@@ -53,6 +53,7 @@ define_id!(SessionId);
 define_id!(PrincipalId);
 define_id!(GeneId);
 define_id!(HarnessId);
+define_id!(PackageId);
 define_id!(ArtifactId);
 define_id!(PermitId);
 define_id!(ReceiptId);

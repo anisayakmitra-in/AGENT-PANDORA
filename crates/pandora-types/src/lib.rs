@@ -7,6 +7,7 @@ pub mod gene;
 pub mod governance;
 pub mod harness;
 pub mod ids;
+pub mod package;
 pub mod session;
 pub mod skill;
 
@@ -20,8 +21,12 @@ pub use gene::{Gene, GeneError, GeneInput, GeneKind, GeneManifest};
 pub use governance::{ParliamentDecision, PolicyContext};
 pub use harness::{Harness, HarnessKind, HarnessManifest, SourceHarnessManifest};
 pub use ids::{
-    ArtifactId, EventId, ExecutionId, GeneId, HarnessId, IdError, PermitId, PrincipalId, ReceiptId,
-    RequestDigest, SessionId, TenantId, WorkspaceId,
+    ArtifactId, EventId, ExecutionId, GeneId, HarnessId, IdError, PackageId, PermitId, PrincipalId,
+    ReceiptId, RequestDigest, SessionId, TenantId, WorkspaceId,
+};
+pub use package::{
+    PackageCompatibility, PackageDependency, PackageKind, PackageManifest, PackageManifestError,
+    TrustEvidence, TrustLevel, hash_artifact,
 };
 pub use session::{Session, TaskIntent};
 pub use skill::{SkillId, SkillManifest, SkillManifestError};

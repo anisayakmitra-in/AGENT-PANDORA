@@ -4,6 +4,7 @@ pub mod approvals;
 pub mod config;
 pub mod execution_controller;
 pub mod executors;
+pub mod harness_registry;
 pub mod package_admission;
 pub mod parliament;
 pub mod permit_store;
@@ -16,6 +17,7 @@ pub use approvals::{
     ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, PendingApproval,
 };
 pub use execution_controller::{ExecutionController, RunStatus, RunSummary, RuntimeError};
+pub use harness_registry::{HarnessRegistry, HarnessRegistryError, PackageRecord, PackageState};
 pub use parliament::Parliament;
 pub use permit_store::{ConsumedPermit, PermitError, PermitStore};
 pub use reference_monitor::{AuthorizationError, ReferenceMonitor};
