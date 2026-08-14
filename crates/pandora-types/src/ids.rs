@@ -61,3 +61,4 @@ define_id!(RequestDigest);
 define_id!(EventId);
 define_id!(TenantId);
 define_id!(WorkspaceId);
+define_id!(MemoryId);
