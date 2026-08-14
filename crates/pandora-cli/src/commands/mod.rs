@@ -113,7 +113,10 @@ pub(crate) fn parse_options(args: &[String], allowed: &[&str]) -> Result<ParsedA
 }
 
 fn is_flag(name: &str) -> bool {
-    matches!(name, "allow" | "deny" | "dry-run" | "rollback" | "yes")
+    matches!(
+        name,
+        "allow" | "deny" | "dry-run" | "plan" | "rollback" | "yes"
+    )
 }
 
 pub(crate) fn load_config(parsed: &ParsedArgs) -> Result<RuntimeConfig, CliError> {
@@ -219,7 +222,7 @@ fn session_error(error: SessionError) -> CliError {
 
 fn usage() -> &'static str {
     "usage: pandora <setup|run|harness|session|approval|provider|tool|orchestration|strategies|completions|migrate|update|uninstall|doctor> [options]\n\n\
-commands:\n  setup\n  run <task>\n  harness list|inspect|run\n  session list|resume <id>\n  approval list|inspect|resolve\n  provider list|set|test\n  orchestration roles\n  strategies list\n  completions <powershell|bash|zsh|fish>\n  migrate config\n  update [--artifact <path> --sha256 <digest> | --rollback]\n  uninstall [--dry-run|--yes]\n  doctor"
+commands:\n  setup\n  run [--plan] [--model <model>] <task>\n  harness list|inspect|run\n  session list|resume <id>\n  approval list|inspect|resolve\n  provider list|set|test\n  orchestration roles\n  strategies list\n  completions <powershell|bash|zsh|fish>\n  migrate config\n  update [--artifact <path> --sha256 <digest> | --rollback]\n  uninstall [--dry-run|--yes]\n  doctor"
 }
 
 fn orchestration(args: &[String]) -> Result<CommandResult, CliError> {

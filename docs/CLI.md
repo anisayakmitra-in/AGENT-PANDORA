@@ -1,6 +1,6 @@
 # Pandora CLI
 
-Status: Partial in the current `v2.0.x` preview line.
+Status: Partial in the current `2.0.0-alpha.1` development line.
 
 The CLI is the primary Pandora surface. Commands return versioned JSON with
 `--json` and stable non-zero exit codes for usage, configuration, policy,
@@ -31,6 +31,7 @@ its output.
 
 ```text
 pandora run "read:README.md"
+pandora run --plan "inspect the README and report what it contains"
 pandora session list
 pandora session resume <session-id>
 pandora approval list
@@ -40,6 +41,11 @@ pandora approval resolve <approval-id> --allow
 
 Read-only work can complete without approval. Writes and process effects stop at
 the approval boundary and expose an inspectable, redacted request subject.
+`run --plan` sends the request to the configured provider as a bounded,
+tool-free planning call. Only a schema-validated task intent is passed to the
+runtime; the model cannot execute tools or grant permissions. Configure the
+provider with `pandora provider set --provider-url <url> --model <model>` and
+provide `PANDORA_PROVIDER_API_KEY` for planning.
 
 ## Discovery and completions
 

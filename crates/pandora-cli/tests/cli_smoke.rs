@@ -288,6 +288,144 @@ fn provider_test_completes_a_configured_request_without_echoing_credentials() {
 }
 
 #[test]
+fn run_plan_uses_structured_provider_output_before_governed_execution() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("planner fixture should bind");
+    let address = listener
+        .local_addr()
+        .expect("planner fixture should expose its address");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("planner should connect");
+        let mut request = Vec::new();
+        let header_end = loop {
+            let mut chunk = [0_u8; 1_024];
+            let bytes_read = stream
+                .read(&mut chunk)
+                .expect("planner request should read");
+            request.extend_from_slice(&chunk[..bytes_read]);
+            if let Some(position) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                break position + 4;
+            }
+        };
+        let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+        let content_length = headers
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .expect("planner should send a content length");
+        while request.len() < header_end + content_length {
+            let mut chunk = [0_u8; 1_024];
+            let bytes_read = stream
+                .read(&mut chunk)
+                .expect("planner request body should read");
+            request.extend_from_slice(&chunk[..bytes_read]);
+        }
+        let body = String::from_utf8_lossy(&request[header_end..header_end + content_length]);
+        assert!(body.contains("\"model\":\"planner-model\""));
+        assert!(body.contains("inspect the README"));
+        assert!(!body.contains("\"tools\":[{"));
+        let response =
+            br#"{"choices":[{"message":{"content":"{\"task\":\"read:README.md\"}"}}],"usage":{"prompt_tokens":3,"completion_tokens":2}}"#;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            response.len()
+        )
+        .expect("planner response headers should be written");
+        stream
+            .write_all(response)
+            .expect("planner response should be written");
+    });
+
+    let fixture = Fixture::new();
+    let provider_url = format!("http://{address}/v1");
+    let configured = fixture
+        .command(&[
+            "provider",
+            "set",
+            "--provider-url",
+            &provider_url,
+            "--model",
+            "planner-model",
+            "--json",
+        ])
+        .output()
+        .expect("provider set should start");
+    assert_success(&configured);
+
+    let output = fixture
+        .command(&["run", "--plan", "inspect the README", "--json"])
+        .env("PANDORA_PROVIDER_API_KEY", "test-planner-key")
+        .output()
+        .expect("planned run should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["status"], "completed");
+    assert_eq!(response["output"], "fixture\n");
+    assert_eq!(response["planning"]["enabled"], true);
+    assert_eq!(response["planning"]["model"], "planner-model");
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("test-planner-key"));
+
+    server.join().expect("planner fixture should finish");
+}
+
+#[test]
+fn run_plan_rejects_malformed_provider_output_before_execution() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("planner fixture should bind");
+    let address = listener
+        .local_addr()
+        .expect("planner fixture should expose its address");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("planner should connect");
+        let mut request = [0_u8; 4_096];
+        let _ = stream
+            .read(&mut request)
+            .expect("planner request should read");
+        let response =
+            br#"{"choices":[{"message":{"content":"not-json"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}"#;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            response.len()
+        )
+        .expect("planner response headers should be written");
+        stream
+            .write_all(response)
+            .expect("planner response should be written");
+    });
+
+    let fixture = Fixture::new();
+    let provider_url = format!("http://{address}/v1");
+    let configured = fixture
+        .command(&[
+            "provider",
+            "set",
+            "--provider-url",
+            &provider_url,
+            "--model",
+            "planner-model",
+            "--json",
+        ])
+        .output()
+        .expect("provider set should start");
+    assert_success(&configured);
+
+    let output = fixture
+        .command(&["run", "--plan", "inspect the README", "--json"])
+        .env("PANDORA_PROVIDER_API_KEY", "test-planner-key")
+        .output()
+        .expect("planned run should start");
+    assert_eq!(output.status.code(), Some(20));
+    let response = parse_json(&output);
+    assert_eq!(response["code"], "provider_error");
+    assert_eq!(
+        fs::read_to_string(fixture.workspace.join("README.md")).unwrap(),
+        "fixture\n"
+    );
+
+    server.join().expect("planner fixture should finish");
+}
+
+#[test]
 fn doctor_reports_missing_configuration_with_stable_error() {
     let fixture = Fixture::new();
     let output = fixture
