@@ -10,7 +10,9 @@ The `ReferenceMonitor` is the sole authority that can issue effect permits. Gene
 
 ## Status
 
-Private development is preparing the first named release line, Anubis. The current build is `2.0.0-alpha.1`; it is not a stable release. See [RELEASES.md](RELEASES.md) for the version and codename policy.
+The first named release line is Anubis. The current public preview is
+`v2.0.0-anubis.1`; it is not a stable release. See [RELEASES.md](RELEASES.md)
+for the shipped scope and version policy.
 
 ## Build
 

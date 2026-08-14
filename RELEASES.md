@@ -4,13 +4,8 @@ Pandora uses SemVer tags for tooling and release codenames for product milestone
 
 ## Anubis — `v2.0.0`
 
-Anubis is the first production release line. The current workspace is still `2.0.0-alpha.1`; no Anubis tag exists yet.
-
-Planned sequence:
-
-- `v2.0.0-anubis.1`: first public preview.
-- `v2.0.0-rc.1`: release candidate after cross-platform install and upgrade checks.
-- `v2.0.0`: stable Anubis release.
+Anubis is Phase 1 and the first CLI-first release line. The public preview is
+`v2.0.0-anubis.1`, published from `main`.
 
 Anubis adds the CLI-first foundation:
 
@@ -20,11 +15,14 @@ Anubis adds the CLI-first foundation:
 - Provider manifests, bounded model requests, OpenAI-compatible HTTP transport, tool-call validation, and structured-output repair.
 - Windows, macOS, and Linux CI, repository validation, dependency auditing, and release-build checks.
 
-Anubis is complete only when the stable CLI can be installed, configured, run, resumed, diagnosed, updated, and removed on a clean machine without Rust.
+The preview is a prerelease. It documents the current CLI foundation and does
+not claim stable installer or desktop support.
 
 ## Naming
 
-Anubis is Phase 1 and owns the `v2.0.x` release line. Patch releases keep the phase name: `Anubis v2.0.1` and `Anubis v2.0.2` are fixes to the same contract, not new phases. A later phase receives a new codename only after its scope is approved and documented.
+Anubis owns the `v2.0.x` release line. Patch releases keep the phase name:
+`Anubis v2.0.1` and `Anubis v2.0.2` are fixes to the same contract, not new
+phases.
 
 ## Version rules
 
