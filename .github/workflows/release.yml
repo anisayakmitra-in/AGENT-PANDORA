@@ -73,7 +73,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
             binary: pandora
             artifact: pandora-x86_64-unknown-linux-gnu
-          - os: macos-13
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             binary: pandora
             artifact: pandora-x86_64-apple-darwin
