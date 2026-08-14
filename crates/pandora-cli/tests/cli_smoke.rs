@@ -92,6 +92,20 @@ fn setup_and_read_only_run_return_versioned_json() {
 }
 
 #[test]
+fn orchestration_roles_are_discoverable_without_runtime_setup() {
+    let fixture = Fixture::new();
+    let output = fixture
+        .command(&["orchestration", "roles", "--json"])
+        .output()
+        .expect("orchestration discovery should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["command"], "orchestration roles");
+    assert_eq!(response["roles"][0], "planner");
+    assert_eq!(response["roles"][3], "verifier");
+}
+
+#[test]
 fn patch_run_returns_approval_required_without_writing() {
     let fixture = Fixture::new();
     fixture.setup();

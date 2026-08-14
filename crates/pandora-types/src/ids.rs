@@ -62,3 +62,6 @@ define_id!(EventId);
 define_id!(TenantId);
 define_id!(WorkspaceId);
 define_id!(MemoryId);
+define_id!(PlanId);
+define_id!(RoleId);
+define_id!(RunLoopId);

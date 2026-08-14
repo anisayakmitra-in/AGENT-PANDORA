@@ -11,10 +11,12 @@ pub mod harness_registry;
 pub mod human_review;
 pub mod memory_engine;
 pub mod observability;
+pub mod orchestration_engine;
 pub mod package_admission;
 pub mod parliament;
 pub mod permit_store;
 pub mod reference_monitor;
+pub mod run_loop;
 pub mod sessions;
 pub mod shadow_council;
 pub mod skill_engine;
@@ -34,9 +36,11 @@ pub use human_review::{
 };
 pub use memory_engine::{MemoryEngine, MemoryError};
 pub use observability::{ObservabilityEngine, ObservabilityError};
+pub use orchestration_engine::{OrchestrationEngine, OrchestrationError, OrchestrationRun};
 pub use parliament::Parliament;
 pub use permit_store::{ConsumedPermit, PermitError, PermitStore};
 pub use reference_monitor::{AuthorizationError, ReferenceMonitor};
+pub use run_loop::{RunLoop, RunLoopError};
 pub use skill_engine::{
     RemovalReceipt, SkillEngine, SkillError, SkillInspection, SkillProvenance, SkillRecord,
     SkillState,

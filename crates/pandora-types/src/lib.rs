@@ -11,6 +11,7 @@ pub mod harness;
 pub mod ids;
 pub mod memory;
 pub mod observability;
+pub mod orchestration;
 pub mod package;
 pub mod session;
 pub mod skill;
@@ -33,7 +34,8 @@ pub use governance::{ParliamentDecision, PolicyContext};
 pub use harness::{Harness, HarnessKind, HarnessManifest, SourceHarnessManifest};
 pub use ids::{
     ArtifactId, EventId, ExecutionId, GeneId, HarnessId, IdError, MemoryId, PackageId, PermitId,
-    PrincipalId, ReceiptId, RequestDigest, SessionId, TenantId, WorkspaceId,
+    PlanId, PrincipalId, ReceiptId, RequestDigest, RoleId, RunLoopId, SessionId, TenantId,
+    WorkspaceId,
 };
 pub use memory::{
     MemoryApproval, MemoryAuditAction, MemoryAuditEntry, MemoryContractError, MemoryKind,
@@ -41,6 +43,11 @@ pub use memory::{
 };
 pub use observability::{
     ObservabilityContractError, ObservabilitySample, ObservabilitySnapshot, SpanView, TraceView,
+};
+pub use orchestration::{
+    Handoff, IterationOutcome, LoopDecision, LoopTermination, OrchestrationContractError,
+    OrchestrationPlan, OrchestrationRole, RoleAssignment, RunLoopConfig, RunLoopSnapshot,
+    RunLoopState, Usage,
 };
 pub use package::{
     PackageCompatibility, PackageDependency, PackageKind, PackageManifest, PackageManifestError,

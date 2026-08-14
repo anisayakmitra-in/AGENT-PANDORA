@@ -1,7 +1,9 @@
 use crate::output::{CliError, CommandResult};
 use pandora_runtime::config::{ConfigError, ConfigOverrides, RuntimeConfig};
 use pandora_runtime::sessions::{SessionError, SessionStore};
-use pandora_types::{PrincipalId, Session, SessionId, TenantId, Timestamp, WorkspaceId};
+use pandora_types::{
+    OrchestrationRole, PrincipalId, Session, SessionId, TenantId, Timestamp, WorkspaceId,
+};
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -48,6 +50,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "session" => session::execute(&args[1..]),
         "provider" => provider::execute(&args[1..]),
         "tool" => tool::execute(&args[1..]),
+        "orchestration" => orchestration(&args[1..]),
         "doctor" => doctor::execute(&args[1..]),
         "--help" | "help" => Err(CliError::usage(usage())),
         unknown => Err(CliError::usage(format!(
@@ -195,6 +198,24 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    "usage: pandora <setup|run|harness|session|approval|provider|tool|doctor> [options]\n\n\
-commands:\n  setup\n  run <task>\n  harness list|inspect|run\n  session list|resume <id>\n  approval list|inspect|resolve\n  provider list|set\n  doctor"
+    "usage: pandora <setup|run|harness|session|approval|provider|tool|orchestration|doctor> [options]\n\n\
+commands:\n  setup\n  run <task>\n  harness list|inspect|run\n  session list|resume <id>\n  approval list|inspect|resolve\n  provider list|set\n  orchestration roles\n  doctor"
+}
+
+fn orchestration(args: &[String]) -> Result<CommandResult, CliError> {
+    let subcommand = args
+        .first()
+        .ok_or_else(|| CliError::usage("orchestration requires 'roles'"))?;
+    if subcommand != "roles" || args.len() != 1 {
+        return Err(CliError::usage("orchestration supports only 'roles'"));
+    }
+    let roles = OrchestrationRole::standard()
+        .into_iter()
+        .map(|role| role.as_str().to_owned())
+        .collect::<Vec<_>>();
+    Ok(crate::output::success(
+        "orchestration roles",
+        json!({"roles": roles}),
+        "planner, maker, critic, verifier",
+    ))
 }
