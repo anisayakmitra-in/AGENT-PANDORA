@@ -1,9 +1,12 @@
 use pandora_types::hash_artifact;
 use serde_json::Value;
 use std::fs;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(1);
@@ -193,6 +196,83 @@ fn provider_set_and_list_use_the_public_configuration_api() {
         response["providers"][0]["base_url"],
         "http://127.0.0.1:4317/v1"
     );
+}
+
+#[test]
+fn provider_test_completes_a_configured_request_without_echoing_credentials() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("provider fixture should bind");
+    let address = listener
+        .local_addr()
+        .expect("provider fixture should expose its address");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("provider should connect");
+        let mut request = Vec::new();
+        loop {
+            let mut chunk = [0_u8; 1_024];
+            let bytes_read = stream.read(&mut chunk).expect("request should be readable");
+            request.extend_from_slice(&chunk[..bytes_read]);
+            if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                break;
+            }
+        }
+        let header_end = request
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .expect("request should contain headers")
+            + 4;
+        let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+        let content_length = headers
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .expect("provider should send a content length");
+        while request.len() < header_end + content_length {
+            let mut chunk = [0_u8; 1_024];
+            let bytes_read = stream
+                .read(&mut chunk)
+                .expect("request body should be readable");
+            request.extend_from_slice(&chunk[..bytes_read]);
+        }
+        let body = String::from_utf8_lossy(&request[header_end..header_end + content_length]);
+        assert!(headers.contains("authorization: bearer test-provider-key"));
+        assert!(body.contains("\"model\":\"default\""));
+        let response =
+            br#"{"choices":[{"message":{"content":"ready"}}],"usage":{"prompt_tokens":2,"completion_tokens":1}}"#;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            response.len()
+        )
+        .expect("provider response headers should be written");
+        stream
+            .write_all(response)
+            .expect("provider response should be written");
+    });
+
+    let fixture = Fixture::new();
+    let provider_url = format!("http://{address}/v1");
+    let configured = fixture
+        .command(&["provider", "set", "--provider-url", &provider_url, "--json"])
+        .output()
+        .expect("provider set should start");
+    assert_success(&configured);
+
+    let output = fixture
+        .command(&["provider", "test", "--json"])
+        .env("PANDORA_PROVIDER_API_KEY", "test-provider-key")
+        .output()
+        .expect("provider test should start");
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("test-provider-key"));
+    let response = parse_json(&output);
+    assert_eq!(response["command"], "provider test");
+    assert_eq!(response["status"], "ready");
+    assert_eq!(response["model"], "default");
+    assert_eq!(response["output"], "ready");
+    assert_eq!(response["usage"]["total_tokens"], 3);
+
+    server.join().expect("provider fixture should finish");
 }
 
 #[test]
