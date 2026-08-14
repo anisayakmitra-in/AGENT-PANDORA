@@ -1,5 +1,6 @@
 import hashlib
 import os
+import platform
 import shutil
 import subprocess
 import unittest
@@ -96,7 +97,11 @@ class InstallerContractTests(unittest.TestCase):
         directory = workspace_temp_directory()
         try:
             cache = directory / "cache"
-            artifact = cache / "v2.0.0-anubis.2" / "pandora-x86_64-pc-windows-msvc.exe"
+            platform_name = platform.system().lower()
+            machine = platform.machine().lower()
+            architecture = "x86_64" if machine in {"amd64", "x86_64"} else "arm64"
+            artifact_name_for_host = artifact_name(platform_name, architecture)
+            artifact = cache / "v2.0.0-anubis.2" / artifact_name_for_host
             artifact.parent.mkdir(parents=True)
             artifact.write_bytes(b"not a Pandora binary")
             marker = Path(f"{artifact}.sha256")
