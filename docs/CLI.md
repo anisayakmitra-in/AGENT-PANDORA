@@ -62,6 +62,9 @@ pandora harness list
 pandora tool list
 pandora skill list
 pandora skill inspect <id>
+pandora skill enable <id>
+pandora skill suspend <id>
+pandora skill disable <id>
 pandora orchestration roles
 pandora strategies list
 pandora completions powershell
@@ -76,7 +79,10 @@ surface and do not execute a command or inspect credentials.
 Skills are discovered from the configured data directory under `skills/`.
 Use `--root <path>` to inspect another local skill root. Listing and inspection
 read metadata, state, provenance, resources, and script inventory only; Skills
-start disabled and scripts are not executed by these commands.
+start disabled and scripts are not executed by these commands. `enable`,
+`suspend`, and `disable` persist the explicit lifecycle state under the skill
+root. These commands do not execute scripts; script execution remains available
+only through the governed ToolEngine path.
 
 ## Configuration migration
 

@@ -6,12 +6,15 @@ use std::fs;
 use std::path::PathBuf;
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
-    let subcommand = args
-        .first()
-        .ok_or_else(|| CliError::usage("skill requires 'list' or 'inspect'"))?;
+    let subcommand = args.first().ok_or_else(|| {
+        CliError::usage("skill requires 'list', 'inspect', 'enable', 'disable', or 'suspend'")
+    })?;
     match subcommand.as_str() {
         "list" => list(&args[1..]),
         "inspect" => inspect(&args[1..]),
+        "enable" => transition(&args[1..], "enable", SkillEngine::enable),
+        "disable" => transition(&args[1..], "disable", SkillEngine::disable),
+        "suspend" => transition(&args[1..], "suspend", SkillEngine::suspend),
         unknown => Err(CliError::usage(format!(
             "unknown skill command '{unknown}'"
         ))),
@@ -37,6 +40,33 @@ fn list(args: &[String]) -> Result<CommandResult, CliError> {
         "skill list",
         json!({"skills": skills}),
         format!("{count} skill(s) discovered"),
+    ))
+}
+
+fn transition(
+    args: &[String],
+    action: &str,
+    apply: fn(&SkillEngine, &str) -> Result<pandora_runtime::skill_engine::SkillRecord, SkillError>,
+) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "root"])?;
+    if parsed.positionals.len() != 1 {
+        return Err(CliError::usage(format!(
+            "skill {action} requires exactly one skill ID"
+        )));
+    }
+    let engine = engine(&parsed)?;
+    let skill = apply(&engine, &parsed.positionals[0]).map_err(skill_error)?;
+    let state = skill.state().as_str();
+    let command = match action {
+        "enable" => "skill enable",
+        "disable" => "skill disable",
+        "suspend" => "skill suspend",
+        _ => unreachable!("skill transition action is fixed by the command router"),
+    };
+    Ok(success(
+        command,
+        json!({"skill": skill_value(skill)}),
+        format!("Skill {} is now {state}", parsed.positionals[0]),
     ))
 }
 

@@ -149,6 +149,51 @@ fn skill_list_and_inspect_are_metadata_only() {
 }
 
 #[test]
+fn skill_state_transitions_persist_without_running_scripts() {
+    let fixture = Fixture::new();
+    let skill_root = fixture.data.join("skills").join("alpha");
+    fs::create_dir_all(skill_root.join("scripts")).unwrap();
+    fs::write(
+        skill_root.join("SKILL.md"),
+        "---\nid: alpha\nversion: 0.1.0\nname: Alpha Skill\ndescription: Reads project guidance\npublisher: pandora\nresources: workspace.read\n---\n# Alpha\n",
+    )
+    .unwrap();
+    fs::write(skill_root.join("scripts").join("marker.txt"), "untouched").unwrap();
+
+    let output = fixture
+        .command(&["skill", "enable", "alpha", "--json"])
+        .output()
+        .expect("skill enable should start");
+    assert_success(&output);
+    assert_eq!(parse_json(&output)["skill"]["state"], "enabled");
+
+    let output = fixture
+        .command(&["skill", "list", "--json"])
+        .output()
+        .expect("skill list should start");
+    assert_success(&output);
+    assert_eq!(parse_json(&output)["skills"][0]["state"], "enabled");
+
+    let output = fixture
+        .command(&["skill", "suspend", "alpha", "--json"])
+        .output()
+        .expect("skill suspend should start");
+    assert_success(&output);
+    assert_eq!(parse_json(&output)["skill"]["state"], "suspended");
+
+    let output = fixture
+        .command(&["skill", "disable", "alpha", "--json"])
+        .output()
+        .expect("skill disable should start");
+    assert_success(&output);
+    assert_eq!(parse_json(&output)["skill"]["state"], "disabled");
+    assert_eq!(
+        fs::read_to_string(skill_root.join("scripts").join("marker.txt")).unwrap(),
+        "untouched"
+    );
+}
+
+#[test]
 fn orchestration_roles_are_discoverable_without_runtime_setup() {
     let fixture = Fixture::new();
     let output = fixture
