@@ -555,16 +555,23 @@ mod tests {
     use super::*;
     use pandora_types::{ExecutionId, GeneId, PrincipalId, RequestDigest, SessionId, Timestamp};
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Barrier};
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(1);
 
     fn fixture() -> (ApprovalStore, PathBuf) {
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be available")
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("pandora-approvals-{suffix}.sqlite3"));
+        let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "pandora-approvals-{}-{suffix}-{sequence}.sqlite3",
+            std::process::id()
+        ));
         let store = ApprovalStore::open(&path).expect("approval store should open");
         (store, path)
     }
