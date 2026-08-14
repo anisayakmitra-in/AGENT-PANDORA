@@ -6,6 +6,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use url::Url;
 
+pub const CONFIG_FORMAT_VERSION: u32 = 1;
+
 #[derive(Debug)]
 pub enum ConfigError {
     Io(std::io::Error),
@@ -113,6 +115,12 @@ impl RuntimeConfig {
         } else {
             FileConfig::default()
         };
+        if file
+            .format_version
+            .is_some_and(|version| version > CONFIG_FORMAT_VERSION)
+        {
+            return Err(ConfigError::InvalidFile);
+        }
 
         let provider_url = overrides
             .provider_url
@@ -158,6 +166,7 @@ impl RuntimeConfig {
             fs::create_dir_all(parent)?;
         }
         let data = serde_json::to_vec_pretty(&FileConfig {
+            format_version: Some(CONFIG_FORMAT_VERSION),
             provider_url: self.provider_url.clone(),
             data_dir: Some(self.data_dir.display().to_string()),
             workspace_dir: Some(self.workspace_dir.display().to_string()),
@@ -194,6 +203,7 @@ impl RuntimeConfig {
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 struct FileConfig {
+    format_version: Option<u32>,
     provider_url: Option<String>,
     data_dir: Option<String>,
     workspace_dir: Option<String>,
@@ -241,7 +251,7 @@ fn validate_provider_url(value: String) -> Result<String, ConfigError> {
     Ok(value)
 }
 
-fn default_config_path() -> PathBuf {
+pub fn default_config_path() -> PathBuf {
     if cfg!(windows) {
         std::env::var_os("APPDATA")
             .map(PathBuf::from)

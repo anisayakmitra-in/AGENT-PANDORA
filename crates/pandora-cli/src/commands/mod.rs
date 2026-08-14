@@ -10,13 +10,17 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod approval;
+mod completions;
 mod doctor;
 mod harness;
+mod migration;
 mod provider;
 mod run;
 mod session;
 mod setup;
 mod tool;
+mod uninstall;
+mod update;
 
 pub(crate) const LOCAL_PRINCIPAL: &str = "local-user";
 pub(crate) const LOCAL_TENANT: &str = "local-tenant";
@@ -44,13 +48,17 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         .as_str();
     match command {
         "approval" => approval::execute(&args[1..]),
+        "completions" => completions::execute(&args[1..]),
         "harness" => harness::execute(&args[1..]),
+        "migrate" => migration::execute(&args[1..]),
         "setup" => setup::execute(&args[1..]),
         "run" => run::execute(&args[1..]),
         "session" => session::execute(&args[1..]),
         "provider" => provider::execute(&args[1..]),
         "strategies" => strategies(&args[1..]),
         "tool" => tool::execute(&args[1..]),
+        "uninstall" => uninstall::execute(&args[1..]),
+        "update" => update::execute(&args[1..]),
         "orchestration" => orchestration(&args[1..]),
         "doctor" => doctor::execute(&args[1..]),
         "--help" | "help" => Err(CliError::usage(usage())),
@@ -105,7 +113,7 @@ pub(crate) fn parse_options(args: &[String], allowed: &[&str]) -> Result<ParsedA
 }
 
 fn is_flag(name: &str) -> bool {
-    matches!(name, "allow" | "deny")
+    matches!(name, "allow" | "deny" | "dry-run" | "rollback" | "yes")
 }
 
 pub(crate) fn load_config(parsed: &ParsedArgs) -> Result<RuntimeConfig, CliError> {
@@ -172,6 +180,14 @@ pub(crate) fn path_option(parsed: &ParsedArgs, name: &str) -> Option<PathBuf> {
     parsed.value(name).map(PathBuf::from)
 }
 
+pub(crate) fn config_path(parsed: &ParsedArgs) -> PathBuf {
+    parsed
+        .value("config")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("PANDORA_CONFIG").map(PathBuf::from))
+        .unwrap_or_else(pandora_runtime::config::default_config_path)
+}
+
 fn overrides(parsed: &ParsedArgs) -> ConfigOverrides {
     let mut overrides = ConfigOverrides::default();
     if let Some(path) = path_option(parsed, "config") {
@@ -199,8 +215,8 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    "usage: pandora <setup|run|harness|session|approval|provider|tool|orchestration|strategies|doctor> [options]\n\n\
-commands:\n  setup\n  run <task>\n  harness list|inspect|run\n  session list|resume <id>\n  approval list|inspect|resolve\n  provider list|set\n  orchestration roles\n  strategies list\n  doctor"
+    "usage: pandora <setup|run|harness|session|approval|provider|tool|orchestration|strategies|completions|migrate|update|uninstall|doctor> [options]\n\n\
+commands:\n  setup\n  run <task>\n  harness list|inspect|run\n  session list|resume <id>\n  approval list|inspect|resolve\n  provider list|set\n  orchestration roles\n  strategies list\n  completions <powershell|bash|zsh|fish>\n  migrate config\n  update [--artifact <path> --sha256 <digest> | --rollback]\n  uninstall [--dry-run|--yes]\n  doctor"
 }
 
 fn orchestration(args: &[String]) -> Result<CommandResult, CliError> {

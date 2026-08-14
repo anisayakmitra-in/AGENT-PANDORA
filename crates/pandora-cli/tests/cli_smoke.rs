@@ -1,3 +1,4 @@
+use pandora_types::hash_artifact;
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
@@ -295,6 +296,161 @@ fn approval_can_be_inspected_and_resolved_without_exposing_patch_content() {
         parse_json(&output)["approvals"].as_array().unwrap().len(),
         1
     );
+}
+
+#[test]
+fn completions_generate_a_bash_script() {
+    let fixture = Fixture::new();
+    let output = fixture
+        .command(&["completions", "bash", "--json"])
+        .output()
+        .expect("completion generation should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["command"], "completions bash");
+    assert!(response["script"].as_str().unwrap().contains("pandora"));
+}
+
+#[test]
+fn migration_converts_legacy_config_and_keeps_a_backup() {
+    let fixture = Fixture::new();
+    fs::create_dir_all(fixture.root.join("data")).expect("legacy data should exist");
+    fs::write(
+        &fixture.config,
+        r#"{"provider":{"url":"http://127.0.0.1:4317/v1"},"data_path":"data","workspace_path":"workspace"}"#,
+    )
+    .expect("legacy config should be written");
+
+    let output = fixture
+        .command(&[
+            "migrate",
+            "config",
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("migration should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["command"], "migrate config");
+    assert!(fixture.config.with_extension("json.bak").is_file());
+    let current: Value = serde_json::from_slice(&fs::read(&fixture.config).unwrap()).unwrap();
+    assert_eq!(current["format_version"], 1);
+    assert_eq!(current["provider_url"], "http://127.0.0.1:4317/v1");
+}
+
+#[test]
+fn migration_preserves_invalid_config() {
+    let fixture = Fixture::new();
+    let original = b"{not-json";
+    fs::write(&fixture.config, original).expect("invalid config should be written");
+
+    let output = fixture
+        .command(&[
+            "migrate",
+            "config",
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("migration should start");
+    assert_eq!(output.status.code(), Some(10));
+    assert_eq!(fs::read(&fixture.config).unwrap(), original);
+    assert!(!fixture.config.with_extension("json.bak").exists());
+}
+
+#[test]
+fn update_rejects_a_checksum_mismatch() {
+    let fixture = Fixture::new();
+    let artifact = fixture.root.join("pandora.bin");
+    fs::write(&artifact, b"verified artifact").expect("artifact should be written");
+    let output = fixture
+        .command(&[
+            "update",
+            "--artifact",
+            artifact.to_str().unwrap(),
+            "--sha256",
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("update should start");
+    assert_eq!(output.status.code(), Some(70));
+    let response = parse_json(&output);
+    assert_eq!(response["code"], "update_error");
+    assert_eq!(response["details"]["reason"], "checksum_mismatch");
+}
+
+#[test]
+fn update_can_rollback_the_previous_verified_artifact() {
+    let fixture = Fixture::new();
+    let first = fixture.root.join("first.bin");
+    let second = fixture.root.join("second.bin");
+    fs::write(&first, b"first").expect("first artifact should be written");
+    fs::write(&second, b"second").expect("second artifact should be written");
+    for (artifact, content) in [
+        (&first, b"first".as_slice()),
+        (&second, b"second".as_slice()),
+    ] {
+        let output = fixture
+            .command(&[
+                "update",
+                "--artifact",
+                artifact.to_str().unwrap(),
+                "--sha256",
+                hash_artifact(content).as_str(),
+                "--json",
+            ])
+            .output()
+            .expect("update should start");
+        assert_success(&output);
+    }
+    let output = fixture
+        .command(&["update", "--rollback", "--json"])
+        .output()
+        .expect("rollback should start");
+    assert_success(&output);
+    assert_eq!(
+        fs::read(fixture.data.join("updates/current/pandora")).unwrap(),
+        b"first"
+    );
+}
+
+#[test]
+fn uninstall_dry_run_preserves_user_data() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let output = fixture
+        .command(&["uninstall", "--dry-run", "--json"])
+        .output()
+        .expect("uninstall should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["dry_run"], true);
+    assert!(fixture.config.is_file());
+    assert!(fixture.data.is_dir());
+    assert!(fixture.workspace.is_dir());
+}
+
+#[test]
+fn doctor_reports_connectivity_state_without_credentials() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let output = fixture
+        .command(&["doctor", "--json"])
+        .env("PANDORA_PROVIDER_API_KEY", "sk-live-secret")
+        .output()
+        .expect("doctor should start");
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("sk-live-secret"));
+    let response = parse_json(&output);
+    assert_eq!(response["healthy"], true);
+    assert_eq!(response["provider"]["connectivity"], "not_checked");
+    assert_eq!(response["policy"]["mode"], "governed");
 }
 
 fn assert_success(output: &Output) {

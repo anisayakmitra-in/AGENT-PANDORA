@@ -74,6 +74,15 @@ impl CliError {
         }
     }
 
+    pub fn update(message: impl Into<String>, details: Value) -> Self {
+        Self {
+            code: "update_error",
+            message: message.into(),
+            details,
+            exit_code: 70,
+        }
+    }
+
     pub fn envelope(&self) -> Value {
         json!({
             "version": OUTPUT_VERSION,

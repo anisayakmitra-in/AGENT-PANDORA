@@ -9,6 +9,7 @@ name = "pandora"
 path = "src/main.rs"
 
 [dependencies]
+ed25519-dalek.workspace = true
 pandora-harnesses = { path = "../pandora-harnesses" }
 pandora-provider = { path = "../pandora-provider" }
 pandora-runtime = { path = "../pandora-runtime" }
