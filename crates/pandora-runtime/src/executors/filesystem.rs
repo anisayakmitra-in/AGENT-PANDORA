@@ -51,7 +51,7 @@ impl FilesystemError {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkspaceRoot {
     canonical: PathBuf,
 }
