@@ -529,6 +529,69 @@ fn approval_can_be_inspected_and_resolved_without_exposing_patch_content() {
 }
 
 #[test]
+fn approved_patch_resumes_once_through_the_governed_executor() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let output = fixture
+        .command(&["run", "patch:README.md:changed", "--json"])
+        .output()
+        .expect("run should start");
+    assert_eq!(output.status.code(), Some(40));
+    let approval_id = parse_json(&output)["details"]["approval_id"]
+        .as_str()
+        .expect("approval ID should be returned")
+        .to_owned();
+
+    let output = fixture
+        .command(&["approval", "resolve", &approval_id, "--allow", "--json"])
+        .output()
+        .expect("approval resolution should start");
+    assert_success(&output);
+
+    let output = fixture
+        .command(&[
+            "run",
+            "--approval",
+            &approval_id,
+            "patch:README.md:changed",
+            "--json",
+        ])
+        .output()
+        .expect("approved run should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["status"], "completed");
+    assert_eq!(
+        fs::read_to_string(fixture.workspace.join("README.md")).unwrap(),
+        "changed"
+    );
+
+    let output = fixture
+        .command(&["approval", "inspect", &approval_id, "--json"])
+        .output()
+        .expect("approval inspection should start");
+    assert_success(&output);
+    assert_eq!(parse_json(&output)["approval"]["status"], "consumed");
+
+    let output = fixture
+        .command(&[
+            "run",
+            "--approval",
+            &approval_id,
+            "patch:README.md:changed-again",
+            "--json",
+        ])
+        .output()
+        .expect("replayed approval run should start");
+    assert_eq!(output.status.code(), Some(40));
+    assert_eq!(parse_json(&output)["code"], "approval_required");
+    assert_eq!(
+        fs::read_to_string(fixture.workspace.join("README.md")).unwrap(),
+        "changed"
+    );
+}
+
+#[test]
 fn completions_generate_a_bash_script() {
     let fixture = Fixture::new();
     let output = fixture

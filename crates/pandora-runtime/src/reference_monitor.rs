@@ -16,6 +16,7 @@ pub enum AuthorizationError {
     PolicyMismatch,
     Denied { reason: String },
     ApprovalRequired { reason: String },
+    ApprovalNotRequired,
     ExpiryOverflow,
     NonceExhausted,
     InvalidPermitId,
@@ -38,12 +39,7 @@ impl ReferenceMonitor {
         decision: ParliamentDecision,
         now: Timestamp,
     ) -> Result<EffectPermit, AuthorizationError> {
-        if decision.request_digest() != request.request_digest() {
-            return Err(AuthorizationError::RequestMismatch);
-        }
-        if decision.policy_version() != self.policy_version {
-            return Err(AuthorizationError::PolicyMismatch);
-        }
+        self.validate_decision(&request, &decision)?;
 
         match decision {
             ParliamentDecision::Allow { .. } => {}
@@ -55,6 +51,41 @@ impl ReferenceMonitor {
             }
         }
 
+        self.issue_permit(request, now)
+    }
+
+    pub fn authorize_after_approval(
+        &self,
+        request: OperationRequest,
+        decision: ParliamentDecision,
+        now: Timestamp,
+    ) -> Result<EffectPermit, AuthorizationError> {
+        if !decision.requires_approval() {
+            return Err(AuthorizationError::ApprovalNotRequired);
+        }
+        self.validate_decision(&request, &decision)?;
+        self.issue_permit(request, now)
+    }
+
+    fn validate_decision(
+        &self,
+        request: &OperationRequest,
+        decision: &ParliamentDecision,
+    ) -> Result<(), AuthorizationError> {
+        if decision.request_digest() != request.request_digest() {
+            return Err(AuthorizationError::RequestMismatch);
+        }
+        if decision.policy_version() != self.policy_version {
+            return Err(AuthorizationError::PolicyMismatch);
+        }
+        Ok(())
+    }
+
+    fn issue_permit(
+        &self,
+        request: OperationRequest,
+        now: Timestamp,
+    ) -> Result<EffectPermit, AuthorizationError> {
         let nonce = self
             .next_nonce
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
@@ -135,6 +166,37 @@ mod tests {
             monitor.authorize(request, decision, Timestamp::from_unix_seconds(10)),
             Err(AuthorizationError::ApprovalRequired { .. })
         ));
+    }
+
+    #[test]
+    fn approval_decision_can_issue_only_after_external_approval() {
+        let parliament = Parliament::new(1);
+        let monitor = ReferenceMonitor::new(1, 60);
+        let context = PolicyContext::new(1, [Capability::FilesystemWrite], [Operation::Write]);
+        let request = OperationRequest::new(
+            ExecutionId::new("execution-1").unwrap(),
+            SessionId::new("session-1").unwrap(),
+            PrincipalId::new("principal-1").unwrap(),
+            GeneId::new("workspace.write").unwrap(),
+            None,
+            Capability::FilesystemWrite,
+            Operation::Write,
+            EffectTarget::path("src/lib.rs"),
+            ResourceScope::workspace("workspace-1"),
+        )
+        .unwrap();
+        let decision = parliament.decide(&request, &context);
+
+        let permit = monitor
+            .authorize_after_approval(request.clone(), decision, Timestamp::from_unix_seconds(10))
+            .unwrap();
+        assert_eq!(permit.request_digest(), request.request_digest());
+
+        let allowed = ParliamentDecision::allow(&request, &context, "already allowed");
+        assert_eq!(
+            monitor.authorize_after_approval(request, allowed, Timestamp::from_unix_seconds(10)),
+            Err(AuthorizationError::ApprovalNotRequired)
+        );
     }
 
     #[test]

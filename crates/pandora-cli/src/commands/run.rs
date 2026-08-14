@@ -28,6 +28,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "data-dir",
             "workspace",
             "session",
+            "approval",
             "gene",
             "model",
             "plan",
@@ -36,15 +37,44 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     if parsed.positionals.len() != 1 {
         return Err(CliError::usage("run requires exactly one task"));
     }
+    if parsed.value("approval").is_some()
+        && (parsed.value("plan").is_some() || parsed.value("model").is_some())
+    {
+        return Err(CliError::usage(
+            "--approval cannot be combined with --plan or --model",
+        ));
+    }
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
     let store = session_store(&config)?;
     let approval_store = ApprovalStore::open(config.data_dir().join("sessions.sqlite3"))
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
     let workspace_id = WorkspaceId::new(LOCAL_WORKSPACE).expect("built-in workspace ID is valid");
-    let session = match parsed.value("session") {
-        Some(value) => resume_session(&store, value)?,
-        None => create_session(&store, &workspace_id)?,
+    let principal = super::session_scope().0;
+    let approval = parsed
+        .value("approval")
+        .map(|id| {
+            approval_store
+                .inspect(id, &principal)
+                .map_err(approval_error)
+        })
+        .transpose()?;
+    let session = match approval.as_ref() {
+        Some(approval) => {
+            if let Some(value) = parsed.value("session")
+                && value != approval.session_id().as_str()
+            {
+                return Err(CliError::policy(
+                    "approval is bound to a different session",
+                    json!({}),
+                ));
+            }
+            resume_session(&store, approval.session_id().as_str())?
+        }
+        None => match parsed.value("session") {
+            Some(value) => resume_session(&store, value)?,
+            None => create_session(&store, &workspace_id)?,
+        },
     };
     let workspace = WorkspaceRoot::new(config.workspace_dir()).map_err(|error| {
         let _ = error;
@@ -76,9 +106,20 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         [Operation::Write],
     );
     let controller = ExecutionController::with_policy(workspace, policy);
-    let summary = controller
-        .run_at(intent, session.clone(), timestamp())
-        .map_err(runtime_error)?;
+    let summary = match parsed.value("approval") {
+        Some(approval_id) => controller
+            .run_with_approval(
+                intent,
+                session.clone(),
+                &approval_store,
+                approval_id,
+                timestamp(),
+            )
+            .map_err(runtime_error)?,
+        None => controller
+            .run_at(intent, session.clone(), timestamp())
+            .map_err(runtime_error)?,
+    };
     for event in summary.events() {
         store
             .append_event(
@@ -317,6 +358,11 @@ fn runtime_error(error: RuntimeError) -> CliError {
         RuntimeError::InvalidIntent(message) => CliError::usage(message),
         RuntimeError::Denied(reason) => CliError::policy(reason, json!({})),
         RuntimeError::ApprovalRequired(reason) => CliError::approval(reason, json!({})),
+        RuntimeError::Approval(error) => approval_error(error),
+        RuntimeError::ApprovalNotRequired => CliError::policy(
+            "the supplied approval is not required by the active policy",
+            json!({}),
+        ),
         RuntimeError::UnsupportedHarness(_) => {
             CliError::execution("requested harness is not supported", json!({}))
         }
@@ -335,5 +381,18 @@ fn runtime_error(error: RuntimeError) -> CliError {
         RuntimeError::UnsupportedOperation(_) => {
             CliError::execution("requested operation is not supported", json!({}))
         }
+    }
+}
+
+fn approval_error(error: pandora_runtime::ApprovalError) -> CliError {
+    match error {
+        pandora_runtime::ApprovalError::Expired | pandora_runtime::ApprovalError::Terminal => {
+            CliError::approval(error.to_string(), json!({}))
+        }
+        pandora_runtime::ApprovalError::ScopeMismatch
+        | pandora_runtime::ApprovalError::DigestMismatch => {
+            CliError::policy(error.to_string(), json!({}))
+        }
+        other => CliError::internal(other.to_string(), json!({})),
     }
 }

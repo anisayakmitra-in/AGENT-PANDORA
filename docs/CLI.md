@@ -32,6 +32,7 @@ its output.
 ```text
 pandora run "read:README.md"
 pandora run --plan "inspect the README and report what it contains"
+pandora run --approval <approval-id> "patch:README.md:approved content"
 pandora session list
 pandora session resume <session-id>
 pandora approval list
@@ -41,6 +42,9 @@ pandora approval resolve <approval-id> --allow
 
 Read-only work can complete without approval. Writes and process effects stop at
 the approval boundary and expose an inspectable, redacted request subject.
+After an operator approves a write, rerun the exact task with its approval ID.
+The approval is bound to the original session, execution, Gene, and request
+digest, is consumed atomically, and cannot be replayed for another task.
 `run --plan` sends the request to the configured provider as a bounded,
 tool-free planning call. Only a schema-validated task intent is passed to the
 runtime; the model cannot execute tools or grant permissions. Configure the

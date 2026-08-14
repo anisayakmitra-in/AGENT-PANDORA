@@ -5,7 +5,7 @@ use crate::executors::{
 use crate::parliament::Parliament;
 use crate::reference_monitor::{AuthorizationError, ReferenceMonitor};
 use crate::shadow_council::{Selection, ShadowCouncil};
-use crate::{ConsumedPermit, PermitError};
+use crate::{ApprovalError, ApprovalStore, ConsumedPermit, PermitError};
 use pandora_harnesses::{CodingHarness, CodingRequest, PlanningContext};
 use pandora_types::{
     Capability, EffectReceipt, EffectTarget, EventContext, EventId, EventPayload, EventType,
@@ -23,6 +23,8 @@ pub enum RuntimeError {
     Planning(GeneError),
     Denied(String),
     ApprovalRequired(String),
+    Approval(ApprovalError),
+    ApprovalNotRequired,
     Authorization(AuthorizationError),
     Permit(PermitError),
     Filesystem(FilesystemError),
@@ -127,11 +129,49 @@ impl ExecutionController {
         session: Session,
         now: Timestamp,
     ) -> Result<RunSummary, RuntimeError> {
+        self.run_internal(intent, session, now, None, None)
+    }
+
+    pub fn run_with_approval(
+        &self,
+        intent: TaskIntent,
+        session: Session,
+        approval_store: &ApprovalStore,
+        approval_id: &str,
+        now: Timestamp,
+    ) -> Result<RunSummary, RuntimeError> {
+        let approval = approval_store
+            .inspect(approval_id, session.principal_id())
+            .map_err(RuntimeError::Approval)?;
+        if approval.session_id() != session.id() {
+            return Err(RuntimeError::Approval(ApprovalError::ScopeMismatch));
+        }
+        self.run_internal(
+            intent,
+            session,
+            now,
+            Some(approval.execution_id().clone()),
+            Some(ApprovalExecution {
+                store: approval_store,
+                id: approval_id,
+            }),
+        )
+    }
+
+    fn run_internal(
+        &self,
+        intent: TaskIntent,
+        session: Session,
+        now: Timestamp,
+        execution_id_override: Option<ExecutionId>,
+        approval: Option<ApprovalExecution<'_>>,
+    ) -> Result<RunSummary, RuntimeError> {
         let execution_id = ExecutionId::new(format!(
             "execution-{}",
             self.next_execution.fetch_add(1, Ordering::Relaxed)
         ))
         .map_err(|_| RuntimeError::InvalidIntent("could not allocate execution ID"))?;
+        let execution_id = execution_id_override.unwrap_or(execution_id);
         let selection = self.shadow_council.select(&intent);
         self.ensure_coding_selection(&selection)?;
         let gene_id = selection
@@ -144,7 +184,7 @@ impl ExecutionController {
             .iter()
             .find(|gene| gene.manifest().id() == &gene_id)
             .ok_or(RuntimeError::UnknownGene)?;
-        let input = coding_input(&intent, &gene_id, &session, &execution_id)?;
+        let (input, payload) = coding_input(&intent, &gene_id, &session, &execution_id)?;
         let requests = gene.plan(&input).map_err(RuntimeError::Planning)?;
         let mut summary = RunSummary {
             execution_id: execution_id.clone(),
@@ -176,8 +216,18 @@ impl ExecutionController {
                 },
             ));
             let decision = self.parliament.decide(&request, &self.policy);
+            let decision_for_authorization = decision.clone();
             let permit = match decision {
                 ParliamentDecision::Allow { ref reason, .. } => {
+                    if approval.is_some() {
+                        self.record_failure(
+                            &session,
+                            &execution_id,
+                            &mut summary,
+                            &RuntimeError::ApprovalNotRequired,
+                        );
+                        return Ok(summary);
+                    }
                     summary.events.push(self.event(
                         EventType::PolicyApproved,
                         self.context(
@@ -191,10 +241,11 @@ impl ExecutionController {
                             reason: reason.clone(),
                         },
                     ));
-                    match self
-                        .reference_monitor
-                        .authorize(request.clone(), decision, now)
-                    {
+                    match self.reference_monitor.authorize(
+                        request.clone(),
+                        decision_for_authorization,
+                        now,
+                    ) {
                         Ok(permit) => permit,
                         Err(error) => {
                             let failure = RuntimeError::Authorization(error);
@@ -221,21 +272,66 @@ impl ExecutionController {
                     return Ok(summary);
                 }
                 ParliamentDecision::RequireApproval { reason, .. } => {
-                    summary.events.push(self.event(
-                        EventType::ApprovalRequired,
-                        self.context(
-                            &session,
-                            &execution_id,
-                            Some(summary.selected_harness.clone()),
-                            Some(summary.selected_gene.clone()),
-                            None,
-                        ),
-                        EventPayload::Policy {
-                            reason: reason.clone(),
-                        },
-                    ));
-                    summary.status = RunStatus::ApprovalRequired { reason };
-                    return Ok(summary);
+                    if let Some(approval) = approval.as_ref() {
+                        approval
+                            .store
+                            .consume(
+                                approval.id,
+                                request.principal_id(),
+                                request.session_id(),
+                                request.execution_id(),
+                                request.gene_id(),
+                                request.request_digest(),
+                                now,
+                            )
+                            .map_err(RuntimeError::Approval)?;
+                        summary.events.push(self.event(
+                            EventType::PolicyApproved,
+                            self.context(
+                                &session,
+                                &execution_id,
+                                Some(summary.selected_harness.clone()),
+                                Some(summary.selected_gene.clone()),
+                                None,
+                            ),
+                            EventPayload::Policy {
+                                reason: format!("explicit approval consumed: {reason}"),
+                            },
+                        ));
+                        match self.reference_monitor.authorize_after_approval(
+                            request.clone(),
+                            decision_for_authorization,
+                            now,
+                        ) {
+                            Ok(permit) => permit,
+                            Err(error) => {
+                                let failure = RuntimeError::Authorization(error);
+                                self.record_failure(
+                                    &session,
+                                    &execution_id,
+                                    &mut summary,
+                                    &failure,
+                                );
+                                return Ok(summary);
+                            }
+                        }
+                    } else {
+                        summary.events.push(self.event(
+                            EventType::ApprovalRequired,
+                            self.context(
+                                &session,
+                                &execution_id,
+                                Some(summary.selected_harness.clone()),
+                                Some(summary.selected_gene.clone()),
+                                None,
+                            ),
+                            EventPayload::Policy {
+                                reason: reason.clone(),
+                            },
+                        ));
+                        summary.status = RunStatus::ApprovalRequired { reason };
+                        return Ok(summary);
+                    }
                 }
             };
             let consumed = match self
@@ -254,9 +350,14 @@ impl ExecutionController {
                     return Ok(summary);
                 }
             };
-            if let Err(error) =
-                self.execute_request(&session, &execution_id, &consumed, now, &mut summary)
-            {
+            if let Err(error) = self.execute_request(
+                &session,
+                &execution_id,
+                &consumed,
+                payload.as_deref(),
+                now,
+                &mut summary,
+            ) {
                 self.record_failure(&session, &execution_id, &mut summary, &error);
                 return Ok(summary);
             }
@@ -303,6 +404,7 @@ impl ExecutionController {
         session: &Session,
         execution_id: &ExecutionId,
         permit: &ConsumedPermit,
+        payload: Option<&[u8]>,
         now: Timestamp,
         output: &mut RunSummary,
     ) -> Result<(), RuntimeError> {
@@ -375,6 +477,43 @@ impl ExecutionController {
                     .map(|_| ())
                     .map_err(|error| RuntimeError::Process(error.clone()))
             }
+            Capability::FilesystemWrite => {
+                let path = match permit.request().target() {
+                    EffectTarget::Path { path } => path,
+                    _ => {
+                        return Err(RuntimeError::UnsupportedOperation(
+                            Capability::FilesystemWrite,
+                        ));
+                    }
+                };
+                let target = self
+                    .workspace
+                    .path(path)
+                    .map_err(RuntimeError::Filesystem)?;
+                let content =
+                    payload.ok_or(RuntimeError::Filesystem(FilesystemError::PermissionDenied))?;
+                let response = self.filesystem.write_patch(permit, &target, content, now);
+                let receipt = response.receipt().clone();
+                let result = response.result();
+                output.receipts.push(receipt.clone());
+                output.events.push(self.event(
+                    EventType::EffectCompleted,
+                    self.context(
+                        session,
+                        execution_id,
+                        Some(output.selected_harness.clone()),
+                        Some(output.selected_gene.clone()),
+                        Some(receipt),
+                    ),
+                    EventPayload::Effect {
+                        capability: permit.request().capability().as_str().to_owned(),
+                        request_digest: permit.request().request_digest().clone(),
+                    },
+                ));
+                result
+                    .map(|_| ())
+                    .map_err(|error| RuntimeError::Filesystem(error.clone()))
+            }
             capability => Err(RuntimeError::UnsupportedOperation(capability)),
         }
     }
@@ -427,6 +566,8 @@ fn runtime_error_code(error: &RuntimeError) -> &'static str {
         RuntimeError::Planning(_) => "planning_failed",
         RuntimeError::Denied(_) => "denied",
         RuntimeError::ApprovalRequired(_) => "approval_required",
+        RuntimeError::Approval(_) => "approval_failed",
+        RuntimeError::ApprovalNotRequired => "approval_not_required",
         RuntimeError::Authorization(_) => "authorization_failed",
         RuntimeError::Permit(_) => "permit_failed",
         RuntimeError::Filesystem(_) => "filesystem_failed",
@@ -458,7 +599,7 @@ fn coding_input(
     gene_id: &GeneId,
     session: &Session,
     execution_id: &ExecutionId,
-) -> Result<GeneInput, RuntimeError> {
+) -> Result<(GeneInput, Option<Vec<u8>>), RuntimeError> {
     let context = PlanningContext::new(
         execution_id.clone(),
         session.id().clone(),
@@ -468,6 +609,13 @@ fn coding_input(
     let summary = intent.summary();
     let (action, remainder) = summary.split_once(':').unwrap_or((summary, ""));
     let action = action.to_ascii_lowercase();
+    let payload = if gene_id.as_str() == "patch.apply" {
+        remainder
+            .split_once(':')
+            .map(|(_, content)| content.as_bytes().to_vec())
+    } else {
+        None
+    };
     let request = match gene_id.as_str() {
         "workspace.read" if action == "read" => CodingRequest::read(context, remainder),
         "workspace.search" if action == "search" => CodingRequest::search(context, remainder),
@@ -489,7 +637,13 @@ fn coding_input(
             ));
         }
     };
-    request.into_gene_input().map_err(RuntimeError::Planning)
+    let input = request.into_gene_input().map_err(RuntimeError::Planning)?;
+    Ok((input, payload))
+}
+
+struct ApprovalExecution<'a> {
+    store: &'a ApprovalStore,
+    id: &'a str,
 }
 
 #[cfg(test)]
