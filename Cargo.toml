@@ -2,7 +2,7 @@
 members = [
     "crates/pandora-types",
     "crates/pandora-runtime",
-    "crates/pandora-harness-coding",
+    "crates/pandora-harnesses",
     "crates/pandora-provider",
     "crates/pandora-cli",
 ]

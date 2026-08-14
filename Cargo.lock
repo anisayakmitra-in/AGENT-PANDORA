@@ -6,13 +6,13 @@ version = 4
 name = "pandora-cli"
 version = "2.0.0-alpha.1"
 dependencies = [
- "pandora-harness-coding",
+ "pandora-harnesses",
  "pandora-provider",
  "pandora-runtime",
 ]
 
 [[package]]
-name = "pandora-harness-coding"
+name = "pandora-harnesses"
 version = "2.0.0-alpha.1"
 dependencies = [
  "pandora-types",

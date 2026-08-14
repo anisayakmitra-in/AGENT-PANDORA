@@ -9,6 +9,6 @@ name = "pandora"
 path = "src/main.rs"
 
 [dependencies]
-pandora-harness-coding = { path = "../pandora-harness-coding" }
+pandora-harnesses = { path = "../pandora-harnesses" }
 pandora-provider = { path = "../pandora-provider" }
 pandora-runtime = { path = "../pandora-runtime" }
