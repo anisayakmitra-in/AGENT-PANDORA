@@ -555,6 +555,8 @@ dependencies = [
  "pandora-harnesses",
  "pandora-provider",
  "pandora-runtime",
+ "pandora-types",
+ "serde_json",
 ]
 
 [[package]]

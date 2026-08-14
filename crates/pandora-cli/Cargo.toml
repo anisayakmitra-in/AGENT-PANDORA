@@ -12,3 +12,5 @@ path = "src/main.rs"
 pandora-harnesses = { path = "../pandora-harnesses" }
 pandora-provider = { path = "../pandora-provider" }
 pandora-runtime = { path = "../pandora-runtime" }
+pandora-types = { path = "../pandora-types" }
+serde_json.workspace = true
