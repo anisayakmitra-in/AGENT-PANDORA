@@ -1,0 +1,19 @@
+{
+  "name": "@o-pandora/cli",
+  "version": "2.0.0-anubis.2",
+  "description": "Verified native launcher for the Pandora CLI",
+  "license": "Apache-2.0",
+  "repository": "github:anisayakmitra-in/PANDORA-AGENT",
+  "bin": {
+    "pandora": "bin/pandora.js"
+  },
+  "files": [
+    "bin"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

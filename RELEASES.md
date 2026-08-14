@@ -4,8 +4,8 @@ Pandora uses SemVer tags for tooling and release codenames for product milestone
 
 ## Anubis — `v2.0.0`
 
-Anubis is Phase 1 and the first CLI-first release line. The public preview is
-`v2.0.0-anubis.1`, published from `main`.
+Anubis is Phase 1 and the first CLI-first release line. The current public
+preview is `v2.0.0-anubis.2`, published from `main`.
 
 Anubis adds the CLI-first foundation:
 
@@ -16,7 +16,9 @@ Anubis adds the CLI-first foundation:
 - Windows, macOS, and Linux CI, repository validation, dependency auditing, and release-build checks.
 
 The preview is a prerelease. It documents the current CLI foundation and does
-not claim stable installer or desktop support.
+not claim stable desktop support. Native release artifacts are valid only when
+the tagged release workflow has completed and its checksums, signature, SBOM,
+and provenance assets are present.
 
 ## Naming
 
