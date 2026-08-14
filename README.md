@@ -11,28 +11,28 @@ The `ReferenceMonitor` is the sole authority that can issue effect permits. Gene
 ## Status
 
 The active development version is `2.0.0-alpha.1`; it is not published yet.
-The historical preview tag `v2.0.0-anubis.3` remains immutable for
-compatibility. New releases use plain SemVer tags without product codenames.
-See [RELEASES.md](RELEASES.md) and [platform support](docs/PLATFORMS.md) for
-the shipped scope and release requirements.
+Existing legacy preview tags remain immutable for compatibility. New releases
+use plain SemVer tags. See [RELEASES.md](RELEASES.md) and [platform support](docs/PLATFORMS.md)
+for the shipped scope and release requirements.
 
 ## Install a tagged CLI release
 
-Use an exact tag. The installer verifies the downloaded native binary against
-the release checksum manifest before installation.
+No binary release is currently published. Once a plain SemVer release is
+available, use its exact tag; the installer verifies the downloaded native
+binary against the release checksum manifest before installation.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.sh |
-  PANDORA_VERSION=v2.0.0-anubis.3 sh
+  PANDORA_VERSION=v2.0.0-alpha.1 sh
 ```
 
 ```powershell
-$env:PANDORA_VERSION = "v2.0.0-anubis.3"
+$env:PANDORA_VERSION = "v2.0.0-alpha.1"
 irm https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.ps1 | iex
 ```
 
-The native release assets must exist for the selected tag. Otherwise use the
-source-build instructions below.
+The example remains unavailable until that tag has published native assets.
+Until then, use the source-build instructions below.
 
 ## Build
 
