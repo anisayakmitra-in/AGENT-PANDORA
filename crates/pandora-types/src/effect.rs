@@ -361,6 +361,22 @@ pub struct EffectReceipt {
 }
 
 impl EffectReceipt {
+    pub fn new(
+        receipt_id: ReceiptId,
+        permit_id: PermitId,
+        request_digest: RequestDigest,
+        completed_at: Timestamp,
+        outcome: EffectOutcome,
+    ) -> Self {
+        Self {
+            receipt_id,
+            permit_id,
+            request_digest,
+            completed_at,
+            outcome,
+        }
+    }
+
     pub fn receipt_id(&self) -> &ReceiptId {
         &self.receipt_id
     }

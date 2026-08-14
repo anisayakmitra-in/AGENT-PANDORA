@@ -31,6 +31,7 @@ pub enum PermitError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConsumedPermit {
     permit: EffectPermit,
+    request: OperationRequest,
     consumed_at: Timestamp,
 }
 
@@ -41,6 +42,10 @@ impl ConsumedPermit {
 
     pub fn consumed_at(&self) -> Timestamp {
         self.consumed_at
+    }
+
+    pub fn request(&self) -> &OperationRequest {
+        &self.request
     }
 }
 
@@ -101,6 +106,7 @@ impl PermitStore {
         stored.state = PermitState::Consumed;
         Ok(ConsumedPermit {
             permit: stored.permit.clone(),
+            request: request.clone(),
             consumed_at: now,
         })
     }
