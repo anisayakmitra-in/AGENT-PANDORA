@@ -33,6 +33,14 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Check tag matches workspace version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          cargo_version="$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)"
+          test "$tag_version" = "$cargo_version"
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 

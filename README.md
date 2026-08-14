@@ -11,7 +11,7 @@ The `ReferenceMonitor` is the sole authority that can issue effect permits. Gene
 ## Status
 
 The first named release line is Anubis. The current public preview is
-`v2.0.0-anubis.2`; it is not a stable release. See [RELEASES.md](RELEASES.md)
+`v2.0.0-anubis.3`; it is not a stable release. See [RELEASES.md](RELEASES.md)
 and [platform support](docs/PLATFORMS.md) for the shipped scope and release
 requirements.
 
@@ -22,11 +22,11 @@ the release checksum manifest before installation.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.sh |
-  PANDORA_VERSION=v2.0.0-anubis.2 sh
+  PANDORA_VERSION=v2.0.0-anubis.3 sh
 ```
 
 ```powershell
-$env:PANDORA_VERSION = "v2.0.0-anubis.2"
+$env:PANDORA_VERSION = "v2.0.0-anubis.3"
 irm https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.ps1 | iex
 ```
 

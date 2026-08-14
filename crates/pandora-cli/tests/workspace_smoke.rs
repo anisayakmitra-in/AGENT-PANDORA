@@ -10,6 +10,6 @@ fn cli_reports_version() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).trim(),
-        "pandora 2.0.0-alpha.1"
+        concat!("pandora ", env!("CARGO_PKG_VERSION"))
     );
 }
