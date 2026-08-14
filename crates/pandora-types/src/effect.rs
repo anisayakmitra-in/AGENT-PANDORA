@@ -276,17 +276,63 @@ impl Timestamp {
 pub struct EffectPermit {
     permit_id: PermitId,
     request_digest: RequestDigest,
+    execution_id: ExecutionId,
+    session_id: SessionId,
+    principal_id: PrincipalId,
+    policy_version: u32,
+    nonce: u64,
     issued_at: Timestamp,
     expires_at: Timestamp,
 }
 
 impl EffectPermit {
+    pub fn issue(
+        permit_id: PermitId,
+        request: &OperationRequest,
+        policy_version: u32,
+        nonce: u64,
+        issued_at: Timestamp,
+        expires_at: Timestamp,
+    ) -> Self {
+        Self {
+            permit_id,
+            request_digest: request.request_digest.clone(),
+            execution_id: request.execution_id.clone(),
+            session_id: request.session_id.clone(),
+            principal_id: request.principal_id.clone(),
+            policy_version,
+            nonce,
+            issued_at,
+            expires_at,
+        }
+    }
+
     pub fn permit_id(&self) -> &PermitId {
         &self.permit_id
     }
 
     pub fn request_digest(&self) -> &RequestDigest {
         &self.request_digest
+    }
+
+    pub fn execution_id(&self) -> &ExecutionId {
+        &self.execution_id
+    }
+
+    pub fn session_id(&self) -> &SessionId {
+        &self.session_id
+    }
+
+    pub fn principal_id(&self) -> &PrincipalId {
+        &self.principal_id
+    }
+
+    pub fn policy_version(&self) -> u32 {
+        self.policy_version
+    }
+
+    pub fn nonce(&self) -> u64 {
+        self.nonce
     }
 
     pub fn issued_at(&self) -> Timestamp {
