@@ -172,6 +172,7 @@ pub struct RemovalReceipt {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SkillEngine {
+    display_root: PathBuf,
     root: PathBuf,
     state_root: PathBuf,
     removed_root: PathBuf,
@@ -179,7 +180,12 @@ pub struct SkillEngine {
 
 impl SkillEngine {
     pub fn discover(root: impl AsRef<Path>) -> Result<Self, SkillError> {
-        let root = fs::canonicalize(root.as_ref())?;
+        let display_root = if root.as_ref().is_absolute() {
+            root.as_ref().to_path_buf()
+        } else {
+            std::env::current_dir()?.join(root.as_ref())
+        };
+        let root = fs::canonicalize(&display_root)?;
         if !fs::symlink_metadata(&root)?.is_dir() {
             return Err(SkillError::InvalidRoot);
         }
@@ -188,6 +194,7 @@ impl SkillEngine {
         fs::create_dir_all(&state_root)?;
         fs::create_dir_all(&removed_root)?;
         let engine = Self {
+            display_root,
             root,
             state_root,
             removed_root,
@@ -333,7 +340,10 @@ impl SkillEngine {
             root: root.clone(),
             state,
             provenance: SkillProvenance {
-                source: public_path(root),
+                source: self.display_root.join(
+                    root.strip_prefix(&self.root)
+                        .map_err(|_| SkillError::PathEscape)?,
+                ),
             },
         })
     }
@@ -500,26 +510,6 @@ fn unquote(value: &str) -> String {
 
 fn is_within(root: &Path, candidate: &Path) -> bool {
     candidate.starts_with(root)
-}
-
-fn public_path(path: PathBuf) -> PathBuf {
-    #[cfg(windows)]
-    {
-        if let Some(path) = path.to_str()
-            && let Some(path) = path.strip_prefix(r"\\?\")
-        {
-            return PathBuf::from(path);
-        }
-    }
-    #[cfg(target_os = "macos")]
-    {
-        if let Some(path) = path.to_str()
-            && let Some(path) = path.strip_prefix("/private/")
-        {
-            return PathBuf::from(format!("/{path}"));
-        }
-    }
-    path
 }
 
 fn unique_suffix() -> u128 {
