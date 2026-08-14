@@ -2,14 +2,24 @@
 
 pub mod capability;
 pub mod effect;
+pub mod events;
+pub mod gene;
+pub mod governance;
+pub mod harness;
 pub mod ids;
+pub mod session;
 
 pub use capability::{Capability, Operation};
 pub use effect::{
     EffectOutcome, EffectPermit, EffectReceipt, EffectTarget, OperationRequest, RequestError,
     ResourceScope, SecretReference, Timestamp,
 };
+pub use events::{EventContext, EventPayload, EventType, RuntimeEvent};
+pub use gene::{Gene, GeneError, GeneInput, GeneKind, GeneManifest};
+pub use governance::{ParliamentDecision, PolicyContext};
+pub use harness::{Harness, HarnessKind, HarnessManifest, SourceHarnessManifest};
 pub use ids::{
-    ArtifactId, ExecutionId, GeneId, HarnessId, IdError, PermitId, PrincipalId, ReceiptId,
-    RequestDigest, SessionId,
+    ArtifactId, EventId, ExecutionId, GeneId, HarnessId, IdError, PermitId, PrincipalId, ReceiptId,
+    RequestDigest, SessionId, TenantId, WorkspaceId,
 };
+pub use session::{Session, TaskIntent};

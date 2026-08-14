@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -19,7 +20,7 @@ impl std::error::Error for IdError {}
 
 macro_rules! define_id {
     ($name:ident) => {
-        #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
         pub struct $name(String);
 
         impl $name {
@@ -56,3 +57,6 @@ define_id!(ArtifactId);
 define_id!(PermitId);
 define_id!(ReceiptId);
 define_id!(RequestDigest);
+define_id!(EventId);
+define_id!(TenantId);
+define_id!(WorkspaceId);

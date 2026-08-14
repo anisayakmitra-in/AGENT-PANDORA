@@ -2,7 +2,7 @@ use crate::capability::{Capability, Operation};
 use crate::ids::{
     ArtifactId, ExecutionId, GeneId, PermitId, PrincipalId, ReceiptId, RequestDigest, SessionId,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
 
@@ -31,7 +31,7 @@ impl From<crate::ids::IdError> for RequestError {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SecretReference(String);
 
 impl SecretReference {
