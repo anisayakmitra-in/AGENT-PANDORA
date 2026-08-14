@@ -103,6 +103,7 @@ dependencies = [
 name = "pandora-runtime"
 version = "2.0.0-alpha.1"
 dependencies = [
+ "pandora-harnesses",
  "pandora-types",
 ]
 

@@ -5,4 +5,5 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+pandora-harnesses = { path = "../pandora-harnesses" }
 pandora-types = { path = "../pandora-types" }

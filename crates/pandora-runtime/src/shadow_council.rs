@@ -45,9 +45,12 @@ impl ShadowCouncil {
         }
 
         let summary = task.summary().to_ascii_lowercase();
-        let is_coding_task = ["code", "rust", "bug", "test", "compiler"]
-            .iter()
-            .any(|term| summary.contains(term));
+        let is_coding_task = [
+            "code", "rust", "bug", "test", "compiler", "read:", "search:", "patch:", "verify",
+            "review:",
+        ]
+        .iter()
+        .any(|term| summary.contains(term));
         let (harness_id, reason) = if is_coding_task {
             ("coding-domain", RoutingReason::CodingTask)
         } else {

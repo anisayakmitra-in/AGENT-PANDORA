@@ -13,6 +13,10 @@ pub enum EventType {
     SessionStarted,
     EffectRequested,
     EffectCompleted,
+    PolicyApproved,
+    PolicyDenied,
+    ApprovalRequired,
+    ExecutionFailed,
     ProviderCall,
 }
 
@@ -80,6 +84,12 @@ pub enum EventPayload {
     Effect {
         capability: String,
         request_digest: RequestDigest,
+    },
+    Policy {
+        reason: String,
+    },
+    Failure {
+        code: String,
     },
     ProviderCall {
         provider: String,
