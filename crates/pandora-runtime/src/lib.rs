@@ -24,6 +24,7 @@ pub mod run_loop;
 pub mod sessions;
 pub mod shadow_council;
 pub mod skill_engine;
+pub mod strategies;
 pub mod tool_engine;
 
 pub use adaptive_engine::{AdaptationResult, AdaptiveEngine, AdaptiveError};
@@ -53,6 +54,7 @@ pub use skill_engine::{
     RemovalReceipt, SkillEngine, SkillError, SkillInspection, SkillProvenance, SkillRecord,
     SkillState,
 };
+pub use strategies::{StrategyBudget, StrategyError, StrategyProfile};
 pub use tool_engine::{ToolContext, ToolDefinition, ToolEngine, ToolError, ToolPlan};
 
 pub fn runtime_is_available() -> bool {

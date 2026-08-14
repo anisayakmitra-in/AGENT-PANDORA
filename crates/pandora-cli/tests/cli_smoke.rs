@@ -106,6 +106,20 @@ fn orchestration_roles_are_discoverable_without_runtime_setup() {
 }
 
 #[test]
+fn strategy_profiles_are_discoverable_without_runtime_setup() {
+    let fixture = Fixture::new();
+    let output = fixture
+        .command(&["strategies", "list", "--json"])
+        .output()
+        .expect("strategy discovery should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["command"], "strategies list");
+    assert_eq!(response["default"], "react");
+    assert_eq!(response["available"][2]["profile"], "research");
+}
+
+#[test]
 fn patch_run_returns_approval_required_without_writing() {
     let fixture = Fixture::new();
     fixture.setup();

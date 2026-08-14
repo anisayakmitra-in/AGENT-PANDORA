@@ -49,6 +49,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "run" => run::execute(&args[1..]),
         "session" => session::execute(&args[1..]),
         "provider" => provider::execute(&args[1..]),
+        "strategies" => strategies(&args[1..]),
         "tool" => tool::execute(&args[1..]),
         "orchestration" => orchestration(&args[1..]),
         "doctor" => doctor::execute(&args[1..]),
@@ -198,8 +199,8 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    "usage: pandora <setup|run|harness|session|approval|provider|tool|orchestration|doctor> [options]\n\n\
-commands:\n  setup\n  run <task>\n  harness list|inspect|run\n  session list|resume <id>\n  approval list|inspect|resolve\n  provider list|set\n  orchestration roles\n  doctor"
+    "usage: pandora <setup|run|harness|session|approval|provider|tool|orchestration|strategies|doctor> [options]\n\n\
+commands:\n  setup\n  run <task>\n  harness list|inspect|run\n  session list|resume <id>\n  approval list|inspect|resolve\n  provider list|set\n  orchestration roles\n  strategies list\n  doctor"
 }
 
 fn orchestration(args: &[String]) -> Result<CommandResult, CliError> {
@@ -217,5 +218,26 @@ fn orchestration(args: &[String]) -> Result<CommandResult, CliError> {
         "orchestration roles",
         json!({"roles": roles}),
         "planner, maker, critic, verifier",
+    ))
+}
+
+fn strategies(args: &[String]) -> Result<CommandResult, CliError> {
+    let subcommand = args
+        .first()
+        .ok_or_else(|| CliError::usage("strategies requires 'list'"))?;
+    if subcommand != "list" || args.len() != 1 {
+        return Err(CliError::usage("strategies supports only 'list'"));
+    }
+    Ok(crate::output::success(
+        "strategies list",
+        json!({
+            "default": "react",
+            "available": [
+                {"id": "react", "profile": "production"},
+                {"id": "reflexion", "profile": "production"},
+                {"id": "lats", "profile": "research"}
+            ]
+        }),
+        "react, reflexion, lats (research)",
     ))
 }
