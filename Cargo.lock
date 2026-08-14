@@ -88,6 +88,8 @@ name = "pandora-harnesses"
 version = "2.0.0-alpha.1"
 dependencies = [
  "pandora-types",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

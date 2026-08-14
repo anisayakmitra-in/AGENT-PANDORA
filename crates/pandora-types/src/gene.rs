@@ -94,6 +94,7 @@ impl GeneInput {
 pub enum GeneError {
     InvalidId(IdError),
     EmptyField(&'static str),
+    InvalidInput(&'static str),
     Request(RequestError),
 }
 
@@ -102,6 +103,7 @@ impl fmt::Display for GeneError {
         match self {
             Self::InvalidId(error) => error.fmt(formatter),
             Self::EmptyField(field) => write!(formatter, "{field} cannot be empty"),
+            Self::InvalidInput(reason) => formatter.write_str(reason),
             Self::Request(error) => error.fmt(formatter),
         }
     }
