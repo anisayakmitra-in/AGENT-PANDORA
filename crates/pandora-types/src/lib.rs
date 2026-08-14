@@ -3,6 +3,7 @@
 pub mod capability;
 pub mod context;
 pub mod effect;
+pub mod evaluation;
 pub mod events;
 pub mod gene;
 pub mod governance;
@@ -21,6 +22,9 @@ pub use context::{
 pub use effect::{
     EffectOutcome, EffectPermit, EffectReceipt, EffectTarget, OperationRequest, RequestError,
     ResourceScope, SecretReference, Timestamp,
+};
+pub use evaluation::{
+    EvaluationContractError, EvaluationKind, EvaluationRequest, EvaluationResult, EvaluationStatus,
 };
 pub use events::{EventContext, EventPayload, EventType, RuntimeEvent};
 pub use gene::{Gene, GeneError, GeneInput, GeneKind, GeneManifest};

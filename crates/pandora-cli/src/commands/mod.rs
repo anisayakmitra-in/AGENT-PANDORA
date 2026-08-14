@@ -14,6 +14,7 @@ mod provider;
 mod run;
 mod session;
 mod setup;
+mod tool;
 
 pub(crate) const LOCAL_PRINCIPAL: &str = "local-user";
 pub(crate) const LOCAL_TENANT: &str = "local-tenant";
@@ -46,6 +47,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "run" => run::execute(&args[1..]),
         "session" => session::execute(&args[1..]),
         "provider" => provider::execute(&args[1..]),
+        "tool" => tool::execute(&args[1..]),
         "doctor" => doctor::execute(&args[1..]),
         "--help" | "help" => Err(CliError::usage(usage())),
         unknown => Err(CliError::usage(format!(
@@ -193,6 +195,6 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    "usage: pandora <setup|run|harness|session|approval|provider|doctor> [options]\n\n\
+    "usage: pandora <setup|run|harness|session|approval|provider|tool|doctor> [options]\n\n\
 commands:\n  setup\n  run <task>\n  harness list|inspect|run\n  session list|resume <id>\n  approval list|inspect|resolve\n  provider list|set\n  doctor"
 }
