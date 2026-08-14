@@ -247,7 +247,20 @@ impl Gene for CodingGene {
 
 fn validate_request(request: &CodingRequest) -> Result<(), GeneError> {
     match request.action {
-        CodingAction::Read | CodingAction::Search | CodingAction::Review => {
+        CodingAction::Search => {
+            validate_query(
+                request
+                    .path
+                    .as_deref()
+                    .ok_or(GeneError::InvalidInput("query is required"))?,
+            )?;
+            if request.content.is_some() {
+                return Err(GeneError::InvalidInput(
+                    "content is not valid for this action",
+                ));
+            }
+        }
+        CodingAction::Read | CodingAction::Review => {
             validate_path(
                 request
                     .path
@@ -287,6 +300,13 @@ fn validate_request(request: &CodingRequest) -> Result<(), GeneError> {
                 ));
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_query(query: &str) -> Result<(), GeneError> {
+    if query.trim().is_empty() || query.len() > MAX_PATH_BYTES || query.contains('\0') {
+        return Err(GeneError::InvalidInput("invalid search query"));
     }
     Ok(())
 }

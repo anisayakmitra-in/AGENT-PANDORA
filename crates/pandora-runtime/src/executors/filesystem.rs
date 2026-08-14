@@ -225,13 +225,8 @@ impl FilesystemExecutor {
         query: &str,
         now: Timestamp,
     ) -> FilesystemResult<Vec<String>> {
-        self.execute(
-            permit,
-            target,
-            Capability::FilesystemRead,
-            Operation::Read,
-            now,
-            || {
+        let result = if request_matches_search(permit, query) {
+            (|| {
                 if query.is_empty() {
                     return Err(FilesystemError::EmptyPath);
                 }
@@ -276,14 +271,26 @@ impl FilesystemExecutor {
                             let relative = entry_path
                                 .strip_prefix(target.root.as_path())
                                 .map_err(|_| FilesystemError::PathOutsideWorkspace)?;
-                            matches.push(relative.to_string_lossy().into_owned());
+                            matches.push(relative.to_string_lossy().replace('\\', "/"));
                         }
                     }
                 }
                 matches.sort();
                 Ok(matches)
+            })()
+        } else {
+            Err(FilesystemError::PermissionDenied)
+        };
+        let outcome = match &result {
+            Ok(_) => EffectOutcome::Succeeded,
+            Err(error) => EffectOutcome::Failed {
+                code: error.code().to_owned(),
             },
-        )
+        };
+        FilesystemResult {
+            result,
+            receipt: receipt_for(permit, now, outcome),
+        }
     }
 
     pub fn write_patch(
@@ -405,6 +412,17 @@ fn request_matches(
         && matches!(request.target(), EffectTarget::Path { path } if path == &target.source)
 }
 
+fn request_matches_search(permit: &ConsumedPermit, query: &str) -> bool {
+    let request = permit.request();
+    request.capability() == Capability::FilesystemRead
+        && request.operation() == Operation::Read
+        && matches!(
+            request.resource_scope(),
+            ResourceScope::Workspace { .. } | ResourceScope::Path { .. }
+        )
+        && matches!(request.target(), EffectTarget::Path { path } if path == query)
+}
+
 fn receipt_for(permit: &ConsumedPermit, now: Timestamp, outcome: EffectOutcome) -> EffectReceipt {
     let receipt_id = ReceiptId::new(format!(
         "receipt-{}",
@@ -519,6 +537,22 @@ mod tests {
             response.receipt().outcome(),
             EffectOutcome::Succeeded
         ));
+    }
+
+    #[test]
+    fn search_returns_matching_relative_paths() {
+        let fixture = Fixture::new();
+        fs::create_dir(fixture.root.root().join("src")).unwrap();
+        fs::write(fixture.root.root().join("src/lib.rs"), b"needle\n").unwrap();
+        let target = fixture.root.path(".").unwrap();
+        let request = fixture.request(Capability::FilesystemRead, Operation::Read, "needle");
+        let permit = fixture.permit(request);
+
+        let response = fixture
+            .executor
+            .search(&permit, &target, "needle", fixture.now());
+
+        assert_eq!(response.result().unwrap(), &vec!["src/lib.rs".to_owned()]);
     }
 
     #[test]

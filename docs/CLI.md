@@ -31,6 +31,7 @@ its output.
 
 ```text
 pandora run "read:README.md"
+pandora run "search:needle"
 pandora run --plan "inspect the README and report what it contains"
 pandora run --approval <approval-id> "patch:README.md:approved content"
 pandora session list
@@ -42,6 +43,9 @@ pandora approval resolve <approval-id> --allow
 
 Read-only work can complete without approval. Writes and process effects stop at
 the approval boundary and expose an inspectable, redacted request subject.
+`search:<query>` scans regular files under the configured workspace within the
+runtime's entry and file-size limits, does not follow symlinks, and returns
+matching paths with forward-slash separators.
 After an operator approves a write, rerun the exact task with its approval ID.
 The approval is bound to the original session, execution, Gene, and request
 digest, is consumed atomically, and cannot be replayed for another task.

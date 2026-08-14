@@ -418,13 +418,25 @@ impl ExecutionController {
                         ));
                     }
                 };
-                let target = self
-                    .workspace
-                    .path(path)
-                    .map_err(RuntimeError::Filesystem)?;
-                let response = self.filesystem.read(permit, &target, now);
-                let receipt = response.receipt().clone();
-                let result = response.result();
+                let (receipt, result) = if permit.request().gene_id().as_str() == "workspace.search"
+                {
+                    let target = self.workspace.path(".").map_err(RuntimeError::Filesystem)?;
+                    let response = self.filesystem.search(permit, &target, path, now);
+                    let receipt = response.receipt().clone();
+                    let result = response
+                        .into_result()
+                        .map(|matches| matches.join("\n").into_bytes());
+                    (receipt, result)
+                } else {
+                    let target = self
+                        .workspace
+                        .path(path)
+                        .map_err(RuntimeError::Filesystem)?;
+                    let response = self.filesystem.read(permit, &target, now);
+                    let receipt = response.receipt().clone();
+                    let result = response.into_result();
+                    (receipt, result)
+                };
                 output.receipts.push(receipt.clone());
                 output.events.push(self.event(
                     EventType::EffectCompleted,
@@ -440,13 +452,9 @@ impl ExecutionController {
                         request_digest: permit.request().request_digest().clone(),
                     },
                 ));
-                match result {
-                    Ok(bytes) => {
-                        output.output = Some(bytes.clone());
-                        Ok(())
-                    }
-                    Err(error) => Err(RuntimeError::Filesystem(error.clone())),
-                }
+                result
+                    .map(|bytes| output.output = Some(bytes))
+                    .map_err(RuntimeError::Filesystem)
             }
             Capability::ProcessExecute => {
                 let command = VerificationCommand::cargo_check_locked(self.workspace.clone());
@@ -675,6 +683,26 @@ mod tests {
         assert_eq!(summary.events().len(), 4);
         assert_eq!(summary.selected_harness().as_str(), "coding-domain");
         assert_eq!(summary.selected_gene().as_str(), "workspace.read");
+    }
+
+    #[test]
+    fn search_returns_matching_workspace_files() {
+        let fixture = Fixture::new();
+        std::fs::create_dir(fixture.path.join("src")).unwrap();
+        std::fs::write(fixture.path.join("src/lib.rs"), b"needle\n").unwrap();
+        let controller = ExecutionController::new(fixture.root.clone());
+
+        let summary = controller
+            .run_at(
+                TaskIntent::new("search:needle").unwrap(),
+                fixture.session(),
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap();
+
+        assert_eq!(summary.status(), &RunStatus::Completed);
+        assert_eq!(summary.output().unwrap(), b"src/lib.rs");
+        assert_eq!(summary.selected_gene().as_str(), "workspace.search");
     }
 
     #[test]

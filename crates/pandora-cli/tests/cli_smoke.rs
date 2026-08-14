@@ -97,6 +97,23 @@ fn setup_and_read_only_run_return_versioned_json() {
 }
 
 #[test]
+fn search_run_returns_matching_workspace_files() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    fs::create_dir(fixture.workspace.join("src")).unwrap();
+    fs::write(fixture.workspace.join("src/lib.rs"), "needle\n").unwrap();
+
+    let output = fixture
+        .command(&["run", "search:needle", "--json"])
+        .output()
+        .expect("search should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["status"], "completed");
+    assert_eq!(response["output"], "src/lib.rs");
+}
+
+#[test]
 fn orchestration_roles_are_discoverable_without_runtime_setup() {
     let fixture = Fixture::new();
     let output = fixture
