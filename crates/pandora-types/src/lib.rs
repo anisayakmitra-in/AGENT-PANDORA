@@ -6,6 +6,7 @@ pub mod context;
 pub mod effect;
 pub mod evaluation;
 pub mod events;
+pub mod evolution;
 pub mod gene;
 pub mod governance;
 pub mod harness;
@@ -34,13 +35,18 @@ pub use evaluation::{
     EvaluationContractError, EvaluationKind, EvaluationRequest, EvaluationResult, EvaluationStatus,
 };
 pub use events::{EventContext, EventPayload, EventType, RuntimeEvent};
+pub use evolution::{
+    ArtifactSignature, CanaryResult, EvolutionContractError, EvolutionMode, EvolutionPolicy,
+    EvolutionSource, EvolutionState, HoldoutEvaluation, MutationProposal, ParliamentApproval,
+    ReflexionArtifact, ReplacementReceipt, RollbackReceipt,
+};
 pub use gene::{Gene, GeneError, GeneInput, GeneKind, GeneManifest};
 pub use governance::{ParliamentDecision, PolicyContext};
 pub use harness::{Harness, HarnessKind, HarnessManifest, SourceHarnessManifest};
 pub use ids::{
     ArtifactId, EventId, ExecutionId, GeneId, HarnessId, IdError, MemoryId, PackageId, PermitId,
-    PlanId, PrincipalId, ReceiptId, RequestDigest, RoleId, RunLoopId, SessionId, TenantId,
-    WorkspaceId,
+    PlanId, PrincipalId, ProposalId, ReceiptId, RequestDigest, RoleId, RunLoopId, SessionId,
+    TenantId, WorkspaceId,
 };
 pub use memory::{
     MemoryApproval, MemoryAuditAction, MemoryAuditEntry, MemoryContractError, MemoryKind,

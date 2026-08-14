@@ -65,3 +65,4 @@ define_id!(MemoryId);
 define_id!(PlanId);
 define_id!(RoleId);
 define_id!(RunLoopId);
+define_id!(ProposalId);
