@@ -21,7 +21,9 @@ class ValidateRepositoryTests(unittest.TestCase):
         self.assertNotIn("sk-test-value-that-must-not-print", rendered)
 
     def test_rejects_private_key_content_without_exposing_key(self) -> None:
-        private_key = "-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----\n"
+        private_key = (
+            "-----BEGIN " + "PRIVATE KEY-----\nsecret\n-----END " + "PRIVATE KEY-----\n"
+        )
         findings = validate_content(Path("signing.key"), private_key.encode("utf-8"))
 
         rendered = "\n".join(findings)
