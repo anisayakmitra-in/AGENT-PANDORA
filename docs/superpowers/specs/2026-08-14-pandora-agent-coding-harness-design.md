@@ -48,6 +48,20 @@ and Harness/Gene ownership. It does not authorize operating-system effects.
 - Domain Harness: supplies roles, workflows, Genes, tools, and evaluators for
   one domain. The first implementation is `coding`.
 
+Custom Domain and Meta Harnesses are installable modules. Installing one adds
+verified, namespaced capabilities to Shadow Council; it does not modify the
+Pandora runtime or grant the package new authority. A Harness package is
+admitted, inspected, and kept disabled until the operator or an approved
+policy enables it. Activation is rejected if its manifest, dependencies,
+signature, compatibility, or requested capability scope is invalid.
+
+Source Harnesses are a separate privileged class. A Source Harness must bind
+to exactly one constitutional service, such as memory, planning, execution,
+governance, identity, or storage. It requires an explicit verified approval,
+service-binding validation, an activation receipt, and a rollback target. It
+cannot be installed as an ordinary Domain or Meta package, and it cannot
+activate during a running execution.
+
 ### Genes
 
 A Gene is a bounded capability selected by Shadow Council. A Gene may return a
@@ -67,6 +81,53 @@ rejects missing, forged, expired, replayed, or mismatched permits.
 K-O Palace remains a separate registry and artifact source. It does not own
 Pandora activation, permissions, routing, runtime events, lockfiles, or
 execution state. Registry integration is outside the first coding slice.
+
+## Harness Package Lifecycle
+
+Harnesses use an explicit lifecycle:
+
+```text
+discovered -> verified -> installed -> disabled -> enabled
+                                      |             |
+                                      v             v
+                                  removed       suspended
+```
+
+The lifecycle rules are:
+
+1. Discovery reads package metadata without executing package code.
+2. Verification checks the artifact identity, signature/trust policy,
+   compatibility, license, dependencies, and canonical Harness kind.
+3. Installation extracts only into an isolated, transaction-owned location
+   and registers the selected manifest without activating it.
+4. Enablement registers namespaced capabilities, slash commands, roles, and
+   workflow references with Shadow Council. It never creates permissions.
+5. Suspension removes a Harness from routing while preserving its receipts and
+   installed bytes.
+6. Uninstallation requires the Harness to be disabled and not used by an
+   active run. It removes routes and commands, checks dependents, preserves
+   provenance records, and deletes only its own package data. A shared
+   dependency remains until its final consumer is removed.
+
+Domain Harnesses may add Genes, Skills, workflows, evaluators, and provider
+role declarations. Meta Harnesses may compose already-installed Domain
+Harnesses and coordinate handoffs. Neither class may alter constitutional
+services, issue permits, expand a capability lease, or silently invoke an
+undeclared domain.
+
+Memory, context, and self-evolution extensions follow the same boundary. A
+Memory Source Harness may augment the Memory service only after its privileged
+activation gate. A Domain Harness may contribute candidate memory or Skill
+artifacts, but promotion into `EvolutionaryMemory`, durable policy, or a
+replacement package requires evidence, evaluation, approval, signing, and
+rollback. Self-evolution may propose a new Domain or Meta Harness; it cannot
+auto-promote a Source Harness or modify the constitutional root.
+
+Custom native package code is not executed automatically. Declarative
+Harnesses, Skills, and built-in Genes are the default extension path. Native
+extensions require a separately sandboxed executor, verified artifact
+identity, explicit capability declarations, and an operator-approved
+activation path.
 
 ## Coding Domain Harness
 
