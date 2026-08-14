@@ -511,6 +511,14 @@ fn public_path(path: PathBuf) -> PathBuf {
             return PathBuf::from(path);
         }
     }
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(path) = path.to_str()
+            && let Some(path) = path.strip_prefix("/private/")
+        {
+            return PathBuf::from(format!("/{path}"));
+        }
+    }
     path
 }
 
