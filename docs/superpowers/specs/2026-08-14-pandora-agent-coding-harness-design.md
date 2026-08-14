@@ -100,6 +100,110 @@ The initial coding flow is:
 
 No model output, Skill, Harness, or Gene can approve its own effect.
 
+## AI Engineering Principles
+
+These principles are part of Pandora's architecture, not optional prompt
+guidance.
+
+### Harness Engineering
+
+A Harness is an operational system boundary: it combines roles, context
+selection, tools, memory policy, evaluators, budgets, fallback behavior, and
+governance metadata. A prompt is only one input to a Harness. Harness
+configuration is versioned and observable, and a Harness cannot expand its
+own permissions.
+
+### Context Engineering
+
+Context is assembled from instructions, task state, workspace evidence,
+retrieved records, tool results, and prior approved execution summaries. The
+ContextEngine applies provenance, relevance, recency, token budgets,
+deduplication, compression, and redaction. Context rotation uses the safe
+fallback chain: remove low-value material, restore constitutional instructions
+and the active plan, rebuild from verified distilled evidence, retrieve fresh
+evidence, reduce scope, and pause if safe context cannot be rebuilt.
+
+Prompt caching and semantic caching are separate policies. Exact prompt reuse
+may be enabled for compatible requests; semantic cache reuse is disabled for
+sensitive or tenant-scoped content unless its identity, freshness, and
+authorization bindings are explicit.
+
+### Loop Engineering
+
+The execution lifecycle follows `reason -> act -> observe -> decide`. The
+fixed ExecutionController owns this lifecycle; a run cannot assemble an
+untracked alternative engine pipeline. Every run has iteration, tool, token,
+duration, cost, and delegation ceilings. It terminates on verified success,
+budget exhaustion, cancellation, repeated failure, unsafe context recovery, or
+an explicit human decision. Infinite-loop detection and deterministic replay
+are required.
+
+### Tool Design
+
+Pandora exposes fewer, well-defined tools instead of overlapping tool names.
+Every tool has a strict input schema, bounded output, capability declaration,
+argument validation, actionable errors, idempotency behavior, and a clear
+effect class. Structured-output repair is bounded and cannot silently change a
+requested operation. Tool scripts are never direct authority; they become
+Reference Monitor requests.
+
+### Memory Architecture
+
+Working context is distinct from durable memory. `EphemeralTrace` is short
+lived and bounded; `DistilledExecution` stores redacted evidence and outcomes;
+`EvolutionaryMemory` stores only approved lessons and lineage. Retrieval uses
+scope, provenance, freshness, and contamination checks. A memory write is an
+audited state transition, not an automatic right of the model.
+
+### Orchestration Patterns
+
+One capable agent is the default. Orchestration adds specialist workers only
+when the task requires them. Handoffs carry an explicit task, evidence scope,
+budget, and capability lease. Independent read-only work may run in parallel;
+dependent or effectful work is ordered. Cross-domain delegation requires Meta
+Harness coordination and a new policy decision.
+
+### Guardrails and Permissions
+
+Permissions are scoped per task and distinguish read, write, execute, network,
+provider, and external-service effects. Input and output validation happens at
+the tool boundary. Workspace containment, resource limits, denial rules,
+approval policy, and blast-radius limits are enforced by Reference Monitor;
+Genes and Harnesses only declare requests.
+
+### Evaluation
+
+Trajectory evaluation measures whether the agent followed policy, selected
+valid tools, respected budgets, and recovered safely. Outcome evaluation
+measures the actual task result. Pandora keeps golden cases, regression cases
+from production failures, adversarial cases, and human review records
+separate. LLM-as-judge is advisory and must not replace deterministic checks
+or human evaluation for high-impact changes.
+
+### Human-in-the-Loop
+
+Pandora supports three explicit operating modes:
+
+- **Human-in-the-loop:** the human approves an action before it executes.
+- **Human-on-the-loop:** the agent proceeds within pre-approved bounds while
+  the human can interrupt, inspect, or revoke authority.
+- **Human-out-of-the-loop:** only low-risk, reversible, fully bounded actions
+  may run without an active human review.
+
+Irreversible or high-blast-radius actions require blocking approval. Lower-risk
+  actions may create asynchronous review records. Confidence thresholds can
+  escalate a run without destroying its checkpoint or audit history.
+
+### Observability and Tracing
+
+Every run emits correlated events for planning, context assembly, provider
+calls, model tokens, tool calls, approvals, permits, effects, failures,
+latency, cost, and completion. Traces are inspectable by execution and
+projected into operator timelines without persisting hidden reasoning. Cost and
+latency are attributed to the run, Harness, Gene, provider, workflow, and
+tenant scope. Redacted production failures can become evaluation cases only
+through an explicit promotion step.
+
 ## CLI v0.1
 
 The initial public commands are deliberately small:
