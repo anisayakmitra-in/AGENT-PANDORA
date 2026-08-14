@@ -8,7 +8,9 @@ pub mod evaluation_engine;
 pub mod execution_controller;
 pub mod executors;
 pub mod harness_registry;
+pub mod human_review;
 pub mod memory_engine;
+pub mod observability;
 pub mod package_admission;
 pub mod parliament;
 pub mod permit_store;
@@ -26,7 +28,12 @@ pub use context_recovery::{ContextRecovery, RecoveryDecision, RecoveryInput, Rec
 pub use evaluation_engine::{EvaluationEngine, EvaluationError};
 pub use execution_controller::{ExecutionController, RunStatus, RunSummary, RuntimeError};
 pub use harness_registry::{HarnessRegistry, HarnessRegistryError, PackageRecord, PackageState};
+pub use human_review::{
+    HumanMode, HumanReviewEngine, ReviewDecision, ReviewError, ReviewReceipt, ReviewRecord,
+    ReviewState, ReviewSubject,
+};
 pub use memory_engine::{MemoryEngine, MemoryError};
+pub use observability::{ObservabilityEngine, ObservabilityError};
 pub use parliament::Parliament;
 pub use permit_store::{ConsumedPermit, PermitError, PermitStore};
 pub use reference_monitor::{AuthorizationError, ReferenceMonitor};

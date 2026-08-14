@@ -10,6 +10,7 @@ pub mod governance;
 pub mod harness;
 pub mod ids;
 pub mod memory;
+pub mod observability;
 pub mod package;
 pub mod session;
 pub mod skill;
@@ -37,6 +38,9 @@ pub use ids::{
 pub use memory::{
     MemoryApproval, MemoryAuditAction, MemoryAuditEntry, MemoryContractError, MemoryKind,
     MemoryRecord, MemoryScope, MemoryTier,
+};
+pub use observability::{
+    ObservabilityContractError, ObservabilitySample, ObservabilitySnapshot, SpanView, TraceView,
 };
 pub use package::{
     PackageCompatibility, PackageDependency, PackageKind, PackageManifest, PackageManifestError,
