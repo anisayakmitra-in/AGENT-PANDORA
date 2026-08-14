@@ -1,6 +1,6 @@
 # Governed evolution
 
-Status: partial in Anubis `v2.0.x`.
+Status: partial in the current `v2.0.x` preview line.
 
 Pandora records improvement evidence without allowing the improvement system to authorize or activate itself.
 
@@ -23,4 +23,4 @@ Replacement is available only between executions registered with `ReplacementEng
 
 ## Not shipped
 
-Autonomous code mutation, automatic promotion, hidden reasoning storage, and mid-execution replacement are not part of the Anubis contract.
+Autonomous code mutation, automatic promotion, hidden reasoning storage, and mid-execution replacement are not part of the current public contract.

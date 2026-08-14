@@ -1,6 +1,6 @@
 # Pandora CLI
 
-Status: Partial in Anubis `v2.0.x`.
+Status: Partial in the current `v2.0.x` preview line.
 
 The CLI is the primary Pandora surface. Commands return versioned JSON with
 `--json` and stable non-zero exit codes for usage, configuration, policy,

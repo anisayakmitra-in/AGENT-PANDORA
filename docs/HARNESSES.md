@@ -26,7 +26,8 @@ The external vocabulary is closed and uses these exact values:
 
 Only `gene` metadata can pass the current package-install boundary. Domain, Meta, Source, Provider, Skill, and generic Package records are recognized but rejected as non-installable until their lifecycles have their own validation and execution rules.
 
-The built-in Coding Domain Harness remains the only executable Domain Harness in Anubis. Downloaded native code is never executed automatically.
+The built-in Coding Domain Harness remains the only executable Domain Harness in
+the current preview. Downloaded native code is never executed automatically.
 
 ## Ownership
 

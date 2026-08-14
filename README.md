@@ -10,8 +10,9 @@ The `ReferenceMonitor` is the sole authority that can issue effect permits. Gene
 
 ## Status
 
-The first named release line is Anubis. The current public preview is
-`v2.0.0-anubis.3`; it is not a stable release. See [RELEASES.md](RELEASES.md)
+The current public preview is the historical tag `v2.0.0-anubis.3`; it is not
+a stable release. Existing tags are retained for compatibility. New releases
+use plain SemVer tags without product codenames. See [RELEASES.md](RELEASES.md)
 and [platform support](docs/PLATFORMS.md) for the shipped scope and release
 requirements.
 

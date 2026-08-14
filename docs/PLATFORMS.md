@@ -2,7 +2,7 @@
 
 ## CLI
 
-Anubis targets the native Pandora CLI on Windows, macOS, and Linux. Tagged
+The current preview targets the native Pandora CLI on Windows, macOS, and Linux. Tagged
 release builds publish native artifacts for Windows x64, Linux x64, and macOS
 Intel and Apple Silicon. The release workflow verifies each artifact before
 publishing it.
@@ -26,7 +26,7 @@ arguments to that binary.
 
 ## Product boundary
 
-Anubis is a CLI release line. No packaged desktop client is part of the current
+The current preview is a CLI release line. No packaged desktop client is part of the current
 support claim. A successful workspace build is not evidence that a platform
 package exists; the corresponding release artifact and clean-machine checks
 must be present first.

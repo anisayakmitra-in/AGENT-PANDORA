@@ -10,7 +10,7 @@ version="${PANDORA_VERSION:-}"
 [ -n "$version" ] || fail "PANDORA_VERSION is required"
 case "$version" in
   v[0-9]*.[0-9]*.[0-9]*|v[0-9]*.[0-9]*.[0-9]*-*) ;;
-  *) fail "PANDORA_VERSION must be a version tag such as v2.0.0-anubis.2" ;;
+  *) fail "PANDORA_VERSION must be a SemVer tag such as v2.0.0-alpha.1" ;;
 esac
 case "$version" in
   *[!A-Za-z0-9._-]*) fail "PANDORA_VERSION contains unsafe characters" ;;

@@ -1,6 +1,6 @@
 # Skills
 
-Skill admission is part of the Anubis CLI foundation. A Skill is a local package
+Skill admission is part of the CLI foundation. A Skill is a local package
 with one `SKILL.md` file and an optional `scripts/` directory.
 
 ## Format

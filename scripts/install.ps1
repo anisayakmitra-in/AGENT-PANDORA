@@ -7,7 +7,7 @@ function Fail([string]$Message) {
 $version = $env:PANDORA_VERSION
 if ([string]::IsNullOrWhiteSpace($version)) { Fail "PANDORA_VERSION is required" }
 if ($version -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$') {
-    Fail "PANDORA_VERSION must be a version tag such as v2.0.0-anubis.2"
+    Fail "PANDORA_VERSION must be a SemVer tag such as v2.0.0-alpha.1"
 }
 
 $base = $env:PANDORA_RELEASE_BASE_URL
