@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod approvals;
 pub mod config;
 pub mod execution_controller;
 pub mod executors;
@@ -9,6 +10,9 @@ pub mod reference_monitor;
 pub mod sessions;
 pub mod shadow_council;
 
+pub use approvals::{
+    ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, PendingApproval,
+};
 pub use execution_controller::{ExecutionController, RunStatus, RunSummary, RuntimeError};
 pub use parliament::Parliament;
 pub use permit_store::{ConsumedPermit, PermitError, PermitStore};

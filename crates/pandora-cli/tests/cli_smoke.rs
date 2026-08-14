@@ -174,6 +174,94 @@ fn doctor_reports_missing_configuration_with_stable_error() {
     assert!(response.get("details").is_some());
 }
 
+#[test]
+fn harness_discovery_exposes_the_coding_domain_without_runtime_internals() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    let output = fixture
+        .command(&["harness", "list", "--json"])
+        .output()
+        .expect("harness list should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["version"], "0.1");
+    assert_eq!(response["harnesses"][0]["id"], "coding-domain");
+
+    let output = fixture
+        .command(&["harness", "inspect", "coding", "--json"])
+        .output()
+        .expect("harness inspect should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["harness"]["kind"], "domain");
+    assert!(response["harness"]["genes"].as_array().unwrap().len() >= 5);
+
+    let output = fixture
+        .command(&[
+            "harness",
+            "run",
+            "coding",
+            "--gene",
+            "workspace.read",
+            "--task",
+            "read:README.md",
+            "--json",
+        ])
+        .output()
+        .expect("harness run should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["command"], "harness run");
+    assert_eq!(response["status"], "completed");
+}
+
+#[test]
+fn approval_can_be_inspected_and_resolved_without_exposing_patch_content() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let output = fixture
+        .command(&["run", "patch:README.md:sk-live-secret", "--json"])
+        .output()
+        .expect("run should start");
+    assert_eq!(output.status.code(), Some(40));
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("sk-live-secret"));
+    let response = parse_json(&output);
+    let approval_id = response["details"]["approval_id"]
+        .as_str()
+        .expect("approval ID should be returned")
+        .to_owned();
+
+    let output = fixture
+        .command(&["approval", "inspect", &approval_id, "--json"])
+        .output()
+        .expect("approval inspect should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["approval"]["status"], "pending");
+    assert_eq!(response["approval"]["gene_id"], "patch.apply");
+    assert!(!response.to_string().contains("sk-live-secret"));
+
+    let output = fixture
+        .command(&["approval", "resolve", &approval_id, "--allow", "--json"])
+        .output()
+        .expect("approval resolve should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["approval"]["status"], "approved");
+    assert_eq!(response["approval"]["approver_id"], "local-user");
+
+    let output = fixture
+        .command(&["approval", "list", "--json"])
+        .output()
+        .expect("approval list should start");
+    assert_success(&output);
+    assert_eq!(
+        parse_json(&output)["approvals"].as_array().unwrap().len(),
+        1
+    );
+}
+
 fn assert_success(output: &Output) {
     assert!(
         output.status.success(),

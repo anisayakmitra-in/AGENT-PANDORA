@@ -7,7 +7,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod approval;
 mod doctor;
+mod harness;
 mod provider;
 mod run;
 mod session;
@@ -38,6 +40,8 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         .ok_or_else(|| CliError::usage(usage()))?
         .as_str();
     match command {
+        "approval" => approval::execute(&args[1..]),
+        "harness" => harness::execute(&args[1..]),
         "setup" => setup::execute(&args[1..]),
         "run" => run::execute(&args[1..]),
         "session" => session::execute(&args[1..]),
@@ -64,6 +68,13 @@ pub(crate) fn parse_options(args: &[String], allowed: &[&str]) -> Result<ParsedA
             if !allowed.contains(&name) {
                 return Err(CliError::usage(format!("unknown option '--{name}'")));
             }
+            if is_flag(name) {
+                if values.insert(name.to_owned(), String::new()).is_some() {
+                    return Err(CliError::usage(format!("option '--{name}' was repeated")));
+                }
+                index += 1;
+                continue;
+            }
             let value = if let Some(value) = inline_value {
                 value.to_owned()
             } else {
@@ -85,6 +96,10 @@ pub(crate) fn parse_options(args: &[String], allowed: &[&str]) -> Result<ParsedA
         values,
         positionals,
     })
+}
+
+fn is_flag(name: &str) -> bool {
+    matches!(name, "allow" | "deny")
 }
 
 pub(crate) fn load_config(parsed: &ParsedArgs) -> Result<RuntimeConfig, CliError> {
@@ -178,6 +193,6 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    "usage: pandora <setup|run|session|provider|doctor> [options]\n\n\
-commands:\n  setup\n  run <task>\n  session list|resume <id>\n  provider list|set\n  doctor"
+    "usage: pandora <setup|run|harness|session|approval|provider|doctor> [options]\n\n\
+commands:\n  setup\n  run <task>\n  harness list|inspect|run\n  session list|resume <id>\n  approval list|inspect|resolve\n  provider list|set\n  doctor"
 }
