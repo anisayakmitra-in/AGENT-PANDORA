@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod capability;
+pub mod context;
 pub mod effect;
 pub mod events;
 pub mod gene;
@@ -12,6 +13,10 @@ pub mod session;
 pub mod skill;
 
 pub use capability::{Capability, Operation};
+pub use context::{
+    ContextAssembly, ContextCacheKey, ContextClassification, ContextContractError, ContextEntry,
+    ContextFragment, ContextReceipt, ContextRequest, ContextSource, ContextTrust,
+};
 pub use effect::{
     EffectOutcome, EffectPermit, EffectReceipt, EffectTarget, OperationRequest, RequestError,
     ResourceScope, SecretReference, Timestamp,

@@ -2,6 +2,8 @@
 
 pub mod approvals;
 pub mod config;
+pub mod context_engine;
+pub mod context_recovery;
 pub mod execution_controller;
 pub mod executors;
 pub mod harness_registry;
@@ -16,6 +18,8 @@ pub mod skill_engine;
 pub use approvals::{
     ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, PendingApproval,
 };
+pub use context_engine::{ContextEngine, ContextError};
+pub use context_recovery::{ContextRecovery, RecoveryDecision, RecoveryInput, RecoveryStep};
 pub use execution_controller::{ExecutionController, RunStatus, RunSummary, RuntimeError};
 pub use harness_registry::{HarnessRegistry, HarnessRegistryError, PackageRecord, PackageState};
 pub use parliament::Parliament;
