@@ -1,0 +1,15 @@
+# Local design companion state
+.superpowers/
+
+# Rust build output
+target/
+
+# Local configuration and secrets
+.env
+*.local
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
