@@ -60,6 +60,8 @@ provide `PANDORA_PROVIDER_API_KEY` for planning.
 ```text
 pandora harness list
 pandora tool list
+pandora skill list
+pandora skill inspect <id>
 pandora orchestration roles
 pandora strategies list
 pandora completions powershell
@@ -70,6 +72,11 @@ pandora completions fish
 
 Completion commands print a shell script. They describe the public command
 surface and do not execute a command or inspect credentials.
+
+Skills are discovered from the configured data directory under `skills/`.
+Use `--root <path>` to inspect another local skill root. Listing and inspection
+read metadata, state, provenance, resources, and script inventory only; Skills
+start disabled and scripts are not executed by these commands.
 
 ## Configuration migration
 

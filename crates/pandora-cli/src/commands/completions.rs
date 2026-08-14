@@ -31,7 +31,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
 fn powershell() -> &'static str {
     r#"Register-ArgumentCompleter -CommandName pandora -ScriptBlock {
     param($commandName, $wordToComplete, $cursorPosition)
-    'setup','run','harness','session','approval','provider','tool','orchestration','strategies','completions','migrate','update','uninstall','doctor' |
+    'setup','run','harness','session','skill','approval','provider','tool','orchestration','strategies','completions','migrate','update','uninstall','doctor' |
         Where-Object { $_ -like "$wordToComplete*" } |
         ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
 }"#
@@ -40,16 +40,16 @@ fn powershell() -> &'static str {
 fn bash() -> &'static str {
     r#"_pandora_complete() {
     local current="${COMP_WORDS[COMP_CWORD]}"
-    COMPREPLY=( $(compgen -W 'setup run harness session approval provider tool orchestration strategies completions migrate update uninstall doctor' -- "$current") )
+    COMPREPLY=( $(compgen -W 'setup run harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor' -- "$current") )
 }
 complete -F _pandora_complete pandora"#
 }
 
 fn zsh() -> &'static str {
     r#"#compdef pandora
-_arguments '1:command:(setup run harness session approval provider tool orchestration strategies completions migrate update uninstall doctor)'"#
+_arguments '1:command:(setup run harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor)'"#
 }
 
 fn fish() -> &'static str {
-    r#"complete -c pandora -f -a 'setup run harness session approval provider tool orchestration strategies completions migrate update uninstall doctor'"#
+    r#"complete -c pandora -f -a 'setup run harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor'"#
 }

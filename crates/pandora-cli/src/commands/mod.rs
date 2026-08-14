@@ -18,6 +18,7 @@ mod provider;
 mod run;
 mod session;
 mod setup;
+mod skill;
 mod tool;
 mod uninstall;
 mod update;
@@ -54,6 +55,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "setup" => setup::execute(&args[1..]),
         "run" => run::execute(&args[1..]),
         "session" => session::execute(&args[1..]),
+        "skill" => skill::execute(&args[1..]),
         "provider" => provider::execute(&args[1..]),
         "strategies" => strategies(&args[1..]),
         "tool" => tool::execute(&args[1..]),
@@ -221,8 +223,8 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    "usage: pandora <setup|run|harness|session|approval|provider|tool|orchestration|strategies|completions|migrate|update|uninstall|doctor> [options]\n\n\
-commands:\n  setup\n  run [--plan] [--model <model>] [--approval <id>] <task>\n  harness list|inspect|run\n  session list|resume <id>\n  approval list|inspect|resolve\n  provider list|set|test\n  orchestration roles\n  strategies list\n  completions <powershell|bash|zsh|fish>\n  migrate config\n  update [--artifact <path> --sha256 <digest> | --rollback]\n  uninstall [--dry-run|--yes]\n  doctor"
+    "usage: pandora <setup|run|harness|session|skill|approval|provider|tool|orchestration|strategies|completions|migrate|update|uninstall|doctor> [options]\n\n\
+commands:\n  setup\n  run [--plan] [--model <model>] [--approval <id>] <task>\n  harness list|inspect|run\n  session list|resume <id>\n  skill list|inspect <id>\n  approval list|inspect|resolve\n  provider list|set|test\n  orchestration roles\n  strategies list\n  completions <powershell|bash|zsh|fish>\n  migrate config\n  update [--artifact <path> --sha256 <digest> | --rollback]\n  uninstall [--dry-run|--yes]\n  doctor"
 }
 
 fn orchestration(args: &[String]) -> Result<CommandResult, CliError> {

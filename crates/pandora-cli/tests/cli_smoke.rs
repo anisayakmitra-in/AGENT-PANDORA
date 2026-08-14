@@ -114,6 +114,41 @@ fn search_run_returns_matching_workspace_files() {
 }
 
 #[test]
+fn skill_list_and_inspect_are_metadata_only() {
+    let fixture = Fixture::new();
+    let skill_root = fixture.data.join("skills").join("alpha");
+    fs::create_dir_all(&skill_root).unwrap();
+    fs::write(
+        skill_root.join("SKILL.md"),
+        "---\nid: alpha\nversion: 0.1.0\nname: Alpha Skill\ndescription: Reads project guidance\npublisher: pandora\nresources: workspace.read\n---\n# Alpha\n\nUse the read tool.\n",
+    )
+    .unwrap();
+
+    let output = fixture
+        .command(&["skill", "list", "--json"])
+        .output()
+        .expect("skill list should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["skills"][0]["id"], "alpha");
+    assert_eq!(response["skills"][0]["state"], "disabled");
+
+    let output = fixture
+        .command(&["skill", "inspect", "alpha", "--json"])
+        .output()
+        .expect("skill inspect should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["skill"]["id"], "alpha");
+    assert!(
+        response["skill"]["body"]
+            .as_str()
+            .unwrap()
+            .contains("read tool")
+    );
+}
+
+#[test]
 fn orchestration_roles_are_discoverable_without_runtime_setup() {
     let fixture = Fixture::new();
     let output = fixture
@@ -619,6 +654,7 @@ fn completions_generate_a_bash_script() {
     let response = parse_json(&output);
     assert_eq!(response["command"], "completions bash");
     assert!(response["script"].as_str().unwrap().contains("pandora"));
+    assert!(response["script"].as_str().unwrap().contains("skill"));
 }
 
 #[test]
