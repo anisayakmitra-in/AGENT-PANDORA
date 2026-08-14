@@ -22,6 +22,10 @@ Anubis adds the CLI-first foundation:
 
 Anubis is complete only when the stable CLI can be installed, configured, run, resumed, diagnosed, updated, and removed on a clean machine without Rust.
 
+## Naming
+
+Anubis is Phase 1 and owns the `v2.0.x` release line. Patch releases keep the phase name: `Anubis v2.0.1` and `Anubis v2.0.2` are fixes to the same contract, not new phases. A later phase receives a new codename only after its scope is approved and documented.
+
 ## Version rules
 
 - Patch releases (`v2.0.x`) fix regressions without changing the Anubis contract.
