@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod adaptive_engine;
 pub mod approvals;
 pub mod config;
 pub mod context_engine;
@@ -22,6 +23,7 @@ pub mod shadow_council;
 pub mod skill_engine;
 pub mod tool_engine;
 
+pub use adaptive_engine::{AdaptationResult, AdaptiveEngine, AdaptiveError};
 pub use approvals::{
     ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, PendingApproval,
 };

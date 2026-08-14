@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod adaptation;
 pub mod capability;
 pub mod context;
 pub mod effect;
@@ -16,6 +17,10 @@ pub mod package;
 pub mod session;
 pub mod skill;
 
+pub use adaptation::{
+    AdaptationCandidate, AdaptationContractError, AdaptationDecision, AdaptationPolicy,
+    AdaptationReceipt, AdaptationRequest, AdaptationTarget,
+};
 pub use capability::{Capability, Operation};
 pub use context::{
     ContextAssembly, ContextCacheKey, ContextClassification, ContextContractError, ContextEntry,
