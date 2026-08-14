@@ -2,7 +2,10 @@ use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Output};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(1);
 
 struct Fixture {
     root: PathBuf,
@@ -17,7 +20,11 @@ impl Fixture {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be available")
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("pandora-cli-smoke-{suffix}"));
+        let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "pandora-cli-smoke-{}-{suffix}-{sequence}",
+            std::process::id()
+        ));
         let workspace = root.join("workspace");
         fs::create_dir_all(&workspace).expect("workspace should be created");
         fs::write(workspace.join("README.md"), "fixture\n").expect("fixture should be written");
