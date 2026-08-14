@@ -4,9 +4,13 @@ Pandora uses plain SemVer tags. Existing `v2.0.0-anubis.*` tags are historical
 preview identifiers and remain immutable; new releases do not use product
 codenames.
 
-## Current preview
+## Current development line
 
-The current public preview is `v2.0.0-anubis.3`, published from `main`.
+The working tree targets `v2.0.0-alpha.1`. It is not published until a tag
+and the release workflow have completed.
+
+The latest historical preview tag is `v2.0.0-anubis.3`. It is retained as an
+immutable compatibility reference and is not the active release line.
 
 It provides the CLI-first foundation:
 
