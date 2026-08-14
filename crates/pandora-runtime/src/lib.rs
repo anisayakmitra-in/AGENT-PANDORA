@@ -4,11 +4,13 @@ pub mod approvals;
 pub mod config;
 pub mod execution_controller;
 pub mod executors;
+pub mod package_admission;
 pub mod parliament;
 pub mod permit_store;
 pub mod reference_monitor;
 pub mod sessions;
 pub mod shadow_council;
+pub mod skill_engine;
 
 pub use approvals::{
     ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, PendingApproval,
@@ -17,6 +19,10 @@ pub use execution_controller::{ExecutionController, RunStatus, RunSummary, Runti
 pub use parliament::Parliament;
 pub use permit_store::{ConsumedPermit, PermitError, PermitStore};
 pub use reference_monitor::{AuthorizationError, ReferenceMonitor};
+pub use skill_engine::{
+    RemovalReceipt, SkillEngine, SkillError, SkillInspection, SkillProvenance, SkillRecord,
+    SkillState,
+};
 
 pub fn runtime_is_available() -> bool {
     true

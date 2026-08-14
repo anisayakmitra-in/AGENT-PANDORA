@@ -8,6 +8,7 @@ pub mod governance;
 pub mod harness;
 pub mod ids;
 pub mod session;
+pub mod skill;
 
 pub use capability::{Capability, Operation};
 pub use effect::{
@@ -23,3 +24,4 @@ pub use ids::{
     RequestDigest, SessionId, TenantId, WorkspaceId,
 };
 pub use session::{Session, TaskIntent};
+pub use skill::{SkillId, SkillManifest, SkillManifestError};
