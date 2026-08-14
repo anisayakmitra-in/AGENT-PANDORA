@@ -24,6 +24,7 @@ fn configuration_uses_first_run_defaults() {
     .unwrap();
 
     assert_eq!(config.provider_url(), None);
+    assert_eq!(config.provider_model(), None);
     assert_eq!(config.data_dir(), fixture.path.join("default-data"));
     assert_eq!(
         config.workspace_dir(),
@@ -39,6 +40,7 @@ fn configuration_flags_override_environment_and_file() {
         &config_path,
         r#"{
             "provider_url": "https://file.example/v1",
+            "provider_model": "file-model",
             "data_dir": "file-data",
             "workspace_dir": "file-workspace"
         }"#,
@@ -51,12 +53,17 @@ fn configuration_flags_override_environment_and_file() {
             "https://environment.example/v1".to_owned(),
         ),
         (
+            "PANDORA_PROVIDER_MODEL".to_owned(),
+            "environment-model".to_owned(),
+        ),
+        (
             "PANDORA_DATA_DIR".to_owned(),
             fixture.path.join("environment-data").display().to_string(),
         ),
     ]);
     let overrides = ConfigOverrides::default()
         .with_provider_url("https://flag.example/v1")
+        .with_provider_model("flag-model")
         .with_workspace_dir(fixture.path.join("flag-workspace"));
 
     let config = RuntimeConfig::from_sources(
@@ -69,8 +76,38 @@ fn configuration_flags_override_environment_and_file() {
     .unwrap();
 
     assert_eq!(config.provider_url(), Some("https://flag.example/v1"));
+    assert_eq!(config.provider_model(), Some("flag-model"));
     assert_eq!(config.data_dir(), fixture.path.join("environment-data"));
     assert_eq!(config.workspace_dir(), fixture.path.join("flag-workspace"));
+}
+
+#[test]
+fn configuration_persists_provider_model() {
+    let fixture = Fixture::new("config-provider-model");
+    let config_path = fixture.path.join("config.json");
+    let config = RuntimeConfig::from_sources(
+        &ConfigOverrides::default()
+            .with_config_path(config_path.clone())
+            .with_provider_model("gpt-5"),
+        &BTreeMap::new(),
+        &fixture.path.join("missing.json"),
+        fixture.path.join("data"),
+        fixture.path.join("workspace"),
+    )
+    .unwrap();
+
+    config.write().unwrap();
+
+    let loaded = RuntimeConfig::from_sources(
+        &ConfigOverrides::default(),
+        &BTreeMap::new(),
+        &config_path,
+        fixture.path.join("default-data"),
+        fixture.path.join("default-workspace"),
+    )
+    .unwrap();
+
+    assert_eq!(loaded.provider_model(), Some("gpt-5"));
 }
 
 #[test]

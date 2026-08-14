@@ -202,6 +202,9 @@ fn overrides(parsed: &ParsedArgs) -> ConfigOverrides {
     if let Some(url) = parsed.value("provider-url") {
         overrides = overrides.with_provider_url(url);
     }
+    if let Some(model) = parsed.value("model") {
+        overrides = overrides.with_provider_model(model);
+    }
     overrides
 }
 

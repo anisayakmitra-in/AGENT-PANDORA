@@ -76,6 +76,7 @@ fn setup_and_read_only_run_return_versioned_json() {
     let setup = fixture.setup();
     assert_eq!(setup["version"], "0.1");
     assert_eq!(setup["command"], "setup");
+    assert_eq!(setup["provider_model"], "default");
 
     let output = fixture
         .command(&["run", "read:README.md", "--json"])
@@ -178,6 +179,8 @@ fn provider_set_and_list_use_the_public_configuration_api() {
             "set",
             "--provider-url",
             "http://127.0.0.1:4317/v1",
+            "--model",
+            "fixture-model",
             "--json",
         ])
         .output()
@@ -196,6 +199,7 @@ fn provider_set_and_list_use_the_public_configuration_api() {
         response["providers"][0]["base_url"],
         "http://127.0.0.1:4317/v1"
     );
+    assert_eq!(response["providers"][0]["default_model"], "fixture-model");
 }
 
 #[test]
@@ -235,7 +239,7 @@ fn provider_test_completes_a_configured_request_without_echoing_credentials() {
         }
         let body = String::from_utf8_lossy(&request[header_end..header_end + content_length]);
         assert!(headers.contains("authorization: bearer test-provider-key"));
-        assert!(body.contains("\"model\":\"default\""));
+        assert!(body.contains("\"model\":\"fixture-model\""));
         let response =
             br#"{"choices":[{"message":{"content":"ready"}}],"usage":{"prompt_tokens":2,"completion_tokens":1}}"#;
         write!(
@@ -252,7 +256,15 @@ fn provider_test_completes_a_configured_request_without_echoing_credentials() {
     let fixture = Fixture::new();
     let provider_url = format!("http://{address}/v1");
     let configured = fixture
-        .command(&["provider", "set", "--provider-url", &provider_url, "--json"])
+        .command(&[
+            "provider",
+            "set",
+            "--provider-url",
+            &provider_url,
+            "--model",
+            "fixture-model",
+            "--json",
+        ])
         .output()
         .expect("provider set should start");
     assert_success(&configured);
@@ -268,7 +280,7 @@ fn provider_test_completes_a_configured_request_without_echoing_credentials() {
     let response = parse_json(&output);
     assert_eq!(response["command"], "provider test");
     assert_eq!(response["status"], "ready");
-    assert_eq!(response["model"], "default");
+    assert_eq!(response["model"], "fixture-model");
     assert_eq!(response["output"], "ready");
     assert_eq!(response["usage"]["total_tokens"], 3);
 
@@ -397,7 +409,7 @@ fn migration_converts_legacy_config_and_keeps_a_backup() {
     fs::create_dir_all(fixture.root.join("data")).expect("legacy data should exist");
     fs::write(
         &fixture.config,
-        r#"{"provider":{"url":"http://127.0.0.1:4317/v1"},"data_path":"data","workspace_path":"workspace"}"#,
+        r#"{"provider":{"url":"http://127.0.0.1:4317/v1"},"provider_model":"legacy-model","data_path":"data","workspace_path":"workspace"}"#,
     )
     .expect("legacy config should be written");
 
@@ -418,6 +430,7 @@ fn migration_converts_legacy_config_and_keeps_a_backup() {
     let current: Value = serde_json::from_slice(&fs::read(&fixture.config).unwrap()).unwrap();
     assert_eq!(current["format_version"], 1);
     assert_eq!(current["provider_url"], "http://127.0.0.1:4317/v1");
+    assert_eq!(current["provider_model"], "legacy-model");
 }
 
 #[test]

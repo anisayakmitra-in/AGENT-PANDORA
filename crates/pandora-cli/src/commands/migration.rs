@@ -101,6 +101,7 @@ fn convert(object: &Map<String, Value>) -> Result<Map<String, Value>, MigrationE
         .get("provider_url")
         .cloned()
         .or_else(|| object.get("provider").and_then(legacy_provider_url));
+    let provider_model = object.get("provider_model").cloned();
     let data_dir = object
         .get("data_dir")
         .cloned()
@@ -109,7 +110,11 @@ fn convert(object: &Map<String, Value>) -> Result<Map<String, Value>, MigrationE
         .get("workspace_dir")
         .cloned()
         .or_else(|| object.get("workspace_path").cloned());
-    if provider_url.is_none() && data_dir.is_none() && workspace_dir.is_none() {
+    if provider_url.is_none()
+        && provider_model.is_none()
+        && data_dir.is_none()
+        && workspace_dir.is_none()
+    {
         return Err(MigrationError::UnsupportedFormat);
     }
     if let Some(value) = provider_url {
@@ -117,6 +122,12 @@ fn convert(object: &Map<String, Value>) -> Result<Map<String, Value>, MigrationE
             return Err(MigrationError::UnsupportedFormat);
         }
         current.insert("provider_url".to_owned(), value);
+    }
+    if let Some(value) = provider_model {
+        if !value.is_string() {
+            return Err(MigrationError::UnsupportedFormat);
+        }
+        current.insert("provider_model".to_owned(), value);
     }
     if let Some(value) = data_dir {
         if !value.is_string() {

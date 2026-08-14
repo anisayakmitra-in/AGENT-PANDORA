@@ -4,7 +4,10 @@ use serde_json::json;
 use std::fs;
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
-    let parsed = parse_options(args, &["config", "data-dir", "workspace", "provider-url"])?;
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "provider-url", "model"],
+    )?;
     let config = load_config(&parsed)?;
     fs::create_dir_all(config.data_dir()).map_err(|_| {
         CliError::configuration(
@@ -27,6 +30,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "data_dir": config.data_dir(),
             "workspace": config.workspace_dir(),
             "provider_configured": provider_configured,
+            "provider_model": config.provider_model().unwrap_or("default"),
         }),
         format!("Pandora configured at {}", config.config_path().display()),
     ))

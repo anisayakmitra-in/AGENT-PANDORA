@@ -26,7 +26,7 @@ fn list(args: &[String]) -> Result<CommandResult, CliError> {
                 "openai-compatible",
                 "OpenAI-compatible",
                 base_url,
-                "default",
+                config.provider_model().unwrap_or("default"),
                 "PANDORA_PROVIDER_API_KEY",
             )
             .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
@@ -49,7 +49,10 @@ fn list(args: &[String]) -> Result<CommandResult, CliError> {
 }
 
 fn set(args: &[String]) -> Result<CommandResult, CliError> {
-    let parsed = parse_options(args, &["config", "data-dir", "workspace", "provider-url"])?;
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "provider-url", "model"],
+    )?;
     if parsed.value("provider-url").is_none() {
         return Err(CliError::usage(
             "provider set requires '--provider-url <url>'",
@@ -62,6 +65,7 @@ fn set(args: &[String]) -> Result<CommandResult, CliError> {
         json!({
             "provider": "openai-compatible",
             "base_url": config.provider_url(),
+            "model": config.provider_model().unwrap_or("default"),
         }),
         "OpenAI-compatible provider configured".to_owned(),
     ))
@@ -77,7 +81,10 @@ fn test(args: &[String]) -> Result<CommandResult, CliError> {
             json!({"config_path": config.config_path()}),
         )
     })?;
-    let model = parsed.value("model").unwrap_or("default");
+    let model = parsed
+        .value("model")
+        .or(config.provider_model())
+        .unwrap_or("default");
     let manifest = ProviderManifest::new(
         "openai-compatible",
         "OpenAI-compatible",

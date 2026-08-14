@@ -9,7 +9,7 @@ approval, execution, update, and internal failures.
 ## Setup and diagnostics
 
 ```text
-pandora setup --provider-url https://provider.example/v1
+pandora setup --provider-url https://provider.example/v1 --model gpt-5
 pandora doctor --json
 pandora provider list --json
 pandora provider test --json
@@ -21,7 +21,9 @@ Provider connectivity is deliberately `not_checked`; diagnostics do not send a
 request or read a provider credential.
 
 `provider test` sends one bounded request using `PANDORA_PROVIDER_API_KEY` and
-reports the selected model, response, and token usage. It fails when the
+reports the configured or explicitly selected model, response, and token
+usage. Use `pandora provider set --provider-url <url> --model <model>` to save a
+model. If none is configured, the provider uses `default`. It fails when the
 provider or credential is not configured and never includes the credential in
 its output.
 

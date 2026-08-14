@@ -49,6 +49,7 @@ impl From<std::io::Error> for ConfigError {
 pub struct ConfigOverrides {
     config_path: Option<PathBuf>,
     provider_url: Option<String>,
+    provider_model: Option<String>,
     data_dir: Option<PathBuf>,
     workspace_dir: Option<PathBuf>,
 }
@@ -61,6 +62,11 @@ impl ConfigOverrides {
 
     pub fn with_provider_url(mut self, url: impl Into<String>) -> Self {
         self.provider_url = Some(url.into());
+        self
+    }
+
+    pub fn with_provider_model(mut self, model: impl Into<String>) -> Self {
+        self.provider_model = Some(model.into());
         self
     }
 
@@ -79,6 +85,7 @@ impl ConfigOverrides {
 pub struct RuntimeConfig {
     config_path: PathBuf,
     provider_url: Option<String>,
+    provider_model: Option<String>,
     data_dir: PathBuf,
     workspace_dir: PathBuf,
 }
@@ -129,6 +136,11 @@ impl RuntimeConfig {
             .or(file.provider_url)
             .map(validate_provider_url)
             .transpose()?;
+        let provider_model = overrides
+            .provider_model
+            .clone()
+            .or_else(|| environment.get("PANDORA_PROVIDER_MODEL").cloned())
+            .or(file.provider_model);
         let data_dir = resolve_path(
             overrides
                 .data_dir
@@ -156,6 +168,7 @@ impl RuntimeConfig {
                 .clone()
                 .unwrap_or_else(|| config_path.to_path_buf()),
             provider_url,
+            provider_model,
             data_dir,
             workspace_dir,
         })
@@ -168,6 +181,7 @@ impl RuntimeConfig {
         let data = serde_json::to_vec_pretty(&FileConfig {
             format_version: Some(CONFIG_FORMAT_VERSION),
             provider_url: self.provider_url.clone(),
+            provider_model: self.provider_model.clone(),
             data_dir: Some(self.data_dir.display().to_string()),
             workspace_dir: Some(self.workspace_dir.display().to_string()),
         })
@@ -192,6 +206,10 @@ impl RuntimeConfig {
         self.provider_url.as_deref()
     }
 
+    pub fn provider_model(&self) -> Option<&str> {
+        self.provider_model.as_deref()
+    }
+
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
     }
@@ -205,6 +223,7 @@ impl RuntimeConfig {
 struct FileConfig {
     format_version: Option<u32>,
     provider_url: Option<String>,
+    provider_model: Option<String>,
     data_dir: Option<String>,
     workspace_dir: Option<String>,
 }
