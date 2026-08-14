@@ -152,6 +152,7 @@ pub struct OperationRequest {
     operation: Operation,
     target: EffectTarget,
     resource_scope: ResourceScope,
+    payload_digest: Option<RequestDigest>,
     request_digest: RequestDigest,
 }
 
@@ -182,6 +183,7 @@ impl OperationRequest {
             operation,
             target,
             resource_scope,
+            payload_digest: None,
             request_digest: RequestDigest::new("pending")?,
         };
         request.request_digest = request.calculate_digest()?;
@@ -228,6 +230,23 @@ impl OperationRequest {
         &self.request_digest
     }
 
+    pub fn with_payload_digest(mut self, payload: &[u8]) -> Result<Self, RequestError> {
+        self.payload_digest = Some(digest_bytes("pandora-payload-v1", payload)?);
+        self.request_digest = self.calculate_digest()?;
+        Ok(self)
+    }
+
+    pub fn payload_digest(&self) -> Option<&RequestDigest> {
+        self.payload_digest.as_ref()
+    }
+
+    pub fn payload_digest_matches(&self, payload: &[u8]) -> bool {
+        self.payload_digest
+            .as_ref()
+            .zip(digest_bytes("pandora-payload-v1", payload).ok())
+            .is_some_and(|(expected, actual)| expected.as_str() == actual.as_str())
+    }
+
     fn calculate_digest(&self) -> Result<RequestDigest, RequestError> {
         let mut hasher = Sha256::new();
         hasher.update(self.canonical_json().as_bytes());
@@ -254,6 +273,7 @@ impl OperationRequest {
             operation: self.operation.as_str(),
             target: CanonicalTarget::from(&self.target),
             resource_scope: CanonicalScope::from(&self.resource_scope),
+            payload_digest: self.payload_digest.as_ref().map(|digest| digest.as_str()),
         };
         serde_json::to_string(&canonical).expect("canonical effect request is serializable")
     }
@@ -410,6 +430,7 @@ struct CanonicalOperationRequest<'a> {
     operation: &'static str,
     target: CanonicalTarget<'a>,
     resource_scope: CanonicalScope<'a>,
+    payload_digest: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -540,6 +561,20 @@ fn validate_text(field: &'static str, value: &str) -> Result<(), RequestError> {
     Ok(())
 }
 
+fn digest_bytes(prefix: &'static str, bytes: &[u8]) -> Result<RequestDigest, RequestError> {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    RequestDigest::new(format!(
+        "{prefix}:sha256:{}",
+        digest
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    ))
+    .map_err(RequestError::from)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -573,6 +608,20 @@ mod tests {
         assert_ne!(
             request("src/lib.rs").request_digest(),
             request("src/main.rs").request_digest()
+        );
+    }
+
+    #[test]
+    fn payload_digest_binds_the_exact_write_content() {
+        let payload_request = request("src/lib.rs")
+            .with_payload_digest(b"first patch")
+            .unwrap();
+
+        assert!(payload_request.payload_digest_matches(b"first patch"));
+        assert!(!payload_request.payload_digest_matches(b"second patch"));
+        assert_ne!(
+            payload_request.request_digest(),
+            request("src/lib.rs").request_digest()
         );
     }
 

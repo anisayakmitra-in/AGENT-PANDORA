@@ -303,6 +303,9 @@ impl FilesystemExecutor {
                 if content.len() as u64 > MAX_FILE_BYTES {
                     return Err(FilesystemError::ReadLimitExceeded);
                 }
+                if !permit.request().payload_digest_matches(content) {
+                    return Err(FilesystemError::PermissionDenied);
+                }
                 if let Ok(metadata) = fs::symlink_metadata(target.absolute()) {
                     if metadata.file_type().is_symlink() {
                         return Err(FilesystemError::SymlinkNotAllowed);
