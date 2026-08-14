@@ -10,7 +10,7 @@ The `ReferenceMonitor` is the sole authority that can issue effect permits. Gene
 
 ## Status
 
-Early private development. The repository currently contains the Rust workspace bootstrap and the first CLI smoke test. The implementation plan is kept locally during this design phase.
+Private development is preparing the first named release line, Anubis. The current build is `2.0.0-alpha.1`; it is not a stable release. See [RELEASES.md](RELEASES.md) for the version and codename policy.
 
 ## Build
 
