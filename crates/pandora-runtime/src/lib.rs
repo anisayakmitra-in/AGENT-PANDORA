@@ -1,10 +1,12 @@
 #![forbid(unsafe_code)]
 
+pub mod config;
 pub mod execution_controller;
 pub mod executors;
 pub mod parliament;
 pub mod permit_store;
 pub mod reference_monitor;
+pub mod sessions;
 pub mod shadow_council;
 
 pub use execution_controller::{ExecutionController, RunStatus, RunSummary, RuntimeError};
