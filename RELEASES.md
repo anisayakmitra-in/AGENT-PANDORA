@@ -22,29 +22,6 @@ Anubis adds the CLI-first foundation:
 
 Anubis is complete only when the stable CLI can be installed, configured, run, resumed, diagnosed, updated, and removed on a clean machine without Rust.
 
-## Zeus — `v3.0.0`
-
-Zeus is reserved for the multi-surface operation release. Its scope is planned, not shipped.
-
-Proposed additions:
-
-- durable sessions and configuration migration;
-- Tool and Skill admission with provenance and approval records;
-- context and memory recovery with tenant and workspace isolation;
-- evaluation, tracing, cost, latency, and failure views;
-- the first supported desktop client over the same runtime API.
-
-## Hades — `v4.0.0`
-
-Hades is reserved for the distributed and adaptive runtime release. Its scope is planned, not shipped.
-
-Proposed additions:
-
-- authenticated Fleet nodes and remote execution;
-- signed package installation with reproducible dependency locks;
-- graph-backed code, knowledge, review, and architecture evidence;
-- bounded adaptation, governed evolution proposals, canaries, and rollback.
-
 ## Version rules
 
 - Patch releases (`v2.0.x`) fix regressions without changing the Anubis contract.
