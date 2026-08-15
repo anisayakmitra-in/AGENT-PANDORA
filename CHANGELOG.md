@@ -2,9 +2,20 @@
 
 ## Unreleased
 
-- Added `pandora chat`, a line-oriented interactive agent session, and
-  `pandora tui`, a full-screen terminal client. Both reuse the existing
-  AgentLoop, session scope, approval records, and governed effect path.
+No changes yet.
+
+## v2.0.0-alpha.4
+
+This prerelease adds interactive terminal clients without changing the
+governed execution model.
+
+### Shipped
+
+- `pandora chat` provides a line-oriented interactive agent session.
+- `pandora tui` provides a full-screen terminal client with task history,
+  session status, transcript clearing, and clean terminal restoration.
+- Both clients reuse the existing AgentLoop, session scope, approval records,
+  and governed effect path.
 
 ## v2.0.0-alpha.3
 

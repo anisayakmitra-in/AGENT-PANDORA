@@ -13,8 +13,8 @@ archived previews from an earlier naming scheme. They remain available for
 history and reproducibility, but they are not the active release line or
 recommended install targets.
 
-The canonical prerelease tags for this line are `v2.0.0-alpha.1` and
-`v2.0.0-alpha.2`. Codenames apply to stable major release titles only, never to
+The canonical prerelease tags for this line are `v2.0.0-alpha.1` through
+`v2.0.0-alpha.4`. Codenames apply to stable major release titles only, never to
 alpha, beta, or release-candidate tags.
 
 ## v2.0.0-alpha.1
@@ -40,7 +40,7 @@ present.
 
 ## v2.0.0-alpha.2
 
-This is the current CLI-only prerelease. It carries the provider, session,
+This was a CLI-only prerelease. It carried the provider, session,
 configuration, launcher, and CI improvements listed in
 [CHANGELOG.md](CHANGELOG.md). The public command name remains `pandora`, and
 the npm/Bun package name is `pandora-agent`.
@@ -49,6 +49,17 @@ The release remains a prerelease and does not claim desktop, mobile, remote,
 or marketplace support. Native artifacts are valid only when the tagged
 release workflow has completed and its checksums, signature, SBOM, and
 provenance assets are present.
+
+## v2.0.0-alpha.3
+
+This CLI-only prerelease added the built-in `core-source` Source Harness,
+session inspection, and completion support for session subcommands.
+
+## v2.0.0-alpha.4
+
+This is the current CLI-only prerelease. It adds the line-oriented `pandora
+chat` client and full-screen `pandora tui` client. Both reuse the existing
+AgentLoop, session, approval, and governed effect path.
 
 ## Version rules
 
