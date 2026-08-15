@@ -149,6 +149,43 @@ fn skill_list_and_inspect_are_metadata_only() {
 }
 
 #[test]
+fn tool_list_and_inspect_expose_governed_contracts_only() {
+    let fixture = Fixture::new();
+
+    let output = fixture
+        .command(&["tool", "list", "--json"])
+        .output()
+        .expect("tool list should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    let tools = response["tools"].as_array().unwrap();
+    assert!(tools.iter().any(|tool| tool["id"] == "workspace.read"));
+
+    let output = fixture
+        .command(&["tool", "inspect", "workspace.read", "--json"])
+        .output()
+        .expect("tool inspect should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["tool"]["id"], "workspace.read");
+    assert_eq!(response["tool"]["version"], "1.0.0");
+    assert_eq!(response["tool"]["capability"], "filesystem.read");
+    assert_eq!(response["tool"]["operation"], "read");
+    assert_eq!(response["tool"]["input_schema"]["required"][0], "path");
+    assert_eq!(
+        response["tool"]["input_schema"]["additionalProperties"],
+        false
+    );
+
+    let output = fixture
+        .command(&["tool", "inspect", "missing", "--json"])
+        .output()
+        .expect("unknown tool inspect should start");
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(parse_json(&output)["code"], "usage_error");
+}
+
+#[test]
 fn skill_state_transitions_persist_without_running_scripts() {
     let fixture = Fixture::new();
     let skill_root = fixture.data.join("skills").join("alpha");
