@@ -71,7 +71,7 @@ path are unchanged.
 
 ## v2.0.0-alpha.4
 
-This is the current CLI-only prerelease. It adds the line-oriented `pandora
+This was a previous CLI-only prerelease. It added the line-oriented `pandora
 chat` client and full-screen `pandora tui` client. Both reuse the existing
 AgentLoop, session, approval, and governed effect path.
 

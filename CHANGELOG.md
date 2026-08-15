@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-No changes yet.
+- Invalid agent tool arguments now return bounded, actionable feedback so a
+  provider can repair the call without exposing raw argument values.
 
 ## v2.0.0-alpha.6
 
