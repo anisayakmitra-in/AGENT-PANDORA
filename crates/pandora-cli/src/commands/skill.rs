@@ -8,12 +8,13 @@ use std::path::PathBuf;
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "skill requires 'list', 'inspect', 'enable', 'disable', 'suspend', 'remove', or 'restore'",
+            "skill requires 'list', 'inspect', 'install', 'enable', 'disable', 'suspend', 'remove', or 'restore'",
         )
     })?;
     match subcommand.as_str() {
         "list" => list(&args[1..]),
         "inspect" => inspect(&args[1..]),
+        "install" => install(&args[1..]),
         "enable" => transition(&args[1..], "enable", SkillEngine::enable),
         "disable" => transition(&args[1..], "disable", SkillEngine::disable),
         "suspend" => transition(&args[1..], "suspend", SkillEngine::suspend),
@@ -23,6 +24,24 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "unknown skill command '{unknown}'"
         ))),
     }
+}
+
+fn install(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "root"])?;
+    if parsed.positionals.len() != 1 {
+        return Err(CliError::usage(
+            "skill install requires exactly one local skill directory",
+        ));
+    }
+    let engine = engine(&parsed)?;
+    let source = PathBuf::from(&parsed.positionals[0]);
+    let skill = engine.install_from(source).map_err(skill_error)?;
+    let id = skill.manifest().id().as_str().to_owned();
+    Ok(success(
+        "skill install",
+        json!({"skill": skill_value(skill)}),
+        format!("Skill {id} installed disabled"),
+    ))
 }
 
 fn list(args: &[String]) -> Result<CommandResult, CliError> {

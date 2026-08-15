@@ -272,6 +272,31 @@ fn skill_list_and_inspect_are_metadata_only() {
 }
 
 #[test]
+fn skill_install_admits_a_local_package_without_enabling_it() {
+    let fixture = Fixture::new();
+    let source = fixture.root.join("incoming").join("beta");
+    fs::create_dir_all(source.join("scripts")).unwrap();
+    fs::write(
+        source.join("SKILL.md"),
+        "---\nid: beta\nversion: 0.1.0\nname: Beta Skill\ndescription: Reads project guidance\npublisher: pandora\nresources: workspace.read\n---\n# Beta\n",
+    )
+    .unwrap();
+    fs::write(source.join("scripts/check.py"), "print('ok')").unwrap();
+
+    let source = source.to_str().unwrap();
+    let output = fixture
+        .command(&["skill", "install", source, "--json"])
+        .output()
+        .expect("skill install should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["skill"]["id"], "beta");
+    assert_eq!(response["skill"]["state"], "disabled");
+    assert!(fixture.data.join("skills/beta/SKILL.md").is_file());
+    assert!(fixture.root.join("incoming/beta/SKILL.md").is_file());
+}
+
+#[test]
 fn tool_list_and_inspect_expose_governed_contracts_only() {
     let fixture = Fixture::new();
 

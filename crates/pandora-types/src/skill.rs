@@ -15,9 +15,10 @@ impl SkillId {
         if value.len() > MAX_SKILL_ID_BYTES {
             return Err(SkillManifestError::FieldTooLong("id"));
         }
-        if !value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        if matches!(value.as_str(), "." | "..")
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
         {
             return Err(SkillManifestError::InvalidId);
         }
@@ -145,6 +146,12 @@ mod tests {
     #[test]
     fn skill_ids_reject_path_components() {
         assert_eq!(SkillId::new("../alpha"), Err(SkillManifestError::InvalidId));
+    }
+
+    #[test]
+    fn skill_ids_reject_dot_segments() {
+        assert_eq!(SkillId::new("."), Err(SkillManifestError::InvalidId));
+        assert_eq!(SkillId::new(".."), Err(SkillManifestError::InvalidId));
     }
 
     #[test]

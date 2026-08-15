@@ -34,6 +34,8 @@ fn powershell() -> &'static str {
     $elements = @($commandAst.CommandElements | ForEach-Object { $_.Extent.Text })
     $commands = if ($elements.Count -gt 1 -and $elements[1] -eq 'session') {
         'list','resume','inspect'
+    } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'skill') {
+        'list','inspect','install','enable','disable','suspend','remove','restore'
     } else {
         'setup','run','chat','tui','harness','session','skill','approval','provider','tool','orchestration','strategies','completions','migrate','update','uninstall','doctor'
     }
@@ -49,6 +51,8 @@ fn bash() -> &'static str {
     local previous="${COMP_WORDS[COMP_CWORD-1]}"
     if [[ "$previous" == "session" ]]; then
         COMPREPLY=( $(compgen -W 'list resume inspect' -- "$current") )
+    elif [[ "$previous" == "skill" ]]; then
+        COMPREPLY=( $(compgen -W 'list inspect install enable disable suspend remove restore' -- "$current") )
     else
         COMPREPLY=( $(compgen -W 'setup run chat tui harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor' -- "$current") )
     fi
@@ -62,6 +66,10 @@ if [[ ${words[2]} == session ]]; then
     _arguments \
         '1:command:(setup run chat tui harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor)' \
         '2:session command:(list resume inspect)'
+elif [[ ${words[2]} == skill ]]; then
+    _arguments \
+        '1:command:(setup run chat tui harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor)' \
+        '2:skill command:(list inspect install enable disable suspend remove restore)'
 else
     _arguments \
         '1:command:(setup run chat tui harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor)'
@@ -70,5 +78,6 @@ fi"#
 
 fn fish() -> &'static str {
     r#"complete -c pandora -f -n '__fish_use_subcommand' -a 'setup run chat tui harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor'
-complete -c pandora -f -n '__fish_seen_subcommand_from session' -a 'list resume inspect'"#
+complete -c pandora -f -n '__fish_seen_subcommand_from session' -a 'list resume inspect'
+complete -c pandora -f -n '__fish_seen_subcommand_from skill' -a 'list inspect install enable disable suspend remove restore'"#
 }

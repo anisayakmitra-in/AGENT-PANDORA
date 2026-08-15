@@ -143,6 +143,7 @@ pandora tool list
 pandora tool inspect <id>
 pandora skill list
 pandora skill inspect <id>
+pandora skill install <local-skill-directory>
 pandora skill enable <id>
 pandora skill suspend <id>
 pandora skill disable <id>
@@ -164,7 +165,11 @@ surface and do not execute a command or inspect credentials.
 name, required capability, operation, and input schema. They do not execute a
 tool or bypass the governed execution path.
 
-Skills are discovered from the configured data directory under `skills/`.
+Skills are stored in the configured data directory under `skills/`. Use
+`skill install <local-skill-directory>` to admit one local `SKILL.md` package.
+The package directory name must match its manifest ID; manifests, resources,
+regular files, and directories are validated before a staged copy. Existing
+IDs and symlinks are rejected. Installed Skills start disabled.
 Use `--root <path>` to inspect another local skill root. Listing and inspection
 read metadata, state, provenance, resources, and script inventory only; Skills
 start disabled and scripts are not executed by these commands. `enable`,

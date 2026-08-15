@@ -203,6 +203,58 @@ impl SkillEngine {
         Ok(engine)
     }
 
+    pub fn install_from(&self, source: impl AsRef<Path>) -> Result<SkillRecord, SkillError> {
+        let source = source.as_ref();
+        let metadata = fs::symlink_metadata(source)?;
+        if metadata.file_type().is_symlink() {
+            return Err(SkillError::SymlinkRejected);
+        }
+        if !metadata.is_dir() {
+            return Err(SkillError::InvalidRoot);
+        }
+        let source = fs::canonicalize(source)?;
+        let (manifest, _) = read_skill_document(&source)?;
+        PackageAdmission::validate_skill(&manifest).map_err(|_| SkillError::InvalidManifest)?;
+        let directory_name = source
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or(SkillError::InvalidManifest)?;
+        if manifest.id().as_str() != directory_name {
+            return Err(SkillError::InvalidManifest);
+        }
+        let mut scripts = Vec::new();
+        collect_scripts(&source, &source.join("scripts"), &mut scripts)?;
+
+        let destination = self.root.join(manifest.id().as_str());
+        let staging = self.create_staging_path(manifest.id())?;
+        if let Err(error) = copy_tree(&source, &staging) {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(error);
+        }
+        if let Err(error) = fs::create_dir(&destination) {
+            let _ = fs::remove_dir_all(&staging);
+            return if error.kind() == io::ErrorKind::AlreadyExists {
+                Err(SkillError::Collision)
+            } else {
+                Err(error.into())
+            };
+        }
+        if let Err(error) = copy_tree(&staging, &destination) {
+            let _ = fs::remove_dir_all(&staging);
+            let _ = fs::remove_dir_all(&destination);
+            return Err(error);
+        }
+        if let Err(error) = fs::remove_dir_all(&staging) {
+            let _ = fs::remove_dir_all(&destination);
+            return Err(error.into());
+        }
+        if let Err(error) = self.write_state(manifest.id(), SkillState::Disabled) {
+            let _ = fs::remove_dir_all(&destination);
+            return Err(error);
+        }
+        self.find_record(manifest.id().as_str())
+    }
+
     pub fn list(&self) -> Result<Vec<SkillRecord>, SkillError> {
         self.load_records()
     }
@@ -439,6 +491,43 @@ impl SkillEngine {
         }
         Err(SkillError::Collision)
     }
+
+    fn create_staging_path(&self, id: &SkillId) -> Result<PathBuf, SkillError> {
+        for _ in 0..100 {
+            let path = self.root.join(format!(
+                ".pandora-install-{}-{}",
+                id.as_str(),
+                unique_suffix()
+            ));
+            match fs::create_dir(&path) {
+                Ok(()) => return Ok(path),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Err(SkillError::Collision)
+    }
+}
+
+fn copy_tree(source: &Path, destination: &Path) -> Result<(), SkillError> {
+    for entry in fs::read_dir(source)? {
+        let source_path = entry?.path();
+        let name = source_path.file_name().ok_or(SkillError::InvalidManifest)?;
+        let destination_path = destination.join(name);
+        let metadata = fs::symlink_metadata(&source_path)?;
+        if metadata.file_type().is_symlink() {
+            return Err(SkillError::SymlinkRejected);
+        }
+        if metadata.is_dir() {
+            fs::create_dir(&destination_path)?;
+            copy_tree(&source_path, &destination_path)?;
+        } else if metadata.is_file() {
+            fs::copy(&source_path, &destination_path)?;
+        } else {
+            return Err(SkillError::InvalidManifest);
+        }
+    }
+    Ok(())
 }
 
 fn read_skill_document(root: &Path) -> Result<(SkillManifest, String), SkillError> {
@@ -673,6 +762,24 @@ mod tests {
         assert_eq!(reopened.list().unwrap().len(), 1);
     }
 
+    #[test]
+    fn local_install_copies_a_valid_skill_and_starts_disabled() {
+        let fixture = Fixture::new();
+        let source = fixture.root.join("incoming/beta");
+        fs::create_dir_all(source.join("scripts")).unwrap();
+        fs::write(source.join("SKILL.md"), skill_text_for("beta")).unwrap();
+        fs::write(source.join("scripts/check.py"), "print('ok')").unwrap();
+
+        let engine = SkillEngine::discover(&fixture.root).unwrap();
+        let installed = engine.install_from(&source).unwrap();
+
+        assert_eq!(installed.manifest().id().as_str(), "beta");
+        assert_eq!(installed.state(), SkillState::Disabled);
+        assert!(fixture.root.join("beta/SKILL.md").is_file());
+        assert!(source.join("SKILL.md").is_file());
+        assert_eq!(engine.list().unwrap().len(), 2);
+    }
+
     #[cfg(unix)]
     #[test]
     fn symlinked_skill_files_are_rejected() {
@@ -705,5 +812,11 @@ mod tests {
             SkillEngine::discover(&fixture.root),
             Err(SkillError::SymlinkRejected)
         );
+    }
+
+    fn skill_text_for(id: &str) -> String {
+        format!(
+            "---\nid: {id}\nversion: 0.1.0\nname: {id} Skill\ndescription: A bounded test skill\npublisher: pandora\nresources: workspace.read, workspace.search\n---\n# Skill\n\nUse the read tool.\n"
+        )
     }
 }

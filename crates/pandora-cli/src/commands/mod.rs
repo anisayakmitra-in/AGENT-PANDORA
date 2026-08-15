@@ -252,7 +252,7 @@ commands:
   tui [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>]
   harness list|inspect|run
   session list|resume|inspect <id>
-  skill list|inspect|enable|disable|suspend|remove|restore <id>
+  skill list|inspect|install|enable|disable|suspend|remove|restore <id-or-path>
   tool list|inspect <id>
   approval list|inspect|resolve
   provider list|set|use|test
