@@ -5,7 +5,7 @@ new releases do not use product codenames.
 
 ## v2.0.0-alpha.1
 
-This is the current CLI-only prerelease. Its shipped scope is recorded in
+This was the first CLI-only prerelease. Its shipped scope is recorded in
 [CHANGELOG.md](CHANGELOG.md).
 
 Historical preview tags are retained as immutable compatibility references and
@@ -23,6 +23,18 @@ The preview is not a stable release and does not claim desktop support. Native
 release artifacts are valid only when the tagged release workflow has
 completed and its checksums, signature, SBOM, and provenance assets are
 present.
+
+## v2.0.0-alpha.2
+
+This is the current CLI-only prerelease. It carries the provider, session,
+configuration, launcher, and CI improvements listed in
+[CHANGELOG.md](CHANGELOG.md). The public command name remains `pandora`, and
+the npm/Bun package name is `pandora-agent`.
+
+The release remains a prerelease and does not claim desktop, mobile, remote,
+or marketplace support. Native artifacts are valid only when the tagged
+release workflow has completed and its checksums, signature, SBOM, and
+provenance assets are present.
 
 ## Version rules
 

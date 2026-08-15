@@ -1,6 +1,6 @@
 # Pandora CLI
 
-Status: Partial in the current `2.0.0-alpha.1` development line.
+Status: Partial in the current `2.0.0-alpha.2` development line.
 
 The CLI is the primary Pandora surface. Commands return versioned JSON with
 `--json` and stable non-zero exit codes for usage, configuration, policy,

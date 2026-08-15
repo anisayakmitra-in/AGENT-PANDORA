@@ -28,7 +28,7 @@ function artifactName() {
 function releaseVersion() {
   const version = process.env.PANDORA_VERSION || packageVersion;
   if (!/^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
-    fail("PANDORA_VERSION must be a SemVer tag such as v2.0.0-alpha.1");
+    fail("PANDORA_VERSION must be a SemVer tag such as v2.0.0-alpha.2");
   }
   return version;
 }

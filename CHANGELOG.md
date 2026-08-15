@@ -2,19 +2,29 @@
 
 ## Unreleased
 
-- The npm and Bun launcher is now packaged as `pandora-agent`; the installed
-  executable remains `pandora`.
-- Configuration writes now replace the file atomically after the new contents
-  are synced, preserving the previous valid configuration on write failure.
-- Provider profiles can keep separate endpoints, models, and credential
-  environment-variable names; `provider use` selects a default and `run
-  --provider` selects one run without copying secrets into configuration.
-- Agent sessions now persist a bounded user, assistant, and tool transcript and
-  reuse it when `run --agent --session <id>` continues a task.
-- Approved agent runs can resume a pending tool call with its session and
-  approval ID; the approval is consumed once through the governed runtime.
-- Transcript records retain tool-call structure, reject stored system-message
-  overrides, and use private session-database permissions where supported.
+No changes yet.
+
+## v2.0.0-alpha.2
+
+This prerelease updates the CLI foundation without changing the governed
+execution model.
+
+### Shipped
+
+- Named provider profiles with one-run provider selection and isolated
+  credential environment-variable names.
+- Bounded agent transcripts with session resume and one-shot continuation of
+  approved pending actions.
+- Atomic private configuration writes that preserve the previous valid file on
+  replacement failure.
+- A public `pandora-agent` npm/Bun launcher that safely replaces stale cached
+  binaries on Windows and forwards to verified native artifacts.
+- GitHub Actions workflows refreshed to current action runtimes for the
+  Windows, macOS, and Linux release checks.
+
+This release remains CLI-only and is a prerelease. Native artifacts are valid
+only when the tagged release workflow and its checksums, signature, SBOM, and
+provenance assets are present.
 
 ## v2.0.0-alpha.1
 

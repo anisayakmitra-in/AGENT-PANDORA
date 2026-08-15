@@ -77,10 +77,10 @@ class InstallerContractTests(unittest.TestCase):
         self.assertEqual(
             release_url(
                 "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download",
-                "v2.0.0-alpha.1",
+                "v2.0.0-alpha.2",
                 "pandora-linux",
             ),
-            "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download/v2.0.0-alpha.1/pandora-linux",
+            "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download/v2.0.0-alpha.2/pandora-linux",
         )
         with self.assertRaises(ValueError):
             release_url("http://example.test/releases", "v2.0.0", "pandora-linux")
@@ -125,7 +125,7 @@ class InstallerContractTests(unittest.TestCase):
             machine = platform.machine().lower()
             architecture = "x86_64" if machine in {"amd64", "x86_64"} else "arm64"
             artifact_name_for_host = artifact_name(platform_name, architecture)
-            artifact = cache / "v2.0.0-alpha.1" / artifact_name_for_host
+            artifact = cache / "v2.0.0-alpha.2" / artifact_name_for_host
             artifact.parent.mkdir(parents=True)
             artifact.write_bytes(b"not a Pandora binary")
             marker = Path(f"{artifact}.sha256")
@@ -135,7 +135,7 @@ class InstallerContractTests(unittest.TestCase):
                 {
                     "PANDORA_OFFLINE": "1",
                     "PANDORA_CACHE_DIR": str(cache),
-                    "PANDORA_VERSION": "v2.0.0-alpha.1",
+                    "PANDORA_VERSION": "v2.0.0-alpha.2",
                 }
             )
             result = subprocess.run(
