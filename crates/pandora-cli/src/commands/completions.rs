@@ -30,8 +30,14 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
 
 fn powershell() -> &'static str {
     r#"Register-ArgumentCompleter -CommandName pandora -ScriptBlock {
-    param($commandName, $wordToComplete, $cursorPosition)
-    'setup','run','harness','session','inspect','skill','approval','provider','tool','orchestration','strategies','completions','migrate','update','uninstall','doctor' |
+    param($wordToComplete, $commandAst, $cursorPosition)
+    $elements = @($commandAst.CommandElements | ForEach-Object { $_.Extent.Text })
+    $commands = if ($elements.Count -gt 1 -and $elements[1] -eq 'session') {
+        'list','resume','inspect'
+    } else {
+        'setup','run','harness','session','skill','approval','provider','tool','orchestration','strategies','completions','migrate','update','uninstall','doctor'
+    }
+    $commands |
         Where-Object { $_ -like "$wordToComplete*" } |
         ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
 }"#
@@ -40,16 +46,24 @@ fn powershell() -> &'static str {
 fn bash() -> &'static str {
     r#"_pandora_complete() {
     local current="${COMP_WORDS[COMP_CWORD]}"
-    COMPREPLY=( $(compgen -W 'setup run harness session inspect skill approval provider tool orchestration strategies completions migrate update uninstall doctor' -- "$current") )
+    local previous="${COMP_WORDS[COMP_CWORD-1]}"
+    if [[ "$previous" == "session" ]]; then
+        COMPREPLY=( $(compgen -W 'list resume inspect' -- "$current") )
+    else
+        COMPREPLY=( $(compgen -W 'setup run harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor' -- "$current") )
+    fi
 }
 complete -F _pandora_complete pandora"#
 }
 
 fn zsh() -> &'static str {
     r#"#compdef pandora
-_arguments '1:command:(setup run harness session inspect skill approval provider tool orchestration strategies completions migrate update uninstall doctor)'"#
+_arguments \
+    '1:command:(setup run harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor)' \
+    '2:session command:(list resume inspect)'"#
 }
 
 fn fish() -> &'static str {
-    r#"complete -c pandora -f -a 'setup run harness session inspect skill approval provider tool orchestration strategies completions migrate update uninstall doctor'"#
+    r#"complete -c pandora -f -n '__fish_use_subcommand' -a 'setup run harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor'
+complete -c pandora -f -n '__fish_seen_subcommand_from session' -a 'list resume inspect'"#
 }

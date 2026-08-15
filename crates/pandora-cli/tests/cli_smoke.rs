@@ -1441,18 +1441,39 @@ fn completions_generate_a_bash_script() {
 #[test]
 fn completions_include_session_inspect_for_each_shell() {
     let fixture = Fixture::new();
-    for shell in ["powershell", "bash", "zsh", "fish"] {
+    let expectations = [
+        (
+            "powershell",
+            "if ($elements.Count -gt 1 -and $elements[1] -eq 'session')",
+            "'list','resume','inspect'",
+        ),
+        (
+            "bash",
+            "if [[ \"$previous\" == \"session\" ]]",
+            "compgen -W 'list resume inspect'",
+        ),
+        (
+            "zsh",
+            "'2:session command:(list resume inspect)'",
+            "session command",
+        ),
+        (
+            "fish",
+            "__fish_seen_subcommand_from session",
+            "list resume inspect",
+        ),
+    ];
+    for (shell, parent_condition, subcommands) in expectations {
         let output = fixture
             .command(&["completions", shell, "--json"])
             .output()
             .expect("completion generation should start");
         assert_success(&output);
-        assert!(
-            parse_json(&output)["script"]
-                .as_str()
-                .unwrap()
-                .contains("inspect")
-        );
+        let response = parse_json(&output);
+        let script = response["script"].as_str().unwrap();
+        assert!(!script.contains("session inspect"));
+        assert!(script.contains(parent_condition));
+        assert!(script.contains(subcommands));
     }
 }
 
