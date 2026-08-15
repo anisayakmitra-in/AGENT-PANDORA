@@ -10,15 +10,14 @@ The `ReferenceMonitor` is the sole authority that can issue effect permits. Gene
 
 ## Status
 
-The active development version is `2.0.0-alpha.1`; it is not published yet.
-Existing legacy preview tags remain immutable for compatibility. New releases
-use plain SemVer tags. See [RELEASES.md](RELEASES.md) and [platform support](docs/PLATFORMS.md)
-for the shipped scope and release requirements.
+The active prerelease is `2.0.0-alpha.1` and is CLI-only. Existing legacy
+preview tags remain immutable for compatibility. New releases use plain SemVer
+tags. See [RELEASES.md](RELEASES.md), [CHANGELOG.md](CHANGELOG.md), and
+[platform support](docs/PLATFORMS.md) for the shipped scope and release gates.
 
 ## Install a tagged CLI release
 
-No binary release is currently published. Once a plain SemVer release is
-available, use its exact tag; the installer verifies the downloaded native
+Use the exact published tag. The installer verifies the downloaded native
 binary against the release checksum manifest before installation.
 
 ```sh

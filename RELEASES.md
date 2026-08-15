@@ -3,10 +3,10 @@
 Pandora uses plain SemVer tags. Existing legacy preview tags remain immutable;
 new releases do not use product codenames.
 
-## Current development line
+## v2.0.0-alpha.1
 
-The working tree targets `v2.0.0-alpha.1`. It is not published until a tag
-and the release workflow have completed.
+This is the current CLI-only prerelease. Its shipped scope is recorded in
+[CHANGELOG.md](CHANGELOG.md).
 
 Historical preview tags are retained as immutable compatibility references and
 are not the active release line.
