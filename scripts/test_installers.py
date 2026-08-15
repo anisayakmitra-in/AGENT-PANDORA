@@ -150,6 +150,16 @@ class InstallerContractTests(unittest.TestCase):
         finally:
             shutil.rmtree(directory)
 
+    def test_npm_launcher_replaces_stale_cache_file(self) -> None:
+        test_script = ROOT / "scripts" / "test_npm_launcher.js"
+        result = subprocess.run(
+            ["node", str(test_script)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

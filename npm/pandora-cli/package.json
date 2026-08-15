@@ -8,7 +8,8 @@
     "pandora": "bin/pandora.js"
   },
   "files": [
-    "bin"
+    "bin",
+    "lib"
   ],
   "engines": {
     "node": ">=18"

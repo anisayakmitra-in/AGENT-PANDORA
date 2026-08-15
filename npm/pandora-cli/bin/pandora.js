@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { replaceFile } = require("../lib/launcher-files.js");
 
 const repository = "anisayakmitra-in/PANDORA-AGENT";
 const packageVersion = require("../package.json").version;
@@ -111,10 +112,8 @@ async function verifiedBinary() {
   if (!verify(bytes, expected)) fail("release checksum verification failed");
 
   fs.mkdirSync(path.dirname(cache), { recursive: true });
-  const temporary = `${cache}.${process.pid}.new`;
-  fs.writeFileSync(temporary, bytes, { mode: 0o755 });
-  fs.renameSync(temporary, cache);
-  fs.writeFileSync(marker, `${expected}\n`, { mode: 0o600 });
+  replaceFile(cache, bytes, 0o755);
+  replaceFile(marker, Buffer.from(`${expected}\n`), 0o600);
   if (process.platform !== "win32") fs.chmodSync(cache, 0o755);
   return cache;
 }
