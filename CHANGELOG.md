@@ -6,6 +6,8 @@
   credential, transport, timeout, rate-limit, and server failures.
 - `pandora setup --interactive` provides bounded first-run provider setup
   without ever collecting or storing an API-key value.
+- The npm/Bun launcher now converts its package version to the `v`-prefixed
+  release tag required by the native artifact host.
 
 ## v2.0.0-alpha.2
 

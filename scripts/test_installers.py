@@ -165,6 +165,42 @@ class InstallerContractTests(unittest.TestCase):
         finally:
             shutil.rmtree(directory)
 
+    def test_npm_launcher_normalizes_package_version_to_a_release_tag(self) -> None:
+        launcher = ROOT / "npm" / "pandora-cli" / "bin" / "pandora.js"
+        directory = workspace_temp_directory()
+        try:
+            cache = directory / "cache"
+            platform_name = platform.system().lower()
+            machine = platform.machine().lower()
+            architecture = "x86_64" if machine in {"amd64", "x86_64"} else "arm64"
+            artifact_name_for_host = artifact_name(platform_name, architecture)
+            artifact = cache / "v2.0.0-alpha.2" / artifact_name_for_host
+            artifact.parent.mkdir(parents=True)
+            payload = b"not an executable, but it is checksum-valid"
+            artifact.write_bytes(payload)
+            marker = Path(f"{artifact}.sha256")
+            marker.write_text(hashlib.sha256(payload).hexdigest() + "\n", encoding="utf-8")
+            environment = os.environ.copy()
+            environment.pop("PANDORA_VERSION", None)
+            environment.update(
+                {
+                    "PANDORA_OFFLINE": "1",
+                    "PANDORA_CACHE_DIR": str(cache),
+                }
+            )
+            result = subprocess.run(
+                ["node", str(launcher), "--version"],
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("semver", result.stderr.lower())
+            self.assertNotIn("checksum", result.stderr.lower())
+        finally:
+            shutil.rmtree(directory)
+
     def test_npm_launcher_replaces_stale_cache_file(self) -> None:
         test_script = ROOT / "scripts" / "test_npm_launcher.js"
         result = subprocess.run(
