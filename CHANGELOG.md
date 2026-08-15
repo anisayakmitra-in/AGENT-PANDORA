@@ -2,18 +2,21 @@
 
 ## Unreleased
 
+No changes yet.
+
+## v2.0.0-alpha.3
+
+This prerelease extends the CLI foundation without changing the governed
+execution model.
+
+### Shipped
+
+- The built-in `core-source` Source Harness appears in discovery and binds the
+  `pandora-runtime` constitutional service without adding a runnable Gene.
 - `pandora session inspect` reports scoped session metadata and bounded event
   counts without exposing stored event payloads.
-- Provider profiles can use one validated fallback profile for recoverable
-  credential, transport, timeout, rate-limit, and server failures.
-- `pandora setup --interactive` provides bounded first-run provider setup
-  without ever collecting or storing an API-key value.
-- The npm/Bun launcher now converts its package version to the `v`-prefixed
-  release tag required by the native artifact host.
-- `pandora doctor` now treats a valid local-only setup as healthy while clearly
-  reporting that model-backed tasks still need a provider.
-- The built-in `core-source` Harness now appears in discovery and binds the
-  `pandora-runtime` constitutional service without adding a runnable Gene.
+- Shell completion keeps session subcommands under `pandora session` across
+  Bash, Fish, PowerShell, and Zsh.
 
 ## v2.0.0-alpha.2
 

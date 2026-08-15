@@ -10,7 +10,7 @@ The `ReferenceMonitor` is the sole authority that can issue effect permits. Gene
 
 ## Status
 
-The active prerelease is `2.0.0-alpha.2` and is CLI-only. Existing legacy
+The active prerelease is `2.0.0-alpha.3` and is CLI-only. Existing legacy
 preview tags remain immutable for compatibility. Release tags use SemVer;
 stable major releases also carry a codename in their title, while prereleases
 use neutral `alpha`, `beta`, and `rc` suffixes. See [RELEASES.md](RELEASES.md),
@@ -35,7 +35,7 @@ irm https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/script
 To pin the current release explicitly:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.sh | PANDORA_VERSION=v2.0.0-alpha.2 sh
+curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.sh | PANDORA_VERSION=v2.0.0-alpha.3 sh
 ```
 
 ## Build

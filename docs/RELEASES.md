@@ -5,7 +5,7 @@ product. Release tags are immutable and are never force-pushed or reused.
 
 ## Current release
 
-`v2.0.0-alpha.2` is the current public prerelease. It is suitable for testing
+`v2.0.0-alpha.3` is the current public prerelease. It is suitable for testing
 the CLI contract, not a stable production guarantee. The release is CLI-only
 and supports native Windows x64, Linux x64, and macOS Intel and Apple Silicon
 artifacts.
@@ -14,13 +14,14 @@ The release includes:
 
 - setup, doctor, provider profiles, and configuration migration;
 - read-only runs, bounded agent runs, sessions, and resumable transcripts;
+- the built-in `core-source` Source Harness and session inspection;
 - the governed Coding Domain Harness;
 - Skills, Tools, approvals, orchestration roles, and strategy discovery;
 - verified update, rollback, uninstall, shell completion, and npm/Bun launchers.
 
-The current `main` branch also contains the built-in `core-source` Source
-Harness. That change is unreleased until a new tag and release assets are
-published.
+This release remains CLI-only and is a prerelease. Native artifacts are valid
+only when the tagged release workflow and its checksums, signature, SBOM, and
+provenance assets are present.
 
 ## Versioning
 
