@@ -11,9 +11,11 @@ The `ReferenceMonitor` is the sole authority that can issue effect permits. Gene
 ## Status
 
 The active prerelease is `2.0.0-alpha.2` and is CLI-only. Existing legacy
-preview tags remain immutable for compatibility. New releases use plain SemVer
-tags. See [RELEASES.md](RELEASES.md), [CHANGELOG.md](CHANGELOG.md), and
-[platform support](docs/PLATFORMS.md) for the shipped scope and release gates.
+preview tags remain immutable for compatibility. Release tags use SemVer;
+stable major releases also carry a codename in their title, while prereleases
+use neutral `alpha`, `beta`, and `rc` suffixes. See [RELEASES.md](RELEASES.md),
+[CHANGELOG.md](CHANGELOG.md), and [platform support](docs/PLATFORMS.md) for the
+shipped scope and release gates.
 
 ## Install a tagged CLI release
 

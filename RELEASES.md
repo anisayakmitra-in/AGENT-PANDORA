@@ -1,7 +1,12 @@
 # Release policy
 
-Pandora uses plain SemVer tags. Existing legacy preview tags remain immutable;
-new releases do not use product codenames.
+Pandora uses SemVer tags. A stable major release also receives a product
+codename in its title and notes; the codename does not change the tag. For
+example, the stable release is titled `Anubis v2.0.0` and uses the tag
+`v2.0.0`. Prereleases use neutral SemVer suffixes such as `v2.0.0-alpha.1`,
+`v2.0.0-beta.1`, and `v2.0.0-rc.1`.
+
+Existing legacy preview tags remain immutable.
 
 The older `v2.0.0-anubis.1`, `v2.0.0-anubis.2`, and `v2.0.0-anubis.3` tags are
 archived previews from an earlier naming scheme. They remain available for
@@ -45,7 +50,7 @@ provenance assets are present.
 
 - Patch releases (`v2.0.x`) fix regressions without changing the public contract.
 - Minor releases (`v2.x.0`) add compatible capabilities within the current release line.
-- Major releases change the public contract and increment the major version.
+- Stable major releases change the public contract, increment the major version, and receive a codename in the release title.
 - Prereleases use `-alpha.N`, `-beta.N`, or `-rc.N` suffixes.
 - Release tags are immutable. Each release must publish notes, checksums, an SBOM, supported-platform results, and rollback instructions.
 - A release is not considered stable until local and GitHub checks pass on Windows, macOS, and Linux.
