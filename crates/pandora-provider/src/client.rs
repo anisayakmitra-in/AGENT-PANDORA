@@ -80,6 +80,17 @@ pub enum MessageRole {
 pub struct ChatMessage {
     role: MessageRole,
     content: String,
+    #[serde(skip)]
+    tool_calls: Vec<ChatToolCall>,
+    #[serde(skip)]
+    tool_call_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ChatToolCall {
+    id: String,
+    name: String,
+    arguments: String,
 }
 
 impl ChatMessage {
@@ -95,7 +106,12 @@ impl ChatMessage {
                 "message content exceeds the size limit".to_owned(),
             ));
         }
-        Ok(Self { role, content })
+        Ok(Self {
+            role,
+            content,
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+        })
     }
 
     pub fn system(content: impl Into<String>) -> Result<Self, ProviderError> {
@@ -112,6 +128,48 @@ impl ChatMessage {
 
     pub fn tool(content: impl Into<String>) -> Result<Self, ProviderError> {
         Self::new(MessageRole::Tool, content)
+    }
+
+    pub fn assistant_tool_calls(tool_calls: &[ToolCall]) -> Result<Self, ProviderError> {
+        if tool_calls.is_empty() {
+            return Err(ProviderError::InvalidRequest(
+                "assistant tool-call message cannot be empty".to_owned(),
+            ));
+        }
+        let tool_calls = tool_calls
+            .iter()
+            .map(|call| {
+                let arguments = serde_json::to_string(call.arguments()).map_err(|_| {
+                    ProviderError::InvalidRequest("tool arguments could not be encoded".to_owned())
+                })?;
+                Ok(ChatToolCall {
+                    id: call.id().to_owned(),
+                    name: call.name().to_owned(),
+                    arguments,
+                })
+            })
+            .collect::<Result<Vec<_>, ProviderError>>()?;
+        Ok(Self {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            tool_calls,
+            tool_call_id: None,
+        })
+    }
+
+    pub fn tool_result(
+        call_id: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Result<Self, ProviderError> {
+        let call_id = call_id.into();
+        if call_id.trim().is_empty() || call_id.chars().any(char::is_control) {
+            return Err(ProviderError::InvalidRequest(
+                "tool call ID is invalid".to_owned(),
+            ));
+        }
+        let mut message = Self::tool(content)?;
+        message.tool_call_id = Some(call_id);
+        Ok(message)
     }
 
     pub fn role(&self) -> MessageRole {
@@ -563,7 +621,7 @@ fn read_limited(mut response: Response) -> Result<Vec<u8>, ProviderError> {
 #[derive(Serialize)]
 struct OpenAiRequest {
     model: String,
-    messages: Vec<ChatMessage>,
+    messages: Vec<OpenAiRequestMessage>,
     tools: Vec<OpenAiTool>,
     max_tokens: u32,
 }
@@ -572,7 +630,11 @@ impl OpenAiRequest {
     fn from_request(request: &ModelRequest) -> Self {
         Self {
             model: request.model_id().as_str().to_owned(),
-            messages: request.messages().to_vec(),
+            messages: request
+                .messages()
+                .iter()
+                .map(OpenAiRequestMessage::from_message)
+                .collect(),
             tools: request
                 .tools()
                 .iter()
@@ -581,6 +643,56 @@ impl OpenAiRequest {
             max_tokens: request.max_output_tokens(),
         }
     }
+}
+
+#[derive(Serialize)]
+struct OpenAiRequestMessage {
+    role: MessageRole,
+    content: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tool_calls: Vec<OpenAiRequestToolCall>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<String>,
+}
+
+impl OpenAiRequestMessage {
+    fn from_message(message: &ChatMessage) -> Self {
+        Self {
+            role: message.role,
+            content: if message.tool_calls.is_empty() {
+                Some(message.content.clone())
+            } else {
+                None
+            },
+            tool_calls: message
+                .tool_calls
+                .iter()
+                .map(|call| OpenAiRequestToolCall {
+                    id: call.id.clone(),
+                    kind: "function",
+                    function: OpenAiRequestFunction {
+                        name: call.name.clone(),
+                        arguments: call.arguments.clone(),
+                    },
+                })
+                .collect(),
+            tool_call_id: message.tool_call_id.clone(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct OpenAiRequestToolCall {
+    id: String,
+    #[serde(rename = "type")]
+    kind: &'static str,
+    function: OpenAiRequestFunction,
+}
+
+#[derive(Serialize)]
+struct OpenAiRequestFunction {
+    name: String,
+    arguments: String,
 }
 
 #[derive(Serialize)]
@@ -761,6 +873,49 @@ mod tests {
             }
         );
         assert!(!error.to_string().contains("not-json"));
+    }
+
+    #[test]
+    fn tool_call_continuation_serializes_assistant_and_tool_messages() {
+        let response = parse_response(
+            br#"{
+                "choices":[{"message":{"content":null,"tool_calls":[
+                    {"id":"call-1","type":"function","function":{"name":"workspace.read","arguments":"{\"path\":\"README.md\"}"}}
+                ]}}]
+            }"#,
+        )
+        .unwrap();
+        let call = &response.tool_calls()[0];
+        let assistant = ChatMessage::assistant_tool_calls(response.tool_calls()).unwrap();
+        let tool = ChatMessage::tool_result(call.id(), "fixture").unwrap();
+        let manifest = manifest();
+        let request = ModelRequest::new(
+            manifest.id().clone(),
+            manifest.default_model().clone(),
+            vec![ChatMessage::user("read README").unwrap(), assistant, tool],
+        )
+        .unwrap();
+
+        let body = serde_json::to_value(OpenAiRequest::from_request(&request)).unwrap();
+        assert_eq!(
+            body["messages"][1],
+            json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {
+                        "name": "workspace.read",
+                        "arguments": "{\"path\":\"README.md\"}"
+                    }
+                }]
+            })
+        );
+        assert_eq!(
+            body["messages"][2],
+            json!({"role": "tool", "content": "fixture", "tool_call_id": "call-1"})
+        );
     }
 
     #[test]
