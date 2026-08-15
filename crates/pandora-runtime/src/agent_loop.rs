@@ -426,11 +426,7 @@ impl AgentLoop {
     ) -> Result<ToolExecution, AgentLoopError> {
         let intent = match self.tools.prepare_invocation(call.name(), call.arguments()) {
             Ok(invocation) => invocation.task().clone(),
-            Err(_) => {
-                return Ok(ToolExecution::Output(
-                    "tool error: unsupported tool".to_owned(),
-                ));
-            }
+            Err(error) => return Ok(ToolExecution::Output(error.agent_message())),
         };
         let summary = match approval {
             Some(approval) => controller.run_agent_with_approval(
@@ -845,6 +841,11 @@ mod tests {
         assert_eq!(
             std::fs::read(fixture.path.join("README.md")).unwrap(),
             b"fixture\n"
+        );
+        let requests = provider.requests();
+        assert_eq!(
+            requests[1].last().unwrap().content(),
+            "tool error: invalid arguments: unknown argument 'extra'"
         );
     }
 

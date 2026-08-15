@@ -19,6 +19,31 @@ pub enum ToolError {
     Request(RequestError),
 }
 
+impl ToolError {
+    pub(crate) fn agent_message(&self) -> String {
+        match self {
+            Self::UnknownTool(tool_id) => {
+                format!("tool error: unknown tool '{}'", bounded_text(tool_id, 128))
+            }
+            Self::UnsupportedTool(tool_id) => {
+                format!(
+                    "tool error: unsupported tool '{}'",
+                    bounded_text(tool_id, 128)
+                )
+            }
+            Self::InvalidArguments(reason) => format!(
+                "tool error: invalid arguments: {}",
+                bounded_text(reason, 256)
+            ),
+            Self::InvalidSchema(_) => "tool error: tool schema is invalid".to_owned(),
+            Self::DuplicateTool => "tool error: tool registration conflict".to_owned(),
+            Self::IdempotencyConflict => "tool error: idempotency conflict".to_owned(),
+            Self::InvalidIdempotencyKey => "tool error: invalid idempotency key".to_owned(),
+            Self::Request(_) => "tool error: tool request was rejected".to_owned(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ToolDefinition {
     id: GeneId,
@@ -519,6 +544,24 @@ fn validate_text(field: &'static str, value: String) -> Result<String, ToolError
         return Err(ToolError::InvalidSchema(format!("{field} is invalid")));
     }
     Ok(value)
+}
+
+fn bounded_text(value: &str, max_chars: usize) -> String {
+    let mut result = value.chars().take(max_chars + 1).collect::<String>();
+    if result.chars().count() > max_chars {
+        result.pop();
+        result.push('…');
+    }
+    result
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
