@@ -25,6 +25,7 @@ fn cli_help_is_successful_and_lists_the_primary_commands() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("usage: pandora"));
     assert!(stdout.contains("run"));
+    assert!(stdout.contains("session list|resume|inspect <id>"));
     assert!(stdout.contains("doctor"));
     assert!(output.stderr.is_empty());
 }

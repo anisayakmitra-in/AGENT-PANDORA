@@ -6,10 +6,11 @@ use serde_json::json;
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args
         .first()
-        .ok_or_else(|| CliError::usage("session requires 'list' or 'resume'"))?;
+        .ok_or_else(|| CliError::usage("session requires 'list', 'resume', or 'inspect'"))?;
     match subcommand.as_str() {
         "list" => list(&args[1..]),
         "resume" => resume(&args[1..]),
+        "inspect" => inspect(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown session command '{unknown}'"
         ))),
@@ -73,6 +74,46 @@ fn resume(args: &[String]) -> Result<CommandResult, CliError> {
         }),
         format!(
             "Resumed {} with {event_count} event(s)",
+            snapshot.session().id()
+        ),
+    ))
+}
+
+fn inspect(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace"])?;
+    if parsed.positionals.len() != 1 {
+        return Err(CliError::usage(
+            "session inspect requires exactly one session ID",
+        ));
+    }
+    let session_id = SessionId::new(parsed.positionals[0].clone())
+        .map_err(|_| CliError::usage("session ID is invalid"))?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+    let (principal, tenant, workspace) = session_scope();
+    let snapshot = store
+        .resume(&session_id, &principal, &tenant, &workspace)
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let last_event_type = snapshot.events().last().map(|event| event.event_type());
+    let event_count = snapshot.events().len();
+    Ok(success(
+        "session inspect",
+        json!({
+            "session_id": snapshot.session().id(),
+            "metadata": {
+                "principal_id": snapshot.session().principal_id(),
+                "tenant_id": snapshot.session().tenant_id(),
+                "workspace_id": snapshot.session().workspace_id(),
+                "created_at": snapshot.session().created_at().as_unix_seconds(),
+            },
+            "event_count": event_count,
+            "agent_message_count": snapshot.agent_messages().len(),
+            "last_event_timestamp": null,
+            "last_event_type": last_event_type,
+        }),
+        format!(
+            "Inspected {} with {event_count} event(s)",
             snapshot.session().id()
         ),
     ))

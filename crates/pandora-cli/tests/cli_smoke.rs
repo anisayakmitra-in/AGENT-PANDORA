@@ -390,6 +390,55 @@ fn session_resume_returns_persisted_events() {
 }
 
 #[test]
+fn session_inspect_returns_metadata_without_event_payloads() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let run = fixture
+        .command(&["run", "read:README.md", "--json"])
+        .output()
+        .expect("run should start");
+    assert_success(&run);
+    let session_id = parse_json(&run)["session_id"]
+        .as_str()
+        .expect("run should return a session")
+        .to_owned();
+
+    let output = fixture
+        .command(&["session", "inspect", &session_id, "--json"])
+        .output()
+        .expect("inspect should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["version"], "0.1");
+    assert_eq!(response["command"], "session inspect");
+    assert_eq!(response["session_id"], session_id);
+    assert_eq!(response["metadata"]["principal_id"], "local-user");
+    assert_eq!(response["metadata"]["tenant_id"], "local-tenant");
+    assert_eq!(response["metadata"]["workspace_id"], "local-workspace");
+    assert_eq!(response["event_count"], 4);
+    assert_eq!(response["agent_message_count"], 0);
+    assert_eq!(response["last_event_type"], "effect_completed");
+    assert!(response["last_event_timestamp"].is_null());
+    assert!(response.get("events").is_none());
+}
+
+#[test]
+fn session_inspect_missing_session_preserves_resume_error() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    let output = fixture
+        .command(&["session", "inspect", "missing-session", "--json"])
+        .output()
+        .expect("inspect should start");
+    assert_eq!(output.status.code(), Some(60));
+    let response = parse_json(&output);
+    assert_eq!(response["version"], "0.1");
+    assert_eq!(response["code"], "internal_error");
+    assert_eq!(response["message"], "session was not found");
+}
+
+#[test]
 fn provider_set_and_list_use_the_public_configuration_api() {
     let fixture = Fixture::new();
     let output = fixture
@@ -1387,6 +1436,24 @@ fn completions_generate_a_bash_script() {
     assert_eq!(response["command"], "completions bash");
     assert!(response["script"].as_str().unwrap().contains("pandora"));
     assert!(response["script"].as_str().unwrap().contains("skill"));
+}
+
+#[test]
+fn completions_include_session_inspect_for_each_shell() {
+    let fixture = Fixture::new();
+    for shell in ["powershell", "bash", "zsh", "fish"] {
+        let output = fixture
+            .command(&["completions", shell, "--json"])
+            .output()
+            .expect("completion generation should start");
+        assert_success(&output);
+        assert!(
+            parse_json(&output)["script"]
+                .as_str()
+                .unwrap()
+                .contains("inspect")
+        );
+    }
 }
 
 #[test]

@@ -242,7 +242,7 @@ commands:
   setup [--interactive] [--provider-url <url>] [--model <model>]
   run [--provider <name>] [--agent] [--max-turns <n>] [--max-tools <n>] [--harness <id>] [--gene <id>] [--plan] [--model <model>] [--approval <id>] <task>
   harness list|inspect|run
-  session list|resume <id>
+  session list|resume|inspect <id>
   skill list|inspect|enable|disable|suspend|remove|restore <id>
   tool list|inspect <id>
   approval list|inspect|resolve
