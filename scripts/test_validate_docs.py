@@ -18,6 +18,25 @@ class ValidateDocumentationTests(unittest.TestCase):
 
         self.assertEqual(findings, ["docs/CLI.md: contains unfinished documentation marker"])
 
+    def test_rejects_missing_local_markdown_link(self) -> None:
+        findings = validate_text(
+            Path("README.md"),
+            "[missing](docs/does-not-exist.md)\n",
+        )
+
+        self.assertEqual(
+            findings,
+            ["README.md: local link does not exist: docs/does-not-exist.md"],
+        )
+
+    def test_accepts_external_and_anchor_links(self) -> None:
+        findings = validate_text(
+            Path("README.md"),
+            "[website](https://example.com) [section](#setup)\n",
+        )
+
+        self.assertEqual(findings, [])
+
 
 if __name__ == "__main__":
     unittest.main()
