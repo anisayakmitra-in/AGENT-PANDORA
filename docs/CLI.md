@@ -108,7 +108,9 @@ the same session, provider, AgentLoop, approval, and effect-policy path as
 `run --agent`; it does not add a second runtime. Enter submits a task, Up and
 Down browse task history, `/help` lists commands, `/session` shows the active
 session, `/clear` clears the transcript, `/approve` approves and resumes the
-pending task, `/deny` denies it, and Escape or Ctrl-C closes the client.
+pending task, `/deny` denies it, and Escape or Ctrl-C closes the client. The
+in-memory transcript and task history are bounded; the session store remains
+the source for later resume.
 The TUI requires a real terminal and rejects `--json` and positional tasks.
 `run --plan` sends the request to the active or explicitly selected provider as a bounded,
 tool-free planning call. Only a schema-validated task intent is passed to the

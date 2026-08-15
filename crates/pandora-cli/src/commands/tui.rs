@@ -12,6 +12,8 @@ use std::io::{self, IsTerminal, Stdout, Write};
 use std::time::Duration;
 
 const MAX_DISPLAY_CHARS: usize = 64 * 1024;
+const MAX_TUI_MESSAGES: usize = 512;
+const MAX_TUI_HISTORY: usize = 100;
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
@@ -209,27 +211,32 @@ impl App {
         }
         match task.as_str() {
             "/exit" | "/quit" => {
-                self.messages.push("Closing...".to_owned());
+                self.push_message("Closing...");
                 return true;
             }
-            "/help" => self.messages.extend([
-                "/help       show TUI commands".to_owned(),
-                "/session    show the active session ID".to_owned(),
-                "/clear      clear the transcript".to_owned(),
-                "/approve    approve and resume the pending task".to_owned(),
-                "/deny       deny the pending task".to_owned(),
-                "/exit       close the TUI".to_owned(),
-            ]),
-            "/session" => self.messages.push(match self.session_id.as_deref() {
-                Some(session_id) => format!("session: {session_id}"),
-                None => "session: not started".to_owned(),
-            }),
+            "/help" => {
+                for message in [
+                    "/help       show TUI commands",
+                    "/session    show the active session ID",
+                    "/clear      clear the transcript",
+                    "/approve    approve and resume the pending task",
+                    "/deny       deny the pending task",
+                    "/exit       close the TUI",
+                ] {
+                    self.push_message(message);
+                }
+            }
+            "/session" => {
+                self.push_message(match self.session_id.as_deref() {
+                    Some(session_id) => format!("session: {session_id}"),
+                    None => "session: not started".to_owned(),
+                });
+            }
             "/clear" => self.messages.clear(),
             "/approve" => self.resolve_pending(true),
             "/deny" => self.resolve_pending(false),
             value if value.starts_with("/approve ") || value.starts_with("/deny ") => {
-                self.messages
-                    .push("usage> /approve and /deny do not accept arguments".to_owned());
+                self.push_message("usage> /approve and /deny do not accept arguments");
             }
             _ => self.run_task(task),
         }
@@ -242,7 +249,7 @@ impl App {
             && !line.trim().starts_with("/deny ")
             && self.history.last().map(String::as_str) != Some(line.trim())
         {
-            self.history.push(line.trim().to_owned());
+            self.remember_history(line.trim());
         }
         false
     }
@@ -253,13 +260,11 @@ impl App {
 
     fn run_task_with_approval(&mut self, task: String, approval_id: Option<&str>) {
         if approval_id.is_none() && self.pending.is_some() {
-            self.messages
-                .push("approval> resolve the pending approval first".to_owned());
+            self.push_message("approval> resolve the pending approval first");
             return;
         }
-        self.messages.push(format!("you> {task}"));
-        let message_index = self.messages.len();
-        self.messages.push("pandora> working...".to_owned());
+        self.push_message(format!("you> {task}"));
+        let message_index = self.push_message("pandora> working...");
         let args = self.run_args(&task, approval_id);
         match super::run::execute(&args) {
             Ok(result) => {
@@ -289,25 +294,38 @@ impl App {
 
     fn resolve_pending(&mut self, allow: bool) {
         let Some(pending) = self.pending.take() else {
-            self.messages
-                .push("approval> no pending approval".to_owned());
+            self.push_message("approval> no pending approval");
             return;
         };
         let approval_args = self.approval_args(&pending.approval_id, allow);
         match super::approval::execute(&approval_args) {
             Ok(result) => {
-                self.messages
-                    .push(format!("approval> {}", clean_text(&result.human)));
+                self.push_message(format!("approval> {}", result.human));
                 if allow {
                     self.run_task_with_approval(pending.task, Some(&pending.approval_id));
                 }
             }
             Err(error) => {
-                self.messages
-                    .push(format!("error> {}", clean_text(&error.message)));
+                self.push_message(format!("error> {}", error.message));
                 self.pending = Some(pending);
             }
         }
+    }
+
+    fn push_message(&mut self, message: impl Into<String>) -> usize {
+        self.messages.push(clean_text(&message.into()));
+        let excess = self.messages.len().saturating_sub(MAX_TUI_MESSAGES);
+        if excess > 0 {
+            self.messages.drain(..excess);
+        }
+        self.messages.len().saturating_sub(1)
+    }
+
+    fn remember_history(&mut self, line: &str) {
+        if self.history.len() >= MAX_TUI_HISTORY {
+            self.history.remove(0);
+        }
+        self.history.push(line.to_owned());
     }
 
     fn approval_args(&self, approval_id: &str, allow: bool) -> Vec<String> {
@@ -498,7 +516,7 @@ fn terminal_error(error: impl std::fmt::Display) -> CliError {
 
 #[cfg(test)]
 mod tests {
-    use super::{App, visible_input, wrap_message};
+    use super::{App, MAX_TUI_HISTORY, MAX_TUI_MESSAGES, visible_input, wrap_message};
     use crate::commands::ParsedArgs;
     use std::collections::BTreeMap;
 
@@ -564,5 +582,29 @@ mod tests {
                 "patch:README.md:updated"
             ]
         );
+    }
+
+    #[test]
+    fn transcript_keeps_only_the_newest_bounded_messages() {
+        let mut app = app();
+        for index in 0..(MAX_TUI_MESSAGES + 2) {
+            app.push_message(format!("message-{index}"));
+        }
+
+        assert_eq!(app.messages.len(), MAX_TUI_MESSAGES);
+        assert_eq!(app.messages.first().map(String::as_str), Some("message-2"));
+        assert_eq!(app.messages.last().map(String::as_str), Some("message-513"));
+    }
+
+    #[test]
+    fn history_keeps_only_the_newest_bounded_tasks() {
+        let mut app = app();
+        for index in 0..(MAX_TUI_HISTORY + 2) {
+            app.remember_history(&format!("task-{index}"));
+        }
+
+        assert_eq!(app.history.len(), MAX_TUI_HISTORY);
+        assert_eq!(app.history.first().map(String::as_str), Some("task-2"));
+        assert_eq!(app.history.last().map(String::as_str), Some("task-101"));
     }
 }

@@ -6,6 +6,8 @@
   provider can repair the call without exposing raw argument values.
 - The terminal TUI can approve or deny a pending effect and resume the exact
   approved task through the existing approval and execution path.
+- The TUI bounds its in-memory transcript and task history for long-running
+  terminal sessions.
 
 ## v2.0.0-alpha.6
 
