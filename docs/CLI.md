@@ -18,10 +18,16 @@ the help text needs to be consumed by an installer or another tool.
 
 ```text
 pandora setup --provider-url https://provider.example/v1 --model gpt-5
+pandora setup --interactive
 pandora doctor --json
 pandora provider list --json
 pandora provider test --json
 ```
+
+`setup --interactive` asks for a provider URL, model, and API-key environment
+variable name. Leaving the URL empty creates a local-only configuration. It
+never asks for or stores the API-key value; press Enter to accept the displayed
+default. The existing flag-based form remains suitable for scripts and CI.
 
 `doctor` reports the platform, CLI version, configuration path, storage path,
 workspace path, policy mode, provider configuration state, and remediation.

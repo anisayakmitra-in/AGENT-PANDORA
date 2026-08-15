@@ -126,7 +126,7 @@ pub(crate) fn parse_options(args: &[String], allowed: &[&str]) -> Result<ParsedA
 fn is_flag(name: &str) -> bool {
     matches!(
         name,
-        "agent" | "allow" | "deny" | "dry-run" | "plan" | "rollback" | "yes"
+        "agent" | "allow" | "deny" | "dry-run" | "interactive" | "plan" | "rollback" | "yes"
     )
 }
 
@@ -239,7 +239,7 @@ fn usage() -> &'static str {
 
 commands:
   help (or --help)
-  setup
+  setup [--interactive] [--provider-url <url>] [--model <model>]
   run [--provider <name>] [--agent] [--max-turns <n>] [--max-tools <n>] [--harness <id>] [--gene <id>] [--plan] [--model <model>] [--approval <id>] <task>
   harness list|inspect|run
   session list|resume <id>

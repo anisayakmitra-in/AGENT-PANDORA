@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -94,6 +94,39 @@ fn setup_and_read_only_run_return_versioned_json() {
             .unwrap_or_default()
             .is_empty()
     );
+}
+
+#[test]
+fn interactive_setup_configures_a_provider_without_echoing_secrets() {
+    let fixture = Fixture::new();
+    let mut command = fixture.command(&["setup", "--interactive", "--json"]);
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().expect("interactive setup should start");
+    let mut input = child
+        .stdin
+        .take()
+        .expect("interactive setup should accept input");
+    input
+        .write_all(b"http://127.0.0.1:4317/v1\nfixture-model\nPANDORA_FIXTURE_KEY\n")
+        .expect("interactive answers should be written");
+    drop(input);
+
+    let output = child
+        .wait_with_output()
+        .expect("interactive setup should finish");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["command"], "setup");
+    assert_eq!(response["provider_configured"], true);
+    assert_eq!(response["provider_model"], "fixture-model");
+    assert_eq!(response["api_key_env"], "PANDORA_FIXTURE_KEY");
+
+    let config = fs::read_to_string(&fixture.config).expect("interactive config should exist");
+    assert!(config.contains("PANDORA_FIXTURE_KEY"));
+    assert!(!config.contains("secret"));
 }
 
 #[test]

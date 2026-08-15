@@ -47,4 +47,8 @@ cargo test --workspace --lib --tests
 cargo run -p pandora-cli -- --version
 ```
 
+For first-time local setup, use `pandora setup --interactive`. It records only
+provider endpoint metadata and the name of the environment variable that holds
+the credential; the credential itself stays outside Pandora configuration.
+
 The supported product target is the native CLI on Windows, macOS, and Linux. Desktop, remote execution, mobile, and package marketplace integration remain gated until their release tests and security boundaries exist.
