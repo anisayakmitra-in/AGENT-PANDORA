@@ -1,5 +1,6 @@
 use crate::gene::Gene;
 use crate::ids::{GeneId, HarnessId, IdError};
+use std::collections::BTreeSet;
 use std::fmt;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -25,6 +26,11 @@ pub enum ManifestError {
     EmptyField(&'static str),
     MissingConstitutionalService,
     UnexpectedConstitutionalService,
+    MissingMetaComposition,
+    UnexpectedMetaComposition,
+    EmptyMetaDomainHarnesses,
+    DuplicateMetaDomainHarness,
+    InvalidMetaHandoffLimit,
 }
 
 impl fmt::Display for ManifestError {
@@ -37,6 +43,21 @@ impl fmt::Display for ManifestError {
             }
             Self::UnexpectedConstitutionalService => {
                 formatter.write_str("only source harnesses may bind a constitutional service")
+            }
+            Self::MissingMetaComposition => {
+                formatter.write_str("meta harness requires a composition declaration")
+            }
+            Self::UnexpectedMetaComposition => {
+                formatter.write_str("only meta harnesses may declare a composition")
+            }
+            Self::EmptyMetaDomainHarnesses => {
+                formatter.write_str("meta composition requires at least one domain harness")
+            }
+            Self::DuplicateMetaDomainHarness => {
+                formatter.write_str("meta composition domain harnesses must be unique")
+            }
+            Self::InvalidMetaHandoffLimit => {
+                formatter.write_str("meta composition handoff limit must be greater than zero")
             }
         }
     }
@@ -51,6 +72,45 @@ impl From<IdError> for ManifestError {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MetaComposition {
+    allowed_domains: Vec<HarnessId>,
+    max_handoffs: u32,
+}
+
+impl MetaComposition {
+    pub fn new(allowed_domains: Vec<HarnessId>, max_handoffs: u32) -> Result<Self, ManifestError> {
+        if allowed_domains.is_empty() {
+            return Err(ManifestError::EmptyMetaDomainHarnesses);
+        }
+        if max_handoffs == 0 {
+            return Err(ManifestError::InvalidMetaHandoffLimit);
+        }
+
+        let mut unique = BTreeSet::new();
+        if allowed_domains.iter().any(|id| !unique.insert(id)) {
+            return Err(ManifestError::DuplicateMetaDomainHarness);
+        }
+
+        Ok(Self {
+            allowed_domains,
+            max_handoffs,
+        })
+    }
+
+    pub fn allowed_domains(&self) -> &[HarnessId] {
+        &self.allowed_domains
+    }
+
+    pub fn allows_domain(&self, harness_id: &HarnessId) -> bool {
+        self.allowed_domains.iter().any(|id| id == harness_id)
+    }
+
+    pub const fn max_handoffs(&self) -> u32 {
+        self.max_handoffs
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HarnessManifest {
     id: HarnessId,
     version: String,
@@ -58,6 +118,7 @@ pub struct HarnessManifest {
     kind: HarnessKind,
     constitutional_service: Option<String>,
     owned_genes: Vec<GeneId>,
+    meta_composition: Option<MetaComposition>,
 }
 
 impl HarnessManifest {
@@ -68,6 +129,44 @@ impl HarnessManifest {
         kind: HarnessKind,
         constitutional_service: Option<String>,
         owned_genes: Vec<GeneId>,
+    ) -> Result<Self, ManifestError> {
+        Self::build(
+            id,
+            version,
+            name,
+            kind,
+            constitutional_service,
+            owned_genes,
+            None,
+        )
+    }
+
+    pub fn new_meta(
+        id: impl Into<String>,
+        version: impl Into<String>,
+        name: impl Into<String>,
+        composition: MetaComposition,
+        owned_genes: Vec<GeneId>,
+    ) -> Result<Self, ManifestError> {
+        Self::build(
+            id,
+            version,
+            name,
+            HarnessKind::Meta,
+            None,
+            owned_genes,
+            Some(composition),
+        )
+    }
+
+    fn build(
+        id: impl Into<String>,
+        version: impl Into<String>,
+        name: impl Into<String>,
+        kind: HarnessKind,
+        constitutional_service: Option<String>,
+        owned_genes: Vec<GeneId>,
+        meta_composition: Option<MetaComposition>,
     ) -> Result<Self, ManifestError> {
         let id = HarnessId::new(id)?;
         let version = version.into();
@@ -84,6 +183,12 @@ impl HarnessManifest {
             }
             _ => {}
         }
+        if kind == HarnessKind::Meta && meta_composition.is_none() {
+            return Err(ManifestError::MissingMetaComposition);
+        }
+        if kind != HarnessKind::Meta && meta_composition.is_some() {
+            return Err(ManifestError::UnexpectedMetaComposition);
+        }
 
         Ok(Self {
             id,
@@ -92,6 +197,7 @@ impl HarnessManifest {
             kind,
             constitutional_service,
             owned_genes,
+            meta_composition,
         })
     }
 
@@ -117,6 +223,10 @@ impl HarnessManifest {
 
     pub fn owned_genes(&self) -> &[GeneId] {
         &self.owned_genes
+    }
+
+    pub fn meta_composition(&self) -> Option<&MetaComposition> {
+        self.meta_composition.as_ref()
     }
 }
 
@@ -160,4 +270,53 @@ fn validate_text(field: &'static str, value: &str) -> Result<(), ManifestError> 
         return Err(ManifestError::EmptyField(field));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HarnessKind, HarnessManifest, ManifestError, MetaComposition};
+    use crate::{GeneId, HarnessId};
+
+    #[test]
+    fn meta_harness_requires_an_explicit_composition() {
+        let result = HarnessManifest::new(
+            "coordination-meta",
+            "0.1.0",
+            "Coordination Meta",
+            HarnessKind::Meta,
+            None,
+            Vec::new(),
+        );
+
+        assert_eq!(result, Err(ManifestError::MissingMetaComposition));
+    }
+
+    #[test]
+    fn meta_composition_rejects_duplicate_domain_members() {
+        let domain = HarnessId::new("coding-domain").unwrap();
+
+        assert_eq!(
+            MetaComposition::new(vec![domain.clone(), domain], 8),
+            Err(ManifestError::DuplicateMetaDomainHarness)
+        );
+    }
+
+    #[test]
+    fn meta_manifest_exposes_only_declared_domain_members() {
+        let domain = HarnessId::new("coding-domain").unwrap();
+        let composition = MetaComposition::new(vec![domain.clone()], 8).unwrap();
+        let manifest = HarnessManifest::new_meta(
+            "coordination-meta",
+            "0.1.0",
+            "Coordination Meta",
+            composition,
+            Vec::<GeneId>::new(),
+        )
+        .unwrap();
+
+        let meta = manifest.meta_composition().expect("meta composition");
+        assert!(meta.allows_domain(&domain));
+        assert!(!meta.allows_domain(&HarnessId::new("research-domain").unwrap()));
+        assert_eq!(meta.max_handoffs(), 8);
+    }
 }

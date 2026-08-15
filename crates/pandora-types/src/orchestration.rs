@@ -41,6 +41,8 @@ pub enum OrchestrationContractError {
     UnknownHandoffRole(RoleId),
     InvalidHandoff,
     UncoordinatedCrossDomain { from: HarnessId, to: HarnessId },
+    MetaDomainNotAllowed { harness_id: HarnessId },
+    MetaHandoffLimitExceeded { limit: u32 },
     TooManyHandoffs,
 }
 
@@ -60,6 +62,15 @@ impl fmt::Display for OrchestrationContractError {
                 formatter,
                 "cross-domain handoff from {from} to {to} requires Meta Harness coordination"
             ),
+            Self::MetaDomainNotAllowed { harness_id } => {
+                write!(
+                    formatter,
+                    "Meta Harness does not allow Domain Harness {harness_id}"
+                )
+            }
+            Self::MetaHandoffLimitExceeded { limit } => {
+                write!(formatter, "Meta Harness allows at most {limit} handoffs")
+            }
             Self::TooManyHandoffs => formatter.write_str("plan exceeds its handoff limit"),
         }
     }

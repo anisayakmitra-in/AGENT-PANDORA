@@ -24,6 +24,14 @@ and inspectable, but it is not a user-runnable task target. Source Harnesses
 augment one constitutional service; they do not provide a second execution
 hierarchy.
 
+The built-in `coordination-meta` Meta Harness declares the Domain Harnesses it
+may coordinate and its handoff ceiling. It owns no Genes. The orchestration
+engine checks those limits before registering a plan, so a plan cannot introduce
+an undeclared Domain Harness through a Meta Harness.
+
+Meta Harnesses coordinate existing Domain Harnesses. They do not augment a
+constitutional service, execute effects, install packages, or grant permits.
+
 ## Package kinds
 
 The external vocabulary is closed and uses these exact values:
@@ -31,6 +39,10 @@ The external vocabulary is closed and uses these exact values:
 `gene`, `domain_harness`, `meta_harness`, `source_harness`, `package`, `provider`, and `skill`.
 
 Only `gene` metadata can pass the current package-install boundary. Domain, Meta, Source, Provider, Skill, and generic Package records are recognized but rejected as non-installable until their lifecycles have their own validation and execution rules.
+
+Custom Meta Harness packages are therefore recognized but not installable in
+this preview. The future admission boundary must verify their declared Domain
+members and orchestration plans before activation.
 
 The built-in Coding Domain Harness remains the only executable Domain Harness in
 the current preview. Downloaded native code is never executed automatically.

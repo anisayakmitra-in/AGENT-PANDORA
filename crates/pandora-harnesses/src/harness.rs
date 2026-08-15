@@ -1,5 +1,5 @@
 use crate::genes::CodingGene;
-use crate::manifest::{coding_manifest, core_source_manifest};
+use crate::manifest::{coding_manifest, coordination_meta_manifest, core_source_manifest};
 use pandora_types::{Gene, Harness, HarnessManifest};
 
 pub struct CoreSourceHarness {
@@ -54,6 +54,37 @@ impl Default for CodingHarness {
 }
 
 impl Harness for CodingHarness {
+    fn manifest(&self) -> &HarnessManifest {
+        &self.manifest
+    }
+
+    fn genes(&self) -> &[Box<dyn Gene>] {
+        &self.genes
+    }
+}
+
+pub struct CoordinationMetaHarness {
+    manifest: HarnessManifest,
+    genes: Vec<Box<dyn Gene>>,
+}
+
+impl CoordinationMetaHarness {
+    pub fn new() -> Self {
+        Self {
+            manifest: coordination_meta_manifest()
+                .expect("built-in Coordination Meta Harness manifest is valid"),
+            genes: Vec::new(),
+        }
+    }
+}
+
+impl Default for CoordinationMetaHarness {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Harness for CoordinationMetaHarness {
     fn manifest(&self) -> &HarnessManifest {
         &self.manifest
     }

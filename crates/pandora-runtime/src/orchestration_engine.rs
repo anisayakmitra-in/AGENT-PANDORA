@@ -67,6 +67,30 @@ impl OrchestrationEngine {
         Ok(())
     }
 
+    pub fn register_for_meta(
+        &self,
+        plan: OrchestrationPlan,
+        composition: &pandora_types::MetaComposition,
+    ) -> Result<(), OrchestrationError> {
+        for role in plan.roles() {
+            if !composition.allows_domain(role.harness_id()) {
+                return Err(OrchestrationError::Plan(
+                    pandora_types::OrchestrationContractError::MetaDomainNotAllowed {
+                        harness_id: role.harness_id().clone(),
+                    },
+                ));
+            }
+        }
+        if plan.handoffs().len() as u32 > composition.max_handoffs() {
+            return Err(OrchestrationError::Plan(
+                pandora_types::OrchestrationContractError::MetaHandoffLimitExceeded {
+                    limit: composition.max_handoffs(),
+                },
+            ));
+        }
+        self.register(plan)
+    }
+
     pub fn list(&self) -> Vec<OrchestrationPlan> {
         let plans = self
             .plans
@@ -232,7 +256,8 @@ impl Default for OrchestrationEngine {
 mod tests {
     use super::*;
     use pandora_types::{
-        Handoff, HarnessId, OrchestrationPlan, OrchestrationRole, PlanId, RoleAssignment, RoleId,
+        Handoff, HarnessId, MetaComposition, OrchestrationPlan, OrchestrationRole, PlanId,
+        RoleAssignment, RoleId,
     };
 
     fn role(
@@ -294,6 +319,34 @@ mod tests {
         assert_eq!(ready.len(), 1);
         run.complete(ready[0].id()).unwrap();
         assert!(run.snapshot().active_roles().is_empty());
+    }
+
+    #[test]
+    fn meta_registration_rejects_domains_outside_its_composition() {
+        let composition =
+            MetaComposition::new(vec![HarnessId::new("research-domain").unwrap()], 2).unwrap();
+        let engine = OrchestrationEngine::new();
+
+        assert_eq!(
+            engine.register_for_meta(plan(), &composition),
+            Err(OrchestrationError::Plan(
+                pandora_types::OrchestrationContractError::MetaDomainNotAllowed {
+                    harness_id: HarnessId::new("coding-domain").unwrap(),
+                }
+            ))
+        );
+        assert!(engine.list().is_empty());
+    }
+
+    #[test]
+    fn meta_registration_accepts_only_declared_domains() {
+        let composition =
+            MetaComposition::new(vec![HarnessId::new("coding-domain").unwrap()], 2).unwrap();
+        let engine = OrchestrationEngine::new();
+
+        engine.register_for_meta(plan(), &composition).unwrap();
+
+        assert_eq!(engine.list().len(), 1);
     }
 
     #[test]

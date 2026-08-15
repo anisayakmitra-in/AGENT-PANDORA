@@ -5,12 +5,13 @@ pub mod harness;
 pub mod manifest;
 
 pub use genes::{CodingAction, CodingGene, CodingGeneRole, CodingRequest, PlanningContext};
-pub use harness::{CodingHarness, CoreSourceHarness};
+pub use harness::{CodingHarness, CoordinationMetaHarness, CoreSourceHarness};
 
 pub fn builtin_harnesses() -> Vec<Box<dyn pandora_types::Harness>> {
     vec![
         Box::new(CoreSourceHarness::new()),
         Box::new(CodingHarness::new()),
+        Box::new(CoordinationMetaHarness::new()),
     ]
 }
 
@@ -32,5 +33,26 @@ mod tests {
             Some("pandora-runtime")
         );
         assert!(core.genes().is_empty());
+    }
+
+    #[test]
+    fn builtin_catalog_includes_a_declared_coordination_meta_harness() {
+        let meta = builtin_harnesses()
+            .into_iter()
+            .find(|harness| harness.manifest().id().as_str() == "coordination-meta")
+            .expect("the built-in catalog should include the coordination Meta Harness");
+
+        assert_eq!(meta.manifest().kind(), HarnessKind::Meta);
+        assert!(meta.genes().is_empty());
+        let composition = meta
+            .manifest()
+            .meta_composition()
+            .expect("Meta Harness must declare its composition");
+        assert!(
+            composition
+                .allowed_domains()
+                .iter()
+                .any(|id| id.as_str() == "coding-domain")
+        );
     }
 }

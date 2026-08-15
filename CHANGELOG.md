@@ -12,6 +12,10 @@
   `coding` remains a compatibility alias for `coding-domain`.
 - `pandora harness run` resolves executable Domain Harnesses from the catalog
   and reports metadata-only Source Harnesses as non-runnable.
+- Added a built-in `coordination-meta` Meta Harness with an explicit Domain
+  membership list and handoff ceiling.
+- Meta-bound orchestration plans are rejected before registration when they
+  reference an undeclared Domain Harness or exceed the Meta handoff ceiling.
 
 ## v2.0.0-alpha.6
 

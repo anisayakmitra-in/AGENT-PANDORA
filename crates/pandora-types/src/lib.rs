@@ -42,7 +42,7 @@ pub use evolution::{
 };
 pub use gene::{Gene, GeneError, GeneInput, GeneKind, GeneManifest};
 pub use governance::{ParliamentDecision, PolicyContext};
-pub use harness::{Harness, HarnessKind, HarnessManifest, SourceHarnessManifest};
+pub use harness::{Harness, HarnessKind, HarnessManifest, MetaComposition, SourceHarnessManifest};
 pub use ids::{
     ArtifactId, EventId, ExecutionId, GeneId, HarnessId, IdError, MemoryId, PackageId, PermitId,
     PlanId, PrincipalId, ProposalId, ReceiptId, RequestDigest, RoleId, RunLoopId, SessionId,
