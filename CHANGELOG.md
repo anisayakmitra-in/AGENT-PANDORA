@@ -4,6 +4,20 @@
 
 No changes yet.
 
+## v2.0.0-alpha.6
+
+This prerelease connects explicitly enabled Skills to agent context without
+changing the governed execution model.
+
+### Shipped
+
+- Enabled Skills contribute bounded reference guidance to the agent system
+  instruction; disabled and suspended Skills are excluded.
+- Skill guidance is size-limited and fails closed rather than being silently
+  truncated.
+- Skill text is never treated as permission, policy, approval, or script
+  execution authority, and is not persisted in the session transcript.
+
 ## v2.0.0-alpha.5
 
 This prerelease adds local Skill admission without changing the governed

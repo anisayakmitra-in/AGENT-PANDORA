@@ -14,8 +14,15 @@ history and reproducibility, but they are not the active release line or
 recommended install targets.
 
 The canonical prerelease tags for this line are `v2.0.0-alpha.1` through
-`v2.0.0-alpha.5`. Codenames apply to stable major release titles only, never to
+`v2.0.0-alpha.6`. Codenames apply to stable major release titles only, never to
 alpha, beta, or release-candidate tags.
+
+## v2.0.0-alpha.6
+
+This is the current CLI-only prerelease. Enabled Skills now contribute bounded
+reference guidance to agent context. Disabled and suspended Skills are omitted,
+oversized guidance fails closed, and Skill text cannot authorize effects,
+change policy, satisfy approvals, or execute scripts.
 
 ## v2.0.0-alpha.1
 
@@ -57,7 +64,7 @@ session inspection, and completion support for session subcommands.
 
 ## v2.0.0-alpha.5
 
-This is the current CLI-only prerelease. It adds local Skill package admission
+This was a previous CLI-only prerelease. It added local Skill package admission
 through `pandora skill install`; admitted Skills remain disabled until an
 operator enables them. The existing terminal clients and governed execution
 path are unchanged.

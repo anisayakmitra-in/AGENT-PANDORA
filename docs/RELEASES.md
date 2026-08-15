@@ -5,7 +5,7 @@ product. Release tags are immutable and are never force-pushed or reused.
 
 ## Current release
 
-`v2.0.0-alpha.5` is the current public prerelease. It is suitable for testing
+`v2.0.0-alpha.6` is the current public prerelease. It is suitable for testing
 the CLI contract, not a stable production guarantee. The release is CLI-only
 and supports native Windows x64, Linux x64, and macOS Intel and Apple Silicon
 artifacts.
@@ -19,6 +19,8 @@ The release includes:
 - Skills, Tools, approvals, orchestration roles, and strategy discovery;
 - the line-oriented `pandora chat` client and full-screen `pandora tui` client;
 - local Skill package admission with disabled-by-default activation;
+- enabled Skill guidance is included in agent context only when explicitly
+  enabled, with bounded size and no authority to change policy or permissions;
 - verified update, rollback, uninstall, shell completion, and npm/Bun launchers.
 
 This release remains CLI-only and is a prerelease. Native artifacts are valid
