@@ -5,7 +5,7 @@ product. Release tags are immutable and are never force-pushed or reused.
 
 ## Current release
 
-`v2.0.0-alpha.4` is the current public prerelease. It is suitable for testing
+`v2.0.0-alpha.5` is the current public prerelease. It is suitable for testing
 the CLI contract, not a stable production guarantee. The release is CLI-only
 and supports native Windows x64, Linux x64, and macOS Intel and Apple Silicon
 artifacts.
@@ -18,6 +18,7 @@ The release includes:
 - the governed Coding Domain Harness;
 - Skills, Tools, approvals, orchestration roles, and strategy discovery;
 - the line-oriented `pandora chat` client and full-screen `pandora tui` client;
+- local Skill package admission with disabled-by-default activation;
 - verified update, rollback, uninstall, shell completion, and npm/Bun launchers.
 
 This release remains CLI-only and is a prerelease. Native artifacts are valid

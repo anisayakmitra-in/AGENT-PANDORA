@@ -6,10 +6,10 @@ fail() {
   exit 1
 }
 
-version="${PANDORA_VERSION:-v2.0.0-alpha.4}"
+version="${PANDORA_VERSION:-v2.0.0-alpha.5}"
 case "$version" in
   v[0-9]*.[0-9]*.[0-9]*|v[0-9]*.[0-9]*.[0-9]*-*) ;;
-  *) fail "PANDORA_VERSION must be a SemVer tag such as v2.0.0-alpha.4" ;;
+  *) fail "PANDORA_VERSION must be a SemVer tag such as v2.0.0-alpha.5" ;;
 esac
 case "$version" in
   *[!A-Za-z0-9._-]*) fail "PANDORA_VERSION contains unsafe characters" ;;

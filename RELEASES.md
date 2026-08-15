@@ -14,7 +14,7 @@ history and reproducibility, but they are not the active release line or
 recommended install targets.
 
 The canonical prerelease tags for this line are `v2.0.0-alpha.1` through
-`v2.0.0-alpha.4`. Codenames apply to stable major release titles only, never to
+`v2.0.0-alpha.5`. Codenames apply to stable major release titles only, never to
 alpha, beta, or release-candidate tags.
 
 ## v2.0.0-alpha.1
@@ -54,6 +54,13 @@ provenance assets are present.
 
 This CLI-only prerelease added the built-in `core-source` Source Harness,
 session inspection, and completion support for session subcommands.
+
+## v2.0.0-alpha.5
+
+This is the current CLI-only prerelease. It adds local Skill package admission
+through `pandora skill install`; admitted Skills remain disabled until an
+operator enables them. The existing terminal clients and governed execution
+path are unchanged.
 
 ## v2.0.0-alpha.4
 

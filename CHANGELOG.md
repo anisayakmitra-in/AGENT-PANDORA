@@ -4,6 +4,19 @@
 
 No changes yet.
 
+## v2.0.0-alpha.5
+
+This prerelease adds local Skill admission without changing the governed
+execution model.
+
+### Shipped
+
+- `pandora skill install <local-skill-directory>` validates and stages one
+  local `SKILL.md` package under the configured Skills root.
+- Installed Skills preserve their source, reject duplicate IDs and symlinks,
+  and start disabled until explicitly enabled.
+- Shell completions and CLI documentation include the install command.
+
 ## v2.0.0-alpha.4
 
 This prerelease adds interactive terminal clients without changing the
