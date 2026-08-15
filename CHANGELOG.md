@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `pandora session inspect` reports scoped session metadata and bounded event
+  counts without exposing stored event payloads.
 - Provider profiles can use one validated fallback profile for recoverable
   credential, transport, timeout, rate-limit, and server failures.
 - `pandora setup --interactive` provides bounded first-run provider setup

@@ -69,6 +69,7 @@ pandora run --harness coding --gene workspace.read "read:README.md"
 pandora run --plan "inspect the README and report what it contains"
 pandora run --approval <approval-id> "patch:README.md:approved content"
 pandora session list
+pandora session inspect <session-id>
 pandora session resume <session-id>
 pandora approval list
 pandora approval inspect <approval-id>
@@ -89,6 +90,9 @@ matching paths with forward-slash separators.
 After an operator approves a write, rerun the exact task with its approval ID.
 The approval is bound to the original session, execution, Gene, and request
 digest, is consumed atomically, and cannot be replayed for another task.
+`session inspect` returns scoped session metadata and bounded counts without
+returning event payloads. Use `session resume` when the full bounded transcript
+is required.
 `run --plan` sends the request to the active or explicitly selected provider as a bounded,
 tool-free planning call. Only a schema-validated task intent is passed to the
 runtime; the model cannot execute tools or grant permissions. Configure the
