@@ -98,7 +98,13 @@ struct App {
     history_index: Option<usize>,
     messages: Vec<String>,
     session_id: Option<String>,
+    pending: Option<PendingTask>,
     turns: u32,
+}
+
+struct PendingTask {
+    task: String,
+    approval_id: String,
 }
 
 impl App {
@@ -115,6 +121,7 @@ impl App {
                 "Enter a task. Press Ctrl-C or Esc to close; /help lists commands.".to_owned(),
             ],
             turns: 0,
+            pending: None,
         }
     }
 
@@ -209,6 +216,8 @@ impl App {
                 "/help       show TUI commands".to_owned(),
                 "/session    show the active session ID".to_owned(),
                 "/clear      clear the transcript".to_owned(),
+                "/approve    approve and resume the pending task".to_owned(),
+                "/deny       deny the pending task".to_owned(),
                 "/exit       close the TUI".to_owned(),
             ]),
             "/session" => self.messages.push(match self.session_id.as_deref() {
@@ -216,13 +225,21 @@ impl App {
                 None => "session: not started".to_owned(),
             }),
             "/clear" => self.messages.clear(),
+            "/approve" => self.resolve_pending(true),
+            "/deny" => self.resolve_pending(false),
+            value if value.starts_with("/approve ") || value.starts_with("/deny ") => {
+                self.messages
+                    .push("usage> /approve and /deny do not accept arguments".to_owned());
+            }
             _ => self.run_task(task),
         }
         if !line.trim().is_empty()
             && !matches!(
                 line.trim(),
-                "/exit" | "/quit" | "/help" | "/session" | "/clear"
+                "/exit" | "/quit" | "/help" | "/session" | "/clear" | "/approve" | "/deny"
             )
+            && !line.trim().starts_with("/approve ")
+            && !line.trim().starts_with("/deny ")
             && self.history.last().map(String::as_str) != Some(line.trim())
         {
             self.history.push(line.trim().to_owned());
@@ -231,10 +248,19 @@ impl App {
     }
 
     fn run_task(&mut self, task: String) {
+        self.run_task_with_approval(task, None);
+    }
+
+    fn run_task_with_approval(&mut self, task: String, approval_id: Option<&str>) {
+        if approval_id.is_none() && self.pending.is_some() {
+            self.messages
+                .push("approval> resolve the pending approval first".to_owned());
+            return;
+        }
         self.messages.push(format!("you> {task}"));
         let message_index = self.messages.len();
         self.messages.push("pandora> working...".to_owned());
-        let args = self.run_args(&task);
+        let args = self.run_args(&task, approval_id);
         match super::run::execute(&args) {
             Ok(result) => {
                 update_session(&mut self.session_id, result.data.get("session_id"));
@@ -251,13 +277,59 @@ impl App {
                 if let Some(approval_id) = error.details.get("approval_id").and_then(Value::as_str)
                 {
                     self.messages[message_index].push_str(&format!(" (approval: {approval_id})"));
+                    self.pending = Some(PendingTask {
+                        task,
+                        approval_id: approval_id.to_owned(),
+                    });
                 }
             }
         }
         self.turns = self.turns.saturating_add(1);
     }
 
-    fn run_args(&self, task: &str) -> Vec<String> {
+    fn resolve_pending(&mut self, allow: bool) {
+        let Some(pending) = self.pending.take() else {
+            self.messages
+                .push("approval> no pending approval".to_owned());
+            return;
+        };
+        let approval_args = self.approval_args(&pending.approval_id, allow);
+        match super::approval::execute(&approval_args) {
+            Ok(result) => {
+                self.messages
+                    .push(format!("approval> {}", clean_text(&result.human)));
+                if allow {
+                    self.run_task_with_approval(pending.task, Some(&pending.approval_id));
+                }
+            }
+            Err(error) => {
+                self.messages
+                    .push(format!("error> {}", clean_text(&error.message)));
+                self.pending = Some(pending);
+            }
+        }
+    }
+
+    fn approval_args(&self, approval_id: &str, allow: bool) -> Vec<String> {
+        let mut args = vec![
+            "resolve".to_owned(),
+            approval_id.to_owned(),
+            if allow {
+                "--allow".to_owned()
+            } else {
+                "--deny".to_owned()
+            },
+        ];
+        for name in ["config", "data-dir", "workspace"] {
+            if let Some(value) = self.args.value(name) {
+                args.push(format!("--{name}"));
+                args.push(value.to_owned());
+            }
+        }
+        args
+    }
+
+    fn run_args(&self, task: &str, approval_id: Option<&str>) -> Vec<String> {
         let mut args = vec!["--agent".to_owned()];
         for name in [
             "config",
@@ -276,6 +348,10 @@ impl App {
         if let Some(session_id) = self.session_id.as_deref() {
             args.push("--session".to_owned());
             args.push(session_id.to_owned());
+        }
+        if let Some(approval_id) = approval_id {
+            args.push("--approval".to_owned());
+            args.push(approval_id.to_owned());
         }
         args.push(task.to_owned());
         args
@@ -422,7 +498,16 @@ fn terminal_error(error: impl std::fmt::Display) -> CliError {
 
 #[cfg(test)]
 mod tests {
-    use super::{visible_input, wrap_message};
+    use super::{App, visible_input, wrap_message};
+    use crate::commands::ParsedArgs;
+    use std::collections::BTreeMap;
+
+    fn app() -> App {
+        App::new(ParsedArgs {
+            values: BTreeMap::new(),
+            positionals: Vec::new(),
+        })
+    }
 
     #[test]
     fn visible_input_keeps_cursor_inside_the_window() {
@@ -437,5 +522,47 @@ mod tests {
         let mut lines = Vec::new();
         wrap_message("one\ntwo", 20, &mut lines);
         assert_eq!(lines, ["one", "two"]);
+    }
+
+    #[test]
+    fn help_lists_approval_commands() {
+        let mut app = app();
+        app.input = "/help".chars().collect();
+        app.submit();
+        assert!(
+            app.messages
+                .iter()
+                .any(|message| message == "/approve    approve and resume the pending task")
+        );
+        assert!(
+            app.messages
+                .iter()
+                .any(|message| message == "/deny       deny the pending task")
+        );
+    }
+
+    #[test]
+    fn approval_commands_report_when_no_task_is_pending() {
+        let mut app = app();
+        app.input = "/approve".chars().collect();
+        app.submit();
+        assert_eq!(
+            app.messages.last().map(String::as_str),
+            Some("approval> no pending approval")
+        );
+    }
+
+    #[test]
+    fn approval_id_is_forwarded_when_resuming_a_task() {
+        let app = app();
+        assert_eq!(
+            app.run_args("patch:README.md:updated", Some("approval-1")),
+            [
+                "--agent",
+                "--approval",
+                "approval-1",
+                "patch:README.md:updated"
+            ]
+        );
     }
 }
