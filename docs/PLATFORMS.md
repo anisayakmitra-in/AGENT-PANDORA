@@ -20,9 +20,11 @@ the artifact checksum before replacing the local binary. Signature verification
 can be required with `PANDORA_REQUIRE_SIGNATURE=1` and a configured Cosign
 identity.
 
-The npm package is a thin Node/Bun launcher. It downloads the matching native
-binary, verifies its checksum, caches it, and then forwards the command-line
-arguments to that binary.
+The `pandora-agent` npm package is a thin Node/Bun launcher. It downloads the
+matching native binary, verifies its checksum, caches it, and then forwards the
+command-line arguments to the `pandora` executable. The immutable first preview
+retains its original `o-pandora-cli` asset filename; new release assets use the
+current package identity.
 
 ## Product boundary
 

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The npm and Bun launcher is now packaged as `pandora-agent`; the installed
+  executable remains `pandora`.
 - Configuration writes now replace the file atomically after the new contents
   are synced, preserving the previous valid configuration on write failure.
 - Provider profiles can keep separate endpoints, models, and credential

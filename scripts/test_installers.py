@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import platform
 import re
@@ -103,6 +104,17 @@ class InstallerContractTests(unittest.TestCase):
 
         self.assertIn(f'version="${{PANDORA_VERSION:-{tag}}}"', shell)
         self.assertIn(f'$defaultVersion = "{tag}"', powershell)
+
+    def test_npm_launcher_uses_the_current_public_package_identity(self) -> None:
+        package = json.loads(
+            (ROOT / "npm" / "pandora-cli" / "package.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        self.assertEqual(package["name"], "pandora-agent")
+        self.assertEqual(package["bin"]["pandora"], "bin/pandora.js")
+        self.assertNotIn("o-pandora", package["name"])
 
     def test_launcher_rejects_tampered_offline_cache(self) -> None:
         launcher = ROOT / "npm" / "pandora-cli" / "bin" / "pandora.js"
