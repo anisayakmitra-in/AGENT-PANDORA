@@ -9,6 +9,14 @@ approval, execution, update, and internal failures.
 ## Setup and diagnostics
 
 ```text
+pandora --help
+pandora help
+```
+
+Both forms print the command surface and exit successfully. Add `--json` when
+the help text needs to be consumed by an installer or another tool.
+
+```text
 pandora setup --provider-url https://provider.example/v1 --model gpt-5
 pandora doctor --json
 pandora provider list --json

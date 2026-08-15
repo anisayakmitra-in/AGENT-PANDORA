@@ -63,7 +63,16 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "update" => update::execute(&args[1..]),
         "orchestration" => orchestration(&args[1..]),
         "doctor" => doctor::execute(&args[1..]),
-        "--help" | "help" => Err(CliError::usage(usage())),
+        "--help" | "help" => {
+            if args.len() != 1 {
+                return Err(CliError::usage("help does not accept additional arguments"));
+            }
+            Ok(crate::output::success(
+                "help",
+                json!({"usage": usage()}),
+                usage(),
+            ))
+        }
         unknown => Err(CliError::usage(format!(
             "unknown command '{unknown}'.\n\n{}",
             usage()
@@ -226,8 +235,25 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    "usage: pandora <setup|run|harness|session|skill|approval|provider|tool|orchestration|strategies|completions|migrate|update|uninstall|doctor> [options]\n\n\
-commands:\n  setup\n  run [--provider <name>] [--agent] [--max-turns <n>] [--max-tools <n>] [--harness <id>] [--gene <id>] [--plan] [--model <model>] [--approval <id>] <task>\n  harness list|inspect|run\n  session list|resume <id>\n  skill list|inspect|enable|disable|suspend|remove|restore <id>\n  tool list|inspect <id>\n  approval list|inspect|resolve\n  provider list|set|use|test\n  orchestration roles\n  strategies list\n  completions <powershell|bash|zsh|fish>\n  migrate config\n  update [--artifact <path> --sha256 <digest> | --rollback]\n  uninstall [--dry-run|--yes]\n  doctor"
+    r#"usage: pandora <help|setup|run|harness|session|skill|approval|provider|tool|orchestration|strategies|completions|migrate|update|uninstall|doctor> [options]
+
+commands:
+  help (or --help)
+  setup
+  run [--provider <name>] [--agent] [--max-turns <n>] [--max-tools <n>] [--harness <id>] [--gene <id>] [--plan] [--model <model>] [--approval <id>] <task>
+  harness list|inspect|run
+  session list|resume <id>
+  skill list|inspect|enable|disable|suspend|remove|restore <id>
+  tool list|inspect <id>
+  approval list|inspect|resolve
+  provider list|set|use|test
+  orchestration roles
+  strategies list
+  completions <powershell|bash|zsh|fish>
+  migrate config
+  update [--artifact <path> --sha256 <digest> | --rollback]
+  uninstall [--dry-run|--yes]
+  doctor"#
 }
 
 fn orchestration(args: &[String]) -> Result<CommandResult, CliError> {
