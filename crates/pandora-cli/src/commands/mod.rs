@@ -21,6 +21,7 @@ mod session;
 mod setup;
 mod skill;
 mod tool;
+mod tui;
 mod uninstall;
 mod update;
 
@@ -63,6 +64,8 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "provider" => provider::execute(&args[1..]),
         "strategies" => strategies(&args[1..]),
         "tool" => tool::execute(&args[1..]),
+        "tui" if json_requested => Err(CliError::usage("tui does not support --json")),
+        "tui" => tui::execute(&args[1..]),
         "uninstall" => uninstall::execute(&args[1..]),
         "update" => update::execute(&args[1..]),
         "orchestration" => orchestration(&args[1..]),
@@ -239,13 +242,14 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|chat|harness|session|skill|approval|provider|tool|orchestration|strategies|completions|migrate|update|uninstall|doctor> [options]
+    r#"usage: pandora <help|setup|run|chat|tui|harness|session|skill|approval|provider|tool|orchestration|strategies|completions|migrate|update|uninstall|doctor> [options]
 
 commands:
   help (or --help)
   setup [--interactive] [--provider-url <url>] [--model <model>]
   run [--provider <name>] [--agent] [--max-turns <n>] [--max-tools <n>] [--harness <id>] [--gene <id>] [--plan] [--model <model>] [--approval <id>] <task>
   chat [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>]
+  tui [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>]
   harness list|inspect|run
   session list|resume|inspect <id>
   skill list|inspect|enable|disable|suspend|remove|restore <id>

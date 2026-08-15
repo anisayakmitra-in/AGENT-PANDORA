@@ -191,6 +191,35 @@ fn chat_rejects_machine_readable_output() {
 }
 
 #[test]
+fn tui_requires_an_interactive_terminal() {
+    let fixture = Fixture::new();
+    let output = fixture
+        .command(&["tui"])
+        .output()
+        .expect("tui should start");
+    assert_eq!(output.status.code(), Some(10));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("error: tui requires an interactive terminal")
+    );
+}
+
+#[test]
+fn tui_rejects_machine_readable_output() {
+    let fixture = Fixture::new();
+    let output = fixture
+        .command(&["tui", "--json"])
+        .output()
+        .expect("tui should start");
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(parse_json(&output)["code"], "usage_error");
+    assert_eq!(
+        parse_json(&output)["message"],
+        "tui does not support --json"
+    );
+}
+
+#[test]
 fn search_run_returns_matching_workspace_files() {
     let fixture = Fixture::new();
     fixture.setup();
@@ -1534,6 +1563,7 @@ fn completions_include_session_inspect_for_each_shell() {
         let script = response["script"].as_str().unwrap();
         assert!(!script.contains("session inspect"));
         assert!(script.contains("chat"));
+        assert!(script.contains("tui"));
         assert!(script.contains(parent_condition));
         assert!(script.contains(subcommands));
         if shell == "zsh" {

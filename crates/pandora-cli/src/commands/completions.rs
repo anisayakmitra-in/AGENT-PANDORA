@@ -35,7 +35,7 @@ fn powershell() -> &'static str {
     $commands = if ($elements.Count -gt 1 -and $elements[1] -eq 'session') {
         'list','resume','inspect'
     } else {
-        'setup','run','chat','harness','session','skill','approval','provider','tool','orchestration','strategies','completions','migrate','update','uninstall','doctor'
+        'setup','run','chat','tui','harness','session','skill','approval','provider','tool','orchestration','strategies','completions','migrate','update','uninstall','doctor'
     }
     $commands |
         Where-Object { $_ -like "$wordToComplete*" } |
@@ -50,7 +50,7 @@ fn bash() -> &'static str {
     if [[ "$previous" == "session" ]]; then
         COMPREPLY=( $(compgen -W 'list resume inspect' -- "$current") )
     else
-        COMPREPLY=( $(compgen -W 'setup run chat harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor' -- "$current") )
+        COMPREPLY=( $(compgen -W 'setup run chat tui harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor' -- "$current") )
     fi
 }
 complete -F _pandora_complete pandora"#
@@ -60,15 +60,15 @@ fn zsh() -> &'static str {
     r#"#compdef pandora
 if [[ ${words[2]} == session ]]; then
     _arguments \
-        '1:command:(setup run chat harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor)' \
+        '1:command:(setup run chat tui harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor)' \
         '2:session command:(list resume inspect)'
 else
     _arguments \
-        '1:command:(setup run chat harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor)'
+        '1:command:(setup run chat tui harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor)'
 fi"#
 }
 
 fn fish() -> &'static str {
-    r#"complete -c pandora -f -n '__fish_use_subcommand' -a 'setup run chat harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor'
+    r#"complete -c pandora -f -n '__fish_use_subcommand' -a 'setup run chat tui harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor'
 complete -c pandora -f -n '__fish_seen_subcommand_from session' -a 'list resume inspect'"#
 }

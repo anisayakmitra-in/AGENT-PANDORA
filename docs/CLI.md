@@ -70,6 +70,8 @@ pandora run --plan "inspect the README and report what it contains"
 pandora run --approval <approval-id> "patch:README.md:approved content"
 pandora chat
 pandora chat --session <session-id>
+pandora tui
+pandora tui --session <session-id>
 pandora session list
 pandora session inspect <session-id>
 pandora session resume <session-id>
@@ -101,6 +103,12 @@ commands, `/session` to print the active session ID, and `/exit` or `/quit` to
 close it. Each other line is sent through the same bounded AgentLoop and
 governed execution path as `run --agent`; the session is reused for later
 turns. Chat output is intended for terminals and rejects `--json`.
+`tui` opens the full-screen terminal client in an interactive terminal. It uses
+the same session, provider, AgentLoop, approval, and effect-policy path as
+`run --agent`; it does not add a second runtime. Enter submits a task, Up and
+Down browse task history, `/help` lists commands, `/session` shows the active
+session, `/clear` clears the transcript, and Escape or Ctrl-C closes the client.
+The TUI requires a real terminal and rejects `--json` and positional tasks.
 `run --plan` sends the request to the active or explicitly selected provider as a bounded,
 tool-free planning call. Only a schema-validated task intent is passed to the
 runtime; the model cannot execute tools or grant permissions. Configure the

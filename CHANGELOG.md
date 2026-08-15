@@ -2,9 +2,9 @@
 
 ## Unreleased
 
-- Added `pandora chat`, a line-oriented interactive agent session that reuses
-  the existing AgentLoop, session scope, approval records, and governed tool
-  path. It is terminal-only and does not claim a full TUI.
+- Added `pandora chat`, a line-oriented interactive agent session, and
+  `pandora tui`, a full-screen terminal client. Both reuse the existing
+  AgentLoop, session scope, approval records, and governed effect path.
 
 ## v2.0.0-alpha.3
 
