@@ -105,6 +105,21 @@ class InstallerContractTests(unittest.TestCase):
         self.assertIn(f'version="${{PANDORA_VERSION:-{tag}}}"', shell)
         self.assertIn(f'$defaultVersion = "{tag}"', powershell)
 
+    def test_readme_pin_example_passes_version_to_the_installer_shell(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        cargo = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
+        version = re.search(r'^version = "([^"]+)"$', cargo, re.MULTILINE)
+        self.assertIsNotNone(version)
+        tag = f"v{version.group(1)}"
+        self.assertIn(
+            f"curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.sh | PANDORA_VERSION={tag} sh",
+            readme,
+        )
+        self.assertNotIn(
+            f"PANDORA_VERSION={tag} curl -fsSL",
+            readme,
+        )
+
     def test_npm_launcher_uses_the_current_public_package_identity(self) -> None:
         package = json.loads(
             (ROOT / "npm" / "pandora-cli" / "package.json").read_text(

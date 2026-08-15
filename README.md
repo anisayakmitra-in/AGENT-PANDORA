@@ -35,7 +35,7 @@ irm https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/script
 To pin the current release explicitly:
 
 ```sh
-PANDORA_VERSION=v2.0.0-alpha.2 curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.sh | PANDORA_VERSION=v2.0.0-alpha.2 sh
 ```
 
 ## Build
