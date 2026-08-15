@@ -195,6 +195,44 @@ impl ToolEngine {
             )
             .expect("built-in search tool ID is unique");
         engine
+            .register(
+                ToolDefinition::new(
+                    "workspace.patch",
+                    "1.0.0",
+                    "Propose a workspace patch",
+                    json!({
+                        "type": "object",
+                        "required": ["path", "content"],
+                        "properties": {
+                            "path": {"type": "string"},
+                            "content": {"type": "string"}
+                        },
+                        "additionalProperties": false
+                    }),
+                    Capability::FilesystemWrite,
+                    Operation::Write,
+                )
+                .expect("built-in patch tool schema is valid"),
+            )
+            .expect("built-in patch tool ID is unique");
+        engine
+            .register(
+                ToolDefinition::new(
+                    "workspace.verify",
+                    "1.0.0",
+                    "Run the fixed workspace verification command",
+                    json!({
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": false
+                    }),
+                    Capability::ProcessExecute,
+                    Operation::Execute,
+                )
+                .expect("built-in verification tool schema is valid"),
+            )
+            .expect("built-in verification tool ID is unique");
+        engine
     }
 
     pub fn register(&self, definition: ToolDefinition) -> Result<(), ToolError> {

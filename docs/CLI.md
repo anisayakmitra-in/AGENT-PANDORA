@@ -60,13 +60,17 @@ runtime; the model cannot execute tools or grant permissions. Configure the
 provider with `pandora provider set --provider-url <url> --model <model>` and
 provide `PANDORA_PROVIDER_API_KEY` for planning.
 
-`run --agent` enables the bounded multi-turn loop. The model can call only
-`workspace.read` and `workspace.search`; each call is routed through the same
-governed runtime and recorded in the session. The loop allows eight model turns
-and sixteen tool calls. Agent mode cannot be combined with `--plan`,
-`--approval`, `--harness`, or `--gene` yet. It keeps the transcript in memory
-and returns the final answer plus token usage; credentials and hidden model
-reasoning are not persisted.
+`run --agent` enables the bounded multi-turn loop. The model can call
+`workspace.read`, `workspace.search`, `workspace.patch`, and `workspace.verify`.
+Each call is validated by the ToolEngine, routed through the same governed
+runtime, and recorded in the session. Read and search use the current read-only
+policy; patch and verify stop at the existing approval boundary before any
+filesystem or process effect. The loop allows eight model turns and sixteen
+tool calls. Agent mode cannot be combined with `--plan`, `--approval`,
+`--harness`, or `--gene` yet. It keeps the transcript in memory and returns the
+final answer plus token usage; credentials and hidden model reasoning are not
+persisted. To continue an approved write, rerun the exact task with the
+returned approval ID using the regular `run --approval` command.
 
 ## Discovery and completions
 

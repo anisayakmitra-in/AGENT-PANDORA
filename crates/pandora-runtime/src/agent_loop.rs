@@ -206,33 +206,61 @@ impl AgentLoop {
             ));
         }
 
-        let argument_name = match call.name() {
-            "workspace.read" => "path",
-            "workspace.search" => "query",
+        let intent = match call.name() {
+            "workspace.read" | "workspace.search" => {
+                let argument_name = if call.name() == "workspace.read" {
+                    "path"
+                } else {
+                    "query"
+                };
+                let Some(argument) = call.arguments().get(argument_name).and_then(Value::as_str)
+                else {
+                    return Ok(ToolExecution::Output(
+                        "tool error: required argument is missing or invalid".to_owned(),
+                    ));
+                };
+                if argument.trim().is_empty() || argument.chars().any(char::is_control) {
+                    return Ok(ToolExecution::Output(
+                        "tool error: required argument is invalid".to_owned(),
+                    ));
+                }
+                let action = if call.name() == "workspace.read" {
+                    "read"
+                } else {
+                    "search"
+                };
+                TaskIntent::new(format!("{action}:{argument}"))
+            }
+            "workspace.patch" => {
+                let Some(path) = call.arguments().get("path").and_then(Value::as_str) else {
+                    return Ok(ToolExecution::Output(
+                        "tool error: required argument is missing or invalid".to_owned(),
+                    ));
+                };
+                let Some(content) = call.arguments().get("content").and_then(Value::as_str) else {
+                    return Ok(ToolExecution::Output(
+                        "tool error: required argument is missing or invalid".to_owned(),
+                    ));
+                };
+                if path.trim().is_empty()
+                    || content.is_empty()
+                    || path.chars().any(char::is_control)
+                    || content.chars().any(char::is_control)
+                {
+                    return Ok(ToolExecution::Output(
+                        "tool error: required argument is invalid".to_owned(),
+                    ));
+                }
+                TaskIntent::new(format!("patch:{path}:{content}"))
+            }
+            "workspace.verify" => TaskIntent::new("verify"),
             _ => {
                 return Ok(ToolExecution::Output(
                     "tool error: unsupported tool".to_owned(),
                 ));
             }
-        };
-        let Some(argument) = call.arguments().get(argument_name).and_then(Value::as_str) else {
-            return Ok(ToolExecution::Output(
-                "tool error: required argument is missing or invalid".to_owned(),
-            ));
-        };
-        if argument.trim().is_empty() || argument.chars().any(char::is_control) {
-            return Ok(ToolExecution::Output(
-                "tool error: required argument is invalid".to_owned(),
-            ));
         }
-
-        let action = if call.name() == "workspace.read" {
-            "read"
-        } else {
-            "search"
-        };
-        let intent = TaskIntent::new(format!("{action}:{argument}"))
-            .map_err(|_| AgentLoopError::InvalidTask)?;
+        .map_err(|_| AgentLoopError::InvalidTask)?;
         let summary = controller
             .run_at(intent, session.clone(), now)
             .map_err(AgentLoopError::Execution)?;
@@ -284,7 +312,10 @@ mod tests {
         ModelRequest, ModelResponse, Provider, ProviderError, ProviderManifest, TokenUsage,
         ToolCall,
     };
-    use pandora_types::{PrincipalId, Session, SessionId, TenantId, Timestamp, WorkspaceId};
+    use pandora_types::{
+        Capability, Operation, PolicyContext, PrincipalId, Session, SessionId, TenantId, Timestamp,
+        WorkspaceId,
+    };
     use std::path::PathBuf;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -504,6 +535,55 @@ mod tests {
                 Timestamp::from_unix_seconds(10),
             ),
             Err(AgentLoopError::ToolBudgetExceeded)
+        );
+    }
+
+    #[test]
+    fn write_tool_stops_at_the_approval_boundary() {
+        let fixture = Fixture::new();
+        let provider = SequenceProvider::new(vec![ModelResponse::new(
+            "",
+            vec![
+                ToolCall::new(
+                    "call-patch",
+                    "workspace.patch",
+                    serde_json::json!({"path": "README.md", "content": "changed"}),
+                )
+                .unwrap(),
+            ],
+            TokenUsage::default(),
+        )]);
+        let policy = PolicyContext::new(
+            1,
+            [Capability::FilesystemRead, Capability::FilesystemWrite],
+            [Operation::Write],
+        );
+        let controller = ExecutionController::with_policy(fixture.root.clone(), policy);
+
+        let error = AgentLoop::new(2, 1)
+            .unwrap()
+            .run(
+                &provider,
+                &controller,
+                fixture.session(),
+                "Update the README",
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap_err();
+
+        match error {
+            AgentLoopError::ApprovalRequired { summary, .. } => {
+                assert_eq!(summary.runs().len(), 1);
+                assert!(matches!(
+                    summary.runs()[0].status(),
+                    RunStatus::ApprovalRequired { .. }
+                ));
+            }
+            other => panic!("expected approval boundary, got {other:?}"),
+        }
+        assert_eq!(
+            std::fs::read(fixture.path.join("README.md")).unwrap(),
+            b"fixture\n"
         );
     }
 
