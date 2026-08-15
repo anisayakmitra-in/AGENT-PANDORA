@@ -259,6 +259,49 @@ impl SkillEngine {
         })
     }
 
+    pub fn restore(&self, id: &str) -> Result<SkillRecord, SkillError> {
+        let id = SkillId::new(id.to_owned()).map_err(|_| SkillError::InvalidManifest)?;
+        let original_root = self.root.join(id.as_str());
+        match fs::symlink_metadata(&original_root) {
+            Ok(_) => return Err(SkillError::Collision),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(_) => return Err(SkillError::Io),
+        }
+
+        let mut backup_root = None;
+        for entry in fs::read_dir(&self.removed_root)? {
+            let path = entry?.path();
+            if !is_within(&self.removed_root, &path) {
+                return Err(SkillError::PathEscape);
+            }
+            let metadata = fs::symlink_metadata(&path)?;
+            if metadata.file_type().is_symlink() {
+                return Err(SkillError::SymlinkRejected);
+            }
+            if !metadata.is_dir() {
+                continue;
+            }
+            let (manifest, _) = read_skill_document(&path)?;
+            if manifest.id() != &id {
+                continue;
+            }
+            PackageAdmission::validate_skill(&manifest).map_err(|_| SkillError::InvalidManifest)?;
+            let mut scripts = Vec::new();
+            collect_scripts(&path, &path.join("scripts"), &mut scripts)?;
+            if backup_root.replace(path).is_some() {
+                return Err(SkillError::Collision);
+            }
+        }
+
+        let backup_root = backup_root.ok_or(SkillError::NotFound)?;
+        fs::rename(&backup_root, &original_root)?;
+        if let Err(error) = self.write_state(&id, SkillState::Disabled) {
+            let _ = fs::rename(&original_root, &backup_root);
+            return Err(error);
+        }
+        self.find_record(id.as_str())
+    }
+
     pub fn rollback(&self, receipt: RemovalReceipt) -> Result<(), SkillError> {
         if !is_within(&self.root, &receipt.original_root)
             || !is_within(&self.removed_root, &receipt.backup_root)
@@ -615,6 +658,19 @@ mod tests {
         let inspection = engine.inspect("alpha").unwrap();
         assert_eq!(inspection.manifest().publisher(), Some("pandora"));
         assert_eq!(inspection.provenance().source(), fixture.root.join("alpha"));
+    }
+
+    #[test]
+    fn restore_survives_engine_reopen_and_defaults_to_disabled() {
+        let fixture = Fixture::new();
+        let engine = SkillEngine::discover(&fixture.root).unwrap();
+        engine.remove("alpha").unwrap();
+
+        let reopened = SkillEngine::discover(&fixture.root).unwrap();
+        let restored = reopened.restore("alpha").unwrap();
+
+        assert_eq!(restored.state(), SkillState::Disabled);
+        assert_eq!(reopened.list().unwrap().len(), 1);
     }
 
     #[cfg(unix)]

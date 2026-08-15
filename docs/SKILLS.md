@@ -28,7 +28,9 @@ front matter, and paths that leave the skill root.
 and inventories script files without enabling the Skill. New Skills start
 `disabled`; the state model also distinguishes `verified`, `installed`,
 `enabled`, `suspended`, and `removed`. The supported state changes are
-`enable`, `suspend`, `disable`, and reversible `remove`/`rollback`.
+`enable`, `suspend`, `disable`, and reversible `remove`/`restore`. The CLI
+requires `--yes` for removal, supports `--dry-run`, and restores a removed
+Skill as `disabled` in a later process.
 
 Scripts are never executed by SkillEngine. Direct script execution returns an
 error. Symlinked manifests, script directories, and script files are rejected.

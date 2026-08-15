@@ -228,6 +228,42 @@ fn skill_state_transitions_persist_without_running_scripts() {
         fs::read_to_string(skill_root.join("scripts").join("marker.txt")).unwrap(),
         "untouched"
     );
+
+    let output = fixture
+        .command(&["skill", "remove", "alpha", "--json"])
+        .output()
+        .expect("unconfirmed skill remove should start");
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(parse_json(&output)["code"], "usage_error");
+    assert!(skill_root.is_dir());
+
+    let output = fixture
+        .command(&["skill", "remove", "alpha", "--dry-run", "--json"])
+        .output()
+        .expect("skill remove dry-run should start");
+    assert_success(&output);
+    assert_eq!(parse_json(&output)["dry_run"], true);
+    assert!(skill_root.is_dir());
+
+    let output = fixture
+        .command(&["skill", "remove", "alpha", "--yes", "--json"])
+        .output()
+        .expect("skill remove should start");
+    assert_success(&output);
+    assert_eq!(parse_json(&output)["skill"]["state"], "removed");
+    assert!(!skill_root.exists());
+
+    let output = fixture
+        .command(&["skill", "restore", "alpha", "--json"])
+        .output()
+        .expect("skill restore should start");
+    assert_success(&output);
+    assert_eq!(parse_json(&output)["skill"]["state"], "disabled");
+    assert!(skill_root.is_dir());
+    assert_eq!(
+        fs::read_to_string(skill_root.join("scripts").join("marker.txt")).unwrap(),
+        "untouched"
+    );
 }
 
 #[test]

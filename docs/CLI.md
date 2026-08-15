@@ -66,6 +66,9 @@ pandora skill inspect <id>
 pandora skill enable <id>
 pandora skill suspend <id>
 pandora skill disable <id>
+pandora skill remove <id> --dry-run
+pandora skill remove <id> --yes
+pandora skill restore <id>
 pandora orchestration roles
 pandora strategies list
 pandora completions powershell
@@ -86,8 +89,10 @@ Use `--root <path>` to inspect another local skill root. Listing and inspection
 read metadata, state, provenance, resources, and script inventory only; Skills
 start disabled and scripts are not executed by these commands. `enable`,
 `suspend`, and `disable` persist the explicit lifecycle state under the skill
-root. These commands do not execute scripts; script execution remains available
-only through the governed ToolEngine path.
+root. `remove --dry-run` previews the skill path; `remove --yes` moves the
+skill into the reversible removal area, and `restore` returns it as disabled.
+These commands do not execute scripts; script execution remains available only
+through the governed ToolEngine path.
 
 ## Configuration migration
 
