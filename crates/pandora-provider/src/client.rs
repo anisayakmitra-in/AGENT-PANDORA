@@ -401,6 +401,33 @@ pub struct ToolCall {
 }
 
 impl ToolCall {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        arguments: Value,
+    ) -> Result<Self, ProviderError> {
+        let id = id.into();
+        let name = name.into();
+        if id.trim().is_empty() || id.chars().any(char::is_control) {
+            return Err(ProviderError::InvalidRequest(
+                "tool call ID is invalid".to_owned(),
+            ));
+        }
+        if name.trim().is_empty() || name.chars().any(char::is_control) {
+            return Err(ProviderError::InvalidRequest(
+                "tool name is invalid".to_owned(),
+            ));
+        }
+        if !arguments.is_object() {
+            return Err(ProviderError::InvalidToolArguments { call_id: id });
+        }
+        Ok(Self {
+            id,
+            name,
+            arguments,
+        })
+    }
+
     pub fn id(&self) -> &str {
         &self.id
     }
@@ -449,6 +476,14 @@ pub struct ModelResponse {
 }
 
 impl ModelResponse {
+    pub fn new(text: impl Into<String>, tool_calls: Vec<ToolCall>, usage: TokenUsage) -> Self {
+        Self {
+            text: text.into(),
+            tool_calls,
+            usage,
+        }
+    }
+
     pub fn text(&self) -> &str {
         &self.text
     }

@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 pandora-harnesses = { path = "../pandora-harnesses" }
+pandora-provider = { path = "../pandora-provider" }
 pandora-types = { path = "../pandora-types" }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde.workspace = true

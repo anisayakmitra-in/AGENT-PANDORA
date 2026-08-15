@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod adaptive_engine;
+pub mod agent_loop;
 pub mod approvals;
 pub mod config;
 pub mod context_engine;
@@ -28,6 +29,7 @@ pub mod strategies;
 pub mod tool_engine;
 
 pub use adaptive_engine::{AdaptationResult, AdaptiveEngine, AdaptiveError};
+pub use agent_loop::{AgentLoop, AgentLoopError, AgentRunSummary};
 pub use approvals::{
     ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, PendingApproval,
 };
