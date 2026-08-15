@@ -13,6 +13,10 @@ archived previews from an earlier naming scheme. They remain available for
 history and reproducibility, but they are not the active release line or
 recommended install targets.
 
+The canonical prerelease tags for this line are `v2.0.0-alpha.1` and
+`v2.0.0-alpha.2`. Codenames apply to stable major release titles only, never to
+alpha, beta, or release-candidate tags.
+
 ## v2.0.0-alpha.1
 
 This was the first CLI-only prerelease. Its shipped scope is recorded in
