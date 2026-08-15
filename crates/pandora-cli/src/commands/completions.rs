@@ -58,9 +58,14 @@ complete -F _pandora_complete pandora"#
 
 fn zsh() -> &'static str {
     r#"#compdef pandora
-_arguments \
-    '1:command:(setup run harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor)' \
-    '2:session command:(list resume inspect)'"#
+if [[ ${words[2]} == session ]]; then
+    _arguments \
+        '1:command:(setup run harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor)' \
+        '2:session command:(list resume inspect)'
+else
+    _arguments \
+        '1:command:(setup run harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor)'
+fi"#
 }
 
 fn fish() -> &'static str {

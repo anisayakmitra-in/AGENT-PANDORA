@@ -1454,8 +1454,8 @@ fn completions_include_session_inspect_for_each_shell() {
         ),
         (
             "zsh",
+            "if [[ ${words[2]} == session ]]",
             "'2:session command:(list resume inspect)'",
-            "session command",
         ),
         (
             "fish",
@@ -1474,6 +1474,11 @@ fn completions_include_session_inspect_for_each_shell() {
         assert!(!script.contains("session inspect"));
         assert!(script.contains(parent_condition));
         assert!(script.contains(subcommands));
+        if shell == "zsh" {
+            assert!(!script.contains(
+                "_arguments \\\n+    '1:command:(setup run harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor)' \\\n+    '2:session command:(list resume inspect)'"
+            ));
+        }
     }
 }
 
