@@ -32,6 +32,7 @@ its output.
 ```text
 pandora run "read:README.md"
 pandora run "search:needle"
+pandora run --harness coding --gene workspace.read "read:README.md"
 pandora run --plan "inspect the README and report what it contains"
 pandora run --approval <approval-id> "patch:README.md:approved content"
 pandora session list
@@ -43,6 +44,9 @@ pandora approval resolve <approval-id> --allow
 
 Read-only work can complete without approval. Writes and process effects stop at
 the approval boundary and expose an inspectable, redacted request subject.
+`--harness` selects an installed Harness by ID; `coding` is an alias for the
+built-in `coding-domain` Harness. The runtime rejects an unknown or unsupported
+Harness before Gene planning.
 `search:<query>` scans regular files under the configured workspace within the
 runtime's entry and file-size limits, does not follow symlinks, and returns
 matching paths with forward-slash separators.

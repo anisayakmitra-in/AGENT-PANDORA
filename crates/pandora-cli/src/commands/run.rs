@@ -13,7 +13,8 @@ use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::sessions::SessionStore;
 use pandora_runtime::{ApprovalRequest, ApprovalStore, RunStatus, RuntimeError};
 use pandora_types::{
-    Capability, EventPayload, Operation, PolicyContext, Session, SessionId, TaskIntent, WorkspaceId,
+    Capability, EventPayload, HarnessId, Operation, PolicyContext, Session, SessionId, TaskIntent,
+    WorkspaceId,
 };
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -29,6 +30,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "workspace",
             "session",
             "approval",
+            "harness",
             "gene",
             "model",
             "plan",
@@ -95,6 +97,15 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     };
     let mut intent =
         TaskIntent::new(task.clone()).map_err(|error| CliError::usage(error.to_string()))?;
+    if let Some(harness) = parsed.value("harness") {
+        let harness = match harness {
+            "coding" => "coding-domain",
+            value => value,
+        };
+        let harness = HarnessId::new(harness.to_owned())
+            .map_err(|_| CliError::usage("Harness ID is invalid"))?;
+        intent = intent.with_harness(harness);
+    }
     if let Some(gene) = parsed.value("gene") {
         let gene = pandora_types::GeneId::new(gene.to_owned())
             .map_err(|_| CliError::usage("Gene ID is invalid"))?;

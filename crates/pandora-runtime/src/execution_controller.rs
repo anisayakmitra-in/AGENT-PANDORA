@@ -4,9 +4,9 @@ use crate::executors::{
 };
 use crate::parliament::Parliament;
 use crate::reference_monitor::{AuthorizationError, ReferenceMonitor};
-use crate::shadow_council::{Selection, ShadowCouncil};
+use crate::shadow_council::ShadowCouncil;
 use crate::{ApprovalError, ApprovalStore, ConsumedPermit, PermitError};
-use pandora_harnesses::{CodingHarness, CodingRequest, PlanningContext};
+use pandora_harnesses::{CodingRequest, PlanningContext, builtin_harnesses};
 use pandora_types::{
     Capability, EffectReceipt, EffectTarget, EventContext, EventId, EventPayload, EventType,
     ExecutionId, GeneError, GeneId, GeneInput, Harness, HarnessId, ParliamentDecision,
@@ -38,7 +38,7 @@ pub struct ExecutionController {
     parliament: Parliament,
     policy: PolicyContext,
     reference_monitor: ReferenceMonitor,
-    coding_harness: CodingHarness,
+    harnesses: Vec<Box<dyn Harness>>,
     filesystem: FilesystemExecutor,
     process: ProcessExecutor,
     next_execution: AtomicU64,
@@ -109,7 +109,7 @@ impl ExecutionController {
             parliament: Parliament::new(policy_version),
             reference_monitor: ReferenceMonitor::new(policy_version, 60),
             policy,
-            coding_harness: CodingHarness::new(),
+            harnesses: builtin_harnesses(),
             next_execution: AtomicU64::new(1),
             next_event: AtomicU64::new(1),
         }
@@ -173,13 +173,12 @@ impl ExecutionController {
         .map_err(|_| RuntimeError::InvalidIntent("could not allocate execution ID"))?;
         let execution_id = execution_id_override.unwrap_or(execution_id);
         let selection = self.shadow_council.select(&intent);
-        self.ensure_coding_selection(&selection)?;
+        let harness = self.find_harness(selection.harness_id())?;
         let gene_id = selection
             .gene_id()
             .cloned()
             .unwrap_or_else(|| default_gene_id(&intent));
-        let gene = self
-            .coding_harness
+        let gene = harness
             .genes()
             .iter()
             .find(|gene| gene.manifest().id() == &gene_id)
@@ -188,7 +187,7 @@ impl ExecutionController {
         let requests = gene.plan(&input).map_err(RuntimeError::Planning)?;
         let mut summary = RunSummary {
             execution_id: execution_id.clone(),
-            selected_harness: self.coding_harness.manifest().id().clone(),
+            selected_harness: harness.manifest().id().clone(),
             selected_gene: gene_id,
             status: RunStatus::Completed,
             output: None,
@@ -390,13 +389,12 @@ impl ExecutionController {
         ));
     }
 
-    fn ensure_coding_selection(&self, selection: &Selection) -> Result<(), RuntimeError> {
-        if selection.harness_id() != self.coding_harness.manifest().id() {
-            return Err(RuntimeError::UnsupportedHarness(
-                selection.harness_id().clone(),
-            ));
-        }
-        Ok(())
+    fn find_harness(&self, harness_id: &HarnessId) -> Result<&dyn Harness, RuntimeError> {
+        self.harnesses
+            .iter()
+            .find(|harness| harness.manifest().id() == harness_id)
+            .map(|harness| harness.as_ref())
+            .ok_or_else(|| RuntimeError::UnsupportedHarness(harness_id.clone()))
     }
 
     fn execute_request(
@@ -764,6 +762,21 @@ mod tests {
         assert_eq!(
             controller.run_at(intent, fixture.session(), Timestamp::from_unix_seconds(10)),
             Err(RuntimeError::UnknownGene)
+        );
+    }
+
+    #[test]
+    fn unsupported_harness_is_rejected_before_gene_planning() {
+        let fixture = Fixture::new();
+        let controller = ExecutionController::new(fixture.root.clone());
+        let harness_id = HarnessId::new("design-domain").unwrap();
+        let intent = TaskIntent::new("read:README.md")
+            .unwrap()
+            .with_harness(harness_id.clone());
+
+        assert_eq!(
+            controller.run_at(intent, fixture.session(), Timestamp::from_unix_seconds(10)),
+            Err(RuntimeError::UnsupportedHarness(harness_id))
         );
     }
 

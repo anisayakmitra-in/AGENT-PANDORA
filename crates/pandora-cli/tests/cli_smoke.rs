@@ -650,6 +650,22 @@ fn harness_discovery_exposes_the_coding_domain_without_runtime_internals() {
     let response = parse_json(&output);
     assert_eq!(response["command"], "harness run");
     assert_eq!(response["status"], "completed");
+
+    let output = fixture
+        .command(&[
+            "run",
+            "--harness",
+            "coding",
+            "--gene",
+            "workspace.read",
+            "read:README.md",
+            "--json",
+        ])
+        .output()
+        .expect("explicit harness run should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["harness_id"], "coding-domain");
 }
 
 #[test]
