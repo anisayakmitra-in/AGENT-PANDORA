@@ -29,7 +29,9 @@ pub mod strategies;
 pub mod tool_engine;
 
 pub use adaptive_engine::{AdaptationResult, AdaptiveEngine, AdaptiveError};
-pub use agent_loop::{AgentLoop, AgentLoopError, AgentRunSummary};
+pub use agent_loop::{
+    AgentLoop, AgentLoopError, AgentRunSummary, MAX_AGENT_TOOL_CALLS, MAX_AGENT_TURNS,
+};
 pub use approvals::{
     ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, PendingApproval,
 };

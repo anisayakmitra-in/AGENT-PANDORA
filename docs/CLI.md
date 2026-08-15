@@ -66,7 +66,9 @@ Each call is validated by the ToolEngine, routed through the same governed
 runtime, and recorded in the session. Read and search use the current read-only
 policy; patch and verify stop at the existing approval boundary before any
 filesystem or process effect. The loop allows eight model turns and sixteen
-tool calls. Agent mode cannot be combined with `--plan`, `--approval`,
+tool calls by default. Set `--max-turns` and `--max-tools` to choose budgets for
+a run; each value must be between 1 and 64 turns or 1 and 128 tool calls.
+Agent mode cannot be combined with `--plan`, `--approval`,
 `--harness`, or `--gene` yet. It keeps the transcript in memory and returns the
 final answer plus token usage; credentials and hidden model reasoning are not
 persisted. To continue an approved write, rerun the exact task with the

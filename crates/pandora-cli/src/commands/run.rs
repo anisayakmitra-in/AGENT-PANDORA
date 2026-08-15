@@ -12,7 +12,8 @@ use pandora_runtime::config::RuntimeConfig;
 use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::sessions::SessionStore;
 use pandora_runtime::{
-    AgentLoop, AgentLoopError, ApprovalRequest, ApprovalStore, RunStatus, RuntimeError,
+    AgentLoop, AgentLoopError, ApprovalRequest, ApprovalStore, MAX_AGENT_TOOL_CALLS,
+    MAX_AGENT_TURNS, RunStatus, RuntimeError,
 };
 use pandora_types::{
     Capability, EventPayload, HarnessId, Operation, PolicyContext, Session, SessionId, TaskIntent,
@@ -22,6 +23,8 @@ use serde_json::{Value, json};
 use std::time::Duration;
 
 const MAX_PLANNED_TASK_BYTES: usize = 8 * 1024;
+const DEFAULT_AGENT_MAX_TURNS: u32 = 8;
+const DEFAULT_AGENT_MAX_TOOL_CALLS: u32 = 16;
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
@@ -37,6 +40,8 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "model",
             "plan",
             "agent",
+            "max-turns",
+            "max-tools",
         ],
     )?;
     if parsed.positionals.len() != 1 {
@@ -59,6 +64,25 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "--agent cannot be combined with --approval, --plan, --harness, or --gene",
         ));
     }
+    if parsed.value("agent").is_none()
+        && (parsed.value("max-turns").is_some() || parsed.value("max-tools").is_some())
+    {
+        return Err(CliError::usage(
+            "--max-turns and --max-tools require --agent",
+        ));
+    }
+    let max_turns = parse_agent_budget(
+        parsed.value("max-turns"),
+        "max-turns",
+        DEFAULT_AGENT_MAX_TURNS,
+        MAX_AGENT_TURNS,
+    )?;
+    let max_tool_calls = parse_agent_budget(
+        parsed.value("max-tools"),
+        "max-tools",
+        DEFAULT_AGENT_MAX_TOOL_CALLS,
+        MAX_AGENT_TOOL_CALLS,
+    )?;
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
     let store = session_store(&config)?;
@@ -121,8 +145,12 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             &session,
             &store,
             &approval_store,
-            &task,
-            parsed.value("model"),
+            AgentOptions {
+                task: &task,
+                model_override: parsed.value("model"),
+                max_turns,
+                max_tool_calls,
+            },
         );
     }
     let mut intent =
@@ -202,8 +230,7 @@ fn execute_agent(
     session: &Session,
     store: &SessionStore,
     approval_store: &ApprovalStore,
-    task: &str,
-    model_override: Option<&str>,
+    options: AgentOptions<'_>,
 ) -> Result<CommandResult, CliError> {
     let base_url = config.provider_url().ok_or_else(|| {
         CliError::configuration(
@@ -211,7 +238,8 @@ fn execute_agent(
             json!({"config_path": config.config_path()}),
         )
     })?;
-    let model = model_override
+    let model = options
+        .model_override
         .or(config.provider_model())
         .unwrap_or("default");
     let manifest = ProviderManifest::new(
@@ -224,9 +252,15 @@ fn execute_agent(
     .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
     let provider = HttpProvider::from_environment(manifest)
         .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
-    let loop_engine =
-        AgentLoop::new(8, 16).map_err(|error| CliError::internal(error.to_string(), json!({})))?;
-    let result = loop_engine.run(&provider, controller, session.clone(), task, timestamp());
+    let loop_engine = AgentLoop::new(options.max_turns, options.max_tool_calls)
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let result = loop_engine.run(
+        &provider,
+        controller,
+        session.clone(),
+        options.task,
+        timestamp(),
+    );
     match result {
         Ok(summary) => {
             let run_count = summary.runs().len();
@@ -241,6 +275,8 @@ fn execute_agent(
                     "status": "completed",
                     "turns": summary.turns(),
                     "tool_calls": summary.tool_calls(),
+                    "turn_budget": options.max_turns,
+                    "tool_budget": options.max_tool_calls,
                     "output": summary.final_text(),
                     "usage": usage_json(summary.usage()),
                     "runs": run_count,
@@ -260,7 +296,7 @@ fn execute_agent(
                 run,
                 session.id(),
                 session.principal_id(),
-                task,
+                options.task,
             )?;
             Err(CliError::approval(
                 reason,
@@ -269,12 +305,43 @@ fn execute_agent(
                     "session_id": session.id(),
                     "turns": summary.turns(),
                     "tool_calls": summary.tool_calls(),
+                    "turn_budget": options.max_turns,
+                    "tool_budget": options.max_tool_calls,
                     "approval_id": approval.id(),
                 }),
             ))
         }
         Err(error) => Err(agent_error(error)),
     }
+}
+
+struct AgentOptions<'a> {
+    task: &'a str,
+    model_override: Option<&'a str>,
+    max_turns: u32,
+    max_tool_calls: u32,
+}
+
+fn parse_agent_budget(
+    value: Option<&str>,
+    name: &str,
+    default: u32,
+    maximum: u32,
+) -> Result<u32, CliError> {
+    let Some(value) = value else {
+        return Ok(default);
+    };
+    let budget = value.parse::<u32>().map_err(|_| {
+        CliError::usage(format!(
+            "--{name} must be an integer between 1 and {maximum}"
+        ))
+    })?;
+    if budget == 0 || budget > maximum {
+        return Err(CliError::usage(format!(
+            "--{name} must be an integer between 1 and {maximum}"
+        )));
+    }
+    Ok(budget)
 }
 
 fn append_events(

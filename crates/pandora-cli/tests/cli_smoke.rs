@@ -520,7 +520,16 @@ fn agent_run_executes_a_bounded_read_then_returns_the_final_answer() {
     assert_success(&configured);
 
     let output = fixture
-        .command(&["run", "--agent", "Read the README", "--json"])
+        .command(&[
+            "run",
+            "--agent",
+            "--max-turns",
+            "2",
+            "--max-tools",
+            "1",
+            "Read the README",
+            "--json",
+        ])
         .env("PANDORA_PROVIDER_API_KEY", "test-agent-key")
         .output()
         .expect("agent run should start");
@@ -533,9 +542,31 @@ fn agent_run_executes_a_bounded_read_then_returns_the_final_answer() {
     assert_eq!(response["status"], "completed");
     assert_eq!(response["turns"], 2);
     assert_eq!(response["tool_calls"], 1);
+    assert_eq!(response["turn_budget"], 2);
+    assert_eq!(response["tool_budget"], 1);
     assert_eq!(response["output"], "The README says fixture.");
 
     server.join().expect("agent fixture should finish");
+}
+
+#[test]
+fn agent_run_rejects_invalid_budgets_before_provider_setup() {
+    let fixture = Fixture::new();
+    let output = fixture
+        .command(&[
+            "run",
+            "--agent",
+            "--max-turns",
+            "0",
+            "Update the README",
+            "--json",
+        ])
+        .output()
+        .expect("agent run should start");
+    assert_eq!(output.status.code(), Some(2));
+    let response = parse_json(&output);
+    assert_eq!(response["code"], "usage_error");
+    assert!(response["message"].as_str().unwrap().contains("max-turns"));
 }
 
 #[test]

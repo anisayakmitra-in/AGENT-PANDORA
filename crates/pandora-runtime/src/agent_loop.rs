@@ -8,7 +8,9 @@ use serde_json::Value;
 use std::fmt;
 
 const MAX_TOOL_RESULT_BYTES: usize = 32 * 1024;
-const SYSTEM_PROMPT: &str = "You are Pandora, a bounded workspace agent. Use only the registered workspace read and search tools. Stop when the task has enough evidence. Never invent tool results.";
+pub const MAX_AGENT_TURNS: u32 = 64;
+pub const MAX_AGENT_TOOL_CALLS: u32 = 128;
+const SYSTEM_PROMPT: &str = "You are Pandora, a bounded workspace agent. Use only the registered workspace.read, workspace.search, workspace.patch, and workspace.verify tools. Patch and verification actions may require operator approval. Stop when the task has enough evidence. Never invent tool results.";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AgentLoopError {
@@ -28,7 +30,9 @@ pub enum AgentLoopError {
 impl fmt::Display for AgentLoopError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidBudget => formatter.write_str("agent loop budget must be non-zero"),
+            Self::InvalidBudget => {
+                formatter.write_str("agent loop budget is outside the allowed range")
+            }
             Self::InvalidTask => formatter.write_str("agent task cannot be empty"),
             Self::Provider(error) => error.fmt(formatter),
             Self::EmptyResponse => formatter.write_str("provider returned an empty final response"),
@@ -89,7 +93,11 @@ pub struct AgentLoop {
 
 impl AgentLoop {
     pub fn new(max_turns: u32, max_tool_calls: u32) -> Result<Self, AgentLoopError> {
-        if max_turns == 0 || max_tool_calls == 0 {
+        if max_turns == 0
+            || max_tool_calls == 0
+            || max_turns > MAX_AGENT_TURNS
+            || max_tool_calls > MAX_AGENT_TOOL_CALLS
+        {
             return Err(AgentLoopError::InvalidBudget);
         }
         Ok(Self {
@@ -401,6 +409,14 @@ mod tests {
         ));
         assert!(matches!(
             AgentLoop::new(1, 0),
+            Err(AgentLoopError::InvalidBudget)
+        ));
+        assert!(matches!(
+            AgentLoop::new(MAX_AGENT_TURNS + 1, 1),
+            Err(AgentLoopError::InvalidBudget)
+        ));
+        assert!(matches!(
+            AgentLoop::new(1, MAX_AGENT_TOOL_CALLS + 1),
             Err(AgentLoopError::InvalidBudget)
         ));
 
