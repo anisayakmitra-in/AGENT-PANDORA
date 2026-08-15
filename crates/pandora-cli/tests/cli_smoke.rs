@@ -425,6 +425,26 @@ fn named_provider_profiles_can_be_selected_without_exposing_credentials() {
     }
 
     let output = fixture
+        .command(&[
+            "provider",
+            "set",
+            "--name",
+            "coding",
+            "--provider-url",
+            "https://coding.example/v1",
+            "--model",
+            "coding-model",
+            "--api-key-env",
+            "PANDORA_CODING_API_KEY",
+            "--fallback-provider",
+            "design",
+            "--json",
+        ])
+        .output()
+        .expect("provider fallback should be configurable");
+    assert_success(&output);
+
+    let output = fixture
         .command(&["provider", "use", "design", "--json"])
         .output()
         .expect("provider selection should start");
@@ -443,9 +463,14 @@ fn named_provider_profiles_can_be_selected_without_exposing_credentials() {
         .iter()
         .find(|provider| provider["id"] == "design")
         .expect("design profile should be listed");
+    let coding = providers
+        .iter()
+        .find(|provider| provider["id"] == "coding")
+        .expect("coding profile should be listed");
     assert_eq!(design["default_model"], "vision-model");
     assert_eq!(design["api_key_env"], "PANDORA_DESIGN_API_KEY");
     assert_eq!(design["active"], true);
+    assert_eq!(coding["fallback_provider"], "design");
     assert!(!response.to_string().contains("test-provider-key"));
 }
 

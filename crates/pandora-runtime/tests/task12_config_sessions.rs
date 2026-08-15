@@ -126,7 +126,8 @@ fn named_provider_profiles_round_trip_and_select() {
                 "coding": {
                     "base_url": "https://coding.example/v1",
                     "model": "coding-model",
-                    "api_key_env": "PANDORA_CODING_API_KEY"
+                    "api_key_env": "PANDORA_CODING_API_KEY",
+                    "fallback_provider": "design"
                 }
             },
             "active_provider": "design"
@@ -182,6 +183,13 @@ fn named_provider_profiles_round_trip_and_select() {
             .api_key_env(),
         "PANDORA_CODING_API_KEY"
     );
+    assert_eq!(
+        reloaded
+            .provider_profile("coding")
+            .expect("coding profile should remain configured")
+            .fallback_provider(),
+        Some("design")
+    );
 }
 
 #[test]
@@ -228,6 +236,39 @@ fn configuration_rejects_unknown_provider_selection() {
         fixture.path.join("default-workspace"),
     )
     .expect_err("unknown provider selection should fail closed");
+
+    assert!(matches!(
+        error,
+        pandora_runtime::config::ConfigError::UnknownProvider
+    ));
+}
+
+#[test]
+fn configuration_rejects_unknown_provider_fallback() {
+    let fixture = Fixture::new("config-unknown-fallback");
+    fs::write(
+        fixture.path.join("config.json"),
+        r#"{
+            "providers": {
+                "coding": {
+                    "base_url": "https://coding.example/v1",
+                    "model": "coding-model",
+                    "api_key_env": "PANDORA_CODING_API_KEY",
+                    "fallback_provider": "missing"
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let error = RuntimeConfig::from_sources(
+        &ConfigOverrides::default(),
+        &BTreeMap::new(),
+        &fixture.path.join("config.json"),
+        fixture.path.join("default-data"),
+        fixture.path.join("default-workspace"),
+    )
+    .expect_err("unknown fallback provider should fail closed");
 
     assert!(matches!(
         error,

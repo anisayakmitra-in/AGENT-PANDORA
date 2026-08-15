@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod client;
+pub mod failover;
 pub mod inference_policy;
 pub mod manifest;
 pub mod structured_output;
@@ -9,6 +10,7 @@ pub use client::{
     ChatMessage, HttpProvider, MessageRole, ModelRequest, ModelResponse, Provider, ProviderError,
     TokenUsage, ToolCall, ToolSchema, TraceMetadata,
 };
+pub use failover::FailoverProvider;
 pub use inference_policy::{
     BackendCapabilities, CacheClass, InferenceObservation, InferencePolicy, InferenceRecord,
     KvCacheOwnership,

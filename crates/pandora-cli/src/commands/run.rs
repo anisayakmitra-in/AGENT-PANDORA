@@ -1,14 +1,14 @@
+use super::provider::configured_provider;
 use super::{
     LOCAL_WORKSPACE, create_session, load_config, parse_options, require_config_file,
     session_store, timestamp,
 };
 use crate::output::{CliError, CommandResult, success};
 use pandora_provider::{
-    ChatMessage, FallbackPolicy, HttpProvider, ModelRequest, Provider, ProviderManifest,
-    TraceMetadata, parse_and_validate,
+    ChatMessage, FallbackPolicy, ModelRequest, TraceMetadata, parse_and_validate,
 };
 use pandora_runtime::ExecutionController;
-use pandora_runtime::config::{DEFAULT_PROVIDER_API_KEY_ENV, DEFAULT_PROVIDER_NAME, RuntimeConfig};
+use pandora_runtime::config::RuntimeConfig;
 use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::sessions::SessionStore;
 use pandora_runtime::{
@@ -252,21 +252,19 @@ fn execute_agent(
         .model_override
         .or(config.provider_model())
         .unwrap_or("default");
-    let manifest = configured_manifest(config, model, "agent mode")?;
-    let provider = HttpProvider::from_environment(manifest)
-        .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
+    let provider = configured_provider(config, model, "agent mode")?;
     let loop_engine = AgentLoop::new(options.max_turns, options.max_tool_calls)
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
     let result = match options.approval_id {
         Some(approval_id) => loop_engine.run_with_history_and_approval(
-            &provider,
+            provider.as_ref(),
             controller,
             options.history,
             AgentApprovalContext::new(session.clone(), approval_store, approval_id, timestamp()),
             options.task,
         ),
         None => loop_engine.run_with_history(
-            &provider,
+            provider.as_ref(),
             controller,
             session.clone(),
             options.history,
@@ -452,30 +450,6 @@ fn run_details(
     )
 }
 
-fn configured_manifest(
-    config: &RuntimeConfig,
-    model: &str,
-    operation: &str,
-) -> Result<ProviderManifest, CliError> {
-    let base_url = config.provider_url().ok_or_else(|| {
-        CliError::configuration(
-            format!("{operation} requires a configured provider; run 'pandora provider set' first"),
-            json!({"config_path": config.config_path()}),
-        )
-    })?;
-    let name = config.active_provider().unwrap_or(DEFAULT_PROVIDER_NAME);
-    ProviderManifest::new(
-        name,
-        name,
-        base_url,
-        model,
-        config
-            .provider_api_key_env()
-            .unwrap_or(DEFAULT_PROVIDER_API_KEY_ENV),
-    )
-    .map_err(|error| CliError::provider(error.to_string(), json!({})))
-}
-
 fn plan_task(
     config: &RuntimeConfig,
     session: &Session,
@@ -485,9 +459,8 @@ fn plan_task(
     let model = model_override
         .or(config.provider_model())
         .unwrap_or("default");
-    let manifest = configured_manifest(config, model, "planning")?;
-    let provider = HttpProvider::from_environment(manifest.clone())
-        .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
+    let provider = configured_provider(config, model, "planning")?;
+    let manifest = provider.manifest().clone();
     let messages = vec![
         ChatMessage::system(
             "You are Pandora's planning layer. Return only JSON with one string field named task. "

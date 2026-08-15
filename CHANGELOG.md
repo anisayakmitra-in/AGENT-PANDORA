@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-No changes yet.
+- Provider profiles can use one validated fallback profile for recoverable
+  credential, transport, timeout, rate-limit, and server failures.
 
 ## v2.0.0-alpha.2
 

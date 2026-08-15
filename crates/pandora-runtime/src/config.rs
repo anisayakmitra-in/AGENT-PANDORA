@@ -16,6 +16,7 @@ pub enum ConfigError {
     InvalidProviderName,
     InvalidProviderModel,
     InvalidCredentialEnvironment,
+    InvalidProviderFallback,
     UnknownProvider,
     InvalidPath(&'static str),
     Serialization(serde_json::Error),
@@ -31,6 +32,9 @@ impl fmt::Display for ConfigError {
             Self::InvalidProviderModel => formatter.write_str("provider model is invalid"),
             Self::InvalidCredentialEnvironment => {
                 formatter.write_str("provider credential environment is invalid")
+            }
+            Self::InvalidProviderFallback => {
+                formatter.write_str("provider fallback configuration is invalid")
             }
             Self::UnknownProvider => formatter.write_str("provider is not configured"),
             Self::InvalidPath(field) => write!(formatter, "{field} path is invalid"),
@@ -64,6 +68,7 @@ pub struct ProviderProfile {
     base_url: String,
     model: String,
     api_key_env: String,
+    fallback_provider: Option<String>,
 }
 
 impl ProviderProfile {
@@ -91,6 +96,7 @@ impl ProviderProfile {
             base_url,
             model,
             api_key_env,
+            fallback_provider: None,
         })
     }
 
@@ -108,6 +114,19 @@ impl ProviderProfile {
 
     pub fn api_key_env(&self) -> &str {
         &self.api_key_env
+    }
+
+    pub fn with_fallback_provider(mut self, name: impl Into<String>) -> Result<Self, ConfigError> {
+        let name = name.into();
+        if !is_identifier(&name) {
+            return Err(ConfigError::InvalidProviderFallback);
+        }
+        self.fallback_provider = Some(name);
+        Ok(self)
+    }
+
+    pub fn fallback_provider(&self) -> Option<&str> {
+        self.fallback_provider.as_deref()
     }
 }
 
@@ -218,14 +237,17 @@ impl RuntimeConfig {
         let mut provider_profiles = file
             .providers
             .into_iter()
-            .map(|(name, profile)| {
-                ProviderProfile::new(
+            .map(|(name, file_profile)| {
+                let mut profile = ProviderProfile::new(
                     name.clone(),
-                    profile.base_url,
-                    profile.model,
-                    profile.api_key_env,
-                )
-                .map(|profile| (name, profile))
+                    file_profile.base_url,
+                    file_profile.model,
+                    file_profile.api_key_env,
+                )?;
+                if let Some(fallback) = file_profile.fallback_provider {
+                    profile = profile.with_fallback_provider(fallback)?;
+                }
+                Ok((name, profile))
             })
             .collect::<Result<BTreeMap<_, _>, ConfigError>>()?;
         if let Some(base_url) = provider_url.as_ref() {
@@ -260,6 +282,7 @@ impl RuntimeConfig {
         {
             return Err(ConfigError::UnknownProvider);
         }
+        validate_fallbacks(&provider_profiles)?;
         let data_dir = resolve_path(
             overrides
                 .data_dir
@@ -313,6 +336,7 @@ impl RuntimeConfig {
                             base_url: profile.base_url.clone(),
                             model: profile.model.clone(),
                             api_key_env: profile.api_key_env.clone(),
+                            fallback_provider: profile.fallback_provider.clone(),
                         },
                     )
                 })
@@ -322,6 +346,7 @@ impl RuntimeConfig {
             workspace_dir: Some(self.workspace_dir.display().to_string()),
         })
         .map_err(ConfigError::Serialization)?;
+        validate_fallbacks(&self.provider_profiles)?;
         data.push(b'\n');
         write_atomic(&self.config_path, &data)
     }
@@ -417,6 +442,28 @@ struct FileProviderProfile {
     base_url: String,
     model: String,
     api_key_env: String,
+    #[serde(default)]
+    fallback_provider: Option<String>,
+}
+
+fn validate_fallbacks(
+    provider_profiles: &BTreeMap<String, ProviderProfile>,
+) -> Result<(), ConfigError> {
+    for (name, profile) in provider_profiles {
+        let Some(fallback) = profile.fallback_provider() else {
+            continue;
+        };
+        if fallback == name {
+            return Err(ConfigError::InvalidProviderFallback);
+        }
+        let fallback_profile = provider_profiles
+            .get(fallback)
+            .ok_or(ConfigError::UnknownProvider)?;
+        if fallback_profile.fallback_provider().is_some() {
+            return Err(ConfigError::InvalidProviderFallback);
+        }
+    }
+    Ok(())
 }
 
 fn resolve_path(

@@ -59,6 +59,18 @@ impl fmt::Display for ProviderError {
     }
 }
 
+impl ProviderError {
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            Self::CredentialUnavailable | Self::Transport => true,
+            Self::HttpStatus { status } => {
+                matches!(*status, 408 | 429 | 500..=599)
+            }
+            _ => false,
+        }
+    }
+}
+
 impl std::error::Error for ProviderError {}
 
 impl From<ManifestError> for ProviderError {
@@ -339,6 +351,12 @@ impl ModelRequest {
 
     pub fn with_trace_metadata(mut self, trace: TraceMetadata) -> Self {
         self.trace = trace;
+        self
+    }
+
+    pub fn for_provider(mut self, provider_id: ProviderId, model_id: ModelId) -> Self {
+        self.provider_id = provider_id;
+        self.model_id = model_id;
         self
     }
 
