@@ -1,8 +1,21 @@
 use pandora_types::harness::ManifestError;
 use pandora_types::{GeneId, HarnessKind, HarnessManifest};
 
+pub const CORE_SOURCE_HARNESS_ID: &str = "core-source";
+pub const CORE_SOURCE_HARNESS_VERSION: &str = "0.1.0";
 pub const CODING_HARNESS_ID: &str = "coding-domain";
 pub const CODING_HARNESS_VERSION: &str = "0.1.0";
+
+pub fn core_source_manifest() -> Result<HarnessManifest, ManifestError> {
+    HarnessManifest::new(
+        CORE_SOURCE_HARNESS_ID,
+        CORE_SOURCE_HARNESS_VERSION,
+        "Pandora Core",
+        HarnessKind::Source,
+        Some("pandora-runtime".to_owned()),
+        Vec::new(),
+    )
+}
 
 pub fn coding_manifest() -> Result<HarnessManifest, ManifestError> {
     let genes = [

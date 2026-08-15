@@ -80,6 +80,9 @@ the approval boundary and expose an inspectable, redacted request subject.
 `--harness` selects an installed Harness by ID; `coding` is an alias for the
 built-in `coding-domain` Harness. The runtime rejects an unknown or unsupported
 Harness before Gene planning.
+The built-in `core-source` Harness is available through `harness list` and
+`harness inspect core-source`; it binds the `pandora-runtime` constitutional
+service and cannot be run as a task.
 `search:<query>` scans regular files under the configured workspace within the
 runtime's entry and file-size limits, does not follow symlinks, and returns
 matching paths with forward-slash separators.
@@ -114,6 +117,8 @@ consumes it once.
 
 ```text
 pandora harness list
+pandora harness inspect core-source
+pandora harness inspect coding
 pandora tool list
 pandora tool inspect <id>
 pandora skill list

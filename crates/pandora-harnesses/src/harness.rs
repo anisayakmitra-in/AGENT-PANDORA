@@ -1,6 +1,37 @@
 use crate::genes::CodingGene;
-use crate::manifest::coding_manifest;
+use crate::manifest::{coding_manifest, core_source_manifest};
 use pandora_types::{Gene, Harness, HarnessManifest};
+
+pub struct CoreSourceHarness {
+    manifest: HarnessManifest,
+    genes: Vec<Box<dyn Gene>>,
+}
+
+impl CoreSourceHarness {
+    pub fn new() -> Self {
+        Self {
+            manifest: core_source_manifest()
+                .expect("built-in Core Source Harness manifest is valid"),
+            genes: Vec::new(),
+        }
+    }
+}
+
+impl Default for CoreSourceHarness {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Harness for CoreSourceHarness {
+    fn manifest(&self) -> &HarnessManifest {
+        &self.manifest
+    }
+
+    fn genes(&self) -> &[Box<dyn Gene>] {
+        &self.genes
+    }
+}
 
 pub struct CodingHarness {
     manifest: HarnessManifest,

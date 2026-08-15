@@ -18,6 +18,12 @@ Pandora keeps package metadata separate from runtime authority.
 
 The registry does not load code, enable a Harness, issue a permit, or grant runtime authority. A recorded package is metadata that passed admission, not an executable extension.
 
+The built-in `core-source` Harness is the runtime's Source Harness. It binds the
+`pandora-runtime` constitutional service and owns no Genes. It is discoverable
+and inspectable, but it is not a user-runnable task target. Source Harnesses
+augment one constitutional service; they do not provide a second execution
+hierarchy.
+
 ## Package kinds
 
 The external vocabulary is closed and uses these exact values:

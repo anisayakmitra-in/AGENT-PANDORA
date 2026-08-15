@@ -10,6 +10,8 @@
   release tag required by the native artifact host.
 - `pandora doctor` now treats a valid local-only setup as healthy while clearly
   reporting that model-backed tasks still need a provider.
+- The built-in `core-source` Harness now appears in discovery and binds the
+  `pandora-runtime` constitutional service without adding a runnable Gene.
 
 ## v2.0.0-alpha.2
 

@@ -40,10 +40,11 @@ fn inspect(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(args, &["config", "data-dir", "workspace"])?;
     if parsed.positionals.len() != 1 {
         return Err(CliError::usage(
-            "harness inspect requires the harness name 'coding'",
+            "harness inspect requires the harness name 'core-source' or 'coding'",
         ));
     }
     let requested_id = match parsed.positionals[0].as_str() {
+        "core-source" => "core-source",
         "coding" | "coding-domain" => "coding-domain",
         other => return Err(CliError::usage(format!("unknown harness '{other}'"))),
     };
@@ -122,6 +123,7 @@ fn harness_value(harness: &dyn pandora_types::Harness) -> serde_json::Value {
         "version": manifest.version(),
         "name": manifest.name(),
         "kind": manifest.kind().as_str(),
+        "constitutional_service": manifest.constitutional_service(),
         "genes": genes,
     })
 }

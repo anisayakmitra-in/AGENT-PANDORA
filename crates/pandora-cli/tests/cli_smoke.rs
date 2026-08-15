@@ -1197,7 +1197,30 @@ fn harness_discovery_exposes_the_coding_domain_without_runtime_internals() {
     assert_success(&output);
     let response = parse_json(&output);
     assert_eq!(response["version"], "0.1");
-    assert_eq!(response["harnesses"][0]["id"], "coding-domain");
+    let harnesses = response["harnesses"].as_array().unwrap();
+    assert!(harnesses.iter().any(|harness| {
+        harness["id"] == "core-source"
+            && harness["kind"] == "source"
+            && harness["constitutional_service"] == "pandora-runtime"
+    }));
+    assert!(
+        harnesses
+            .iter()
+            .any(|harness| harness["id"] == "coding-domain")
+    );
+
+    let output = fixture
+        .command(&["harness", "inspect", "core-source", "--json"])
+        .output()
+        .expect("source harness inspect should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["harness"]["kind"], "source");
+    assert_eq!(
+        response["harness"]["constitutional_service"],
+        "pandora-runtime"
+    );
+    assert!(response["harness"]["genes"].as_array().unwrap().is_empty());
 
     let output = fixture
         .command(&["harness", "inspect", "coding", "--json"])
