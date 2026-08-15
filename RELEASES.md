@@ -3,6 +3,11 @@
 Pandora uses plain SemVer tags. Existing legacy preview tags remain immutable;
 new releases do not use product codenames.
 
+The older `v2.0.0-anubis.1`, `v2.0.0-anubis.2`, and `v2.0.0-anubis.3` tags are
+archived previews from an earlier naming scheme. They remain available for
+history and reproducibility, but they are not the active release line or
+recommended install targets.
+
 ## v2.0.0-alpha.1
 
 This was the first CLI-only prerelease. Its shipped scope is recorded in
