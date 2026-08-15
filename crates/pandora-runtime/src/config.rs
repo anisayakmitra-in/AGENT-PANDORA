@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use url::Url;
 
@@ -299,7 +299,7 @@ impl RuntimeConfig {
         if let Some(parent) = self.config_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let data = serde_json::to_vec_pretty(&FileConfig {
+        let mut data = serde_json::to_vec_pretty(&FileConfig {
             format_version: Some(CONFIG_FORMAT_VERSION),
             provider_url: self.provider_url.clone(),
             provider_model: self.provider_model.clone(),
@@ -322,16 +322,8 @@ impl RuntimeConfig {
             workspace_dir: Some(self.workspace_dir.display().to_string()),
         })
         .map_err(ConfigError::Serialization)?;
-        let mut file = OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(&self.config_path)?;
-        set_private_permissions(&file)?;
-        file.write_all(&data)?;
-        file.write_all(b"\n")?;
-        file.sync_all()?;
-        Ok(())
+        data.push(b'\n');
+        write_atomic(&self.config_path, &data)
     }
 
     pub fn config_path(&self) -> &Path {
@@ -542,4 +534,72 @@ fn set_private_permissions(file: &std::fs::File) -> Result<(), ConfigError> {
     #[cfg(not(unix))]
     let _ = file;
     Ok(())
+}
+
+fn write_atomic(path: &Path, data: &[u8]) -> Result<(), ConfigError> {
+    if path.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::IsADirectory,
+            "configuration path is a directory",
+        )
+        .into());
+    }
+    let mut file = atomic_write_file::AtomicWriteFile::open(path)?;
+    set_private_permissions(file.as_file())?;
+    file.write_all(data)?;
+    file.commit()?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::write_atomic;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(1);
+
+    #[test]
+    fn atomic_write_replaces_existing_configuration() {
+        let directory = fixture("replace");
+        let path = directory.join("config.json");
+        fs::write(&path, b"old configuration\n").unwrap();
+
+        write_atomic(&path, b"new configuration\n").unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), b"new configuration\n");
+        assert_no_temporary_files(&directory);
+    }
+
+    #[test]
+    fn atomic_write_cleans_up_when_destination_cannot_be_replaced() {
+        let directory = fixture("failed-replace");
+        let path = directory.join("config.json");
+        fs::create_dir(&path).unwrap();
+
+        assert!(write_atomic(&path, b"configuration").is_err());
+
+        assert!(path.is_dir());
+        assert_no_temporary_files(&directory);
+    }
+
+    fn fixture(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "pandora-config-{name}-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn assert_no_temporary_files(directory: &std::path::Path) {
+        let entries = fs::read_dir(directory)
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].file_name(), "config.json");
+    }
 }

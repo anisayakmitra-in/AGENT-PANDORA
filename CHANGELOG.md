@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Configuration writes now replace the file atomically after the new contents
+  are synced, preserving the previous valid configuration on write failure.
 - Provider profiles can keep separate endpoints, models, and credential
   environment-variable names; `provider use` selects a default and `run
   --provider` selects one run without copying secrets into configuration.

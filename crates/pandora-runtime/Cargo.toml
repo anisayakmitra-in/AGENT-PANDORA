@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+atomic-write-file.workspace = true
 pandora-harnesses = { path = "../pandora-harnesses" }
 pandora-provider = { path = "../pandora-provider" }
 pandora-types = { path = "../pandora-types" }
