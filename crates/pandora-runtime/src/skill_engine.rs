@@ -7,6 +7,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const MAX_ACTIVE_SKILLS: usize = 16;
+const MAX_ACTIVE_SKILL_CONTEXT_BYTES: usize = 24 * 1024;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SkillState {
     Verified,
@@ -53,6 +56,7 @@ pub enum SkillError {
     PathEscape,
     DirectExecutionDisabled,
     Collision,
+    ContextTooLarge,
     CorruptState,
     RollbackFailed,
 }
@@ -69,6 +73,7 @@ impl fmt::Display for SkillError {
             Self::PathEscape => "skill path escapes its admission root",
             Self::DirectExecutionDisabled => "skill scripts must run through ToolEngine",
             Self::Collision => "skill destination already exists",
+            Self::ContextTooLarge => "enabled skill guidance exceeds the context limit",
             Self::CorruptState => "skill state is invalid",
             Self::RollbackFailed => "skill rollback failed",
         };
@@ -257,6 +262,55 @@ impl SkillEngine {
 
     pub fn list(&self) -> Result<Vec<SkillRecord>, SkillError> {
         self.load_records()
+    }
+
+    pub fn active_context(&self) -> Result<Option<String>, SkillError> {
+        let records = self.load_records()?;
+        let enabled = records
+            .iter()
+            .filter(|record| record.state() == SkillState::Enabled)
+            .collect::<Vec<_>>();
+        if enabled.len() > MAX_ACTIVE_SKILLS {
+            return Err(SkillError::ContextTooLarge);
+        }
+
+        let mut context = String::new();
+        for record in enabled {
+            let document_path = record.root().join("SKILL.md");
+            let metadata = fs::symlink_metadata(&document_path)?;
+            if metadata.file_type().is_symlink() {
+                return Err(SkillError::SymlinkRejected);
+            }
+            if !metadata.is_file() {
+                return Err(SkillError::InvalidManifest);
+            }
+            if metadata.len() > MAX_ACTIVE_SKILL_CONTEXT_BYTES as u64 {
+                return Err(SkillError::ContextTooLarge);
+            }
+            let (_, body) = read_skill_document(record.root())?;
+            let body = body
+                .chars()
+                .filter(|character| {
+                    *character == '\n' || *character == '\t' || !character.is_control()
+                })
+                .collect::<String>();
+            let section = format!(
+                "Skill: {} v{}\n{}\n",
+                record.manifest().id(),
+                record.manifest().version(),
+                body
+            );
+            if context.len().saturating_add(section.len()) > MAX_ACTIVE_SKILL_CONTEXT_BYTES {
+                return Err(SkillError::ContextTooLarge);
+            }
+            context.push_str(&section);
+        }
+
+        if context.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(context))
+        }
     }
 
     pub fn inspect(&self, id: &str) -> Result<SkillInspection, SkillError> {
@@ -778,6 +832,33 @@ mod tests {
         assert!(fixture.root.join("beta/SKILL.md").is_file());
         assert!(source.join("SKILL.md").is_file());
         assert_eq!(engine.list().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn active_context_includes_enabled_skills_only() {
+        let fixture = Fixture::new();
+        let engine = SkillEngine::discover(&fixture.root).unwrap();
+
+        assert_eq!(engine.active_context().unwrap(), None);
+        engine.enable("alpha").unwrap();
+
+        let context = engine.active_context().unwrap().unwrap();
+        assert!(context.contains("Skill: alpha"));
+        assert!(context.contains("Use the read tool."));
+    }
+
+    #[test]
+    fn active_context_fails_closed_when_guidance_is_too_large() {
+        let fixture = Fixture::new();
+        let body = "x".repeat(MAX_ACTIVE_SKILL_CONTEXT_BYTES);
+        let document = format!(
+            "---\nid: alpha\nversion: 0.1.0\nname: Alpha Skill\ndescription: A bounded test skill\npublisher: pandora\nresources: workspace.read\n---\n{body}"
+        );
+        fs::write(fixture.root.join("alpha/SKILL.md"), document).unwrap();
+        let engine = SkillEngine::discover(&fixture.root).unwrap();
+        engine.enable("alpha").unwrap();
+
+        assert_eq!(engine.active_context(), Err(SkillError::ContextTooLarge));
     }
 
     #[cfg(unix)]

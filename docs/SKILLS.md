@@ -42,3 +42,11 @@ error. Symlinked manifests, script directories, and script files are rejected.
 Inspection reads the body and resource declarations only when requested.
 State is kept under `.pandora-state`; removed packages are held under
 `.pandora-removed` until a rollback receipt restores them.
+
+## Agent use
+
+An enabled Skill contributes bounded guidance to agent context. Skills are
+reference material only: their resource labels do not grant capabilities, and
+their scripts still require the governed ToolEngine path. Disabled and
+suspended Skills are omitted. If enabled guidance exceeds the context limit,
+the run fails closed instead of silently truncating the package.

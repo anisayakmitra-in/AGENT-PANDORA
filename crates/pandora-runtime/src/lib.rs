@@ -30,8 +30,8 @@ pub mod tool_engine;
 
 pub use adaptive_engine::{AdaptationResult, AdaptiveEngine, AdaptiveError};
 pub use agent_loop::{
-    AgentApprovalContext, AgentLoop, AgentLoopError, AgentRunSummary, MAX_AGENT_TOOL_CALLS,
-    MAX_AGENT_TURNS,
+    AgentApprovalContext, AgentLoop, AgentLoopError, AgentRunRequest, AgentRunSummary,
+    MAX_AGENT_TOOL_CALLS, MAX_AGENT_TURNS,
 };
 pub use approvals::{
     ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, PendingApproval,

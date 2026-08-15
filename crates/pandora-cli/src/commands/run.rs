@@ -7,19 +7,20 @@ use crate::output::{CliError, CommandResult, success};
 use pandora_provider::{
     ChatMessage, FallbackPolicy, ModelRequest, TraceMetadata, parse_and_validate,
 };
-use pandora_runtime::ExecutionController;
 use pandora_runtime::config::RuntimeConfig;
 use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::sessions::SessionStore;
 use pandora_runtime::{
-    AgentApprovalContext, AgentLoop, AgentLoopError, ApprovalRequest, ApprovalStore,
-    MAX_AGENT_TOOL_CALLS, MAX_AGENT_TURNS, RunStatus, RuntimeError,
+    AgentApprovalContext, AgentLoop, AgentLoopError, AgentRunRequest, ApprovalRequest,
+    ApprovalStore, MAX_AGENT_TOOL_CALLS, MAX_AGENT_TURNS, RunStatus, RuntimeError,
 };
+use pandora_runtime::{ExecutionController, SkillEngine, SkillError};
 use pandora_types::{
     Capability, EventPayload, HarnessId, Operation, PolicyContext, Session, SessionId, TaskIntent,
     WorkspaceId,
 };
 use serde_json::{Value, json};
+use std::fs;
 use std::time::Duration;
 
 const MAX_PLANNED_TASK_BYTES: usize = 8 * 1024;
@@ -248,6 +249,7 @@ fn execute_agent(
     approval_store: &ApprovalStore,
     options: AgentOptions<'_>,
 ) -> Result<CommandResult, CliError> {
+    let skill_context = active_skill_context(config)?;
     let model = options
         .model_override
         .or(config.provider_model())
@@ -256,20 +258,19 @@ fn execute_agent(
     let loop_engine = AgentLoop::new(options.max_turns, options.max_tool_calls)
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
     let result = match options.approval_id {
-        Some(approval_id) => loop_engine.run_with_history_and_approval(
+        Some(approval_id) => loop_engine.run_with_history_and_approval_and_skill_context(
             provider.as_ref(),
             controller,
             options.history,
             AgentApprovalContext::new(session.clone(), approval_store, approval_id, timestamp()),
+            skill_context.as_deref(),
             options.task,
         ),
-        None => loop_engine.run_with_history(
+        None => loop_engine.run_with_request(
             provider.as_ref(),
             controller,
-            session.clone(),
-            options.history,
-            options.task,
-            timestamp(),
+            AgentRunRequest::new(session.clone(), options.history, options.task, timestamp())
+                .with_skill_context(skill_context.as_deref()),
         ),
     };
     match result {
@@ -344,6 +345,34 @@ fn execute_agent(
     }
 }
 
+fn active_skill_context(config: &RuntimeConfig) -> Result<Option<String>, CliError> {
+    let root = config.data_dir().join("skills");
+    let metadata = match fs::symlink_metadata(&root) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => {
+            return Err(CliError::configuration(
+                "could not inspect the Skill directory",
+                json!({"root": root}),
+            ));
+        }
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(CliError::configuration(
+            "Skill directory is not a regular directory",
+            json!({"root": root}),
+        ));
+    }
+    SkillEngine::discover(root)
+        .and_then(|engine| engine.active_context())
+        .map_err(|error: SkillError| {
+            CliError::execution(
+                "enabled Skill context is unavailable",
+                json!({"error": error.to_string()}),
+            )
+        })
+}
+
 struct AgentOptions<'a> {
     task: &'a str,
     history: Vec<ChatMessage>,
@@ -407,6 +436,7 @@ fn agent_error(error: AgentLoopError) -> CliError {
         AgentLoopError::InvalidBudget | AgentLoopError::InvalidTask => {
             CliError::usage(error.to_string())
         }
+        AgentLoopError::InvalidSkillContext => CliError::execution(error.to_string(), json!({})),
         AgentLoopError::Provider(error) => CliError::provider(error.to_string(), json!({})),
         AgentLoopError::EmptyResponse
         | AgentLoopError::ToolBudgetExceeded

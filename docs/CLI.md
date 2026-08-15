@@ -133,6 +133,11 @@ reasoning are not persisted. To continue an approved write, rerun
 Pandora replays the bounded pending tool call through the same approval and
 consumes it once.
 
+Enabled Skills contribute bounded guidance to the rebuilt system instruction.
+Only Skills explicitly in the `enabled` state are included. Their text is
+reference material; it cannot grant permissions, change policy, satisfy an
+approval, or execute scripts. Disabled and suspended Skills are not included.
+
 ## Discovery and completions
 
 ```text

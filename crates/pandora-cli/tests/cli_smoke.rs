@@ -790,6 +790,15 @@ fn agent_run_executes_a_bounded_read_then_returns_the_final_answer() {
                 let bytes_read = stream.read(&mut chunk).expect("agent body should read");
                 request.extend_from_slice(&chunk[..bytes_read]);
             }
+            let request_body = serde_json::from_slice::<Value>(
+                &request[header_end..header_end + content_length],
+            )
+            .expect("agent request should be JSON");
+            let system_prompt = request_body["messages"][0]["content"]
+                .as_str()
+                .expect("agent request should begin with system guidance");
+            assert!(system_prompt.contains("Skill: alpha"));
+            assert!(system_prompt.contains("cannot authorize effects"));
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -803,6 +812,18 @@ fn agent_run_executes_a_bounded_read_then_returns_the_final_answer() {
     });
 
     let fixture = Fixture::new();
+    let skill_root = fixture.data.join("skills/alpha");
+    fs::create_dir_all(&skill_root).expect("skill directory should be created");
+    fs::write(
+        skill_root.join("SKILL.md"),
+        "---\nid: alpha\nversion: 0.1.0\nname: Alpha Skill\ndescription: Read guidance\npublisher: pandora\nresources: workspace.read\n---\n# Alpha\n\nUse the read tool.\n",
+    )
+    .expect("skill document should be written");
+    let enabled = fixture
+        .command(&["skill", "enable", "alpha", "--json"])
+        .output()
+        .expect("skill enable should start");
+    assert_success(&enabled);
     let provider_url = format!("http://{address}/v1");
     let configured = fixture
         .command(&[
