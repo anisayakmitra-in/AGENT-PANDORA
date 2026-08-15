@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod approval;
+mod chat;
 mod completions;
 mod doctor;
 mod harness;
@@ -39,6 +40,7 @@ impl ParsedArgs {
 }
 
 pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
+    let json_requested = raw_args.iter().any(|argument| argument == "--json");
     let args = raw_args
         .into_iter()
         .filter(|argument| argument != "--json")
@@ -49,6 +51,8 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         .as_str();
     match command {
         "approval" => approval::execute(&args[1..]),
+        "chat" if json_requested => Err(CliError::usage("chat does not support --json")),
+        "chat" => chat::execute(&args[1..]),
         "completions" => completions::execute(&args[1..]),
         "harness" => harness::execute(&args[1..]),
         "migrate" => migration::execute(&args[1..]),
@@ -235,12 +239,13 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|harness|session|skill|approval|provider|tool|orchestration|strategies|completions|migrate|update|uninstall|doctor> [options]
+    r#"usage: pandora <help|setup|run|chat|harness|session|skill|approval|provider|tool|orchestration|strategies|completions|migrate|update|uninstall|doctor> [options]
 
 commands:
   help (or --help)
   setup [--interactive] [--provider-url <url>] [--model <model>]
   run [--provider <name>] [--agent] [--max-turns <n>] [--max-tools <n>] [--harness <id>] [--gene <id>] [--plan] [--model <model>] [--approval <id>] <task>
+  chat [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>]
   harness list|inspect|run
   session list|resume|inspect <id>
   skill list|inspect|enable|disable|suspend|remove|restore <id>

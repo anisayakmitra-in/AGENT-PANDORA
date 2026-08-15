@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-No changes yet.
+- Added `pandora chat`, a line-oriented interactive agent session that reuses
+  the existing AgentLoop, session scope, approval records, and governed tool
+  path. It is terminal-only and does not claim a full TUI.
 
 ## v2.0.0-alpha.3
 

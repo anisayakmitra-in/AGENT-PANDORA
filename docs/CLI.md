@@ -68,6 +68,8 @@ pandora run --agent "Read the README and summarize it"
 pandora run --harness coding --gene workspace.read "read:README.md"
 pandora run --plan "inspect the README and report what it contains"
 pandora run --approval <approval-id> "patch:README.md:approved content"
+pandora chat
+pandora chat --session <session-id>
 pandora session list
 pandora session inspect <session-id>
 pandora session resume <session-id>
@@ -93,6 +95,12 @@ digest, is consumed atomically, and cannot be replayed for another task.
 `session inspect` returns scoped session metadata and bounded counts without
 returning event payloads. Use `session resume` when the full bounded transcript
 is required.
+
+`chat` is a line-oriented interactive agent session. Type `/help` for the local
+commands, `/session` to print the active session ID, and `/exit` or `/quit` to
+close it. Each other line is sent through the same bounded AgentLoop and
+governed execution path as `run --agent`; the session is reused for later
+turns. Chat output is intended for terminals and rejects `--json`.
 `run --plan` sends the request to the active or explicitly selected provider as a bounded,
 tool-free planning call. Only a schema-validated task intent is passed to the
 runtime; the model cannot execute tools or grant permissions. Configure the

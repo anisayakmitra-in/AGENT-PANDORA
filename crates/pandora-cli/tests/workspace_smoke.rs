@@ -26,6 +26,7 @@ fn cli_help_is_successful_and_lists_the_primary_commands() {
     assert!(stdout.contains("usage: pandora"));
     assert!(stdout.contains("run"));
     assert!(stdout.contains("session list|resume|inspect <id>"));
+    assert!(stdout.contains("chat [--provider <name>]"));
     assert!(stdout.contains("doctor"));
     assert!(output.stderr.is_empty());
 }

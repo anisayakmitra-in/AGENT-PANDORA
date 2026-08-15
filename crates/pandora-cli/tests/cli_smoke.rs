@@ -130,6 +130,67 @@ fn interactive_setup_configures_a_provider_without_echoing_secrets() {
 }
 
 #[test]
+fn chat_can_exit_without_provider_configuration() {
+    let fixture = Fixture::new();
+    let mut command = fixture.command(&["chat"]);
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().expect("chat should start");
+    child
+        .stdin
+        .take()
+        .expect("chat should accept input")
+        .write_all(b"/exit\n")
+        .expect("chat command should be written");
+
+    let output = child.wait_with_output().expect("chat should finish");
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Chat closed"));
+}
+
+#[test]
+fn chat_handles_local_commands_without_provider_configuration() {
+    let fixture = Fixture::new();
+    let mut command = fixture.command(&["chat"]);
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().expect("chat should start");
+    child
+        .stdin
+        .take()
+        .expect("chat should accept input")
+        .write_all(b"/help\n/session\n/quit\n")
+        .expect("chat commands should be written");
+
+    let output = child.wait_with_output().expect("chat should finish");
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("show chat commands"));
+    assert!(stdout.contains("session: not started"));
+    assert!(stdout.contains("Chat closed after 0 turn(s)"));
+}
+
+#[test]
+fn chat_rejects_machine_readable_output() {
+    let fixture = Fixture::new();
+    let output = fixture
+        .command(&["chat", "--json"])
+        .output()
+        .expect("chat should start");
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(parse_json(&output)["code"], "usage_error");
+    assert_eq!(
+        parse_json(&output)["message"],
+        "chat does not support --json"
+    );
+}
+
+#[test]
 fn search_run_returns_matching_workspace_files() {
     let fixture = Fixture::new();
     fixture.setup();
@@ -1472,6 +1533,7 @@ fn completions_include_session_inspect_for_each_shell() {
         let response = parse_json(&output);
         let script = response["script"].as_str().unwrap();
         assert!(!script.contains("session inspect"));
+        assert!(script.contains("chat"));
         assert!(script.contains(parent_condition));
         assert!(script.contains(subcommands));
         if shell == "zsh" {
