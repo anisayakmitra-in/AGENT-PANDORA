@@ -12,8 +12,8 @@ use pandora_runtime::config::RuntimeConfig;
 use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::sessions::SessionStore;
 use pandora_runtime::{
-    AgentLoop, AgentLoopError, ApprovalRequest, ApprovalStore, MAX_AGENT_TOOL_CALLS,
-    MAX_AGENT_TURNS, RunStatus, RuntimeError,
+    AgentApprovalContext, AgentLoop, AgentLoopError, ApprovalRequest, ApprovalStore,
+    MAX_AGENT_TOOL_CALLS, MAX_AGENT_TURNS, RunStatus, RuntimeError,
 };
 use pandora_types::{
     Capability, EventPayload, HarnessId, Operation, PolicyContext, Session, SessionId, TaskIntent,
@@ -55,13 +55,12 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         ));
     }
     if parsed.value("agent").is_some()
-        && (parsed.value("approval").is_some()
-            || parsed.value("plan").is_some()
+        && (parsed.value("plan").is_some()
             || parsed.value("harness").is_some()
             || parsed.value("gene").is_some())
     {
         return Err(CliError::usage(
-            "--agent cannot be combined with --approval, --plan, --harness, or --gene",
+            "--agent cannot be combined with --plan, --harness, or --gene",
         ));
     }
     if parsed.value("agent").is_none()
@@ -162,6 +161,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             AgentOptions {
                 task: &task,
                 history: agent_history,
+                approval_id: parsed.value("approval"),
                 model_override: parsed.value("model"),
                 max_turns,
                 max_tool_calls,
@@ -269,14 +269,23 @@ fn execute_agent(
         .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
     let loop_engine = AgentLoop::new(options.max_turns, options.max_tool_calls)
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
-    let result = loop_engine.run_with_history(
-        &provider,
-        controller,
-        session.clone(),
-        options.history,
-        options.task,
-        timestamp(),
-    );
+    let result = match options.approval_id {
+        Some(approval_id) => loop_engine.run_with_history_and_approval(
+            &provider,
+            controller,
+            options.history,
+            AgentApprovalContext::new(session.clone(), approval_store, approval_id, timestamp()),
+            options.task,
+        ),
+        None => loop_engine.run_with_history(
+            &provider,
+            controller,
+            session.clone(),
+            options.history,
+            options.task,
+            timestamp(),
+        ),
+    };
     match result {
         Ok(summary) => {
             store
@@ -352,6 +361,7 @@ fn execute_agent(
 struct AgentOptions<'a> {
     task: &'a str,
     history: Vec<ChatMessage>,
+    approval_id: Option<&'a str>,
     model_override: Option<&'a str>,
     max_turns: u32,
     max_tool_calls: u32,

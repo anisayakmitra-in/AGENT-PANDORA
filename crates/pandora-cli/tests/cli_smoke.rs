@@ -771,6 +771,118 @@ fn agent_run_stops_a_patch_at_the_approval_boundary() {
 }
 
 #[test]
+fn approved_agent_run_resumes_the_pending_tool_call_once() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("agent fixture should bind");
+    let address = listener
+        .local_addr()
+        .expect("agent fixture should expose its address");
+    let server = thread::spawn(move || {
+        let first_response = br#"{"choices":[{"message":{"content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"workspace.patch","arguments":"{\"path\":\"README.md\",\"content\":\"approved\"}"}}]}}],"usage":{"prompt_tokens":4,"completion_tokens":2}}"#;
+        let second_response = br#"{"choices":[{"message":{"content":"approved"}}],"usage":{"prompt_tokens":5,"completion_tokens":2}}"#;
+        for response in [first_response.as_slice(), second_response.as_slice()] {
+            let (mut stream, _) = listener.accept().expect("agent should connect");
+            let mut request = Vec::new();
+            let header_end = loop {
+                let mut chunk = [0_u8; 1_024];
+                let bytes_read = stream.read(&mut chunk).expect("agent request should read");
+                request.extend_from_slice(&chunk[..bytes_read]);
+                if let Some(position) = request.windows(4).position(|window| window == b"\r\n\r\n")
+                {
+                    break position + 4;
+                }
+            };
+            let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+            let content_length = headers
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .and_then(|value| value.trim().parse::<usize>().ok())
+                .expect("agent should send a content length");
+            while request.len() < header_end + content_length {
+                let mut chunk = [0_u8; 1_024];
+                let bytes_read = stream.read(&mut chunk).expect("agent body should read");
+                request.extend_from_slice(&chunk[..bytes_read]);
+            }
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                response.len()
+            )
+            .expect("agent response headers should be written");
+            stream
+                .write_all(response)
+                .expect("agent response should be written");
+        }
+    });
+
+    let fixture = Fixture::new();
+    let provider_url = format!("http://{address}/v1");
+    let configured = fixture
+        .command(&[
+            "provider",
+            "set",
+            "--provider-url",
+            &provider_url,
+            "--model",
+            "agent-model",
+            "--json",
+        ])
+        .output()
+        .expect("provider set should start");
+    assert_success_with_context(&configured, "provider set");
+
+    let first = fixture
+        .command(&["run", "--agent", "Update the README", "--json"])
+        .env("PANDORA_PROVIDER_API_KEY", "test-agent-key")
+        .output()
+        .expect("agent run should start");
+    assert_eq!(first.status.code(), Some(40));
+    let first_response = parse_json(&first);
+    let approval_id = first_response["details"]["approval_id"]
+        .as_str()
+        .expect("approval ID should be returned")
+        .to_owned();
+    let session_id = first_response["details"]["session_id"]
+        .as_str()
+        .expect("agent approval should include its session")
+        .to_owned();
+
+    let resolved = fixture
+        .command(&["approval", "resolve", &approval_id, "--allow", "--json"])
+        .output()
+        .expect("approval resolution should start");
+    assert_success_with_context(&resolved, "approval resolve");
+
+    let resumed = fixture
+        .command(&[
+            "run",
+            "--agent",
+            "--approval",
+            &approval_id,
+            "--session",
+            &session_id,
+            "Continue after approval",
+            "--json",
+        ])
+        .env("PANDORA_PROVIDER_API_KEY", "test-agent-key")
+        .output()
+        .expect("approved agent run should start");
+    assert_success_with_context(&resumed, "approved agent resume");
+    assert_eq!(parse_json(&resumed)["output"], "approved");
+    assert_eq!(
+        fs::read_to_string(fixture.workspace.join("README.md")).unwrap(),
+        "approved"
+    );
+
+    let inspected = fixture
+        .command(&["approval", "inspect", &approval_id, "--json"])
+        .output()
+        .expect("approval inspection should start");
+    assert_success(&inspected);
+    assert_eq!(parse_json(&inspected)["approval"]["status"], "consumed");
+    server.join().expect("agent fixture should finish");
+}
+
+#[test]
 fn run_plan_uses_structured_provider_output_before_governed_execution() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("planner fixture should bind");
     let address = listener
@@ -1252,6 +1364,16 @@ fn assert_success(output: &Output) {
         output.status.success(),
         "command failed: {}\nstderr: {}",
         output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn assert_success_with_context(output: &Output, command: &str) {
+    assert!(
+        output.status.success(),
+        "{command} failed: {}\nstdout: {}\nstderr: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
 }

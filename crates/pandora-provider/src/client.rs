@@ -167,6 +167,12 @@ impl ChatMessage {
                 "tool call ID is invalid".to_owned(),
             ));
         }
+        let content = content.into();
+        let content = if content.is_empty() {
+            "[empty tool result]".to_owned()
+        } else {
+            content
+        };
         let mut message = Self::tool(content)?;
         message.tool_call_id = Some(call_id);
         Ok(message)
@@ -178,6 +184,20 @@ impl ChatMessage {
 
     pub fn content(&self) -> &str {
         &self.content
+    }
+
+    pub fn tool_calls(&self) -> Result<Vec<ToolCall>, ProviderError> {
+        self.tool_calls
+            .iter()
+            .map(|call| {
+                let arguments = serde_json::from_str::<Value>(&call.arguments).map_err(|_| {
+                    ProviderError::InvalidToolArguments {
+                        call_id: call.id.clone(),
+                    }
+                })?;
+                ToolCall::new(call.id.clone(), call.name.clone(), arguments)
+            })
+            .collect()
     }
 }
 
@@ -973,6 +993,14 @@ mod tests {
         let decoded: Vec<ChatMessage> = serde_json::from_slice(&encoded).unwrap();
 
         assert_eq!(decoded, messages);
+    }
+
+    #[test]
+    fn empty_tool_results_use_a_bounded_placeholder() {
+        let message = ChatMessage::tool_result("call-1", "").unwrap();
+
+        assert_eq!(message.role(), MessageRole::Tool);
+        assert_eq!(message.content(), "[empty tool result]");
     }
 
     #[test]

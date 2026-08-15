@@ -1,4 +1,4 @@
-use crate::{ExecutionController, RunStatus, RunSummary, RuntimeError, ToolEngine};
+use crate::{ApprovalStore, ExecutionController, RunStatus, RunSummary, RuntimeError, ToolEngine};
 use pandora_provider::{
     ChatMessage, MessageRole, ModelRequest, Provider, ProviderError, TokenUsage, ToolCall,
     ToolSchema, TraceMetadata,
@@ -132,6 +132,56 @@ impl AgentLoop {
         task: impl Into<String>,
         now: Timestamp,
     ) -> Result<AgentRunSummary, AgentLoopError> {
+        self.run_with_context(
+            provider,
+            controller,
+            history,
+            AgentRunContext {
+                session,
+                now,
+                approval: None,
+            },
+            task,
+        )
+    }
+
+    pub fn run_with_history_and_approval(
+        &self,
+        provider: &dyn Provider,
+        controller: &ExecutionController,
+        history: Vec<ChatMessage>,
+        approval: AgentApprovalContext<'_>,
+        task: impl Into<String>,
+    ) -> Result<AgentRunSummary, AgentLoopError> {
+        self.run_with_context(
+            provider,
+            controller,
+            history,
+            AgentRunContext {
+                session: approval.session,
+                now: approval.now,
+                approval: Some(AgentApproval {
+                    store: approval.store,
+                    id: approval.id,
+                }),
+            },
+            task,
+        )
+    }
+
+    fn run_with_context(
+        &self,
+        provider: &dyn Provider,
+        controller: &ExecutionController,
+        history: Vec<ChatMessage>,
+        context: AgentRunContext<'_>,
+        task: impl Into<String>,
+    ) -> Result<AgentRunSummary, AgentLoopError> {
+        let AgentRunContext {
+            session,
+            now,
+            approval,
+        } = context;
         let task = task.into();
         if task.trim().is_empty() {
             return Err(AgentLoopError::InvalidTask);
@@ -143,6 +193,15 @@ impl AgentLoop {
         {
             return Err(AgentLoopError::Execution(RuntimeError::InvalidIntent(
                 "agent history is invalid or too large",
+            )));
+        }
+        let pending_tool_calls = match history.last() {
+            Some(message) if message.role() == MessageRole::Assistant => message.tool_calls()?,
+            _ => Vec::new(),
+        };
+        if !pending_tool_calls.is_empty() && approval.is_none() {
+            return Err(AgentLoopError::Execution(RuntimeError::InvalidIntent(
+                "agent session has a pending approval",
             )));
         }
 
@@ -162,7 +221,39 @@ impl AgentLoop {
         messages.push(ChatMessage::user(task)?);
         let mut usage = TokenUsage::default();
         let mut runs = Vec::new();
-        let mut tool_calls = 0;
+        let mut tool_calls: u32 = 0;
+
+        if let Some(approval) = approval.as_ref() {
+            for call in pending_tool_calls {
+                tool_calls = tool_calls.saturating_add(1);
+                match self.execute_tool(
+                    &call,
+                    controller,
+                    &session,
+                    now,
+                    &mut runs,
+                    Some(approval),
+                )? {
+                    ToolExecution::Output(result) => {
+                        messages.push(ChatMessage::tool_result(call.id(), result)?);
+                    }
+                    ToolExecution::Approval { reason, summary } => {
+                        runs.push(summary);
+                        return Err(AgentLoopError::ApprovalRequired {
+                            reason,
+                            summary: AgentRunSummary {
+                                final_text: String::new(),
+                                turns: 0,
+                                tool_calls,
+                                usage,
+                                runs,
+                                messages: persisted_messages(&messages),
+                            },
+                        });
+                    }
+                }
+            }
+        }
 
         for turn in 1..=self.max_turns {
             let request = ModelRequest::new(
@@ -199,7 +290,14 @@ impl AgentLoop {
 
             for call in response.tool_calls() {
                 tool_calls = tool_calls.saturating_add(1);
-                match self.execute_tool(call, controller, &session, now, &mut runs)? {
+                match self.execute_tool(
+                    call,
+                    controller,
+                    &session,
+                    now,
+                    &mut runs,
+                    approval.as_ref(),
+                )? {
                     ToolExecution::Output(result) => {
                         messages.push(ChatMessage::tool_result(call.id(), result)?);
                     }
@@ -231,6 +329,7 @@ impl AgentLoop {
         session: &Session,
         now: Timestamp,
         runs: &mut Vec<RunSummary>,
+        approval: Option<&AgentApproval<'_>>,
     ) -> Result<ToolExecution, AgentLoopError> {
         if self
             .tools
@@ -297,9 +396,17 @@ impl AgentLoop {
             }
         }
         .map_err(|_| AgentLoopError::InvalidTask)?;
-        let summary = controller
-            .run_at(intent, session.clone(), now)
-            .map_err(AgentLoopError::Execution)?;
+        let summary = match approval {
+            Some(approval) => controller.run_agent_with_approval(
+                intent,
+                session.clone(),
+                approval.store,
+                approval.id,
+                now,
+            ),
+            None => controller.run_at(intent, session.clone(), now),
+        }
+        .map_err(AgentLoopError::Execution)?;
         let output = match summary.status() {
             RunStatus::Completed => bounded_text(summary.output().unwrap_or_default()),
             RunStatus::Denied { .. } => "tool denied by policy".to_owned(),
@@ -341,6 +448,40 @@ fn bounded_text(bytes: &[u8]) -> String {
     let mut text = String::from_utf8_lossy(&bytes[..MAX_TOOL_RESULT_BYTES]).into_owned();
     text.push_str("\n[tool output truncated]");
     text
+}
+
+struct AgentApproval<'a> {
+    store: &'a ApprovalStore,
+    id: &'a str,
+}
+
+pub struct AgentApprovalContext<'a> {
+    session: Session,
+    store: &'a ApprovalStore,
+    id: &'a str,
+    now: Timestamp,
+}
+
+impl<'a> AgentApprovalContext<'a> {
+    pub fn new(
+        session: Session,
+        store: &'a ApprovalStore,
+        approval_id: &'a str,
+        now: Timestamp,
+    ) -> Self {
+        Self {
+            session,
+            store,
+            id: approval_id,
+            now,
+        }
+    }
+}
+
+struct AgentRunContext<'a> {
+    session: Session,
+    now: Timestamp,
+    approval: Option<AgentApproval<'a>>,
 }
 
 #[cfg(test)]

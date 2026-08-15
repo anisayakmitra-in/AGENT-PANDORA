@@ -129,7 +129,7 @@ impl ExecutionController {
         session: Session,
         now: Timestamp,
     ) -> Result<RunSummary, RuntimeError> {
-        self.run_internal(intent, session, now, None, None)
+        self.run_internal(intent, session, now, None, None, false)
     }
 
     pub fn run_with_approval(
@@ -155,6 +155,34 @@ impl ExecutionController {
                 store: approval_store,
                 id: approval_id,
             }),
+            false,
+        )
+    }
+
+    pub(crate) fn run_agent_with_approval(
+        &self,
+        intent: TaskIntent,
+        session: Session,
+        approval_store: &ApprovalStore,
+        approval_id: &str,
+        now: Timestamp,
+    ) -> Result<RunSummary, RuntimeError> {
+        let approval = approval_store
+            .inspect(approval_id, session.principal_id())
+            .map_err(RuntimeError::Approval)?;
+        if approval.session_id() != session.id() {
+            return Err(RuntimeError::Approval(ApprovalError::ScopeMismatch));
+        }
+        self.run_internal(
+            intent,
+            session,
+            now,
+            Some(approval.execution_id().clone()),
+            Some(ApprovalExecution {
+                store: approval_store,
+                id: approval_id,
+            }),
+            true,
         )
     }
 
@@ -165,6 +193,7 @@ impl ExecutionController {
         now: Timestamp,
         execution_id_override: Option<ExecutionId>,
         approval: Option<ApprovalExecution<'_>>,
+        allow_unrequired_approval: bool,
     ) -> Result<RunSummary, RuntimeError> {
         let execution_id = ExecutionId::new(format!(
             "execution-{}",
@@ -218,7 +247,7 @@ impl ExecutionController {
             let decision_for_authorization = decision.clone();
             let permit = match decision {
                 ParliamentDecision::Allow { ref reason, .. } => {
-                    if approval.is_some() {
+                    if approval.is_some() && !allow_unrequired_approval {
                         self.record_failure(
                             &session,
                             &execution_id,

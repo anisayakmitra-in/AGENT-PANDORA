@@ -68,13 +68,15 @@ policy; patch and verify stop at the existing approval boundary before any
 filesystem or process effect. The loop allows eight model turns and sixteen
 tool calls by default. Set `--max-turns` and `--max-tools` to choose budgets for
 a run; each value must be between 1 and 64 turns or 1 and 128 tool calls.
-Agent mode cannot be combined with `--plan`, `--approval`,
-`--harness`, or `--gene` yet. User, assistant, and tool messages are stored in
+Agent mode cannot be combined with `--plan`, `--harness`, or `--gene`. User,
+assistant, and tool messages are stored in
 the scoped session database with fixed size limits; the system instruction is
 rebuilt for every run. Reusing `--session <id>` restores that bounded
 conversation before adding the new task. Credentials and hidden model
-reasoning are not persisted. To continue an approved write, rerun the exact
-task with the returned approval ID using the regular `run --approval` command.
+reasoning are not persisted. To continue an approved write, rerun
+`run --agent --approval <id>` with the returned session ID and a follow-up task.
+Pandora replays the bounded pending tool call through the same approval and
+consumes it once.
 
 ## Discovery and completions
 

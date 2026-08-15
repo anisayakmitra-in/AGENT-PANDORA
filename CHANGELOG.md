@@ -4,6 +4,8 @@
 
 - Agent sessions now persist a bounded user, assistant, and tool transcript and
   reuse it when `run --agent --session <id>` continues a task.
+- Approved agent runs can resume a pending tool call with its session and
+  approval ID; the approval is consumed once through the governed runtime.
 - Transcript records retain tool-call structure, reject stored system-message
   overrides, and use private session-database permissions where supported.
 
