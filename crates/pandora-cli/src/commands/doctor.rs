@@ -10,18 +10,12 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let data_ok = directory_is_readable(config.data_dir());
     let workspace_ok = directory_is_readable(config.workspace_dir());
     let provider_configured = config.provider_url().is_some();
-    let checks = vec![
+    let mut checks = vec![
         check(
             "config",
             config_ok,
             "configuration file is available",
             "run 'pandora setup'",
-        ),
-        check(
-            "provider",
-            provider_configured,
-            "provider configuration is present",
-            "run 'pandora provider set --provider-url <url>'",
         ),
         check(
             "storage",
@@ -36,7 +30,25 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "check the workspace path and permissions",
         ),
     ];
-    let healthy = config_ok && provider_configured && data_ok && workspace_ok;
+    checks.insert(
+        1,
+        if provider_configured {
+            check(
+                "provider",
+                true,
+                "provider configuration is present",
+                "run 'pandora provider set --provider-url <url>'",
+            )
+        } else {
+            json!({
+                "check": "provider",
+                "status": "not_configured",
+                "message": "local-only mode is available for read-only tasks",
+                "remediation": "configure a provider before running model-backed tasks",
+            })
+        },
+    );
+    let healthy = config_ok && data_ok && workspace_ok;
     let provider = json!({
         "configured": provider_configured,
         "profiles": config.provider_names(),

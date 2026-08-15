@@ -1155,6 +1155,37 @@ fn doctor_reports_missing_configuration_with_stable_error() {
 }
 
 #[test]
+fn doctor_accepts_a_valid_local_only_setup_without_a_provider() {
+    let fixture = Fixture::new();
+    let mut command = fixture.command(&["setup", "--interactive", "--json"]);
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().expect("interactive setup should start");
+    child
+        .stdin
+        .take()
+        .expect("interactive setup should accept input")
+        .write_all(b"\n")
+        .expect("local-only setup answer should be written");
+    let setup = child
+        .wait_with_output()
+        .expect("interactive setup should finish");
+    assert_success(&setup);
+
+    let output = fixture
+        .command(&["doctor", "--json"])
+        .output()
+        .expect("doctor should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["healthy"], true);
+    assert_eq!(response["provider"]["configured"], false);
+    assert_eq!(response["provider"]["connectivity"], "not_configured");
+}
+
+#[test]
 fn harness_discovery_exposes_the_coding_domain_without_runtime_internals() {
     let fixture = Fixture::new();
     fixture.setup();

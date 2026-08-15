@@ -8,6 +8,8 @@
   without ever collecting or storing an API-key value.
 - The npm/Bun launcher now converts its package version to the `v`-prefixed
   release tag required by the native artifact host.
+- `pandora doctor` now treats a valid local-only setup as healthy while clearly
+  reporting that model-backed tasks still need a provider.
 
 ## v2.0.0-alpha.2
 

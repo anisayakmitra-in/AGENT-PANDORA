@@ -32,7 +32,9 @@ default. The existing flag-based form remains suitable for scripts and CI.
 `doctor` reports the platform, CLI version, configuration path, storage path,
 workspace path, policy mode, provider configuration state, and remediation.
 Provider connectivity is deliberately `not_checked`; diagnostics do not send a
-request or read a provider credential.
+request or read a provider credential. A valid local-only setup is healthy for
+read-only tasks and reports the provider check as `not_configured`; configure a
+provider before running model-backed tasks.
 
 `provider test` sends one bounded request using the active profile's credential
 environment variable and reports the selected model, response, and token usage.
