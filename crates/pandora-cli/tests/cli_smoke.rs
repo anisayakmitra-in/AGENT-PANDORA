@@ -1425,6 +1425,16 @@ fn harness_discovery_exposes_the_coding_domain_without_runtime_internals() {
     assert_eq!(response["harness"]["id"], "coding-domain");
 
     let output = fixture
+        .command(&["harness", "run", "core-source", "--json"])
+        .output()
+        .expect("source harness run should start");
+    assert_eq!(output.status.code(), Some(50));
+    let response = parse_json(&output);
+    assert_eq!(response["code"], "execution_failed");
+    assert_eq!(response["message"], "harness 'core-source' is not runnable");
+    assert_eq!(response["details"]["kind"], "source");
+
+    let output = fixture
         .command(&[
             "harness",
             "run",

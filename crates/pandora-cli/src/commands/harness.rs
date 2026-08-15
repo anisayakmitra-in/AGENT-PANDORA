@@ -1,6 +1,7 @@
 use super::{parse_options, run};
 use crate::output::{CliError, CommandResult, success};
 use pandora_harnesses::builtin_harnesses;
+use pandora_types::HarnessKind;
 use serde_json::json;
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
@@ -68,13 +69,30 @@ fn run_harness(args: &[String]) -> Result<CommandResult, CliError> {
         args,
         &["config", "data-dir", "workspace", "session", "gene", "task"],
     )?;
-    if parsed.positionals.len() != 1
-        || !matches!(parsed.positionals[0].as_str(), "coding" | "coding-domain")
-    {
+    if parsed.positionals.len() != 1 {
         return Err(CliError::usage(
-            "harness run requires the harness name 'coding' or 'coding-domain'",
+            "harness run requires exactly one harness ID",
         ));
     }
+    let requested_id = match parsed.positionals[0].as_str() {
+        "coding" => "coding-domain",
+        requested_id => requested_id,
+    };
+    let harnesses = builtin_harnesses();
+    let harness = harnesses
+        .iter()
+        .find(|harness| harness.manifest().id().as_str() == requested_id)
+        .ok_or_else(|| CliError::usage(format!("unknown harness '{requested_id}'")))?;
+    if harness.manifest().kind() != HarnessKind::Domain || harness.genes().is_empty() {
+        return Err(CliError::execution(
+            format!("harness '{requested_id}' is not runnable"),
+            json!({
+                "harness_id": harness.manifest().id(),
+                "kind": harness.manifest().kind().as_str(),
+            }),
+        ));
+    }
+    let canonical_id = harness.manifest().id().as_str().to_owned();
     let gene = parsed
         .value("gene")
         .ok_or_else(|| CliError::usage("harness run requires '--gene <id>'"))?;
@@ -84,7 +102,7 @@ fn run_harness(args: &[String]) -> Result<CommandResult, CliError> {
     let mut run_args = vec![
         task.to_owned(),
         "--harness".to_owned(),
-        "coding-domain".to_owned(),
+        canonical_id,
         "--gene".to_owned(),
         gene.to_owned(),
     ];

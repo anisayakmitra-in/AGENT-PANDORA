@@ -85,6 +85,9 @@ the approval boundary and expose an inspectable, redacted request subject.
 `--harness` selects an installed Harness by ID; `coding` is an alias for the
 built-in `coding-domain` Harness. The runtime rejects an unknown or unsupported
 Harness before Gene planning.
+`harness run` accepts the same canonical catalog IDs and only runs a Domain
+Harness with executable Genes. A metadata-only Source Harness is inspectable but
+returns a clear non-runnable error.
 The built-in `core-source` Harness is available through `harness list` and
 `harness inspect core-source`; it binds the `pandora-runtime` constitutional
 service and cannot be run as a task.
@@ -148,6 +151,7 @@ pandora harness list
 pandora harness inspect core-source
 pandora harness inspect coding
 pandora harness inspect coding-domain
+pandora harness run coding --gene workspace.read --task "read:README.md"
 pandora tool list
 pandora tool inspect <id>
 pandora skill list

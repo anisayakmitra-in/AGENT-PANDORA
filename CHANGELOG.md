@@ -10,6 +10,8 @@
   terminal sessions.
 - `pandora harness inspect` resolves canonical IDs from the built-in catalog;
   `coding` remains a compatibility alias for `coding-domain`.
+- `pandora harness run` resolves executable Domain Harnesses from the catalog
+  and reports metadata-only Source Harnesses as non-runnable.
 
 ## v2.0.0-alpha.6
 
