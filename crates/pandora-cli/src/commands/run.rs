@@ -134,8 +134,12 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     };
     let policy = PolicyContext::new(
         1,
-        [Capability::FilesystemRead, Capability::FilesystemWrite],
-        [Operation::Write],
+        [
+            Capability::FilesystemRead,
+            Capability::FilesystemWrite,
+            Capability::ProcessExecute,
+        ],
+        [Operation::Write, Operation::Execute],
     );
     let controller = ExecutionController::with_policy(workspace, policy);
     if parsed.value("agent").is_some() {

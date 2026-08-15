@@ -315,6 +315,21 @@ fn patch_run_returns_approval_required_without_writing() {
 }
 
 #[test]
+fn verify_run_returns_approval_required_before_process_execution() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    let output = fixture
+        .command(&["run", "verify", "--json"])
+        .output()
+        .expect("verify run should start");
+    assert_eq!(output.status.code(), Some(40));
+    let response = parse_json(&output);
+    assert_eq!(response["code"], "approval_required");
+    assert_eq!(response["details"]["status"], "approval_required");
+}
+
+#[test]
 fn session_resume_returns_persisted_events() {
     let fixture = Fixture::new();
     fixture.setup();
