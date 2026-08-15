@@ -117,7 +117,7 @@ pub(crate) fn parse_options(args: &[String], allowed: &[&str]) -> Result<ParsedA
 fn is_flag(name: &str) -> bool {
     matches!(
         name,
-        "allow" | "deny" | "dry-run" | "plan" | "rollback" | "yes"
+        "agent" | "allow" | "deny" | "dry-run" | "plan" | "rollback" | "yes"
     )
 }
 
@@ -224,7 +224,7 @@ fn session_error(error: SessionError) -> CliError {
 
 fn usage() -> &'static str {
     "usage: pandora <setup|run|harness|session|skill|approval|provider|tool|orchestration|strategies|completions|migrate|update|uninstall|doctor> [options]\n\n\
-commands:\n  setup\n  run [--harness <id>] [--gene <id>] [--plan] [--model <model>] [--approval <id>] <task>\n  harness list|inspect|run\n  session list|resume <id>\n  skill list|inspect|enable|disable|suspend|remove|restore <id>\n  tool list|inspect <id>\n  approval list|inspect|resolve\n  provider list|set|test\n  orchestration roles\n  strategies list\n  completions <powershell|bash|zsh|fish>\n  migrate config\n  update [--artifact <path> --sha256 <digest> | --rollback]\n  uninstall [--dry-run|--yes]\n  doctor"
+commands:\n  setup\n  run [--agent] [--harness <id>] [--gene <id>] [--plan] [--model <model>] [--approval <id>] <task>\n  harness list|inspect|run\n  session list|resume <id>\n  skill list|inspect|enable|disable|suspend|remove|restore <id>\n  tool list|inspect <id>\n  approval list|inspect|resolve\n  provider list|set|test\n  orchestration roles\n  strategies list\n  completions <powershell|bash|zsh|fish>\n  migrate config\n  update [--artifact <path> --sha256 <digest> | --rollback]\n  uninstall [--dry-run|--yes]\n  doctor"
 }
 
 fn orchestration(args: &[String]) -> Result<CommandResult, CliError> {

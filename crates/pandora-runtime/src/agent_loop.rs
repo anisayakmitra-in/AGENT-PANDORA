@@ -196,26 +196,26 @@ impl AgentLoop {
         now: Timestamp,
         runs: &mut Vec<RunSummary>,
     ) -> Result<ToolExecution, AgentLoopError> {
-        let known = self
+        if self
             .tools
-            .list()
-            .iter()
-            .any(|definition| definition.id().as_str() == call.name());
-        if !known {
+            .validate_call(call.name(), call.arguments())
+            .is_err()
+        {
             return Ok(ToolExecution::Output(
                 "tool error: unsupported tool".to_owned(),
             ));
         }
 
-        let Some(argument) = call
-            .arguments()
-            .get(if call.name() == "workspace.read" {
-                "path"
-            } else {
-                "query"
-            })
-            .and_then(Value::as_str)
-        else {
+        let argument_name = match call.name() {
+            "workspace.read" => "path",
+            "workspace.search" => "query",
+            _ => {
+                return Ok(ToolExecution::Output(
+                    "tool error: unsupported tool".to_owned(),
+                ));
+            }
+        };
+        let Some(argument) = call.arguments().get(argument_name).and_then(Value::as_str) else {
             return Ok(ToolExecution::Output(
                 "tool error: required argument is missing or invalid".to_owned(),
             ));
@@ -419,6 +419,46 @@ mod tests {
                 &controller,
                 fixture.session(),
                 "Do not write files",
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap();
+
+        assert_eq!(result.final_text(), "done");
+        assert_eq!(result.tool_calls(), 1);
+        assert!(result.runs().is_empty());
+        assert_eq!(
+            std::fs::read(fixture.path.join("README.md")).unwrap(),
+            b"fixture\n"
+        );
+    }
+
+    #[test]
+    fn malformed_tool_arguments_are_rejected_before_execution() {
+        let fixture = Fixture::new();
+        let provider = SequenceProvider::new(vec![
+            ModelResponse::new("done", vec![], TokenUsage::default()),
+            ModelResponse::new(
+                "",
+                vec![
+                    ToolCall::new(
+                        "call-invalid",
+                        "workspace.read",
+                        serde_json::json!({"path": "README.md", "extra": true}),
+                    )
+                    .unwrap(),
+                ],
+                TokenUsage::default(),
+            ),
+        ]);
+        let controller = ExecutionController::new(fixture.root.clone());
+
+        let result = AgentLoop::new(2, 1)
+            .unwrap()
+            .run(
+                &provider,
+                &controller,
+                fixture.session(),
+                "Read the README",
                 Timestamp::from_unix_seconds(10),
             )
             .unwrap();

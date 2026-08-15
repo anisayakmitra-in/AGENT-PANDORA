@@ -32,6 +32,7 @@ its output.
 ```text
 pandora run "read:README.md"
 pandora run "search:needle"
+pandora run --agent "Read the README and summarize it"
 pandora run --harness coding --gene workspace.read "read:README.md"
 pandora run --plan "inspect the README and report what it contains"
 pandora run --approval <approval-id> "patch:README.md:approved content"
@@ -58,6 +59,14 @@ tool-free planning call. Only a schema-validated task intent is passed to the
 runtime; the model cannot execute tools or grant permissions. Configure the
 provider with `pandora provider set --provider-url <url> --model <model>` and
 provide `PANDORA_PROVIDER_API_KEY` for planning.
+
+`run --agent` enables the bounded multi-turn loop. The model can call only
+`workspace.read` and `workspace.search`; each call is routed through the same
+governed runtime and recorded in the session. The loop allows eight model turns
+and sixteen tool calls. Agent mode cannot be combined with `--plan`,
+`--approval`, `--harness`, or `--gene` yet. It keeps the transcript in memory
+and returns the final answer plus token usage; credentials and hidden model
+reasoning are not persisted.
 
 ## Discovery and completions
 

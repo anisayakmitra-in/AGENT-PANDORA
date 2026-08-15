@@ -458,6 +458,87 @@ fn provider_test_completes_a_configured_request_without_echoing_credentials() {
 }
 
 #[test]
+fn agent_run_executes_a_bounded_read_then_returns_the_final_answer() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("agent fixture should bind");
+    let address = listener
+        .local_addr()
+        .expect("agent fixture should expose its address");
+    let server = thread::spawn(move || {
+        for response in [
+            br#"{"choices":[{"message":{"content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"workspace.read","arguments":"{\"path\":\"README.md\"}"}}]}}],"usage":{"prompt_tokens":4,"completion_tokens":2}}"#
+                .as_slice(),
+            br#"{"choices":[{"message":{"content":"The README says fixture."}}],"usage":{"prompt_tokens":5,"completion_tokens":3}}"#
+                .as_slice(),
+        ] {
+            let (mut stream, _) = listener.accept().expect("agent should connect");
+            let mut request = Vec::new();
+            let header_end = loop {
+                let mut chunk = [0_u8; 1_024];
+                let bytes_read = stream.read(&mut chunk).expect("agent request should read");
+                request.extend_from_slice(&chunk[..bytes_read]);
+                if let Some(position) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                    break position + 4;
+                }
+            };
+            let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+            let content_length = headers
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .and_then(|value| value.trim().parse::<usize>().ok())
+                .expect("agent should send a content length");
+            while request.len() < header_end + content_length {
+                let mut chunk = [0_u8; 1_024];
+                let bytes_read = stream.read(&mut chunk).expect("agent body should read");
+                request.extend_from_slice(&chunk[..bytes_read]);
+            }
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                response.len()
+            )
+            .expect("agent response headers should be written");
+            stream
+                .write_all(response)
+                .expect("agent response should be written");
+        }
+    });
+
+    let fixture = Fixture::new();
+    let provider_url = format!("http://{address}/v1");
+    let configured = fixture
+        .command(&[
+            "provider",
+            "set",
+            "--provider-url",
+            &provider_url,
+            "--model",
+            "agent-model",
+            "--json",
+        ])
+        .output()
+        .expect("provider set should start");
+    assert_success(&configured);
+
+    let output = fixture
+        .command(&["run", "--agent", "Read the README", "--json"])
+        .env("PANDORA_PROVIDER_API_KEY", "test-agent-key")
+        .output()
+        .expect("agent run should start");
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("test-agent-key"));
+    let response = parse_json(&output);
+    assert_eq!(response["command"], "run");
+    assert_eq!(response["agent"], true);
+    assert_eq!(response["status"], "completed");
+    assert_eq!(response["turns"], 2);
+    assert_eq!(response["tool_calls"], 1);
+    assert_eq!(response["output"], "The README says fixture.");
+
+    server.join().expect("agent fixture should finish");
+}
+
+#[test]
 fn run_plan_uses_structured_provider_output_before_governed_execution() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("planner fixture should bind");
     let address = listener

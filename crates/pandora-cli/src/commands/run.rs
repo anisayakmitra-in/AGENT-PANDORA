@@ -11,7 +11,9 @@ use pandora_runtime::ExecutionController;
 use pandora_runtime::config::RuntimeConfig;
 use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::sessions::SessionStore;
-use pandora_runtime::{ApprovalRequest, ApprovalStore, RunStatus, RuntimeError};
+use pandora_runtime::{
+    AgentLoop, AgentLoopError, ApprovalRequest, ApprovalStore, RunStatus, RuntimeError,
+};
 use pandora_types::{
     Capability, EventPayload, HarnessId, Operation, PolicyContext, Session, SessionId, TaskIntent,
     WorkspaceId,
@@ -34,6 +36,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "gene",
             "model",
             "plan",
+            "agent",
         ],
     )?;
     if parsed.positionals.len() != 1 {
@@ -44,6 +47,16 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     {
         return Err(CliError::usage(
             "--approval cannot be combined with --plan or --model",
+        ));
+    }
+    if parsed.value("agent").is_some()
+        && (parsed.value("approval").is_some()
+            || parsed.value("plan").is_some()
+            || parsed.value("harness").is_some()
+            || parsed.value("gene").is_some())
+    {
+        return Err(CliError::usage(
+            "--agent cannot be combined with --approval, --plan, --harness, or --gene",
         ));
     }
     let config = load_config(&parsed)?;
@@ -95,6 +108,23 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     } else {
         (parsed.positionals[0].clone(), None)
     };
+    let policy = PolicyContext::new(
+        1,
+        [Capability::FilesystemRead, Capability::FilesystemWrite],
+        [Operation::Write],
+    );
+    let controller = ExecutionController::with_policy(workspace, policy);
+    if parsed.value("agent").is_some() {
+        return execute_agent(
+            &config,
+            &controller,
+            &session,
+            &store,
+            &approval_store,
+            &task,
+            parsed.value("model"),
+        );
+    }
     let mut intent =
         TaskIntent::new(task.clone()).map_err(|error| CliError::usage(error.to_string()))?;
     if let Some(harness) = parsed.value("harness") {
@@ -111,12 +141,6 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             .map_err(|_| CliError::usage("Gene ID is invalid"))?;
         intent = intent.with_gene(gene);
     }
-    let policy = PolicyContext::new(
-        1,
-        [Capability::FilesystemRead, Capability::FilesystemWrite],
-        [Operation::Write],
-    );
-    let controller = ExecutionController::with_policy(workspace, policy);
     let summary = match parsed.value("approval") {
         Some(approval_id) => controller
             .run_with_approval(
@@ -131,17 +155,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             .run_at(intent, session.clone(), timestamp())
             .map_err(runtime_error)?,
     };
-    for event in summary.events() {
-        store
-            .append_event(
-                session.id(),
-                session.principal_id(),
-                session.tenant_id(),
-                session.workspace_id(),
-                event,
-            )
-            .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
-    }
+    append_events(&store, &session, summary.events())?;
     let details = run_details(&summary, session.id(), planning_model.as_deref());
     match summary.status() {
         RunStatus::Completed => {
@@ -179,6 +193,128 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             Err(CliError::approval(reason.clone(), details))
         }
         RunStatus::Failed { code } => Err(CliError::execution(code.clone(), details)),
+    }
+}
+
+fn execute_agent(
+    config: &RuntimeConfig,
+    controller: &ExecutionController,
+    session: &Session,
+    store: &SessionStore,
+    approval_store: &ApprovalStore,
+    task: &str,
+    model_override: Option<&str>,
+) -> Result<CommandResult, CliError> {
+    let base_url = config.provider_url().ok_or_else(|| {
+        CliError::configuration(
+            "agent mode requires a configured provider; run 'pandora provider set' first",
+            json!({"config_path": config.config_path()}),
+        )
+    })?;
+    let model = model_override
+        .or(config.provider_model())
+        .unwrap_or("default");
+    let manifest = ProviderManifest::new(
+        "openai-compatible",
+        "OpenAI-compatible",
+        base_url,
+        model,
+        "PANDORA_PROVIDER_API_KEY",
+    )
+    .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
+    let provider = HttpProvider::from_environment(manifest)
+        .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
+    let loop_engine =
+        AgentLoop::new(8, 16).map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let result = loop_engine.run(&provider, controller, session.clone(), task, timestamp());
+    match result {
+        Ok(summary) => {
+            let run_count = summary.runs().len();
+            for run in summary.runs() {
+                append_events(store, session, run.events())?;
+            }
+            Ok(success(
+                "run",
+                json!({
+                    "agent": true,
+                    "session_id": session.id(),
+                    "status": "completed",
+                    "turns": summary.turns(),
+                    "tool_calls": summary.tool_calls(),
+                    "output": summary.final_text(),
+                    "usage": usage_json(summary.usage()),
+                    "runs": run_count,
+                }),
+                format!("Completed agent task in {}", session.id()),
+            ))
+        }
+        Err(AgentLoopError::ApprovalRequired { reason, summary }) => {
+            let run = summary.runs().last().ok_or_else(|| {
+                CliError::internal("approval request has no execution summary", json!({}))
+            })?;
+            for current in summary.runs() {
+                append_events(store, session, current.events())?;
+            }
+            let approval = create_approval(
+                approval_store,
+                run,
+                session.id(),
+                session.principal_id(),
+                task,
+            )?;
+            Err(CliError::approval(
+                reason,
+                json!({
+                    "agent": true,
+                    "session_id": session.id(),
+                    "turns": summary.turns(),
+                    "tool_calls": summary.tool_calls(),
+                    "approval_id": approval.id(),
+                }),
+            ))
+        }
+        Err(error) => Err(agent_error(error)),
+    }
+}
+
+fn append_events(
+    store: &SessionStore,
+    session: &Session,
+    events: &[pandora_types::RuntimeEvent],
+) -> Result<(), CliError> {
+    for event in events {
+        store
+            .append_event(
+                session.id(),
+                session.principal_id(),
+                session.tenant_id(),
+                session.workspace_id(),
+                event,
+            )
+            .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    }
+    Ok(())
+}
+
+fn usage_json(usage: &pandora_provider::TokenUsage) -> Value {
+    json!({
+        "prompt_tokens": usage.prompt_tokens(),
+        "completion_tokens": usage.completion_tokens(),
+        "total_tokens": usage.total_tokens(),
+    })
+}
+
+fn agent_error(error: AgentLoopError) -> CliError {
+    match error {
+        AgentLoopError::InvalidBudget | AgentLoopError::InvalidTask => {
+            CliError::usage(error.to_string())
+        }
+        AgentLoopError::Provider(error) => CliError::provider(error.to_string(), json!({})),
+        AgentLoopError::EmptyResponse
+        | AgentLoopError::ToolBudgetExceeded
+        | AgentLoopError::TurnBudgetExceeded => CliError::execution(error.to_string(), json!({})),
+        AgentLoopError::Execution(error) => runtime_error(error),
+        AgentLoopError::ApprovalRequired { reason, .. } => CliError::approval(reason, json!({})),
     }
 }
 

@@ -219,6 +219,19 @@ impl ToolEngine {
         values
     }
 
+    pub fn validate_call(&self, tool_id: &str, arguments: &Value) -> Result<(), ToolError> {
+        let id = GeneId::new(tool_id.to_owned())
+            .map_err(|_| ToolError::UnknownTool(tool_id.to_owned()))?;
+        let definitions = self
+            .definitions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let definition = definitions
+            .get(&id)
+            .ok_or_else(|| ToolError::UnknownTool(tool_id.to_owned()))?;
+        validate_arguments(definition.input_schema(), arguments)
+    }
+
     pub fn plan(
         &self,
         tool_id: &str,
