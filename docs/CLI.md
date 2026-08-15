@@ -147,6 +147,7 @@ approval, or execute scripts. Disabled and suspended Skills are not included.
 pandora harness list
 pandora harness inspect core-source
 pandora harness inspect coding
+pandora harness inspect coding-domain
 pandora tool list
 pandora tool inspect <id>
 pandora skill list

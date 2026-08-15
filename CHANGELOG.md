@@ -8,6 +8,8 @@
   approved task through the existing approval and execution path.
 - The TUI bounds its in-memory transcript and task history for long-running
   terminal sessions.
+- `pandora harness inspect` resolves canonical IDs from the built-in catalog;
+  `coding` remains a compatibility alias for `coding-domain`.
 
 ## v2.0.0-alpha.6
 

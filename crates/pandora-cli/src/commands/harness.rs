@@ -40,19 +40,18 @@ fn inspect(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(args, &["config", "data-dir", "workspace"])?;
     if parsed.positionals.len() != 1 {
         return Err(CliError::usage(
-            "harness inspect requires the harness name 'core-source' or 'coding'",
+            "harness inspect requires exactly one harness ID",
         ));
     }
     let requested_id = match parsed.positionals[0].as_str() {
-        "core-source" => "core-source",
-        "coding" | "coding-domain" => "coding-domain",
-        other => return Err(CliError::usage(format!("unknown harness '{other}'"))),
+        "coding" => "coding-domain",
+        requested_id => requested_id,
     };
     let harnesses = builtin_harnesses();
     let harness = harnesses
         .iter()
         .find(|harness| harness.manifest().id().as_str() == requested_id)
-        .expect("catalogued harness should be available");
+        .ok_or_else(|| CliError::usage(format!("unknown harness '{requested_id}'")))?;
     Ok(success(
         "harness inspect",
         json!({"harness": harness_value(harness.as_ref())}),

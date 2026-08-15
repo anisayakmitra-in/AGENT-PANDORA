@@ -1417,6 +1417,14 @@ fn harness_discovery_exposes_the_coding_domain_without_runtime_internals() {
     assert!(response["harness"]["genes"].as_array().unwrap().len() >= 5);
 
     let output = fixture
+        .command(&["harness", "inspect", "coding-domain", "--json"])
+        .output()
+        .expect("canonical harness inspect should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["harness"]["id"], "coding-domain");
+
+    let output = fixture
         .command(&[
             "harness",
             "run",
