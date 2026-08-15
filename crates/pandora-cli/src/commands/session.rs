@@ -68,6 +68,7 @@ fn resume(args: &[String]) -> Result<CommandResult, CliError> {
         json!({
             "session_id": snapshot.session().id(),
             "event_count": event_count,
+            "agent_message_count": snapshot.agent_messages().len(),
             "events": events,
         }),
         format!(

@@ -1,3 +1,4 @@
+use pandora_provider::ChatMessage;
 use pandora_types::{
     PrincipalId, RuntimeEvent, Session, SessionId, TenantId, Timestamp, WorkspaceId,
 };
@@ -7,8 +8,11 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
-const CURRENT_SCHEMA_VERSION: i64 = 1;
+const CURRENT_SCHEMA_VERSION: i64 = 2;
 const MAX_EVENT_BYTES: usize = 1_048_576;
+const MAX_AGENT_MESSAGE_BYTES: usize = 1_048_576;
+const MAX_AGENT_TRANSCRIPT_BYTES: usize = 8 * 1_048_576;
+const MAX_AGENT_MESSAGES: usize = 256;
 
 #[derive(Debug)]
 pub enum SessionError {
@@ -17,6 +21,8 @@ pub enum SessionError {
     Serialization(serde_json::Error),
     CorruptRecord,
     EventTooLarge,
+    AgentMessageTooLarge,
+    AgentTranscriptTooLarge,
     LockPoisoned,
     ScopeViolation,
     SessionAlreadyExists,
@@ -34,6 +40,12 @@ impl fmt::Display for SessionError {
                 formatter.write_str("session database contains an invalid record")
             }
             Self::EventTooLarge => formatter.write_str("session event exceeds its size limit"),
+            Self::AgentMessageTooLarge => {
+                formatter.write_str("agent transcript message exceeds its size limit")
+            }
+            Self::AgentTranscriptTooLarge => {
+                formatter.write_str("agent transcript exceeds its message limit")
+            }
             Self::LockPoisoned => formatter.write_str("session database lock is unavailable"),
             Self::ScopeViolation => formatter.write_str("session is outside the requested scope"),
             Self::SessionAlreadyExists => formatter.write_str("session already exists"),
@@ -81,6 +93,7 @@ impl From<serde_json::Error> for SessionError {
 pub struct SessionSnapshot {
     session: Session,
     events: Vec<RuntimeEvent>,
+    agent_messages: Vec<ChatMessage>,
 }
 
 impl SessionSnapshot {
@@ -90,6 +103,10 @@ impl SessionSnapshot {
 
     pub fn events(&self) -> &[RuntimeEvent] {
         &self.events
+    }
+
+    pub fn agent_messages(&self) -> &[ChatMessage] {
+        &self.agent_messages
     }
 }
 
@@ -106,6 +123,7 @@ impl SessionStore {
             std::fs::create_dir_all(parent)?;
         }
         let mut connection = Connection::open(path)?;
+        set_private_permissions(path)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.execute_batch(
             "PRAGMA journal_mode = WAL;
@@ -164,7 +182,23 @@ impl SessionStore {
             let serialized = row?;
             events.push(serde_json::from_str(&serialized).map_err(SessionError::Serialization)?);
         }
-        Ok(SessionSnapshot { session, events })
+        let mut statement = connection.prepare(
+            "SELECT message_json FROM agent_messages
+             WHERE session_id = ?1 ORDER BY sequence ASC",
+        )?;
+        let rows =
+            statement.query_map(params![session_id.as_str()], |row| row.get::<_, String>(0))?;
+        let mut agent_messages = Vec::new();
+        for row in rows {
+            let serialized = row?;
+            agent_messages
+                .push(serde_json::from_str(&serialized).map_err(SessionError::Serialization)?);
+        }
+        Ok(SessionSnapshot {
+            session,
+            events,
+            agent_messages,
+        })
     }
 
     pub fn append_event(
@@ -190,6 +224,51 @@ impl SessionStore {
                 String::from_utf8(serialized).map_err(|_| SessionError::CorruptRecord)?
             ],
         )?;
+        Ok(())
+    }
+
+    pub fn save_agent_transcript(
+        &self,
+        session_id: &SessionId,
+        principal_id: &PrincipalId,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        messages: &[ChatMessage],
+    ) -> Result<(), SessionError> {
+        if messages.len() > MAX_AGENT_MESSAGES {
+            return Err(SessionError::AgentTranscriptTooLarge);
+        }
+        let serialized = messages
+            .iter()
+            .map(|message| {
+                let bytes = serde_json::to_vec(message)?;
+                if bytes.len() > MAX_AGENT_MESSAGE_BYTES {
+                    return Err(SessionError::AgentMessageTooLarge);
+                }
+                String::from_utf8(bytes).map_err(|_| SessionError::CorruptRecord)
+            })
+            .collect::<Result<Vec<_>, SessionError>>()?;
+        let total_bytes = serialized.iter().map(String::len).sum::<usize>();
+        if total_bytes > MAX_AGENT_TRANSCRIPT_BYTES {
+            return Err(SessionError::AgentTranscriptTooLarge);
+        }
+
+        let mut connection = self.lock()?;
+        let session =
+            load_session(&connection, session_id)?.ok_or(SessionError::SessionNotFound)?;
+        ensure_scope(&session, principal_id, tenant_id, workspace_id)?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute(
+            "DELETE FROM agent_messages WHERE session_id = ?1",
+            params![session_id.as_str()],
+        )?;
+        for message in serialized {
+            transaction.execute(
+                "INSERT INTO agent_messages (session_id, message_json) VALUES (?1, ?2)",
+                params![session_id.as_str(), message],
+            )?;
+        }
+        transaction.commit()?;
         Ok(())
     }
 
@@ -236,7 +315,7 @@ fn migrate(connection: &mut Connection) -> Result<(), SessionError> {
              applied_at INTEGER NOT NULL
          );",
     )?;
-    let version = transaction.query_row(
+    let mut version = transaction.query_row(
         "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
         [],
         |row| row.get::<_, i64>(0),
@@ -261,6 +340,18 @@ fn migrate(connection: &mut Connection) -> Result<(), SessionError> {
              CREATE INDEX session_events_session_idx ON session_events(session_id, sequence);
              CREATE INDEX sessions_scope_idx ON sessions(principal_id, tenant_id, workspace_id);
              INSERT INTO schema_migrations (version, applied_at) VALUES (1, strftime('%s', 'now'));",
+        )?;
+        version = 1;
+    }
+    if version == 1 {
+        transaction.execute_batch(
+            "CREATE TABLE agent_messages (
+                 sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                 session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                 message_json TEXT NOT NULL
+             );
+             CREATE INDEX agent_messages_session_idx ON agent_messages(session_id, sequence);
+             INSERT INTO schema_migrations (version, applied_at) VALUES (2, strftime('%s', 'now'));",
         )?;
     }
     transaction.commit()?;
@@ -317,4 +408,106 @@ fn ensure_scope(
         return Err(SessionError::ScopeViolation);
     }
     Ok(())
+}
+
+fn set_private_permissions(path: &Path) -> Result<(), SessionError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pandora_provider::{ChatMessage, ToolCall};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(1);
+
+    #[test]
+    fn agent_transcript_round_trips_with_session_scope() {
+        let root = std::env::temp_dir().join(format!(
+            "pandora-session-test-{}-{}",
+            std::process::id(),
+            NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let store = SessionStore::open(root.join("sessions.sqlite3")).unwrap();
+        let session = Session::new(
+            SessionId::new("session-1").unwrap(),
+            PrincipalId::new("principal-1").unwrap(),
+            TenantId::new("tenant-1").unwrap(),
+            WorkspaceId::new("workspace-1").unwrap(),
+            Timestamp::from_unix_seconds(1),
+        );
+        store.create(&session).unwrap();
+        let call = ToolCall::new(
+            "call-1",
+            "workspace.read",
+            serde_json::json!({"path": "README.md"}),
+        )
+        .unwrap();
+        let transcript = vec![
+            ChatMessage::user("read README").unwrap(),
+            ChatMessage::assistant_tool_calls(&[call]).unwrap(),
+            ChatMessage::tool_result("call-1", "fixture").unwrap(),
+        ];
+
+        store
+            .save_agent_transcript(
+                session.id(),
+                session.principal_id(),
+                session.tenant_id(),
+                session.workspace_id(),
+                &transcript,
+            )
+            .unwrap();
+
+        let snapshot = store
+            .resume(
+                session.id(),
+                session.principal_id(),
+                session.tenant_id(),
+                session.workspace_id(),
+            )
+            .unwrap();
+        assert_eq!(snapshot.agent_messages(), transcript.as_slice());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn agent_transcript_rejects_excess_total_bytes() {
+        let root = std::env::temp_dir().join(format!(
+            "pandora-session-size-test-{}-{}",
+            std::process::id(),
+            NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let store = SessionStore::open(root.join("sessions.sqlite3")).unwrap();
+        let session = Session::new(
+            SessionId::new("session-1").unwrap(),
+            PrincipalId::new("principal-1").unwrap(),
+            TenantId::new("tenant-1").unwrap(),
+            WorkspaceId::new("workspace-1").unwrap(),
+            Timestamp::from_unix_seconds(1),
+        );
+        store.create(&session).unwrap();
+        let message = ChatMessage::user("a".repeat(1_000_000)).unwrap();
+        let transcript = vec![message; 9];
+
+        assert!(matches!(
+            store.save_agent_transcript(
+                session.id(),
+                session.principal_id(),
+                session.tenant_id(),
+                session.workspace_id(),
+                &transcript,
+            ),
+            Err(SessionError::AgentTranscriptTooLarge)
+        ));
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

@@ -353,6 +353,7 @@ fn session_resume_returns_persisted_events() {
     assert_eq!(response["command"], "session resume");
     assert_eq!(response["session_id"], session_id);
     assert_eq!(response["event_count"], 4);
+    assert_eq!(response["agent_message_count"], 0);
 }
 
 #[test]
@@ -562,6 +563,110 @@ fn agent_run_executes_a_bounded_read_then_returns_the_final_answer() {
     assert_eq!(response["output"], "The README says fixture.");
 
     server.join().expect("agent fixture should finish");
+}
+
+#[test]
+fn agent_session_reuses_persisted_conversation() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("agent fixture should bind");
+    let address = listener
+        .local_addr()
+        .expect("agent fixture should expose its address");
+    let server = thread::spawn(move || {
+        let mut requests = Vec::new();
+        for response in [
+            br#"{"choices":[{"message":{"content":"first answer"}}]}"#.as_slice(),
+            br#"{"choices":[{"message":{"content":"continued answer"}}]}"#.as_slice(),
+        ] {
+            let (mut stream, _) = listener.accept().expect("agent should connect");
+            let mut request = Vec::new();
+            let header_end = loop {
+                let mut chunk = [0_u8; 1_024];
+                let bytes_read = stream.read(&mut chunk).expect("agent request should read");
+                request.extend_from_slice(&chunk[..bytes_read]);
+                if let Some(position) = request.windows(4).position(|window| window == b"\r\n\r\n")
+                {
+                    break position + 4;
+                }
+            };
+            let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+            let content_length = headers
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .and_then(|value| value.trim().parse::<usize>().ok())
+                .expect("agent should send a content length");
+            while request.len() < header_end + content_length {
+                let mut chunk = [0_u8; 1_024];
+                let bytes_read = stream.read(&mut chunk).expect("agent body should read");
+                request.extend_from_slice(&chunk[..bytes_read]);
+            }
+            requests.push(
+                serde_json::from_slice::<Value>(&request[header_end..header_end + content_length])
+                    .expect("agent request should be JSON"),
+            );
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                response.len()
+            )
+            .expect("agent response headers should be written");
+            stream
+                .write_all(response)
+                .expect("agent response should be written");
+        }
+        requests
+    });
+
+    let fixture = Fixture::new();
+    let provider_url = format!("http://{address}/v1");
+    let configured = fixture
+        .command(&[
+            "provider",
+            "set",
+            "--provider-url",
+            &provider_url,
+            "--model",
+            "agent-model",
+            "--json",
+        ])
+        .output()
+        .expect("provider set should start");
+    assert_success(&configured);
+
+    let first = fixture
+        .command(&["run", "--agent", "First task", "--json"])
+        .env("PANDORA_PROVIDER_API_KEY", "test-agent-key")
+        .output()
+        .expect("first agent run should start");
+    assert_success(&first);
+    let session_id = parse_json(&first)["session_id"]
+        .as_str()
+        .expect("first run should return a session")
+        .to_owned();
+
+    let second = fixture
+        .command(&[
+            "run",
+            "--agent",
+            "--session",
+            &session_id,
+            "Continue the task",
+            "--json",
+        ])
+        .env("PANDORA_PROVIDER_API_KEY", "test-agent-key")
+        .output()
+        .expect("resumed agent run should start");
+    assert_success(&second);
+    assert_eq!(parse_json(&second)["output"], "continued answer");
+
+    let requests = server.join().expect("agent fixture should finish");
+    let messages = requests[1]["messages"]
+        .as_array()
+        .expect("agent request should contain messages");
+    assert!(
+        messages
+            .iter()
+            .any(|message| message["content"] == "First task")
+    );
 }
 
 #[test]

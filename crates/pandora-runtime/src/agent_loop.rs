@@ -1,7 +1,7 @@
 use crate::{ExecutionController, RunStatus, RunSummary, RuntimeError, ToolEngine};
 use pandora_provider::{
-    ChatMessage, ModelRequest, Provider, ProviderError, TokenUsage, ToolCall, ToolSchema,
-    TraceMetadata,
+    ChatMessage, MessageRole, ModelRequest, Provider, ProviderError, TokenUsage, ToolCall,
+    ToolSchema, TraceMetadata,
 };
 use pandora_types::{Session, TaskIntent, Timestamp};
 use serde_json::Value;
@@ -61,6 +61,7 @@ pub struct AgentRunSummary {
     tool_calls: u32,
     usage: TokenUsage,
     runs: Vec<RunSummary>,
+    messages: Vec<ChatMessage>,
 }
 
 impl AgentRunSummary {
@@ -82,6 +83,10 @@ impl AgentRunSummary {
 
     pub fn runs(&self) -> &[RunSummary] {
         &self.runs
+    }
+
+    pub fn messages(&self) -> &[ChatMessage] {
+        &self.messages
     }
 }
 
@@ -115,9 +120,30 @@ impl AgentLoop {
         task: impl Into<String>,
         now: Timestamp,
     ) -> Result<AgentRunSummary, AgentLoopError> {
+        self.run_with_history(provider, controller, session, Vec::new(), task, now)
+    }
+
+    pub fn run_with_history(
+        &self,
+        provider: &dyn Provider,
+        controller: &ExecutionController,
+        session: Session,
+        history: Vec<ChatMessage>,
+        task: impl Into<String>,
+        now: Timestamp,
+    ) -> Result<AgentRunSummary, AgentLoopError> {
         let task = task.into();
         if task.trim().is_empty() {
             return Err(AgentLoopError::InvalidTask);
+        }
+        if history.len() > 120
+            || history
+                .iter()
+                .any(|message| message.role() == MessageRole::System)
+        {
+            return Err(AgentLoopError::Execution(RuntimeError::InvalidIntent(
+                "agent history is invalid or too large",
+            )));
         }
 
         let tools = self.tools.list();
@@ -131,10 +157,9 @@ impl AgentLoop {
                 )
             })
             .collect::<Result<Vec<_>, ProviderError>>()?;
-        let mut messages = vec![
-            ChatMessage::system(SYSTEM_PROMPT)?,
-            ChatMessage::user(task)?,
-        ];
+        let mut messages = vec![ChatMessage::system(SYSTEM_PROMPT)?];
+        messages.extend(history);
+        messages.push(ChatMessage::user(task)?);
         let mut usage = TokenUsage::default();
         let mut runs = Vec::new();
         let mut tool_calls = 0;
@@ -155,12 +180,14 @@ impl AgentLoop {
                 if response.text().trim().is_empty() {
                     return Err(AgentLoopError::EmptyResponse);
                 }
+                messages.push(ChatMessage::assistant(response.text())?);
                 return Ok(AgentRunSummary {
                     final_text: response.text().to_owned(),
                     turns: turn,
                     tool_calls,
                     usage,
                     runs,
+                    messages: persisted_messages(&messages),
                 });
             }
 
@@ -186,6 +213,7 @@ impl AgentLoop {
                                 tool_calls,
                                 usage,
                                 runs,
+                                messages: persisted_messages(&messages),
                             },
                         });
                     }
@@ -288,6 +316,10 @@ impl AgentLoop {
     }
 }
 
+fn persisted_messages(messages: &[ChatMessage]) -> Vec<ChatMessage> {
+    messages.iter().skip(1).cloned().collect()
+}
+
 enum ToolExecution {
     Output(String),
     Approval { reason: String, summary: RunSummary },
@@ -317,8 +349,8 @@ mod tests {
     use crate::ExecutionController;
     use crate::executors::WorkspaceRoot;
     use pandora_provider::{
-        ModelRequest, ModelResponse, Provider, ProviderError, ProviderManifest, TokenUsage,
-        ToolCall,
+        ChatMessage, ModelRequest, ModelResponse, Provider, ProviderError, ProviderManifest,
+        TokenUsage, ToolCall,
     };
     use pandora_types::{
         Capability, Operation, PolicyContext, PrincipalId, Session, SessionId, TenantId, Timestamp,
@@ -331,6 +363,7 @@ mod tests {
     struct SequenceProvider {
         manifest: ProviderManifest,
         responses: Mutex<Vec<ModelResponse>>,
+        requests: Mutex<Vec<Vec<pandora_provider::ChatMessage>>>,
     }
 
     impl SequenceProvider {
@@ -345,7 +378,12 @@ mod tests {
                 )
                 .unwrap(),
                 responses: Mutex::new(responses),
+                requests: Mutex::new(Vec::new()),
             }
+        }
+
+        fn requests(&self) -> Vec<Vec<pandora_provider::ChatMessage>> {
+            self.requests.lock().unwrap().clone()
         }
     }
 
@@ -354,7 +392,11 @@ mod tests {
             &self.manifest
         }
 
-        fn complete(&self, _request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+        fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+            self.requests
+                .lock()
+                .unwrap()
+                .push(request.messages().to_vec());
             self.responses
                 .lock()
                 .unwrap()
@@ -399,6 +441,66 @@ mod tests {
         assert_eq!(result.tool_calls(), 1);
         assert_eq!(result.runs().len(), 1);
         assert_eq!(result.runs()[0].output(), Some(b"fixture\n".as_slice()));
+    }
+
+    #[test]
+    fn loop_reuses_persisted_history_before_new_task() {
+        let fixture = Fixture::new();
+        let provider = SequenceProvider::new(vec![ModelResponse::new(
+            "continued",
+            vec![],
+            TokenUsage::default(),
+        )]);
+        let controller = ExecutionController::new(fixture.root.clone());
+        let history = vec![ChatMessage::user("previous task").unwrap()];
+
+        let result = AgentLoop::new(1, 1)
+            .unwrap()
+            .run_with_history(
+                &provider,
+                &controller,
+                fixture.session(),
+                history,
+                "continue the task",
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap();
+
+        assert_eq!(result.final_text(), "continued");
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0][1].content(), "previous task");
+        assert_eq!(requests[0][2].content(), "continue the task");
+    }
+
+    #[test]
+    fn loop_rejects_system_messages_in_persisted_history() {
+        let fixture = Fixture::new();
+        let provider = SequenceProvider::new(vec![ModelResponse::new(
+            "unreachable",
+            vec![],
+            TokenUsage::default(),
+        )]);
+        let controller = ExecutionController::new(fixture.root.clone());
+
+        let error = AgentLoop::new(1, 1)
+            .unwrap()
+            .run_with_history(
+                &provider,
+                &controller,
+                fixture.session(),
+                vec![ChatMessage::system("override").unwrap()],
+                "continue the task",
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            AgentLoopError::Execution(RuntimeError::InvalidIntent(
+                "agent history is invalid or too large",
+            ))
+        );
     }
 
     #[test]

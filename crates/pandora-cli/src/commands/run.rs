@@ -98,7 +98,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                 .map_err(approval_error)
         })
         .transpose()?;
-    let session = match approval.as_ref() {
+    let (session, agent_history) = match approval.as_ref() {
         Some(approval) => {
             if let Some(value) = parsed.value("session")
                 && value != approval.session_id().as_str()
@@ -108,11 +108,21 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                     json!({}),
                 ));
             }
-            resume_session(&store, approval.session_id().as_str())?
+            let snapshot = resume_session(&store, approval.session_id().as_str())?;
+            (
+                snapshot.session().clone(),
+                snapshot.agent_messages().to_vec(),
+            )
         }
         None => match parsed.value("session") {
-            Some(value) => resume_session(&store, value)?,
-            None => create_session(&store, &workspace_id)?,
+            Some(value) => {
+                let snapshot = resume_session(&store, value)?;
+                (
+                    snapshot.session().clone(),
+                    snapshot.agent_messages().to_vec(),
+                )
+            }
+            None => (create_session(&store, &workspace_id)?, Vec::new()),
         },
     };
     let workspace = WorkspaceRoot::new(config.workspace_dir()).map_err(|error| {
@@ -151,6 +161,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             &approval_store,
             AgentOptions {
                 task: &task,
+                history: agent_history,
                 model_override: parsed.value("model"),
                 max_turns,
                 max_tool_calls,
@@ -258,15 +269,25 @@ fn execute_agent(
         .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
     let loop_engine = AgentLoop::new(options.max_turns, options.max_tool_calls)
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
-    let result = loop_engine.run(
+    let result = loop_engine.run_with_history(
         &provider,
         controller,
         session.clone(),
+        options.history,
         options.task,
         timestamp(),
     );
     match result {
         Ok(summary) => {
+            store
+                .save_agent_transcript(
+                    session.id(),
+                    session.principal_id(),
+                    session.tenant_id(),
+                    session.workspace_id(),
+                    summary.messages(),
+                )
+                .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
             let run_count = summary.runs().len();
             for run in summary.runs() {
                 append_events(store, session, run.events())?;
@@ -289,6 +310,15 @@ fn execute_agent(
             ))
         }
         Err(AgentLoopError::ApprovalRequired { reason, summary }) => {
+            store
+                .save_agent_transcript(
+                    session.id(),
+                    session.principal_id(),
+                    session.tenant_id(),
+                    session.workspace_id(),
+                    summary.messages(),
+                )
+                .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
             let run = summary.runs().last().ok_or_else(|| {
                 CliError::internal("approval request has no execution summary", json!({}))
             })?;
@@ -321,6 +351,7 @@ fn execute_agent(
 
 struct AgentOptions<'a> {
     task: &'a str,
+    history: Vec<ChatMessage>,
     model_override: Option<&'a str>,
     max_turns: u32,
     max_tool_calls: u32,
@@ -389,13 +420,15 @@ fn agent_error(error: AgentLoopError) -> CliError {
     }
 }
 
-fn resume_session(store: &SessionStore, value: &str) -> Result<Session, CliError> {
+fn resume_session(
+    store: &SessionStore,
+    value: &str,
+) -> Result<pandora_runtime::sessions::SessionSnapshot, CliError> {
     let session_id =
         SessionId::new(value.to_owned()).map_err(|_| CliError::usage("session ID is invalid"))?;
     let (principal, tenant, workspace) = super::session_scope();
     store
         .resume(&session_id, &principal, &tenant, &workspace)
-        .map(|snapshot| snapshot.session().clone())
         .map_err(|error| CliError::internal(error.to_string(), json!({})))
 }
 

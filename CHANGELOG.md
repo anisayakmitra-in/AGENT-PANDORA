@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Agent sessions now persist a bounded user, assistant, and tool transcript and
+  reuse it when `run --agent --session <id>` continues a task.
+- Transcript records retain tool-call structure, reject stored system-message
+  overrides, and use private session-database permissions where supported.
+
 ## v2.0.0-alpha.1
 
 This is the first plain-SemVer Pandora Agent CLI prerelease.

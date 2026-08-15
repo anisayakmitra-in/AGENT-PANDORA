@@ -80,13 +80,13 @@ pub enum MessageRole {
 pub struct ChatMessage {
     role: MessageRole,
     content: String,
-    #[serde(skip)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     tool_calls: Vec<ChatToolCall>,
-    #[serde(skip)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     tool_call_id: Option<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct ChatToolCall {
     id: String,
     name: String,
@@ -951,6 +951,28 @@ mod tests {
             body["messages"][2],
             json!({"role": "tool", "content": "fixture", "tool_call_id": "call-1"})
         );
+    }
+
+    #[test]
+    fn persisted_chat_messages_round_trip_tool_calls() {
+        let response = parse_response(
+            br#"{
+                "choices":[{"message":{"content":null,"tool_calls":[
+                    {"id":"call-1","type":"function","function":{"name":"workspace.read","arguments":"{\"path\":\"README.md\"}"}}
+                ]}}]
+            }"#,
+        )
+        .unwrap();
+        let messages = vec![
+            ChatMessage::user("read README").unwrap(),
+            ChatMessage::assistant_tool_calls(response.tool_calls()).unwrap(),
+            ChatMessage::tool_result("call-1", "fixture").unwrap(),
+        ];
+
+        let encoded = serde_json::to_vec(&messages).unwrap();
+        let decoded: Vec<ChatMessage> = serde_json::from_slice(&encoded).unwrap();
+
+        assert_eq!(decoded, messages);
     }
 
     #[test]
