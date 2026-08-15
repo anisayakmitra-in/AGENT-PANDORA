@@ -1,6 +1,6 @@
 use pandora_types::{
     ArtifactId, Capability, EffectTarget, ExecutionId, GeneId, Operation, OperationRequest,
-    PrincipalId, RequestError, ResourceScope, SessionId,
+    PrincipalId, RequestError, ResourceScope, SessionId, TaskIntent,
 };
 use serde_json::Value;
 use serde_json::json;
@@ -10,6 +10,7 @@ use std::sync::Mutex;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolError {
     UnknownTool(String),
+    UnsupportedTool(String),
     DuplicateTool,
     InvalidSchema(String),
     InvalidArguments(String),
@@ -123,6 +124,22 @@ pub struct ToolPlan {
     idempotency_key: String,
     arguments: Value,
     request: OperationRequest,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ToolInvocation {
+    tool_id: GeneId,
+    task: TaskIntent,
+}
+
+impl ToolInvocation {
+    pub fn tool_id(&self) -> &GeneId {
+        &self.tool_id
+    }
+
+    pub fn task(&self) -> &TaskIntent {
+        &self.task
+    }
 }
 
 impl ToolPlan {
@@ -258,16 +275,38 @@ impl ToolEngine {
     }
 
     pub fn validate_call(&self, tool_id: &str, arguments: &Value) -> Result<(), ToolError> {
-        let id = GeneId::new(tool_id.to_owned())
-            .map_err(|_| ToolError::UnknownTool(tool_id.to_owned()))?;
-        let definitions = self
-            .definitions
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let definition = definitions
-            .get(&id)
-            .ok_or_else(|| ToolError::UnknownTool(tool_id.to_owned()))?;
+        let definition = self.definition(tool_id)?;
         validate_arguments(definition.input_schema(), arguments)
+    }
+
+    pub fn prepare_invocation(
+        &self,
+        tool_id: &str,
+        arguments: &Value,
+    ) -> Result<ToolInvocation, ToolError> {
+        let definition = self.definition(tool_id)?;
+        validate_arguments(definition.input_schema(), arguments)?;
+        let task = match definition.id().as_str() {
+            "workspace.read" => task_from_argument(arguments, "read", "path")?,
+            "workspace.search" => task_from_argument(arguments, "search", "query")?,
+            "workspace.patch" => {
+                let path = required_text_argument(arguments, "path")?;
+                let content = required_text_argument(arguments, "content")?;
+                TaskIntent::new(format!("patch:{path}:{content}"))
+                    .map_err(|error| ToolError::InvalidArguments(error.to_string()))?
+            }
+            "workspace.verify" => TaskIntent::new("verify")
+                .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
+            _ => {
+                return Err(ToolError::UnsupportedTool(
+                    definition.id().as_str().to_owned(),
+                ));
+            }
+        };
+        Ok(ToolInvocation {
+            tool_id: definition.id().clone(),
+            task,
+        })
     }
 
     pub fn plan(
@@ -327,6 +366,19 @@ impl ToolEngine {
         }
         plans.insert(idempotency_key.to_owned(), plan.clone());
         Ok(plan)
+    }
+
+    fn definition(&self, tool_id: &str) -> Result<ToolDefinition, ToolError> {
+        let id = GeneId::new(tool_id.to_owned())
+            .map_err(|_| ToolError::UnknownTool(tool_id.to_owned()))?;
+        let definitions = self
+            .definitions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        definitions
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| ToolError::UnknownTool(tool_id.to_owned()))
     }
 }
 
@@ -414,6 +466,28 @@ fn validate_arguments(schema: &Value, arguments: &Value) -> Result<(), ToolError
         }
     }
     Ok(())
+}
+
+fn task_from_argument(
+    arguments: &Value,
+    action: &str,
+    name: &str,
+) -> Result<TaskIntent, ToolError> {
+    let value = required_text_argument(arguments, name)?;
+    TaskIntent::new(format!("{action}:{value}"))
+        .map_err(|error| ToolError::InvalidArguments(error.to_string()))
+}
+
+fn required_text_argument<'a>(arguments: &'a Value, name: &str) -> Result<&'a str, ToolError> {
+    let value = arguments.get(name).and_then(Value::as_str).ok_or_else(|| {
+        ToolError::InvalidArguments(format!("argument '{name}' must be a string"))
+    })?;
+    if value.trim().is_empty() || value.chars().any(char::is_control) {
+        return Err(ToolError::InvalidArguments(format!(
+            "argument '{name}' is invalid"
+        )));
+    }
+    Ok(value)
 }
 
 fn matches_type(value: &Value, expected: &str) -> bool {
@@ -558,6 +632,70 @@ mod tests {
                 .list()
                 .iter()
                 .any(|tool| tool.id().as_str() == "workspace.read")
+        );
+    }
+
+    #[test]
+    fn prepares_each_builtin_as_a_canonical_task() {
+        let engine = ToolEngine::with_builtins();
+
+        assert_eq!(
+            engine
+                .prepare_invocation("workspace.read", &json!({"path": "README.md"}))
+                .unwrap()
+                .task()
+                .summary(),
+            "read:README.md"
+        );
+        assert_eq!(
+            engine
+                .prepare_invocation("workspace.search", &json!({"query": "needle"}))
+                .unwrap()
+                .task()
+                .summary(),
+            "search:needle"
+        );
+        assert_eq!(
+            engine
+                .prepare_invocation(
+                    "workspace.patch",
+                    &json!({"path": "README.md", "content": "updated"})
+                )
+                .unwrap()
+                .task()
+                .summary(),
+            "patch:README.md:updated"
+        );
+        assert_eq!(
+            engine
+                .prepare_invocation("workspace.verify", &json!({}))
+                .unwrap()
+                .task()
+                .summary(),
+            "verify"
+        );
+    }
+
+    #[test]
+    fn preparation_rejects_a_registered_tool_without_an_executor_mapping() {
+        let engine = ToolEngine::new();
+        engine
+            .register(
+                ToolDefinition::new(
+                    "custom.tool",
+                    "1.0.0",
+                    "Custom tool",
+                    json!({"type": "object", "additionalProperties": false}),
+                    Capability::FilesystemRead,
+                    Operation::Read,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            engine.prepare_invocation("custom.tool", &json!({})),
+            Err(ToolError::UnsupportedTool("custom.tool".to_owned()))
         );
     }
 }

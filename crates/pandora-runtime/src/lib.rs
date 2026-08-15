@@ -60,7 +60,9 @@ pub use skill_engine::{
     SkillState,
 };
 pub use strategies::{StrategyBudget, StrategyError, StrategyProfile};
-pub use tool_engine::{ToolContext, ToolDefinition, ToolEngine, ToolError, ToolPlan};
+pub use tool_engine::{
+    ToolContext, ToolDefinition, ToolEngine, ToolError, ToolInvocation, ToolPlan,
+};
 
 pub fn runtime_is_available() -> bool {
     true

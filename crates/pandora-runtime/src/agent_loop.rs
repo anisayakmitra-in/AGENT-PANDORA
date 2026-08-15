@@ -3,8 +3,7 @@ use pandora_provider::{
     ChatMessage, MessageRole, ModelRequest, Provider, ProviderError, TokenUsage, ToolCall,
     ToolSchema, TraceMetadata,
 };
-use pandora_types::{Session, TaskIntent, Timestamp};
-use serde_json::Value;
+use pandora_types::{Session, Timestamp};
 use std::fmt;
 
 const MAX_TOOL_RESULT_BYTES: usize = 32 * 1024;
@@ -425,71 +424,14 @@ impl AgentLoop {
         runs: &mut Vec<RunSummary>,
         approval: Option<&AgentApproval<'_>>,
     ) -> Result<ToolExecution, AgentLoopError> {
-        if self
-            .tools
-            .validate_call(call.name(), call.arguments())
-            .is_err()
-        {
-            return Ok(ToolExecution::Output(
-                "tool error: unsupported tool".to_owned(),
-            ));
-        }
-
-        let intent = match call.name() {
-            "workspace.read" | "workspace.search" => {
-                let argument_name = if call.name() == "workspace.read" {
-                    "path"
-                } else {
-                    "query"
-                };
-                let Some(argument) = call.arguments().get(argument_name).and_then(Value::as_str)
-                else {
-                    return Ok(ToolExecution::Output(
-                        "tool error: required argument is missing or invalid".to_owned(),
-                    ));
-                };
-                if argument.trim().is_empty() || argument.chars().any(char::is_control) {
-                    return Ok(ToolExecution::Output(
-                        "tool error: required argument is invalid".to_owned(),
-                    ));
-                }
-                let action = if call.name() == "workspace.read" {
-                    "read"
-                } else {
-                    "search"
-                };
-                TaskIntent::new(format!("{action}:{argument}"))
-            }
-            "workspace.patch" => {
-                let Some(path) = call.arguments().get("path").and_then(Value::as_str) else {
-                    return Ok(ToolExecution::Output(
-                        "tool error: required argument is missing or invalid".to_owned(),
-                    ));
-                };
-                let Some(content) = call.arguments().get("content").and_then(Value::as_str) else {
-                    return Ok(ToolExecution::Output(
-                        "tool error: required argument is missing or invalid".to_owned(),
-                    ));
-                };
-                if path.trim().is_empty()
-                    || content.is_empty()
-                    || path.chars().any(char::is_control)
-                    || content.chars().any(char::is_control)
-                {
-                    return Ok(ToolExecution::Output(
-                        "tool error: required argument is invalid".to_owned(),
-                    ));
-                }
-                TaskIntent::new(format!("patch:{path}:{content}"))
-            }
-            "workspace.verify" => TaskIntent::new("verify"),
-            _ => {
+        let intent = match self.tools.prepare_invocation(call.name(), call.arguments()) {
+            Ok(invocation) => invocation.task().clone(),
+            Err(_) => {
                 return Ok(ToolExecution::Output(
                     "tool error: unsupported tool".to_owned(),
                 ));
             }
-        }
-        .map_err(|_| AgentLoopError::InvalidTask)?;
+        };
         let summary = match approval {
             Some(approval) => controller.run_agent_with_approval(
                 intent,
