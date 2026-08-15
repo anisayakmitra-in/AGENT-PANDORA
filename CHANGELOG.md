@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Provider profiles can keep separate endpoints, models, and credential
+  environment-variable names; `provider use` selects a default and `run
+  --provider` selects one run without copying secrets into configuration.
 - Agent sessions now persist a bounded user, assistant, and tool transcript and
   reuse it when `run --agent --session <id>` continues a task.
 - Approved agent runs can resume a pending tool call with its session and

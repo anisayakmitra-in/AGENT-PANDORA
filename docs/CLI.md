@@ -20,12 +20,23 @@ workspace path, policy mode, provider configuration state, and remediation.
 Provider connectivity is deliberately `not_checked`; diagnostics do not send a
 request or read a provider credential.
 
-`provider test` sends one bounded request using `PANDORA_PROVIDER_API_KEY` and
-reports the configured or explicitly selected model, response, and token
-usage. Use `pandora provider set --provider-url <url> --model <model>` to save a
-model. If none is configured, the provider uses `default`. It fails when the
-provider or credential is not configured and never includes the credential in
-its output.
+`provider test` sends one bounded request using the active profile's credential
+environment variable and reports the selected model, response, and token usage.
+Use `pandora provider set --provider-url <url> --model <model>` to configure the
+backward-compatible `openai-compatible` profile. Multiple provider profiles can
+keep separate endpoints, models, and credential variables:
+
+```text
+pandora provider set --name coding --provider-url https://coding.example/v1 --model coding-model --api-key-env PANDORA_CODING_API_KEY
+pandora provider set --name design --provider-url https://design.example/v1 --model vision-model --api-key-env PANDORA_DESIGN_API_KEY
+pandora provider use design
+pandora provider list --json
+pandora provider test --provider design --json
+```
+
+Use `pandora run --provider coding ...` for a one-run selection. Profiles store
+only endpoint, model, and environment-variable names; Pandora never stores API
+key values in configuration or output.
 
 ## Sessions and execution
 
@@ -54,11 +65,11 @@ matching paths with forward-slash separators.
 After an operator approves a write, rerun the exact task with its approval ID.
 The approval is bound to the original session, execution, Gene, and request
 digest, is consumed atomically, and cannot be replayed for another task.
-`run --plan` sends the request to the configured provider as a bounded,
+`run --plan` sends the request to the active or explicitly selected provider as a bounded,
 tool-free planning call. Only a schema-validated task intent is passed to the
 runtime; the model cannot execute tools or grant permissions. Configure the
-provider with `pandora provider set --provider-url <url> --model <model>` and
-provide `PANDORA_PROVIDER_API_KEY` for planning.
+active profile with `pandora provider set` and provide the environment variable
+named by that profile for planning.
 
 `run --agent` enables the bounded multi-turn loop. The model can call
 `workspace.read`, `workspace.search`, `workspace.patch`, and `workspace.verify`.

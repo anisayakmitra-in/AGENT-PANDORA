@@ -8,7 +8,7 @@ use pandora_provider::{
     TraceMetadata, parse_and_validate,
 };
 use pandora_runtime::ExecutionController;
-use pandora_runtime::config::RuntimeConfig;
+use pandora_runtime::config::{DEFAULT_PROVIDER_API_KEY_ENV, DEFAULT_PROVIDER_NAME, RuntimeConfig};
 use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::sessions::SessionStore;
 use pandora_runtime::{
@@ -33,6 +33,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "config",
             "data-dir",
             "workspace",
+            "provider",
             "session",
             "approval",
             "harness",
@@ -247,24 +248,11 @@ fn execute_agent(
     approval_store: &ApprovalStore,
     options: AgentOptions<'_>,
 ) -> Result<CommandResult, CliError> {
-    let base_url = config.provider_url().ok_or_else(|| {
-        CliError::configuration(
-            "agent mode requires a configured provider; run 'pandora provider set' first",
-            json!({"config_path": config.config_path()}),
-        )
-    })?;
     let model = options
         .model_override
         .or(config.provider_model())
         .unwrap_or("default");
-    let manifest = ProviderManifest::new(
-        "openai-compatible",
-        "OpenAI-compatible",
-        base_url,
-        model,
-        "PANDORA_PROVIDER_API_KEY",
-    )
-    .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
+    let manifest = configured_manifest(config, model, "agent mode")?;
     let provider = HttpProvider::from_environment(manifest)
         .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
     let loop_engine = AgentLoop::new(options.max_turns, options.max_tool_calls)
@@ -464,29 +452,40 @@ fn run_details(
     )
 }
 
+fn configured_manifest(
+    config: &RuntimeConfig,
+    model: &str,
+    operation: &str,
+) -> Result<ProviderManifest, CliError> {
+    let base_url = config.provider_url().ok_or_else(|| {
+        CliError::configuration(
+            format!("{operation} requires a configured provider; run 'pandora provider set' first"),
+            json!({"config_path": config.config_path()}),
+        )
+    })?;
+    let name = config.active_provider().unwrap_or(DEFAULT_PROVIDER_NAME);
+    ProviderManifest::new(
+        name,
+        name,
+        base_url,
+        model,
+        config
+            .provider_api_key_env()
+            .unwrap_or(DEFAULT_PROVIDER_API_KEY_ENV),
+    )
+    .map_err(|error| CliError::provider(error.to_string(), json!({})))
+}
+
 fn plan_task(
     config: &RuntimeConfig,
     session: &Session,
     request: &str,
     model_override: Option<&str>,
 ) -> Result<(String, Option<String>), CliError> {
-    let base_url = config.provider_url().ok_or_else(|| {
-        CliError::configuration(
-            "planning requires a configured provider; run 'pandora provider set' first",
-            json!({"config_path": config.config_path()}),
-        )
-    })?;
     let model = model_override
         .or(config.provider_model())
         .unwrap_or("default");
-    let manifest = ProviderManifest::new(
-        "openai-compatible",
-        "OpenAI-compatible",
-        base_url,
-        model,
-        "PANDORA_PROVIDER_API_KEY",
-    )
-    .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
+    let manifest = configured_manifest(config, model, "planning")?;
     let provider = HttpProvider::from_environment(manifest.clone())
         .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
     let messages = vec![

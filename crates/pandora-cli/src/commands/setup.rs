@@ -30,6 +30,8 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "data_dir": config.data_dir(),
             "workspace": config.workspace_dir(),
             "provider_configured": provider_configured,
+            "provider_profiles": config.provider_names(),
+            "active_provider": config.active_provider(),
             "provider_model": config.provider_model().unwrap_or("default"),
         }),
         format!("Pandora configured at {}", config.config_path().display()),

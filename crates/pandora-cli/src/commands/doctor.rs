@@ -39,7 +39,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let healthy = config_ok && provider_configured && data_ok && workspace_ok;
     let provider = json!({
         "configured": provider_configured,
+        "profiles": config.provider_names(),
+        "active_profile": config.active_provider(),
         "model": config.provider_model().unwrap_or("default"),
+        "credential_env": config.provider_api_key_env(),
         "connectivity": if provider_configured { "not_checked" } else { "not_configured" },
         "remediation": if provider_configured {
             "connectivity checks are opt-in and are not performed by default"

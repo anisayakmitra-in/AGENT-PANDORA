@@ -111,6 +111,80 @@ fn configuration_persists_provider_model() {
 }
 
 #[test]
+fn named_provider_profiles_round_trip_and_select() {
+    let fixture = Fixture::new("config-provider-profiles");
+    let config_path = fixture.path.join("config.json");
+    fs::write(
+        &config_path,
+        r#"{
+            "providers": {
+                "design": {
+                    "base_url": "https://design.example/v1",
+                    "model": "vision-model",
+                    "api_key_env": "PANDORA_DESIGN_API_KEY"
+                },
+                "coding": {
+                    "base_url": "https://coding.example/v1",
+                    "model": "coding-model",
+                    "api_key_env": "PANDORA_CODING_API_KEY"
+                }
+            },
+            "active_provider": "design"
+        }"#,
+    )
+    .unwrap();
+
+    let config = RuntimeConfig::from_sources(
+        &ConfigOverrides::default(),
+        &BTreeMap::new(),
+        &config_path,
+        fixture.path.join("default-data"),
+        fixture.path.join("default-workspace"),
+    )
+    .unwrap();
+
+    assert_eq!(config.provider_names(), &["coding", "design"]);
+    assert_eq!(config.active_provider(), Some("design"));
+    assert_eq!(config.provider_url(), Some("https://design.example/v1"));
+    assert_eq!(config.provider_model(), Some("vision-model"));
+    assert_eq!(
+        config.provider_api_key_env(),
+        Some("PANDORA_DESIGN_API_KEY")
+    );
+
+    let one_run = RuntimeConfig::from_sources(
+        &ConfigOverrides::default().with_provider_name("coding"),
+        &BTreeMap::new(),
+        &config_path,
+        fixture.path.join("default-data"),
+        fixture.path.join("default-workspace"),
+    )
+    .unwrap();
+    assert_eq!(one_run.active_provider(), Some("coding"));
+    assert_eq!(one_run.provider_model(), Some("coding-model"));
+
+    config.write().unwrap();
+    let reloaded = RuntimeConfig::from_sources(
+        &ConfigOverrides::default(),
+        &BTreeMap::new(),
+        &config_path,
+        fixture.path.join("default-data"),
+        fixture.path.join("default-workspace"),
+    )
+    .unwrap();
+
+    assert_eq!(reloaded.active_provider(), Some("design"));
+    assert_eq!(reloaded.provider_model(), Some("vision-model"));
+    assert_eq!(
+        reloaded
+            .provider_profile("coding")
+            .expect("coding profile should remain configured")
+            .api_key_env(),
+        "PANDORA_CODING_API_KEY"
+    );
+}
+
+#[test]
 fn configuration_rejects_non_http_provider_urls() {
     let fixture = Fixture::new("config-invalid-url");
     let environment = BTreeMap::from([(
@@ -127,6 +201,38 @@ fn configuration_rejects_non_http_provider_urls() {
     );
 
     assert!(result.is_err());
+}
+
+#[test]
+fn configuration_rejects_unknown_provider_selection() {
+    let fixture = Fixture::new("config-unknown-provider");
+    fs::write(
+        fixture.path.join("config.json"),
+        r#"{
+            "providers": {
+                "coding": {
+                    "base_url": "https://coding.example/v1",
+                    "model": "coding-model",
+                    "api_key_env": "PANDORA_CODING_API_KEY"
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let error = RuntimeConfig::from_sources(
+        &ConfigOverrides::default().with_provider_name("missing"),
+        &BTreeMap::new(),
+        &fixture.path.join("config.json"),
+        fixture.path.join("default-data"),
+        fixture.path.join("default-workspace"),
+    )
+    .expect_err("unknown provider selection should fail closed");
+
+    assert!(matches!(
+        error,
+        pandora_runtime::config::ConfigError::UnknownProvider
+    ));
 }
 
 #[test]

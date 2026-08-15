@@ -1,15 +1,19 @@
 use super::{load_config, parse_options, write_config};
 use crate::output::{CliError, CommandResult, success};
 use pandora_provider::{ChatMessage, HttpProvider, ModelRequest, Provider, ProviderManifest};
+use pandora_runtime::config::{
+    DEFAULT_PROVIDER_API_KEY_ENV, DEFAULT_PROVIDER_NAME, ProviderProfile,
+};
 use serde_json::json;
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args
         .first()
-        .ok_or_else(|| CliError::usage("provider requires 'list', 'set', or 'test'"))?;
+        .ok_or_else(|| CliError::usage("provider requires 'list', 'set', 'use', or 'test'"))?;
     match subcommand.as_str() {
         "list" => list(&args[1..]),
         "set" => set(&args[1..]),
+        "use" => use_provider(&args[1..]),
         "test" => test(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown provider command '{unknown}'"
@@ -20,23 +24,33 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
 fn list(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(args, &["config", "data-dir", "workspace"])?;
     let config = load_config(&parsed)?;
-    let providers = match config.provider_url() {
-        Some(base_url) => {
+    let providers = config
+        .provider_names()
+        .into_iter()
+        .map(|name| {
+            let profile = config
+                .provider_profile(&name)
+                .expect("provider names must resolve to profiles");
             let manifest = ProviderManifest::new(
-                "openai-compatible",
-                "OpenAI-compatible",
-                base_url,
-                config.provider_model().unwrap_or("default"),
-                "PANDORA_PROVIDER_API_KEY",
+                profile.name(),
+                profile.name(),
+                profile.base_url(),
+                profile.model(),
+                profile.api_key_env(),
             )
             .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
-            let manifest = serde_json::to_value(manifest).map_err(|_| {
+            let mut value = serde_json::to_value(manifest).map_err(|_| {
                 CliError::internal("could not serialize provider metadata", json!({}))
             })?;
-            vec![manifest]
-        }
-        None => Vec::new(),
-    };
+            if let Some(object) = value.as_object_mut() {
+                object.insert(
+                    "active".to_owned(),
+                    json!(config.active_provider() == Some(profile.name())),
+                );
+            }
+            Ok(value)
+        })
+        .collect::<Result<Vec<_>, CliError>>()?;
     Ok(success(
         "provider list",
         json!({"providers": providers}),
@@ -51,28 +65,91 @@ fn list(args: &[String]) -> Result<CommandResult, CliError> {
 fn set(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
         args,
-        &["config", "data-dir", "workspace", "provider-url", "model"],
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "name",
+            "provider-url",
+            "model",
+            "api-key-env",
+        ],
     )?;
     if parsed.value("provider-url").is_none() {
         return Err(CliError::usage(
             "provider set requires '--provider-url <url>'",
         ));
     }
-    let config = load_config(&parsed)?;
+    let mut config = load_config(&parsed)?;
+    let name = parsed.value("name").unwrap_or(DEFAULT_PROVIDER_NAME);
+    let model = parsed
+        .value("model")
+        .or_else(|| config.provider_profile(name).map(ProviderProfile::model))
+        .unwrap_or("default");
+    let api_key_env = parsed
+        .value("api-key-env")
+        .or_else(|| {
+            config
+                .provider_profile(name)
+                .map(ProviderProfile::api_key_env)
+        })
+        .unwrap_or(DEFAULT_PROVIDER_API_KEY_ENV);
+    let profile = ProviderProfile::new(
+        name,
+        parsed
+            .value("provider-url")
+            .expect("provider URL was checked"),
+        model,
+        api_key_env,
+    )
+    .map_err(|error| CliError::configuration(error.to_string(), json!({})))?;
+    config.set_provider_profile(profile);
+    config
+        .set_active_provider(name)
+        .map_err(|error| CliError::configuration(error.to_string(), json!({})))?;
     write_config(&config)?;
     Ok(success(
         "provider set",
         json!({
-            "provider": "openai-compatible",
+            "provider": name,
             "base_url": config.provider_url(),
             "model": config.provider_model().unwrap_or("default"),
+            "api_key_env": config.provider_api_key_env(),
+            "active": config.active_provider() == Some(name),
         }),
-        "OpenAI-compatible provider configured".to_owned(),
+        format!("Provider {name} configured"),
+    ))
+}
+
+fn use_provider(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace"])?;
+    if parsed.positionals.len() != 1 {
+        return Err(CliError::usage(
+            "provider use requires exactly one provider name",
+        ));
+    }
+    let mut config = load_config(&parsed)?;
+    let name = parsed.positionals[0].as_str();
+    config
+        .set_active_provider(name)
+        .map_err(|error| CliError::configuration(error.to_string(), json!({})))?;
+    write_config(&config)?;
+    Ok(success(
+        "provider use",
+        json!({
+            "provider": name,
+            "model": config.provider_model().unwrap_or("default"),
+            "api_key_env": config.provider_api_key_env(),
+        }),
+        format!("Provider {name} is active"),
     ))
 }
 
 fn test(args: &[String]) -> Result<CommandResult, CliError> {
-    let parsed = parse_options(args, &["config", "data-dir", "workspace", "model"])?;
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "provider", "model"],
+    )?;
     let config = load_config(&parsed)?;
     super::require_config_file(&config)?;
     let base_url = config.provider_url().ok_or_else(|| {
@@ -85,12 +162,15 @@ fn test(args: &[String]) -> Result<CommandResult, CliError> {
         .value("model")
         .or(config.provider_model())
         .unwrap_or("default");
+    let provider_name = config.active_provider().unwrap_or(DEFAULT_PROVIDER_NAME);
     let manifest = ProviderManifest::new(
-        "openai-compatible",
-        "OpenAI-compatible",
+        provider_name,
+        provider_name,
         base_url,
         model,
-        "PANDORA_PROVIDER_API_KEY",
+        config
+            .provider_api_key_env()
+            .unwrap_or(DEFAULT_PROVIDER_API_KEY_ENV),
     )
     .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
     let provider = HttpProvider::from_environment(manifest.clone())

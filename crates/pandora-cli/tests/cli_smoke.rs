@@ -389,6 +389,67 @@ fn provider_set_and_list_use_the_public_configuration_api() {
 }
 
 #[test]
+fn named_provider_profiles_can_be_selected_without_exposing_credentials() {
+    let fixture = Fixture::new();
+    for (name, url, model, key_env) in [
+        (
+            "design",
+            "https://design.example/v1",
+            "vision-model",
+            "PANDORA_DESIGN_API_KEY",
+        ),
+        (
+            "coding",
+            "https://coding.example/v1",
+            "coding-model",
+            "PANDORA_CODING_API_KEY",
+        ),
+    ] {
+        let output = fixture
+            .command(&[
+                "provider",
+                "set",
+                "--name",
+                name,
+                "--provider-url",
+                url,
+                "--model",
+                model,
+                "--api-key-env",
+                key_env,
+                "--json",
+            ])
+            .output()
+            .expect("provider profile should start");
+        assert_success(&output);
+    }
+
+    let output = fixture
+        .command(&["provider", "use", "design", "--json"])
+        .output()
+        .expect("provider selection should start");
+    assert_success(&output);
+
+    let output = fixture
+        .command(&["provider", "list", "--json"])
+        .output()
+        .expect("provider list should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    let providers = response["providers"]
+        .as_array()
+        .expect("provider list should be an array");
+    let design = providers
+        .iter()
+        .find(|provider| provider["id"] == "design")
+        .expect("design profile should be listed");
+    assert_eq!(design["default_model"], "vision-model");
+    assert_eq!(design["api_key_env"], "PANDORA_DESIGN_API_KEY");
+    assert_eq!(design["active"], true);
+    assert!(!response.to_string().contains("test-provider-key"));
+}
+
+#[test]
 fn provider_test_completes_a_configured_request_without_echoing_credentials() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("provider fixture should bind");
     let address = listener
