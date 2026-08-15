@@ -4,8 +4,12 @@ function Fail([string]$Message) {
     throw "pandora installer: $Message"
 }
 
-$version = $env:PANDORA_VERSION
-if ([string]::IsNullOrWhiteSpace($version)) { Fail "PANDORA_VERSION is required" }
+$defaultVersion = "v2.0.0-alpha.1"
+$version = if ([string]::IsNullOrWhiteSpace($env:PANDORA_VERSION)) {
+    $defaultVersion
+} else {
+    $env:PANDORA_VERSION
+}
 if ($version -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$') {
     Fail "PANDORA_VERSION must be a SemVer tag such as v2.0.0-alpha.1"
 }

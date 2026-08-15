@@ -17,21 +17,24 @@ tags. See [RELEASES.md](RELEASES.md), [CHANGELOG.md](CHANGELOG.md), and
 
 ## Install a tagged CLI release
 
-Use the exact published tag. The installer verifies the downloaded native
-binary against the release checksum manifest before installation.
+The bootstrap installers use the current published prerelease by default. They
+verify the downloaded native binary against the release checksum manifest
+before installation. Set `PANDORA_VERSION` when you need to pin a different
+published tag.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.sh |
-  PANDORA_VERSION=v2.0.0-alpha.1 sh
+curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.sh | sh
 ```
 
 ```powershell
-$env:PANDORA_VERSION = "v2.0.0-alpha.1"
 irm https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.ps1 | iex
 ```
 
-The example remains unavailable until that tag has published native assets.
-Until then, use the source-build instructions below.
+To pin the current release explicitly:
+
+```sh
+PANDORA_VERSION=v2.0.0-alpha.1 curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.sh | sh
+```
 
 ## Build
 

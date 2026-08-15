@@ -6,8 +6,7 @@ fail() {
   exit 1
 }
 
-version="${PANDORA_VERSION:-}"
-[ -n "$version" ] || fail "PANDORA_VERSION is required"
+version="${PANDORA_VERSION:-v2.0.0-alpha.1}"
 case "$version" in
   v[0-9]*.[0-9]*.[0-9]*|v[0-9]*.[0-9]*.[0-9]*-*) ;;
   *) fail "PANDORA_VERSION must be a SemVer tag such as v2.0.0-alpha.1" ;;

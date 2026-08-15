@@ -1,6 +1,7 @@
 import hashlib
 import os
 import platform
+import re
 import shutil
 import subprocess
 import unittest
@@ -91,6 +92,17 @@ class InstallerContractTests(unittest.TestCase):
         self.assertIn("sha256sum", shell)
         self.assertIn("checksums.txt", powershell)
         self.assertIn("Get-FileHash", powershell)
+
+    def test_installers_default_to_the_current_published_release(self) -> None:
+        shell = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
+        powershell = (ROOT / "scripts" / "install.ps1").read_text(encoding="utf-8")
+        cargo = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
+        version = re.search(r'^version = "([^"]+)"$', cargo, re.MULTILINE)
+        self.assertIsNotNone(version)
+        tag = f"v{version.group(1)}"
+
+        self.assertIn(f'version="${{PANDORA_VERSION:-{tag}}}"', shell)
+        self.assertIn(f'$defaultVersion = "{tag}"', powershell)
 
     def test_launcher_rejects_tampered_offline_cache(self) -> None:
         launcher = ROOT / "npm" / "pandora-cli" / "bin" / "pandora.js"
