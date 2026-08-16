@@ -30,3 +30,10 @@ operator-supplied metadata, not inferred from a provider name or response.
 The default `AdaptiveEngine::select` path remains score-based for compatibility.
 Evidence-ranked selection is opt-in and falls back to the existing score order for
 approved candidates without matching history.
+
+Agent and planning runs may opt into provider selection with
+`--optimize cost|latency|tokens|certainty`. Selection matches evidence to an
+explicitly configured `<provider>/<model>` profile and requires at least one
+completed sample. Missing or unsuitable evidence preserves the active provider;
+cost selection also requires explicit pricing evidence. Selection does not
+change policy, permissions, credentials, or provider configuration.

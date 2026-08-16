@@ -151,12 +151,18 @@ available, so unknown cost is never treated as zero.
 ```text
 pandora efficiency rank --task-class general --objective certainty
 pandora efficiency rank --task-class coding --objective cost --json
+pandora run --agent --task-class coding --optimize certainty "Fix the failing tests"
 ```
 
 `efficiency rank` is read-only. It ranks existing evidence by cost, latency,
-token usage, or verified completion rate. It does not select a provider,
-change policy, or execute a task; runtime adaptation must still use approved
-candidates and the reference monitor.
+token usage, or verified completion rate. `run --agent` and `run --plan` may
+use `--optimize cost|latency|tokens|certainty` to select a configured provider
+profile for the current task class. The selector requires completed evidence,
+uses only exact provider/model matches, and falls back to the active provider
+when no suitable evidence exists. Cost selection ignores runs without explicit
+pricing. The option cannot be combined with `--provider`, `--model`, or
+`--approval`; it does not change configuration, policy, permissions, or
+credentials.
 
 Enabled Skills contribute bounded guidance to the rebuilt system instruction.
 Only Skills explicitly in the `enabled` state are included. Their text is

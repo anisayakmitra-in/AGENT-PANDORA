@@ -1,4 +1,5 @@
-use super::provider::configured_provider;
+use super::efficiency::parse_objective;
+use super::provider::configured_provider_for;
 use super::{
     LOCAL_WORKSPACE, create_session, load_config, parse_options, require_config_file,
     session_store, timestamp,
@@ -15,11 +16,12 @@ use pandora_runtime::{
     ApprovalStore, MAX_AGENT_TOOL_CALLS, MAX_AGENT_TURNS, RunStatus, RuntimeError,
 };
 use pandora_runtime::{
-    DEFAULT_MAX_SAMPLES_PER_TARGET, EfficiencyStore, ExecutionController, SkillEngine, SkillError,
+    DEFAULT_MAX_SAMPLES_PER_TARGET, EfficiencyEngine, EfficiencyStore, ExecutionController,
+    SkillEngine, SkillError,
 };
 use pandora_types::{
-    Capability, EfficiencySample, EventPayload, ExecutionId, HarnessId, Operation, PolicyContext,
-    Session, SessionId, TaskIntent, WorkspaceId,
+    Capability, EfficiencyObjective, EfficiencySample, EventPayload, ExecutionId, HarnessId,
+    Operation, PolicyContext, Session, SessionId, TaskIntent, WorkspaceId,
 };
 use serde_json::{Value, json};
 use std::fs;
@@ -47,6 +49,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "agent",
             "max-turns",
             "max-tools",
+            "optimize",
         ],
     )?;
     if parsed.positionals.len() != 1 {
@@ -75,6 +78,27 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "--max-turns and --max-tools require --agent",
         ));
     }
+    if parsed.value("optimize").is_some() && parsed.value("provider").is_some() {
+        return Err(CliError::usage(
+            "--optimize cannot be combined with --provider",
+        ));
+    }
+    if parsed.value("optimize").is_some() && parsed.value("model").is_some() {
+        return Err(CliError::usage(
+            "--optimize cannot be combined with --model",
+        ));
+    }
+    if parsed.value("optimize").is_some()
+        && parsed.value("agent").is_none()
+        && parsed.value("plan").is_none()
+    {
+        return Err(CliError::usage("--optimize requires --agent or --plan"));
+    }
+    if parsed.value("optimize").is_some() && parsed.value("approval").is_some() {
+        return Err(CliError::usage(
+            "--optimize cannot be combined with --approval",
+        ));
+    }
     let max_turns = parse_agent_budget(
         parsed.value("max-turns"),
         "max-turns",
@@ -89,8 +113,13 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     )?;
     let task_class = parsed.value("task-class").unwrap_or("general");
     validate_task_class(task_class)?;
+    let optimization = parsed.value("optimize").map(parse_objective).transpose()?;
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
+    let optimized_provider = optimization
+        .map(|objective| select_provider(&config, task_class, objective))
+        .transpose()?
+        .flatten();
     let store = session_store(&config)?;
     let approval_store = ApprovalStore::open(config.data_dir().join("sessions.sqlite3"))
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
@@ -144,6 +173,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             &session,
             &parsed.positionals[0],
             parsed.value("model"),
+            optimized_provider.as_deref(),
         )?
     } else {
         (parsed.positionals[0].clone(), None)
@@ -171,6 +201,8 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                 history: agent_history,
                 approval_id: parsed.value("approval"),
                 model_override: parsed.value("model"),
+                provider_name: optimized_provider.as_deref(),
+                optimization,
                 max_turns,
                 max_tool_calls,
             },
@@ -210,7 +242,11 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     append_events(&store, &session, summary.events())?;
     let efficiency_recorded =
         record_execution_efficiency(&config, task_class, &summary, elapsed_millis(started));
-    let details = run_details(&summary, session.id(), planning_model.as_deref());
+    let details = add_optimization(
+        run_details(&summary, session.id(), planning_model.as_deref()),
+        optimization,
+        optimized_provider.as_deref(),
+    );
     match summary.status() {
         RunStatus::Completed => {
             let data = add_planning(
@@ -227,7 +263,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             );
             Ok(success(
                 "run",
-                data,
+                add_optimization(data, optimization, optimized_provider.as_deref()),
                 format!(
                     "Completed {} with {}",
                     summary.selected_gene(),
@@ -262,9 +298,14 @@ fn execute_agent(
     let skill_context = active_skill_context(config)?;
     let model = options
         .model_override
+        .or_else(|| {
+            options
+                .provider_name
+                .and_then(|name| config.provider_profile(name).map(|profile| profile.model()))
+        })
         .or(config.provider_model())
         .unwrap_or("default");
-    let provider = configured_provider(config, model, "agent mode")?;
+    let provider = configured_provider_for(config, model, "agent mode", options.provider_name)?;
     let loop_engine = AgentLoop::new(options.max_turns, options.max_tool_calls)
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
     let started = Instant::now();
@@ -322,6 +363,10 @@ fn execute_agent(
                     "usage": usage_json(summary.usage()),
                     "runs": run_count,
                     "efficiency_recorded": efficiency_recorded,
+                    "optimization": optimization_value(
+                        options.optimization,
+                        options.provider_name,
+                    ),
                 }),
                 format!("Completed agent task in {}", session.id()),
             ))
@@ -368,6 +413,10 @@ fn execute_agent(
                     "turn_budget": options.max_turns,
                     "tool_budget": options.max_tool_calls,
                     "approval_id": approval.id(),
+                    "optimization": optimization_value(
+                        options.optimization,
+                        options.provider_name,
+                    ),
                 }),
             ))
         }
@@ -418,6 +467,8 @@ struct AgentOptions<'a> {
     history: Vec<ChatMessage>,
     approval_id: Option<&'a str>,
     model_override: Option<&'a str>,
+    provider_name: Option<&'a str>,
+    optimization: Option<EfficiencyObjective>,
     max_turns: u32,
     max_tool_calls: u32,
 }
@@ -479,6 +530,69 @@ fn validate_task_class(value: &str) -> Result<(), CliError> {
         return Err(CliError::usage("task class is invalid or too long"));
     }
     Ok(())
+}
+
+fn select_provider(
+    config: &RuntimeConfig,
+    task_class: &str,
+    objective: EfficiencyObjective,
+) -> Result<Option<String>, CliError> {
+    let store = EfficiencyStore::open(config.data_dir().join("efficiency.sqlite3"))
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let samples = store
+        .load_task_class(task_class)
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let engine = EfficiencyEngine::from_samples(DEFAULT_MAX_SAMPLES_PER_TARGET, samples)
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let rankings = engine
+        .rank(task_class, objective)
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+
+    for summary in rankings {
+        if summary.completed_samples() == 0 {
+            continue;
+        }
+        if objective == EfficiencyObjective::LowestCost && !summary.has_cost_evidence() {
+            continue;
+        }
+        for name in config.provider_names() {
+            let Some(profile) = config.provider_profile(&name) else {
+                continue;
+            };
+            let target = format!("{}/{}", profile.name(), profile.model());
+            if target == summary.target() {
+                return Ok(Some(name));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn optimization_value(objective: Option<EfficiencyObjective>, provider: Option<&str>) -> Value {
+    match objective {
+        Some(objective) => json!({
+            "objective": objective.as_str(),
+            "provider": provider,
+            "evidence_used": provider.is_some(),
+        }),
+        None => Value::Null,
+    }
+}
+
+fn add_optimization(
+    mut details: Value,
+    objective: Option<EfficiencyObjective>,
+    provider: Option<&str>,
+) -> Value {
+    if objective.is_some()
+        && let Value::Object(object) = &mut details
+    {
+        object.insert(
+            "optimization".to_owned(),
+            optimization_value(objective, provider),
+        );
+    }
+    details
 }
 
 fn elapsed_millis(started: Instant) -> u64 {
@@ -669,11 +783,16 @@ fn plan_task(
     session: &Session,
     request: &str,
     model_override: Option<&str>,
+    provider_name: Option<&str>,
 ) -> Result<(String, Option<String>), CliError> {
     let model = model_override
+        .or_else(|| {
+            provider_name
+                .and_then(|name| config.provider_profile(name).map(|profile| profile.model()))
+        })
         .or(config.provider_model())
         .unwrap_or("default");
-    let provider = configured_provider(config, model, "planning")?;
+    let provider = configured_provider_for(config, model, "planning", provider_name)?;
     let manifest = provider.manifest().clone();
     let messages = vec![
         ChatMessage::system(
@@ -841,5 +960,72 @@ fn approval_error(error: pandora_runtime::ApprovalError) -> CliError {
             CliError::policy(error.to_string(), json!({}))
         }
         other => CliError::internal(other.to_string(), json!({})),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pandora_runtime::config::{ConfigOverrides, RuntimeConfig};
+    use pandora_types::{ExecutionId, Timestamp};
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn optimization_selects_a_configured_provider_with_completed_evidence() {
+        let root =
+            std::env::temp_dir().join(format!("pandora-provider-selection-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("fixture root should be created");
+        let config_path = root.join("config.json");
+        fs::write(
+            &config_path,
+            r#"{
+                "providers": {
+                    "slow": {
+                        "base_url": "https://slow.example/v1",
+                        "model": "slow-model",
+                        "api_key_env": "PANDORA_SLOW_API_KEY"
+                    },
+                    "fast": {
+                        "base_url": "https://fast.example/v1",
+                        "model": "fast-model",
+                        "api_key_env": "PANDORA_FAST_API_KEY"
+                    }
+                },
+                "active_provider": "slow"
+            }"#,
+        )
+        .expect("fixture config should be written");
+        let config = RuntimeConfig::from_sources(
+            &ConfigOverrides::default(),
+            &BTreeMap::new(),
+            &config_path,
+            root.join("data"),
+            root.join("workspace"),
+        )
+        .expect("fixture config should load");
+        let store = EfficiencyStore::open(config.data_dir().join("efficiency.sqlite3"))
+            .expect("efficiency store should open");
+        let sample = EfficiencySample::new(
+            ExecutionId::new("provider-selection-1").unwrap(),
+            "coding",
+            "fast/fast-model",
+            100,
+            40,
+            20,
+            12,
+            true,
+            Timestamp::from_unix_seconds(1),
+        )
+        .unwrap();
+        store
+            .record(&sample, DEFAULT_MAX_SAMPLES_PER_TARGET)
+            .expect("efficiency sample should persist");
+
+        let selected = select_provider(&config, "coding", EfficiencyObjective::LowestLatency)
+            .expect("provider selection should succeed");
+        assert_eq!(selected.as_deref(), Some("fast"));
+
+        let _ = fs::remove_dir_all(root);
     }
 }

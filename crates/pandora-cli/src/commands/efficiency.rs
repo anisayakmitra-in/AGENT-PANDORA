@@ -52,14 +52,14 @@ fn rank(args: &[String]) -> Result<CommandResult, CliError> {
     ))
 }
 
-fn parse_objective(value: &str) -> Result<EfficiencyObjective, CliError> {
+pub(crate) fn parse_objective(value: &str) -> Result<EfficiencyObjective, CliError> {
     match value {
         "cost" | "lowest_cost" => Ok(EfficiencyObjective::LowestCost),
         "latency" | "lowest_latency" => Ok(EfficiencyObjective::LowestLatency),
         "tokens" | "lowest_token_usage" => Ok(EfficiencyObjective::LowestTokenUsage),
         "certainty" | "highest_certainty" => Ok(EfficiencyObjective::HighestCertainty),
         _ => Err(CliError::usage(
-            "--objective must be cost, latency, tokens, or certainty",
+            "objective must be cost, latency, tokens, or certainty",
         )),
     }
 }

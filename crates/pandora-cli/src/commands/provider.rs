@@ -14,23 +14,43 @@ pub(crate) fn configured_provider(
     model: &str,
     operation: &str,
 ) -> Result<Box<dyn Provider>, CliError> {
-    let base_url = config.provider_url().ok_or_else(|| {
-        CliError::configuration(
-            format!("{operation} requires a configured provider; run 'pandora provider set' first"),
-            json!({"config_path": config.config_path()}),
-        )
-    })?;
-    let provider_name = config.active_provider().unwrap_or(DEFAULT_PROVIDER_NAME);
-    let manifest = ProviderManifest::new(
-        provider_name,
-        provider_name,
-        base_url,
-        model,
-        config
-            .provider_api_key_env()
-            .unwrap_or(DEFAULT_PROVIDER_API_KEY_ENV),
-    )
-    .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
+    configured_provider_for(config, model, operation, None)
+}
+
+pub(crate) fn configured_provider_for(
+    config: &RuntimeConfig,
+    model: &str,
+    operation: &str,
+    provider_override: Option<&str>,
+) -> Result<Box<dyn Provider>, CliError> {
+    let provider_name = provider_override
+        .or(config.active_provider())
+        .unwrap_or(DEFAULT_PROVIDER_NAME);
+    let selected_profile = config.provider_profile(provider_name);
+    if provider_override.is_some() && selected_profile.is_none() {
+        return Err(CliError::configuration(
+            "provider is not configured",
+            json!({"provider": provider_name}),
+        ));
+    }
+    let base_url = selected_profile
+        .map(ProviderProfile::base_url)
+        .or_else(|| config.provider_url())
+        .ok_or_else(|| {
+            CliError::configuration(
+                format!(
+                    "{operation} requires a configured provider; run 'pandora provider set' first"
+                ),
+                json!({"config_path": config.config_path()}),
+            )
+        })?;
+    let api_key_env = selected_profile
+        .map(ProviderProfile::api_key_env)
+        .or_else(|| config.provider_api_key_env())
+        .unwrap_or(DEFAULT_PROVIDER_API_KEY_ENV);
+    let manifest =
+        ProviderManifest::new(provider_name, provider_name, base_url, model, api_key_env)
+            .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
     let primary = HttpProvider::from_environment(manifest)
         .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
 
