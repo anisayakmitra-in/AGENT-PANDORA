@@ -14,9 +14,9 @@ Pandora keeps package metadata separate from runtime authority.
 - license;
 - inline trust evidence.
 
-`pandora-runtime::HarnessRegistry` compares the declared package metadata with the embedded manifest, hashes the supplied bytes, checks required dependencies, and records the verified metadata in an in-memory registry.
+`pandora-runtime::PackageStore` compares the declared package metadata with the embedded manifest, hashes the supplied bytes, checks required dependencies, and records the verified metadata in the local `packages.sqlite3` store. The store retains the artifact bytes so a later process can revalidate the record before using it.
 
-The registry does not load code, enable a Harness, issue a permit, or grant runtime authority. A recorded package is metadata that passed admission, not an executable extension.
+The package store does not load code, enable a Harness, issue a permit, or grant runtime authority. A recorded package is metadata that passed admission, not an executable extension.
 
 The built-in `core-source` Harness is the runtime's Source Harness. It binds the
 `pandora-runtime` constitutional service and owns no Genes. It is discoverable
@@ -33,6 +33,17 @@ an undeclared Domain Harness through a Meta Harness.
 boundary as `meta_composition.allowed_domains` and
 `meta_composition.max_handoffs`. This is metadata for routing and validation;
 it is not a permission grant.
+
+Local package admission is explicit:
+
+```text
+pandora package admit --manifest <manifest.json> --artifact <artifact>
+pandora package list
+pandora package inspect <id> <version>
+```
+
+The command uses one local manifest as both the declared and embedded record.
+It is a local admission path, not a signature verifier or a registry client.
 
 Meta Harnesses coordinate existing Domain Harnesses. They do not augment a
 constitutional service, execute effects, install packages, or grant permits.

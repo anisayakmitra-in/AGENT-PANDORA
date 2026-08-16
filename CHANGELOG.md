@@ -19,6 +19,9 @@
 - Custom Meta package profiles now carry validated Domain membership and
   handoff limits, are admitted without runtime authority, and expose their
   composition through Harness inspection.
+- Local package admission now persists verified package metadata and artifact
+  evidence in `packages.sqlite3`; `pandora package list` and `inspect` reload
+  only records that pass the same validation boundary.
 
 ## v2.0.0-alpha.6
 

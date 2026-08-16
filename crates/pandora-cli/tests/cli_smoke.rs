@@ -1,4 +1,6 @@
-use pandora_types::hash_artifact;
+use pandora_types::{
+    HarnessId, MetaComposition, PackageCompatibility, PackageManifest, TrustEvidence, hash_artifact,
+};
 use serde_json::Value;
 use std::fs;
 use std::io::{Read, Write};
@@ -1490,6 +1492,72 @@ fn harness_discovery_exposes_the_coding_domain_without_runtime_internals() {
 }
 
 #[test]
+fn package_meta_admission_survives_cli_restart_without_runtime_authority() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let artifact = b"custom meta profile\n";
+    let manifest = PackageManifest::new_meta(
+        "example/meta",
+        "1.0.0",
+        "local-publisher",
+        hash_artifact(artifact),
+        Vec::new(),
+        PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+        "Apache-2.0",
+        TrustEvidence::unsigned(),
+        MetaComposition::new(vec![HarnessId::new("coding-domain").unwrap()], 4).unwrap(),
+    )
+    .unwrap();
+    let manifest_path = fixture.root.join("meta.json");
+    let artifact_path = fixture.root.join("meta.artifact");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+    )
+    .expect("manifest should be written");
+    fs::write(&artifact_path, artifact).expect("artifact should be written");
+
+    let output = fixture
+        .command(&[
+            "package",
+            "admit",
+            "--manifest",
+            manifest_path.to_str().unwrap(),
+            "--artifact",
+            artifact_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("package admission should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["package"]["kind"], "meta_harness");
+    assert_eq!(response["package"]["state"], "admitted");
+    assert_eq!(response["package"]["runtime_authority"], false);
+
+    let output = fixture
+        .command(&["package", "list", "--json"])
+        .output()
+        .expect("package listing should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["packages"].as_array().unwrap().len(), 1);
+    assert_eq!(response["packages"][0]["id"], "example/meta");
+    assert_eq!(
+        response["packages"][0]["meta_composition"]["max_handoffs"],
+        4
+    );
+
+    let output = fixture
+        .command(&["package", "inspect", "example/meta", "1.0.0", "--json"])
+        .output()
+        .expect("package inspection should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["package"]["state"], "admitted");
+}
+
+#[test]
 fn approval_can_be_inspected_and_resolved_without_exposing_patch_content() {
     let fixture = Fixture::new();
     fixture.setup();
@@ -1648,6 +1716,7 @@ fn completions_include_session_inspect_for_each_shell() {
         assert!(!script.contains("session inspect"));
         assert!(script.contains("chat"));
         assert!(script.contains("tui"));
+        assert!(script.contains("package"));
         assert!(script.contains(parent_condition));
         assert!(script.contains(subcommands));
         if shell == "zsh" {

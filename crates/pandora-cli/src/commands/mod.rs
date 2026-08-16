@@ -15,6 +15,7 @@ mod completions;
 mod doctor;
 mod harness;
 mod migration;
+mod package;
 mod provider;
 mod run;
 mod session;
@@ -57,6 +58,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "completions" => completions::execute(&args[1..]),
         "harness" => harness::execute(&args[1..]),
         "migrate" => migration::execute(&args[1..]),
+        "package" => package::execute(&args[1..]),
         "setup" => setup::execute(&args[1..]),
         "run" => run::execute(&args[1..]),
         "session" => session::execute(&args[1..]),
@@ -242,7 +244,7 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|chat|tui|harness|session|skill|approval|provider|tool|orchestration|strategies|completions|migrate|update|uninstall|doctor> [options]
+    r#"usage: pandora <help|setup|run|chat|tui|harness|session|skill|package|approval|provider|tool|orchestration|strategies|completions|migrate|update|uninstall|doctor> [options]
 
 commands:
   help (or --help)
@@ -253,6 +255,7 @@ commands:
   harness list|inspect|run
   session list|resume|inspect <id>
   skill list|inspect|install|enable|disable|suspend|remove|restore <id-or-path>
+  package admit --manifest <path> --artifact <path> | list | inspect <id> <version>
   tool list|inspect <id>
   approval list|inspect|resolve
   provider list|set|use|test
