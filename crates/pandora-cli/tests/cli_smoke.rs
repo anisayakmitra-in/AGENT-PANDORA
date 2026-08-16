@@ -1393,6 +1393,16 @@ fn harness_discovery_exposes_the_coding_domain_without_runtime_internals() {
             .iter()
             .any(|harness| harness["id"] == "coding-domain")
     );
+    let meta = harnesses
+        .iter()
+        .find(|harness| harness["id"] == "coordination-meta")
+        .expect("coordination Meta Harness should be discoverable");
+    assert_eq!(meta["kind"], "meta");
+    assert_eq!(meta["meta_composition"]["max_handoffs"], 8);
+    assert_eq!(
+        meta["meta_composition"]["allowed_domains"][0],
+        "coding-domain"
+    );
 
     let output = fixture
         .command(&["harness", "inspect", "core-source", "--json"])
@@ -1405,6 +1415,16 @@ fn harness_discovery_exposes_the_coding_domain_without_runtime_internals() {
         response["harness"]["constitutional_service"],
         "pandora-runtime"
     );
+    assert!(response["harness"]["genes"].as_array().unwrap().is_empty());
+
+    let output = fixture
+        .command(&["harness", "inspect", "coordination-meta", "--json"])
+        .output()
+        .expect("Meta harness inspect should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["harness"]["kind"], "meta");
+    assert_eq!(response["harness"]["meta_composition"]["max_handoffs"], 8);
     assert!(response["harness"]["genes"].as_array().unwrap().is_empty());
 
     let output = fixture

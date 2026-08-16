@@ -47,6 +47,5 @@ pub fn coordination_meta_manifest() -> Result<HarnessManifest, ManifestError> {
         COORDINATION_META_HARNESS_VERSION,
         "Coordination Meta",
         composition,
-        Vec::new(),
     )
 }

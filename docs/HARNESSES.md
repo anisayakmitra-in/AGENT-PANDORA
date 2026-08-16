@@ -29,6 +29,11 @@ may coordinate and its handoff ceiling. It owns no Genes. The orchestration
 engine checks those limits before registering a plan, so a plan cannot introduce
 an undeclared Domain Harness through a Meta Harness.
 
+`pandora harness inspect coordination-meta --json` exposes that composition
+boundary as `meta_composition.allowed_domains` and
+`meta_composition.max_handoffs`. This is metadata for routing and validation;
+it is not a permission grant.
+
 Meta Harnesses coordinate existing Domain Harnesses. They do not augment a
 constitutional service, execute effects, install packages, or grant permits.
 
@@ -38,11 +43,17 @@ The external vocabulary is closed and uses these exact values:
 
 `gene`, `domain_harness`, `meta_harness`, `source_harness`, `package`, `provider`, and `skill`.
 
-Only `gene` metadata can pass the current package-install boundary. Domain, Meta, Source, Provider, Skill, and generic Package records are recognized but rejected as non-installable until their lifecycles have their own validation and execution rules.
+`gene` packages can pass the executable package-install boundary. `meta_harness`
+packages can pass the separate composition-profile admission boundary described
+below. Domain, Source, Provider, Skill, and generic Package records remain
+recognized but rejected until their lifecycles have their own validation and
+execution rules.
 
-Custom Meta Harness packages are therefore recognized but not installable in
-this preview. The future admission boundary must verify their declared Domain
-members and orchestration plans before activation.
+Custom Meta Harness packages may be admitted as composition-only metadata
+profiles. Admission verifies their declared Domain members, exact artifact
+hash, package identity, and required dependencies. Admission records use the
+`admitted` state and never activate a Harness, execute native code, issue a
+permit, or grant runtime authority.
 
 The built-in Coding Domain Harness remains the only executable Domain Harness in
 the current preview. Downloaded native code is never executed automatically.

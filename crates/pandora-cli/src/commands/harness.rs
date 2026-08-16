@@ -118,6 +118,16 @@ fn run_harness(args: &[String]) -> Result<CommandResult, CliError> {
 
 fn harness_value(harness: &dyn pandora_types::Harness) -> serde_json::Value {
     let manifest = harness.manifest();
+    let meta_composition = manifest.meta_composition().map(|composition| {
+        json!({
+            "allowed_domains": composition
+                .allowed_domains()
+                .iter()
+                .map(|domain| domain.as_str())
+                .collect::<Vec<_>>(),
+            "max_handoffs": composition.max_handoffs(),
+        })
+    });
     let genes = harness
         .genes()
         .iter()
@@ -141,6 +151,7 @@ fn harness_value(harness: &dyn pandora_types::Harness) -> serde_json::Value {
         "name": manifest.name(),
         "kind": manifest.kind().as_str(),
         "constitutional_service": manifest.constitutional_service(),
+        "meta_composition": meta_composition,
         "genes": genes,
     })
 }

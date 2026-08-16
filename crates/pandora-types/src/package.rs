@@ -1,4 +1,4 @@
-use crate::harness::{HarnessKind, HarnessManifest};
+use crate::harness::{HarnessKind, HarnessManifest, MetaComposition};
 use crate::ids::{IdError, PackageId};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -64,6 +64,9 @@ pub enum PackageManifestError {
     InvalidHash,
     InvalidKind,
     ControlCharacter(&'static str),
+    MissingMetaComposition,
+    UnexpectedMetaComposition,
+    InvalidMetaComposition,
 }
 
 impl fmt::Display for PackageManifestError {
@@ -79,6 +82,15 @@ impl fmt::Display for PackageManifestError {
             Self::InvalidKind => formatter.write_str("package kind is not recognized"),
             Self::ControlCharacter(field) => {
                 write!(formatter, "{field} contains a control character")
+            }
+            Self::MissingMetaComposition => {
+                formatter.write_str("Meta Harness packages require a composition")
+            }
+            Self::UnexpectedMetaComposition => {
+                formatter.write_str("only Meta Harness packages may declare a composition")
+            }
+            Self::InvalidMetaComposition => {
+                formatter.write_str("Meta Harness composition is invalid")
             }
         }
     }
@@ -210,6 +222,8 @@ pub struct PackageManifest {
     compatibility: PackageCompatibility,
     license: String,
     trust: TrustEvidence,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    meta_composition: Option<MetaComposition>,
 }
 
 impl PackageManifest {
@@ -225,17 +239,73 @@ impl PackageManifest {
         license: impl Into<String>,
         trust: TrustEvidence,
     ) -> Result<Self, PackageManifestError> {
-        Ok(Self {
-            id: package_id(id)?,
-            version: validate_text("version", version.into())?,
+        Self::build(
+            package_id(id)?,
+            validate_text("version", version.into())?,
             kind,
-            publisher: validate_text("publisher", publisher.into())?,
-            content_hash: validate_hash(content_hash.into())?,
+            validate_text("publisher", publisher.into())?,
+            validate_hash(content_hash.into())?,
             dependencies,
             compatibility,
-            license: validate_text("license", license.into())?,
+            validate_text("license", license.into())?,
             trust,
-        })
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_meta(
+        id: impl Into<String>,
+        version: impl Into<String>,
+        publisher: impl Into<String>,
+        content_hash: impl Into<String>,
+        dependencies: Vec<PackageDependency>,
+        compatibility: PackageCompatibility,
+        license: impl Into<String>,
+        trust: TrustEvidence,
+        composition: MetaComposition,
+    ) -> Result<Self, PackageManifestError> {
+        Self::build(
+            package_id(id)?,
+            validate_text("version", version.into())?,
+            PackageKind::MetaHarness,
+            validate_text("publisher", publisher.into())?,
+            validate_hash(content_hash.into())?,
+            dependencies,
+            compatibility,
+            validate_text("license", license.into())?,
+            trust,
+            Some(composition),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build(
+        id: PackageId,
+        version: String,
+        kind: PackageKind,
+        publisher: String,
+        content_hash: String,
+        dependencies: Vec<PackageDependency>,
+        compatibility: PackageCompatibility,
+        license: String,
+        trust: TrustEvidence,
+        meta_composition: Option<MetaComposition>,
+    ) -> Result<Self, PackageManifestError> {
+        let package = Self {
+            id,
+            version,
+            kind,
+            publisher,
+            content_hash,
+            dependencies,
+            compatibility,
+            license,
+            trust,
+            meta_composition,
+        };
+        package.validate()?;
+        Ok(package)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -248,6 +318,19 @@ impl PackageManifest {
         license: impl Into<String>,
         trust: TrustEvidence,
     ) -> Result<Self, PackageManifestError> {
+        if let Some(composition) = manifest.meta_composition().cloned() {
+            return Self::new_meta(
+                manifest.id().as_str(),
+                manifest.version(),
+                publisher,
+                content_hash,
+                dependencies,
+                compatibility,
+                license,
+                trust,
+                composition,
+            );
+        }
         Self::new(
             manifest.id().as_str(),
             manifest.version(),
@@ -295,6 +378,21 @@ impl PackageManifest {
 
     pub fn trust(&self) -> &TrustEvidence {
         &self.trust
+    }
+
+    pub fn meta_composition(&self) -> Option<&MetaComposition> {
+        self.meta_composition.as_ref()
+    }
+
+    pub fn validate(&self) -> Result<(), PackageManifestError> {
+        match (self.kind, self.meta_composition.as_ref()) {
+            (PackageKind::MetaHarness, None) => Err(PackageManifestError::MissingMetaComposition),
+            (PackageKind::MetaHarness, Some(composition)) => composition
+                .validate()
+                .map_err(|_| PackageManifestError::InvalidMetaComposition),
+            (_, Some(_)) => Err(PackageManifestError::UnexpectedMetaComposition),
+            _ => Ok(()),
+        }
     }
 
     pub fn identity_matches(&self, other: &Self) -> bool {
@@ -348,7 +446,8 @@ fn validate_hash(value: String) -> Result<String, PackageManifestError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::harness::{HarnessKind, HarnessManifest};
+    use crate::HarnessId;
+    use crate::harness::{HarnessKind, HarnessManifest, MetaComposition};
 
     #[test]
     fn package_kinds_use_the_closed_external_vocabulary() {
@@ -388,5 +487,47 @@ mod tests {
         assert_eq!(package.id().as_str(), "coding-domain");
         assert_eq!(package.version(), "0.1.0");
         assert_eq!(package.kind(), PackageKind::DomainHarness);
+    }
+
+    #[test]
+    fn meta_package_requires_and_round_trips_composition() {
+        let composition =
+            MetaComposition::new(vec![HarnessId::new("coding-domain").unwrap()], 8).unwrap();
+        let package = PackageManifest::new_meta(
+            "publisher/coordination",
+            "1.0.0",
+            "publisher",
+            hash_artifact(b"meta profile"),
+            Vec::new(),
+            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "Apache-2.0",
+            TrustEvidence::unsigned(),
+            composition.clone(),
+        )
+        .unwrap();
+
+        let encoded = serde_json::to_vec(&package).unwrap();
+        let decoded: PackageManifest = serde_json::from_slice(&encoded).unwrap();
+
+        assert_eq!(decoded.kind(), PackageKind::MetaHarness);
+        assert_eq!(decoded.meta_composition(), Some(&composition));
+    }
+
+    #[test]
+    fn ordinary_constructor_rejects_meta_without_composition() {
+        assert_eq!(
+            PackageManifest::new(
+                "publisher/coordination",
+                "1.0.0",
+                PackageKind::MetaHarness,
+                "publisher",
+                hash_artifact(b"meta profile"),
+                Vec::new(),
+                PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+                "Apache-2.0",
+                TrustEvidence::unsigned(),
+            ),
+            Err(PackageManifestError::MissingMetaComposition)
+        );
     }
 }

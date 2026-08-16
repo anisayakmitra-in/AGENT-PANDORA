@@ -16,6 +16,9 @@
   membership list and handoff ceiling.
 - Meta-bound orchestration plans are rejected before registration when they
   reference an undeclared Domain Harness or exceed the Meta handoff ceiling.
+- Custom Meta package profiles now carry validated Domain membership and
+  handoff limits, are admitted without runtime authority, and expose their
+  composition through Harness inspection.
 
 ## v2.0.0-alpha.6
 

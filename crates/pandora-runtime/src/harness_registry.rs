@@ -6,12 +6,14 @@ use std::fmt;
 pub enum PackageState {
     #[default]
     Installed,
+    Admitted,
 }
 
 impl PackageState {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Installed => "installed",
+            Self::Admitted => "admitted",
         }
     }
 }
@@ -90,9 +92,12 @@ impl HarnessRegistry {
         embedded: &PackageManifest,
         artifact: &[u8],
     ) -> Result<PackageRecord, HarnessRegistryError> {
-        if !declared.identity_matches(embedded)
+        if declared.validate().is_err()
+            || embedded.validate().is_err()
+            || !declared.identity_matches(embedded)
             || declared.publisher() != embedded.publisher()
             || declared.content_hash() != embedded.content_hash()
+            || declared.meta_composition() != embedded.meta_composition()
         {
             return Err(HarnessRegistryError::ManifestMismatch);
         }
@@ -105,7 +110,10 @@ impl HarnessRegistry {
             });
         }
 
-        if embedded.kind() != PackageKind::Gene {
+        if !matches!(
+            embedded.kind(),
+            PackageKind::Gene | PackageKind::MetaHarness
+        ) {
             return Err(HarnessRegistryError::UnsupportedKind(embedded.kind()));
         }
 
@@ -136,7 +144,11 @@ impl HarnessRegistry {
 
         let record = PackageRecord {
             manifest: embedded.clone(),
-            state: PackageState::Installed,
+            state: if embedded.kind() == PackageKind::MetaHarness {
+                PackageState::Admitted
+            } else {
+                PackageState::Installed
+            },
         };
         self.packages.insert(key, record.clone());
         Ok(record)
@@ -156,8 +168,8 @@ impl HarnessRegistry {
 mod tests {
     use super::*;
     use pandora_types::{
-        PackageCompatibility, PackageDependency, PackageKind, PackageManifest, TrustEvidence,
-        hash_artifact,
+        HarnessId, MetaComposition, PackageCompatibility, PackageDependency, PackageKind,
+        PackageManifest, TrustEvidence, hash_artifact,
     };
 
     fn manifest(
@@ -177,6 +189,28 @@ mod tests {
             PackageCompatibility::new("pandora>=2.0.0").unwrap(),
             "Apache-2.0",
             TrustEvidence::unsigned(),
+        )
+        .unwrap()
+    }
+
+    fn meta_manifest(id: &str, artifact: &[u8], domains: &[&str]) -> PackageManifest {
+        PackageManifest::new_meta(
+            id,
+            "1.0.0",
+            "publisher",
+            hash_artifact(artifact),
+            Vec::new(),
+            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "Apache-2.0",
+            TrustEvidence::unsigned(),
+            MetaComposition::new(
+                domains
+                    .iter()
+                    .map(|domain| HarnessId::new(*domain).unwrap())
+                    .collect(),
+                8,
+            )
+            .unwrap(),
         )
         .unwrap()
     }
@@ -266,7 +300,6 @@ mod tests {
     fn unsupported_remote_kinds_fail_closed() {
         for kind in [
             PackageKind::DomainHarness,
-            PackageKind::MetaHarness,
             PackageKind::SourceHarness,
             PackageKind::Provider,
             PackageKind::Skill,
@@ -281,6 +314,57 @@ mod tests {
             );
             assert!(registry.list().is_empty());
         }
+    }
+
+    #[test]
+    fn custom_meta_profile_is_admitted_without_runtime_authority() {
+        let artifact = b"meta profile";
+        let package = meta_manifest("publisher/coordination", artifact, &["coding-domain"]);
+        let mut registry = HarnessRegistry::new();
+
+        let record = registry.install(&package, &package, artifact).unwrap();
+
+        assert_eq!(record.state(), PackageState::Admitted);
+        assert!(!record.grants_runtime_authority());
+        assert_eq!(
+            record
+                .manifest()
+                .meta_composition()
+                .unwrap()
+                .allowed_domains()[0]
+                .as_str(),
+            "coding-domain"
+        );
+    }
+
+    #[test]
+    fn custom_meta_profile_cannot_change_composition_between_declarations() {
+        let artifact = b"meta profile";
+        let declared = meta_manifest("publisher/coordination", artifact, &["coding-domain"]);
+        let embedded = meta_manifest("publisher/coordination", artifact, &["research-domain"]);
+        let mut registry = HarnessRegistry::new();
+
+        assert_eq!(
+            registry.install(&declared, &embedded, artifact),
+            Err(HarnessRegistryError::ManifestMismatch)
+        );
+        assert!(registry.list().is_empty());
+    }
+
+    #[test]
+    fn invalid_deserialized_meta_profile_is_rejected_before_admission() {
+        let artifact = b"meta profile";
+        let package = meta_manifest("publisher/coordination", artifact, &["coding-domain"]);
+        let mut value = serde_json::to_value(&package).unwrap();
+        value["meta_composition"]["allowed_domains"] = serde_json::json!([]);
+        let decoded: PackageManifest = serde_json::from_value(value).unwrap();
+        let mut registry = HarnessRegistry::new();
+
+        assert_eq!(
+            registry.install(&decoded, &decoded, artifact),
+            Err(HarnessRegistryError::ManifestMismatch)
+        );
+        assert!(registry.list().is_empty());
     }
 
     #[test]

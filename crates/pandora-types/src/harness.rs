@@ -1,5 +1,6 @@
 use crate::gene::Gene;
 use crate::ids::{GeneId, HarnessId, IdError};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -71,7 +72,7 @@ impl From<IdError> for ManifestError {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct MetaComposition {
     allowed_domains: Vec<HarnessId>,
     max_handoffs: u32,
@@ -79,22 +80,28 @@ pub struct MetaComposition {
 
 impl MetaComposition {
     pub fn new(allowed_domains: Vec<HarnessId>, max_handoffs: u32) -> Result<Self, ManifestError> {
-        if allowed_domains.is_empty() {
+        let composition = Self {
+            allowed_domains,
+            max_handoffs,
+        };
+        composition.validate()?;
+        Ok(composition)
+    }
+
+    pub fn validate(&self) -> Result<(), ManifestError> {
+        if self.allowed_domains.is_empty() {
             return Err(ManifestError::EmptyMetaDomainHarnesses);
         }
-        if max_handoffs == 0 {
+        if self.max_handoffs == 0 {
             return Err(ManifestError::InvalidMetaHandoffLimit);
         }
 
         let mut unique = BTreeSet::new();
-        if allowed_domains.iter().any(|id| !unique.insert(id)) {
+        if self.allowed_domains.iter().any(|id| !unique.insert(id)) {
             return Err(ManifestError::DuplicateMetaDomainHarness);
         }
 
-        Ok(Self {
-            allowed_domains,
-            max_handoffs,
-        })
+        Ok(())
     }
 
     pub fn allowed_domains(&self) -> &[HarnessId] {
@@ -146,7 +153,6 @@ impl HarnessManifest {
         version: impl Into<String>,
         name: impl Into<String>,
         composition: MetaComposition,
-        owned_genes: Vec<GeneId>,
     ) -> Result<Self, ManifestError> {
         Self::build(
             id,
@@ -154,7 +160,7 @@ impl HarnessManifest {
             name,
             HarnessKind::Meta,
             None,
-            owned_genes,
+            Vec::new(),
             Some(composition),
         )
     }
@@ -275,7 +281,7 @@ fn validate_text(field: &'static str, value: &str) -> Result<(), ManifestError> 
 #[cfg(test)]
 mod tests {
     use super::{HarnessKind, HarnessManifest, ManifestError, MetaComposition};
-    use crate::{GeneId, HarnessId};
+    use crate::HarnessId;
 
     #[test]
     fn meta_harness_requires_an_explicit_composition() {
@@ -310,7 +316,6 @@ mod tests {
             "0.1.0",
             "Coordination Meta",
             composition,
-            Vec::<GeneId>::new(),
         )
         .unwrap();
 
