@@ -18,12 +18,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "uninstall requires '--yes' or '--dry-run'; workspace files are always preserved",
         ));
     }
-    if config.data_dir() == config.workspace_dir() {
-        return Err(CliError::configuration(
-            "data and workspace directories must be different before uninstall",
-            json!({"data_dir": config.data_dir(), "workspace": config.workspace_dir()}),
-        ));
-    }
+    validate_workspace_boundary(config.data_dir(), config.workspace_dir())?;
     let config_path = config.config_path().to_path_buf();
     let data_dir = config.data_dir().to_path_buf();
     if dry_run {
@@ -43,13 +38,16 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             json!({"config_path": config_path}),
         ));
     }
+    let config_is_in_data_dir = data_dir_contains_path(&data_dir, &config_path);
     remove_data_dir(&data_dir)?;
-    fs::remove_file(&config_path).map_err(|_| {
-        CliError::configuration(
-            "could not remove Pandora configuration",
-            json!({"config_path": config_path}),
-        )
-    })?;
+    if !config_is_in_data_dir {
+        fs::remove_file(&config_path).map_err(|_| {
+            CliError::configuration(
+                "could not remove Pandora configuration",
+                json!({"config_path": config_path}),
+            )
+        })?;
+    }
     Ok(success(
         "uninstall",
         json!({
@@ -59,6 +57,50 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         }),
         "Pandora configuration and data removed; workspace preserved".to_owned(),
     ))
+}
+
+fn validate_workspace_boundary(
+    data_dir: &std::path::Path,
+    workspace: &std::path::Path,
+) -> Result<(), CliError> {
+    if data_dir == workspace {
+        return Err(CliError::configuration(
+            "data and workspace directories must be different before uninstall",
+            json!({"data_dir": data_dir, "workspace": workspace}),
+        ));
+    }
+    if !data_dir.exists() || !workspace.exists() {
+        return Ok(());
+    }
+    let data_dir = fs::canonicalize(data_dir).map_err(|_| {
+        CliError::configuration(
+            "could not resolve the Pandora data directory",
+            json!({"data_dir": data_dir}),
+        )
+    })?;
+    let workspace = fs::canonicalize(workspace).map_err(|_| {
+        CliError::configuration(
+            "could not resolve the workspace directory",
+            json!({"workspace": workspace}),
+        )
+    })?;
+    if workspace.starts_with(&data_dir) {
+        return Err(CliError::configuration(
+            "Pandora data directory contains the workspace and cannot be removed",
+            json!({"data_dir": data_dir, "workspace": workspace}),
+        ));
+    }
+    Ok(())
+}
+
+fn data_dir_contains_path(data_dir: &std::path::Path, path: &std::path::Path) -> bool {
+    if path.starts_with(data_dir) {
+        return true;
+    }
+    match (fs::canonicalize(data_dir), fs::canonicalize(path)) {
+        (Ok(data_dir), Ok(path)) => path.starts_with(data_dir),
+        _ => false,
+    }
 }
 
 fn remove_data_dir(path: &std::path::Path) -> Result<(), CliError> {

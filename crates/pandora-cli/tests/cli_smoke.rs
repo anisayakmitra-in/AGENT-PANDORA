@@ -2311,6 +2311,77 @@ fn uninstall_dry_run_preserves_user_data() {
 }
 
 #[test]
+fn uninstall_handles_a_config_file_stored_under_the_data_root() {
+    let fixture = Fixture::new();
+    let config = fixture.data.join("config.json");
+    let config = config.to_str().unwrap();
+    let output = fixture
+        .command(&[
+            "setup",
+            "--config",
+            config,
+            "--provider-url",
+            "http://127.0.0.1:4317/v1",
+            "--json",
+        ])
+        .output()
+        .expect("setup should start");
+    assert_success(&output);
+
+    let output = fixture
+        .command(&["uninstall", "--config", config, "--yes", "--json"])
+        .output()
+        .expect("uninstall should start");
+    assert_success(&output);
+    assert!(!fixture.data.exists());
+    assert!(fixture.workspace.is_dir());
+}
+
+#[test]
+fn uninstall_refuses_a_data_root_that_contains_the_workspace() {
+    let fixture = Fixture::new();
+    let data_dir = fixture.root.to_str().unwrap();
+    let workspace = fixture.workspace.to_str().unwrap();
+    let output = fixture
+        .command(&[
+            "setup",
+            "--data-dir",
+            data_dir,
+            "--workspace",
+            workspace,
+            "--provider-url",
+            "http://127.0.0.1:4317/v1",
+            "--json",
+        ])
+        .output()
+        .expect("setup should start");
+    assert_success(&output);
+
+    let output = fixture
+        .command(&[
+            "uninstall",
+            "--data-dir",
+            data_dir,
+            "--workspace",
+            workspace,
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("uninstall should start");
+    assert_eq!(output.status.code(), Some(10));
+    let response = parse_json(&output);
+    assert_eq!(response["code"], "configuration_error");
+    assert!(
+        response["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("contains the workspace")
+    );
+    assert!(fixture.workspace.is_dir());
+}
+
+#[test]
 fn doctor_reports_connectivity_state_without_credentials() {
     let fixture = Fixture::new();
     fixture.setup();

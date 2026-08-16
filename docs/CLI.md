@@ -294,6 +294,7 @@ data directory. A detached Ed25519 signature can be checked with matching
 The previous staged artifact is retained for one-step rollback. No update
 operation executes an unverified artifact.
 
-Uninstall requires `--yes` for deletion, preserves the configured workspace,
-and removes only the Pandora configuration file and data directory. Use
-`--dry-run` to inspect the exact paths first.
+Uninstall requires `--yes` for deletion and preserves the configured workspace.
+It refuses a data directory that contains that workspace, and removes a
+configuration stored inside the data directory as part of that one data-root
+deletion. Use `--dry-run` to inspect the exact paths first.
