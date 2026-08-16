@@ -11,10 +11,14 @@ approval, execution, update, and internal failures.
 ```text
 pandora --help
 pandora help
+pandora --version
+pandora --version --json
 ```
 
 Both forms print the command surface and exit successfully. Add `--json` when
 the help text needs to be consumed by an installer or another tool.
+`pandora --version` remains a single human-readable line; with `--json`, it
+uses the normal output envelope and includes `pandora_version`.
 
 In a real interactive terminal, a bare `pandora` invocation runs the existing
 setup wizard when its configuration file is missing, then opens the same
