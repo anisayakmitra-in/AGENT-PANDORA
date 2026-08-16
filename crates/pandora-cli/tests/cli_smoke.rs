@@ -151,6 +151,51 @@ fn interactive_setup_configures_a_provider_without_echoing_secrets() {
 }
 
 #[test]
+fn scripted_setup_persists_the_requested_credential_environment() {
+    let fixture = Fixture::new();
+    let output = fixture
+        .command(&[
+            "setup",
+            "--provider-url",
+            "http://127.0.0.1:4317/v1",
+            "--model",
+            "scripted-model",
+            "--api-key-env",
+            "PANDORA_SCRIPTED_KEY",
+            "--json",
+        ])
+        .output()
+        .expect("scripted setup should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["active_provider"], "openai-compatible");
+    assert_eq!(response["provider_model"], "scripted-model");
+    assert_eq!(response["api_key_env"], "PANDORA_SCRIPTED_KEY");
+
+    let config = fs::read_to_string(&fixture.config).expect("scripted config should exist");
+    assert!(config.contains("PANDORA_SCRIPTED_KEY"));
+}
+
+#[test]
+fn scripted_setup_rejects_provider_options_without_a_provider_url() {
+    let fixture = Fixture::new();
+    let output = fixture
+        .command(&["setup", "--api-key-env", "PANDORA_SCRIPTED_KEY", "--json"])
+        .output()
+        .expect("scripted setup should start");
+    assert_eq!(output.status.code(), Some(2));
+    let response = parse_json(&output);
+    assert_eq!(response["code"], "usage_error");
+    assert!(
+        response["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("--provider-url")
+    );
+    assert!(!fixture.config.exists());
+}
+
+#[test]
 fn chat_can_exit_without_provider_configuration() {
     let fixture = Fixture::new();
     let mut command = fixture.command(&["chat"]);

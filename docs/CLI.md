@@ -27,7 +27,7 @@ being replaced. A bare noninteractive invocation, including `pandora --json`,
 returns the normal usage error rather than entering a UI.
 
 ```text
-pandora setup --provider-url https://provider.example/v1 --model gpt-5
+pandora setup --provider-url https://provider.example/v1 --model gpt-5 --api-key-env PANDORA_PROVIDER_API_KEY
 pandora setup --interactive
 pandora doctor --json
 pandora provider list --json
@@ -37,7 +37,9 @@ pandora provider test --json
 `setup --interactive` asks for a provider URL, model, and API-key environment
 variable name. Leaving the URL empty creates a local-only configuration. It
 never asks for or stores the API-key value; press Enter to accept the displayed
-default. The existing flag-based form remains suitable for scripts and CI.
+default. The flag-based form creates or updates the same active
+`openai-compatible` profile, so scripts and CI can select a non-default
+credential environment without storing a credential value.
 
 `doctor` reports the platform, CLI version, configuration path, storage path,
 workspace path, policy mode, provider configuration state, and remediation.

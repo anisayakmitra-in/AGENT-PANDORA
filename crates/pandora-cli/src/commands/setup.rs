@@ -25,6 +25,8 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let mut config = load_config(&parsed)?;
     if parsed.value("interactive").is_some() {
         configure_interactively(&mut config, &parsed)?;
+    } else {
+        configure_from_options(&mut config, &parsed)?;
     }
     fs::create_dir_all(config.data_dir()).map_err(|_| {
         CliError::configuration(
@@ -57,6 +59,41 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     ))
 }
 
+fn configure_from_options(
+    config: &mut pandora_runtime::config::RuntimeConfig,
+    parsed: &super::ParsedArgs,
+) -> Result<(), CliError> {
+    let has_provider_option = ["provider-url", "model", "api-key-env"]
+        .into_iter()
+        .any(|name| parsed.value(name).is_some());
+    if !has_provider_option {
+        return Ok(());
+    }
+    let existing = config.provider_profile(DEFAULT_PROVIDER_NAME);
+    let existing_url = existing.map(ProviderProfile::base_url).map(str::to_owned);
+    let existing_model = existing.map(ProviderProfile::model).map(str::to_owned);
+    let existing_api_key_env = existing
+        .map(ProviderProfile::api_key_env)
+        .map(str::to_owned);
+    let provider_url = parsed
+        .value("provider-url")
+        .or(existing_url.as_deref())
+        .ok_or_else(|| {
+            CliError::usage(
+                "setup provider options require '--provider-url <url>' on an unconfigured installation",
+            )
+        })?;
+    let model = parsed
+        .value("model")
+        .or(existing_model.as_deref())
+        .unwrap_or("default");
+    let api_key_env = parsed
+        .value("api-key-env")
+        .or(existing_api_key_env.as_deref())
+        .unwrap_or(DEFAULT_PROVIDER_API_KEY_ENV);
+    configure_default_provider(config, provider_url, model, api_key_env)
+}
+
 fn configure_interactively(
     config: &mut pandora_runtime::config::RuntimeConfig,
     parsed: &super::ParsedArgs,
@@ -84,6 +121,15 @@ fn configure_interactively(
             .or_else(|| config.provider_api_key_env())
             .or(Some(DEFAULT_PROVIDER_API_KEY_ENV)),
     )?;
+    configure_default_provider(config, &provider_url, &model, &api_key_env)
+}
+
+fn configure_default_provider(
+    config: &mut pandora_runtime::config::RuntimeConfig,
+    provider_url: &str,
+    model: &str,
+    api_key_env: &str,
+) -> Result<(), CliError> {
     let profile = ProviderProfile::new(DEFAULT_PROVIDER_NAME, provider_url, model, api_key_env)
         .map_err(|error| CliError::configuration(error.to_string(), json!({})))?;
     config.set_provider_profile(profile);
