@@ -236,36 +236,6 @@ impl HarnessManifest {
     }
 }
 
-pub struct SourceHarnessManifest {
-    manifest: HarnessManifest,
-}
-
-impl TryFrom<HarnessManifest> for SourceHarnessManifest {
-    type Error = ManifestError;
-
-    fn try_from(manifest: HarnessManifest) -> Result<Self, Self::Error> {
-        if manifest.kind != HarnessKind::Source {
-            return Err(ManifestError::MissingConstitutionalService);
-        }
-        if manifest.constitutional_service.is_none() {
-            return Err(ManifestError::MissingConstitutionalService);
-        }
-        Ok(Self { manifest })
-    }
-}
-
-impl SourceHarnessManifest {
-    pub fn manifest(&self) -> &HarnessManifest {
-        &self.manifest
-    }
-
-    pub fn constitutional_service(&self) -> &str {
-        self.manifest
-            .constitutional_service()
-            .expect("validated source harness has a service")
-    }
-}
-
 pub trait Harness: Send + Sync {
     fn manifest(&self) -> &HarnessManifest;
     fn genes(&self) -> &[Box<dyn Gene>];
