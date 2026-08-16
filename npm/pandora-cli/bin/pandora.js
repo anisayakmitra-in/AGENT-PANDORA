@@ -10,6 +10,7 @@ const { replaceFile } = require("../lib/launcher-files.js");
 
 const repository = "anisayakmitra-in/PANDORA-AGENT";
 const packageVersion = require("../package.json").version;
+const MAX_RELEASE_DOWNLOAD_BYTES = 64 * 1024 * 1024;
 
 function fail(message) {
   throw new Error(`pandora launcher: ${message}`);
@@ -60,7 +61,38 @@ async function fetchBytes(url, allowedHosts) {
   if (finalUrl.protocol !== "https:" || !allowedHosts.has(finalUrl.hostname)) {
     fail("release download redirected to an untrusted host");
   }
-  return Buffer.from(await response.arrayBuffer());
+  return readResponseBytes(response);
+}
+
+async function readResponseBytes(response, maxBytes = MAX_RELEASE_DOWNLOAD_BYTES) {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength !== null) {
+    if (!/^\d+$/.test(contentLength)) fail("release download returned an invalid Content-Length");
+    if (Number(contentLength) > maxBytes) fail(`release download exceeds ${maxBytes} bytes`);
+  }
+  if (!response.body) return Buffer.alloc(0);
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!(value instanceof Uint8Array)) fail("release download returned an invalid body chunk");
+      if (value.byteLength > maxBytes - size) {
+        try {
+          await reader.cancel();
+        } catch {}
+        fail(`release download exceeds ${maxBytes} bytes`);
+      }
+      chunks.push(Buffer.from(value.buffer, value.byteOffset, value.byteLength));
+      size += value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, size);
 }
 
 function checksumManifest(text) {
@@ -125,7 +157,14 @@ async function main() {
   process.exit(result.status === null ? 1 : result.status);
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error.message);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  MAX_RELEASE_DOWNLOAD_BYTES,
+  readResponseBytes,
+};
