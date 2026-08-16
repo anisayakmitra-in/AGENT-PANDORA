@@ -369,7 +369,6 @@ mod tests {
     use pandora_types::{
         ExecutionId, GeneId, OperationRequest, PolicyContext, PrincipalId, SessionId,
     };
-    use std::sync::atomic::AtomicU64;
 
     #[test]
     fn accepts_only_locked_cargo_check() {
@@ -458,12 +457,7 @@ mod tests {
 
     impl Workspace {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "pandora-process-test-{}-{}",
-                std::process::id(),
-                NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed)
-            ));
-            std::fs::create_dir_all(&path).unwrap();
+            let path = crate::test_support::new_temp_dir("pandora-process-test").unwrap();
             let root = WorkspaceRoot::new(&path).unwrap();
             Self { root, path }
         }
@@ -499,6 +493,4 @@ mod tests {
             .consume(permit, &request, Timestamp::from_unix_seconds(10))
             .unwrap()
     }
-
-    static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(1);
 }

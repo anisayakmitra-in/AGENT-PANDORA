@@ -287,9 +287,7 @@ mod tests {
         MetaComposition, PackageCompatibility, PackageDependency, PackageKind, PackageManifest,
         TrustEvidence, TrustLevel, hash_artifact,
     };
-    use std::sync::atomic::{AtomicU64, Ordering};
 
-    static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(1);
     const CURRENT_RUNTIME_REQUIREMENT: &str = concat!("pandora>=", env!("CARGO_PKG_VERSION"));
 
     fn meta_manifest(artifact: &[u8]) -> PackageManifest {
@@ -353,11 +351,7 @@ mod tests {
     }
 
     fn store() -> (PackageStore, std::path::PathBuf) {
-        let root = std::env::temp_dir().join(format!(
-            "pandora-package-store-{}-{}",
-            std::process::id(),
-            NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = crate::test_support::new_temp_dir("pandora-package-store").unwrap();
         let path = root.join("packages.sqlite3");
         let store = PackageStore::open(&path).unwrap();
         (store, root)

@@ -670,9 +670,6 @@ mod tests {
     use super::write_atomic;
     use std::fs;
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(1);
 
     #[test]
     fn atomic_write_replaces_existing_configuration() {
@@ -699,13 +696,7 @@ mod tests {
     }
 
     fn fixture(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "pandora-config-{name}-{}-{}",
-            std::process::id(),
-            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
+        crate::test_support::new_temp_dir(&format!("pandora-config-{name}")).unwrap()
     }
 
     fn assert_no_temporary_files(directory: &std::path::Path) {

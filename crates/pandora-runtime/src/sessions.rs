@@ -745,17 +745,10 @@ fn set_private_permissions(path: &Path) -> Result<(), SessionError> {
 mod tests {
     use super::*;
     use pandora_provider::{ChatMessage, ToolCall};
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(1);
 
     #[test]
     fn agent_transcript_round_trips_with_session_scope() {
-        let root = std::env::temp_dir().join(format!(
-            "pandora-session-test-{}-{}",
-            std::process::id(),
-            NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = crate::test_support::new_temp_dir("pandora-session-test").unwrap();
         let store = SessionStore::open(root.join("sessions.sqlite3")).unwrap();
         let session = Session::new(
             SessionId::new("session-1").unwrap(),
@@ -801,11 +794,7 @@ mod tests {
 
     #[test]
     fn agent_transcript_rejects_excess_total_bytes() {
-        let root = std::env::temp_dir().join(format!(
-            "pandora-session-size-test-{}-{}",
-            std::process::id(),
-            NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = crate::test_support::new_temp_dir("pandora-session-size-test").unwrap();
         let store = SessionStore::open(root.join("sessions.sqlite3")).unwrap();
         let session = Session::new(
             SessionId::new("session-1").unwrap(),

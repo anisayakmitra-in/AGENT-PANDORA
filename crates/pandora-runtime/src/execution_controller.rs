@@ -771,7 +771,6 @@ mod tests {
         TenantId, Timestamp, TrustEvidence, WorkspaceId, hash_artifact,
     };
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
     #[test]
     fn read_only_coding_task_completes_with_receipt_and_events() {
@@ -963,12 +962,7 @@ mod tests {
 
     impl Fixture {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "pandora-controller-test-{}-{}",
-                std::process::id(),
-                NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed)
-            ));
-            std::fs::create_dir_all(&path).unwrap();
+            let path = crate::test_support::new_temp_dir("pandora-controller-test").unwrap();
             std::fs::write(path.join("README.md"), b"fixture\n").unwrap();
             let root = WorkspaceRoot::new(&path).unwrap();
             Self { path, root }
@@ -990,6 +984,4 @@ mod tests {
             let _ = std::fs::remove_dir_all(&self.path);
         }
     }
-
-    static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(1);
 }

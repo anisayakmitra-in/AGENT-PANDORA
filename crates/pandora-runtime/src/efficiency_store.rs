@@ -235,8 +235,7 @@ mod tests {
 
     #[test]
     fn records_and_loads_bounded_samples() {
-        let root =
-            std::env::temp_dir().join(format!("pandora-efficiency-store-{}", std::process::id()));
+        let root = crate::test_support::new_temp_dir("pandora-efficiency-store").unwrap();
         let store = EfficiencyStore::open(root.join("efficiency.sqlite3")).unwrap();
         let sample = EfficiencySample::new(
             ExecutionId::new("execution-1").unwrap(),
@@ -259,8 +258,7 @@ mod tests {
 
     #[test]
     fn trims_oldest_target_evidence() {
-        let root =
-            std::env::temp_dir().join(format!("pandora-efficiency-trim-{}", std::process::id()));
+        let root = crate::test_support::new_temp_dir("pandora-efficiency-trim").unwrap();
         let store = EfficiencyStore::open(root.join("efficiency.sqlite3")).unwrap();
         for (id, at) in [("one", 1), ("two", 2), ("three", 3)] {
             let sample = EfficiencySample::new(

@@ -31,6 +31,9 @@ pub mod skill_engine;
 pub mod strategies;
 pub mod tool_engine;
 
+#[cfg(test)]
+mod test_support;
+
 pub use adaptive_engine::{AdaptationResult, AdaptiveEngine, AdaptiveError};
 pub use agent_loop::{
     AgentApprovalContext, AgentLoop, AgentLoopError, AgentRunRequest, AgentRunSummary,

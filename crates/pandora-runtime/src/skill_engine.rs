@@ -709,9 +709,6 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(1);
 
     struct Fixture {
         root: PathBuf,
@@ -719,11 +716,7 @@ mod tests {
 
     impl Fixture {
         fn new() -> Self {
-            let root = std::env::temp_dir().join(format!(
-                "pandora-skills-{}-{}",
-                std::process::id(),
-                NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
-            ));
+            let root = crate::test_support::new_temp_dir("pandora-skills").unwrap();
             fs::create_dir_all(root.join("alpha/scripts")).unwrap();
             fs::write(root.join("alpha/SKILL.md"), skill_text()).unwrap();
             fs::write(root.join("alpha/scripts/check.py"), "print('ok')").unwrap();

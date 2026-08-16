@@ -521,7 +521,6 @@ mod tests {
     use pandora_types::{
         EffectTarget, ExecutionId, GeneId, OperationRequest, PolicyContext, PrincipalId, SessionId,
     };
-    use std::sync::atomic::AtomicU64;
 
     #[test]
     fn reads_inside_workspace_and_returns_receipt() {
@@ -677,13 +676,7 @@ mod tests {
 
     impl TempDir {
         fn new() -> Self {
-            static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(1);
-            let path = std::env::temp_dir().join(format!(
-                "pandora-filesystem-test-{}-{}",
-                std::process::id(),
-                NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed)
-            ));
-            fs::create_dir_all(&path).unwrap();
+            let path = crate::test_support::new_temp_dir("pandora-filesystem-test").unwrap();
             Self { path }
         }
 
