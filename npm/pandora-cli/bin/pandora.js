@@ -11,6 +11,7 @@ const { replaceFile } = require("../lib/launcher-files.js");
 const repository = "anisayakmitra-in/PANDORA-AGENT";
 const packageVersion = require("../package.json").version;
 const MAX_RELEASE_DOWNLOAD_BYTES = 64 * 1024 * 1024;
+const MAX_RELEASE_REDIRECTS = 5;
 
 function fail(message) {
   throw new Error(`pandora launcher: ${message}`);
@@ -53,15 +54,24 @@ function cacheDirectory(version, artifact) {
 }
 
 async function fetchBytes(url, allowedHosts) {
-  const initial = new URL(url);
-  if (initial.protocol !== "https:") fail("release downloads must use HTTPS");
-  const response = await fetch(url, { redirect: "follow" });
-  if (!response.ok) fail(`download failed with HTTP ${response.status}`);
-  const finalUrl = new URL(response.url);
-  if (finalUrl.protocol !== "https:" || !allowedHosts.has(finalUrl.hostname)) {
-    fail("release download redirected to an untrusted host");
+  let target = new URL(url);
+  for (let redirects = 0; redirects <= MAX_RELEASE_REDIRECTS; redirects += 1) {
+    if (target.protocol !== "https:" || target.username || target.password ||
+        !allowedHosts.has(target.hostname)) {
+      fail("release download redirected to an untrusted host");
+    }
+    const response = await fetch(target, { redirect: "manual" });
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location");
+      if (!location) fail("release download redirect is missing a location");
+      if (redirects === MAX_RELEASE_REDIRECTS) fail("release download exceeded redirect limit");
+      target = new URL(location, target);
+      continue;
+    }
+    if (!response.ok) fail(`download failed with HTTP ${response.status}`);
+    return readResponseBytes(response);
   }
-  return readResponseBytes(response);
+  fail("release download exceeded redirect limit");
 }
 
 async function readResponseBytes(response, maxBytes = MAX_RELEASE_DOWNLOAD_BYTES) {
@@ -166,5 +176,6 @@ if (require.main === module) {
 
 module.exports = {
   MAX_RELEASE_DOWNLOAD_BYTES,
+  fetchBytes,
   readResponseBytes,
 };

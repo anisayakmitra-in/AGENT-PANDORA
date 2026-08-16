@@ -8,6 +8,7 @@ const path = require("node:path");
 const { replaceFile } = require("../npm/pandora-cli/lib/launcher-files.js");
 const {
   MAX_RELEASE_DOWNLOAD_BYTES,
+  fetchBytes,
   readResponseBytes,
 } = require("../npm/pandora-cli/bin/pandora.js");
 
@@ -45,6 +46,35 @@ function streamedResponse(chunks, contentLength = null) {
   };
 }
 
+function downloadResponse(status, headers = {}, chunks = []) {
+  return {
+    status,
+    ok: status >= 200 && status < 300,
+    headers: {
+      get(name) {
+        return headers[name.toLowerCase()] || null;
+      },
+    },
+    body: streamedResponse(chunks).response.body,
+  };
+}
+
+async function withFetchResponses(responses, callback) {
+  const originalFetch = global.fetch;
+  const requests = [];
+  global.fetch = async (url, options) => {
+    requests.push({ options, url: String(url) });
+    const response = responses.shift();
+    if (!response) throw new Error("unexpected fetch request");
+    return response;
+  };
+  try {
+    await callback(requests);
+  } finally {
+    global.fetch = originalFetch;
+  }
+}
+
 async function main() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pandora-launcher-"));
   try {
@@ -77,6 +107,41 @@ async function main() {
       body: { getReader: () => { throw new Error("body should not be read"); } },
     };
     await assert.rejects(readResponseBytes(declaredOversized, 8), /exceeds 8 bytes/);
+
+    await withFetchResponses(
+      [downloadResponse(302, { location: "https://evil.example/release" })],
+      async (requests) => {
+        await assert.rejects(
+          fetchBytes("https://github.com/release", new Set(["github.com"])),
+          /untrusted host/,
+        );
+        assert.equal(requests.length, 1);
+        assert.equal(requests[0].options.redirect, "manual");
+      },
+    );
+
+    await withFetchResponses(
+      [
+        downloadResponse(302, { location: "https://objects.githubusercontent.com/release" }),
+        downloadResponse(200, {}, [Buffer.from("verified")]),
+      ],
+      async (requests) => {
+        assert.deepEqual(
+          await fetchBytes(
+            "https://github.com/release",
+            new Set(["github.com", "objects.githubusercontent.com"]),
+          ),
+          Buffer.from("verified"),
+        );
+        assert.deepEqual(
+          requests.map(({ options, url }) => [url, options.redirect]),
+          [
+            ["https://github.com/release", "manual"],
+            ["https://objects.githubusercontent.com/release", "manual"],
+          ],
+        );
+      },
+    );
   } finally {
     fs.rmSync(directory, { force: true, recursive: true });
   }
