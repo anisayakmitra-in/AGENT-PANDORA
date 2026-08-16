@@ -54,7 +54,10 @@ impl ContextEngine {
         let mut cacheable = true;
 
         for fragment in candidates {
-            if fragment.is_expired(request.now()) || fragment.trust() == ContextTrust::Unverified {
+            if fragment.is_expired(request.now())
+                || fragment.trust() == ContextTrust::Unverified
+                || fragment.classification() > request.classification_boundary()
+            {
                 dropped_ids.push(fragment.id().to_owned());
                 continue;
             }
@@ -175,6 +178,13 @@ mod tests {
             Timestamp::from_unix_seconds(100),
         )
         .unwrap()
+    }
+
+    fn request_with_boundary(
+        budget: u32,
+        classification_boundary: ContextClassification,
+    ) -> ContextRequest {
+        request(budget).with_classification_boundary(classification_boundary)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -307,7 +317,10 @@ mod tests {
         )];
 
         let assembly = ContextEngine::new()
-            .assemble(&request(20), fragments)
+            .assemble(
+                &request_with_boundary(20, ContextClassification::Secret),
+                fragments,
+            )
             .unwrap();
 
         assert!(!assembly.text().contains("sk-live-secret"));
@@ -329,12 +342,71 @@ mod tests {
         )];
 
         let assembly = ContextEngine::new()
-            .assemble(&request(20), fragments)
+            .assemble(
+                &request_with_boundary(20, ContextClassification::Sensitive),
+                fragments,
+            )
             .unwrap();
 
         assert_eq!(assembly.item_ids(), ["skill"]);
         assert_eq!(assembly.text(), "locally admitted guidance");
         assert!(!assembly.receipt().cacheable());
+    }
+
+    #[test]
+    fn assembly_drops_fragments_above_the_classification_boundary() {
+        let fragments = vec![
+            fragment(
+                "internal",
+                ContextSource::Constitutional,
+                ContextTrust::Constitutional,
+                ContextClassification::Internal,
+                100,
+                "constitutional rules",
+                2,
+                None,
+            ),
+            fragment(
+                "sensitive",
+                ContextSource::Retrieved,
+                ContextTrust::Admitted,
+                ContextClassification::Sensitive,
+                90,
+                "local guidance",
+                2,
+                None,
+            ),
+            fragment(
+                "secret",
+                ContextSource::Retrieved,
+                ContextTrust::Verified,
+                ContextClassification::Secret,
+                80,
+                "credential",
+                2,
+                None,
+            ),
+        ];
+
+        let assembly = ContextEngine::new()
+            .assemble(&request(20), fragments)
+            .unwrap();
+
+        assert_eq!(assembly.item_ids(), ["internal"]);
+        assert!(!assembly.text().contains("local guidance"));
+        assert!(!assembly.text().contains("credential"));
+        assert!(
+            assembly
+                .receipt()
+                .dropped_ids()
+                .contains(&"sensitive".to_owned())
+        );
+        assert!(
+            assembly
+                .receipt()
+                .dropped_ids()
+                .contains(&"secret".to_owned())
+        );
     }
 
     #[test]

@@ -547,7 +547,8 @@ impl AgentLoop {
             MAX_SYSTEM_CONTEXT_TOKENS,
             now,
         )
-        .map_err(|error| AgentLoopError::Context(error.to_string()))?;
+        .map_err(|error| AgentLoopError::Context(error.to_string()))?
+        .with_classification_boundary(ContextClassification::Sensitive);
         let mut fragments = vec![context_fragment(
             CONTEXT_CONSTITUTION_ID,
             ContextSource::Constitutional,

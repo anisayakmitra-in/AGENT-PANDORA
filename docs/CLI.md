@@ -138,6 +138,8 @@ the full bounded transcript.
 Agent runs retrieve at most eight canonical L1 execution-evidence records from
 the exact same session and provider. The context receipt lists generated record
 identifiers only; evidence stays descriptive and non-cacheable.
+The agent explicitly admits internal and sensitive context only; secret-classified
+fragments are dropped before a provider request is assembled.
 
 `chat` is a line-oriented interactive agent session. Type `/help` for the local
 commands, `/session` to print the active session ID, `/approve` to approve and
