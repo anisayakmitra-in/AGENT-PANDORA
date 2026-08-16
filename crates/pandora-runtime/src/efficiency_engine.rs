@@ -3,6 +3,7 @@
 use pandora_types::{
     EfficiencyContractError, EfficiencyObjective, EfficiencySample, EfficiencySummary,
 };
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::sync::Mutex;
@@ -58,6 +59,17 @@ impl EfficiencyEngine {
         })
     }
 
+    pub fn from_samples(
+        max_samples_per_target: usize,
+        samples: impl IntoIterator<Item = EfficiencySample>,
+    ) -> Result<Self, EfficiencyError> {
+        let engine = Self::new(max_samples_per_target)?;
+        for sample in samples {
+            engine.record(sample)?;
+        }
+        Ok(engine)
+    }
+
     pub fn record(&self, sample: EfficiencySample) -> Result<(), EfficiencyError> {
         let key = (sample.task_class().to_owned(), sample.target().to_owned());
         let mut samples = self
@@ -93,9 +105,7 @@ impl EfficiencyEngine {
         }
 
         summaries.sort_by(|left, right| match objective {
-            EfficiencyObjective::LowestCost => left
-                .average_cost_micros()
-                .cmp(&right.average_cost_micros())
+            EfficiencyObjective::LowestCost => compare_known_cost(left, right)
                 .then_with(|| right.completion_bps().cmp(&left.completion_bps()))
                 .then_with(|| left.average_latency_ms().cmp(&right.average_latency_ms()))
                 .then_with(|| left.target().cmp(right.target())),
@@ -103,12 +113,18 @@ impl EfficiencyEngine {
                 .average_latency_ms()
                 .cmp(&right.average_latency_ms())
                 .then_with(|| right.completion_bps().cmp(&left.completion_bps()))
-                .then_with(|| left.average_cost_micros().cmp(&right.average_cost_micros()))
+                .then_with(|| compare_known_cost(left, right))
+                .then_with(|| left.target().cmp(right.target())),
+            EfficiencyObjective::LowestTokenUsage => left
+                .average_tokens()
+                .cmp(&right.average_tokens())
+                .then_with(|| right.completion_bps().cmp(&left.completion_bps()))
+                .then_with(|| compare_known_cost(left, right))
                 .then_with(|| left.target().cmp(right.target())),
             EfficiencyObjective::HighestCertainty => right
                 .completion_bps()
                 .cmp(&left.completion_bps())
-                .then_with(|| left.average_cost_micros().cmp(&right.average_cost_micros()))
+                .then_with(|| compare_known_cost(left, right))
                 .then_with(|| left.average_latency_ms().cmp(&right.average_latency_ms()))
                 .then_with(|| left.target().cmp(right.target())),
         });
@@ -128,21 +144,37 @@ fn summarize(
     let mut completed_samples = 0;
     for sample in history {
         total_tokens = total_tokens.saturating_add(sample.total_tokens());
-        total_cost_micros = total_cost_micros.saturating_add(sample.cost_micros());
+        if sample.cost_known() {
+            total_cost_micros = total_cost_micros.saturating_add(sample.cost_micros());
+        }
         total_latency_ms = total_latency_ms.saturating_add(sample.latency_ms());
         if sample.completed() {
             completed_samples += 1;
         }
     }
-    Ok(EfficiencySummary::from_totals(
+    let cost_sample_count = history.iter().filter(|sample| sample.cost_known()).count() as u32;
+    Ok(EfficiencySummary::from_totals_with_cost_samples(
         task_class,
         target,
         history.len() as u32,
         total_tokens,
         total_cost_micros,
+        cost_sample_count,
         total_latency_ms,
         completed_samples,
     )?)
+}
+
+fn compare_known_cost(left: &EfficiencySummary, right: &EfficiencySummary) -> Ordering {
+    match (
+        left.average_known_cost_micros(),
+        right.average_known_cost_micros(),
+    ) {
+        (Some(left), Some(right)) => left.cmp(&right),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
 }
 
 fn validate_task_class(task_class: &str) -> Result<&str, EfficiencyError> {
@@ -215,6 +247,80 @@ mod tests {
         assert_eq!(cost[0].target(), "cheap");
         assert_eq!(latency[0].target(), "fast");
         assert_eq!(certainty[0].target(), "cheap");
+    }
+
+    #[test]
+    fn ranks_lowest_token_usage_without_changing_other_objectives() {
+        let engine = EfficiencyEngine::new(8).unwrap();
+        engine
+            .record(
+                EfficiencySample::new(
+                    ExecutionId::new("compact-run").unwrap(),
+                    "coding",
+                    "compact",
+                    10,
+                    5,
+                    80,
+                    80,
+                    true,
+                    Timestamp::from_unix_seconds(10),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        engine
+            .record(
+                EfficiencySample::new(
+                    ExecutionId::new("large-run").unwrap(),
+                    "coding",
+                    "large",
+                    100,
+                    50,
+                    10,
+                    10,
+                    true,
+                    Timestamp::from_unix_seconds(10),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let ranking = engine
+            .rank("coding", EfficiencyObjective::LowestTokenUsage)
+            .unwrap();
+
+        assert_eq!(ranking[0].target(), "compact");
+        assert_eq!(ranking[0].average_tokens(), 15);
+    }
+
+    #[test]
+    fn unknown_cost_is_not_ranked_as_zero_cost() {
+        let engine = EfficiencyEngine::new(8).unwrap();
+        engine
+            .record(
+                EfficiencySample::new_without_cost(
+                    ExecutionId::new("unknown-cost").unwrap(),
+                    "coding",
+                    "unknown",
+                    20,
+                    10,
+                    10,
+                    true,
+                    Timestamp::from_unix_seconds(10),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        engine
+            .record(sample("known-cost", "known", 20, 10, true))
+            .unwrap();
+
+        let ranking = engine
+            .rank("coding", EfficiencyObjective::LowestCost)
+            .unwrap();
+
+        assert_eq!(ranking[0].target(), "known");
+        assert!(!ranking[1].has_cost_evidence());
     }
 
     #[test]

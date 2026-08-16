@@ -13,6 +13,7 @@ mod approval;
 mod chat;
 mod completions;
 mod doctor;
+mod efficiency;
 mod harness;
 mod migration;
 mod package;
@@ -72,6 +73,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "update" => update::execute(&args[1..]),
         "orchestration" => orchestration(&args[1..]),
         "doctor" => doctor::execute(&args[1..]),
+        "efficiency" => efficiency::execute(&args[1..]),
         "--help" | "help" => {
             if args.len() != 1 {
                 return Err(CliError::usage("help does not accept additional arguments"));
@@ -244,7 +246,7 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|chat|tui|harness|session|skill|package|approval|provider|tool|orchestration|strategies|completions|migrate|update|uninstall|doctor> [options]
+    r#"usage: pandora <help|setup|run|chat|tui|harness|session|skill|package|approval|provider|tool|orchestration|strategies|efficiency|completions|migrate|update|uninstall|doctor> [options]
 
 commands:
   help (or --help)
@@ -261,6 +263,7 @@ commands:
   provider list|set|use|test
   orchestration roles
   strategies list
+  efficiency rank [--task-class <name>] [--objective <cost|latency|tokens|certainty>]
   completions <powershell|bash|zsh|fish>
   migrate config
   update [--artifact <path> --sha256 <digest> | --rollback]

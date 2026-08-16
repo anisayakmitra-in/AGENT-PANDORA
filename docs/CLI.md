@@ -139,6 +139,22 @@ reasoning are not persisted. To continue an approved write, rerun
 Pandora replays the bounded pending tool call through the same approval and
 consumes it once.
 
+Every run accepts an optional `--task-class <name>` label. The default is
+`general`; labels are bounded metadata and must not contain credentials or
+prompt text. Pandora records measured tokens and elapsed time in the scoped
+efficiency database. Provider pricing is recorded only when it is explicitly
+available, so unknown cost is never treated as zero.
+
+```text
+pandora efficiency rank --task-class general --objective certainty
+pandora efficiency rank --task-class coding --objective cost --json
+```
+
+`efficiency rank` is read-only. It ranks existing evidence by cost, latency,
+token usage, or verified completion rate. It does not select a provider,
+change policy, or execute a task; runtime adaptation must still use approved
+candidates and the reference monitor.
+
 Enabled Skills contribute bounded guidance to the rebuilt system instruction.
 Only Skills explicitly in the `enabled` state are included. Their text is
 reference material; it cannot grant permissions, change policy, satisfy an

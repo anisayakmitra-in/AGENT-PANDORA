@@ -10,6 +10,7 @@ const MAX_LABEL_BYTES: usize = 128;
 pub enum EfficiencyObjective {
     LowestCost,
     LowestLatency,
+    LowestTokenUsage,
     HighestCertainty,
 }
 
@@ -18,6 +19,7 @@ impl EfficiencyObjective {
         match self {
             Self::LowestCost => "lowest_cost",
             Self::LowestLatency => "lowest_latency",
+            Self::LowestTokenUsage => "lowest_token_usage",
             Self::HighestCertainty => "highest_certainty",
         }
     }
@@ -30,6 +32,7 @@ pub enum EfficiencyContractError {
     ControlCharacter(&'static str),
     InvalidSampleCount,
     CompletedExceedsSamples,
+    CostSamplesExceedSamples,
 }
 
 impl fmt::Display for EfficiencyContractError {
@@ -46,6 +49,9 @@ impl fmt::Display for EfficiencyContractError {
             Self::CompletedExceedsSamples => {
                 formatter.write_str("completed samples cannot exceed sample count")
             }
+            Self::CostSamplesExceedSamples => {
+                formatter.write_str("cost samples cannot exceed sample count")
+            }
         }
     }
 }
@@ -60,6 +66,7 @@ pub struct EfficiencySample {
     input_tokens: u64,
     output_tokens: u64,
     cost_micros: u64,
+    cost_known: bool,
     latency_ms: u64,
     completed: bool,
     recorded_at: Timestamp,
@@ -78,13 +85,66 @@ impl EfficiencySample {
         completed: bool,
         recorded_at: Timestamp,
     ) -> Result<Self, EfficiencyContractError> {
-        Ok(Self {
+        Self::build(
             execution_id,
-            task_class: validate_label("task class", task_class.into())?,
-            target: validate_label("target", target.into())?,
+            task_class.into(),
+            target.into(),
             input_tokens,
             output_tokens,
             cost_micros,
+            true,
+            latency_ms,
+            completed,
+            recorded_at,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_without_cost(
+        execution_id: ExecutionId,
+        task_class: impl Into<String>,
+        target: impl Into<String>,
+        input_tokens: u64,
+        output_tokens: u64,
+        latency_ms: u64,
+        completed: bool,
+        recorded_at: Timestamp,
+    ) -> Result<Self, EfficiencyContractError> {
+        Self::build(
+            execution_id,
+            task_class.into(),
+            target.into(),
+            input_tokens,
+            output_tokens,
+            0,
+            false,
+            latency_ms,
+            completed,
+            recorded_at,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build(
+        execution_id: ExecutionId,
+        task_class: String,
+        target: String,
+        input_tokens: u64,
+        output_tokens: u64,
+        cost_micros: u64,
+        cost_known: bool,
+        latency_ms: u64,
+        completed: bool,
+        recorded_at: Timestamp,
+    ) -> Result<Self, EfficiencyContractError> {
+        Ok(Self {
+            execution_id,
+            task_class: validate_label("task class", task_class)?,
+            target: validate_label("target", target)?,
+            input_tokens,
+            output_tokens,
+            cost_micros,
+            cost_known,
             latency_ms,
             completed,
             recorded_at,
@@ -119,6 +179,10 @@ impl EfficiencySample {
         self.cost_micros
     }
 
+    pub const fn cost_known(&self) -> bool {
+        self.cost_known
+    }
+
     pub const fn latency_ms(&self) -> u64 {
         self.latency_ms
     }
@@ -139,6 +203,7 @@ pub struct EfficiencySummary {
     sample_count: u32,
     total_tokens: u64,
     total_cost_micros: u64,
+    cost_sample_count: u32,
     total_latency_ms: u64,
     completed_samples: u32,
 }
@@ -153,11 +218,37 @@ impl EfficiencySummary {
         total_latency_ms: u64,
         completed_samples: u32,
     ) -> Result<Self, EfficiencyContractError> {
+        Self::from_totals_with_cost_samples(
+            task_class,
+            target,
+            sample_count,
+            total_tokens,
+            total_cost_micros,
+            sample_count,
+            total_latency_ms,
+            completed_samples,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_totals_with_cost_samples(
+        task_class: impl Into<String>,
+        target: impl Into<String>,
+        sample_count: u32,
+        total_tokens: u64,
+        total_cost_micros: u64,
+        cost_sample_count: u32,
+        total_latency_ms: u64,
+        completed_samples: u32,
+    ) -> Result<Self, EfficiencyContractError> {
         if sample_count == 0 {
             return Err(EfficiencyContractError::InvalidSampleCount);
         }
         if completed_samples > sample_count {
             return Err(EfficiencyContractError::CompletedExceedsSamples);
+        }
+        if cost_sample_count > sample_count {
+            return Err(EfficiencyContractError::CostSamplesExceedSamples);
         }
         Ok(Self {
             task_class: validate_label("task class", task_class.into())?,
@@ -165,6 +256,7 @@ impl EfficiencySummary {
             sample_count,
             total_tokens,
             total_cost_micros,
+            cost_sample_count,
             total_latency_ms,
             completed_samples,
         })
@@ -188,6 +280,22 @@ impl EfficiencySummary {
 
     pub const fn total_cost_micros(&self) -> u64 {
         self.total_cost_micros
+    }
+
+    pub const fn cost_sample_count(&self) -> u32 {
+        self.cost_sample_count
+    }
+
+    pub const fn has_cost_evidence(&self) -> bool {
+        self.cost_sample_count > 0
+    }
+
+    pub const fn average_known_cost_micros(&self) -> Option<u64> {
+        if self.cost_sample_count == 0 {
+            None
+        } else {
+            Some(self.total_cost_micros / self.cost_sample_count as u64)
+        }
     }
 
     pub const fn total_latency_ms(&self) -> u64 {
@@ -271,5 +379,23 @@ mod tests {
         assert_eq!(summary.average_cost_micros(), 25);
         assert_eq!(summary.average_latency_ms(), 200);
         assert_eq!(summary.completion_bps(), 7_500);
+    }
+
+    #[test]
+    fn missing_cost_is_explicit() {
+        let sample = EfficiencySample::new_without_cost(
+            ExecutionId::new("execution-2").unwrap(),
+            "coding",
+            "provider/model",
+            20,
+            10,
+            180,
+            true,
+            Timestamp::from_unix_seconds(10),
+        )
+        .unwrap();
+
+        assert!(!sample.cost_known());
+        assert_eq!(sample.cost_micros(), 0);
     }
 }

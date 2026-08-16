@@ -90,12 +90,30 @@ fn setup_and_read_only_run_return_versioned_json() {
     assert_eq!(response["command"], "run");
     assert_eq!(response["status"], "completed");
     assert_eq!(response["output"], "fixture\n");
+    assert_eq!(response["efficiency_recorded"], true);
     assert!(
         !response["session_id"]
             .as_str()
             .unwrap_or_default()
             .is_empty()
     );
+
+    let output = fixture
+        .command(&[
+            "efficiency",
+            "rank",
+            "--task-class",
+            "general",
+            "--objective",
+            "latency",
+            "--json",
+        ])
+        .output()
+        .expect("efficiency ranking should start");
+    assert_success(&output);
+    let ranking = parse_json(&output);
+    assert_eq!(ranking["command"], "efficiency rank");
+    assert!(!ranking["rankings"].as_array().unwrap().is_empty());
 }
 
 #[test]

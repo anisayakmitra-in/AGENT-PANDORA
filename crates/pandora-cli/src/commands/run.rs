@@ -14,14 +14,16 @@ use pandora_runtime::{
     AgentApprovalContext, AgentLoop, AgentLoopError, AgentRunRequest, ApprovalRequest,
     ApprovalStore, MAX_AGENT_TOOL_CALLS, MAX_AGENT_TURNS, RunStatus, RuntimeError,
 };
-use pandora_runtime::{ExecutionController, SkillEngine, SkillError};
+use pandora_runtime::{
+    DEFAULT_MAX_SAMPLES_PER_TARGET, EfficiencyStore, ExecutionController, SkillEngine, SkillError,
+};
 use pandora_types::{
-    Capability, EventPayload, HarnessId, Operation, PolicyContext, Session, SessionId, TaskIntent,
-    WorkspaceId,
+    Capability, EfficiencySample, EventPayload, ExecutionId, HarnessId, Operation, PolicyContext,
+    Session, SessionId, TaskIntent, WorkspaceId,
 };
 use serde_json::{Value, json};
 use std::fs;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const MAX_PLANNED_TASK_BYTES: usize = 8 * 1024;
 const DEFAULT_AGENT_MAX_TURNS: u32 = 8;
@@ -40,6 +42,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "harness",
             "gene",
             "model",
+            "task-class",
             "plan",
             "agent",
             "max-turns",
@@ -84,6 +87,8 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         DEFAULT_AGENT_MAX_TOOL_CALLS,
         MAX_AGENT_TOOL_CALLS,
     )?;
+    let task_class = parsed.value("task-class").unwrap_or("general");
+    validate_task_class(task_class)?;
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
     let store = session_store(&config)?;
@@ -162,6 +167,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             &approval_store,
             AgentOptions {
                 task: &task,
+                task_class,
                 history: agent_history,
                 approval_id: parsed.value("approval"),
                 model_override: parsed.value("model"),
@@ -186,6 +192,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             .map_err(|_| CliError::usage("Gene ID is invalid"))?;
         intent = intent.with_gene(gene);
     }
+    let started = Instant::now();
     let summary = match parsed.value("approval") {
         Some(approval_id) => controller
             .run_with_approval(
@@ -201,6 +208,8 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             .map_err(runtime_error)?,
     };
     append_events(&store, &session, summary.events())?;
+    let efficiency_recorded =
+        record_execution_efficiency(&config, task_class, &summary, elapsed_millis(started));
     let details = run_details(&summary, session.id(), planning_model.as_deref());
     match summary.status() {
         RunStatus::Completed => {
@@ -212,6 +221,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                 "gene_id": summary.selected_gene(),
                 "status": "completed",
                 "output": summary.output().map(output_text),
+                "efficiency_recorded": efficiency_recorded,
                 }),
                 planning_model.as_deref(),
             );
@@ -257,6 +267,7 @@ fn execute_agent(
     let provider = configured_provider(config, model, "agent mode")?;
     let loop_engine = AgentLoop::new(options.max_turns, options.max_tool_calls)
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let started = Instant::now();
     let result = match options.approval_id {
         Some(approval_id) => loop_engine.run_with_history_and_approval_and_skill_context(
             provider.as_ref(),
@@ -275,6 +286,15 @@ fn execute_agent(
     };
     match result {
         Ok(summary) => {
+            let efficiency_recorded = record_agent_efficiency(
+                config,
+                session,
+                options.task_class,
+                provider.as_ref(),
+                &summary,
+                elapsed_millis(started),
+                true,
+            );
             store
                 .save_agent_transcript(
                     session.id(),
@@ -301,11 +321,21 @@ fn execute_agent(
                     "output": summary.final_text(),
                     "usage": usage_json(summary.usage()),
                     "runs": run_count,
+                    "efficiency_recorded": efficiency_recorded,
                 }),
                 format!("Completed agent task in {}", session.id()),
             ))
         }
         Err(AgentLoopError::ApprovalRequired { reason, summary }) => {
+            let _ = record_agent_efficiency(
+                config,
+                session,
+                options.task_class,
+                provider.as_ref(),
+                &summary,
+                elapsed_millis(started),
+                false,
+            );
             store
                 .save_agent_transcript(
                     session.id(),
@@ -341,7 +371,16 @@ fn execute_agent(
                 }),
             ))
         }
-        Err(error) => Err(agent_error(error)),
+        Err(error) => {
+            let _ = record_agent_failure(
+                config,
+                session,
+                options.task_class,
+                provider.as_ref(),
+                elapsed_millis(started),
+            );
+            Err(agent_error(error))
+        }
     }
 }
 
@@ -375,6 +414,7 @@ fn active_skill_context(config: &RuntimeConfig) -> Result<Option<String>, CliErr
 
 struct AgentOptions<'a> {
     task: &'a str,
+    task_class: &'a str,
     history: Vec<ChatMessage>,
     approval_id: Option<&'a str>,
     model_override: Option<&'a str>,
@@ -429,6 +469,131 @@ fn usage_json(usage: &pandora_provider::TokenUsage) -> Value {
         "completion_tokens": usage.completion_tokens(),
         "total_tokens": usage.total_tokens(),
     })
+}
+
+fn validate_task_class(value: &str) -> Result<(), CliError> {
+    if value.trim().is_empty() {
+        return Err(CliError::usage("task class cannot be empty"));
+    }
+    if value.len() > 128 || value.chars().any(char::is_control) {
+        return Err(CliError::usage("task class is invalid or too long"));
+    }
+    Ok(())
+}
+
+fn elapsed_millis(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+fn record_execution_efficiency(
+    config: &RuntimeConfig,
+    task_class: &str,
+    summary: &pandora_runtime::RunSummary,
+    latency_ms: u64,
+) -> bool {
+    let target = format!("{}/{}", summary.selected_harness(), summary.selected_gene());
+    let sample = EfficiencySample::new_without_cost(
+        summary.execution_id().clone(),
+        task_class,
+        target,
+        0,
+        0,
+        latency_ms,
+        matches!(summary.status(), RunStatus::Completed),
+        timestamp(),
+    );
+    let Ok(sample) = sample else {
+        return false;
+    };
+    record_efficiency_sample(config, sample)
+}
+
+fn record_agent_efficiency(
+    config: &RuntimeConfig,
+    session: &Session,
+    task_class: &str,
+    provider: &dyn pandora_provider::Provider,
+    summary: &pandora_runtime::AgentRunSummary,
+    latency_ms: u64,
+    completed: bool,
+) -> bool {
+    let execution_id = summary
+        .runs()
+        .last()
+        .map(|run| run.execution_id().clone())
+        .or_else(|| {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .ok()?
+                .as_nanos();
+            ExecutionId::new(format!("agent-efficiency-{}-{nonce}", session.id())).ok()
+        });
+    let Some(execution_id) = execution_id else {
+        return false;
+    };
+    let target = format!(
+        "{}/{}",
+        provider.manifest().id(),
+        provider.manifest().default_model()
+    );
+    let sample = EfficiencySample::new_without_cost(
+        execution_id,
+        task_class,
+        target,
+        u64::from(summary.usage().prompt_tokens()),
+        u64::from(summary.usage().completion_tokens()),
+        latency_ms,
+        completed,
+        timestamp(),
+    );
+    let Ok(sample) = sample else {
+        return false;
+    };
+    record_efficiency_sample(config, sample)
+}
+
+fn record_agent_failure(
+    config: &RuntimeConfig,
+    session: &Session,
+    task_class: &str,
+    provider: &dyn pandora_provider::Provider,
+    latency_ms: u64,
+) -> bool {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let Ok(execution_id) = ExecutionId::new(format!("agent-failure-{}-{nonce}", session.id()))
+    else {
+        return false;
+    };
+    let sample = EfficiencySample::new_without_cost(
+        execution_id,
+        task_class,
+        format!(
+            "{}/{}",
+            provider.manifest().id(),
+            provider.manifest().default_model()
+        ),
+        0,
+        0,
+        latency_ms,
+        false,
+        timestamp(),
+    );
+    let Ok(sample) = sample else {
+        return false;
+    };
+    record_efficiency_sample(config, sample)
+}
+
+fn record_efficiency_sample(config: &RuntimeConfig, sample: EfficiencySample) -> bool {
+    let Ok(store) = EfficiencyStore::open(config.data_dir().join("efficiency.sqlite3")) else {
+        return false;
+    };
+    store
+        .record(&sample, DEFAULT_MAX_SAMPLES_PER_TARGET)
+        .is_ok()
 }
 
 fn agent_error(error: AgentLoopError) -> CliError {
