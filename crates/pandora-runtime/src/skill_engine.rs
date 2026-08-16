@@ -190,14 +190,12 @@ impl SkillEngine {
         } else {
             std::env::current_dir()?.join(root.as_ref())
         };
+        validate_regular_directory(&display_root)?;
         let root = fs::canonicalize(&display_root)?;
-        if !fs::symlink_metadata(&root)?.is_dir() {
-            return Err(SkillError::InvalidRoot);
-        }
         let state_root = root.join(".pandora-state");
         let removed_root = root.join(".pandora-removed");
-        fs::create_dir_all(&state_root)?;
-        fs::create_dir_all(&removed_root)?;
+        ensure_managed_directory(&state_root)?;
+        ensure_managed_directory(&removed_root)?;
         let engine = Self {
             display_root,
             root,
@@ -584,6 +582,28 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<(), SkillError> {
     Ok(())
 }
 
+fn validate_regular_directory(path: &Path) -> Result<(), SkillError> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() {
+        return Err(SkillError::SymlinkRejected);
+    }
+    if !metadata.is_dir() {
+        return Err(SkillError::InvalidRoot);
+    }
+    Ok(())
+}
+
+fn ensure_managed_directory(path: &Path) -> Result<(), SkillError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => validate_regular_directory(path),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            fs::create_dir(path)?;
+            validate_regular_directory(path)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
 fn read_skill_document(root: &Path) -> Result<(SkillManifest, String), SkillError> {
     let manifest_path = root.join("SKILL.md");
     let metadata = fs::symlink_metadata(&manifest_path)?;
@@ -854,6 +874,57 @@ mod tests {
         assert_eq!(engine.active_context(), Err(SkillError::ContextTooLarge));
     }
 
+    #[test]
+    fn symlinked_skill_root_is_rejected() {
+        let fixture = Fixture::new();
+        let parent = crate::test_support::new_temp_dir("pandora-skill-root-link").unwrap();
+        let linked_root = parent.join("skills");
+        if create_directory_symlink(&fixture.root, &linked_root).is_err() {
+            return;
+        }
+
+        assert_eq!(
+            SkillEngine::discover(&linked_root),
+            Err(SkillError::SymlinkRejected)
+        );
+
+        let _ = fs::remove_dir_all(parent);
+    }
+
+    #[test]
+    fn symlinked_skill_state_directory_is_rejected() {
+        let fixture = Fixture::new();
+        let outside = crate::test_support::new_temp_dir("pandora-skill-state-link").unwrap();
+        let state_root = fixture.root.join(".pandora-state");
+        if create_directory_symlink(&outside, &state_root).is_err() {
+            return;
+        }
+
+        assert_eq!(
+            SkillEngine::discover(&fixture.root),
+            Err(SkillError::SymlinkRejected)
+        );
+
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[test]
+    fn symlinked_skill_removal_directory_is_rejected() {
+        let fixture = Fixture::new();
+        let outside = crate::test_support::new_temp_dir("pandora-skill-removal-link").unwrap();
+        let removed_root = fixture.root.join(".pandora-removed");
+        if create_directory_symlink(&outside, &removed_root).is_err() {
+            return;
+        }
+
+        assert_eq!(
+            SkillEngine::discover(&fixture.root),
+            Err(SkillError::SymlinkRejected)
+        );
+
+        let _ = fs::remove_dir_all(outside);
+    }
+
     #[cfg(unix)]
     #[test]
     fn symlinked_skill_files_are_rejected() {
@@ -892,5 +963,20 @@ mod tests {
         format!(
             "---\nid: {id}\nversion: 0.1.0\nname: {id} Skill\ndescription: A bounded test skill\npublisher: pandora\nresources: workspace.read, workspace.search\n---\n# Skill\n\nUse the read tool.\n"
         )
+    }
+
+    #[cfg(unix)]
+    fn create_directory_symlink(source: &Path, destination: &Path) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(source, destination)
+    }
+
+    #[cfg(windows)]
+    fn create_directory_symlink(source: &Path, destination: &Path) -> std::io::Result<()> {
+        std::os::windows::fs::symlink_dir(source, destination)
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    fn create_directory_symlink(_source: &Path, _destination: &Path) -> std::io::Result<()> {
+        Err(std::io::Error::other("directory symlink test unsupported"))
     }
 }

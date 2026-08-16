@@ -250,7 +250,9 @@ Skills are stored in the configured data directory under `skills/`. Use
 `skill install <local-skill-directory>` to admit one local `SKILL.md` package.
 The package directory name must match its manifest ID; manifests, resources,
 regular files, and directories are validated before a staged copy. Existing
-IDs and symlinks are rejected. Installed Skills start disabled.
+IDs and symlinks are rejected. The Skill root and its internal state and
+removal directories must also be regular directories. Installed Skills start
+disabled.
 Use `--root <path>` to inspect another local skill root. Listing and inspection
 read metadata, state, provenance, resources, and script inventory only; Skills
 start disabled and scripts are not executed by these commands. `enable`,
