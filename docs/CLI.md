@@ -232,6 +232,7 @@ pandora skill disable <id>
 pandora skill remove <id> --dry-run
 pandora skill remove <id> --yes
 pandora skill restore <id>
+pandora package admit --manifest <manifest.json> --artifact <artifact>
 pandora package list
 pandora package inspect <id> <version>
 pandora package remove <id> <version> --dry-run
@@ -267,7 +268,9 @@ skill into the reversible removal area, and `restore` returns it as disabled.
 These commands do not execute scripts; script execution remains available only
 through the governed ToolEngine path.
 
-Package records are addressed by exact ID and strict SemVer version. `package remove
+Package records are addressed by exact ID and strict SemVer version. `package admit`
+reads at most the local artifact limit plus one byte before it rejects an oversized
+artifact. `package remove
 --dry-run` reports the admitted record without changing the local store;
 `package remove --yes` removes it transactionally. Removal is refused when
 another admitted package has a required dependency on the target, while

@@ -1,10 +1,11 @@
 use super::{load_config, parse_options};
 use crate::output::{CliError, CommandResult, success};
-use pandora_runtime::{PackageRecord, PackageStore, PackageStoreError};
+use pandora_runtime::{MAX_STORED_ARTIFACT_BYTES, PackageRecord, PackageStore, PackageStoreError};
 use pandora_types::{PackageId, PackageManifest};
 use serde_json::json;
 use std::fs;
-use std::path::PathBuf;
+use std::io::{self, Read};
+use std::path::{Path, PathBuf};
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
@@ -41,12 +42,7 @@ fn admit(args: &[String]) -> Result<CommandResult, CliError> {
     })?;
     let manifest: PackageManifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|error| CliError::usage(format!("package manifest is invalid: {error}")))?;
-    let artifact = fs::read(&artifact_path).map_err(|error| {
-        CliError::configuration(
-            "could not read package artifact",
-            json!({"path": artifact_path, "error": error.to_string()}),
-        )
-    })?;
+    let artifact = read_artifact(&artifact_path)?;
     let store = store(&parsed)?;
     let record = store
         .admit(&manifest, &manifest, &artifact)
@@ -179,6 +175,46 @@ fn required_path(parsed: &super::ParsedArgs, name: &str) -> Result<PathBuf, CliE
         .ok_or_else(|| CliError::usage(format!("package admit requires '--{name} <path>'")))
 }
 
+fn read_artifact(path: &Path) -> Result<Vec<u8>, CliError> {
+    let mut file = fs::File::open(path).map_err(|error| artifact_read_error(path, error))?;
+    match read_artifact_bytes(&mut file, MAX_STORED_ARTIFACT_BYTES) {
+        Ok(artifact) => Ok(artifact),
+        Err(ArtifactReadError::TooLarge) => Err(CliError::execution(
+            "package artifact exceeds the local limit",
+            json!({"path": path, "limit_bytes": MAX_STORED_ARTIFACT_BYTES}),
+        )),
+        Err(ArtifactReadError::Io(error)) => Err(artifact_read_error(path, error)),
+    }
+}
+
+fn artifact_read_error(path: &Path, error: io::Error) -> CliError {
+    CliError::configuration(
+        "could not read package artifact",
+        json!({"path": path, "error": error.to_string()}),
+    )
+}
+
+#[derive(Debug)]
+enum ArtifactReadError {
+    Io(io::Error),
+    TooLarge,
+}
+
+fn read_artifact_bytes<R: Read>(
+    reader: &mut R,
+    limit: usize,
+) -> Result<Vec<u8>, ArtifactReadError> {
+    let mut artifact = Vec::new();
+    reader
+        .take(limit as u64 + 1)
+        .read_to_end(&mut artifact)
+        .map_err(ArtifactReadError::Io)?;
+    if artifact.len() > limit {
+        return Err(ArtifactReadError::TooLarge);
+    }
+    Ok(artifact)
+}
+
 pub(super) fn store(parsed: &super::ParsedArgs) -> Result<PackageStore, CliError> {
     let config = load_config(parsed)?;
     PackageStore::open(config.data_dir().join("packages.sqlite3")).map_err(store_error)
@@ -228,5 +264,29 @@ fn removal_error(error: PackageStoreError) -> CliError {
             json!({"id": id, "version": version, "dependents": dependents}),
         ),
         other => store_error(other),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ArtifactReadError, read_artifact_bytes};
+    use std::io::Cursor;
+
+    #[test]
+    fn artifact_reader_stops_after_the_limit_plus_one_byte() {
+        let mut source = Cursor::new(vec![0_u8; 32]);
+
+        assert!(matches!(
+            read_artifact_bytes(&mut source, 8),
+            Err(ArtifactReadError::TooLarge)
+        ));
+        assert_eq!(source.position(), 9);
+    }
+
+    #[test]
+    fn artifact_reader_accepts_an_exactly_limited_artifact() {
+        let mut source = Cursor::new(vec![7_u8; 8]);
+
+        assert_eq!(read_artifact_bytes(&mut source, 8).unwrap(), vec![7_u8; 8]);
     }
 }
