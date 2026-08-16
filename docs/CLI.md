@@ -182,6 +182,9 @@ reasoning are not persisted. To continue an approved write, rerun
 `run --agent --approval <id>` with the returned session ID and a follow-up task.
 Pandora replays the bounded pending tool call through the same approval and
 consumes it once.
+Tool calls from one model reply are recorded and executed in sequence, so an
+approval pause always preserves one exact pending call. Older persisted batches
+are rejected as ambiguous instead of reusing one approval across multiple calls.
 
 Every run accepts an optional `--task-class <name>` label. The default is
 `general`; labels are bounded metadata and must not contain credentials or

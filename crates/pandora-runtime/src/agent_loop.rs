@@ -339,6 +339,11 @@ impl AgentLoop {
         if pending_tool_calls.len() > self.max_tool_calls as usize {
             return Err(AgentLoopError::ToolBudgetExceeded);
         }
+        if pending_tool_calls.len() > 1 {
+            return Err(AgentLoopError::Execution(RuntimeError::InvalidIntent(
+                "agent session contains an ambiguous pending tool batch",
+            )));
+        }
         if !pending_tool_calls.is_empty() && approval.is_none() {
             return Err(AgentLoopError::Execution(RuntimeError::InvalidIntent(
                 "agent session has a pending approval",
@@ -454,9 +459,11 @@ impl AgentLoop {
             if tool_calls.saturating_add(requested) > self.max_tool_calls {
                 return Err(AgentLoopError::ToolBudgetExceeded);
             }
-            messages.push(ChatMessage::assistant_tool_calls(response.tool_calls())?);
 
             for call in response.tool_calls() {
+                messages.push(ChatMessage::assistant_tool_calls(std::slice::from_ref(
+                    call,
+                ))?);
                 tool_calls = tool_calls.saturating_add(1);
                 match self.execute_tool(
                     call,
@@ -892,6 +899,48 @@ mod tests {
     }
 
     #[test]
+    fn resumed_pending_tool_batches_fail_closed() {
+        let fixture = Fixture::new();
+        let provider = SequenceProvider::new(Vec::new());
+        let controller = ExecutionController::new(fixture.root.clone());
+        let pending_calls = vec![
+            ToolCall::new(
+                "call-1",
+                "workspace.read",
+                serde_json::json!({"path": "README.md"}),
+            )
+            .unwrap(),
+            ToolCall::new(
+                "call-2",
+                "workspace.read",
+                serde_json::json!({"path": "README.md"}),
+            )
+            .unwrap(),
+        ];
+        let history = vec![ChatMessage::assistant_tool_calls(&pending_calls).unwrap()];
+
+        let error = AgentLoop::new(1, 2)
+            .unwrap()
+            .run_with_history(
+                &provider,
+                &controller,
+                fixture.session(),
+                history,
+                "continue the task",
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            AgentLoopError::Execution(RuntimeError::InvalidIntent(
+                "agent session contains an ambiguous pending tool batch"
+            ))
+        );
+        assert!(provider.requests().is_empty());
+    }
+
+    #[test]
     fn enabled_skill_context_is_sent_as_system_guidance_only() {
         let fixture = Fixture::new();
         let provider = SequenceProvider::new(vec![ModelResponse::new(
@@ -1309,6 +1358,68 @@ mod tests {
             }
             other => panic!("expected approval boundary, got {other:?}"),
         }
+        assert_eq!(
+            std::fs::read(fixture.path.join("README.md")).unwrap(),
+            b"fixture\n"
+        );
+    }
+
+    #[test]
+    fn approval_boundary_preserves_the_exact_pending_tool_call() {
+        let fixture = Fixture::new();
+        let provider = SequenceProvider::new(vec![ModelResponse::new(
+            "",
+            vec![
+                ToolCall::new(
+                    "call-read",
+                    "workspace.read",
+                    serde_json::json!({"path": "README.md"}),
+                )
+                .unwrap(),
+                ToolCall::new(
+                    "call-patch",
+                    "workspace.patch",
+                    serde_json::json!({"path": "README.md", "content": "changed"}),
+                )
+                .unwrap(),
+            ],
+            TokenUsage::default(),
+        )]);
+        let policy = PolicyContext::new(
+            1,
+            [
+                Capability::FilesystemRead,
+                Capability::FilesystemWrite,
+                Capability::ProviderInvoke,
+            ],
+            [Operation::Write],
+        );
+        let controller = ExecutionController::with_policy(fixture.root.clone(), policy);
+
+        let error = AgentLoop::new(2, 2)
+            .unwrap()
+            .run(
+                &provider,
+                &controller,
+                fixture.session(),
+                "Read then update the README",
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap_err();
+
+        let AgentLoopError::ApprovalRequired { summary, .. } = error else {
+            panic!("expected approval boundary");
+        };
+        let pending_message = summary.messages().last().unwrap();
+        assert_eq!(pending_message.role(), MessageRole::Assistant);
+        let pending_calls = pending_message.tool_calls().unwrap();
+        assert_eq!(pending_calls.len(), 1);
+        assert_eq!(pending_calls[0].id(), "call-patch");
+        assert_eq!(
+            summary.messages()[1].tool_calls().unwrap()[0].id(),
+            "call-read"
+        );
+        assert_eq!(summary.messages()[2].role(), MessageRole::Tool);
         assert_eq!(
             std::fs::read(fixture.path.join("README.md")).unwrap(),
             b"fixture\n"
