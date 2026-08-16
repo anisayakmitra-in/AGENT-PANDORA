@@ -336,6 +336,9 @@ impl AgentLoop {
             Some(message) if message.role() == MessageRole::Assistant => message.tool_calls()?,
             _ => Vec::new(),
         };
+        if pending_tool_calls.len() > self.max_tool_calls as usize {
+            return Err(AgentLoopError::ToolBudgetExceeded);
+        }
         if !pending_tool_calls.is_empty() && approval.is_none() {
             return Err(AgentLoopError::Execution(RuntimeError::InvalidIntent(
                 "agent session has a pending approval",
@@ -849,6 +852,43 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0][1].content(), "previous task");
         assert_eq!(requests[0][2].content(), "continue the task");
+    }
+
+    #[test]
+    fn resumed_pending_calls_cannot_exceed_the_tool_budget() {
+        let fixture = Fixture::new();
+        let provider = SequenceProvider::new(Vec::new());
+        let controller = ExecutionController::new(fixture.root.clone());
+        let pending_calls = vec![
+            ToolCall::new(
+                "call-1",
+                "workspace.read",
+                serde_json::json!({"path": "README.md"}),
+            )
+            .unwrap(),
+            ToolCall::new(
+                "call-2",
+                "workspace.read",
+                serde_json::json!({"path": "README.md"}),
+            )
+            .unwrap(),
+        ];
+        let history = vec![ChatMessage::assistant_tool_calls(&pending_calls).unwrap()];
+
+        let error = AgentLoop::new(1, 1)
+            .unwrap()
+            .run_with_history(
+                &provider,
+                &controller,
+                fixture.session(),
+                history,
+                "continue the task",
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap_err();
+
+        assert_eq!(error, AgentLoopError::ToolBudgetExceeded);
+        assert!(provider.requests().is_empty());
     }
 
     #[test]
