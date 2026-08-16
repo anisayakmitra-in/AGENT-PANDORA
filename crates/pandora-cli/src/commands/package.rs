@@ -109,12 +109,12 @@ fn required_path(parsed: &super::ParsedArgs, name: &str) -> Result<PathBuf, CliE
         .ok_or_else(|| CliError::usage(format!("package admit requires '--{name} <path>'")))
 }
 
-fn store(parsed: &super::ParsedArgs) -> Result<PackageStore, CliError> {
+pub(super) fn store(parsed: &super::ParsedArgs) -> Result<PackageStore, CliError> {
     let config = load_config(parsed)?;
     PackageStore::open(config.data_dir().join("packages.sqlite3")).map_err(store_error)
 }
 
-fn package_value(record: &PackageRecord) -> serde_json::Value {
+pub(super) fn package_value(record: &PackageRecord) -> serde_json::Value {
     let manifest = record.manifest();
     json!({
         "id": manifest.id().as_str(),
@@ -143,6 +143,6 @@ fn package_value(record: &PackageRecord) -> serde_json::Value {
     })
 }
 
-fn store_error(error: PackageStoreError) -> CliError {
+pub(super) fn store_error(error: PackageStoreError) -> CliError {
     CliError::execution(error.to_string(), json!({}))
 }

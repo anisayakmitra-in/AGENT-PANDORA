@@ -1549,6 +1549,21 @@ fn package_meta_admission_survives_cli_restart_without_runtime_authority() {
     );
 
     let output = fixture
+        .command(&["harness", "list", "--json"])
+        .output()
+        .expect("harness listing should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    let admitted = response["package_records"]
+        .as_array()
+        .expect("harness listing should expose local package records");
+    assert_eq!(admitted.len(), 1);
+    assert_eq!(admitted[0]["id"], "example/meta");
+    assert_eq!(admitted[0]["kind"], "meta_harness");
+    assert_eq!(admitted[0]["state"], "admitted");
+    assert_eq!(admitted[0]["runtime_authority"], false);
+
+    let output = fixture
         .command(&["package", "inspect", "example/meta", "1.0.0", "--json"])
         .output()
         .expect("package inspection should start");

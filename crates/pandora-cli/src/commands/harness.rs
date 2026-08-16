@@ -30,10 +30,23 @@ fn list(args: &[String]) -> Result<CommandResult, CliError> {
         .iter()
         .map(|harness| harness_value(harness.as_ref()))
         .collect::<Vec<_>>();
+    let package_records = super::package::store(&parsed)?
+        .list()
+        .map_err(super::package::store_error)?;
     Ok(success(
         "harness list",
-        json!({"harnesses": values}),
-        format!("{} harnesses available", harnesses.len()),
+        json!({
+            "harnesses": values,
+            "package_records": package_records
+                .iter()
+                .map(super::package::package_value)
+                .collect::<Vec<_>>(),
+        }),
+        format!(
+            "{} harnesses available; {} package record(s)",
+            harnesses.len(),
+            package_records.len()
+        ),
     ))
 }
 

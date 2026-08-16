@@ -45,6 +45,11 @@ pandora package inspect <id> <version>
 The command uses one local manifest as both the declared and embedded record.
 It is a local admission path, not a signature verifier or a registry client.
 
+`pandora harness list --json` keeps built-in Harnesses under `harnesses` and
+reports locally admitted package records separately under `package_records`.
+Those records are discoverable metadata; they are not active Harnesses and do
+not become runnable through discovery.
+
 Meta Harnesses coordinate existing Domain Harnesses. They do not augment a
 constitutional service, execute effects, install packages, or grant permits.
 
