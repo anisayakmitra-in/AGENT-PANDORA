@@ -15,6 +15,7 @@ const MAX_OUTPUT_TOKENS: u32 = 131_072;
 const MAX_MESSAGES: usize = 128;
 const MAX_MESSAGE_BYTES: usize = 1_048_576;
 const MAX_TOOLS: usize = 128;
+const MAX_TOOL_CALL_ID_BYTES: usize = 256;
 const MAX_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_RESPONSE_TEXT_BYTES: usize = 4 * 1024 * 1024;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
@@ -72,6 +73,18 @@ impl ProviderError {
 }
 
 impl std::error::Error for ProviderError {}
+
+fn validate_tool_call_id(value: &str) -> Result<(), ProviderError> {
+    if value.len() > MAX_TOOL_CALL_ID_BYTES
+        || value.trim().is_empty()
+        || value.chars().any(char::is_control)
+    {
+        return Err(ProviderError::InvalidRequest(
+            "tool call ID is invalid".to_owned(),
+        ));
+    }
+    Ok(())
+}
 
 impl From<ManifestError> for ProviderError {
     fn from(error: ManifestError) -> Self {
@@ -174,11 +187,7 @@ impl ChatMessage {
         content: impl Into<String>,
     ) -> Result<Self, ProviderError> {
         let call_id = call_id.into();
-        if call_id.trim().is_empty() || call_id.chars().any(char::is_control) {
-            return Err(ProviderError::InvalidRequest(
-                "tool call ID is invalid".to_owned(),
-            ));
-        }
+        validate_tool_call_id(&call_id)?;
         let content = content.into();
         let content = if content.is_empty() {
             "[empty tool result]".to_owned()
@@ -446,11 +455,7 @@ impl ToolCall {
     ) -> Result<Self, ProviderError> {
         let id = id.into();
         let name = name.into();
-        if id.trim().is_empty() || id.chars().any(char::is_control) {
-            return Err(ProviderError::InvalidRequest(
-                "tool call ID is invalid".to_owned(),
-            ));
-        }
+        validate_tool_call_id(&id)?;
         if name.trim().is_empty() || name.chars().any(char::is_control) {
             return Err(ProviderError::InvalidRequest(
                 "tool name is invalid".to_owned(),
@@ -848,7 +853,10 @@ fn parse_response(bytes: &[u8]) -> Result<ModelResponse, ProviderError> {
     let mut seen_ids = BTreeSet::new();
     let mut tool_calls = Vec::new();
     for call in choice.message.tool_calls.unwrap_or_default() {
-        if call.id.is_empty() || !seen_ids.insert(call.id.clone()) {
+        if validate_tool_call_id(&call.id).is_err() {
+            return Err(ProviderError::InvalidResponse);
+        }
+        if !seen_ids.insert(call.id.clone()) {
             return Err(ProviderError::DuplicateToolCallId { call_id: call.id });
         }
         let arguments = serde_json::from_str(&call.function.arguments).map_err(|_| {
@@ -856,11 +864,14 @@ fn parse_response(bytes: &[u8]) -> Result<ModelResponse, ProviderError> {
                 call_id: call.id.clone(),
             }
         })?;
-        tool_calls.push(ToolCall {
-            id: call.id,
-            name: call.function.name,
-            arguments,
-        });
+        let tool_call =
+            ToolCall::new(call.id, call.function.name, arguments).map_err(|error| match error {
+                ProviderError::InvalidToolArguments { call_id } => {
+                    ProviderError::InvalidToolArguments { call_id }
+                }
+                _ => ProviderError::InvalidResponse,
+            })?;
+        tool_calls.push(tool_call);
     }
     let usage = response
         .usage
@@ -946,6 +957,36 @@ mod tests {
             }
         );
         assert!(!error.to_string().contains("not-json"));
+    }
+
+    #[test]
+    fn tool_call_identifiers_are_bounded_before_transcript_creation() {
+        let identifier = "x".repeat(257);
+
+        assert!(ToolCall::new("x".repeat(256), "workspace.read", json!({})).is_ok());
+        assert!(ToolCall::new(identifier.clone(), "workspace.read", json!({})).is_err());
+        assert!(ChatMessage::tool_result(identifier.clone(), "fixture").is_err());
+
+        let response = json!({
+            "choices": [{
+                "message": {
+                    "content": null,
+                    "tool_calls": [{
+                        "id": identifier,
+                        "type": "function",
+                        "function": {
+                            "name": "workspace.read",
+                            "arguments": "{}"
+                        }
+                    }]
+                }
+            }]
+        });
+
+        assert_eq!(
+            parse_response(&serde_json::to_vec(&response).unwrap()).unwrap_err(),
+            ProviderError::InvalidResponse
+        );
     }
 
     #[test]
