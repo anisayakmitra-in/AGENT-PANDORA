@@ -1,7 +1,8 @@
 use super::{parse_options, run};
 use crate::output::{CliError, CommandResult, success};
 use pandora_harnesses::{CODING_HARNESS_ID, HarnessCatalog};
-use pandora_types::HarnessKind;
+use pandora_runtime::{PackageRecord, PackageState};
+use pandora_types::{HarnessKind, PackageKind};
 use serde_json::json;
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
@@ -31,18 +32,23 @@ fn list(args: &[String]) -> Result<CommandResult, CliError> {
     let package_records = super::package::store(&parsed)?
         .list()
         .map_err(super::package::store_error)?;
+    let admitted_profiles = package_records
+        .iter()
+        .filter_map(admitted_profile_value)
+        .collect::<Vec<_>>();
+    let profile_count = admitted_profiles.len();
     Ok(success(
         "harness list",
         json!({
             "harnesses": values,
+            "admitted_profiles": admitted_profiles,
             "package_records": package_records
                 .iter()
                 .map(super::package::package_value)
                 .collect::<Vec<_>>(),
         }),
         format!(
-            "{} harnesses available; {} package record(s)",
-            harness_count,
+            "{harness_count} built-in Harness(es) available; {profile_count} admitted profile(s); {} package record(s)",
             package_records.len()
         ),
     ))
@@ -172,33 +178,6 @@ fn run_harness(args: &[String]) -> Result<CommandResult, CliError> {
 
 fn harness_value(harness: &dyn pandora_types::Harness) -> serde_json::Value {
     let manifest = harness.manifest();
-    let meta_composition = manifest.meta_composition().map(|composition| {
-        json!({
-            "allowed_domains": composition
-                .allowed_domains()
-                .iter()
-                .map(|domain| domain.as_str())
-                .collect::<Vec<_>>(),
-            "max_handoffs": composition.max_handoffs(),
-        })
-    });
-    let genes = harness
-        .genes()
-        .iter()
-        .map(|gene| {
-            json!({
-                "id": gene.manifest().id(),
-                "version": gene.manifest().version(),
-                "kind": gene.manifest().kind().as_str(),
-                "capabilities": gene
-                    .manifest()
-                    .capabilities()
-                    .iter()
-                    .map(|capability| capability.as_str())
-                    .collect::<Vec<_>>(),
-            })
-        })
-        .collect::<Vec<_>>();
     json!({
         "id": manifest.id(),
         "version": manifest.version(),
@@ -210,8 +189,64 @@ fn harness_value(harness: &dyn pandora_types::Harness) -> serde_json::Value {
         },
         "constitutional_service": manifest.constitutional_service(),
         "constitutional_service_version": manifest.constitutional_service_version(),
-        "meta_composition": meta_composition,
-        "genes": genes,
+        "meta_composition": meta_composition_value(manifest.meta_composition()),
+        "genes": harness
+            .genes()
+            .iter()
+            .map(|gene| {
+                json!({
+                    "id": gene.manifest().id(),
+                    "version": gene.manifest().version(),
+                    "kind": gene.manifest().kind().as_str(),
+                    "capabilities": gene
+                        .manifest()
+                        .capabilities()
+                        .iter()
+                        .map(|capability| capability.as_str())
+                        .collect::<Vec<_>>(),
+                })
+            })
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn admitted_profile_value(record: &PackageRecord) -> Option<serde_json::Value> {
+    if record.state() != PackageState::Admitted {
+        return None;
+    }
+    let manifest = record.manifest();
+    let kind = match manifest.kind() {
+        PackageKind::DomainHarness => HarnessKind::Domain,
+        PackageKind::MetaHarness => HarnessKind::Meta,
+        _ => return None,
+    };
+    Some(json!({
+        "id": manifest.id(),
+        "version": manifest.version(),
+        "kind": kind.as_str(),
+        "package_kind": manifest.kind().as_str(),
+        "execution": {
+            "runnable": kind == HarnessKind::Domain,
+            "mode": execution_mode(kind),
+        },
+        "meta_composition": meta_composition_value(manifest.meta_composition()),
+        "state": record.state().as_str(),
+        "runtime_authority": record.grants_runtime_authority(),
+    }))
+}
+
+fn meta_composition_value(
+    composition: Option<&pandora_types::MetaComposition>,
+) -> Option<serde_json::Value> {
+    composition.map(|composition| {
+        json!({
+            "allowed_domains": composition
+                .allowed_domains()
+                .iter()
+                .map(|domain| domain.as_str())
+                .collect::<Vec<_>>(),
+            "max_handoffs": composition.max_handoffs(),
+        })
     })
 }
 

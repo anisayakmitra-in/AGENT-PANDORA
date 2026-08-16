@@ -117,6 +117,8 @@ Source Harness is inspectable but returns a clear non-runnable error.
 or Meta profile through the same exact-version boundary. Domain profiles show
 their executable Genes; Meta profiles show composition metadata and remain
 non-runnable. Inspection does not enable a profile or grant runtime authority.
+`harness list --json` reports those package-backed Domain and Meta profiles
+separately under `admitted_profiles`; built-ins remain under `harnesses`.
 The built-in `core-source` Harness is available through `harness list` and
 `harness inspect core-source`; it binds the `pandora-runtime` constitutional
 service and cannot be run as a task. Memory, Context, and Observability remain

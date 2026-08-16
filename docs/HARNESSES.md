@@ -81,10 +81,12 @@ confirmed removal is transactional and refuses to remove a package required by
 another admitted package or named by an admitted Meta Harness composition.
 Optional dependencies do not block removal.
 
-`pandora harness list --json` keeps built-in Harnesses under `harnesses` and
-reports locally admitted package records separately under `package_records`.
-Those records are discoverable metadata; they are not active Harnesses and do
-not become runnable through discovery.
+`pandora harness list --json` keeps built-in Harnesses under `harnesses`,
+reports the admitted Domain and Meta subset under `admitted_profiles`, and keeps
+all local package records under `package_records`. Admitted profiles are
+discoverable metadata; discovery does not enable them or grant runtime
+authority. A Domain profile remains selectable only through an explicit,
+exact-version governed run.
 
 Meta Harnesses coordinate existing Domain Harnesses. They do not augment a
 constitutional service, execute effects, install packages, or grant permits.

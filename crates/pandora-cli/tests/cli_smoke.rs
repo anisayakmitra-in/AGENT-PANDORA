@@ -1831,6 +1831,16 @@ fn package_meta_admission_survives_cli_restart_without_runtime_authority() {
     assert_eq!(admitted[0]["kind"], "meta_harness");
     assert_eq!(admitted[0]["state"], "admitted");
     assert_eq!(admitted[0]["runtime_authority"], false);
+    let profiles = response["admitted_profiles"]
+        .as_array()
+        .expect("harness listing should expose admitted profiles");
+    assert_eq!(profiles.len(), 1);
+    assert_eq!(profiles[0]["id"], "example/meta");
+    assert_eq!(profiles[0]["kind"], "meta");
+    assert_eq!(profiles[0]["package_kind"], "meta_harness");
+    assert_eq!(profiles[0]["execution"]["runnable"], false);
+    assert_eq!(profiles[0]["execution"]["mode"], "composition_only");
+    assert_eq!(profiles[0]["runtime_authority"], false);
 
     let output = fixture
         .command(&["package", "inspect", "example/meta", "1.0.0", "--json"])
@@ -1978,6 +1988,23 @@ fn admitted_domain_profile_runs_with_an_explicit_version() {
         .expect("domain profile admission should start");
     assert_success(&output);
     assert_eq!(parse_json(&output)["package"]["state"], "admitted");
+
+    let output = fixture
+        .command(&["harness", "list", "--json"])
+        .output()
+        .expect("harness listing should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    let profiles = response["admitted_profiles"]
+        .as_array()
+        .expect("harness listing should expose admitted profiles");
+    assert_eq!(profiles.len(), 1);
+    assert_eq!(profiles[0]["id"], "example/domain");
+    assert_eq!(profiles[0]["kind"], "domain");
+    assert_eq!(profiles[0]["package_kind"], "domain_harness");
+    assert_eq!(profiles[0]["execution"]["runnable"], true);
+    assert_eq!(profiles[0]["execution"]["mode"], "domain_execution");
+    assert_eq!(profiles[0]["runtime_authority"], false);
 
     let output = fixture
         .command(&[
