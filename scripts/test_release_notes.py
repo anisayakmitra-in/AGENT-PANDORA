@@ -52,3 +52,19 @@ Older notes.
         )
         self.assertIn("body_path: ${{ runner.temp }}/release-notes.md", workflow)
         self.assertNotIn("body_path: CHANGELOG.md", workflow)
+
+    def test_release_workflow_smokes_native_cli_before_uploading_assets(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+
+        smoke_step = workflow.index("- name: Smoke test native CLI")
+        unix_stage = workflow.index("- name: Stage Unix artifact")
+        windows_stage = workflow.index("- name: Stage Windows artifact")
+
+        self.assertLess(smoke_step, unix_stage)
+        self.assertLess(smoke_step, windows_stage)
+        self.assertIn('expected="pandora ${GITHUB_REF_NAME#v}"', workflow)
+        self.assertIn(
+            '$expected = "pandora " + $env:GITHUB_REF_NAME.Substring(1)', workflow
+        )

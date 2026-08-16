@@ -111,6 +111,24 @@ jobs:
       - name: Build native CLI
         run: cargo build --locked --release -p pandora-cli --target ${{ matrix.target }}
 
+      - name: Smoke test native CLI (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="pandora ${GITHUB_REF_NAME#v}"
+          actual="$(target/${{ matrix.target }}/release/${{ matrix.binary }} --version)"
+          test "$actual" = "$expected"
+
+      - name: Smoke test native CLI (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $expected = "pandora " + $env:GITHUB_REF_NAME.Substring(1)
+          $actual = (& "target/${{ matrix.target }}/release/${{ matrix.binary }}" --version).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "native Pandora CLI smoke test failed" }
+          if ($actual -ne $expected) { throw "expected '$expected' but received '$actual'" }
+
       - name: Stage Unix artifact
         if: runner.os != 'Windows'
         shell: bash
