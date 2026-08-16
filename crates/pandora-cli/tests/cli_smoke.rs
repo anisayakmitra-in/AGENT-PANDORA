@@ -655,6 +655,10 @@ fn named_provider_profiles_can_be_selected_without_exposing_credentials() {
             "PANDORA_CODING_API_KEY",
             "--fallback-provider",
             "design",
+            "--input-micros-per-million-tokens",
+            "2000000",
+            "--output-micros-per-million-tokens",
+            "4000000",
             "--json",
         ])
         .output()
@@ -688,6 +692,14 @@ fn named_provider_profiles_can_be_selected_without_exposing_credentials() {
     assert_eq!(design["api_key_env"], "PANDORA_DESIGN_API_KEY");
     assert_eq!(design["active"], true);
     assert_eq!(coding["fallback_provider"], "design");
+    assert_eq!(
+        coding["pricing"]["input_micros_per_million_tokens"],
+        2_000_000
+    );
+    assert_eq!(
+        coding["pricing"]["output_micros_per_million_tokens"],
+        4_000_000
+    );
     assert!(!response.to_string().contains("test-provider-key"));
 }
 

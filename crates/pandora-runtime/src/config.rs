@@ -61,6 +61,41 @@ impl From<std::io::Error> for ConfigError {
 
 pub const DEFAULT_PROVIDER_NAME: &str = "openai-compatible";
 pub const DEFAULT_PROVIDER_API_KEY_ENV: &str = "PANDORA_PROVIDER_API_KEY";
+const TOKENS_PER_MILLION: u128 = 1_000_000;
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ProviderPricing {
+    input_micros_per_million_tokens: u64,
+    output_micros_per_million_tokens: u64,
+}
+
+impl ProviderPricing {
+    pub const fn new(
+        input_micros_per_million_tokens: u64,
+        output_micros_per_million_tokens: u64,
+    ) -> Self {
+        Self {
+            input_micros_per_million_tokens,
+            output_micros_per_million_tokens,
+        }
+    }
+
+    pub const fn input_micros_per_million_tokens(&self) -> u64 {
+        self.input_micros_per_million_tokens
+    }
+
+    pub const fn output_micros_per_million_tokens(&self) -> u64 {
+        self.output_micros_per_million_tokens
+    }
+
+    pub fn cost_micros(&self, input_tokens: u32, output_tokens: u32) -> Option<u64> {
+        let input_cost = u128::from(input_tokens)
+            .checked_mul(u128::from(self.input_micros_per_million_tokens))?;
+        let output_cost = u128::from(output_tokens)
+            .checked_mul(u128::from(self.output_micros_per_million_tokens))?;
+        u64::try_from((input_cost + output_cost) / TOKENS_PER_MILLION).ok()
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProviderProfile {
@@ -69,6 +104,7 @@ pub struct ProviderProfile {
     model: String,
     api_key_env: String,
     fallback_provider: Option<String>,
+    pricing: Option<ProviderPricing>,
 }
 
 impl ProviderProfile {
@@ -97,6 +133,7 @@ impl ProviderProfile {
             model,
             api_key_env,
             fallback_provider: None,
+            pricing: None,
         })
     }
 
@@ -127,6 +164,15 @@ impl ProviderProfile {
 
     pub fn fallback_provider(&self) -> Option<&str> {
         self.fallback_provider.as_deref()
+    }
+
+    pub fn with_pricing(mut self, pricing: ProviderPricing) -> Self {
+        self.pricing = Some(pricing);
+        self
+    }
+
+    pub fn pricing(&self) -> Option<ProviderPricing> {
+        self.pricing
     }
 }
 
@@ -247,6 +293,9 @@ impl RuntimeConfig {
                 if let Some(fallback) = file_profile.fallback_provider {
                     profile = profile.with_fallback_provider(fallback)?;
                 }
+                if let Some(pricing) = file_profile.pricing {
+                    profile = profile.with_pricing(pricing);
+                }
                 Ok((name, profile))
             })
             .collect::<Result<BTreeMap<_, _>, ConfigError>>()?;
@@ -337,6 +386,7 @@ impl RuntimeConfig {
                             model: profile.model.clone(),
                             api_key_env: profile.api_key_env.clone(),
                             fallback_provider: profile.fallback_provider.clone(),
+                            pricing: profile.pricing,
                         },
                     )
                 })
@@ -365,6 +415,21 @@ impl RuntimeConfig {
 
     pub fn provider_profile(&self, name: &str) -> Option<&ProviderProfile> {
         self.provider_profiles.get(name)
+    }
+
+    pub fn provider_cost_micros(
+        &self,
+        name: &str,
+        input_tokens: u32,
+        output_tokens: u32,
+    ) -> Option<u64> {
+        let profile = self.provider_profiles.get(name)?;
+        if profile.fallback_provider().is_some() {
+            return None;
+        }
+        profile
+            .pricing()
+            .and_then(|pricing| pricing.cost_micros(input_tokens, output_tokens))
     }
 
     pub fn set_provider_profile(&mut self, profile: ProviderProfile) {
@@ -444,6 +509,8 @@ struct FileProviderProfile {
     api_key_env: String,
     #[serde(default)]
     fallback_provider: Option<String>,
+    #[serde(default)]
+    pricing: Option<ProviderPricing>,
 }
 
 fn validate_fallbacks(

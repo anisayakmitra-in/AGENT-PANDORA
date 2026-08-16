@@ -1,4 +1,4 @@
-use pandora_runtime::config::{ConfigOverrides, RuntimeConfig};
+use pandora_runtime::config::{ConfigOverrides, ProviderPricing, RuntimeConfig};
 use pandora_runtime::sessions::SessionStore;
 use pandora_types::{
     EventContext, EventId, EventPayload, EventType, PrincipalId, RuntimeEvent, Session, SessionId,
@@ -189,6 +189,68 @@ fn named_provider_profiles_round_trip_and_select() {
             .expect("coding profile should remain configured")
             .fallback_provider(),
         Some("design")
+    );
+}
+
+#[test]
+fn provider_pricing_round_trips_and_calculates_known_cost() {
+    let fixture = Fixture::new("config-provider-pricing");
+    let config_path = fixture.path.join("config.json");
+    fs::write(
+        &config_path,
+        r#"{
+            "providers": {
+                "direct": {
+                    "base_url": "https://provider.example/v1",
+                    "model": "model",
+                    "api_key_env": "PANDORA_PROVIDER_API_KEY",
+                    "pricing": {
+                        "input_micros_per_million_tokens": 2000000,
+                        "output_micros_per_million_tokens": 4000000
+                    }
+                },
+                "fallback": {
+                    "base_url": "https://fallback.example/v1",
+                    "model": "fallback-model",
+                    "api_key_env": "PANDORA_FALLBACK_API_KEY"
+                }
+            },
+            "active_provider": "direct"
+        }"#,
+    )
+    .unwrap();
+
+    let config = RuntimeConfig::from_sources(
+        &ConfigOverrides::default(),
+        &BTreeMap::new(),
+        &config_path,
+        fixture.path.join("default-data"),
+        fixture.path.join("default-workspace"),
+    )
+    .unwrap();
+
+    assert_eq!(
+        config.provider_profile("direct").unwrap().pricing(),
+        Some(ProviderPricing::new(2_000_000, 4_000_000))
+    );
+    assert_eq!(
+        config.provider_cost_micros("direct", 1_000, 500),
+        Some(4_000)
+    );
+    assert_eq!(config.provider_cost_micros("fallback", 1_000, 500), None);
+
+    config.write().unwrap();
+    let reloaded = RuntimeConfig::from_sources(
+        &ConfigOverrides::default(),
+        &BTreeMap::new(),
+        &config_path,
+        fixture.path.join("other-data"),
+        fixture.path.join("other-workspace"),
+    )
+    .unwrap();
+    assert_eq!(
+        reloaded.provider_profile("direct").unwrap().pricing(),
+        Some(ProviderPricing::new(2_000_000, 4_000_000))
     );
 }
 

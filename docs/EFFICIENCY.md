@@ -20,7 +20,12 @@ The engine exposes four separate objectives:
 
 Samples store a task class and target identifier, not prompts, credentials, or hidden reasoning. The rolling window is bounded per target, and rankings use deterministic tie-breakers. The engine only ranks evidence: it cannot execute, authorize, install, or change permissions.
 
-Cost evidence is explicit. A sample without provider pricing is not treated as a zero-cost run and is ranked after samples with known cost for the cost objective.
+Cost evidence is explicit. A run records known cost only when its provider
+profile declares both input and output rates with
+`--input-micros-per-million-tokens` and `--output-micros-per-million-tokens`.
+Missing pricing and fallback-provider runs remain unknown, never zero-cost, and
+are ranked after known-cost samples for the cost objective. Pricing is
+operator-supplied metadata, not inferred from a provider name or response.
 
 The default `AdaptiveEngine::select` path remains score-based for compatibility.
 Evidence-ranked selection is opt-in and falls back to the existing score order for

@@ -46,14 +46,17 @@ keep separate endpoints, models, and credential variables:
 pandora provider set --name coding --provider-url https://coding.example/v1 --model coding-model --api-key-env PANDORA_CODING_API_KEY
 pandora provider set --name design --provider-url https://design.example/v1 --model vision-model --api-key-env PANDORA_DESIGN_API_KEY
 pandora provider set --name coding --provider-url https://coding.example/v1 --model coding-model --fallback-provider design
+pandora provider set --name coding --provider-url https://coding.example/v1 --model coding-model --input-micros-per-million-tokens 2000000 --output-micros-per-million-tokens 4000000
 pandora provider use design
 pandora provider list --json
 pandora provider test --provider design --json
 ```
 
 Use `pandora run --provider coding ...` for a one-run selection. Profiles store
-only endpoint, model, and environment-variable names; Pandora never stores API
-key values in configuration or output. A profile can name one fallback profile.
+only endpoint, model, environment-variable names, and optional declared token
+pricing; Pandora never stores API key values in configuration or output. Pricing
+uses integer micro-units per million input and output tokens. Both rates must be
+provided together. A profile can name one fallback profile.
 Pandora uses it only for credential, transport, timeout, rate-limit, or server
 failures; invalid requests and other client errors return immediately. Fallback
 selection does not grant tools or permissions, and nested fallback chains are

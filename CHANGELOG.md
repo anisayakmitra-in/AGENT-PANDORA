@@ -7,6 +7,8 @@
 - Efficiency ranking can also minimize measured token usage per task class.
 - CLI runs persist bounded token, latency, completion, and explicitly known
   cost evidence; `pandora efficiency rank` exposes read-only rankings.
+- Provider profiles can declare input and output token rates so direct runs
+  record auditable cost evidence; fallback runs remain cost-unknown.
 - Invalid agent tool arguments now return bounded, actionable feedback so a
   provider can repair the call without exposing raw argument values.
 - The terminal TUI can approve or deny a pending effect and resume the exact

@@ -4,7 +4,8 @@ use pandora_provider::{
     ChatMessage, FailoverProvider, HttpProvider, ModelRequest, Provider, ProviderManifest,
 };
 use pandora_runtime::config::{
-    DEFAULT_PROVIDER_API_KEY_ENV, DEFAULT_PROVIDER_NAME, ProviderProfile, RuntimeConfig,
+    DEFAULT_PROVIDER_API_KEY_ENV, DEFAULT_PROVIDER_NAME, ProviderPricing, ProviderProfile,
+    RuntimeConfig,
 };
 use serde_json::json;
 
@@ -103,6 +104,17 @@ fn list(args: &[String]) -> Result<CommandResult, CliError> {
                     "fallback_provider".to_owned(),
                     json!(profile.fallback_provider()),
                 );
+                object.insert(
+                    "pricing".to_owned(),
+                    json!(profile.pricing().map(|pricing| {
+                        json!({
+                            "input_micros_per_million_tokens": pricing
+                                .input_micros_per_million_tokens(),
+                            "output_micros_per_million_tokens": pricing
+                                .output_micros_per_million_tokens(),
+                        })
+                    })),
+                );
             }
             Ok(value)
         })
@@ -130,6 +142,8 @@ fn set(args: &[String]) -> Result<CommandResult, CliError> {
             "model",
             "api-key-env",
             "fallback-provider",
+            "input-micros-per-million-tokens",
+            "output-micros-per-million-tokens",
         ],
     )?;
     if parsed.value("provider-url").is_none() {
@@ -156,6 +170,25 @@ fn set(args: &[String]) -> Result<CommandResult, CliError> {
             .provider_profile(name)
             .and_then(ProviderProfile::fallback_provider)
     });
+    let input_pricing = parsed
+        .value("input-micros-per-million-tokens")
+        .map(|value| parse_pricing(value, "input-micros-per-million-tokens"))
+        .transpose()?;
+    let output_pricing = parsed
+        .value("output-micros-per-million-tokens")
+        .map(|value| parse_pricing(value, "output-micros-per-million-tokens"))
+        .transpose()?;
+    let pricing = match (input_pricing, output_pricing) {
+        (None, None) => config
+            .provider_profile(name)
+            .and_then(ProviderProfile::pricing),
+        (Some(input), Some(output)) => Some(ProviderPricing::new(input, output)),
+        _ => {
+            return Err(CliError::usage(
+                "provider pricing requires both input and output token rates",
+            ));
+        }
+    };
     let mut profile = ProviderProfile::new(
         name,
         parsed
@@ -169,6 +202,9 @@ fn set(args: &[String]) -> Result<CommandResult, CliError> {
         profile = profile
             .with_fallback_provider(fallback_provider)
             .map_err(|error| CliError::configuration(error.to_string(), json!({})))?;
+    }
+    if let Some(pricing) = pricing {
+        profile = profile.with_pricing(pricing);
     }
     config.set_provider_profile(profile);
     config
@@ -185,10 +221,27 @@ fn set(args: &[String]) -> Result<CommandResult, CliError> {
             "fallback_provider": config
                 .provider_profile(name)
                 .and_then(ProviderProfile::fallback_provider),
+            "pricing": config
+                .provider_profile(name)
+                .and_then(ProviderProfile::pricing)
+                .map(|pricing| json!({
+                    "input_micros_per_million_tokens": pricing
+                        .input_micros_per_million_tokens(),
+                    "output_micros_per_million_tokens": pricing
+                        .output_micros_per_million_tokens(),
+                })),
             "active": config.active_provider() == Some(name),
         }),
         format!("Provider {name} configured"),
     ))
+}
+
+fn parse_pricing(value: &str, name: &str) -> Result<u64, CliError> {
+    value.parse::<u64>().map_err(|_| {
+        CliError::usage(format!(
+            "--{name} must be a non-negative integer in micro-units per million tokens"
+        ))
+    })
 }
 
 fn use_provider(args: &[String]) -> Result<CommandResult, CliError> {

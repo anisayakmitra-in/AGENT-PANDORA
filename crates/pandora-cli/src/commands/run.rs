@@ -536,16 +536,35 @@ fn record_agent_efficiency(
         provider.manifest().id(),
         provider.manifest().default_model()
     );
-    let sample = EfficiencySample::new_without_cost(
-        execution_id,
-        task_class,
-        target,
-        u64::from(summary.usage().prompt_tokens()),
-        u64::from(summary.usage().completion_tokens()),
-        latency_ms,
-        completed,
-        timestamp(),
-    );
+    let prompt_tokens = summary.usage().prompt_tokens();
+    let completion_tokens = summary.usage().completion_tokens();
+    let sample = match config.provider_cost_micros(
+        provider.manifest().id().as_str(),
+        prompt_tokens,
+        completion_tokens,
+    ) {
+        Some(cost_micros) => EfficiencySample::new(
+            execution_id,
+            task_class,
+            target,
+            u64::from(prompt_tokens),
+            u64::from(completion_tokens),
+            cost_micros,
+            latency_ms,
+            completed,
+            timestamp(),
+        ),
+        None => EfficiencySample::new_without_cost(
+            execution_id,
+            task_class,
+            target,
+            u64::from(prompt_tokens),
+            u64::from(completion_tokens),
+            latency_ms,
+            completed,
+            timestamp(),
+        ),
+    };
     let Ok(sample) = sample else {
         return false;
     };
