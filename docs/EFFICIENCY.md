@@ -2,7 +2,7 @@
 
 Status: Shipped in the runtime contract.
 
-`EfficiencyEngine` records bounded, task-class metrics for approved execution targets. `ObservabilityEngine` supplies usage and latency measurements; `EvaluationEngine` supplies verified completion outcomes; `EfficiencyEngine` keeps a rolling evidence window; `AdaptiveEngine` may use the resulting ranking when policy permits. Parliament and the reference monitor remain the authority for selection and effects.
+`EfficiencyEngine` records bounded, task-class metrics for approved execution targets. `ObservabilityEngine` supplies usage and latency measurements; `EvaluationEngine` supplies verified completion outcomes; `EfficiencyEngine` keeps a rolling evidence window; `AdaptiveEngine::select_with_efficiency` may use the resulting ranking when policy permits. Parliament and the reference monitor remain the authority for selection and effects.
 
 The engine exposes three separate objectives:
 
@@ -13,3 +13,7 @@ The engine exposes three separate objectives:
 “Certainty” means historical completion evidence for the same bounded task class. It is not model confidence, a guarantee, or a reason to bypass evaluation or policy.
 
 Samples store a task class and target identifier, not prompts, credentials, or hidden reasoning. The rolling window is bounded per target, and rankings use deterministic tie-breakers. The engine only ranks evidence: it cannot execute, authorize, install, or change permissions.
+
+The default `AdaptiveEngine::select` path remains score-based for compatibility.
+Evidence-ranked selection is opt-in and falls back to the existing score order for
+approved candidates without matching history.

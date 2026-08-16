@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `AdaptiveEngine::select_with_efficiency` can opt into bounded cost, latency, or
+  verified-completion ranking while retaining the existing score-based default.
 - Invalid agent tool arguments now return bounded, actionable feedback so a
   provider can repair the call without exposing raw argument values.
 - The terminal TUI can approve or deny a pending effect and resume the exact

@@ -1,22 +1,33 @@
+use crate::efficiency_engine::{EfficiencyEngine, EfficiencyError};
 use pandora_types::{
-    AdaptationDecision, AdaptationPolicy, AdaptationReceipt, AdaptationRequest, Timestamp,
+    AdaptationDecision, AdaptationPolicy, AdaptationReceipt, AdaptationRequest,
+    EfficiencyObjective, EfficiencySummary, Timestamp,
 };
+use std::cmp::Ordering;
 use std::fmt;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AdaptiveError {
     InvalidPolicy(pandora_types::AdaptationContractError),
+    Efficiency(EfficiencyError),
 }
 
 impl fmt::Display for AdaptiveError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidPolicy(error) => error.fmt(formatter),
+            Self::Efficiency(error) => error.fmt(formatter),
         }
     }
 }
 
 impl std::error::Error for AdaptiveError {}
+
+impl From<EfficiencyError> for AdaptiveError {
+    fn from(error: EfficiencyError) -> Self {
+        Self::Efficiency(error)
+    }
+}
 
 pub struct AdaptiveEngine {
     policy: AdaptationPolicy,
@@ -52,6 +63,27 @@ impl AdaptiveEngine {
         request: &AdaptationRequest,
         now: Timestamp,
     ) -> Result<AdaptationResult, AdaptiveError> {
+        self.select_internal(request, now, None)
+    }
+
+    pub fn select_with_efficiency(
+        &self,
+        request: &AdaptationRequest,
+        now: Timestamp,
+        efficiency: &EfficiencyEngine,
+        task_class: &str,
+        objective: EfficiencyObjective,
+    ) -> Result<AdaptationResult, AdaptiveError> {
+        let ranking = efficiency.rank(task_class, objective)?;
+        self.select_internal(request, now, Some(&ranking))
+    }
+
+    fn select_internal(
+        &self,
+        request: &AdaptationRequest,
+        now: Timestamp,
+        efficiency_ranking: Option<&[EfficiencySummary]>,
+    ) -> Result<AdaptationResult, AdaptiveError> {
         let mut eligible = request
             .candidates()
             .iter()
@@ -61,10 +93,13 @@ impl AdaptiveEngine {
             .filter(|candidate| candidate.latency_ms() <= self.policy.max_latency_ms())
             .collect::<Vec<_>>();
         eligible.sort_by(|left, right| {
-            right
-                .score()
-                .cmp(&left.score())
-                .then_with(|| left.id().cmp(right.id()))
+            compare_evidence(
+                left.target().label(),
+                right.target().label(),
+                efficiency_ranking,
+            )
+            .then_with(|| right.score().cmp(&left.score()))
+            .then_with(|| left.id().cmp(right.id()))
         });
 
         let decision = if let Some(candidate) = eligible.first() {
@@ -95,12 +130,34 @@ impl AdaptiveEngine {
     }
 }
 
+fn compare_evidence(
+    left_target: &str,
+    right_target: &str,
+    ranking: Option<&[EfficiencySummary]>,
+) -> Ordering {
+    let Some(ranking) = ranking else {
+        return Ordering::Equal;
+    };
+    let left_rank = ranking
+        .iter()
+        .position(|summary| summary.target() == left_target);
+    let right_rank = ranking
+        .iter()
+        .position(|summary| summary.target() == right_target);
+    match (left_rank, right_rank) {
+        (Some(left), Some(right)) => left.cmp(&right),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use pandora_types::{
-        AdaptationCandidate, AdaptationRequest, AdaptationTarget, ExecutionId, GeneId, HarnessId,
-        RequestDigest, SessionId,
+        AdaptationCandidate, AdaptationRequest, AdaptationTarget, EfficiencyObjective,
+        EfficiencySample, ExecutionId, GeneId, HarnessId, RequestDigest, SessionId,
     };
 
     fn candidate(
@@ -211,5 +268,102 @@ mod tests {
 
         assert!(result.decision().selected().is_none());
         assert!(result.receipt().reason().contains("ceiling"));
+    }
+
+    #[test]
+    fn evidence_ranking_can_prefer_a_lower_cost_target() {
+        let efficiency = EfficiencyEngine::new(8).unwrap();
+        efficiency
+            .record(
+                EfficiencySample::new(
+                    ExecutionId::new("efficiency-1").unwrap(),
+                    "coding",
+                    "cheap",
+                    20,
+                    10,
+                    10,
+                    100,
+                    true,
+                    Timestamp::from_unix_seconds(10),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        efficiency
+            .record(
+                EfficiencySample::new(
+                    ExecutionId::new("efficiency-2").unwrap(),
+                    "coding",
+                    "expensive",
+                    20,
+                    10,
+                    100,
+                    10,
+                    true,
+                    Timestamp::from_unix_seconds(10),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let request = request(vec![
+            candidate(
+                "expensive",
+                AdaptationTarget::Provider("expensive".to_owned()),
+                100,
+                true,
+            ),
+            candidate(
+                "cheap",
+                AdaptationTarget::Provider("cheap".to_owned()),
+                1,
+                true,
+            ),
+        ]);
+
+        let result = AdaptiveEngine::new(AdaptationPolicy::new(7, 4, 500, 100).unwrap())
+            .select_with_efficiency(
+                &request,
+                Timestamp::from_unix_seconds(10),
+                &efficiency,
+                "coding",
+                EfficiencyObjective::LowestCost,
+            )
+            .unwrap();
+
+        assert_eq!(result.decision().selected().unwrap().label(), "cheap");
+    }
+
+    #[test]
+    fn missing_efficiency_evidence_keeps_score_based_selection_for_unmatched_targets() {
+        let efficiency = EfficiencyEngine::new(8).unwrap();
+        let request = request(vec![
+            candidate(
+                "higher-score",
+                AdaptationTarget::Provider("higher-score".to_owned()),
+                100,
+                true,
+            ),
+            candidate(
+                "lower-score",
+                AdaptationTarget::Provider("lower-score".to_owned()),
+                1,
+                true,
+            ),
+        ]);
+
+        let result = AdaptiveEngine::new(AdaptationPolicy::new(7, 4, 500, 100).unwrap())
+            .select_with_efficiency(
+                &request,
+                Timestamp::from_unix_seconds(10),
+                &efficiency,
+                "coding",
+                EfficiencyObjective::HighestCertainty,
+            )
+            .unwrap();
+
+        assert_eq!(
+            result.decision().selected().unwrap().label(),
+            "higher-score"
+        );
     }
 }
