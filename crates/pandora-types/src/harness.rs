@@ -1,5 +1,6 @@
 use crate::gene::Gene;
 use crate::ids::{GeneId, HarnessId, IdError};
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fmt;
@@ -25,7 +26,10 @@ impl HarnessKind {
 pub enum ManifestError {
     InvalidId(IdError),
     EmptyField(&'static str),
+    InvalidVersion,
+    DuplicateOwnedGene,
     MissingConstitutionalService,
+    MissingConstitutionalServiceVersion,
     UnexpectedConstitutionalService,
     MissingMetaComposition,
     UnexpectedMetaComposition,
@@ -39,9 +43,16 @@ impl fmt::Display for ManifestError {
         match self {
             Self::InvalidId(error) => error.fmt(formatter),
             Self::EmptyField(field) => write!(formatter, "{field} cannot be empty"),
+            Self::InvalidVersion => formatter.write_str("version must be valid SemVer"),
+            Self::DuplicateOwnedGene => {
+                formatter.write_str("harness owned Gene IDs must be unique")
+            }
             Self::MissingConstitutionalService => {
                 formatter.write_str("source harness requires one constitutional service")
             }
+            Self::MissingConstitutionalServiceVersion => formatter.write_str(
+                "source harness requires a constitutional service implementation version",
+            ),
             Self::UnexpectedConstitutionalService => {
                 formatter.write_str("only source harnesses may bind a constitutional service")
             }
@@ -118,12 +129,34 @@ impl MetaComposition {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct ConstitutionalServiceBinding {
+    service: String,
+    implementation_version: String,
+}
+
+impl ConstitutionalServiceBinding {
+    fn new(
+        service: impl Into<String>,
+        implementation_version: impl Into<String>,
+    ) -> Result<Self, ManifestError> {
+        let service = service.into();
+        let implementation_version = implementation_version.into();
+        validate_text("constitutional service", &service)?;
+        validate_version(&implementation_version)?;
+        Ok(Self {
+            service,
+            implementation_version,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HarnessManifest {
     id: HarnessId,
     version: String,
     name: String,
     kind: HarnessKind,
-    constitutional_service: Option<String>,
+    constitutional_service: Option<ConstitutionalServiceBinding>,
     owned_genes: Vec<GeneId>,
     meta_composition: Option<MetaComposition>,
 }
@@ -137,12 +170,36 @@ impl HarnessManifest {
         constitutional_service: Option<String>,
         owned_genes: Vec<GeneId>,
     ) -> Result<Self, ManifestError> {
+        if kind == HarnessKind::Source {
+            return if constitutional_service.is_some() {
+                Err(ManifestError::MissingConstitutionalServiceVersion)
+            } else {
+                Err(ManifestError::MissingConstitutionalService)
+            };
+        }
+        if constitutional_service.is_some() {
+            return Err(ManifestError::UnexpectedConstitutionalService);
+        }
+        Self::build(id, version, name, kind, None, owned_genes, None)
+    }
+
+    pub fn new_source(
+        id: impl Into<String>,
+        version: impl Into<String>,
+        name: impl Into<String>,
+        constitutional_service: impl Into<String>,
+        constitutional_service_version: impl Into<String>,
+        owned_genes: Vec<GeneId>,
+    ) -> Result<Self, ManifestError> {
         Self::build(
             id,
             version,
             name,
-            kind,
-            constitutional_service,
+            HarnessKind::Source,
+            Some(ConstitutionalServiceBinding::new(
+                constitutional_service,
+                constitutional_service_version,
+            )?),
             owned_genes,
             None,
         )
@@ -170,18 +227,26 @@ impl HarnessManifest {
         version: impl Into<String>,
         name: impl Into<String>,
         kind: HarnessKind,
-        constitutional_service: Option<String>,
+        constitutional_service: Option<ConstitutionalServiceBinding>,
         owned_genes: Vec<GeneId>,
         meta_composition: Option<MetaComposition>,
     ) -> Result<Self, ManifestError> {
         let id = HarnessId::new(id)?;
         let version = version.into();
         let name = name.into();
-        validate_text("version", &version)?;
+        validate_version(&version)?;
         validate_text("name", &name)?;
 
-        match (kind, constitutional_service.as_deref()) {
-            (HarnessKind::Source, None | Some("")) => {
+        let mut unique_owned_genes = BTreeSet::new();
+        if owned_genes
+            .iter()
+            .any(|gene_id| !unique_owned_genes.insert(gene_id))
+        {
+            return Err(ManifestError::DuplicateOwnedGene);
+        }
+
+        match (kind, constitutional_service.as_ref()) {
+            (HarnessKind::Source, None) => {
                 return Err(ManifestError::MissingConstitutionalService);
             }
             (HarnessKind::Meta | HarnessKind::Domain, Some(_)) => {
@@ -224,7 +289,15 @@ impl HarnessManifest {
     }
 
     pub fn constitutional_service(&self) -> Option<&str> {
-        self.constitutional_service.as_deref()
+        self.constitutional_service
+            .as_ref()
+            .map(|binding| binding.service.as_str())
+    }
+
+    pub fn constitutional_service_version(&self) -> Option<&str> {
+        self.constitutional_service
+            .as_ref()
+            .map(|binding| binding.implementation_version.as_str())
     }
 
     pub fn owned_genes(&self) -> &[GeneId] {
@@ -239,11 +312,25 @@ impl HarnessManifest {
 pub trait Harness: Send + Sync {
     fn manifest(&self) -> &HarnessManifest;
     fn genes(&self) -> &[Box<dyn Gene>];
+
+    fn is_runnable(&self) -> bool {
+        self.manifest().kind() == HarnessKind::Domain && !self.genes().is_empty()
+    }
 }
 
 fn validate_text(field: &'static str, value: &str) -> Result<(), ManifestError> {
     if value.trim().is_empty() {
         return Err(ManifestError::EmptyField(field));
+    }
+    Ok(())
+}
+
+fn validate_version(value: &str) -> Result<(), ManifestError> {
+    if Version::parse(value)
+        .map(|parsed| parsed.to_string() != value)
+        .unwrap_or(true)
+    {
+        return Err(ManifestError::InvalidVersion);
     }
     Ok(())
 }
@@ -265,6 +352,76 @@ mod tests {
         );
 
         assert_eq!(result, Err(ManifestError::MissingMetaComposition));
+    }
+
+    #[test]
+    fn source_harness_requires_an_explicit_service_implementation_version() {
+        let incomplete = HarnessManifest::new(
+            "core-source",
+            "0.1.0",
+            "Pandora Core",
+            HarnessKind::Source,
+            Some("pandora-runtime".to_owned()),
+            Vec::new(),
+        );
+        assert_eq!(
+            incomplete,
+            Err(ManifestError::MissingConstitutionalServiceVersion)
+        );
+
+        let source = HarnessManifest::new_source(
+            "core-source",
+            "0.1.0",
+            "Pandora Core",
+            "pandora-runtime",
+            "2.0.0-alpha.6",
+            Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(source.constitutional_service(), Some("pandora-runtime"));
+        assert_eq!(
+            source.constitutional_service_version(),
+            Some("2.0.0-alpha.6")
+        );
+    }
+
+    #[test]
+    fn harness_identity_rejects_non_semver_versions_and_duplicate_owned_genes() {
+        assert_eq!(
+            HarnessManifest::new(
+                "coding-domain",
+                "release-1",
+                "Coding Domain",
+                HarnessKind::Domain,
+                None,
+                Vec::new(),
+            ),
+            Err(ManifestError::InvalidVersion)
+        );
+        assert_eq!(
+            HarnessManifest::new_source(
+                "core-source",
+                "0.1.0",
+                "Pandora Core",
+                "pandora-runtime",
+                "runtime-release",
+                Vec::new(),
+            ),
+            Err(ManifestError::InvalidVersion)
+        );
+
+        let gene = crate::GeneId::new("workspace.read").unwrap();
+        assert_eq!(
+            HarnessManifest::new(
+                "coding-domain",
+                "1.0.0",
+                "Coding Domain",
+                HarnessKind::Domain,
+                None,
+                vec![gene.clone(), gene],
+            ),
+            Err(ManifestError::DuplicateOwnedGene)
+        );
     }
 
     #[test]

@@ -33,6 +33,11 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Check tag matches workspace version
         shell: bash
         run: |
@@ -48,10 +53,13 @@ jobs:
         run: cargo check --workspace --locked
 
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Run Rust tests
-        run: cargo test --workspace --lib --tests
+        run: cargo test --workspace --lib --tests --locked
+
+      - name: Test npm launcher
+        run: node scripts/test_npm_launcher.js
 
       - name: Run Python tests
         run: python -m unittest discover -s scripts -p "test_*.py" -v
@@ -146,6 +154,11 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
       - name: Download native artifacts
         uses: actions/download-artifact@v4
         with:
@@ -181,6 +194,10 @@ jobs:
         shell: bash
         run: sha256sum dist/* > dist/checksums.txt
 
+      - name: Generate release notes
+        shell: bash
+        run: python scripts/release_notes.py "$GITHUB_REF_NAME" > "$RUNNER_TEMP/release-notes.md"
+
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3.7.0
 
@@ -202,7 +219,7 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          body_path: CHANGELOG.md
+          body_path: ${{ runner.temp }}/release-notes.md
           name: Pandora ${{ github.ref_name }}
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: dist/*

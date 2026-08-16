@@ -1,5 +1,6 @@
 use crate::harness::{HarnessKind, HarnessManifest, MetaComposition};
 use crate::ids::{IdError, PackageId};
+use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -60,6 +61,8 @@ pub enum PackageManifestError {
     InvalidId(IdError),
     EmptyField(&'static str),
     FieldTooLong(&'static str),
+    InvalidVersion,
+    InvalidRuntimeCompatibility,
     InvalidPackageId,
     InvalidHash,
     InvalidKind,
@@ -75,6 +78,10 @@ impl fmt::Display for PackageManifestError {
             Self::InvalidId(error) => error.fmt(formatter),
             Self::EmptyField(field) => write!(formatter, "{field} cannot be empty"),
             Self::FieldTooLong(field) => write!(formatter, "{field} is too long"),
+            Self::InvalidVersion => formatter.write_str("version must be valid SemVer"),
+            Self::InvalidRuntimeCompatibility => formatter.write_str(
+                "runtime compatibility must be a non-wildcard Pandora SemVer requirement",
+            ),
             Self::InvalidPackageId => {
                 formatter.write_str("package id contains an invalid path component")
             }
@@ -119,7 +126,7 @@ impl PackageDependency {
     ) -> Result<Self, PackageManifestError> {
         Ok(Self {
             id: package_id(id)?,
-            version: validate_text("dependency version", version.into())?,
+            version: validate_version(version.into())?,
             optional,
         })
     }
@@ -135,6 +142,14 @@ impl PackageDependency {
     pub fn optional(&self) -> bool {
         self.optional
     }
+
+    fn validate(&self) -> Result<(), PackageManifestError> {
+        package_id(self.id.as_str())?;
+        if validate_version(self.version.clone())? != self.version {
+            return Err(PackageManifestError::InvalidVersion);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -144,13 +159,28 @@ pub struct PackageCompatibility {
 
 impl PackageCompatibility {
     pub fn new(runtime: impl Into<String>) -> Result<Self, PackageManifestError> {
-        Ok(Self {
-            runtime: validate_text("runtime compatibility", runtime.into())?,
-        })
+        let runtime = validate_text("runtime compatibility", runtime.into())?;
+        runtime_requirement(&runtime)?;
+        Ok(Self { runtime })
     }
 
     pub fn runtime(&self) -> &str {
         &self.runtime
+    }
+
+    pub fn matches_runtime(&self, runtime_version: &str) -> Result<bool, PackageManifestError> {
+        let version =
+            Version::parse(runtime_version).map_err(|_| PackageManifestError::InvalidVersion)?;
+        Ok(runtime_requirement(&self.runtime)?.matches(&version))
+    }
+
+    fn validate(&self) -> Result<(), PackageManifestError> {
+        let runtime = validate_text("runtime compatibility", self.runtime.clone())?;
+        if runtime != self.runtime {
+            return Err(PackageManifestError::InvalidRuntimeCompatibility);
+        }
+        runtime_requirement(&runtime)?;
+        Ok(())
     }
 }
 
@@ -175,19 +205,25 @@ impl TrustEvidence {
         signature: Option<String>,
         public_key: Option<String>,
     ) -> Result<Self, PackageManifestError> {
+        let evidence = Self {
+            level,
+            signature,
+            public_key,
+        };
+        evidence.validate()?;
+        Ok(evidence)
+    }
+
+    fn validate(&self) -> Result<(), PackageManifestError> {
         for (field, value) in [
-            ("signature", signature.as_deref()),
-            ("public_key", public_key.as_deref()),
+            ("signature", self.signature.as_deref()),
+            ("public_key", self.public_key.as_deref()),
         ] {
             if value.is_some_and(|value| value.chars().any(char::is_control)) {
                 return Err(PackageManifestError::ControlCharacter(field));
             }
         }
-        Ok(Self {
-            level,
-            signature,
-            public_key,
-        })
+        Ok(())
     }
 
     pub fn unsigned() -> Self {
@@ -241,7 +277,7 @@ impl PackageManifest {
     ) -> Result<Self, PackageManifestError> {
         Self::build(
             package_id(id)?,
-            validate_text("version", version.into())?,
+            validate_version(version.into())?,
             kind,
             validate_text("publisher", publisher.into())?,
             validate_hash(content_hash.into())?,
@@ -267,7 +303,7 @@ impl PackageManifest {
     ) -> Result<Self, PackageManifestError> {
         Self::build(
             package_id(id)?,
-            validate_text("version", version.into())?,
+            validate_version(version.into())?,
             PackageKind::MetaHarness,
             validate_text("publisher", publisher.into())?,
             validate_hash(content_hash.into())?,
@@ -385,6 +421,18 @@ impl PackageManifest {
     }
 
     pub fn validate(&self) -> Result<(), PackageManifestError> {
+        package_id(self.id.as_str())?;
+        if validate_version(self.version.clone())? != self.version {
+            return Err(PackageManifestError::InvalidVersion);
+        }
+        validate_text("publisher", self.publisher.clone())?;
+        validate_hash(self.content_hash.clone())?;
+        for dependency in &self.dependencies {
+            dependency.validate()?;
+        }
+        self.compatibility.validate()?;
+        validate_text("license", self.license.clone())?;
+        self.trust.validate()?;
         match (self.kind, self.meta_composition.as_ref()) {
             (PackageKind::MetaHarness, None) => Err(PackageManifestError::MissingMetaComposition),
             (PackageKind::MetaHarness, Some(composition)) => composition
@@ -433,6 +481,13 @@ fn validate_text(field: &'static str, value: String) -> Result<String, PackageMa
     Ok(trimmed.to_owned())
 }
 
+fn validate_version(value: String) -> Result<String, PackageManifestError> {
+    let value = validate_text("version", value)?;
+    Version::parse(&value)
+        .map(|_| value)
+        .map_err(|_| PackageManifestError::InvalidVersion)
+}
+
 fn validate_hash(value: String) -> Result<String, PackageManifestError> {
     let Some(hex) = value.strip_prefix("sha256:") else {
         return Err(PackageManifestError::InvalidHash);
@@ -441,6 +496,17 @@ fn validate_hash(value: String) -> Result<String, PackageManifestError> {
         return Err(PackageManifestError::InvalidHash);
     }
     Ok(value)
+}
+
+fn runtime_requirement(value: &str) -> Result<VersionReq, PackageManifestError> {
+    let Some(requirement) = value.strip_prefix("pandora") else {
+        return Err(PackageManifestError::InvalidRuntimeCompatibility);
+    };
+    let requirement = requirement.trim();
+    if requirement.is_empty() || requirement == "*" {
+        return Err(PackageManifestError::InvalidRuntimeCompatibility);
+    }
+    VersionReq::parse(requirement).map_err(|_| PackageManifestError::InvalidRuntimeCompatibility)
 }
 
 #[cfg(test)]
@@ -528,6 +594,122 @@ mod tests {
                 TrustEvidence::unsigned(),
             ),
             Err(PackageManifestError::MissingMetaComposition)
+        );
+    }
+
+    #[test]
+    fn package_and_dependency_versions_require_semver() {
+        assert_eq!(
+            PackageDependency::new("publisher/gene", "1.0", false),
+            Err(PackageManifestError::InvalidVersion)
+        );
+
+        let artifact = b"domain";
+        assert_eq!(
+            PackageManifest::new(
+                "publisher/domain",
+                "release-1",
+                PackageKind::DomainHarness,
+                "publisher",
+                hash_artifact(artifact),
+                vec![],
+                PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+                "Apache-2.0",
+                TrustEvidence::unsigned(),
+            ),
+            Err(PackageManifestError::InvalidVersion)
+        );
+    }
+
+    #[test]
+    fn runtime_compatibility_requires_a_pandora_semver_requirement() {
+        assert_eq!(
+            PackageCompatibility::new("other>=2.0.0"),
+            Err(PackageManifestError::InvalidRuntimeCompatibility)
+        );
+        assert_eq!(
+            PackageCompatibility::new("pandora*"),
+            Err(PackageManifestError::InvalidRuntimeCompatibility)
+        );
+
+        let compatibility = PackageCompatibility::new("pandora>=2.0.0-alpha.0, <3.0.0").unwrap();
+        assert!(compatibility.matches_runtime("2.0.0-alpha.6").unwrap());
+        assert!(!compatibility.matches_runtime("3.0.0").unwrap());
+        assert!(
+            !PackageCompatibility::new("pandora>=2.0.0")
+                .unwrap()
+                .matches_runtime("2.0.0-alpha.6")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn package_versions_preserve_prerelease_and_build_metadata() {
+        let artifact = b"gene";
+        let manifest = PackageManifest::new(
+            "publisher/gene",
+            "1.0.0-beta.1+build.5",
+            PackageKind::Gene,
+            "publisher",
+            hash_artifact(artifact),
+            vec![PackageDependency::new("publisher/base", "2.0.0-rc.2+build.9", false).unwrap()],
+            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "Apache-2.0",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+
+        assert_eq!(manifest.version(), "1.0.0-beta.1+build.5");
+        assert_eq!(manifest.dependencies()[0].version(), "2.0.0-rc.2+build.9");
+    }
+
+    #[test]
+    fn deserialized_manifest_cannot_bypass_constructor_validation() {
+        let artifact = b"gene";
+        let manifest = PackageManifest::new(
+            "publisher/gene",
+            "1.0.0",
+            PackageKind::Gene,
+            "publisher",
+            hash_artifact(artifact),
+            Vec::new(),
+            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "Apache-2.0",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+
+        let mut invalid_version = serde_json::to_value(&manifest).unwrap();
+        invalid_version["version"] = serde_json::Value::String("release-1".to_owned());
+        let invalid_version: PackageManifest = serde_json::from_value(invalid_version).unwrap();
+        assert_eq!(
+            invalid_version.validate(),
+            Err(PackageManifestError::InvalidVersion)
+        );
+
+        let mut invalid_dependency = serde_json::to_value(&manifest).unwrap();
+        invalid_dependency["dependencies"] = serde_json::json!([{
+            "id": "publisher/dependency",
+            "version": "1.0",
+            "optional": false,
+        }]);
+        let invalid_dependency: PackageManifest =
+            serde_json::from_value(invalid_dependency).unwrap();
+        assert_eq!(
+            invalid_dependency.validate(),
+            Err(PackageManifestError::InvalidVersion)
+        );
+
+        let mut invalid_compatibility = serde_json::to_value(&manifest).unwrap();
+        invalid_compatibility["compatibility"]["runtime"] =
+            serde_json::Value::String("\u{0000}".to_owned());
+        let invalid_compatibility: PackageManifest =
+            serde_json::from_value(invalid_compatibility).unwrap();
+        assert_eq!(
+            invalid_compatibility.validate(),
+            Err(PackageManifestError::ControlCharacter(
+                "runtime compatibility"
+            ))
         );
     }
 }

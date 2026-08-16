@@ -102,7 +102,9 @@ impl ObservabilityEngine {
             total_latency_ms,
             error_count,
             reliability_bps,
-            (drift_count > 0).then_some((drift_total / drift_count) as u8),
+            drift_total
+                .checked_div(drift_count)
+                .map(|score| score as u8),
         )
     }
 }
@@ -194,5 +196,36 @@ mod tests {
         assert_eq!(snapshot.error_count(), 1);
         assert_eq!(snapshot.reliability_bps(), 0);
         assert!(!format!("{snapshot:?}").contains("raw_prompt"));
+    }
+
+    #[test]
+    fn samples_without_drift_return_no_drift_score() {
+        let event = pandora_types::RuntimeEvent::new(
+            EventId::new("event-1").unwrap(),
+            EventType::EffectCompleted,
+            EventContext::new(
+                TenantId::new("tenant-1").unwrap(),
+                WorkspaceId::new("workspace-1").unwrap(),
+            ),
+            EventPayload::Empty,
+        );
+        let sample = ObservabilitySample::new(
+            "trace-1",
+            "span-1",
+            None,
+            1,
+            event,
+            Timestamp::from_unix_seconds(1),
+            0,
+            0,
+            0,
+            None,
+            None,
+        )
+        .unwrap();
+        let engine = ObservabilityEngine::new();
+        engine.record(sample).unwrap();
+
+        assert_eq!(engine.snapshot().drift_score(), None);
     }
 }

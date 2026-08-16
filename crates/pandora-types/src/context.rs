@@ -50,6 +50,7 @@ impl ContextSource {
 pub enum ContextTrust {
     Constitutional,
     Verified,
+    Admitted,
     Unverified,
 }
 
@@ -58,6 +59,7 @@ impl ContextTrust {
         match self {
             Self::Constitutional => "constitutional",
             Self::Verified => "verified",
+            Self::Admitted => "admitted",
             Self::Unverified => "unverified",
         }
     }

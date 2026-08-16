@@ -1,6 +1,7 @@
 use crate::capability::Capability;
 use crate::effect::{OperationRequest, RequestError};
 use crate::ids::{GeneId, IdError};
+use semver::Version;
 use std::fmt;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -48,6 +49,12 @@ impl GeneManifest {
         if version.trim().is_empty() {
             return Err(GeneError::EmptyField("version"));
         }
+        if Version::parse(&version)
+            .map(|parsed| parsed.to_string() != version)
+            .unwrap_or(true)
+        {
+            return Err(GeneError::InvalidVersion);
+        }
         Ok(Self {
             id,
             version,
@@ -94,6 +101,7 @@ impl GeneInput {
 pub enum GeneError {
     InvalidId(IdError),
     EmptyField(&'static str),
+    InvalidVersion,
     InvalidInput(&'static str),
     Request(RequestError),
 }
@@ -103,6 +111,7 @@ impl fmt::Display for GeneError {
         match self {
             Self::InvalidId(error) => error.fmt(formatter),
             Self::EmptyField(field) => write!(formatter, "{field} cannot be empty"),
+            Self::InvalidVersion => formatter.write_str("version must be valid SemVer"),
             Self::InvalidInput(reason) => formatter.write_str(reason),
             Self::Request(error) => error.fmt(formatter),
         }
@@ -120,4 +129,26 @@ impl From<RequestError> for GeneError {
 pub trait Gene: Send + Sync {
     fn manifest(&self) -> &GeneManifest;
     fn plan(&self, input: &GeneInput) -> Result<Vec<OperationRequest>, GeneError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{GeneError, GeneKind, GeneManifest};
+
+    #[test]
+    fn gene_manifest_requires_exact_semver() {
+        assert_eq!(
+            GeneManifest::new("workspace.read", "release-1", GeneKind::Tool, Vec::new()),
+            Err(GeneError::InvalidVersion)
+        );
+        assert!(
+            GeneManifest::new(
+                "workspace.read",
+                "1.0.0-beta.1+build.5",
+                GeneKind::Tool,
+                Vec::new(),
+            )
+            .is_ok()
+        );
+    }
 }

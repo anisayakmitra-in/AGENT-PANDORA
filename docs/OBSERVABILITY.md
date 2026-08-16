@@ -12,6 +12,6 @@ Irreversible actions remain pending until explicitly approved. Each review expos
 
 ## Observability
 
-`ObservabilityEngine` projects the canonical runtime events into ordered trace and span views. Samples contain correlation IDs, sequence numbers, timestamps, token counts, cost, latency, error codes, and an optional drift score. The snapshot reports reliability and aggregates by trace.
+`ObservabilityEngine` projects the canonical runtime events into ordered trace and span views. Samples can contain correlation IDs, sequence numbers, timestamps, token counts, cost, latency, error codes, and an optional drift score. `pandora session inspect` currently projects timestamped persisted events and reports trace, span, failure, and reliability counts. It reports reliability as unavailable when a session has no timestamped events, and does not invent token, cost, latency, or drift measurements when they were not recorded.
 
 Telemetry has no raw prompt or output field. Debug exports must be redacted before they enter the projection. Runtime events remain the authoritative event stream; observability is a derived view and cannot authorize execution, approve memory promotion, or change policy.

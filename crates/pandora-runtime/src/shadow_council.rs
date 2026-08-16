@@ -1,10 +1,15 @@
+use pandora_harnesses::CODING_HARNESS_ID;
 use pandora_types::{GeneId, HarnessId, TaskIntent};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RoutingError {
+    NoDefaultHarness,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RoutingReason {
     RequestedHarness,
     CodingTask,
-    DefaultDomain,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -35,13 +40,13 @@ impl ShadowCouncil {
         Self
     }
 
-    pub fn select(&self, task: &TaskIntent) -> Selection {
+    pub fn select(&self, task: &TaskIntent) -> Result<Selection, RoutingError> {
         if let Some(harness_id) = task.requested_harness() {
-            return Selection {
+            return Ok(Selection {
                 harness_id: harness_id.clone(),
                 gene_id: task.requested_gene().cloned(),
                 reason: RoutingReason::RequestedHarness,
-            };
+            });
         }
 
         let summary = task.summary().to_ascii_lowercase();
@@ -51,17 +56,16 @@ impl ShadowCouncil {
         ]
         .iter()
         .any(|term| summary.contains(term));
-        let (harness_id, reason) = if is_coding_task {
-            ("coding-domain", RoutingReason::CodingTask)
-        } else {
-            ("general-domain", RoutingReason::DefaultDomain)
-        };
-
-        Selection {
-            harness_id: HarnessId::new(harness_id).expect("built-in harness ID is valid"),
-            gene_id: task.requested_gene().cloned(),
-            reason,
+        if is_coding_task {
+            return Ok(Selection {
+                harness_id: HarnessId::new(CODING_HARNESS_ID)
+                    .expect("built-in harness ID is valid"),
+                gene_id: task.requested_gene().cloned(),
+                reason: RoutingReason::CodingTask,
+            });
         }
+
+        Err(RoutingError::NoDefaultHarness)
     }
 }
 
@@ -75,15 +79,23 @@ impl Default for ShadowCouncil {
 mod tests {
     use pandora_types::TaskIntent;
 
-    use super::ShadowCouncil;
+    use super::{RoutingError, ShadowCouncil};
 
     #[test]
     fn coding_task_selects_the_coding_domain() {
         let council = ShadowCouncil::new();
         let task = TaskIntent::new("Fix the Rust compiler error and run tests").unwrap();
 
-        let selection = council.select(&task);
+        let selection = council.select(&task).unwrap();
 
         assert_eq!(selection.harness_id().as_str(), "coding-domain");
+    }
+
+    #[test]
+    fn unclassified_task_has_no_implicit_harness() {
+        let council = ShadowCouncil::new();
+        let task = TaskIntent::new("summarize the workspace").unwrap();
+
+        assert_eq!(council.select(&task), Err(RoutingError::NoDefaultHarness));
     }
 }

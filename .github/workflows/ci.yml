@@ -32,6 +32,11 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -39,10 +44,13 @@ jobs:
         run: cargo check --workspace --locked
 
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Run Rust tests
-        run: cargo test --workspace --lib --tests
+        run: cargo test --workspace --lib --tests --locked
+
+      - name: Test npm launcher
+        run: node scripts/test_npm_launcher.js
 
       - name: Run Python tests
         run: python -m unittest discover -s scripts -p "test_*.py" -v
@@ -54,4 +62,4 @@ jobs:
         run: python scripts/validate_docs.py
 
       - name: Build release CLI
-        run: cargo build --release -p pandora-cli
+        run: cargo build --release -p pandora-cli --locked

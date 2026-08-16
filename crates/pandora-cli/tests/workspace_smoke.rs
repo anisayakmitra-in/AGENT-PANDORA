@@ -31,3 +31,13 @@ fn cli_help_is_successful_and_lists_the_primary_commands() {
     assert!(stdout.contains("doctor"));
     assert!(output.stderr.is_empty());
 }
+
+#[test]
+fn cli_without_arguments_keeps_noninteractive_automation_explicit() {
+    let output = Command::new(env!("CARGO_BIN_EXE_pandora"))
+        .output()
+        .expect("pandora binary should start");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("usage: pandora"));
+}

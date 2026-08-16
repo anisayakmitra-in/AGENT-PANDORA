@@ -1,4 +1,7 @@
-use pandora_types::{PackageId, PackageKind, PackageManifest, hash_artifact};
+use pandora_harnesses::{CodingGene, builtin_harnesses};
+use pandora_types::{
+    HarnessId, HarnessKind, PackageId, PackageKind, PackageManifest, TrustLevel, hash_artifact,
+};
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -41,9 +44,39 @@ impl PackageRecord {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HarnessRegistryError {
     ManifestMismatch,
-    HashMismatch { expected: String, actual: String },
+    HashMismatch {
+        expected: String,
+        actual: String,
+    },
+    IncompatibleRuntime {
+        required: String,
+        actual: String,
+    },
+    UnverifiedTrustClaim,
     UnsupportedKind(PackageKind),
-    MissingDependency { id: String, version: String },
+    MissingDependency {
+        id: String,
+        version: String,
+    },
+    DomainDependencyNotGene {
+        id: String,
+        version: String,
+        kind: PackageKind,
+    },
+    DomainHarnessRequiresGene,
+    MetaDomainMissing {
+        id: String,
+    },
+    MetaDomainNotDomain {
+        id: String,
+        kind: PackageKind,
+    },
+    AmbiguousMetaDomain {
+        id: String,
+    },
+    ReservedHarnessId {
+        id: String,
+    },
     DuplicateIdentity,
 }
 
@@ -56,6 +89,13 @@ impl fmt::Display for HarnessRegistryError {
             Self::HashMismatch { .. } => {
                 formatter.write_str("package artifact hash does not match its manifest")
             }
+            Self::IncompatibleRuntime { required, actual } => write!(
+                formatter,
+                "package requires {required}, but this Pandora runtime is {actual}"
+            ),
+            Self::UnverifiedTrustClaim => {
+                formatter.write_str("local package admission cannot verify a claimed trust level")
+            }
             Self::UnsupportedKind(kind) => write!(
                 formatter,
                 "package kind {} is not installable",
@@ -66,6 +106,33 @@ impl fmt::Display for HarnessRegistryError {
                     formatter,
                     "required package dependency {id}@{version} is not installed"
                 )
+            }
+            Self::DomainDependencyNotGene { id, version, kind } => write!(
+                formatter,
+                "Domain Harness dependency {id}@{version} is {}, not a Gene",
+                kind.as_str()
+            ),
+            Self::DomainHarnessRequiresGene => {
+                formatter.write_str("Domain Harness packages require a required Gene dependency")
+            }
+            Self::MetaDomainMissing { id } => {
+                write!(formatter, "Meta Harness domain {id} is not admitted")
+            }
+            Self::MetaDomainNotDomain { id, kind } => {
+                write!(
+                    formatter,
+                    "Meta Harness member {id} is {}, not a Domain Harness",
+                    kind.as_str()
+                )
+            }
+            Self::AmbiguousMetaDomain { id } => {
+                write!(
+                    formatter,
+                    "Meta Harness domain {id} resolves to multiple profiles"
+                )
+            }
+            Self::ReservedHarnessId { id } => {
+                write!(formatter, "{id} is reserved by a built-in Harness")
             }
             Self::DuplicateIdentity => {
                 formatter.write_str("package id and version are already installed")
@@ -92,13 +159,7 @@ impl HarnessRegistry {
         embedded: &PackageManifest,
         artifact: &[u8],
     ) -> Result<PackageRecord, HarnessRegistryError> {
-        if declared.validate().is_err()
-            || embedded.validate().is_err()
-            || !declared.identity_matches(embedded)
-            || declared.publisher() != embedded.publisher()
-            || declared.content_hash() != embedded.content_hash()
-            || declared.meta_composition() != embedded.meta_composition()
-        {
+        if declared.validate().is_err() || embedded.validate().is_err() || declared != embedded {
             return Err(HarnessRegistryError::ManifestMismatch);
         }
 
@@ -109,12 +170,36 @@ impl HarnessRegistry {
                 actual,
             });
         }
+        if !embedded
+            .compatibility()
+            .matches_runtime(env!("CARGO_PKG_VERSION"))
+            .map_err(|_| HarnessRegistryError::ManifestMismatch)?
+        {
+            return Err(HarnessRegistryError::IncompatibleRuntime {
+                required: embedded.compatibility().runtime().to_owned(),
+                actual: env!("CARGO_PKG_VERSION").to_owned(),
+            });
+        }
+        if embedded.trust().level() != TrustLevel::Unverified {
+            return Err(HarnessRegistryError::UnverifiedTrustClaim);
+        }
 
         if !matches!(
             embedded.kind(),
-            PackageKind::Gene | PackageKind::MetaHarness
+            PackageKind::Gene | PackageKind::DomainHarness | PackageKind::MetaHarness
         ) {
             return Err(HarnessRegistryError::UnsupportedKind(embedded.kind()));
+        }
+        if matches!(
+            embedded.kind(),
+            PackageKind::DomainHarness | PackageKind::MetaHarness
+        ) && builtin_harnesses()
+            .into_iter()
+            .any(|harness| harness.manifest().id().as_str() == embedded.id().as_str())
+        {
+            return Err(HarnessRegistryError::ReservedHarnessId {
+                id: embedded.id().as_str().to_owned(),
+            });
         }
 
         let key = (
@@ -125,29 +210,61 @@ impl HarnessRegistry {
             return Err(HarnessRegistryError::DuplicateIdentity);
         }
 
-        for dependency in embedded
-            .dependencies()
-            .iter()
-            .filter(|dependency| !dependency.optional())
-        {
+        let mut has_required_gene = false;
+        for dependency in embedded.dependencies() {
             let dependency_key = (
                 dependency.id().as_str().to_owned(),
                 dependency.version().to_owned(),
             );
-            if !self.packages.contains_key(&dependency_key) {
-                return Err(HarnessRegistryError::MissingDependency {
-                    id: dependency.id().as_str().to_owned(),
-                    version: dependency.version().to_owned(),
+            let dependency_kind = self
+                .packages
+                .get(&dependency_key)
+                .map(|record| record.manifest().kind())
+                .or_else(|| {
+                    builtin_gene_available(dependency.id().as_str(), dependency.version())
+                        .then_some(PackageKind::Gene)
                 });
+            match dependency_kind {
+                Some(kind) => {
+                    if embedded.kind() == PackageKind::DomainHarness && kind != PackageKind::Gene {
+                        return Err(HarnessRegistryError::DomainDependencyNotGene {
+                            id: dependency.id().as_str().to_owned(),
+                            version: dependency.version().to_owned(),
+                            kind,
+                        });
+                    }
+                    if embedded.kind() == PackageKind::DomainHarness && !dependency.optional() {
+                        has_required_gene = true;
+                    }
+                }
+                None if !dependency.optional() => {
+                    return Err(HarnessRegistryError::MissingDependency {
+                        id: dependency.id().as_str().to_owned(),
+                        version: dependency.version().to_owned(),
+                    });
+                }
+                None => {}
+            }
+        }
+
+        if embedded.kind() == PackageKind::DomainHarness && !has_required_gene {
+            return Err(HarnessRegistryError::DomainHarnessRequiresGene);
+        }
+        if embedded.kind() == PackageKind::MetaHarness {
+            for domain in embedded
+                .meta_composition()
+                .expect("validated Meta Harness package has a composition")
+                .allowed_domains()
+            {
+                self.require_domain(domain)?;
             }
         }
 
         let record = PackageRecord {
             manifest: embedded.clone(),
-            state: if embedded.kind() == PackageKind::MetaHarness {
-                PackageState::Admitted
-            } else {
-                PackageState::Installed
+            state: match embedded.kind() {
+                PackageKind::MetaHarness | PackageKind::DomainHarness => PackageState::Admitted,
+                _ => PackageState::Installed,
             },
         };
         self.packages.insert(key, record.clone());
@@ -162,6 +279,40 @@ impl HarnessRegistry {
     pub fn list(&self) -> Vec<PackageRecord> {
         self.packages.values().cloned().collect()
     }
+
+    fn require_domain(&self, domain: &HarnessId) -> Result<(), HarnessRegistryError> {
+        let installed = self
+            .packages
+            .values()
+            .filter(|record| record.manifest().id().as_str() == domain.as_str())
+            .collect::<Vec<_>>();
+        let built_in = builtin_harnesses()
+            .into_iter()
+            .find(|harness| harness.manifest().id() == domain)
+            .map(|harness| harness.manifest().kind() == HarnessKind::Domain)
+            .unwrap_or(false);
+
+        match (built_in, installed.as_slice()) {
+            (true, []) => Ok(()),
+            (true, _) | (false, [_, _, ..]) => Err(HarnessRegistryError::AmbiguousMetaDomain {
+                id: domain.as_str().to_owned(),
+            }),
+            (false, []) => Err(HarnessRegistryError::MetaDomainMissing {
+                id: domain.as_str().to_owned(),
+            }),
+            (false, [record]) if record.manifest().kind() == PackageKind::DomainHarness => Ok(()),
+            (false, [record]) => Err(HarnessRegistryError::MetaDomainNotDomain {
+                id: domain.as_str().to_owned(),
+                kind: record.manifest().kind(),
+            }),
+        }
+    }
+}
+
+fn builtin_gene_available(id: &str, version: &str) -> bool {
+    CodingGene::all()
+        .iter()
+        .any(|gene| gene.manifest().id().as_str() == id && gene.manifest().version() == version)
 }
 
 #[cfg(test)]
@@ -169,8 +320,10 @@ mod tests {
     use super::*;
     use pandora_types::{
         HarnessId, MetaComposition, PackageCompatibility, PackageDependency, PackageKind,
-        PackageManifest, TrustEvidence, hash_artifact,
+        PackageManifest, TrustEvidence, TrustLevel, hash_artifact,
     };
+
+    const CURRENT_RUNTIME_REQUIREMENT: &str = concat!("pandora>=", env!("CARGO_PKG_VERSION"));
 
     fn manifest(
         id: &str,
@@ -186,7 +339,7 @@ mod tests {
             "publisher",
             hash_artifact(artifact),
             dependencies,
-            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
             "Apache-2.0",
             TrustEvidence::unsigned(),
         )
@@ -200,7 +353,7 @@ mod tests {
             "publisher",
             hash_artifact(artifact),
             Vec::new(),
-            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
             "Apache-2.0",
             TrustEvidence::unsigned(),
             MetaComposition::new(
@@ -279,6 +432,99 @@ mod tests {
     }
 
     #[test]
+    fn manifest_binding_rejects_dependency_license_and_trust_mismatches() {
+        let artifact = b"gene artifact";
+        let declared = manifest(
+            "publisher/gene",
+            "1.0.0",
+            PackageKind::Gene,
+            Vec::new(),
+            artifact,
+        );
+        let cases = [
+            PackageManifest::new(
+                "publisher/gene",
+                "1.0.0",
+                PackageKind::Gene,
+                "publisher",
+                hash_artifact(artifact),
+                vec![PackageDependency::new("workspace.read", "0.1.0", false).unwrap()],
+                PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
+                "Apache-2.0",
+                TrustEvidence::unsigned(),
+            )
+            .unwrap(),
+            PackageManifest::new(
+                "publisher/gene",
+                "1.0.0",
+                PackageKind::Gene,
+                "publisher",
+                hash_artifact(artifact),
+                Vec::new(),
+                PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
+                "MIT",
+                TrustEvidence::unsigned(),
+            )
+            .unwrap(),
+            PackageManifest::new(
+                "publisher/gene",
+                "1.0.0",
+                PackageKind::Gene,
+                "publisher",
+                hash_artifact(artifact),
+                Vec::new(),
+                PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
+                "Apache-2.0",
+                TrustEvidence::new(
+                    TrustLevel::Verified,
+                    Some("signature".to_owned()),
+                    Some("public-key".to_owned()),
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+        ];
+
+        for embedded in cases {
+            let mut registry = HarnessRegistry::new();
+            assert_eq!(
+                registry.install(&declared, &embedded, artifact),
+                Err(HarnessRegistryError::ManifestMismatch)
+            );
+            assert!(registry.list().is_empty());
+        }
+    }
+
+    #[test]
+    fn claimed_trust_is_rejected_without_a_verification_boundary() {
+        let artifact = b"gene artifact";
+        let package = PackageManifest::new(
+            "publisher/gene",
+            "1.0.0",
+            PackageKind::Gene,
+            "publisher",
+            hash_artifact(artifact),
+            Vec::new(),
+            PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
+            "Apache-2.0",
+            TrustEvidence::new(
+                TrustLevel::Verified,
+                Some("signature".to_owned()),
+                Some("public-key".to_owned()),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let mut registry = HarnessRegistry::new();
+
+        assert_eq!(
+            registry.install(&package, &package, artifact),
+            Err(HarnessRegistryError::UnverifiedTrustClaim)
+        );
+        assert!(registry.list().is_empty());
+    }
+
+    #[test]
     fn hash_mismatch_is_rejected_before_installation() {
         let declared = manifest(
             "publisher/gene",
@@ -297,9 +543,35 @@ mod tests {
     }
 
     #[test]
+    fn incompatible_runtime_is_rejected_before_admission() {
+        let artifact = b"gene artifact";
+        let package = PackageManifest::new(
+            "publisher/gene",
+            "1.0.0",
+            PackageKind::Gene,
+            "publisher",
+            hash_artifact(artifact),
+            Vec::new(),
+            PackageCompatibility::new("pandora>=3.0.0").unwrap(),
+            "Apache-2.0",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+        let mut registry = HarnessRegistry::new();
+
+        assert_eq!(
+            registry.install(&package, &package, artifact),
+            Err(HarnessRegistryError::IncompatibleRuntime {
+                required: "pandora>=3.0.0".to_owned(),
+                actual: env!("CARGO_PKG_VERSION").to_owned(),
+            })
+        );
+        assert!(registry.list().is_empty());
+    }
+
+    #[test]
     fn unsupported_remote_kinds_fail_closed() {
         for kind in [
-            PackageKind::DomainHarness,
             PackageKind::SourceHarness,
             PackageKind::Provider,
             PackageKind::Skill,
@@ -335,6 +607,238 @@ mod tests {
                 .as_str(),
             "coding-domain"
         );
+    }
+
+    #[test]
+    fn custom_meta_profile_rejects_an_unknown_domain() {
+        let artifact = b"meta profile";
+        let package = meta_manifest("publisher/coordination", artifact, &["publisher/domain"]);
+        let mut registry = HarnessRegistry::new();
+
+        assert_eq!(
+            registry.install(&package, &package, artifact),
+            Err(HarnessRegistryError::MetaDomainMissing {
+                id: "publisher/domain".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn custom_meta_profile_rejects_a_non_domain_member() {
+        let gene_artifact = b"gene artifact";
+        let gene = manifest(
+            "publisher/gene",
+            "1.0.0",
+            PackageKind::Gene,
+            vec![],
+            gene_artifact,
+        );
+        let meta_artifact = b"meta profile";
+        let meta = meta_manifest("publisher/coordination", meta_artifact, &["publisher/gene"]);
+        let mut registry = HarnessRegistry::new();
+        registry.install(&gene, &gene, gene_artifact).unwrap();
+
+        assert_eq!(
+            registry.install(&meta, &meta, meta_artifact),
+            Err(HarnessRegistryError::MetaDomainNotDomain {
+                id: "publisher/gene".to_owned(),
+                kind: PackageKind::Gene,
+            })
+        );
+    }
+
+    #[test]
+    fn custom_meta_profile_accepts_one_admitted_domain() {
+        let gene_artifact = b"gene artifact";
+        let gene = manifest(
+            "publisher/gene",
+            "1.0.0",
+            PackageKind::Gene,
+            vec![],
+            gene_artifact,
+        );
+        let domain_artifact = b"domain profile";
+        let domain = manifest(
+            "publisher/domain",
+            "1.0.0",
+            PackageKind::DomainHarness,
+            vec![PackageDependency::new("publisher/gene", "1.0.0", false).unwrap()],
+            domain_artifact,
+        );
+        let meta_artifact = b"meta profile";
+        let meta = meta_manifest(
+            "publisher/coordination",
+            meta_artifact,
+            &["publisher/domain"],
+        );
+        let mut registry = HarnessRegistry::new();
+        registry.install(&gene, &gene, gene_artifact).unwrap();
+        registry.install(&domain, &domain, domain_artifact).unwrap();
+
+        assert_eq!(
+            registry
+                .install(&meta, &meta, meta_artifact)
+                .unwrap()
+                .state(),
+            PackageState::Admitted
+        );
+    }
+
+    #[test]
+    fn custom_meta_profile_rejects_an_ambiguous_domain_id() {
+        let first_artifact = b"first domain profile";
+        let first = manifest(
+            "publisher/domain",
+            "1.0.0",
+            PackageKind::DomainHarness,
+            vec![PackageDependency::new("workspace.read", "0.1.0", false).unwrap()],
+            first_artifact,
+        );
+        let second_artifact = b"second domain profile";
+        let second = manifest(
+            "publisher/domain",
+            "2.0.0",
+            PackageKind::DomainHarness,
+            vec![PackageDependency::new("workspace.read", "0.1.0", false).unwrap()],
+            second_artifact,
+        );
+        let meta_artifact = b"meta profile";
+        let meta = meta_manifest(
+            "publisher/coordination",
+            meta_artifact,
+            &["publisher/domain"],
+        );
+        let mut registry = HarnessRegistry::new();
+        registry.install(&first, &first, first_artifact).unwrap();
+        registry.install(&second, &second, second_artifact).unwrap();
+
+        assert_eq!(
+            registry.install(&meta, &meta, meta_artifact),
+            Err(HarnessRegistryError::AmbiguousMetaDomain {
+                id: "publisher/domain".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn custom_profiles_cannot_shadow_built_in_harness_ids() {
+        let domain_artifact = b"domain profile";
+        let domain = manifest(
+            "coding-domain",
+            "1.0.0",
+            PackageKind::DomainHarness,
+            vec![PackageDependency::new("workspace.read", "0.1.0", false).unwrap()],
+            domain_artifact,
+        );
+        let meta_artifact = b"meta profile";
+        let meta = meta_manifest("coordination-meta", meta_artifact, &["coding-domain"]);
+        let mut registry = HarnessRegistry::new();
+
+        assert_eq!(
+            registry.install(&domain, &domain, domain_artifact),
+            Err(HarnessRegistryError::ReservedHarnessId {
+                id: "coding-domain".to_owned(),
+            })
+        );
+        assert_eq!(
+            registry.install(&meta, &meta, meta_artifact),
+            Err(HarnessRegistryError::ReservedHarnessId {
+                id: "coordination-meta".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn domain_profile_is_admitted_after_its_gene_dependencies_are_installed() {
+        let gene_artifact = b"gene artifact";
+        let gene = manifest(
+            "publisher/gene",
+            "1.0.0",
+            PackageKind::Gene,
+            vec![],
+            gene_artifact,
+        );
+        let profile_artifact = b"domain profile";
+        let profile = manifest(
+            "publisher/domain",
+            "1.0.0",
+            PackageKind::DomainHarness,
+            vec![PackageDependency::new("publisher/gene", "1.0.0", false).unwrap()],
+            profile_artifact,
+        );
+        let mut registry = HarnessRegistry::new();
+        registry.install(&gene, &gene, gene_artifact).unwrap();
+
+        let record = registry
+            .install(&profile, &profile, profile_artifact)
+            .unwrap();
+
+        assert_eq!(record.state(), PackageState::Admitted);
+        assert!(!record.grants_runtime_authority());
+        assert_eq!(record.manifest().kind(), PackageKind::DomainHarness);
+    }
+
+    #[test]
+    fn domain_profile_can_reference_a_built_in_gene_without_a_package_record() {
+        let artifact = b"domain profile";
+        let profile = manifest(
+            "publisher/domain",
+            "1.0.0",
+            PackageKind::DomainHarness,
+            vec![PackageDependency::new("workspace.read", "0.1.0", false).unwrap()],
+            artifact,
+        );
+        let mut registry = HarnessRegistry::new();
+
+        let record = registry.install(&profile, &profile, artifact).unwrap();
+
+        assert_eq!(record.state(), PackageState::Admitted);
+        assert!(!record.grants_runtime_authority());
+    }
+
+    #[test]
+    fn domain_profile_requires_a_required_gene_dependency() {
+        let artifact = b"domain profile";
+        let profile = manifest(
+            "publisher/domain",
+            "1.0.0",
+            PackageKind::DomainHarness,
+            vec![],
+            artifact,
+        );
+        let mut registry = HarnessRegistry::new();
+
+        assert_eq!(
+            registry.install(&profile, &profile, artifact),
+            Err(HarnessRegistryError::DomainHarnessRequiresGene)
+        );
+        assert!(registry.list().is_empty());
+    }
+
+    #[test]
+    fn domain_profile_rejects_a_non_gene_dependency() {
+        let meta_artifact = b"meta profile";
+        let meta = meta_manifest("publisher/meta", meta_artifact, &["coding-domain"]);
+        let profile_artifact = b"domain profile";
+        let profile = manifest(
+            "publisher/domain",
+            "1.0.0",
+            PackageKind::DomainHarness,
+            vec![PackageDependency::new("publisher/meta", "1.0.0", false).unwrap()],
+            profile_artifact,
+        );
+        let mut registry = HarnessRegistry::new();
+        registry.install(&meta, &meta, meta_artifact).unwrap();
+
+        assert_eq!(
+            registry.install(&profile, &profile, profile_artifact),
+            Err(HarnessRegistryError::DomainDependencyNotGene {
+                id: "publisher/meta".to_owned(),
+                version: "1.0.0".to_owned(),
+                kind: PackageKind::MetaHarness,
+            })
+        );
+        assert_eq!(registry.list().len(), 1);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 use pandora_types::{
-    HarnessId, MetaComposition, PackageCompatibility, PackageManifest, TrustEvidence, hash_artifact,
+    HarnessId, MetaComposition, PackageCompatibility, PackageDependency, PackageKind,
+    PackageManifest, TrustEvidence, hash_artifact,
 };
 use serde_json::Value;
 use std::fs;
@@ -184,7 +185,7 @@ fn chat_handles_local_commands_without_provider_configuration() {
         .stdin
         .take()
         .expect("chat should accept input")
-        .write_all(b"/help\n/session\n/quit\n")
+        .write_all(b"/help\n/session\n/approve\n/deny\n/quit\n")
         .expect("chat commands should be written");
 
     let output = child.wait_with_output().expect("chat should finish");
@@ -192,6 +193,7 @@ fn chat_handles_local_commands_without_provider_configuration() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("show chat commands"));
     assert!(stdout.contains("session: not started"));
+    assert!(stdout.contains("approval> no pending approval"));
     assert!(stdout.contains("Chat closed after 0 turn(s)"));
 }
 
@@ -522,6 +524,7 @@ fn session_resume_returns_persisted_events() {
     assert_eq!(response["session_id"], session_id);
     assert_eq!(response["event_count"], 4);
     assert_eq!(response["agent_message_count"], 0);
+    assert_eq!(response["l1_evidence_count"], 1);
 }
 
 #[test]
@@ -553,7 +556,12 @@ fn session_inspect_returns_metadata_without_event_payloads() {
     assert_eq!(response["event_count"], 4);
     assert_eq!(response["agent_message_count"], 0);
     assert_eq!(response["last_event_type"], "effect_completed");
-    assert!(response["last_event_timestamp"].is_null());
+    assert!(response["last_event_timestamp"].as_u64().is_some());
+    assert_eq!(response["observability"]["trace_count"], 1);
+    assert_eq!(response["observability"]["span_count"], 4);
+    assert_eq!(response["observability"]["uninstrumented_event_count"], 0);
+    assert_eq!(response["observability"]["error_count"], 0);
+    assert_eq!(response["observability"]["reliability_bps"], 10_000);
     assert!(response.get("events").is_none());
 }
 
@@ -896,6 +904,17 @@ fn agent_run_executes_a_bounded_read_then_returns_the_final_answer() {
     assert_eq!(response["tool_calls"], 1);
     assert_eq!(response["turn_budget"], 2);
     assert_eq!(response["tool_budget"], 1);
+    assert_eq!(
+        response["context"]["included"],
+        serde_json::json!([
+            "agent.constitution",
+            "agent.skill-boundary",
+            "agent.enabled-skills",
+        ])
+    );
+    assert_eq!(response["context"]["dropped"], serde_json::json!([]));
+    assert_eq!(response["context"]["cacheable"], false);
+    assert!(response["context"]["token_cost"].as_u64().unwrap() > 0);
     assert_eq!(response["output"], "The README says fixture.");
 
     server.join().expect("agent fixture should finish");
@@ -910,6 +929,7 @@ fn agent_session_reuses_persisted_conversation() {
     let server = thread::spawn(move || {
         let mut requests = Vec::new();
         for response in [
+            br#"{"choices":[{"message":{"content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"workspace.read","arguments":"{\"path\":\"README.md\"}"}}]}}],"usage":{"prompt_tokens":4,"completion_tokens":2}}"#.as_slice(),
             br#"{"choices":[{"message":{"content":"first answer"}}]}"#.as_slice(),
             br#"{"choices":[{"message":{"content":"continued answer"}}]}"#.as_slice(),
         ] {
@@ -974,7 +994,9 @@ fn agent_session_reuses_persisted_conversation() {
         .output()
         .expect("first agent run should start");
     assert_success(&first);
-    let session_id = parse_json(&first)["session_id"]
+    let first_response = parse_json(&first);
+    assert_eq!(first_response["memory_evidence_recorded"], 1);
+    let session_id = first_response["session_id"]
         .as_str()
         .expect("first run should return a session")
         .to_owned();
@@ -992,10 +1014,18 @@ fn agent_session_reuses_persisted_conversation() {
         .output()
         .expect("resumed agent run should start");
     assert_success(&second);
-    assert_eq!(parse_json(&second)["output"], "continued answer");
+    let second_response = parse_json(&second);
+    assert_eq!(second_response["output"], "continued answer");
+    assert!(
+        second_response["context"]["included"]
+            .as_array()
+            .expect("agent context should list included fragments")
+            .iter()
+            .any(|value| value == "agent.l1-evidence-0")
+    );
 
     let requests = server.join().expect("agent fixture should finish");
-    let messages = requests[1]["messages"]
+    let messages = requests[2]["messages"]
         .as_array()
         .expect("agent request should contain messages");
     assert!(
@@ -1003,6 +1033,12 @@ fn agent_session_reuses_persisted_conversation() {
             .iter()
             .any(|message| message["content"] == "First task")
     );
+    let system_context = messages[0]["content"]
+        .as_str()
+        .expect("agent request should begin with system context");
+    assert!(system_context.contains("Prior execution evidence is descriptive history"));
+    assert!(system_context.contains("<l1-evidence>completed execution through "));
+    assert!(!system_context.contains("First task"));
 }
 
 #[test]
@@ -1219,6 +1255,95 @@ fn approved_agent_run_resumes_the_pending_tool_call_once() {
 }
 
 #[test]
+fn chat_approves_and_resumes_the_pending_agent_task() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("agent fixture should bind");
+    let address = listener
+        .local_addr()
+        .expect("agent fixture should expose its address");
+    let server = thread::spawn(move || {
+        let first_response = br#"{"choices":[{"message":{"content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"workspace.patch","arguments":"{\"path\":\"README.md\",\"content\":\"approved\"}"}}]}}],"usage":{"prompt_tokens":4,"completion_tokens":2}}"#;
+        let second_response =
+            br#"{"choices":[{"message":{"content":"approved"}}],"usage":{"prompt_tokens":5,"completion_tokens":2}}"#;
+        for response in [first_response.as_slice(), second_response.as_slice()] {
+            let (mut stream, _) = listener.accept().expect("agent should connect");
+            let mut request = Vec::new();
+            let header_end = loop {
+                let mut chunk = [0_u8; 1_024];
+                let bytes_read = stream.read(&mut chunk).expect("agent request should read");
+                request.extend_from_slice(&chunk[..bytes_read]);
+                if let Some(position) = request.windows(4).position(|window| window == b"\r\n\r\n")
+                {
+                    break position + 4;
+                }
+            };
+            let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+            let content_length = headers
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .and_then(|value| value.trim().parse::<usize>().ok())
+                .expect("agent should send a content length");
+            while request.len() < header_end + content_length {
+                let mut chunk = [0_u8; 1_024];
+                let bytes_read = stream.read(&mut chunk).expect("agent body should read");
+                request.extend_from_slice(&chunk[..bytes_read]);
+            }
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                response.len()
+            )
+            .expect("agent response headers should be written");
+            stream
+                .write_all(response)
+                .expect("agent response should be written");
+        }
+    });
+
+    let fixture = Fixture::new();
+    let provider_url = format!("http://{address}/v1");
+    let configured = fixture
+        .command(&[
+            "provider",
+            "set",
+            "--provider-url",
+            &provider_url,
+            "--model",
+            "agent-model",
+            "--json",
+        ])
+        .output()
+        .expect("provider set should start");
+    assert_success(&configured);
+
+    let mut command = fixture.command(&["chat"]);
+    command
+        .env("PANDORA_PROVIDER_API_KEY", "test-agent-key")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().expect("chat should start");
+    child
+        .stdin
+        .take()
+        .expect("chat should accept input")
+        .write_all(b"Update the README\n/approve\n/exit\n")
+        .expect("chat commands should be written");
+
+    let output = child.wait_with_output().expect("chat should finish");
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("approval:"));
+    assert!(stdout.contains("approved"));
+    assert!(!stdout.contains("test-agent-key"));
+    assert_eq!(
+        fs::read_to_string(fixture.workspace.join("README.md")).unwrap(),
+        "approved"
+    );
+
+    server.join().expect("agent fixture should finish");
+}
+
+#[test]
 fn run_plan_uses_structured_provider_output_before_governed_execution() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("planner fixture should bind");
     let address = listener
@@ -1419,6 +1544,9 @@ fn harness_discovery_exposes_the_coding_domain_without_runtime_internals() {
         harness["id"] == "core-source"
             && harness["kind"] == "source"
             && harness["constitutional_service"] == "pandora-runtime"
+            && harness["constitutional_service_version"] == env!("CARGO_PKG_VERSION")
+            && harness["execution"]["runnable"] == false
+            && harness["execution"]["mode"] == "system_augmentation"
     }));
     assert!(
         harnesses
@@ -1430,6 +1558,8 @@ fn harness_discovery_exposes_the_coding_domain_without_runtime_internals() {
         .find(|harness| harness["id"] == "coordination-meta")
         .expect("coordination Meta Harness should be discoverable");
     assert_eq!(meta["kind"], "meta");
+    assert_eq!(meta["execution"]["runnable"], false);
+    assert_eq!(meta["execution"]["mode"], "composition_only");
     assert_eq!(meta["meta_composition"]["max_handoffs"], 8);
     assert_eq!(
         meta["meta_composition"]["allowed_domains"][0],
@@ -1443,9 +1573,14 @@ fn harness_discovery_exposes_the_coding_domain_without_runtime_internals() {
     assert_success(&output);
     let response = parse_json(&output);
     assert_eq!(response["harness"]["kind"], "source");
+    assert_eq!(response["harness"]["execution"]["runnable"], false);
     assert_eq!(
         response["harness"]["constitutional_service"],
         "pandora-runtime"
+    );
+    assert_eq!(
+        response["harness"]["constitutional_service_version"],
+        env!("CARGO_PKG_VERSION")
     );
     assert!(response["harness"]["genes"].as_array().unwrap().is_empty());
 
@@ -1456,6 +1591,7 @@ fn harness_discovery_exposes_the_coding_domain_without_runtime_internals() {
     assert_success(&output);
     let response = parse_json(&output);
     assert_eq!(response["harness"]["kind"], "meta");
+    assert_eq!(response["harness"]["execution"]["runnable"], false);
     assert_eq!(response["harness"]["meta_composition"]["max_handoffs"], 8);
     assert!(response["harness"]["genes"].as_array().unwrap().is_empty());
 
@@ -1466,6 +1602,8 @@ fn harness_discovery_exposes_the_coding_domain_without_runtime_internals() {
     assert_success(&output);
     let response = parse_json(&output);
     assert_eq!(response["harness"]["kind"], "domain");
+    assert_eq!(response["harness"]["execution"]["runnable"], true);
+    assert_eq!(response["harness"]["execution"]["mode"], "domain_execution");
     assert!(response["harness"]["genes"].as_array().unwrap().len() >= 5);
 
     let output = fixture
@@ -1484,6 +1622,23 @@ fn harness_discovery_exposes_the_coding_domain_without_runtime_internals() {
     let response = parse_json(&output);
     assert_eq!(response["code"], "execution_failed");
     assert_eq!(response["message"], "harness 'core-source' is not runnable");
+    assert_eq!(response["details"]["kind"], "source");
+
+    let output = fixture
+        .command(&[
+            "run",
+            "--harness",
+            "core-source",
+            "read:README.md",
+            "--json",
+        ])
+        .output()
+        .expect("direct source harness run should start");
+    assert_eq!(output.status.code(), Some(50));
+    let response = parse_json(&output);
+    assert_eq!(response["code"], "execution_failed");
+    assert_eq!(response["message"], "requested harness is not runnable");
+    assert_eq!(response["details"]["harness_id"], "core-source");
     assert_eq!(response["details"]["kind"], "source");
 
     let output = fixture
@@ -1522,6 +1677,21 @@ fn harness_discovery_exposes_the_coding_domain_without_runtime_internals() {
 }
 
 #[test]
+fn direct_run_rejects_unclassified_tasks_without_a_phantom_harness() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    let output = fixture
+        .command(&["run", "summarize the workspace", "--json"])
+        .output()
+        .expect("direct run should start");
+    assert_eq!(output.status.code(), Some(50));
+    let response = parse_json(&output);
+    assert_eq!(response["code"], "execution_failed");
+    assert_eq!(response["message"], "no default harness is available");
+}
+
+#[test]
 fn package_meta_admission_survives_cli_restart_without_runtime_authority() {
     let fixture = Fixture::new();
     fixture.setup();
@@ -1532,7 +1702,7 @@ fn package_meta_admission_survives_cli_restart_without_runtime_authority() {
         "local-publisher",
         hash_artifact(artifact),
         Vec::new(),
-        PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+        PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
         "Apache-2.0",
         TrustEvidence::unsigned(),
         MetaComposition::new(vec![HarnessId::new("coding-domain").unwrap()], 4).unwrap(),
@@ -1600,6 +1770,191 @@ fn package_meta_admission_survives_cli_restart_without_runtime_authority() {
     assert_success(&output);
     let response = parse_json(&output);
     assert_eq!(response["package"]["state"], "admitted");
+
+    let output = fixture
+        .command(&[
+            "harness",
+            "inspect",
+            "example/meta",
+            "--harness-version",
+            "1.0.0",
+            "--json",
+        ])
+        .output()
+        .expect("Meta profile inspection should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["harness"]["kind"], "meta");
+    assert_eq!(response["harness"]["execution"]["runnable"], false);
+    assert_eq!(response["harness"]["meta_composition"]["max_handoffs"], 4);
+
+    let output = fixture
+        .command(&[
+            "harness",
+            "run",
+            "example/meta",
+            "--harness-version",
+            "1.0.0",
+            "--gene",
+            "workspace.read",
+            "--task",
+            "read:README.md",
+            "--json",
+        ])
+        .output()
+        .expect("Meta profile run should start");
+    assert_eq!(output.status.code(), Some(50));
+    let response = parse_json(&output);
+    assert_eq!(response["code"], "execution_failed");
+    assert_eq!(response["message"], "requested harness is not runnable");
+    assert_eq!(response["details"]["kind"], "meta");
+
+    let output = fixture
+        .command(&["package", "remove", "example/meta", "1.0.0", "--json"])
+        .output()
+        .expect("unconfirmed package removal should start");
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(parse_json(&output)["code"], "usage_error");
+
+    let output = fixture
+        .command(&[
+            "package",
+            "remove",
+            "example/meta",
+            "1.0.0",
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("package removal dry-run should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["dry_run"], true);
+    assert_eq!(response["removed"], false);
+
+    let output = fixture
+        .command(&[
+            "package",
+            "remove",
+            "example/meta",
+            "1.0.0",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("package removal should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["dry_run"], false);
+    assert_eq!(response["removed"], true);
+
+    let output = fixture
+        .command(&["package", "inspect", "example/meta", "1.0.0", "--json"])
+        .output()
+        .expect("removed package inspection should start");
+    assert_eq!(output.status.code(), Some(50));
+    assert_eq!(parse_json(&output)["code"], "execution_failed");
+}
+
+#[test]
+fn admitted_domain_profile_runs_with_an_explicit_version() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let artifact = b"domain profile\n";
+    let manifest = PackageManifest::new(
+        "example/domain",
+        "1.0.0",
+        PackageKind::DomainHarness,
+        "local-publisher",
+        hash_artifact(artifact),
+        vec![PackageDependency::new("workspace.read", "0.1.0", false).unwrap()],
+        PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+        "Apache-2.0",
+        TrustEvidence::unsigned(),
+    )
+    .unwrap();
+    let manifest_path = fixture.root.join("domain.json");
+    let artifact_path = fixture.root.join("domain.artifact");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest should be written"),
+    )
+    .expect("manifest should be written");
+    fs::write(&artifact_path, artifact).expect("artifact should be written");
+
+    let output = fixture
+        .command(&[
+            "package",
+            "admit",
+            "--manifest",
+            manifest_path.to_str().unwrap(),
+            "--artifact",
+            artifact_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("domain profile admission should start");
+    assert_success(&output);
+    assert_eq!(parse_json(&output)["package"]["state"], "admitted");
+
+    let output = fixture
+        .command(&[
+            "harness",
+            "inspect",
+            "example/domain",
+            "--harness-version",
+            "1.0.0",
+            "--json",
+        ])
+        .output()
+        .expect("domain profile inspection should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["harness"]["id"], "example/domain");
+    assert_eq!(response["harness"]["kind"], "domain");
+    assert_eq!(response["harness"]["execution"]["runnable"], true);
+    assert_eq!(response["harness"]["genes"][0]["id"], "workspace.read");
+
+    let output = fixture
+        .command(&[
+            "run",
+            "--harness",
+            "example/domain",
+            "--harness-version",
+            "1.0.0",
+            "--gene",
+            "workspace.read",
+            "read:README.md",
+            "--json",
+        ])
+        .output()
+        .expect("domain profile run should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["status"], "completed");
+    assert_eq!(response["harness_id"], "example/domain");
+    assert_eq!(response["gene_id"], "workspace.read");
+
+    let output = fixture
+        .command(&[
+            "harness",
+            "run",
+            "example/domain",
+            "--harness-version",
+            "1.0.0",
+            "--gene",
+            "workspace.read",
+            "--task",
+            "read:README.md",
+            "--json",
+        ])
+        .output()
+        .expect("custom Domain Harness command should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["command"], "harness run");
+    assert_eq!(response["status"], "completed");
+    assert_eq!(response["harness_id"], "example/domain");
 }
 
 #[test]

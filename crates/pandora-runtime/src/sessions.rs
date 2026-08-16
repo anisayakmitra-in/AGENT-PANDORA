@@ -1,6 +1,7 @@
 use pandora_provider::ChatMessage;
 use pandora_types::{
-    PrincipalId, RuntimeEvent, Session, SessionId, TenantId, Timestamp, WorkspaceId,
+    ContextClassification, MemoryKind, MemoryRecord, MemoryScope, PrincipalId, RuntimeEvent,
+    Session, SessionId, TenantId, Timestamp, WorkspaceId,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::fmt;
@@ -8,11 +9,13 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
-const CURRENT_SCHEMA_VERSION: i64 = 2;
+const CURRENT_SCHEMA_VERSION: i64 = 4;
 const MAX_EVENT_BYTES: usize = 1_048_576;
 const MAX_AGENT_MESSAGE_BYTES: usize = 1_048_576;
 const MAX_AGENT_TRANSCRIPT_BYTES: usize = 8 * 1_048_576;
 const MAX_AGENT_MESSAGES: usize = 256;
+pub const MAX_L1_EVIDENCE_PER_SCOPE: usize = 64;
+pub const MAX_L1_EVIDENCE_CONTEXT_RECORDS: usize = 8;
 
 #[derive(Debug)]
 pub enum SessionError {
@@ -27,6 +30,9 @@ pub enum SessionError {
     ScopeViolation,
     SessionAlreadyExists,
     SessionNotFound,
+    L1EvidenceAlreadyExists,
+    L1EvidenceCapacityExceeded,
+    InvalidL1Evidence,
     UnsupportedSchemaVersion(i64),
 }
 
@@ -50,6 +56,11 @@ impl fmt::Display for SessionError {
             Self::ScopeViolation => formatter.write_str("session is outside the requested scope"),
             Self::SessionAlreadyExists => formatter.write_str("session already exists"),
             Self::SessionNotFound => formatter.write_str("session was not found"),
+            Self::L1EvidenceAlreadyExists => formatter.write_str("L1 evidence already exists"),
+            Self::L1EvidenceCapacityExceeded => {
+                formatter.write_str("L1 evidence capacity is exhausted")
+            }
+            Self::InvalidL1Evidence => formatter.write_str("L1 evidence record is invalid"),
             Self::UnsupportedSchemaVersion(version) => {
                 write!(
                     formatter,
@@ -93,6 +104,8 @@ impl From<serde_json::Error> for SessionError {
 pub struct SessionSnapshot {
     session: Session,
     events: Vec<RuntimeEvent>,
+    event_metadata: Vec<EventMetadata>,
+    l1_evidence_count: usize,
     agent_messages: Vec<ChatMessage>,
 }
 
@@ -105,8 +118,79 @@ impl SessionSnapshot {
         &self.events
     }
 
+    pub fn recorded_events(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = RecordedEvent<'_>> + ExactSizeIterator + '_ {
+        self.events
+            .iter()
+            .zip(&self.event_metadata)
+            .map(|(event, metadata)| RecordedEvent {
+                sequence: metadata.sequence,
+                recorded_at: metadata.recorded_at,
+                event,
+            })
+    }
+
+    pub const fn l1_evidence_count(&self) -> usize {
+        self.l1_evidence_count
+    }
+
     pub fn agent_messages(&self) -> &[ChatMessage] {
         &self.agent_messages
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RecordedEvent<'a> {
+    sequence: u64,
+    recorded_at: Option<Timestamp>,
+    event: &'a RuntimeEvent,
+}
+
+impl RecordedEvent<'_> {
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    pub const fn recorded_at(&self) -> Option<Timestamp> {
+        self.recorded_at
+    }
+
+    pub fn event(&self) -> &RuntimeEvent {
+        self.event
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct EventMetadata {
+    sequence: u64,
+    recorded_at: Option<Timestamp>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct L1EvidenceContext {
+    scope: MemoryScope,
+    records: Vec<MemoryRecord>,
+}
+
+impl L1EvidenceContext {
+    pub const fn len(&self) -> usize {
+        self.records.len()
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
+
+    pub(crate) fn records(&self) -> &[MemoryRecord] {
+        &self.records
+    }
+
+    pub(crate) fn matches(&self, session: &Session, provider: &str) -> bool {
+        self.scope.session_id() == session.id()
+            && self.scope.tenant_id() == session.tenant_id()
+            && self.scope.workspace_id() == session.workspace_id()
+            && self.scope.provider() == provider
     }
 }
 
@@ -172,16 +256,43 @@ impl SessionStore {
             load_session(&connection, session_id)?.ok_or(SessionError::SessionNotFound)?;
         ensure_scope(&session, principal_id, tenant_id, workspace_id)?;
         let mut statement = connection.prepare(
-            "SELECT event_json FROM session_events
+            "SELECT sequence, event_json, recorded_at FROM session_events
              WHERE session_id = ?1 ORDER BY sequence ASC",
         )?;
-        let rows =
-            statement.query_map(params![session_id.as_str()], |row| row.get::<_, String>(0))?;
+        let rows = statement.query_map(params![session_id.as_str()], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<i64>>(2)?,
+            ))
+        })?;
         let mut events = Vec::new();
+        let mut event_metadata = Vec::new();
         for row in rows {
-            let serialized = row?;
-            events.push(serde_json::from_str(&serialized).map_err(SessionError::Serialization)?);
+            let (sequence, serialized, recorded_at) = row?;
+            let event: RuntimeEvent =
+                serde_json::from_str(&serialized).map_err(SessionError::Serialization)?;
+            let sequence = u64::try_from(sequence).map_err(|_| SessionError::CorruptRecord)?;
+            let recorded_at = recorded_at
+                .map(|value| {
+                    u64::try_from(value)
+                        .map(Timestamp::from_unix_seconds)
+                        .map_err(|_| SessionError::CorruptRecord)
+                })
+                .transpose()?;
+            events.push(event);
+            event_metadata.push(EventMetadata {
+                sequence,
+                recorded_at,
+            });
         }
+        let l1_evidence_count = connection.query_row(
+            "SELECT COUNT(*) FROM session_l1_evidence WHERE session_id = ?1",
+            params![session_id.as_str()],
+            |row| row.get::<_, i64>(0),
+        )?;
+        let l1_evidence_count =
+            usize::try_from(l1_evidence_count).map_err(|_| SessionError::CorruptRecord)?;
         let mut statement = connection.prepare(
             "SELECT message_json FROM agent_messages
              WHERE session_id = ?1 ORDER BY sequence ASC",
@@ -197,6 +308,8 @@ impl SessionStore {
         Ok(SessionSnapshot {
             session,
             events,
+            event_metadata,
+            l1_evidence_count,
             agent_messages,
         })
     }
@@ -209,6 +322,44 @@ impl SessionStore {
         workspace_id: &WorkspaceId,
         event: &RuntimeEvent,
     ) -> Result<(), SessionError> {
+        self.append_event_recorded_at(
+            session_id,
+            principal_id,
+            tenant_id,
+            workspace_id,
+            event,
+            None,
+        )
+    }
+
+    pub fn append_event_at(
+        &self,
+        session_id: &SessionId,
+        principal_id: &PrincipalId,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        event: &RuntimeEvent,
+        recorded_at: Timestamp,
+    ) -> Result<(), SessionError> {
+        self.append_event_recorded_at(
+            session_id,
+            principal_id,
+            tenant_id,
+            workspace_id,
+            event,
+            Some(recorded_at),
+        )
+    }
+
+    fn append_event_recorded_at(
+        &self,
+        session_id: &SessionId,
+        principal_id: &PrincipalId,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        event: &RuntimeEvent,
+        recorded_at: Option<Timestamp>,
+    ) -> Result<(), SessionError> {
         let serialized = serde_json::to_vec(event)?;
         if serialized.len() > MAX_EVENT_BYTES {
             return Err(SessionError::EventTooLarge);
@@ -217,14 +368,144 @@ impl SessionStore {
         let session =
             load_session(&connection, session_id)?.ok_or(SessionError::SessionNotFound)?;
         ensure_scope(&session, principal_id, tenant_id, workspace_id)?;
+        let recorded_at = recorded_at
+            .map(|value| {
+                i64::try_from(value.as_unix_seconds()).map_err(|_| SessionError::CorruptRecord)
+            })
+            .transpose()?;
         connection.execute(
-            "INSERT INTO session_events (session_id, event_json) VALUES (?1, ?2)",
+            "INSERT INTO session_events (session_id, event_json, recorded_at) VALUES (?1, ?2, ?3)",
             params![
                 session_id.as_str(),
-                String::from_utf8(serialized).map_err(|_| SessionError::CorruptRecord)?
+                String::from_utf8(serialized).map_err(|_| SessionError::CorruptRecord)?,
+                recorded_at,
             ],
         )?;
         Ok(())
+    }
+
+    pub fn record_l1_evidence(
+        &self,
+        principal_id: &PrincipalId,
+        record: &MemoryRecord,
+    ) -> Result<(), SessionError> {
+        if record.tier() != pandora_types::MemoryTier::L1
+            || record.kind() != MemoryKind::ExecutionEvidence
+            || record.classification() != ContextClassification::Internal
+            || !is_canonical_l1_execution_evidence(record)
+        {
+            return Err(SessionError::InvalidL1Evidence);
+        }
+        let scope = record.scope();
+        let mut connection = self.lock()?;
+        let session =
+            load_session(&connection, scope.session_id())?.ok_or(SessionError::SessionNotFound)?;
+        ensure_scope(
+            &session,
+            principal_id,
+            scope.tenant_id(),
+            scope.workspace_id(),
+        )?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let count = transaction.query_row(
+            "SELECT COUNT(*) FROM session_l1_evidence
+             WHERE session_id = ?1 AND provider = ?2",
+            params![scope.session_id().as_str(), scope.provider()],
+            |row| row.get::<_, i64>(0),
+        )?;
+        let count = usize::try_from(count).map_err(|_| SessionError::CorruptRecord)?;
+        if count >= MAX_L1_EVIDENCE_PER_SCOPE {
+            return Err(SessionError::L1EvidenceCapacityExceeded);
+        }
+        let result = transaction.execute(
+            "INSERT INTO session_l1_evidence
+             (session_id, provider, memory_id, summary, created_at, provenance)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                scope.session_id().as_str(),
+                scope.provider(),
+                record.id().as_str(),
+                record.summary(),
+                i64::try_from(record.created_at().as_unix_seconds())
+                    .map_err(|_| SessionError::CorruptRecord)?,
+                record.provenance(),
+            ],
+        );
+        match result {
+            Ok(_) => transaction.commit().map_err(SessionError::Database),
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if error.code == rusqlite::ErrorCode::ConstraintViolation =>
+            {
+                Err(SessionError::L1EvidenceAlreadyExists)
+            }
+            Err(error) => Err(SessionError::Database(error)),
+        }
+    }
+
+    pub fn l1_evidence_context(
+        &self,
+        session_id: &SessionId,
+        principal_id: &PrincipalId,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        provider: impl Into<String>,
+    ) -> Result<L1EvidenceContext, SessionError> {
+        let scope = MemoryScope::new(
+            tenant_id.clone(),
+            workspace_id.clone(),
+            session_id.clone(),
+            provider,
+        )
+        .map_err(|_| SessionError::InvalidL1Evidence)?;
+        let connection = self.lock()?;
+        let session =
+            load_session(&connection, session_id)?.ok_or(SessionError::SessionNotFound)?;
+        ensure_scope(&session, principal_id, tenant_id, workspace_id)?;
+        let mut statement = connection.prepare(
+            "SELECT memory_id, summary, created_at, provenance
+             FROM session_l1_evidence
+             WHERE session_id = ?1 AND provider = ?2
+             ORDER BY created_at DESC, memory_id DESC
+             LIMIT ?3",
+        )?;
+        let rows = statement.query_map(
+            params![
+                session_id.as_str(),
+                scope.provider(),
+                i64::try_from(MAX_L1_EVIDENCE_CONTEXT_RECORDS)
+                    .map_err(|_| SessionError::CorruptRecord)?,
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        )?;
+        let mut records = Vec::new();
+        for row in rows {
+            let (id, summary, created_at, provenance) = row?;
+            let created_at = u64::try_from(created_at)
+                .map(Timestamp::from_unix_seconds)
+                .map_err(|_| SessionError::CorruptRecord)?;
+            let record = MemoryRecord::new_l1(
+                id,
+                MemoryKind::ExecutionEvidence,
+                scope.clone(),
+                summary,
+                ContextClassification::Internal,
+                created_at,
+                provenance,
+            )
+            .map_err(|_| SessionError::CorruptRecord)?;
+            if !is_canonical_l1_execution_evidence(&record) {
+                return Err(SessionError::CorruptRecord);
+            }
+            records.push(record);
+        }
+        Ok(L1EvidenceContext { scope, records })
     }
 
     pub fn save_agent_transcript(
@@ -353,6 +634,30 @@ fn migrate(connection: &mut Connection) -> Result<(), SessionError> {
              CREATE INDEX agent_messages_session_idx ON agent_messages(session_id, sequence);
              INSERT INTO schema_migrations (version, applied_at) VALUES (2, strftime('%s', 'now'));",
         )?;
+        version = 2;
+    }
+    if version == 2 {
+        transaction.execute_batch(
+            "ALTER TABLE session_events ADD COLUMN recorded_at INTEGER CHECK (recorded_at >= 0);
+             INSERT INTO schema_migrations (version, applied_at) VALUES (3, strftime('%s', 'now'));",
+        )?;
+        version = 3;
+    }
+    if version == 3 {
+        transaction.execute_batch(
+            "CREATE TABLE session_l1_evidence (
+                 session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                 provider TEXT NOT NULL,
+                 memory_id TEXT NOT NULL,
+                 summary TEXT NOT NULL,
+                 created_at INTEGER NOT NULL CHECK (created_at >= 0),
+                 provenance TEXT NOT NULL,
+                 PRIMARY KEY (session_id, provider, memory_id)
+             );
+             CREATE INDEX session_l1_evidence_scope_idx
+                 ON session_l1_evidence(session_id, provider, created_at);
+             INSERT INTO schema_migrations (version, applied_at) VALUES (4, strftime('%s', 'now'));",
+        )?;
     }
     transaction.commit()?;
     Ok(())
@@ -408,6 +713,21 @@ fn ensure_scope(
         return Err(SessionError::ScopeViolation);
     }
     Ok(())
+}
+
+fn is_canonical_l1_execution_evidence(record: &MemoryRecord) -> bool {
+    let Some((status, target)) = record.summary().split_once(" execution through ") else {
+        return false;
+    };
+    let Some((harness, gene)) = target.rsplit_once('/') else {
+        return false;
+    };
+    matches!(
+        status,
+        "completed" | "denied" | "approval_required" | "failed"
+    ) && !harness.is_empty()
+        && !gene.is_empty()
+        && record.provenance() == format!("execution:{}", record.id())
 }
 
 fn set_private_permissions(path: &Path) -> Result<(), SessionError> {

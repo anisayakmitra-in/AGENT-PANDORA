@@ -16,6 +16,12 @@ pandora help
 Both forms print the command surface and exit successfully. Add `--json` when
 the help text needs to be consumed by an installer or another tool.
 
+In a real interactive terminal, a bare `pandora` invocation runs the existing
+setup wizard when its configuration file is missing, then opens the same
+Ratatui client as `pandora tui`. A malformed configuration fails rather than
+being replaced. A bare noninteractive invocation, including `pandora --json`,
+returns the normal usage error rather than entering a UI.
+
 ```text
 pandora setup --provider-url https://provider.example/v1 --model gpt-5
 pandora setup --interactive
@@ -37,7 +43,8 @@ read-only tasks and reports the provider check as `not_configured`; configure a
 provider before running model-backed tasks.
 
 `provider test` sends one bounded request using the active profile's credential
-environment variable and reports the selected model, response, and token usage.
+environment variable through the provider permit boundary and reports the
+selected model, response, and token usage.
 Use `pandora provider set --provider-url <url> --model <model>` to configure the
 backward-compatible `openai-compatible` profile. Multiple provider profiles can
 keep separate endpoints, models, and credential variables:
@@ -85,29 +92,51 @@ pandora approval resolve <approval-id> --allow
 
 Read-only work can complete without approval. Writes and process effects stop at
 the approval boundary and expose an inspectable, redacted request subject.
-`--harness` selects an installed Harness by ID; `coding` is an alias for the
-built-in `coding-domain` Harness. The runtime rejects an unknown or unsupported
-Harness before Gene planning.
+`--harness` selects a built-in Harness or an admitted package profile by ID;
+`coding` is an alias for the built-in `coding-domain` Harness. Package-backed
+Domain profiles require the exact `--harness-version <version>` value. The
+runtime rejects an unknown, unsupported, or unavailable profile before Gene
+planning.
+Direct `run` uses the Coding Domain Harness only for recognized action prefixes
+such as `read:`, `search:`, `patch:`, `verify:`, and `review:`. Natural-language
+tasks require `run --agent`; Pandora does not silently route them to an
+unregistered default Harness.
 `harness run` accepts the same canonical catalog IDs and only runs a Domain
-Harness with executable Genes. A metadata-only Source Harness is inspectable but
-returns a clear non-runnable error.
+Harness with executable Genes. A package-backed profile is assembled only from
+matching built-in Genes; its artifact is never loaded as code. A metadata-only
+Source Harness is inspectable but returns a clear non-runnable error.
+`harness inspect <id> --harness-version <version>` resolves an admitted Domain
+or Meta profile through the same exact-version boundary. Domain profiles show
+their executable Genes; Meta profiles show composition metadata and remain
+non-runnable. Inspection does not enable a profile or grant runtime authority.
 The built-in `core-source` Harness is available through `harness list` and
 `harness inspect core-source`; it binds the `pandora-runtime` constitutional
-service and cannot be run as a task.
+service and cannot be run as a task. Memory, Context, and Observability remain
+internal engines in this release rather than separately installable Source
+Harnesses.
 `search:<query>` scans regular files under the configured workspace within the
 runtime's entry and file-size limits, does not follow symlinks, and returns
 matching paths with forward-slash separators.
 After an operator approves a write, rerun the exact task with its approval ID.
 The approval is bound to the original session, execution, Gene, and request
 digest, is consumed atomically, and cannot be replayed for another task.
-`session inspect` returns scoped session metadata and bounded counts without
-returning event payloads. Use `session resume` when the full bounded transcript
-is required.
+`session inspect` returns scoped session metadata, bounded event counts, and a
+derived observability summary without returning event payloads. It also reports
+the count of bounded, redacted L1 execution-evidence records without exposing
+their content. New CLI events include their recorded time; older events remain
+explicitly untimestamped. `session resume` returns the same evidence count with
+the full bounded transcript.
+
+Agent runs retrieve at most eight canonical L1 execution-evidence records from
+the exact same session and provider. The context receipt lists generated record
+identifiers only; evidence stays descriptive and non-cacheable.
 
 `chat` is a line-oriented interactive agent session. Type `/help` for the local
-commands, `/session` to print the active session ID, and `/exit` or `/quit` to
-close it. Each other line is sent through the same bounded AgentLoop and
-governed execution path as `run --agent`; the session is reused for later
+commands, `/session` to print the active session ID, `/approve` to approve and
+resume the pending task, `/deny` to reject it, and `/exit` or `/quit` to close
+it. Inspect the returned approval ID with `pandora approval inspect <id>`
+before approving. Each other line is sent through the same bounded AgentLoop
+and governed execution path as `run --agent`; the session is reused for later
 turns. Chat output is intended for terminals and rejects `--json`.
 `tui` opens the full-screen terminal client in an interactive terminal. It uses
 the same session, provider, AgentLoop, approval, and effect-policy path as
@@ -119,12 +148,14 @@ in-memory transcript and task history are bounded; the session store remains
 the source for later resume.
 The TUI requires a real terminal and rejects `--json` and positional tasks.
 `run --plan` sends the request to the active or explicitly selected provider as a bounded,
-tool-free planning call. Only a schema-validated task intent is passed to the
-runtime; the model cannot execute tools or grant permissions. Configure the
-active profile with `pandora provider set` and provide the environment variable
-named by that profile for planning.
+tool-free planning call. The planning request passes through the runtime's
+`provider.invoke` permit boundary. Only a schema-validated task intent is passed
+to the runtime; the model cannot execute tools or grant permissions. Configure
+the active profile with `pandora provider set` and provide the environment
+variable named by that profile for planning.
 
-`run --agent` enables the bounded multi-turn loop. The model can call
+`run --agent` enables the bounded multi-turn loop. Each model request passes
+through the same provider permit boundary. The model can call
 `workspace.read`, `workspace.search`, `workspace.patch`, and `workspace.verify`.
 Each call is validated by the ToolEngine, routed through the same governed
 runtime, and recorded in the session. Read and search use the current read-only
@@ -188,6 +219,10 @@ pandora skill disable <id>
 pandora skill remove <id> --dry-run
 pandora skill remove <id> --yes
 pandora skill restore <id>
+pandora package list
+pandora package inspect <id> <version>
+pandora package remove <id> <version> --dry-run
+pandora package remove <id> <version> --yes
 pandora orchestration roles
 pandora strategies list
 pandora completions powershell
@@ -216,6 +251,13 @@ root. `remove --dry-run` previews the skill path; `remove --yes` moves the
 skill into the reversible removal area, and `restore` returns it as disabled.
 These commands do not execute scripts; script execution remains available only
 through the governed ToolEngine path.
+
+Package records are addressed by exact ID and strict SemVer version. `package remove
+--dry-run` reports the admitted record without changing the local store;
+`package remove --yes` removes it transactionally. Removal is refused when
+another admitted package has a required dependency on the target, while
+optional dependencies do not block removal. Package artifacts are local
+admission evidence and are not executable authority.
 
 ## Configuration migration
 

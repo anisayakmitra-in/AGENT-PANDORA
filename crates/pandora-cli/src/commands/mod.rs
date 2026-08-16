@@ -6,6 +6,7 @@ use pandora_types::{
 };
 use serde_json::json;
 use std::collections::BTreeMap;
+use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -48,6 +49,9 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         .into_iter()
         .filter(|argument| argument != "--json")
         .collect::<Vec<_>>();
+    if starts_interactive_tui(&args, json_requested, interactive_terminal()) {
+        return open_interactive_default();
+    }
     let command = args
         .first()
         .ok_or_else(|| CliError::usage(usage()))?
@@ -89,6 +93,30 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
             usage()
         ))),
     }
+}
+
+fn starts_interactive_tui(
+    args: &[String],
+    json_requested: bool,
+    interactive_terminal: bool,
+) -> bool {
+    args.is_empty() && !json_requested && interactive_terminal
+}
+
+fn interactive_terminal() -> bool {
+    io::stdin().is_terminal() && io::stdout().is_terminal()
+}
+
+fn open_interactive_default() -> Result<CommandResult, CliError> {
+    let config = RuntimeConfig::load(ConfigOverrides::default()).map_err(config_error)?;
+    if needs_interactive_setup(config.config_path().is_file()) {
+        setup::execute(&["--interactive".to_owned()])?;
+    }
+    tui::execute(&[])
+}
+
+fn needs_interactive_setup(config_exists: bool) -> bool {
+    !config_exists
 }
 
 pub(crate) fn parse_options(args: &[String], allowed: &[&str]) -> Result<ParsedArgs, CliError> {
@@ -251,13 +279,13 @@ fn usage() -> &'static str {
 commands:
   help (or --help)
   setup [--interactive] [--provider-url <url>] [--model <model>]
-  run [--provider <name>] [--agent] [--max-turns <n>] [--max-tools <n>] [--harness <id>] [--gene <id>] [--plan] [--model <model>] [--approval <id>] [--optimize <cost|latency|tokens|certainty>] <task>
+  run [--provider <name>] [--agent] [--max-turns <n>] [--max-tools <n>] [--harness <id>] [--harness-version <version>] [--gene <id>] [--plan] [--model <model>] [--approval <id>] [--optimize <cost|latency|tokens|certainty>] <task>
   chat [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>]
   tui [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>]
-  harness list|inspect|run
+  harness list|inspect|run [--harness-version <version>]
   session list|resume|inspect <id>
   skill list|inspect|install|enable|disable|suspend|remove|restore <id-or-path>
-  package admit --manifest <path> --artifact <path> | list | inspect <id> <version>
+  package admit --manifest <path> --artifact <path> | list | inspect <id> <version> | remove <id> <version> [--dry-run|--yes]
   tool list|inspect <id>
   approval list|inspect|resolve
   provider list|set|use|test
@@ -308,4 +336,23 @@ fn strategies(args: &[String]) -> Result<CommandResult, CliError> {
         }),
         "react, reflexion, lats (research)",
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{needs_interactive_setup, starts_interactive_tui};
+
+    #[test]
+    fn empty_argv_opens_tui_only_for_interactive_human_sessions() {
+        assert!(starts_interactive_tui(&[], false, true));
+        assert!(!starts_interactive_tui(&[], true, true));
+        assert!(!starts_interactive_tui(&[], false, false));
+        assert!(!starts_interactive_tui(&["run".to_owned()], false, true));
+    }
+
+    #[test]
+    fn missing_configuration_requires_onboarding_before_the_tui() {
+        assert!(needs_interactive_setup(false));
+        assert!(!needs_interactive_setup(true));
+    }
 }

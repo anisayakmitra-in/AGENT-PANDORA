@@ -1,10 +1,15 @@
-use super::run;
 use super::{ParsedArgs, parse_options};
+use super::{approval, run};
 use crate::output::{CliError, CommandResult, success};
 use serde_json::{Value, json};
 use std::io::{self, BufRead, Write};
 
 const MAX_DISPLAY_CHARS: usize = 64 * 1024;
+
+struct PendingTask {
+    task: String,
+    approval_id: String,
+}
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
@@ -26,6 +31,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
 
     let mut session_id = parsed.value("session").map(str::to_owned);
     let mut turns = 0u32;
+    let mut pending = None;
     let stdin = io::stdin();
     let mut input = stdin.lock();
     let mut stdout = io::stdout();
@@ -51,19 +57,20 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "/exit" | "/quit" => break,
             "/help" => print_help(),
             "/session" => print_session(session_id.as_deref()),
+            "/approve" => resolve_pending(&parsed, &mut session_id, &mut pending, true, &mut turns),
+            "/deny" => resolve_pending(&parsed, &mut session_id, &mut pending, false, &mut turns),
+            value if value.starts_with("/approve ") || value.starts_with("/deny ") => {
+                println!("usage: /approve and /deny do not accept arguments");
+            }
             task => {
-                let run_args = run_args(&parsed, session_id.as_deref(), task);
-                match run::execute(&run_args) {
-                    Ok(result) => {
-                        update_session(&mut session_id, result.data.get("session_id"));
-                        print_result(&result);
-                    }
-                    Err(error) => {
-                        update_session(&mut session_id, error.details.get("session_id"));
-                        print_error(&error);
-                    }
-                }
-                turns = turns.saturating_add(1);
+                run_task(
+                    &parsed,
+                    &mut session_id,
+                    &mut pending,
+                    task,
+                    None,
+                    &mut turns,
+                );
             }
         }
     }
@@ -79,7 +86,103 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     ))
 }
 
-fn run_args(parsed: &ParsedArgs, session_id: Option<&str>, task: &str) -> Vec<String> {
+fn run_task(
+    parsed: &ParsedArgs,
+    session_id: &mut Option<String>,
+    pending: &mut Option<PendingTask>,
+    task: &str,
+    approval_id: Option<&str>,
+    turns: &mut u32,
+) {
+    if approval_id.is_none() && pending.is_some() {
+        println!("approval> resolve the pending approval first");
+        return;
+    }
+    let run_args = run_args(parsed, session_id.as_deref(), task, approval_id);
+    match run::execute(&run_args) {
+        Ok(result) => {
+            update_session(session_id, result.data.get("session_id"));
+            print_result(&result);
+        }
+        Err(error) => {
+            update_session(session_id, error.details.get("session_id"));
+            let approval_id = error
+                .details
+                .get("approval_id")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            print_error(&error);
+            if let Some(approval_id) = approval_id {
+                println!(
+                    "approval> inspect with 'pandora approval inspect {approval_id}', then use /approve or /deny"
+                );
+                *pending = Some(PendingTask {
+                    task: task.to_owned(),
+                    approval_id,
+                });
+            }
+        }
+    }
+    *turns = turns.saturating_add(1);
+}
+
+fn resolve_pending(
+    parsed: &ParsedArgs,
+    session_id: &mut Option<String>,
+    pending: &mut Option<PendingTask>,
+    allow: bool,
+    turns: &mut u32,
+) {
+    let Some(pending_task) = pending.take() else {
+        println!("approval> no pending approval");
+        return;
+    };
+    match approval::execute(&approval_args(parsed, &pending_task.approval_id, allow)) {
+        Ok(result) => {
+            print_result(&result);
+            if allow {
+                run_task(
+                    parsed,
+                    session_id,
+                    pending,
+                    &pending_task.task,
+                    Some(&pending_task.approval_id),
+                    turns,
+                );
+            }
+        }
+        Err(error) => {
+            print_error(&error);
+            *pending = Some(pending_task);
+        }
+    }
+}
+
+fn approval_args(parsed: &ParsedArgs, approval_id: &str, allow: bool) -> Vec<String> {
+    let mut args = vec![
+        "resolve".to_owned(),
+        approval_id.to_owned(),
+        if allow {
+            "--allow".to_owned()
+        } else {
+            "--deny".to_owned()
+        },
+    ];
+    for name in ["config", "data-dir", "workspace"] {
+        if let Some(value) = parsed.value(name) {
+            args.push(format!("--{name}"));
+            args.push(value.to_owned());
+        }
+    }
+    args
+}
+
+fn run_args(
+    parsed: &ParsedArgs,
+    session_id: Option<&str>,
+    task: &str,
+    approval_id: Option<&str>,
+) -> Vec<String> {
     let mut args = vec!["--agent".to_owned()];
     for name in [
         "config",
@@ -99,6 +202,10 @@ fn run_args(parsed: &ParsedArgs, session_id: Option<&str>, task: &str) -> Vec<St
         args.push("--session".to_owned());
         args.push(session_id.to_owned());
     }
+    if let Some(approval_id) = approval_id {
+        args.push("--approval".to_owned());
+        args.push(approval_id.to_owned());
+    }
     args.push(task.to_owned());
     args
 }
@@ -112,6 +219,8 @@ fn update_session(session_id: &mut Option<String>, value: Option<&Value>) {
 fn print_help() {
     println!("/help       show chat commands");
     println!("/session    show the active session ID");
+    println!("/approve    approve and resume the pending task");
+    println!("/deny       deny the pending task");
     println!("/exit       close the chat");
     println!("/quit       close the chat");
     println!("Any other line is sent as a bounded agent task.");

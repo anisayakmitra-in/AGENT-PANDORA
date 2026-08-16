@@ -901,6 +901,7 @@ dependencies = [
 name = "pandora-types"
 version = "2.0.0-alpha.6"
 dependencies = [
+ "semver",
  "serde",
  "serde_json",
  "sha2",

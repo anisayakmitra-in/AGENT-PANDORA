@@ -1,12 +1,15 @@
-use super::{load_config, parse_options, write_config};
+use super::{load_config, parse_options, timestamp, write_config};
 use crate::output::{CliError, CommandResult, success};
 use pandora_provider::{
     ChatMessage, FailoverProvider, HttpProvider, ModelRequest, Provider, ProviderManifest,
 };
+use pandora_runtime::ExecutionController;
 use pandora_runtime::config::{
     DEFAULT_PROVIDER_API_KEY_ENV, DEFAULT_PROVIDER_NAME, ProviderPricing, ProviderProfile,
     RuntimeConfig,
 };
+use pandora_runtime::executors::WorkspaceRoot;
+use pandora_types::{Capability, PolicyContext, Session, SessionId};
 use serde_json::json;
 
 pub(crate) fn configured_provider(
@@ -310,8 +313,24 @@ fn test(args: &[String]) -> Result<CommandResult, CliError> {
         ],
     )
     .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
-    let response = provider
-        .complete(request)
+    let workspace = WorkspaceRoot::new(config.workspace_dir())
+        .map_err(|_| CliError::configuration("workspace path is invalid", json!({})))?;
+    let controller = ExecutionController::with_policy(
+        workspace,
+        PolicyContext::new(1, [Capability::ProviderInvoke], []),
+    );
+    let (principal, tenant, workspace_id) = super::session_scope();
+    let session = Session::new(
+        SessionId::new("provider-test").expect("provider test session ID is valid"),
+        principal,
+        tenant,
+        workspace_id,
+        timestamp(),
+    );
+    let response = controller
+        .invoke_provider(provider.as_ref(), request, &session, timestamp())
+        .map_err(|_| CliError::provider("provider effect was not authorized", json!({})))?
+        .into_result()
         .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
     Ok(success(
         "provider test",

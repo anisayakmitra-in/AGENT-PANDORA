@@ -316,6 +316,28 @@ mod tests {
     }
 
     #[test]
+    fn admitted_sensitive_context_is_included_without_cache_reuse() {
+        let fragments = vec![fragment(
+            "skill",
+            ContextSource::Retrieved,
+            ContextTrust::Admitted,
+            ContextClassification::Sensitive,
+            100,
+            "locally admitted guidance",
+            4,
+            None,
+        )];
+
+        let assembly = ContextEngine::new()
+            .assemble(&request(20), fragments)
+            .unwrap();
+
+        assert_eq!(assembly.item_ids(), ["skill"]);
+        assert_eq!(assembly.text(), "locally admitted guidance");
+        assert!(!assembly.receipt().cacheable());
+    }
+
+    #[test]
     fn cache_key_keeps_sessions_providers_models_and_policy_isolated() {
         let first = ContextEngine::new()
             .assemble(&request(20), Vec::new())

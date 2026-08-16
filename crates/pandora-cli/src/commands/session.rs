@@ -1,6 +1,7 @@
 use super::{load_config, parse_options, require_config_file, session_scope, session_store};
 use crate::output::{CliError, CommandResult, success};
-use pandora_types::SessionId;
+use pandora_runtime::{ObservabilityEngine, sessions::SessionSnapshot};
+use pandora_types::{EventType, ObservabilitySample, SessionId};
 use serde_json::json;
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
@@ -70,6 +71,7 @@ fn resume(args: &[String]) -> Result<CommandResult, CliError> {
             "session_id": snapshot.session().id(),
             "event_count": event_count,
             "agent_message_count": snapshot.agent_messages().len(),
+            "l1_evidence_count": snapshot.l1_evidence_count(),
             "events": events,
         }),
         format!(
@@ -96,6 +98,11 @@ fn inspect(args: &[String]) -> Result<CommandResult, CliError> {
         .resume(&session_id, &principal, &tenant, &workspace)
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
     let last_event_type = snapshot.events().last().map(|event| event.event_type());
+    let last_event_timestamp = snapshot
+        .recorded_events()
+        .last()
+        .and_then(|event| event.recorded_at())
+        .map(|value| value.as_unix_seconds());
     let event_count = snapshot.events().len();
     Ok(success(
         "session inspect",
@@ -109,12 +116,76 @@ fn inspect(args: &[String]) -> Result<CommandResult, CliError> {
             },
             "event_count": event_count,
             "agent_message_count": snapshot.agent_messages().len(),
-            "last_event_timestamp": null,
+            "l1_evidence_count": snapshot.l1_evidence_count(),
+            "last_event_timestamp": last_event_timestamp,
             "last_event_type": last_event_type,
+            "observability": session_observability(&snapshot)?,
         }),
         format!(
             "Inspected {} with {event_count} event(s)",
             snapshot.session().id()
         ),
     ))
+}
+
+fn session_observability(snapshot: &SessionSnapshot) -> Result<serde_json::Value, CliError> {
+    let engine = ObservabilityEngine::new();
+    let mut uninstrumented_event_count = 0usize;
+
+    for recorded in snapshot.recorded_events() {
+        let Some(recorded_at) = recorded.recorded_at() else {
+            uninstrumented_event_count = uninstrumented_event_count.saturating_add(1);
+            continue;
+        };
+        let event = recorded.event();
+        let mut sample = ObservabilitySample::new(
+            snapshot.session().id().as_str(),
+            event.event_id().as_str(),
+            None,
+            recorded.sequence(),
+            event.clone(),
+            recorded_at,
+            0,
+            0,
+            0,
+            None,
+            None,
+        )
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+        if let Some(code) = observability_error_code(event.event_type()) {
+            sample = sample
+                .with_error_code(code)
+                .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+        }
+        engine.record(sample).map_err(|_| {
+            CliError::internal("session observability projection is invalid", json!({}))
+        })?;
+    }
+
+    let projection = engine.snapshot();
+    let span_count = projection
+        .traces()
+        .iter()
+        .map(|trace| trace.spans().len())
+        .sum::<usize>();
+    let reliability_bps = if span_count > 0 {
+        Some(projection.reliability_bps())
+    } else {
+        None
+    };
+    Ok(json!({
+        "trace_count": projection.traces().len(),
+        "span_count": span_count,
+        "uninstrumented_event_count": uninstrumented_event_count,
+        "error_count": projection.error_count(),
+        "reliability_bps": reliability_bps,
+    }))
+}
+
+fn observability_error_code(event_type: EventType) -> Option<&'static str> {
+    match event_type {
+        EventType::ExecutionFailed => Some("execution_failed"),
+        EventType::PolicyDenied => Some("policy_denied"),
+        _ => None,
+    }
 }

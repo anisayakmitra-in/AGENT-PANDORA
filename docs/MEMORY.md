@@ -14,4 +14,6 @@ Memory stores summaries rather than transcripts. Secret-classified content is re
 
 ## Boundary
 
-The current engine is an in-memory runtime component. Its approval object is an explicit memory contract; it does not replace Parliament approval or provide execution authority. Memory records do not grant permissions, activate packages, or execute tools.
+The current engine is an in-memory runtime component. The CLI also keeps a bounded, private L1 execution-evidence ledger in the session store. Each entry records only the execution ID, selected Harness and Gene, terminal status, provider scope, timestamp, and provenance; it never stores a task, output, transcript, credential, or hidden reasoning. `session inspect` exposes its count, not its contents. Agent runs retrieve at most eight canonical entries from the exact same tenant, workspace, session, and provider scope. They enter context as non-cacheable descriptive history, never as instructions or authority.
+
+Its approval object is an explicit memory contract; it does not replace Parliament approval or provide execution authority. Memory records do not grant permissions, activate packages, or execute tools.

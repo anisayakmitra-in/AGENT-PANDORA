@@ -11,9 +11,9 @@ The `ReferenceMonitor` is the sole authority that can issue effect permits. Gene
 ## Status
 
 The active prerelease is `2.0.0-alpha.6` and is CLI-only. Existing legacy
-preview tags remain immutable for compatibility. Release tags use SemVer;
-stable major releases also carry a codename in their title, while prereleases
-use neutral `alpha`, `beta`, and `rc` suffixes. See [RELEASES.md](RELEASES.md),
+preview tags remain immutable for compatibility. Release tags use plain
+SemVer; prereleases use `alpha`, `beta`, and `rc` suffixes. Older codename tags
+are historical references only. See [RELEASES.md](RELEASES.md),
 [CHANGELOG.md](CHANGELOG.md), and [platform support](docs/PLATFORMS.md) for the
 shipped scope and release gates.
 
@@ -50,5 +50,10 @@ cargo run -p pandora-cli -- --version
 For first-time local setup, use `pandora setup --interactive`. It records only
 provider endpoint metadata and the name of the environment variable that holds
 the credential; the credential itself stays outside Pandora configuration.
+
+In an interactive terminal, running `pandora` with no arguments starts the
+setup wizard when configuration is missing, then opens the Ratatui client. Use
+`pandora chat` for the line-oriented client and explicit subcommands for
+scripts and automation.
 
 The supported product target is the native CLI on Windows, macOS, and Linux. Desktop, remote execution, mobile, and package marketplace integration remain gated until their release tests and security boundaries exist.

@@ -1,8 +1,8 @@
 # Efficiency Engine
 
-Status: Shipped in the runtime contract.
+Status: Shipped as a bounded CLI evidence ledger.
 
-`EfficiencyEngine` records bounded, task-class metrics for approved execution targets. `ObservabilityEngine` supplies usage and latency measurements; `EvaluationEngine` supplies verified completion outcomes; `EfficiencyEngine` keeps a rolling evidence window; `AdaptiveEngine::select_with_efficiency` may use the resulting ranking when policy permits. Parliament and the reference monitor remain the authority for selection and effects.
+`EfficiencyEngine` ranks bounded task-class evidence recorded by CLI runs. Agent runs contribute provider-reported token usage, elapsed latency, explicit operator-supplied cost evidence, and governed completion state. Direct runs contribute elapsed latency and completion state; they do not claim unavailable provider usage or cost. `EfficiencyEngine` keeps a rolling evidence window, and `AdaptiveEngine::select_with_efficiency` may use the resulting ranking when policy permits. `ObservabilityEngine` and `EvaluationEngine` remain separate derived views in this release. Parliament and the reference monitor remain the authority for selection and effects.
 
 The CLI persists the bounded evidence in its private data directory and can
 inspect it with `pandora efficiency rank`. The persisted ledger contains only

@@ -5,6 +5,7 @@ use super::{
     session_store, timestamp,
 };
 use crate::output::{CliError, CommandResult, success};
+use pandora_harnesses::{CODING_HARNESS_ID, HarnessCatalog};
 use pandora_provider::{
     ChatMessage, FallbackPolicy, ModelRequest, TraceMetadata, parse_and_validate,
 };
@@ -17,11 +18,12 @@ use pandora_runtime::{
 };
 use pandora_runtime::{
     DEFAULT_MAX_SAMPLES_PER_TARGET, EfficiencyEngine, EfficiencyStore, ExecutionController,
-    SkillEngine, SkillError,
+    PackageState, PackageStore, SkillEngine, SkillError,
 };
 use pandora_types::{
-    Capability, EfficiencyObjective, EfficiencySample, EventPayload, ExecutionId, HarnessId,
-    Operation, PolicyContext, Session, SessionId, TaskIntent, WorkspaceId,
+    Capability, ContextClassification, EfficiencyObjective, EfficiencySample, EventPayload,
+    ExecutionId, HarnessId, MemoryKind, MemoryRecord, MemoryScope, Operation, PackageId,
+    PackageKind, PolicyContext, Session, SessionId, TaskIntent, WorkspaceId,
 };
 use serde_json::{Value, json};
 use std::fs;
@@ -42,6 +44,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "session",
             "approval",
             "harness",
+            "harness-version",
             "gene",
             "model",
             "task-class",
@@ -65,7 +68,8 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     if parsed.value("agent").is_some()
         && (parsed.value("plan").is_some()
             || parsed.value("harness").is_some()
-            || parsed.value("gene").is_some())
+            || parsed.value("gene").is_some()
+            || parsed.value("harness-version").is_some())
     {
         return Err(CliError::usage(
             "--agent cannot be combined with --plan, --harness, or --gene",
@@ -98,6 +102,9 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         return Err(CliError::usage(
             "--optimize cannot be combined with --approval",
         ));
+    }
+    if parsed.value("harness-version").is_some() && parsed.value("harness").is_none() {
+        return Err(CliError::usage("--harness-version requires --harness <id>"));
     }
     let max_turns = parse_agent_budget(
         parsed.value("max-turns"),
@@ -167,9 +174,26 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             json!({"workspace": config.workspace_dir()}),
         )
     })?;
+    let policy = PolicyContext::new(
+        1,
+        [
+            Capability::FilesystemRead,
+            Capability::FilesystemWrite,
+            Capability::ProcessExecute,
+            Capability::ProviderInvoke,
+        ],
+        [Operation::Write, Operation::Execute],
+    );
+    let harnesses = configured_harnesses(
+        &config,
+        parsed.value("harness"),
+        parsed.value("harness-version"),
+    )?;
+    let controller = ExecutionController::with_policy_and_harnesses(workspace, policy, harnesses);
     let (task, planning_model) = if parsed.value("plan").is_some() {
         plan_task(
             &config,
+            &controller,
             &session,
             &parsed.positionals[0],
             parsed.value("model"),
@@ -178,16 +202,6 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     } else {
         (parsed.positionals[0].clone(), None)
     };
-    let policy = PolicyContext::new(
-        1,
-        [
-            Capability::FilesystemRead,
-            Capability::FilesystemWrite,
-            Capability::ProcessExecute,
-        ],
-        [Operation::Write, Operation::Execute],
-    );
-    let controller = ExecutionController::with_policy(workspace, policy);
     if parsed.value("agent").is_some() {
         return execute_agent(
             &config,
@@ -211,10 +225,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let mut intent =
         TaskIntent::new(task.clone()).map_err(|error| CliError::usage(error.to_string()))?;
     if let Some(harness) = parsed.value("harness") {
-        let harness = match harness {
-            "coding" => "coding-domain",
-            value => value,
-        };
+        let harness = canonical_harness_id(harness);
         let harness = HarnessId::new(harness.to_owned())
             .map_err(|_| CliError::usage("Harness ID is invalid"))?;
         intent = intent.with_harness(harness);
@@ -240,6 +251,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             .map_err(runtime_error)?,
     };
     append_events(&store, &session, summary.events())?;
+    let memory_evidence_recorded = record_execution_evidence(&store, &session, "local", &summary);
     let efficiency_recorded =
         record_execution_efficiency(&config, task_class, &summary, elapsed_millis(started));
     let details = add_optimization(
@@ -256,8 +268,9 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                 "harness_id": summary.selected_harness(),
                 "gene_id": summary.selected_gene(),
                 "status": "completed",
-                "output": summary.output().map(output_text),
-                "efficiency_recorded": efficiency_recorded,
+                    "output": summary.output().map(output_text),
+                    "efficiency_recorded": efficiency_recorded,
+                    "memory_evidence_recorded": memory_evidence_recorded,
                 }),
                 planning_model.as_deref(),
             );
@@ -287,6 +300,82 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     }
 }
 
+pub(super) fn configured_harnesses(
+    config: &RuntimeConfig,
+    requested: Option<&str>,
+    version: Option<&str>,
+) -> Result<HarnessCatalog, CliError> {
+    let harnesses = HarnessCatalog::builtins();
+    let Some(requested) = requested else {
+        return Ok(harnesses);
+    };
+    let requested = canonical_harness_id(requested);
+    let harness_id = HarnessId::new(requested.to_owned())
+        .map_err(|_| CliError::usage("Harness ID is invalid"))?;
+    if let Some(harness) = harnesses.find(&harness_id) {
+        if let Some(version) = version
+            && version != harness.manifest().version()
+        {
+            return Err(CliError::usage(format!(
+                "built-in Harness '{}' is version {}, not {}",
+                requested,
+                harness.manifest().version(),
+                version
+            )));
+        }
+        return Ok(harnesses);
+    }
+
+    let version = version.ok_or_else(|| {
+        CliError::usage("custom Domain Harnesses require '--harness-version <version>'")
+    })?;
+    let package_id = PackageId::new(requested.to_owned())
+        .map_err(|_| CliError::usage("package Harness ID is invalid"))?;
+    let store = PackageStore::open(config.data_dir().join("packages.sqlite3"))
+        .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+    let record = store
+        .get(&package_id, version)
+        .map_err(|error| CliError::execution(error.to_string(), json!({})))?
+        .ok_or_else(|| {
+            CliError::execution(
+                "the requested Domain Harness profile is not admitted",
+                json!({"id": package_id, "version": version}),
+            )
+        })?;
+    if record.state() != PackageState::Admitted
+        || !matches!(
+            record.manifest().kind(),
+            PackageKind::DomainHarness | PackageKind::MetaHarness
+        )
+    {
+        return Err(CliError::execution(
+            "the requested package is not an admitted Harness profile",
+            json!({
+                "id": record.manifest().id(),
+                "version": record.manifest().version(),
+                "kind": record.manifest().kind().as_str(),
+                "state": record.state().as_str(),
+            }),
+        ));
+    }
+    match record.manifest().kind() {
+        PackageKind::DomainHarness => harnesses
+            .with_declarative_domain(record.manifest())
+            .map_err(|error| CliError::execution(error.to_string(), json!({}))),
+        PackageKind::MetaHarness => harnesses
+            .with_declarative_meta(record.manifest())
+            .map_err(|error| CliError::execution(error.to_string(), json!({}))),
+        _ => unreachable!("admitted Harness profile kind was validated"),
+    }
+}
+
+fn canonical_harness_id(value: &str) -> &str {
+    match value {
+        "coding" => CODING_HARNESS_ID,
+        value => value,
+    }
+}
+
 fn execute_agent(
     config: &RuntimeConfig,
     controller: &ExecutionController,
@@ -306,6 +395,15 @@ fn execute_agent(
         .or(config.provider_model())
         .unwrap_or("default");
     let provider = configured_provider_for(config, model, "agent mode", options.provider_name)?;
+    let l1_evidence = store
+        .l1_evidence_context(
+            session.id(),
+            session.principal_id(),
+            session.tenant_id(),
+            session.workspace_id(),
+            provider.manifest().id().as_str(),
+        )
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
     let loop_engine = AgentLoop::new(options.max_turns, options.max_tool_calls)
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
     let started = Instant::now();
@@ -314,7 +412,8 @@ fn execute_agent(
             provider.as_ref(),
             controller,
             options.history,
-            AgentApprovalContext::new(session.clone(), approval_store, approval_id, timestamp()),
+            AgentApprovalContext::new(session.clone(), approval_store, approval_id, timestamp())
+                .with_l1_evidence(Some(&l1_evidence)),
             skill_context.as_deref(),
             options.task,
         ),
@@ -322,7 +421,8 @@ fn execute_agent(
             provider.as_ref(),
             controller,
             AgentRunRequest::new(session.clone(), options.history, options.task, timestamp())
-                .with_skill_context(skill_context.as_deref()),
+                .with_skill_context(skill_context.as_deref())
+                .with_l1_evidence(Some(&l1_evidence)),
         ),
     };
     match result {
@@ -349,6 +449,13 @@ fn execute_agent(
             for run in summary.runs() {
                 append_events(store, session, run.events())?;
             }
+            let mut memory_evidence_recorded = 0;
+            for run in summary.runs() {
+                if record_execution_evidence(store, session, provider.manifest().id().as_str(), run)
+                {
+                    memory_evidence_recorded += 1;
+                }
+            }
             Ok(success(
                 "run",
                 json!({
@@ -359,10 +466,18 @@ fn execute_agent(
                     "tool_calls": summary.tool_calls(),
                     "turn_budget": options.max_turns,
                     "tool_budget": options.max_tool_calls,
+                    "provider_calls": summary.provider_receipts().len(),
+                    "context": {
+                        "included": summary.context_receipt().included_ids(),
+                        "dropped": summary.context_receipt().dropped_ids(),
+                        "token_cost": summary.context_receipt().token_cost(),
+                        "cacheable": summary.context_receipt().cacheable(),
+                    },
                     "output": summary.final_text(),
                     "usage": usage_json(summary.usage()),
                     "runs": run_count,
                     "efficiency_recorded": efficiency_recorded,
+                    "memory_evidence_recorded": memory_evidence_recorded,
                     "optimization": optimization_value(
                         options.optimization,
                         options.provider_name,
@@ -396,6 +511,14 @@ fn execute_agent(
             for current in summary.runs() {
                 append_events(store, session, current.events())?;
             }
+            for run in summary.runs() {
+                let _ = record_execution_evidence(
+                    store,
+                    session,
+                    provider.manifest().id().as_str(),
+                    run,
+                );
+            }
             let approval = create_approval(
                 approval_store,
                 run,
@@ -413,6 +536,12 @@ fn execute_agent(
                     "turn_budget": options.max_turns,
                     "tool_budget": options.max_tool_calls,
                     "approval_id": approval.id(),
+                    "context": {
+                        "included": summary.context_receipt().included_ids(),
+                        "dropped": summary.context_receipt().dropped_ids(),
+                        "token_cost": summary.context_receipt().token_cost(),
+                        "cacheable": summary.context_receipt().cacheable(),
+                    },
                     "optimization": optimization_value(
                         options.optimization,
                         options.provider_name,
@@ -502,16 +631,59 @@ fn append_events(
 ) -> Result<(), CliError> {
     for event in events {
         store
-            .append_event(
+            .append_event_at(
                 session.id(),
                 session.principal_id(),
                 session.tenant_id(),
                 session.workspace_id(),
                 event,
+                timestamp(),
             )
             .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
     }
     Ok(())
+}
+
+fn record_execution_evidence(
+    store: &SessionStore,
+    session: &Session,
+    provider: &str,
+    summary: &pandora_runtime::RunSummary,
+) -> bool {
+    let scope = match MemoryScope::new(
+        session.tenant_id().clone(),
+        session.workspace_id().clone(),
+        session.id().clone(),
+        provider,
+    ) {
+        Ok(scope) => scope,
+        Err(_) => return false,
+    };
+    let status = match summary.status() {
+        RunStatus::Completed => "completed",
+        RunStatus::Denied { .. } => "denied",
+        RunStatus::ApprovalRequired { .. } => "approval_required",
+        RunStatus::Failed { .. } => "failed",
+    };
+    let record = MemoryRecord::new_l1(
+        summary.execution_id().as_str(),
+        MemoryKind::ExecutionEvidence,
+        scope,
+        format!(
+            "{status} execution through {}/{}",
+            summary.selected_harness(),
+            summary.selected_gene(),
+        ),
+        ContextClassification::Internal,
+        timestamp(),
+        format!("execution:{}", summary.execution_id()),
+    );
+    match record {
+        Ok(record) => store
+            .record_l1_evidence(session.principal_id(), &record)
+            .is_ok(),
+        Err(_) => false,
+    }
 }
 
 fn usage_json(usage: &pandora_provider::TokenUsage) -> Value {
@@ -734,7 +906,9 @@ fn agent_error(error: AgentLoopError) -> CliError {
         AgentLoopError::InvalidBudget | AgentLoopError::InvalidTask => {
             CliError::usage(error.to_string())
         }
-        AgentLoopError::InvalidSkillContext => CliError::execution(error.to_string(), json!({})),
+        AgentLoopError::InvalidSkillContext
+        | AgentLoopError::InvalidL1Evidence
+        | AgentLoopError::Context(_) => CliError::execution(error.to_string(), json!({})),
         AgentLoopError::Provider(error) => CliError::provider(error.to_string(), json!({})),
         AgentLoopError::EmptyResponse
         | AgentLoopError::ToolBudgetExceeded
@@ -780,6 +954,7 @@ fn run_details(
 
 fn plan_task(
     config: &RuntimeConfig,
+    controller: &ExecutionController,
     session: &Session,
     request: &str,
     model_override: Option<&str>,
@@ -817,8 +992,10 @@ fn plan_task(
         request.with_trace_metadata(TraceMetadata::new().with_session_id(session.id().clone()))
     })
     .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
-    let response = provider
-        .complete(request)
+    let response = controller
+        .invoke_provider(provider.as_ref(), request, session, timestamp())
+        .map_err(runtime_error)?
+        .into_result()
         .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
     if !response.tool_calls().is_empty() {
         return Err(CliError::provider(
@@ -922,6 +1099,10 @@ fn output_text(bytes: &[u8]) -> String {
 fn runtime_error(error: RuntimeError) -> CliError {
     match error {
         RuntimeError::InvalidIntent(message) => CliError::usage(message),
+        RuntimeError::NoDefaultHarness => CliError::execution(
+            "no default harness is available",
+            json!({"hint": "use --agent for natural-language tasks or a coding action prefix"}),
+        ),
         RuntimeError::Denied(reason) => CliError::policy(reason, json!({})),
         RuntimeError::ApprovalRequired(reason) => CliError::approval(reason, json!({})),
         RuntimeError::Approval(error) => approval_error(error),
@@ -932,6 +1113,10 @@ fn runtime_error(error: RuntimeError) -> CliError {
         RuntimeError::UnsupportedHarness(_) => {
             CliError::execution("requested harness is not supported", json!({}))
         }
+        RuntimeError::NonExecutableHarness { id, kind } => CliError::execution(
+            "requested harness is not runnable",
+            json!({"harness_id": id, "kind": kind.as_str()}),
+        ),
         RuntimeError::UnknownGene => {
             CliError::execution("requested Gene is not available", json!({}))
         }
@@ -940,6 +1125,8 @@ fn runtime_error(error: RuntimeError) -> CliError {
             CliError::execution("effect authorization failed", json!({}))
         }
         RuntimeError::Permit(_) => CliError::execution("effect permit failed", json!({})),
+        RuntimeError::Provider(error) => CliError::provider(error.to_string(), json!({})),
+        RuntimeError::Request(_) => CliError::execution("effect request was invalid", json!({})),
         RuntimeError::Filesystem(_) => {
             CliError::execution("filesystem execution failed", json!({}))
         }

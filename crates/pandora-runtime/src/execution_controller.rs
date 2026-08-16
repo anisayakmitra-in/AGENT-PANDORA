@@ -1,16 +1,18 @@
 use crate::executors::{
-    FilesystemError, FilesystemExecutor, ProcessError, ProcessExecutor, VerificationCommand,
-    VerificationOptions, WorkspaceRoot,
+    FilesystemError, FilesystemExecutor, ProcessError, ProcessExecutor, ProviderExecutor,
+    ProviderResult, VerificationCommand, VerificationOptions, WorkspaceRoot,
 };
 use crate::parliament::Parliament;
 use crate::reference_monitor::{AuthorizationError, ReferenceMonitor};
-use crate::shadow_council::ShadowCouncil;
+use crate::shadow_council::{RoutingError, ShadowCouncil};
 use crate::{ApprovalError, ApprovalStore, ConsumedPermit, PermitError};
-use pandora_harnesses::{CodingRequest, PlanningContext, builtin_harnesses};
+use pandora_harnesses::{CodingRequest, HarnessCatalog, PlanningContext};
+use pandora_provider::{ModelRequest, Provider, ProviderError};
 use pandora_types::{
     Capability, EffectReceipt, EffectTarget, EventContext, EventId, EventPayload, EventType,
-    ExecutionId, GeneError, GeneId, GeneInput, Harness, HarnessId, ParliamentDecision,
-    PolicyContext, RuntimeEvent, Session, TaskIntent, Timestamp,
+    ExecutionId, GeneError, GeneId, GeneInput, Harness, HarnessId, HarnessKind, Operation,
+    OperationRequest, ParliamentDecision, PolicyContext, RequestError, ResourceScope, RuntimeEvent,
+    SecretReference, Session, TaskIntent, Timestamp,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -18,7 +20,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RuntimeError {
     InvalidIntent(&'static str),
+    NoDefaultHarness,
     UnsupportedHarness(HarnessId),
+    NonExecutableHarness { id: HarnessId, kind: HarnessKind },
     UnknownGene,
     Planning(GeneError),
     Denied(String),
@@ -27,6 +31,8 @@ pub enum RuntimeError {
     ApprovalNotRequired,
     Authorization(AuthorizationError),
     Permit(PermitError),
+    Provider(ProviderError),
+    Request(RequestError),
     Filesystem(FilesystemError),
     Process(ProcessError),
     UnsupportedOperation(Capability),
@@ -38,9 +44,10 @@ pub struct ExecutionController {
     parliament: Parliament,
     policy: PolicyContext,
     reference_monitor: ReferenceMonitor,
-    harnesses: Vec<Box<dyn Harness>>,
+    harnesses: HarnessCatalog,
     filesystem: FilesystemExecutor,
     process: ProcessExecutor,
+    provider: ProviderExecutor,
     next_execution: AtomicU64,
     next_event: AtomicU64,
 }
@@ -100,19 +107,32 @@ impl ExecutionController {
     }
 
     pub fn with_policy(workspace: WorkspaceRoot, policy: PolicyContext) -> Self {
+        Self::with_policy_and_harnesses(workspace, policy, HarnessCatalog::builtins())
+    }
+
+    pub fn with_policy_and_harnesses(
+        workspace: WorkspaceRoot,
+        policy: PolicyContext,
+        harnesses: HarnessCatalog,
+    ) -> Self {
         let policy_version = policy.policy_version();
         Self {
             filesystem: FilesystemExecutor::new(),
             process: ProcessExecutor::new(workspace.clone()),
+            provider: ProviderExecutor::new(),
             workspace,
             shadow_council: ShadowCouncil::new(),
             parliament: Parliament::new(policy_version),
             reference_monitor: ReferenceMonitor::new(policy_version, 60),
             policy,
-            harnesses: builtin_harnesses(),
+            harnesses,
             next_execution: AtomicU64::new(1),
             next_event: AtomicU64::new(1),
         }
+    }
+
+    pub fn policy_version(&self) -> u32 {
+        self.policy.policy_version()
     }
 
     pub fn run(&self, intent: TaskIntent, session: Session) -> Result<RunSummary, RuntimeError> {
@@ -130,6 +150,53 @@ impl ExecutionController {
         now: Timestamp,
     ) -> Result<RunSummary, RuntimeError> {
         self.run_internal(intent, session, now, None, None, false)
+    }
+
+    pub fn invoke_provider(
+        &self,
+        provider: &dyn Provider,
+        request: ModelRequest,
+        session: &Session,
+        now: Timestamp,
+    ) -> Result<ProviderResult, RuntimeError> {
+        let execution_id = ExecutionId::new(format!(
+            "provider-execution-{}",
+            self.next_execution.fetch_add(1, Ordering::Relaxed)
+        ))
+        .map_err(|_| RuntimeError::InvalidIntent("could not allocate provider execution ID"))?;
+        let operation_request = OperationRequest::new(
+            execution_id,
+            session.id().clone(),
+            session.principal_id().clone(),
+            GeneId::new("provider.invoke").expect("built-in provider Gene ID is valid"),
+            None,
+            Capability::ProviderInvoke,
+            Operation::Invoke,
+            EffectTarget::provider(
+                provider.manifest().id().as_str(),
+                SecretReference::new(provider.manifest().api_key_env().to_owned())
+                    .map_err(RuntimeError::Request)?,
+            ),
+            ResourceScope::none(),
+        )
+        .map_err(RuntimeError::Request)?;
+        let decision = self.parliament.decide(&operation_request, &self.policy);
+        let permit = match decision {
+            ParliamentDecision::Allow { .. } => self
+                .reference_monitor
+                .authorize(operation_request.clone(), decision, now)
+                .map_err(RuntimeError::Authorization)?,
+            ParliamentDecision::Deny { reason, .. } => return Err(RuntimeError::Denied(reason)),
+            ParliamentDecision::RequireApproval { reason, .. } => {
+                return Err(RuntimeError::ApprovalRequired(reason));
+            }
+        };
+        let consumed = self
+            .reference_monitor
+            .store()
+            .consume(permit, &operation_request, now)
+            .map_err(RuntimeError::Permit)?;
+        Ok(self.provider.complete(&consumed, provider, request, now))
     }
 
     pub fn run_with_approval(
@@ -201,8 +268,19 @@ impl ExecutionController {
         ))
         .map_err(|_| RuntimeError::InvalidIntent("could not allocate execution ID"))?;
         let execution_id = execution_id_override.unwrap_or(execution_id);
-        let selection = self.shadow_council.select(&intent);
+        let selection = self
+            .shadow_council
+            .select(&intent)
+            .map_err(|error| match error {
+                RoutingError::NoDefaultHarness => RuntimeError::NoDefaultHarness,
+            })?;
         let harness = self.find_harness(selection.harness_id())?;
+        if !harness.is_runnable() {
+            return Err(RuntimeError::NonExecutableHarness {
+                id: harness.manifest().id().clone(),
+                kind: harness.manifest().kind(),
+            });
+        }
         let gene_id = selection
             .gene_id()
             .cloned()
@@ -420,9 +498,7 @@ impl ExecutionController {
 
     fn find_harness(&self, harness_id: &HarnessId) -> Result<&dyn Harness, RuntimeError> {
         self.harnesses
-            .iter()
-            .find(|harness| harness.manifest().id() == harness_id)
-            .map(|harness| harness.as_ref())
+            .find(harness_id)
             .ok_or_else(|| RuntimeError::UnsupportedHarness(harness_id.clone()))
     }
 
@@ -596,7 +672,9 @@ impl ExecutionController {
 fn runtime_error_code(error: &RuntimeError) -> &'static str {
     match error {
         RuntimeError::InvalidIntent(_) => "invalid_intent",
+        RuntimeError::NoDefaultHarness => "no_default_harness",
         RuntimeError::UnsupportedHarness(_) => "unsupported_harness",
+        RuntimeError::NonExecutableHarness { .. } => "non_executable_harness",
         RuntimeError::UnknownGene => "unknown_gene",
         RuntimeError::Planning(_) => "planning_failed",
         RuntimeError::Denied(_) => "denied",
@@ -605,6 +683,8 @@ fn runtime_error_code(error: &RuntimeError) -> &'static str {
         RuntimeError::ApprovalNotRequired => "approval_not_required",
         RuntimeError::Authorization(_) => "authorization_failed",
         RuntimeError::Permit(_) => "permit_failed",
+        RuntimeError::Provider(_) => "provider_failed",
+        RuntimeError::Request(_) => "request_failed",
         RuntimeError::Filesystem(_) => "filesystem_failed",
         RuntimeError::Process(_) => "process_failed",
         RuntimeError::UnsupportedOperation(_) => "unsupported_operation",
@@ -684,9 +764,11 @@ struct ApprovalExecution<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pandora_harnesses::HarnessCatalog;
     use pandora_types::{
-        Capability, GeneId, HarnessId, Operation, PolicyContext, PrincipalId, Session, SessionId,
-        TaskIntent, TenantId, Timestamp, WorkspaceId,
+        Capability, GeneId, HarnessId, Operation, PackageCompatibility, PackageDependency,
+        PackageKind, PackageManifest, PolicyContext, PrincipalId, Session, SessionId, TaskIntent,
+        TenantId, Timestamp, TrustEvidence, WorkspaceId, hash_artifact,
     };
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -709,6 +791,45 @@ mod tests {
         assert_eq!(summary.receipts().len(), 1);
         assert_eq!(summary.events().len(), 4);
         assert_eq!(summary.selected_harness().as_str(), "coding-domain");
+        assert_eq!(summary.selected_gene().as_str(), "workspace.read");
+    }
+
+    #[test]
+    fn an_admitted_domain_profile_runs_through_the_existing_controller() {
+        let fixture = Fixture::new();
+        let artifact = b"domain profile";
+        let package = PackageManifest::new(
+            "example/domain",
+            "1.0.0",
+            PackageKind::DomainHarness,
+            "publisher",
+            hash_artifact(artifact),
+            vec![PackageDependency::new("workspace.read", "0.1.0", false).unwrap()],
+            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "Apache-2.0",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+        let harnesses = HarnessCatalog::builtins()
+            .with_declarative_domain(&package)
+            .unwrap();
+        let controller = ExecutionController::with_policy_and_harnesses(
+            fixture.root.clone(),
+            PolicyContext::read_only_workspace(),
+            harnesses,
+        );
+        let intent = TaskIntent::new("read:README.md")
+            .unwrap()
+            .with_harness(HarnessId::new("example/domain").unwrap())
+            .with_gene(GeneId::new("workspace.read").unwrap());
+
+        let summary = controller
+            .run_at(intent, fixture.session(), Timestamp::from_unix_seconds(10))
+            .unwrap();
+
+        assert_eq!(summary.status(), &RunStatus::Completed);
+        assert_eq!(summary.output().unwrap(), b"fixture\n");
+        assert_eq!(summary.selected_harness().as_str(), "example/domain");
         assert_eq!(summary.selected_gene().as_str(), "workspace.read");
     }
 
@@ -807,6 +928,32 @@ mod tests {
             controller.run_at(intent, fixture.session(), Timestamp::from_unix_seconds(10)),
             Err(RuntimeError::UnsupportedHarness(harness_id))
         );
+    }
+
+    #[test]
+    fn source_and_meta_harnesses_are_not_execution_targets() {
+        let fixture = Fixture::new();
+        let controller = ExecutionController::new(fixture.root.clone());
+
+        for harness_id in ["core-source", "coordination-meta"] {
+            let harness_id = HarnessId::new(harness_id).unwrap();
+            let intent = TaskIntent::new("read:README.md")
+                .unwrap()
+                .with_harness(harness_id.clone());
+            let kind = if harness_id.as_str() == "core-source" {
+                HarnessKind::Source
+            } else {
+                HarnessKind::Meta
+            };
+
+            assert_eq!(
+                controller.run_at(intent, fixture.session(), Timestamp::from_unix_seconds(10),),
+                Err(RuntimeError::NonExecutableHarness {
+                    id: harness_id,
+                    kind,
+                })
+            );
+        }
     }
 
     struct Fixture {

@@ -1,0 +1,10 @@
+/target/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+*.sqlite3
+*.db
+.DS_Store
+Thumbs.db

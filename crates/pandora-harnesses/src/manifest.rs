@@ -9,12 +9,12 @@ pub const COORDINATION_META_HARNESS_ID: &str = "coordination-meta";
 pub const COORDINATION_META_HARNESS_VERSION: &str = "0.1.0";
 
 pub fn core_source_manifest() -> Result<HarnessManifest, ManifestError> {
-    HarnessManifest::new(
+    HarnessManifest::new_source(
         CORE_SOURCE_HARNESS_ID,
         CORE_SOURCE_HARNESS_VERSION,
         "Pandora Core",
-        HarnessKind::Source,
-        Some("pandora-runtime".to_owned()),
+        "pandora-runtime",
+        env!("CARGO_PKG_VERSION"),
         Vec::new(),
     )
 }

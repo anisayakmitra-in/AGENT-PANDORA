@@ -26,12 +26,11 @@ impl PolicyContext {
     pub fn read_only_workspace() -> Self {
         Self::new(
             1,
-            [Capability::FilesystemRead],
+            [Capability::FilesystemRead, Capability::ProviderInvoke],
             [
                 Operation::Write,
                 Operation::Execute,
                 Operation::Connect,
-                Operation::Invoke,
                 Operation::Install,
             ],
         )

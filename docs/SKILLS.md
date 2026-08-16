@@ -50,3 +50,10 @@ reference material only: their resource labels do not grant capabilities, and
 their scripts still require the governed ToolEngine path. Disabled and
 suspended Skills are omitted. If enabled guidance exceeds the context limit,
 the run fails closed instead of silently truncating the package.
+
+Agent runs assemble the constitutional prompt and enabled Skill guidance through
+`ContextEngine`. The JSON result includes a receipt with included and dropped
+context item IDs, estimated token cost, and cache eligibility. Skill guidance
+is sensitive and therefore non-cacheable. It is marked `admitted`, not
+`verified`: admission makes its local provenance inspectable, never
+authoritative.

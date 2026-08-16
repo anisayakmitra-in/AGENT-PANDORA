@@ -7,13 +7,14 @@ use std::fs;
 use std::path::PathBuf;
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
-    let subcommand = args
-        .first()
-        .ok_or_else(|| CliError::usage("package requires 'admit', 'list', or 'inspect'"))?;
+    let subcommand = args.first().ok_or_else(|| {
+        CliError::usage("package requires 'admit', 'list', 'inspect', or 'remove'")
+    })?;
     match subcommand.as_str() {
         "admit" => admit(&args[1..]),
         "list" => list(&args[1..]),
         "inspect" => inspect(&args[1..]),
+        "remove" => remove(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown package command '{unknown}'"
         ))),
@@ -102,6 +103,75 @@ fn inspect(args: &[String]) -> Result<CommandResult, CliError> {
     ))
 }
 
+fn remove(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "dry-run", "yes"])?;
+    if parsed.positionals.len() != 2 {
+        return Err(CliError::usage(
+            "package remove requires an ID and an exact version",
+        ));
+    }
+    let dry_run = parsed.value("dry-run").is_some();
+    let confirmed = parsed.value("yes").is_some();
+    if dry_run && confirmed {
+        return Err(CliError::usage(
+            "package remove accepts only one of '--dry-run' or '--yes'",
+        ));
+    }
+    if !dry_run && !confirmed {
+        return Err(CliError::usage(
+            "package remove requires '--yes' or '--dry-run'",
+        ));
+    }
+
+    let id = PackageId::new(parsed.positionals[0].clone())
+        .map_err(|_| CliError::usage("package ID is invalid"))?;
+    let version = &parsed.positionals[1];
+    let store = store(&parsed)?;
+    let record = store
+        .get(&id, version)
+        .map_err(store_error)?
+        .ok_or_else(|| {
+            CliError::execution(
+                "package was not admitted locally",
+                json!({"id": id.as_str(), "version": version}),
+            )
+        })?;
+    if dry_run {
+        return Ok(success(
+            "package remove",
+            json!({
+                "dry_run": true,
+                "removed": false,
+                "package": package_value(&record),
+            }),
+            format!(
+                "Package {}@{} is admitted; no files changed",
+                id.as_str(),
+                version
+            ),
+        ));
+    }
+
+    let removed = store
+        .remove(&id, version)
+        .map_err(removal_error)?
+        .ok_or_else(|| {
+            CliError::execution(
+                "package was not admitted locally",
+                json!({"id": id.as_str(), "version": version}),
+            )
+        })?;
+    Ok(success(
+        "package remove",
+        json!({
+            "dry_run": false,
+            "removed": true,
+            "package": package_value(&removed),
+        }),
+        format!("Package {}@{} removed", id.as_str(), version),
+    ))
+}
+
 fn required_path(parsed: &super::ParsedArgs, name: &str) -> Result<PathBuf, CliError> {
     parsed
         .value(name)
@@ -145,4 +215,18 @@ pub(super) fn package_value(record: &PackageRecord) -> serde_json::Value {
 
 pub(super) fn store_error(error: PackageStoreError) -> CliError {
     CliError::execution(error.to_string(), json!({}))
+}
+
+fn removal_error(error: PackageStoreError) -> CliError {
+    match error {
+        PackageStoreError::HasDependents {
+            id,
+            version,
+            dependents,
+        } => CliError::policy(
+            format!("cannot remove package {id}@{version} because required dependents exist"),
+            json!({"id": id, "version": version, "dependents": dependents}),
+        ),
+        other => store_error(other),
+    }
 }
