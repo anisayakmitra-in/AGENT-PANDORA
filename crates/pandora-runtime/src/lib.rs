@@ -6,6 +6,7 @@ pub mod approvals;
 pub mod config;
 pub mod context_engine;
 pub mod context_recovery;
+pub mod efficiency_engine;
 pub mod evaluation_engine;
 pub mod evolution;
 pub mod execution_controller;
@@ -39,6 +40,7 @@ pub use approvals::{
 };
 pub use context_engine::{ContextEngine, ContextError};
 pub use context_recovery::{ContextRecovery, RecoveryDecision, RecoveryInput, RecoveryStep};
+pub use efficiency_engine::{DEFAULT_MAX_SAMPLES_PER_TARGET, EfficiencyEngine, EfficiencyError};
 pub use evaluation_engine::{EvaluationEngine, EvaluationError};
 pub use evolution::{EvolutionEngine, EvolutionError};
 pub use execution_controller::{ExecutionController, RunStatus, RunSummary, RuntimeError};

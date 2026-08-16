@@ -4,6 +4,7 @@ pub mod adaptation;
 pub mod capability;
 pub mod context;
 pub mod effect;
+pub mod efficiency;
 pub mod evaluation;
 pub mod events;
 pub mod evolution;
@@ -30,6 +31,9 @@ pub use context::{
 pub use effect::{
     EffectOutcome, EffectPermit, EffectReceipt, EffectTarget, OperationRequest, RequestError,
     ResourceScope, SecretReference, Timestamp,
+};
+pub use efficiency::{
+    EfficiencyContractError, EfficiencyObjective, EfficiencySample, EfficiencySummary,
 };
 pub use evaluation::{
     EvaluationContractError, EvaluationKind, EvaluationRequest, EvaluationResult, EvaluationStatus,
