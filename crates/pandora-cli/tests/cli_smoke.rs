@@ -1573,6 +1573,30 @@ fn doctor_accepts_a_valid_local_only_setup_without_a_provider() {
 }
 
 #[test]
+fn doctor_rejects_a_configured_provider_without_a_credential() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let output = fixture
+        .command(&["doctor", "--json"])
+        .env_remove("PANDORA_PROVIDER_API_KEY")
+        .output()
+        .expect("doctor should start");
+
+    assert_eq!(output.status.code(), Some(10));
+    let response = parse_json(&output);
+    assert_eq!(response["code"], "configuration_error");
+    assert_eq!(response["details"]["healthy"], false);
+    assert_eq!(response["details"]["provider"]["credential"], "missing");
+    assert!(
+        response["details"]["checks"]
+            .as_array()
+            .expect("diagnostic checks should be an array")
+            .iter()
+            .any(|check| check["check"] == "credential" && check["status"] == "failed")
+    );
+}
+
+#[test]
 fn harness_discovery_exposes_the_coding_domain_without_runtime_internals() {
     let fixture = Fixture::new();
     fixture.setup();
@@ -2382,7 +2406,7 @@ fn uninstall_refuses_a_data_root_that_contains_the_workspace() {
 }
 
 #[test]
-fn doctor_reports_connectivity_state_without_credentials() {
+fn doctor_reports_connectivity_state_without_exposing_credentials() {
     let fixture = Fixture::new();
     fixture.setup();
     let output = fixture
@@ -2395,6 +2419,7 @@ fn doctor_reports_connectivity_state_without_credentials() {
     assert!(!stdout.contains("sk-live-secret"));
     let response = parse_json(&output);
     assert_eq!(response["healthy"], true);
+    assert_eq!(response["provider"]["credential"], "available");
     assert_eq!(response["provider"]["connectivity"], "not_checked");
     assert_eq!(response["policy"]["mode"], "governed");
 }

@@ -10,6 +10,9 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let data_ok = directory_is_readable(config.data_dir());
     let workspace_ok = directory_is_readable(config.workspace_dir());
     let provider_configured = config.provider_url().is_some();
+    let credential_available = config
+        .provider_api_key_env()
+        .is_some_and(credential_is_available);
     let mut checks = vec![
         check(
             "config",
@@ -48,13 +51,30 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             })
         },
     );
-    let healthy = config_ok && data_ok && workspace_ok;
+    if provider_configured {
+        checks.insert(
+            2,
+            check(
+                "credential",
+                credential_available,
+                "provider credential environment is available",
+                "set the configured provider credential environment variable",
+            ),
+        );
+    }
+    let healthy =
+        config_ok && data_ok && workspace_ok && (!provider_configured || credential_available);
     let provider = json!({
         "configured": provider_configured,
         "profiles": config.provider_names(),
         "active_profile": config.active_provider(),
         "model": config.provider_model().unwrap_or("default"),
         "credential_env": config.provider_api_key_env(),
+        "credential": if provider_configured {
+            if credential_available { "available" } else { "missing" }
+        } else {
+            "not_configured"
+        },
         "connectivity": if provider_configured { "not_checked" } else { "not_configured" },
         "remediation": if provider_configured {
             "connectivity checks are opt-in and are not performed by default"
@@ -94,6 +114,11 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
 
 fn directory_is_readable(path: &std::path::Path) -> bool {
     path.is_dir() && fs::read_dir(path).is_ok()
+}
+
+fn credential_is_available(name: &str) -> bool {
+    std::env::var(name)
+        .is_ok_and(|value| !value.trim().is_empty() && !value.chars().any(char::is_control))
 }
 
 fn check(name: &str, ok: bool, message: &str, remediation: &str) -> Value {

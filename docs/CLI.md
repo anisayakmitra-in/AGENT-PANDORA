@@ -42,11 +42,13 @@ default. The flag-based form creates or updates the same active
 credential environment without storing a credential value.
 
 `doctor` reports the platform, CLI version, configuration path, storage path,
-workspace path, policy mode, provider configuration state, and remediation.
+workspace path, policy mode, provider configuration state, and remediation. If
+a provider is configured, it also verifies that the configured credential
+environment variable contains a usable value without exposing that value.
 Provider connectivity is deliberately `not_checked`; diagnostics do not send a
-request or read a provider credential. A valid local-only setup is healthy for
-read-only tasks and reports the provider check as `not_configured`; configure a
-provider before running model-backed tasks.
+request. A valid local-only setup is healthy for read-only tasks and reports
+the provider check as `not_configured`; configure a provider before running
+model-backed tasks.
 
 `provider test` sends one bounded request using the active profile's credential
 environment variable through the provider permit boundary and reports the
