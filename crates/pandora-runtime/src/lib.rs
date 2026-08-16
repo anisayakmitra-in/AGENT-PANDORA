@@ -50,7 +50,9 @@ pub use human_review::{
 pub use memory_engine::{MemoryEngine, MemoryError};
 pub use mutation::{MutationEngine, MutationError};
 pub use observability::{ObservabilityEngine, ObservabilityError};
-pub use orchestration_engine::{OrchestrationEngine, OrchestrationError, OrchestrationRun};
+pub use orchestration_engine::{
+    DomainProfileRun, OrchestrationEngine, OrchestrationError, OrchestrationRun,
+};
 pub use package_store::{MAX_STORED_ARTIFACT_BYTES, PackageStore, PackageStoreError};
 pub use parliament::Parliament;
 pub use permit_store::{ConsumedPermit, PermitError, PermitStore};

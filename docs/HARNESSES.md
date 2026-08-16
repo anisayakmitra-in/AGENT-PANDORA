@@ -56,11 +56,14 @@ constitutional service, execute effects, install packages, or grant permits.
 ## Domain profiles
 
 `DomainAgent` is a runtime profile of a Domain Harness, not a fourth Harness
-kind. It gives one Domain Harness a selected role set, provider bindings, and
-bounded work loop while preserving the same Genes and effect policy.
+kind. The runtime represents it as a `DomainAgentProfile` over one
+`OrchestrationPlan` and `RunLoopConfig`. Registration requires every role to
+belong to the same Domain Harness and keeps the existing Gene and effect
+policy. Provider selection remains a provider-runtime concern and is not
+embedded in the Harness or package contract.
 
-A `Swarm` is a Domain Harness composition profile for multiple workers in one
-domain. It declares worker roles, handoff limits, and shared budgets. A Swarm
+A `Swarm` is the `DomainProfileMode::Swarm` form of that same runtime profile.
+It records a bounded worker count within the plan's parallelism limit. A Swarm
 does not create a parallel execution hierarchy. Cross-domain work still goes
 through a Meta Harness and its declared composition.
 

@@ -1,4 +1,4 @@
-use pandora_types::{OrchestrationPlan, PlanId, RoleAssignment, RoleId};
+use pandora_types::{DomainAgentProfile, OrchestrationPlan, PlanId, RoleAssignment, RoleId};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Mutex;
@@ -46,12 +46,14 @@ impl From<pandora_types::OrchestrationContractError> for OrchestrationError {
 
 pub struct OrchestrationEngine {
     plans: Mutex<BTreeMap<PlanId, OrchestrationPlan>>,
+    profiles: Mutex<BTreeMap<PlanId, DomainAgentProfile>>,
 }
 
 impl OrchestrationEngine {
     pub fn new() -> Self {
         Self {
             plans: Mutex::new(BTreeMap::new()),
+            profiles: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -99,6 +101,27 @@ impl OrchestrationEngine {
         plans.values().cloned().collect()
     }
 
+    pub fn register_domain_profile(
+        &self,
+        profile: DomainAgentProfile,
+    ) -> Result<(), OrchestrationError> {
+        let plan_id = profile.plan().id().clone();
+        self.register(profile.plan().clone())?;
+        self.profiles
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(plan_id, profile);
+        Ok(())
+    }
+
+    pub fn domain_profiles(&self) -> Vec<DomainAgentProfile> {
+        let profiles = self
+            .profiles
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        profiles.values().cloned().collect()
+    }
+
     pub fn start(&self, plan_id: &PlanId) -> Result<OrchestrationRun, OrchestrationError> {
         let plan = self
             .plans
@@ -109,6 +132,23 @@ impl OrchestrationEngine {
             .ok_or_else(|| OrchestrationError::PlanNotFound(plan_id.clone()))?;
         Ok(OrchestrationRun::new(plan))
     }
+
+    pub fn start_domain_profile(
+        &self,
+        plan_id: &PlanId,
+    ) -> Result<DomainProfileRun, OrchestrationError> {
+        let profile = self
+            .profiles
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(plan_id)
+            .cloned()
+            .ok_or_else(|| OrchestrationError::PlanNotFound(plan_id.clone()))?;
+        Ok(DomainProfileRun {
+            run: OrchestrationRun::new(profile.plan().clone()),
+            profile,
+        })
+    }
 }
 
 pub struct OrchestrationRun {
@@ -116,6 +156,25 @@ pub struct OrchestrationRun {
     completed: BTreeSet<RoleId>,
     active: BTreeSet<RoleId>,
     handoffs_used: u32,
+}
+
+pub struct DomainProfileRun {
+    profile: DomainAgentProfile,
+    run: OrchestrationRun,
+}
+
+impl DomainProfileRun {
+    pub fn profile(&self) -> &DomainAgentProfile {
+        &self.profile
+    }
+
+    pub fn run(&self) -> &OrchestrationRun {
+        &self.run
+    }
+
+    pub fn run_mut(&mut self) -> &mut OrchestrationRun {
+        &mut self.run
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -256,8 +315,9 @@ impl Default for OrchestrationEngine {
 mod tests {
     use super::*;
     use pandora_types::{
-        Handoff, HarnessId, MetaComposition, OrchestrationPlan, OrchestrationRole, PlanId,
-        RoleAssignment, RoleId,
+        DomainAgentProfile, DomainProfileMode, Handoff, HarnessId, LoopTermination,
+        MetaComposition, OrchestrationPlan, OrchestrationRole, PlanId, RoleAssignment, RoleId,
+        RunLoopConfig,
     };
 
     fn role(
@@ -431,5 +491,24 @@ mod tests {
 
         assert_eq!(restored.snapshot(), snapshot);
         assert_eq!(restored.ready_roles().unwrap()[0].id().as_str(), "maker");
+    }
+
+    #[test]
+    fn domain_profile_registration_retains_mode_and_loop_budget() {
+        let profile = DomainAgentProfile::new(
+            HarnessId::new("coding-domain").unwrap(),
+            plan(),
+            RunLoopConfig::new(3, 1_000, 4, 60, 2_000, 1, LoopTermination::GoalReached).unwrap(),
+            DomainProfileMode::Swarm { workers: 2 },
+        )
+        .unwrap();
+        let engine = OrchestrationEngine::new();
+
+        engine.register_domain_profile(profile.clone()).unwrap();
+
+        assert_eq!(engine.domain_profiles(), vec![profile.clone()]);
+        let run = engine.start_domain_profile(profile.plan().id()).unwrap();
+        assert_eq!(run.profile(), &profile);
+        assert_eq!(run.run().plan(), profile.plan());
     }
 }

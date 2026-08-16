@@ -40,9 +40,25 @@ pub enum OrchestrationContractError {
     DependencyCycle,
     UnknownHandoffRole(RoleId),
     InvalidHandoff,
-    UncoordinatedCrossDomain { from: HarnessId, to: HarnessId },
-    MetaDomainNotAllowed { harness_id: HarnessId },
-    MetaHandoffLimitExceeded { limit: u32 },
+    UncoordinatedCrossDomain {
+        from: HarnessId,
+        to: HarnessId,
+    },
+    MetaDomainNotAllowed {
+        harness_id: HarnessId,
+    },
+    MetaHandoffLimitExceeded {
+        limit: u32,
+    },
+    DomainRoleOutsideHarness {
+        expected: HarnessId,
+        actual: HarnessId,
+    },
+    InvalidSwarmWorkers,
+    SwarmExceedsParallelism {
+        workers: usize,
+        max_parallelism: usize,
+    },
     TooManyHandoffs,
 }
 
@@ -71,6 +87,20 @@ impl fmt::Display for OrchestrationContractError {
             Self::MetaHandoffLimitExceeded { limit } => {
                 write!(formatter, "Meta Harness allows at most {limit} handoffs")
             }
+            Self::DomainRoleOutsideHarness { expected, actual } => write!(
+                formatter,
+                "Domain profile for {expected} cannot include role from {actual}"
+            ),
+            Self::InvalidSwarmWorkers => {
+                formatter.write_str("Swarm profiles require at least two workers")
+            }
+            Self::SwarmExceedsParallelism {
+                workers,
+                max_parallelism,
+            } => write!(
+                formatter,
+                "Swarm worker count {workers} exceeds plan parallelism {max_parallelism}"
+            ),
             Self::TooManyHandoffs => formatter.write_str("plan exceeds its handoff limit"),
         }
     }
@@ -284,6 +314,74 @@ impl OrchestrationPlan {
         self.handoffs
             .iter()
             .find(|handoff| handoff.from() == from && handoff.to() == to)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DomainProfileMode {
+    Agent,
+    Swarm { workers: usize },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DomainAgentProfile {
+    harness_id: HarnessId,
+    plan: OrchestrationPlan,
+    loop_config: RunLoopConfig,
+    mode: DomainProfileMode,
+}
+
+impl DomainAgentProfile {
+    pub fn new(
+        harness_id: HarnessId,
+        plan: OrchestrationPlan,
+        loop_config: RunLoopConfig,
+        mode: DomainProfileMode,
+    ) -> Result<Self, OrchestrationContractError> {
+        if let Some(role) = plan
+            .roles()
+            .iter()
+            .find(|role| role.harness_id() != &harness_id)
+        {
+            return Err(OrchestrationContractError::DomainRoleOutsideHarness {
+                expected: harness_id,
+                actual: role.harness_id().clone(),
+            });
+        }
+        if let DomainProfileMode::Swarm { workers } = mode {
+            if workers < 2 {
+                return Err(OrchestrationContractError::InvalidSwarmWorkers);
+            }
+            if workers > plan.max_parallelism() {
+                return Err(OrchestrationContractError::SwarmExceedsParallelism {
+                    workers,
+                    max_parallelism: plan.max_parallelism(),
+                });
+            }
+        }
+        Ok(Self {
+            harness_id,
+            plan,
+            loop_config,
+            mode,
+        })
+    }
+
+    pub fn harness_id(&self) -> &HarnessId {
+        &self.harness_id
+    }
+
+    pub fn plan(&self) -> &OrchestrationPlan {
+        &self.plan
+    }
+
+    pub fn loop_config(&self) -> &RunLoopConfig {
+        &self.loop_config
+    }
+
+    pub const fn mode(&self) -> DomainProfileMode {
+        self.mode
     }
 }
 
@@ -699,5 +797,116 @@ mod tests {
             result,
             Err(OrchestrationContractError::UncoordinatedCrossDomain { .. })
         ));
+    }
+
+    #[test]
+    fn domain_agent_profile_keeps_one_harness_and_loop_budget() {
+        let harness_id = HarnessId::new("coding-domain").unwrap();
+        let plan = OrchestrationPlan::new(
+            PlanId::new("coding-agent").unwrap(),
+            vec![role(
+                "planner",
+                OrchestrationRole::Planner,
+                "coding-domain",
+                &[],
+            )],
+            1,
+            0,
+            Vec::new(),
+        )
+        .unwrap();
+        let loop_config =
+            RunLoopConfig::new(3, 1_000, 4, 60, 2_000, 1, LoopTermination::GoalReached).unwrap();
+
+        let profile = DomainAgentProfile::new(
+            harness_id.clone(),
+            plan.clone(),
+            loop_config.clone(),
+            DomainProfileMode::Agent,
+        )
+        .unwrap();
+
+        assert_eq!(profile.harness_id(), &harness_id);
+        assert_eq!(profile.plan(), &plan);
+        assert_eq!(profile.loop_config(), &loop_config);
+        assert_eq!(profile.mode(), DomainProfileMode::Agent);
+    }
+
+    #[test]
+    fn domain_agent_profile_rejects_roles_from_another_harness() {
+        let plan = OrchestrationPlan::new(
+            PlanId::new("mixed-domain").unwrap(),
+            vec![
+                role("planner", OrchestrationRole::Planner, "coding-domain", &[]),
+                role("designer", OrchestrationRole::Maker, "design-domain", &[]),
+            ],
+            2,
+            0,
+            Vec::new(),
+        )
+        .unwrap();
+        let loop_config =
+            RunLoopConfig::new(1, 100, 1, 30, 100, 0, LoopTermination::ExplicitStop).unwrap();
+
+        let result = DomainAgentProfile::new(
+            HarnessId::new("coding-domain").unwrap(),
+            plan,
+            loop_config,
+            DomainProfileMode::Agent,
+        );
+
+        assert!(matches!(
+            result,
+            Err(OrchestrationContractError::DomainRoleOutsideHarness { .. })
+        ));
+    }
+
+    #[test]
+    fn swarm_profile_requires_multiple_workers_within_plan_capacity() {
+        let harness_id = HarnessId::new("coding-domain").unwrap();
+        let plan = OrchestrationPlan::new(
+            PlanId::new("coding-swarm").unwrap(),
+            vec![
+                role("maker-a", OrchestrationRole::Maker, "coding-domain", &[]),
+                role("maker-b", OrchestrationRole::Maker, "coding-domain", &[]),
+            ],
+            2,
+            0,
+            Vec::new(),
+        )
+        .unwrap();
+        let loop_config =
+            RunLoopConfig::new(2, 500, 4, 30, 500, 0, LoopTermination::NoProgress).unwrap();
+
+        let profile = DomainAgentProfile::new(
+            harness_id.clone(),
+            plan.clone(),
+            loop_config.clone(),
+            DomainProfileMode::Swarm { workers: 2 },
+        )
+        .unwrap();
+        assert_eq!(profile.mode(), DomainProfileMode::Swarm { workers: 2 });
+
+        assert_eq!(
+            DomainAgentProfile::new(
+                harness_id.clone(),
+                plan.clone(),
+                loop_config.clone(),
+                DomainProfileMode::Swarm { workers: 1 },
+            ),
+            Err(OrchestrationContractError::InvalidSwarmWorkers)
+        );
+        assert_eq!(
+            DomainAgentProfile::new(
+                harness_id,
+                plan,
+                loop_config,
+                DomainProfileMode::Swarm { workers: 3 },
+            ),
+            Err(OrchestrationContractError::SwarmExceedsParallelism {
+                workers: 3,
+                max_parallelism: 2,
+            })
+        );
     }
 }

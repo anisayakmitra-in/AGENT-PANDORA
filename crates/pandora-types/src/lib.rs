@@ -56,9 +56,9 @@ pub use observability::{
     ObservabilityContractError, ObservabilitySample, ObservabilitySnapshot, SpanView, TraceView,
 };
 pub use orchestration::{
-    Handoff, IterationOutcome, LoopDecision, LoopTermination, OrchestrationContractError,
-    OrchestrationPlan, OrchestrationRole, RoleAssignment, RunLoopConfig, RunLoopSnapshot,
-    RunLoopState, Usage,
+    DomainAgentProfile, DomainProfileMode, Handoff, IterationOutcome, LoopDecision,
+    LoopTermination, OrchestrationContractError, OrchestrationPlan, OrchestrationRole,
+    RoleAssignment, RunLoopConfig, RunLoopSnapshot, RunLoopState, Usage,
 };
 pub use package::{
     PackageCompatibility, PackageDependency, PackageKind, PackageManifest, PackageManifestError,
