@@ -123,6 +123,12 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let optimization = parsed.value("optimize").map(parse_objective).transpose()?;
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
+    let harnesses = configured_harnesses(
+        &config,
+        parsed.value("harness"),
+        parsed.value("harness-version"),
+    )?;
+    require_runnable_harness(&harnesses, parsed.value("harness"))?;
     let optimized_provider = optimization
         .map(|objective| select_provider(&config, task_class, objective))
         .transpose()?
@@ -184,11 +190,6 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         ],
         [Operation::Write, Operation::Execute],
     );
-    let harnesses = configured_harnesses(
-        &config,
-        parsed.value("harness"),
-        parsed.value("harness-version"),
-    )?;
     let controller = ExecutionController::with_policy_and_harnesses(workspace, policy, harnesses);
     let (task, planning_model) = if parsed.value("plan").is_some() {
         plan_task(
@@ -374,6 +375,30 @@ fn canonical_harness_id(value: &str) -> &str {
         "coding" => CODING_HARNESS_ID,
         value => value,
     }
+}
+
+fn require_runnable_harness(
+    harnesses: &HarnessCatalog,
+    requested: Option<&str>,
+) -> Result<(), CliError> {
+    let Some(requested) = requested else {
+        return Ok(());
+    };
+    let harness_id = HarnessId::new(canonical_harness_id(requested).to_owned())
+        .map_err(|_| CliError::usage("Harness ID is invalid"))?;
+    let harness = harnesses
+        .find(&harness_id)
+        .ok_or_else(|| CliError::execution("requested harness is not supported", json!({})))?;
+    if harness.is_runnable() {
+        return Ok(());
+    }
+    Err(CliError::execution(
+        "requested harness is not runnable",
+        json!({
+            "harness_id": harness.manifest().id(),
+            "kind": harness.manifest().kind().as_str(),
+        }),
+    ))
 }
 
 fn execute_agent(

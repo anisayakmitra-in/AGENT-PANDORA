@@ -1810,6 +1810,19 @@ fn package_meta_admission_survives_cli_restart_without_runtime_authority() {
     assert_eq!(response["details"]["kind"], "meta");
 
     let output = fixture
+        .command(&["session", "list", "--json"])
+        .output()
+        .expect("session listing should start");
+    assert_success(&output);
+    assert!(
+        parse_json(&output)["sessions"]
+            .as_array()
+            .expect("sessions should be an array")
+            .is_empty(),
+        "a non-runnable Harness must not create a session"
+    );
+
+    let output = fixture
         .command(&["package", "remove", "example/meta", "1.0.0", "--json"])
         .output()
         .expect("unconfirmed package removal should start");
