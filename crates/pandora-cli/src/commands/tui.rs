@@ -1,20 +1,24 @@
 use super::{ParsedArgs, parse_options};
 use crate::output::{CliError, CommandResult, success};
-use crossterm::cursor::MoveTo;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::execute;
-use crossterm::queue;
-use crossterm::style::{Color, Print, ResetColor, SetForegroundColor};
-use crossterm::terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
+use ratatui::backend::CrosstermBackend;
+use ratatui::layout::{Constraint, Direction, Layout, Position};
+use ratatui::style::{Color as TuiColor, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::{Frame, Terminal};
 use serde_json::{Value, json};
 use std::cmp::min;
-use std::io::{self, IsTerminal, Stdout, Write};
+use std::io::{self, IsTerminal, Stdout};
 use std::time::Duration;
 
 const MAX_DISPLAY_CHARS: usize = 64 * 1024;
 const MAX_TUI_MESSAGES: usize = 512;
 const MAX_TUI_HISTORY: usize = 100;
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
+type TuiTerminal = Terminal<CrosstermBackend<Stdout>>;
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
@@ -42,7 +46,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
 
     let mut terminal = TerminalSession::enter()?;
     let mut app = App::new(parsed);
-    let result = app.run(&mut terminal.stdout);
+    let result = app.run(&mut terminal.terminal);
     terminal.restore();
     result?;
 
@@ -58,7 +62,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
 }
 
 struct TerminalSession {
-    stdout: Stdout,
+    terminal: TuiTerminal,
     active: bool,
 }
 
@@ -70,8 +74,16 @@ impl TerminalSession {
             let _ = terminal::disable_raw_mode();
             return Err(terminal_error(error));
         }
+        let terminal = match Terminal::new(CrosstermBackend::new(stdout)) {
+            Ok(terminal) => terminal,
+            Err(error) => {
+                let _ = terminal::disable_raw_mode();
+                let _ = execute!(io::stdout(), LeaveAlternateScreen);
+                return Err(terminal_error(error));
+            }
+        };
         Ok(Self {
-            stdout,
+            terminal,
             active: true,
         })
     }
@@ -80,7 +92,8 @@ impl TerminalSession {
         if !self.active {
             return;
         }
-        let _ = execute!(self.stdout, LeaveAlternateScreen);
+        let _ = self.terminal.show_cursor();
+        let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
         let _ = terminal::disable_raw_mode();
         self.active = false;
     }
@@ -127,9 +140,11 @@ impl App {
         }
     }
 
-    fn run(&mut self, stdout: &mut Stdout) -> Result<(), CliError> {
+    fn run(&mut self, terminal: &mut TuiTerminal) -> Result<(), CliError> {
         loop {
-            self.draw(stdout)?;
+            terminal
+                .draw(|frame| self.render(frame))
+                .map_err(terminal_error)?;
             if !event::poll(POLL_INTERVAL).map_err(terminal_error)? {
                 continue;
             }
@@ -403,65 +418,79 @@ impl App {
         self.cursor = self.input.len();
     }
 
-    fn draw(&self, stdout: &mut Stdout) -> Result<(), CliError> {
-        let (width, height) = terminal::size().map_err(terminal_error)?;
-        let width = usize::from(width).max(1);
-        let height = usize::from(height).max(4);
-        let body_height = height.saturating_sub(4);
+    fn render(&self, frame: &mut Frame) {
+        let area = frame.area();
+        let sections = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Min(3),
+                Constraint::Length(1),
+                Constraint::Length(3),
+            ])
+            .split(area);
+
+        let header = Paragraph::new(vec![
+            Line::from(Span::styled(
+                "PANDORA TUI",
+                Style::default()
+                    .fg(TuiColor::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                "Governed execution · Ctrl-C/Esc exits · /help for commands",
+                Style::default().fg(TuiColor::DarkGray),
+            )),
+        ]);
+        frame.render_widget(header, sections[0]);
+
         let mut lines = Vec::new();
         for message in &self.messages {
-            wrap_message(message, width.saturating_sub(2), &mut lines);
+            wrap_message(
+                message,
+                usize::from(sections[1].width.saturating_sub(2)),
+                &mut lines,
+            );
         }
+        let body_height = usize::from(sections[1].height.saturating_sub(2));
         let first = lines.len().saturating_sub(body_height);
-
-        queue!(
-            stdout,
-            Clear(ClearType::All),
-            MoveTo(0, 0),
-            SetForegroundColor(Color::Cyan),
-            Print("PANDORA TUI"),
-            ResetColor,
-            MoveTo(0, 1),
-            SetForegroundColor(Color::DarkGrey),
-            Print("Governed execution · Ctrl-C/Esc exits · /help for commands"),
-            ResetColor,
-        )
-        .map_err(terminal_error)?;
-        for (offset, line) in lines.iter().skip(first).take(body_height).enumerate() {
-            queue!(
-                stdout,
-                MoveTo(1, (2 + offset) as u16),
-                Print(truncate(line, width - 2))
-            )
-            .map_err(terminal_error)?;
-        }
+        let visible_lines = lines
+            .iter()
+            .skip(first)
+            .take(body_height)
+            .map(|line| {
+                Line::from(truncate(
+                    line,
+                    usize::from(sections[1].width.saturating_sub(2)),
+                ))
+            })
+            .collect::<Vec<_>>();
+        let transcript = Paragraph::new(visible_lines)
+            .block(Block::default().borders(Borders::ALL).title("Transcript"));
+        frame.render_widget(transcript, sections[1]);
 
         let session = self.session_id.as_deref().unwrap_or("not started");
-        let status = truncate(
-            &format!("session: {session} · turns: {}", self.turns),
-            width,
+        let status = format!("session: {session} · turns: {}", self.turns);
+        frame.render_widget(
+            Paragraph::new(truncate(&status, usize::from(sections[2].width)))
+                .style(Style::default().fg(TuiColor::DarkGray)),
+            sections[2],
         );
-        queue!(
-            stdout,
-            MoveTo(0, height.saturating_sub(2) as u16),
-            SetForegroundColor(Color::DarkGrey),
-            Print(status),
-            ResetColor,
-        )
-        .map_err(terminal_error)?;
 
-        let (input, cursor) = visible_input(&self.input, self.cursor, width);
-        queue!(
-            stdout,
-            MoveTo(0, height.saturating_sub(1) as u16),
-            SetForegroundColor(Color::Green),
-            Print("> "),
-            ResetColor,
-            Print(input),
-            MoveTo(cursor, height.saturating_sub(1) as u16),
-        )
-        .map_err(terminal_error)?;
-        stdout.flush().map_err(terminal_error)
+        let (input, cursor) =
+            visible_input(&self.input, self.cursor, usize::from(sections[3].width));
+        let input_line = Line::from(vec![
+            Span::styled("> ", Style::default().fg(TuiColor::Green)),
+            Span::raw(input),
+        ]);
+        frame.render_widget(
+            Paragraph::new(input_line).block(Block::default().borders(Borders::TOP)),
+            sections[3],
+        );
+        frame.set_cursor_position(Position::new(
+            sections[3].x.saturating_add(cursor),
+            sections[3].y.saturating_add(1),
+        ));
     }
 }
 
@@ -518,6 +547,7 @@ fn terminal_error(error: impl std::fmt::Display) -> CliError {
 mod tests {
     use super::{App, MAX_TUI_HISTORY, MAX_TUI_MESSAGES, visible_input, wrap_message};
     use crate::commands::ParsedArgs;
+    use ratatui::{Terminal, backend::TestBackend};
     use std::collections::BTreeMap;
 
     fn app() -> App {
@@ -606,5 +636,26 @@ mod tests {
         assert_eq!(app.history.len(), MAX_TUI_HISTORY);
         assert_eq!(app.history.first().map(String::as_str), Some("task-2"));
         assert_eq!(app.history.last().map(String::as_str), Some("task-101"));
+    }
+
+    #[test]
+    fn ratatui_renderer_draws_the_initial_screen() {
+        let backend = TestBackend::new(60, 12);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let app = app();
+
+        terminal
+            .draw(|frame| app.render(frame))
+            .expect("render initial TUI");
+
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("PANDORA TUI"));
+        assert!(rendered.contains("Enter a task"));
     }
 }

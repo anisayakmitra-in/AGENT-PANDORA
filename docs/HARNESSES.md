@@ -53,6 +53,17 @@ not become runnable through discovery.
 Meta Harnesses coordinate existing Domain Harnesses. They do not augment a
 constitutional service, execute effects, install packages, or grant permits.
 
+## Domain profiles
+
+`DomainAgent` is a runtime profile of a Domain Harness, not a fourth Harness
+kind. It gives one Domain Harness a selected role set, provider bindings, and
+bounded work loop while preserving the same Genes and effect policy.
+
+A `Swarm` is a Domain Harness composition profile for multiple workers in one
+domain. It declares worker roles, handoff limits, and shared budgets. A Swarm
+does not create a parallel execution hierarchy. Cross-domain work still goes
+through a Meta Harness and its declared composition.
+
 ## Package kinds
 
 The external vocabulary is closed and uses these exact values:
