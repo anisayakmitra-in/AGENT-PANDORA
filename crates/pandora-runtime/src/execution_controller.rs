@@ -159,6 +159,9 @@ impl ExecutionController {
         session: &Session,
         now: Timestamp,
     ) -> Result<ProviderResult, RuntimeError> {
+        let authorization_payload = request
+            .authorization_payload()
+            .map_err(RuntimeError::Provider)?;
         let execution_id = ExecutionId::new(format!(
             "provider-execution-{}",
             self.next_execution.fetch_add(1, Ordering::Relaxed)
@@ -179,6 +182,8 @@ impl ExecutionController {
             ),
             ResourceScope::none(),
         )
+        .map_err(RuntimeError::Request)?
+        .with_payload_digest(&authorization_payload)
         .map_err(RuntimeError::Request)?;
         let decision = self.parliament.decide(&operation_request, &self.policy);
         let permit = match decision {

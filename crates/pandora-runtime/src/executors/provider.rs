@@ -73,6 +73,10 @@ fn request_matches(
     request: &ModelRequest,
 ) -> bool {
     let operation = permit.request();
+    let payload_matches = request
+        .authorization_payload()
+        .ok()
+        .is_some_and(|payload| operation.payload_digest_matches(&payload));
     operation.capability() == Capability::ProviderInvoke
         && operation.operation() == Operation::Invoke
         && matches!(operation.resource_scope(), ResourceScope::None)
@@ -82,6 +86,7 @@ fn request_matches(
                 if provider_id == provider.manifest().id().as_str()
         )
         && request.provider_id() == provider.manifest().id()
+        && payload_matches
 }
 
 fn error_code(error: &ProviderError) -> &'static str {
@@ -178,7 +183,15 @@ mod tests {
     #[test]
     fn provider_executor_requires_a_matching_permit() {
         let provider = StubProvider::new();
-        let request = request(provider.manifest());
+        let model_request = ModelRequest::new(
+            provider.manifest().id().clone(),
+            provider.manifest().default_model().clone(),
+            vec![ChatMessage::user("hello").unwrap()],
+        )
+        .unwrap();
+        let request = request(provider.manifest())
+            .with_payload_digest(&model_request.authorization_payload().unwrap())
+            .unwrap();
         let monitor = ReferenceMonitor::new(1, 60);
         let parliament = Parliament::new(1);
         let policy = PolicyContext::new(1, [Capability::ProviderInvoke], []);
@@ -193,13 +206,6 @@ mod tests {
             .store()
             .consume(permit, &request, Timestamp::from_unix_seconds(10))
             .unwrap();
-        let model_request = ModelRequest::new(
-            provider.manifest().id().clone(),
-            provider.manifest().default_model().clone(),
-            vec![ChatMessage::user("hello").unwrap()],
-        )
-        .unwrap();
-
         let result = ProviderExecutor::new().complete(
             &consumed,
             &provider,
@@ -217,7 +223,15 @@ mod tests {
     #[test]
     fn provider_executor_rejects_a_different_provider() {
         let provider = StubProvider::new();
-        let request = request(provider.manifest());
+        let authorized_model_request = ModelRequest::new(
+            provider.manifest().id().clone(),
+            provider.manifest().default_model().clone(),
+            vec![ChatMessage::user("hello").unwrap()],
+        )
+        .unwrap();
+        let request = request(provider.manifest())
+            .with_payload_digest(&authorized_model_request.authorization_payload().unwrap())
+            .unwrap();
         let monitor = ReferenceMonitor::new(1, 60);
         let parliament = Parliament::new(1);
         let policy = PolicyContext::new(1, [Capability::ProviderInvoke], []);
@@ -261,6 +275,90 @@ mod tests {
         assert!(matches!(
             result.receipt().outcome(),
             EffectOutcome::Failed { .. }
+        ));
+    }
+
+    #[test]
+    fn provider_executor_rejects_a_permit_without_payload_binding() {
+        let provider = StubProvider::new();
+        let request = request(provider.manifest());
+        let monitor = ReferenceMonitor::new(1, 60);
+        let parliament = Parliament::new(1);
+        let policy = PolicyContext::new(1, [Capability::ProviderInvoke], []);
+        let permit = monitor
+            .authorize(
+                request.clone(),
+                parliament.decide(&request, &policy),
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap();
+        let consumed = monitor
+            .store()
+            .consume(permit, &request, Timestamp::from_unix_seconds(10))
+            .unwrap();
+        let model_request = ModelRequest::new(
+            provider.manifest().id().clone(),
+            provider.manifest().default_model().clone(),
+            vec![ChatMessage::user("hello").unwrap()],
+        )
+        .unwrap();
+
+        let result = ProviderExecutor::new().complete(
+            &consumed,
+            &provider,
+            model_request,
+            Timestamp::from_unix_seconds(10),
+        );
+
+        assert!(matches!(
+            result.result(),
+            Err(ProviderError::InvalidRequest(_))
+        ));
+    }
+
+    #[test]
+    fn provider_executor_rejects_changed_model_payload() {
+        let provider = StubProvider::new();
+        let authorized_model_request = ModelRequest::new(
+            provider.manifest().id().clone(),
+            provider.manifest().default_model().clone(),
+            vec![ChatMessage::user("authorized").unwrap()],
+        )
+        .unwrap();
+        let request = request(provider.manifest())
+            .with_payload_digest(&authorized_model_request.authorization_payload().unwrap())
+            .unwrap();
+        let monitor = ReferenceMonitor::new(1, 60);
+        let parliament = Parliament::new(1);
+        let policy = PolicyContext::new(1, [Capability::ProviderInvoke], []);
+        let permit = monitor
+            .authorize(
+                request.clone(),
+                parliament.decide(&request, &policy),
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap();
+        let consumed = monitor
+            .store()
+            .consume(permit, &request, Timestamp::from_unix_seconds(10))
+            .unwrap();
+        let changed_model_request = ModelRequest::new(
+            provider.manifest().id().clone(),
+            provider.manifest().default_model().clone(),
+            vec![ChatMessage::user("changed").unwrap()],
+        )
+        .unwrap();
+
+        let result = ProviderExecutor::new().complete(
+            &consumed,
+            &provider,
+            changed_model_request,
+            Timestamp::from_unix_seconds(10),
+        );
+
+        assert!(matches!(
+            result.result(),
+            Err(ProviderError::InvalidRequest(_))
         ));
     }
 }

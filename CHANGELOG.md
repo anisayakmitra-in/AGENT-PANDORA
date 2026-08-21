@@ -79,6 +79,8 @@
   so a caller cannot widen effect authority with a fabricated decision.
 - Filesystem executors are now bound to one canonical workspace before they can
   read, search, or write; the unbound compatibility constructor fails closed.
+- Provider permits now bind the canonical model request payload, including its
+  messages, tools, model, token budget, timeout, and trace identifiers.
 - Agent, planning, and provider-test model requests now pass through the runtime
   ProviderExecutor and require a scoped, one-shot `provider.invoke` permit.
 - Agent runs now assemble the constitutional prompt and enabled Skill guidance

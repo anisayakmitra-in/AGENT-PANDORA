@@ -438,6 +438,36 @@ impl ModelRequest {
     pub fn trace(&self) -> &TraceMetadata {
         &self.trace
     }
+
+    pub fn authorization_payload(&self) -> Result<Vec<u8>, ProviderError> {
+        serde_json::to_vec(&CanonicalModelRequest {
+            provider_id: self.provider_id.as_str(),
+            model_id: self.model_id.as_str(),
+            messages: &self.messages,
+            tools: &self.tools,
+            max_output_tokens: self.max_output_tokens,
+            timeout_millis: self.timeout.as_millis(),
+            trace_execution_id: self.trace.execution_id().map(|id| id.as_str()),
+            trace_session_id: self.trace.session_id().map(|id| id.as_str()),
+        })
+        .map_err(|_| {
+            ProviderError::InvalidRequest(
+                "provider request could not be encoded for authorization".to_owned(),
+            )
+        })
+    }
+}
+
+#[derive(Serialize)]
+struct CanonicalModelRequest<'a> {
+    provider_id: &'a str,
+    model_id: &'a str,
+    messages: &'a [ChatMessage],
+    tools: &'a [ToolSchema],
+    max_output_tokens: u32,
+    timeout_millis: u128,
+    trace_execution_id: Option<&'a str>,
+    trace_session_id: Option<&'a str>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
