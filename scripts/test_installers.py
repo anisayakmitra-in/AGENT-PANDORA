@@ -105,6 +105,34 @@ class InstallerContractTests(unittest.TestCase):
         self.assertIn(f'version="${{PANDORA_VERSION:-{tag}}}"', shell)
         self.assertIn(f'$defaultVersion = "{tag}"', powershell)
 
+    def test_posix_installer_rejects_malformed_version_components(self) -> None:
+        shell = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            "grep -Eq '^v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$'",
+            shell,
+        )
+
+        shell_command = shutil.which("sh") or shutil.which("bash")
+        if shell_command is None or platform.system() == "Windows":
+            self.skipTest("a POSIX shell is required to execute install.sh")
+
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "PANDORA_VERSION": "v2x.0.0",
+                "PANDORA_RELEASE_BASE_URL": "https://example.invalid/releases/download",
+            }
+        )
+        result = subprocess.run(
+            [shell_command, str(ROOT / "scripts" / "install.sh")],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must be a SemVer tag", result.stderr)
+
     def test_readme_pin_example_passes_version_to_the_installer_shell(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         cargo = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
