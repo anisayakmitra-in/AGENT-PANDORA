@@ -1570,6 +1570,13 @@ fn doctor_accepts_a_valid_local_only_setup_without_a_provider() {
     assert_eq!(response["healthy"], true);
     assert_eq!(response["provider"]["configured"], false);
     assert_eq!(response["provider"]["connectivity"], "not_configured");
+    let storage_write = response["checks"]
+        .as_array()
+        .expect("doctor checks should be an array")
+        .iter()
+        .find(|check| check["check"] == "storage_write")
+        .expect("doctor should check storage writeability");
+    assert_eq!(storage_write["status"], "ok");
 }
 
 #[test]

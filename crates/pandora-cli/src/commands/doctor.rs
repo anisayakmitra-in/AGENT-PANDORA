@@ -1,13 +1,17 @@
 use super::{load_config, parse_options};
 use crate::output::{CliError, CommandResult, success};
 use serde_json::{Value, json};
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(args, &["config", "data-dir", "workspace"])?;
     let config = load_config(&parsed)?;
     let config_ok = config.config_path().is_file();
     let data_ok = directory_is_readable(config.data_dir());
+    let storage_write_ok = directory_is_writable(config.data_dir());
     let workspace_ok = directory_is_readable(config.workspace_dir());
     let provider_configured = config.provider_url().is_some();
     let credential_available = config
@@ -25,6 +29,12 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             data_ok,
             "data directory is readable",
             "run 'pandora setup' or check the data directory permissions",
+        ),
+        check(
+            "storage_write",
+            storage_write_ok,
+            "data directory accepts a temporary write",
+            "check the data directory write permissions",
         ),
         check(
             "workspace",
@@ -62,8 +72,11 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             ),
         );
     }
-    let healthy =
-        config_ok && data_ok && workspace_ok && (!provider_configured || credential_available);
+    let healthy = config_ok
+        && data_ok
+        && storage_write_ok
+        && workspace_ok
+        && (!provider_configured || credential_available);
     let provider = json!({
         "configured": provider_configured,
         "profiles": config.provider_names(),
@@ -114,6 +127,33 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
 
 fn directory_is_readable(path: &std::path::Path) -> bool {
     path.is_dir() && fs::read_dir(path).is_ok()
+}
+
+fn directory_is_writable(path: &Path) -> bool {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let probe = path.join(format!(
+        ".pandora-doctor-write-{}-{}",
+        std::process::id(),
+        timestamp
+    ));
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe)?;
+        file.write_all(b"probe")?;
+        drop(file);
+        fs::remove_file(&probe)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&probe);
+        false
+    } else {
+        true
+    }
 }
 
 fn credential_is_available(name: &str) -> bool {

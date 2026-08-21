@@ -41,8 +41,8 @@ default. The flag-based form creates or updates the same active
 `openai-compatible` profile, so scripts and CI can select a non-default
 credential environment without storing a credential value.
 
-`doctor` reports the platform, CLI version, configuration path, storage path,
-workspace path, policy mode, provider configuration state, and remediation. If
+`doctor` reports the platform, CLI version, configuration path, storage path and
+writeability, workspace path, policy mode, provider configuration state, and remediation. If
 a provider is configured, it also verifies that the configured credential
 environment variable contains a usable value without exposing that value.
 Provider connectivity is deliberately `not_checked`; diagnostics do not send a
