@@ -30,6 +30,20 @@ fn cli_reports_version_in_the_json_envelope_when_requested() {
 }
 
 #[test]
+fn cli_reports_version_when_json_precedes_the_version_flag() {
+    let output = Command::new(env!("CARGO_BIN_EXE_pandora"))
+        .args(["--json", "--version"])
+        .output()
+        .expect("pandora binary should start");
+
+    assert!(output.status.success());
+    let response: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("version output should be JSON");
+    assert_eq!(response["command"], "version");
+    assert_eq!(response["pandora_version"], env!("CARGO_PKG_VERSION"));
+}
+
+#[test]
 fn cli_help_is_successful_and_lists_the_primary_commands() {
     let output = Command::new(env!("CARGO_BIN_EXE_pandora"))
         .arg("--help")
