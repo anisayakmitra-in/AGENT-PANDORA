@@ -77,6 +77,8 @@
   engine; stale `verified` and `installed` state values fail closed on reload.
 - ReferenceMonitor now recomputes Parliament decisions from its bound policy,
   so a caller cannot widen effect authority with a fabricated decision.
+- Filesystem executors are now bound to one canonical workspace before they can
+  read, search, or write; the unbound compatibility constructor fails closed.
 - Agent, planning, and provider-test model requests now pass through the runtime
   ProviderExecutor and require a scoped, one-shot `provider.invoke` permit.
 - Agent runs now assemble the constitutional prompt and enabled Skill guidance

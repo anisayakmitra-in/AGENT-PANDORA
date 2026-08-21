@@ -117,7 +117,7 @@ impl ExecutionController {
     ) -> Self {
         let policy_version = policy.policy_version();
         Self {
-            filesystem: FilesystemExecutor::new(),
+            filesystem: FilesystemExecutor::for_workspace(workspace.clone()),
             process: ProcessExecutor::new(workspace.clone()),
             provider: ProviderExecutor::new(),
             workspace,

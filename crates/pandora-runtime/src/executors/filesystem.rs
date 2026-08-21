@@ -123,7 +123,9 @@ impl WorkspacePath {
     }
 }
 
-pub struct FilesystemExecutor;
+pub struct FilesystemExecutor {
+    workspace: Option<WorkspaceRoot>,
+}
 
 pub struct FilesystemResult<T> {
     result: Result<T, FilesystemError>,
@@ -146,7 +148,13 @@ impl<T> FilesystemResult<T> {
 
 impl FilesystemExecutor {
     pub const fn new() -> Self {
-        Self
+        Self { workspace: None }
+    }
+
+    pub fn for_workspace(workspace: WorkspaceRoot) -> Self {
+        Self {
+            workspace: Some(workspace),
+        }
     }
 
     pub fn read(
@@ -225,7 +233,9 @@ impl FilesystemExecutor {
         query: &str,
         now: Timestamp,
     ) -> FilesystemResult<Vec<String>> {
-        let result = if request_matches_search(permit, query) {
+        let result = if !self.matches_workspace(target) {
+            Err(FilesystemError::PermissionDenied)
+        } else if request_matches_search(permit, query) {
             (|| {
                 if query.is_empty() {
                     return Err(FilesystemError::EmptyPath);
@@ -372,7 +382,9 @@ impl FilesystemExecutor {
     where
         F: FnOnce() -> Result<T, FilesystemError>,
     {
-        let result = if request_matches(permit, target, capability, operation) {
+        let result = if !self.matches_workspace(target) {
+            Err(FilesystemError::PermissionDenied)
+        } else if request_matches(permit, target, capability, operation) {
             action()
         } else {
             Err(FilesystemError::PermissionDenied)
@@ -387,6 +399,12 @@ impl FilesystemExecutor {
             result,
             receipt: receipt_for(permit, now, outcome),
         }
+    }
+
+    fn matches_workspace(&self, target: &WorkspacePath) -> bool {
+        self.workspace
+            .as_ref()
+            .is_some_and(|workspace| workspace.root() == target.root.as_path())
     }
 }
 
@@ -539,6 +557,40 @@ mod tests {
     }
 
     #[test]
+    fn rejects_the_same_relative_path_from_another_workspace() {
+        let fixture = Fixture::new();
+        let other_workspace = fixture.temp.path().join("other-workspace");
+        fs::create_dir(&other_workspace).unwrap();
+        fs::write(other_workspace.join("README.md"), b"other\n").unwrap();
+        let other_root = WorkspaceRoot::new(&other_workspace).unwrap();
+        let target = other_root.path("README.md").unwrap();
+        let request = fixture.request(Capability::FilesystemRead, Operation::Read, "README.md");
+        let permit = fixture.permit(request);
+
+        let response = fixture.executor.read(&permit, &target, fixture.now());
+
+        assert_eq!(
+            response.result().unwrap_err(),
+            &FilesystemError::PermissionDenied
+        );
+    }
+
+    #[test]
+    fn unbound_executor_fails_closed() {
+        let fixture = Fixture::new();
+        let target = fixture.root.path("README.md").unwrap();
+        let request = fixture.request(Capability::FilesystemRead, Operation::Read, "README.md");
+        let permit = fixture.permit(request);
+
+        let response = FilesystemExecutor::new().read(&permit, &target, fixture.now());
+
+        assert_eq!(
+            response.result().unwrap_err(),
+            &FilesystemError::PermissionDenied
+        );
+    }
+
+    #[test]
     fn search_returns_matching_relative_paths() {
         let fixture = Fixture::new();
         fs::create_dir(fixture.root.root().join("src")).unwrap();
@@ -627,8 +679,8 @@ mod tests {
             let root = WorkspaceRoot::new(&workspace).unwrap();
             Self {
                 temp,
+                executor: FilesystemExecutor::for_workspace(root.clone()),
                 root,
-                executor: FilesystemExecutor::new(),
             }
         }
 
