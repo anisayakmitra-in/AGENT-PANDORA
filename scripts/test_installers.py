@@ -28,6 +28,26 @@ def workspace_temp_directory() -> Path:
     return directory
 
 
+def posix_shell_command() -> str | None:
+    if platform.system() == "Windows":
+        for program_files in (
+            os.environ.get("ProgramFiles"),
+            os.environ.get("ProgramW6432"),
+            os.environ.get("ProgramFiles(x86)"),
+        ):
+            if not program_files:
+                continue
+            for relative_path in (
+                ("Git", "bin", "bash.exe"),
+                ("Git", "usr", "bin", "sh.exe"),
+            ):
+                candidate = Path(program_files, *relative_path)
+                if candidate.is_file():
+                    return str(candidate)
+        return None
+    return shutil.which("sh") or shutil.which("bash")
+
+
 class InstallerContractTests(unittest.TestCase):
     def test_selects_supported_native_artifacts(self) -> None:
         self.assertEqual(
@@ -112,8 +132,8 @@ class InstallerContractTests(unittest.TestCase):
             shell,
         )
 
-        shell_command = shutil.which("sh") or shutil.which("bash")
-        if shell_command is None or platform.system() == "Windows":
+        shell_command = posix_shell_command()
+        if shell_command is None:
             self.skipTest("a POSIX shell is required to execute install.sh")
 
         environment = os.environ.copy()
