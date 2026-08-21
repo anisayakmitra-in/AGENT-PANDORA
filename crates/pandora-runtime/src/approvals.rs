@@ -1,4 +1,6 @@
-use pandora_types::{ExecutionId, GeneId, PrincipalId, RequestDigest, SessionId, Timestamp};
+use pandora_types::{
+    ExecutionId, GeneId, OperationRequest, PrincipalId, RequestDigest, SessionId, Timestamp,
+};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::fmt;
 use std::fs;
@@ -197,6 +199,22 @@ impl PendingApproval {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct ApprovalGrant {
+    approval: PendingApproval,
+}
+
+impl ApprovalGrant {
+    pub(crate) fn matches(&self, request: &OperationRequest, policy_version: u32) -> bool {
+        self.approval.session_id() == request.session_id()
+            && self.approval.execution_id() == request.execution_id()
+            && self.approval.principal_id() == request.principal_id()
+            && self.approval.gene_id() == request.gene_id()
+            && self.approval.request_digest() == request.request_digest()
+            && self.approval.policy_version() == policy_version
+    }
+}
+
 pub struct ApprovalStore {
     connection: Mutex<Connection>,
 }
@@ -365,6 +383,29 @@ impl ApprovalStore {
         request_digest: &RequestDigest,
         now: Timestamp,
     ) -> Result<PendingApproval, ApprovalError> {
+        self.consume_grant(
+            id,
+            principal_id,
+            session_id,
+            execution_id,
+            gene_id,
+            request_digest,
+            now,
+        )
+        .map(|grant| grant.approval)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn consume_grant(
+        &self,
+        id: &str,
+        principal_id: &PrincipalId,
+        session_id: &SessionId,
+        execution_id: &ExecutionId,
+        gene_id: &GeneId,
+        request_digest: &RequestDigest,
+        now: Timestamp,
+    ) -> Result<ApprovalGrant, ApprovalError> {
         let mut connection = self.lock()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -405,7 +446,9 @@ impl ApprovalStore {
         }
         transaction.commit().map_err(|_| ApprovalError::Database)?;
         drop(connection);
-        self.inspect(id, principal_id)
+        Ok(ApprovalGrant {
+            approval: self.inspect(id, principal_id)?,
+        })
     }
 
     fn inspect_unscoped(&self, id: &str) -> Result<PendingApproval, ApprovalError> {

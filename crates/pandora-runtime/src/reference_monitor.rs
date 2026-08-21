@@ -1,3 +1,4 @@
+use crate::approvals::ApprovalGrant;
 use crate::permit_store::{PermitError, PermitStore};
 use pandora_types::{EffectPermit, OperationRequest, ParliamentDecision, PermitId, Timestamp};
 use std::sync::Arc;
@@ -16,6 +17,7 @@ pub enum AuthorizationError {
     PolicyMismatch,
     Denied { reason: String },
     ApprovalRequired { reason: String },
+    ApprovalEvidenceRequired,
     ApprovalNotRequired,
     ExpiryOverflow,
     NonceExhausted,
@@ -58,12 +60,29 @@ impl ReferenceMonitor {
         &self,
         request: OperationRequest,
         decision: ParliamentDecision,
+        _now: Timestamp,
+    ) -> Result<EffectPermit, AuthorizationError> {
+        if !decision.requires_approval() {
+            return Err(AuthorizationError::ApprovalNotRequired);
+        }
+        self.validate_decision(&request, &decision)?;
+        Err(AuthorizationError::ApprovalEvidenceRequired)
+    }
+
+    pub(crate) fn authorize_after_approval_with_grant(
+        &self,
+        request: OperationRequest,
+        decision: ParliamentDecision,
+        _grant: &ApprovalGrant,
         now: Timestamp,
     ) -> Result<EffectPermit, AuthorizationError> {
         if !decision.requires_approval() {
             return Err(AuthorizationError::ApprovalNotRequired);
         }
         self.validate_decision(&request, &decision)?;
+        if !_grant.matches(&request, self.policy_version) {
+            return Err(AuthorizationError::RequestMismatch);
+        }
         self.issue_permit(request, now)
     }
 
@@ -127,6 +146,8 @@ mod tests {
 
     use super::*;
     use crate::parliament::Parliament;
+    use crate::{ApprovalRequest, ApprovalStore};
+    use std::path::PathBuf;
 
     fn request(session: &str) -> OperationRequest {
         OperationRequest::new(
@@ -141,6 +162,49 @@ mod tests {
             ResourceScope::workspace("workspace-1"),
         )
         .unwrap()
+    }
+
+    fn consumed_approval(request: &OperationRequest) -> (ApprovalGrant, PathBuf) {
+        let directory = crate::test_support::new_temp_dir("pandora-approval-grant").unwrap();
+        let store = ApprovalStore::open(directory.join("approvals.sqlite3")).unwrap();
+        store
+            .create(
+                ApprovalRequest::new(
+                    "approval-1",
+                    request.session_id().clone(),
+                    request.execution_id().clone(),
+                    request.principal_id().clone(),
+                    request.gene_id().clone(),
+                    request.request_digest().clone(),
+                    "approve the exact requested operation",
+                    1,
+                    Timestamp::from_unix_seconds(100),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let approver = pandora_types::PrincipalId::new("approver-1").unwrap();
+        store
+            .resolve(
+                "approval-1",
+                request.principal_id(),
+                &approver,
+                true,
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap();
+        let grant = store
+            .consume_grant(
+                "approval-1",
+                request.principal_id(),
+                request.session_id(),
+                request.execution_id(),
+                request.gene_id(),
+                request.request_digest(),
+                Timestamp::from_unix_seconds(11),
+            )
+            .unwrap();
+        (grant, directory)
     }
 
     #[test]
@@ -187,10 +251,47 @@ mod tests {
         .unwrap();
         let decision = parliament.decide(&request, &context);
 
+        assert_eq!(
+            monitor.authorize_after_approval(
+                request.clone(),
+                decision.clone(),
+                Timestamp::from_unix_seconds(10),
+            ),
+            Err(AuthorizationError::ApprovalEvidenceRequired)
+        );
+        let (grant, directory) = consumed_approval(&request);
         let permit = monitor
-            .authorize_after_approval(request.clone(), decision, Timestamp::from_unix_seconds(10))
+            .authorize_after_approval_with_grant(
+                request.clone(),
+                decision,
+                &grant,
+                Timestamp::from_unix_seconds(11),
+            )
             .unwrap();
         assert_eq!(permit.request_digest(), request.request_digest());
+        let other_request = OperationRequest::new(
+            ExecutionId::new("execution-2").unwrap(),
+            SessionId::new("session-2").unwrap(),
+            PrincipalId::new("principal-1").unwrap(),
+            GeneId::new("workspace.write").unwrap(),
+            None,
+            Capability::FilesystemWrite,
+            Operation::Write,
+            EffectTarget::path("src/lib.rs"),
+            ResourceScope::workspace("workspace-1"),
+        )
+        .unwrap();
+        let other_decision = parliament.decide(&other_request, &context);
+        assert_eq!(
+            monitor.authorize_after_approval_with_grant(
+                other_request,
+                other_decision,
+                &grant,
+                Timestamp::from_unix_seconds(11),
+            ),
+            Err(AuthorizationError::RequestMismatch)
+        );
+        std::fs::remove_dir_all(directory).unwrap();
 
         let allowed = ParliamentDecision::allow(&request, &context, "already allowed");
         assert_eq!(

@@ -379,9 +379,9 @@ impl ExecutionController {
                 }
                 ParliamentDecision::RequireApproval { reason, .. } => {
                     if let Some(approval) = approval.as_ref() {
-                        approval
+                        let grant = approval
                             .store
-                            .consume(
+                            .consume_grant(
                                 approval.id,
                                 request.principal_id(),
                                 request.session_id(),
@@ -404,9 +404,10 @@ impl ExecutionController {
                                 reason: format!("explicit approval consumed: {reason}"),
                             },
                         ));
-                        match self.reference_monitor.authorize_after_approval(
+                        match self.reference_monitor.authorize_after_approval_with_grant(
                             request.clone(),
                             decision_for_authorization,
+                            &grant,
                             now,
                         ) {
                             Ok(permit) => permit,
