@@ -1,3 +1,4 @@
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use pandora_harnesses::{CodingGene, builtin_harnesses};
 use pandora_types::{
     HarnessId, HarnessKind, PackageId, PackageKind, PackageManifest, TrustLevel, hash_artifact,
@@ -53,6 +54,10 @@ pub enum HarnessRegistryError {
         actual: String,
     },
     UnverifiedTrustClaim,
+    SignatureRequired,
+    InvalidSignatureEncoding,
+    InvalidSignature,
+    OfficialTrustUnsupported,
     UnsupportedKind(PackageKind),
     MissingDependency {
         id: String,
@@ -95,6 +100,17 @@ impl fmt::Display for HarnessRegistryError {
             ),
             Self::UnverifiedTrustClaim => {
                 formatter.write_str("local package admission cannot verify a claimed trust level")
+            }
+            Self::SignatureRequired => formatter
+                .write_str("verified package admission requires a public key and signature"),
+            Self::InvalidSignatureEncoding => {
+                formatter.write_str("package signature evidence is not valid fixed-width hex")
+            }
+            Self::InvalidSignature => {
+                formatter.write_str("package signature does not match its identity and artifact")
+            }
+            Self::OfficialTrustUnsupported => {
+                formatter.write_str("official package trust requires a configured publisher root")
             }
             Self::UnsupportedKind(kind) => write!(
                 formatter,
@@ -180,8 +196,10 @@ impl HarnessRegistry {
                 actual: env!("CARGO_PKG_VERSION").to_owned(),
             });
         }
-        if embedded.trust().level() != TrustLevel::Unverified {
-            return Err(HarnessRegistryError::UnverifiedTrustClaim);
+        match embedded.trust().level() {
+            TrustLevel::Unverified => {}
+            TrustLevel::Verified => verify_package_signature(embedded)?,
+            TrustLevel::Official => return Err(HarnessRegistryError::OfficialTrustUnsupported),
         }
 
         if !matches!(
@@ -315,9 +333,49 @@ fn builtin_gene_available(id: &str, version: &str) -> bool {
         .any(|gene| gene.manifest().id().as_str() == id && gene.manifest().version() == version)
 }
 
+fn verify_package_signature(manifest: &PackageManifest) -> Result<(), HarnessRegistryError> {
+    let Some(public_key) = manifest.trust().public_key() else {
+        return Err(HarnessRegistryError::SignatureRequired);
+    };
+    let Some(signature) = manifest.trust().signature() else {
+        return Err(HarnessRegistryError::SignatureRequired);
+    };
+    let public_key = decode_hex::<32>(public_key)?;
+    let signature = decode_hex::<64>(signature)?;
+    let public_key = VerifyingKey::from_bytes(&public_key)
+        .map_err(|_| HarnessRegistryError::InvalidSignatureEncoding)?;
+    let signature = Signature::from_bytes(&signature);
+    public_key
+        .verify(manifest.signing_message().as_bytes(), &signature)
+        .map_err(|_| HarnessRegistryError::InvalidSignature)
+}
+
+fn decode_hex<const N: usize>(value: &str) -> Result<[u8; N], HarnessRegistryError> {
+    if value.len() != N * 2 {
+        return Err(HarnessRegistryError::InvalidSignatureEncoding);
+    }
+    let mut bytes = [0_u8; N];
+    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+        let high = hex_digit(pair[0])?;
+        let low = hex_digit(pair[1])?;
+        bytes[index] = (high << 4) | low;
+    }
+    Ok(bytes)
+}
+
+fn hex_digit(value: u8) -> Result<u8, HarnessRegistryError> {
+    match value {
+        b'0'..=b'9' => Ok(value - b'0'),
+        b'a'..=b'f' => Ok(value - b'a' + 10),
+        b'A'..=b'F' => Ok(value - b'A' + 10),
+        _ => Err(HarnessRegistryError::InvalidSignatureEncoding),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
     use pandora_types::{
         HarnessId, MetaComposition, PackageCompatibility, PackageDependency, PackageKind,
         PackageManifest, TrustEvidence, TrustLevel, hash_artifact,
@@ -366,6 +424,39 @@ mod tests {
             .unwrap(),
         )
         .unwrap()
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    #[test]
+    fn valid_signed_package_is_admitted_after_signature_verification() {
+        let artifact = b"signed gene artifact";
+        let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
+        let content_hash = hash_artifact(artifact);
+        let message = format!("publisher/gene:1.0.0:publisher:{content_hash}");
+        let signature = signing_key.sign(message.as_bytes());
+        let package = PackageManifest::new(
+            "publisher/gene",
+            "1.0.0",
+            PackageKind::Gene,
+            "publisher",
+            content_hash,
+            Vec::new(),
+            PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
+            "Apache-2.0",
+            TrustEvidence::new(
+                TrustLevel::Verified,
+                Some(hex(&signature.to_bytes())),
+                Some(hex(&signing_key.verifying_key().to_bytes())),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let mut registry = HarnessRegistry::new();
+
+        assert!(registry.install(&package, &package, artifact).is_ok());
     }
 
     #[test]
@@ -496,7 +587,7 @@ mod tests {
     }
 
     #[test]
-    fn claimed_trust_is_rejected_without_a_verification_boundary() {
+    fn invalid_signed_package_is_rejected() {
         let artifact = b"gene artifact";
         let package = PackageManifest::new(
             "publisher/gene",
@@ -519,7 +610,85 @@ mod tests {
 
         assert_eq!(
             registry.install(&package, &package, artifact),
-            Err(HarnessRegistryError::UnverifiedTrustClaim)
+            Err(HarnessRegistryError::InvalidSignatureEncoding)
+        );
+        assert!(registry.list().is_empty());
+    }
+
+    #[test]
+    fn signed_package_requires_complete_signature_evidence() {
+        let artifact = b"gene artifact";
+        let package = PackageManifest::new(
+            "publisher/gene",
+            "1.0.0",
+            PackageKind::Gene,
+            "publisher",
+            hash_artifact(artifact),
+            Vec::new(),
+            PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
+            "Apache-2.0",
+            TrustEvidence::new(TrustLevel::Verified, None, None).unwrap(),
+        )
+        .unwrap();
+        let mut registry = HarnessRegistry::new();
+
+        assert_eq!(
+            registry.install(&package, &package, artifact),
+            Err(HarnessRegistryError::SignatureRequired)
+        );
+        assert!(registry.list().is_empty());
+    }
+
+    #[test]
+    fn signed_package_rejects_a_signature_for_different_content() {
+        let artifact = b"gene artifact";
+        let signing_key = SigningKey::from_bytes(&[9_u8; 32]);
+        let package = PackageManifest::new(
+            "publisher/gene",
+            "1.0.0",
+            PackageKind::Gene,
+            "publisher",
+            hash_artifact(artifact),
+            Vec::new(),
+            PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
+            "Apache-2.0",
+            TrustEvidence::new(
+                TrustLevel::Verified,
+                Some(hex(&[0_u8; 64])),
+                Some(hex(&signing_key.verifying_key().to_bytes())),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let mut registry = HarnessRegistry::new();
+
+        assert_eq!(
+            registry.install(&package, &package, artifact),
+            Err(HarnessRegistryError::InvalidSignature)
+        );
+        assert!(registry.list().is_empty());
+    }
+
+    #[test]
+    fn official_package_trust_requires_a_publisher_root() {
+        let artifact = b"gene artifact";
+        let package = PackageManifest::new(
+            "publisher/gene",
+            "1.0.0",
+            PackageKind::Gene,
+            "publisher",
+            hash_artifact(artifact),
+            Vec::new(),
+            PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
+            "Apache-2.0",
+            TrustEvidence::new(TrustLevel::Official, None, None).unwrap(),
+        )
+        .unwrap();
+        let mut registry = HarnessRegistry::new();
+
+        assert_eq!(
+            registry.install(&package, &package, artifact),
+            Err(HarnessRegistryError::OfficialTrustUnsupported)
         );
         assert!(registry.list().is_empty());
     }

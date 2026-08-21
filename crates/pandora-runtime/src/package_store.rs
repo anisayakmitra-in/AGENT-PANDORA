@@ -538,7 +538,7 @@ mod tests {
     }
 
     #[test]
-    fn claimed_trust_does_not_persist_without_verification() {
+    fn official_trust_does_not_persist_without_a_publisher_root() {
         let artifact = b"gene";
         let manifest = PackageManifest::new(
             "example/gene",
@@ -562,7 +562,7 @@ mod tests {
         assert!(matches!(
             store.admit(&manifest, &manifest, artifact),
             Err(PackageStoreError::Admission(
-                HarnessRegistryError::UnverifiedTrustClaim
+                HarnessRegistryError::OfficialTrustUnsupported
             ))
         ));
         assert!(store.list().unwrap().is_empty());

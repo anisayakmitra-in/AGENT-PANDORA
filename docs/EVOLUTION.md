@@ -17,7 +17,9 @@ Pandora records improvement evidence without allowing the improvement system to 
 
 Evolution records are evidence and workflow state. They do not grant permissions, mint effect permits, change policy, install packages, or execute code.
 
-The package admission boundary remains responsible for validating artifact identity and signatures. This slice records the required evidence and binds it to the candidate artifact; it does not perform cryptographic verification.
+The package admission boundary validates artifact identity and supported
+Ed25519 signature evidence before recording a package. It does not establish
+publisher trust, grant permissions, or make the artifact executable.
 
 Replacement is available only between executions registered with `ReplacementEngine`. A failed canary cannot activate, and an active replacement can be rolled back to its recorded base artifact.
 

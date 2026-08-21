@@ -277,7 +277,10 @@ artifact. `package remove
 `package remove --yes` removes it transactionally. Removal is refused when
 another admitted package has a required dependency on the target, while
 optional dependencies do not block removal. Package artifacts are local
-admission evidence and are not executable authority.
+admission evidence and are not executable authority. A `verified` manifest must
+include fixed-width hexadecimal Ed25519 evidence over
+`{id}:{version}:{publisher}:{content_hash}`. An `official` claim is rejected
+until a publisher trust root is configured.
 
 ## Configuration migration
 

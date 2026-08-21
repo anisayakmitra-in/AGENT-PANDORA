@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 atomic-write-file.workspace = true
+ed25519-dalek.workspace = true
 pandora-harnesses = { path = "../pandora-harnesses" }
 pandora-provider = { path = "../pandora-provider" }
 pandora-types = { path = "../pandora-types" }

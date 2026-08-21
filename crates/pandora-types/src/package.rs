@@ -420,6 +420,16 @@ impl PackageManifest {
         self.meta_composition.as_ref()
     }
 
+    pub fn signing_message(&self) -> String {
+        format!(
+            "{}:{}:{}:{}",
+            self.id.as_str(),
+            self.version,
+            self.publisher,
+            self.content_hash
+        )
+    }
+
     pub fn validate(&self) -> Result<(), PackageManifestError> {
         package_id(self.id.as_str())?;
         if validate_version(self.version.clone())? != self.version {

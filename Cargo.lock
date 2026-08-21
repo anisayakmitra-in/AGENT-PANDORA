@@ -888,6 +888,7 @@ name = "pandora-runtime"
 version = "2.0.0-alpha.6"
 dependencies = [
  "atomic-write-file",
+ "ed25519-dalek",
  "pandora-harnesses",
  "pandora-provider",
  "pandora-types",

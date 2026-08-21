@@ -1956,6 +1956,69 @@ fn package_meta_admission_survives_cli_restart_without_runtime_authority() {
 }
 
 #[test]
+fn package_admission_rejects_invalid_signed_trust_evidence() {
+    let fixture = Fixture::new();
+    let artifact = b"signed gene artifact\n";
+    let manifest = PackageManifest::new(
+        "example/gene",
+        "1.0.0",
+        PackageKind::Gene,
+        "local-publisher",
+        hash_artifact(artifact),
+        Vec::new(),
+        PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+        "Apache-2.0",
+        TrustEvidence::new(
+            pandora_types::TrustLevel::Verified,
+            Some("signature".to_owned()),
+            Some("public-key".to_owned()),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let manifest_path = fixture.root.join("gene.json");
+    let artifact_path = fixture.root.join("gene.artifact");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+    )
+    .expect("manifest should be written");
+    fs::write(&artifact_path, artifact).expect("artifact should be written");
+
+    let output = fixture
+        .command(&[
+            "package",
+            "admit",
+            "--manifest",
+            manifest_path.to_str().unwrap(),
+            "--artifact",
+            artifact_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("package admission should start");
+    assert_eq!(output.status.code(), Some(50));
+    let response = parse_json(&output);
+    assert_eq!(response["code"], "execution_failed");
+    assert_eq!(
+        response["message"],
+        "package signature evidence is not valid fixed-width hex"
+    );
+
+    let output = fixture
+        .command(&["package", "list", "--json"])
+        .output()
+        .expect("package listing should start");
+    assert_success(&output);
+    assert!(
+        parse_json(&output)["packages"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn admitted_domain_profile_runs_with_an_explicit_version() {
     let fixture = Fixture::new();
     fixture.setup();

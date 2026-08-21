@@ -72,10 +72,14 @@ pandora package remove <id> <version> --yes
 ```
 
 The command uses one local manifest as both the declared and embedded record.
-It is a local admission path, not a signature verifier or a registry client.
-It accepts only `unverified` trust evidence. Manifests that claim `verified` or
-`official` trust are rejected until a separate signature-verification boundary
-exists; local metadata must not display a trust level Pandora has not proven.
+Local admission verifies `verified` trust evidence when the public key and
+signature are fixed-width hexadecimal Ed25519 values. The signed message is
+`{id}:{version}:{publisher}:{content_hash}`, using the exact manifest strings.
+This proves that the evidence matches the declared package and artifact; it
+does not establish publisher trust. `official` claims remain rejected until a
+publisher trust root is configured. Admission still records metadata only: it
+does not load code, enable a Harness, issue a permit, or grant runtime
+authority.
 Removal uses the exact package ID and version. A dry run changes nothing;
 confirmed removal is transactional and refuses to remove a package required by
 another admitted package or named by an admitted Meta Harness composition.

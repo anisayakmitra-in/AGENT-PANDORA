@@ -70,9 +70,9 @@
 - Package-store reload now revalidates every deserialized manifest field, so
   malformed versions, dependency records, hashes, text fields, or control data
   in trust fields fail closed instead of becoming local package state.
-- Local package admission now binds every declared manifest field to its
-  embedded record and rejects claimed `verified` or `official` trust until a
-  signature-verification boundary exists.
+- Local package admission now verifies `verified` Ed25519 evidence over the
+  exact package identity and artifact hash; `official` claims remain rejected
+  until a publisher trust root is configured.
 - Agent, planning, and provider-test model requests now pass through the runtime
   ProviderExecutor and require a scoped, one-shot `provider.invoke` permit.
 - Agent runs now assemble the constitutional prompt and enabled Skill guidance
