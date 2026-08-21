@@ -278,8 +278,8 @@ fn usage() -> &'static str {
 
 commands:
   help (or --help)
-  setup [--interactive] [--provider-url <url>] [--model <model>]
-  run [--provider <name>] [--agent] [--max-turns <n>] [--max-tools <n>] [--harness <id>] [--harness-version <version>] [--gene <id>] [--plan] [--model <model>] [--approval <id>] [--optimize <cost|latency|tokens|certainty>] <task>
+  setup [--interactive] [--provider-url <url>] [--model <model>] [--api-key-env <name>]
+  run [--provider <name>] [--session <id>] [--agent] [--max-turns <n>] [--max-tools <n>] [--harness <id>] [--harness-version <version>] [--gene <id>] [--plan] [--model <model>] [--task-class <name>] [--approval <id>] [--optimize <cost|latency|tokens|certainty>] <task>
   chat [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>]
   tui [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>]
   harness list|inspect|run [--harness-version <version>]

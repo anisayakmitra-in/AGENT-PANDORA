@@ -54,6 +54,11 @@ fn cli_help_is_successful_and_lists_the_primary_commands() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("usage: pandora"));
     assert!(stdout.contains("run"));
+    assert!(stdout.contains(
+        "setup [--interactive] [--provider-url <url>] [--model <model>] [--api-key-env <name>]"
+    ));
+    assert!(stdout.contains("[--session <id>]"));
+    assert!(stdout.contains("[--task-class <name>]"));
     assert!(stdout.contains("session list|resume|inspect <id>"));
     assert!(stdout.contains("chat [--provider <name>]"));
     assert!(stdout.contains("tui [--provider <name>]"));
