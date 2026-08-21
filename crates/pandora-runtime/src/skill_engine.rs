@@ -12,8 +12,6 @@ const MAX_ACTIVE_SKILL_CONTEXT_BYTES: usize = 24 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SkillState {
-    Verified,
-    Installed,
     Disabled,
     Enabled,
     Suspended,
@@ -23,8 +21,6 @@ pub enum SkillState {
 impl SkillState {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Verified => "verified",
-            Self::Installed => "installed",
             Self::Disabled => "disabled",
             Self::Enabled => "enabled",
             Self::Suspended => "suspended",
@@ -34,8 +30,6 @@ impl SkillState {
 
     fn parse(value: &str) -> Option<Self> {
         match value {
-            "verified" => Some(Self::Verified),
-            "installed" => Some(Self::Installed),
             "disabled" => Some(Self::Disabled),
             "enabled" => Some(Self::Enabled),
             "suspended" => Some(Self::Suspended),
@@ -801,6 +795,20 @@ mod tests {
             engine.execute_script("alpha", "scripts/check.py"),
             Err(SkillError::DirectExecutionDisabled)
         );
+    }
+
+    #[test]
+    fn unsupported_skill_states_fail_closed_on_reopen() {
+        for state in ["verified", "installed"] {
+            let fixture = Fixture::new();
+            let _engine = SkillEngine::discover(&fixture.root).unwrap();
+            fs::write(fixture.root.join(".pandora-state/alpha.state"), state).unwrap();
+
+            assert_eq!(
+                SkillEngine::discover(&fixture.root),
+                Err(SkillError::CorruptState)
+            );
+        }
     }
 
     #[test]
