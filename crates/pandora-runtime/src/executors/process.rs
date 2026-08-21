@@ -482,8 +482,8 @@ mod tests {
             ResourceScope::workspace("workspace-1"),
         )
         .unwrap();
-        let monitor = ReferenceMonitor::new(1, 60);
         let context = PolicyContext::new(1, [capability], []);
+        let monitor = ReferenceMonitor::new_with_policy(context.clone(), 60);
         let decision = Parliament::new(1).decide(&request, &context);
         let permit = monitor
             .authorize(request.clone(), decision, Timestamp::from_unix_seconds(10))

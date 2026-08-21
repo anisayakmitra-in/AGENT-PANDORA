@@ -123,7 +123,7 @@ impl ExecutionController {
             workspace,
             shadow_council: ShadowCouncil::new(),
             parliament: Parliament::new(policy_version),
-            reference_monitor: ReferenceMonitor::new(policy_version, 60),
+            reference_monitor: ReferenceMonitor::new_with_policy(policy.clone(), 60),
             policy,
             harnesses,
             next_execution: AtomicU64::new(1),

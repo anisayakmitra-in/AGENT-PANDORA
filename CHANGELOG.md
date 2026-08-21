@@ -75,6 +75,8 @@
   until a publisher trust root is configured.
 - Skill lifecycle state now exposes only the states implemented by the local
   engine; stale `verified` and `installed` state values fail closed on reload.
+- ReferenceMonitor now recomputes Parliament decisions from its bound policy,
+  so a caller cannot widen effect authority with a fabricated decision.
 - Agent, planning, and provider-test model requests now pass through the runtime
   ProviderExecutor and require a scoped, one-shot `provider.invoke` permit.
 - Agent runs now assemble the constitutional prompt and enabled Skill guidance
