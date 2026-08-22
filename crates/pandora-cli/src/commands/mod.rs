@@ -21,6 +21,7 @@ mod migration;
 mod package;
 mod provider;
 mod run;
+mod service;
 mod session;
 mod setup;
 mod skill;
@@ -72,6 +73,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "package" => package::execute(&args[1..]),
         "setup" => setup::execute(&args[1..]),
         "run" => run::execute(&args[1..]),
+        "service" => service::execute(&args[1..]),
         "session" => session::execute(&args[1..]),
         "slash" => slash::execute(&args[1..]),
         "skill" => skill::execute(&args[1..]),
@@ -281,12 +283,13 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|chat|tui|harness|slash|session|job|skill|package|approval|provider|tool|orchestration|strategies|efficiency|completions|migrate|update|uninstall|doctor> [options]
+    r#"usage: pandora <help|setup|run|service|chat|tui|harness|slash|session|job|skill|package|approval|provider|tool|orchestration|strategies|efficiency|completions|migrate|update|uninstall|doctor> [options]
 
 commands:
   help (or --help)
   setup [--interactive] [--provider-url <url>] [--model <model>] [--api-key-env <name>]
   run [--provider <name>] [--session <id>] [--agent] [--max-turns <n>] [--max-tools <n>] [--harness <id>] [--harness-version <version>] [--gene <id>] [--plan] [--model <model>] [--task-class <name>] [--approval <id>] [--optimize <cost|latency|tokens|certainty>] <task>
+  service start [--port <port>]
   chat [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>]
   tui [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>]
   harness list|inspect|run [--harness-version <version>]

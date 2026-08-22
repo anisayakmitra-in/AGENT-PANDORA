@@ -76,4 +76,15 @@ record `pandora job mark-interrupted <job-id> --reason "..." --yes`.
 Run it from an existing service manager or scheduler when continuous polling
 is needed.
 
+For a local client such as the future desktop app, start the authenticated
+loopback runtime service:
+
+```text
+pandora service start --port 0
+```
+
+It prints one JSON readiness record with the bound endpoint and protected token
+file path, then remains in the foreground until Ctrl-C. It never prints the
+token or accepts non-loopback connections. See [CLI reference](docs/CLI.md).
+
 The supported product target is the native CLI on Windows, macOS, and Linux. Desktop, remote execution, mobile, and package marketplace integration remain gated until their release tests and security boundaries exist.

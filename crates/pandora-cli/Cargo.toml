@@ -15,5 +15,7 @@ ratatui.workspace = true
 pandora-harnesses = { path = "../pandora-harnesses" }
 pandora-provider = { path = "../pandora-provider" }
 pandora-runtime = { path = "../pandora-runtime" }
+pandora-service = { path = "../pandora-service" }
 pandora-types = { path = "../pandora-types" }
 serde_json.workspace = true
+tokio.workspace = true

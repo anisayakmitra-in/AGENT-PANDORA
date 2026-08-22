@@ -140,8 +140,30 @@ because the worker may already have produced effects. Such a job remains
 `running` until an operator reviews it. Use `job mark-interrupted <job-id>
 --reason "..." --yes` to record a terminal `interrupted` outcome with unknown
 external effects. The command does not stop a process or requeue work; submit a
-new job only after that review. This release provides a bounded worker command,
-not a resident daemon or remote Fleet node.
+new job only after that review. The job worker is a bounded command, not a
+remote Fleet node.
+
+## Local service
+
+```text
+pandora service start
+pandora service start --port 4317
+pandora service start --port 0
+```
+
+`service start` hosts the same local runtime used by `pandora run` at a
+loopback-only JSON-RPC endpoint. It writes one readiness object to standard
+output, for example:
+
+```json
+{"endpoint":"http://127.0.0.1:4317/v1/rpc","token_path":".../service-token"}
+```
+
+The token is generated or reused under the configured data directory and is
+never printed. Read it from `token_path` and send it as `Authorization: Bearer
+<token>`. `--port 0` selects an available loopback port. The process remains in
+the foreground until Ctrl-C; it does not listen on LAN addresses, daemonize,
+or expose provider, MCP, package, or remote-execution methods.
 
 Read-only work can complete without approval. Writes and process effects stop at
 the approval boundary and expose an inspectable, redacted request subject.

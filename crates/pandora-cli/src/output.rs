@@ -97,6 +97,7 @@ pub struct CommandResult {
     pub command: &'static str,
     pub data: Value,
     pub human: String,
+    print: bool,
 }
 
 pub fn success(command: &'static str, data: Value, human: impl Into<String>) -> CommandResult {
@@ -104,6 +105,16 @@ pub fn success(command: &'static str, data: Value, human: impl Into<String>) -> 
         command,
         data,
         human: human.into(),
+        print: true,
+    }
+}
+
+pub fn already_printed(command: &'static str) -> CommandResult {
+    CommandResult {
+        command,
+        data: Value::Null,
+        human: String::new(),
+        print: false,
     }
 }
 
@@ -128,6 +139,9 @@ pub fn envelope(result: CommandResult) -> Value {
 }
 
 pub fn print_success(result: CommandResult, json_output: bool) {
+    if !result.print {
+        return;
+    }
     if json_output {
         println!(
             "{}",

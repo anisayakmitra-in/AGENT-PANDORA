@@ -4,8 +4,8 @@ use pandora_types::{
 };
 use serde_json::Value;
 use std::fs;
-use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -133,6 +133,75 @@ fn setup_and_read_only_run_return_versioned_json() {
     let ranking = parse_json(&output);
     assert_eq!(ranking["command"], "efficiency rank");
     assert!(!ranking["rankings"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn service_start_reports_a_loopback_endpoint_and_token_path() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let mut child = fixture
+        .command(&["service", "start", "--port", "0"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("service should start");
+    let stdout = child
+        .stdout
+        .take()
+        .expect("service stdout should be available");
+    let mut readiness = String::new();
+    let bytes = BufReader::new(stdout)
+        .read_line(&mut readiness)
+        .expect("service readiness should be readable");
+
+    assert!(bytes > 0, "service should print readiness JSON");
+    let readiness =
+        serde_json::from_str::<Value>(&readiness).expect("service readiness should be valid JSON");
+    assert!(
+        readiness["endpoint"]
+            .as_str()
+            .expect("readiness should include an endpoint")
+            .starts_with("http://127.0.0.1:")
+    );
+    assert!(readiness["endpoint"].as_str().unwrap().ends_with("/v1/rpc"));
+    assert!(readiness.get("token").is_none());
+    assert_eq!(
+        readiness["token_path"]
+            .as_str()
+            .expect("readiness should include a token path"),
+        fixture.data.join("service-token").to_string_lossy(),
+    );
+    assert!(fixture.data.join("service-token").is_file());
+    let address = readiness["endpoint"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("http://")
+        .unwrap()
+        .strip_suffix("/v1/rpc")
+        .unwrap();
+    let token = fs::read_to_string(fixture.data.join("service-token"))
+        .expect("service token should be readable from its declared path");
+    let body = r#"{"jsonrpc":"2.0","id":1,"method":"runtime.health"}"#;
+    let mut stream =
+        TcpStream::connect(address).expect("service endpoint should accept loopback RPC");
+    stream
+        .write_all(
+            format!(
+                "POST /v1/rpc HTTP/1.1\r\nHost: {address}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len(),
+            )
+            .as_bytes(),
+        )
+        .expect("service RPC should be sent");
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .expect("service RPC response should be readable");
+    assert!(response.starts_with("HTTP/1.1 200"));
+    assert!(response.contains("\"status\":\"ready\""));
+
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 #[test]
