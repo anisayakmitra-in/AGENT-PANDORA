@@ -7,7 +7,10 @@ use pandora_types::{
     ServiceRunRequest, Session, SessionId, TenantId, Timestamp, WorkspaceId,
 };
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static NEXT_FIXTURE_DIRECTORY: AtomicU64 = AtomicU64::new(1);
 
 #[test]
 fn service_session_list_never_crosses_its_configured_scope() {
@@ -141,7 +144,11 @@ fn unique_directory(prefix: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("{prefix}-{}-{timestamp}", std::process::id()));
+    let sequence = NEXT_FIXTURE_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "{prefix}-{}-{timestamp}-{sequence}",
+        std::process::id()
+    ));
     std::fs::create_dir(&path).unwrap();
     path
 }

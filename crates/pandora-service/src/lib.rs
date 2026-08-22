@@ -344,8 +344,11 @@ mod tests {
     use pandora_types::{PrincipalId, TenantId, WorkspaceId};
     use serde_json::{Value, json};
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
     use tower::ServiceExt;
+
+    static NEXT_FIXTURE_ROOT: AtomicU64 = AtomicU64::new(1);
 
     #[tokio::test]
     async fn rpc_rejects_missing_or_wrong_bearer_tokens() {
@@ -481,9 +484,10 @@ mod tests {
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
+            let sequence = NEXT_FIXTURE_ROOT.fetch_add(1, Ordering::Relaxed);
             let root = std::env::temp_dir().join(format!(
-                "pandora-local-service-{}-{timestamp}",
-                std::process::id()
+                "pandora-local-service-{}-{timestamp}-{sequence}",
+                std::process::id(),
             ));
             std::fs::create_dir(&root).unwrap();
             Self { root }
