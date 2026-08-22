@@ -179,6 +179,9 @@ policy; patch and verify stop at the existing approval boundary before any
 filesystem or process effect. The loop allows eight model turns and sixteen
 tool calls by default. Set `--max-turns` and `--max-tools` to choose budgets for
 a run; each value must be between 1 and 64 turns or 1 and 128 tool calls.
+Tool output is marked as untrusted data before it reaches a provider. It cannot
+serve as policy, authorization, or approval; a restored tool message without a
+bound tool-call ID is rejected.
 Agent mode cannot be combined with `--plan`, `--harness`, or `--gene`. User,
 assistant, and tool messages are stored in
 the scoped session database with fixed size limits; the system instruction is

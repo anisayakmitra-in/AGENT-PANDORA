@@ -27,6 +27,8 @@
   active provider without changing configuration or policy.
 - Invalid agent tool arguments now return bounded, actionable feedback so a
   provider can repair the call without exposing raw argument values.
+- Agent tool outputs and restored tool messages are framed as untrusted data
+  before a provider sees them; unbound tool history is rejected.
 - The terminal TUI can approve or deny a pending effect and resume the exact
   approved task through the existing approval and execution path.
 - The TUI bounds its in-memory transcript and task history for long-running

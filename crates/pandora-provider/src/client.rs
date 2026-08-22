@@ -207,6 +207,10 @@ impl ChatMessage {
         &self.content
     }
 
+    pub fn tool_call_id(&self) -> Option<&str> {
+        self.tool_call_id.as_deref()
+    }
+
     pub fn tool_calls(&self) -> Result<Vec<ToolCall>, ProviderError> {
         self.tool_calls
             .iter()
