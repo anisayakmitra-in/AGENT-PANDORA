@@ -21,8 +21,10 @@ crossterm = "0.28"
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 ed25519-dalek = { version = "2.1", features = ["std"] }
+getrandom = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 semver = "1.0"
 sha2 = "0.10"
+subtle = "2.6"
 url = "2.5"

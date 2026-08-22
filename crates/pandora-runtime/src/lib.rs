@@ -28,6 +28,7 @@ pub mod registry_client;
 pub mod replacement;
 pub mod run_loop;
 pub mod service;
+pub mod service_token;
 pub mod sessions;
 pub mod shadow_council;
 pub mod skill_engine;
@@ -72,6 +73,7 @@ pub use registry_client::{PackageRegistryClient, PackageRegistryError};
 pub use replacement::{ReplacementEngine, ReplacementError};
 pub use run_loop::{RunLoop, RunLoopError};
 pub use service::{RuntimeService, RuntimeServiceError, RuntimeServiceScope};
+pub use service_token::{ServiceToken, ServiceTokenError, ServiceTokenStore};
 pub use skill_engine::{
     RemovalReceipt, SkillEngine, SkillError, SkillInspection, SkillProvenance, SkillRecord,
     SkillState,

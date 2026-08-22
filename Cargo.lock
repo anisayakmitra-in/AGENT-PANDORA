@@ -1075,6 +1075,7 @@ dependencies = [
  "atomic-write-file",
  "base64",
  "ed25519-dalek",
+ "getrandom 0.4.3",
  "pandora-harnesses",
  "pandora-provider",
  "pandora-types",
@@ -1084,6 +1085,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "subtle",
  "url",
 ]
 
