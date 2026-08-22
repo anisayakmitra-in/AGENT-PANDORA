@@ -4,8 +4,8 @@ use pandora_types::{
 };
 use serde_json::Value;
 use serde_json::json;
-use std::collections::HashMap;
-use std::sync::Mutex;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolError {
@@ -185,16 +185,17 @@ impl ToolPlan {
     }
 }
 
+#[derive(Clone)]
 pub struct ToolEngine {
-    definitions: Mutex<HashMap<GeneId, ToolDefinition>>,
-    idempotent_plans: Mutex<HashMap<String, ToolPlan>>,
+    definitions: Arc<Mutex<HashMap<GeneId, ToolDefinition>>>,
+    idempotent_plans: Arc<Mutex<HashMap<String, ToolPlan>>>,
 }
 
 impl ToolEngine {
     pub fn new() -> Self {
         Self {
-            definitions: Mutex::new(HashMap::new()),
-            idempotent_plans: Mutex::new(HashMap::new()),
+            definitions: Arc::new(Mutex::new(HashMap::new())),
+            idempotent_plans: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -330,6 +331,38 @@ impl ToolEngine {
         }
         definitions.insert(definition.id().clone(), definition);
         Ok(())
+    }
+
+    pub fn register_batch(&self, definitions: Vec<ToolDefinition>) -> Result<(), ToolError> {
+        let mut registered = self
+            .definitions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut batch_ids = HashSet::with_capacity(definitions.len());
+        if definitions.iter().any(|definition| {
+            registered.contains_key(definition.id()) || !batch_ids.insert(definition.id().clone())
+        }) {
+            return Err(ToolError::DuplicateTool);
+        }
+        for definition in definitions {
+            registered.insert(definition.id().clone(), definition);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn unregister_batch(&self, tool_ids: &[GeneId]) {
+        let tool_ids = tool_ids.iter().collect::<HashSet<_>>();
+        let mut definitions = self
+            .definitions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        definitions.retain(|tool_id, _| !tool_ids.contains(tool_id));
+        drop(definitions);
+        let mut plans = self
+            .idempotent_plans
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        plans.retain(|_, plan| !tool_ids.contains(plan.tool_id()));
     }
 
     pub fn list(&self) -> Vec<ToolDefinition> {
@@ -658,6 +691,22 @@ mod tests {
         .unwrap()
     }
 
+    fn mcp_definition(id: &str) -> ToolDefinition {
+        ToolDefinition::new(
+            id,
+            "2026-07-28",
+            id,
+            json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+            Capability::McpInvoke,
+            Operation::Invoke,
+        )
+        .unwrap()
+    }
+
     fn context() -> ToolContext {
         ToolContext::new(
             ExecutionId::new("execution-1").unwrap(),
@@ -704,6 +753,63 @@ mod tests {
         assert_eq!(
             plan(&engine, "key-1", json!({"path": "README.md"})),
             Err(ToolError::UnknownTool("workspace.read".to_owned()))
+        );
+    }
+
+    #[test]
+    fn batch_registration_is_atomic_on_collision() {
+        let engine = ToolEngine::new();
+        engine
+            .register(mcp_definition("mcp.local.existing"))
+            .unwrap();
+
+        assert_eq!(
+            engine.register_batch(vec![
+                mcp_definition("mcp.local.fresh"),
+                mcp_definition("mcp.local.existing"),
+            ]),
+            Err(ToolError::DuplicateTool)
+        );
+        assert_eq!(
+            engine
+                .list()
+                .into_iter()
+                .map(|tool| tool.id().as_str().to_owned())
+                .collect::<Vec<_>>(),
+            vec!["mcp.local.existing"]
+        );
+    }
+
+    #[test]
+    fn batch_registration_is_shared_and_removal_is_scoped() {
+        let engine = ToolEngine::new();
+        engine.register(definition()).unwrap();
+        let shared = engine.clone();
+        let imported = vec![
+            mcp_definition("mcp.local.first"),
+            mcp_definition("mcp.local.second"),
+        ];
+        let imported_ids = imported
+            .iter()
+            .map(|tool| tool.id().clone())
+            .collect::<Vec<_>>();
+
+        shared.register_batch(imported).unwrap();
+        assert!(
+            engine
+                .list()
+                .iter()
+                .any(|tool| tool.id().as_str() == "mcp.local.first")
+        );
+
+        shared.unregister_batch(&imported_ids);
+        assert_eq!(
+            engine
+                .list()
+                .into_iter()
+                .map(|tool| tool.id().as_str().to_owned())
+                .collect::<Vec<_>>(),
+            vec!["workspace.read"]
         );
     }
 

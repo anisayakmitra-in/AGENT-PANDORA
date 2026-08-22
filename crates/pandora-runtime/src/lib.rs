@@ -16,6 +16,7 @@ pub mod harness_registry;
 pub mod hooks;
 pub mod human_review;
 pub mod job_store;
+pub mod mcp;
 pub mod memory_engine;
 pub mod mutation;
 pub mod observability;
@@ -61,6 +62,10 @@ pub use human_review::{
     ReviewState, ReviewSubject,
 };
 pub use job_store::{JobRecord, JobStore, JobStoreError, MAX_JOB_RESULT_BYTES};
+pub use mcp::{
+    MCP_LEGACY_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION, McpError, McpFailure, McpInvocation,
+    McpProtocolMode, McpServer, McpStart, McpStdioConfig, McpToolResult, McpWireEra,
+};
 pub use memory_engine::{MemoryEngine, MemoryError};
 pub use mutation::{MutationEngine, MutationError};
 pub use observability::{ObservabilityEngine, ObservabilityError};

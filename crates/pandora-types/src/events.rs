@@ -18,6 +18,7 @@ pub enum EventType {
     ApprovalRequired,
     ExecutionFailed,
     ProviderCall,
+    McpEraSelected,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -111,6 +112,11 @@ pub enum EventPayload {
         provider: String,
         credential: SecretReference,
         request_digest: RequestDigest,
+    },
+    McpEra {
+        server: String,
+        era: String,
+        downgraded: bool,
     },
 }
 

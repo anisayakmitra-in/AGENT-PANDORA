@@ -99,4 +99,4 @@ It prints one JSON readiness record with the bound endpoint and protected token
 file path, then remains in the foreground until Ctrl-C. It never prints the
 token or accepts non-loopback connections. See [CLI reference](docs/CLI.md).
 
-The supported product target is the native CLI on Windows, macOS, and Linux. Desktop, remote execution, mobile, and package marketplace integration remain gated until their release tests and security boundaries exist.
+The supported product target is the native CLI on Windows, macOS, and Linux. Desktop, remote execution, mobile, and package marketplace integration remain gated until their release tests and security boundaries exist. The runtime's governed local stdio MCP client is documented as a bounded internal preview in [MCP.md](docs/MCP.md).
