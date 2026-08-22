@@ -205,6 +205,26 @@ fn service_start_reports_a_loopback_endpoint_and_token_path() {
 }
 
 #[test]
+fn release_update_rejects_an_invalid_tag_before_network_access() {
+    let fixture = Fixture::new();
+    let output = fixture
+        .command(&[
+            "update",
+            "--release",
+            "vnot-a-version",
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("update should start");
+
+    assert_eq!(output.status.code(), Some(70));
+    let response = parse_json(&output);
+    assert_eq!(response["code"], "update_error");
+    assert_eq!(response["details"]["reason"], "invalid_release");
+}
+
+#[test]
 fn headless_job_worker_executes_the_existing_run_command() {
     let fixture = Fixture::new();
     fixture.setup();

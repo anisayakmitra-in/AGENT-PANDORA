@@ -45,10 +45,10 @@ def parse_checksums(text: str) -> dict[str, str]:
 
 
 def expected_checksum(manifest: dict[str, str], filename: str) -> str:
-    try:
-        return manifest[filename]
-    except KeyError as error:
-        raise ValueError(f"missing checksum for {filename}") from error
+    for candidate in (filename, f"dist/{filename}"):
+        if candidate in manifest:
+            return manifest[candidate]
+    raise ValueError(f"missing checksum for {filename}")
 
 
 def verify_checksum(payload: bytes, expected: str) -> bool:

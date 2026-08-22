@@ -4,10 +4,14 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use pandora_types::hash_artifact;
 use serde_json::json;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 const MAX_UPDATE_BYTES: u64 = 256 * 1024 * 1024;
+const OFFICIAL_RELEASE_BASE_URL: &str =
+    "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download";
+const RELEASE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug)]
 enum UpdateError {
@@ -20,12 +24,23 @@ enum UpdateError {
     TooLarge,
     UnsafeTarget,
     NoRollback,
+    InvalidRelease,
+    UnsupportedPlatform,
+    InvalidChecksumManifest,
+    MissingReleaseChecksum,
+    ReleaseDownload,
 }
 
 #[derive(Debug)]
 struct VerifiedArtifact {
     bytes: Vec<u8>,
     signature_verified: bool,
+}
+
+#[derive(Debug)]
+struct DownloadedRelease {
+    artifact_name: String,
+    verified: VerifiedArtifact,
 }
 
 impl UpdateError {
@@ -40,6 +55,11 @@ impl UpdateError {
             Self::TooLarge => "artifact_too_large",
             Self::UnsafeTarget => "unsafe_target",
             Self::NoRollback => "no_rollback_available",
+            Self::InvalidRelease => "invalid_release",
+            Self::UnsupportedPlatform => "unsupported_platform",
+            Self::InvalidChecksumManifest => "invalid_checksum_manifest",
+            Self::MissingReleaseChecksum => "missing_release_checksum",
+            Self::ReleaseDownload => "release_download_failed",
         }
     }
 }
@@ -58,6 +78,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "workspace",
             "dry-run",
             "rollback",
+            "release",
         ],
     )?;
     if !parsed.positionals.is_empty() {
@@ -71,6 +92,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             || parsed.value("sha256").is_some()
             || parsed.value("public-key").is_some()
             || parsed.value("signature").is_some()
+            || parsed.value("release").is_some()
         {
             return Err(CliError::usage(
                 "update --rollback cannot be combined with artifact verification options",
@@ -82,10 +104,59 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         return rollback(&target, dry_run).map_err(|error| update_error(error, &target));
     }
 
-    let artifact = parsed
-        .value("artifact")
-        .map(PathBuf::from)
-        .ok_or_else(|| CliError::usage("update requires '--artifact <path>' or '--rollback'"))?;
+    if let Some(release) = parsed.value("release") {
+        if parsed.value("artifact").is_some()
+            || parsed.value("sha256").is_some()
+            || parsed.value("public-key").is_some()
+            || parsed.value("signature").is_some()
+        {
+            return Err(CliError::usage(
+                "update --release cannot be combined with local artifact verification options",
+            ));
+        }
+        let downloaded = download_release_artifact(
+            OFFICIAL_RELEASE_BASE_URL,
+            release,
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            download_https,
+        )
+        .map_err(|error| update_error(error, Path::new(release)))?;
+        if dry_run {
+            return Ok(success(
+                "update",
+                json!({
+                    "verified": true,
+                    "release": release,
+                    "artifact": downloaded.artifact_name,
+                    "signature_verified": downloaded.verified.signature_verified,
+                    "dry_run": true,
+                }),
+                "Official release artifact verified; no files changed".to_owned(),
+            ));
+        }
+        let config = load_config(&parsed)
+            .map_err(|error| CliError::update(error.message, json!({"reason": "configuration"})))?;
+        let target = target_path(&config, path_option(&parsed, "target"));
+        install_verified(&downloaded.verified.bytes, &target)
+            .map_err(|error| update_error(error, &target))?;
+        return Ok(success(
+            "update",
+            json!({
+                "verified": true,
+                "release": release,
+                "artifact": downloaded.artifact_name,
+                "target": target,
+                "signature_verified": downloaded.verified.signature_verified,
+                "dry_run": false,
+            }),
+            format!("Verified release update staged at {}", target.display()),
+        ));
+    }
+
+    let artifact = parsed.value("artifact").map(PathBuf::from).ok_or_else(|| {
+        CliError::usage("update requires '--release <tag>', '--artifact <path>', or '--rollback'")
+    })?;
     let expected = parsed
         .value("sha256")
         .ok_or_else(|| CliError::usage("update requires '--sha256 <digest>'"))?;
@@ -145,6 +216,15 @@ fn verify_artifact(
         return Err(UpdateError::TooLarge);
     }
     let bytes = fs::read(artifact).map_err(|_| UpdateError::Io)?;
+    verify_artifact_bytes(bytes, expected, public_key, signature)
+}
+
+fn verify_artifact_bytes(
+    bytes: Vec<u8>,
+    expected: &str,
+    public_key: Option<&str>,
+    signature: Option<&str>,
+) -> Result<VerifiedArtifact, UpdateError> {
     if !hash_artifact(&bytes).eq_ignore_ascii_case(expected) {
         return Err(UpdateError::ChecksumMismatch);
     }
@@ -168,6 +248,135 @@ fn verify_artifact(
         }),
         _ => Err(UpdateError::InvalidSignatureEncoding),
     }
+}
+
+fn download_release_artifact<F>(
+    base_url: &str,
+    release: &str,
+    operating_system: &str,
+    architecture: &str,
+    mut download: F,
+) -> Result<DownloadedRelease, UpdateError>
+where
+    F: FnMut(&str) -> Result<Vec<u8>, UpdateError>,
+{
+    let artifact_name = release_artifact_name(operating_system, architecture)?;
+    let checksums_url = release_asset_url(base_url, release, "checksums.txt")?;
+    let checksum_manifest = download(&checksums_url)?;
+    let checksum = release_checksum(&checksum_manifest, &artifact_name)?;
+    let artifact_url = release_asset_url(base_url, release, &artifact_name)?;
+    let bytes = download(&artifact_url)?;
+    let verified = verify_artifact_bytes(bytes, &format!("sha256:{checksum}"), None, None)?;
+    Ok(DownloadedRelease {
+        artifact_name,
+        verified,
+    })
+}
+
+fn release_artifact_name(
+    operating_system: &str,
+    architecture: &str,
+) -> Result<String, UpdateError> {
+    match (operating_system, architecture) {
+        ("linux", "x86_64") => Ok("pandora-x86_64-unknown-linux-gnu".to_owned()),
+        ("macos", "x86_64") => Ok("pandora-x86_64-apple-darwin".to_owned()),
+        ("macos", "aarch64") => Ok("pandora-aarch64-apple-darwin".to_owned()),
+        ("windows", "x86_64") => Ok("pandora-x86_64-pc-windows-msvc.exe".to_owned()),
+        _ => Err(UpdateError::UnsupportedPlatform),
+    }
+}
+
+fn release_asset_url(base_url: &str, release: &str, asset: &str) -> Result<String, UpdateError> {
+    let version = release
+        .strip_prefix('v')
+        .ok_or(UpdateError::InvalidRelease)?;
+    if semver::Version::parse(version).is_err()
+        || asset.is_empty()
+        || asset.contains('/')
+        || asset.contains('\\')
+    {
+        return Err(UpdateError::InvalidRelease);
+    }
+    let mut url = reqwest::Url::parse(base_url).map_err(|_| UpdateError::InvalidRelease)?;
+    if url.scheme() != "https"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(UpdateError::InvalidRelease);
+    }
+    url.path_segments_mut()
+        .map_err(|_| UpdateError::InvalidRelease)?
+        .push(release)
+        .push(asset);
+    Ok(url.into())
+}
+
+fn release_checksum(manifest: &[u8], artifact_name: &str) -> Result<String, UpdateError> {
+    let text = std::str::from_utf8(manifest).map_err(|_| UpdateError::InvalidChecksumManifest)?;
+    let mut checksum = None;
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let mut fields = line.split_whitespace();
+        let digest = fields.next().ok_or(UpdateError::InvalidChecksumManifest)?;
+        let name = fields.next().ok_or(UpdateError::InvalidChecksumManifest)?;
+        if fields.next().is_some() || !is_sha256_digest(digest) {
+            return Err(UpdateError::InvalidChecksumManifest);
+        }
+        let name = name.trim_start_matches('*');
+        if (name == artifact_name || name.strip_prefix("dist/") == Some(artifact_name))
+            && checksum.replace(digest.to_ascii_lowercase()).is_some()
+        {
+            return Err(UpdateError::InvalidChecksumManifest);
+        }
+    }
+    checksum.ok_or(UpdateError::MissingReleaseChecksum)
+}
+
+fn is_sha256_digest(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn download_https(url: &str) -> Result<Vec<u8>, UpdateError> {
+    let parsed = reqwest::Url::parse(url).map_err(|_| UpdateError::ReleaseDownload)?;
+    if parsed.scheme() != "https" || !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(UpdateError::ReleaseDownload);
+    }
+    let client = reqwest::blocking::Client::builder()
+        .timeout(RELEASE_DOWNLOAD_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|_| UpdateError::ReleaseDownload)?;
+    let mut response = client
+        .get(parsed)
+        .send()
+        .map_err(|_| UpdateError::ReleaseDownload)?;
+    if !response.status().is_success()
+        || response.url().scheme() != "https"
+        || !response.url().username().is_empty()
+        || response.url().password().is_some()
+    {
+        return Err(UpdateError::ReleaseDownload);
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_UPDATE_BYTES)
+    {
+        return Err(UpdateError::TooLarge);
+    }
+    read_limited(&mut response, MAX_UPDATE_BYTES)
+}
+
+fn read_limited<R: Read>(reader: &mut R, limit: u64) -> Result<Vec<u8>, UpdateError> {
+    let mut bytes = Vec::new();
+    reader
+        .take(limit.checked_add(1).ok_or(UpdateError::TooLarge)?)
+        .read_to_end(&mut bytes)
+        .map_err(|_| UpdateError::ReleaseDownload)?;
+    if bytes.len() as u64 > limit {
+        return Err(UpdateError::TooLarge);
+    }
+    Ok(bytes)
 }
 
 fn decode_fixed<const N: usize>(value: &str) -> Result<[u8; N], UpdateError> {
@@ -286,6 +495,13 @@ fn update_error(error: UpdateError, path: &Path) -> CliError {
             UpdateError::UnsafeTarget => "update target is unsafe",
             UpdateError::NoRollback => "no verified previous update is available",
             UpdateError::Io => "update filesystem operation failed",
+            UpdateError::InvalidRelease => "release tag or official release URL is invalid",
+            UpdateError::UnsupportedPlatform => {
+                "no official update artifact exists for this platform"
+            }
+            UpdateError::InvalidChecksumManifest => "release checksum manifest is invalid",
+            UpdateError::MissingReleaseChecksum => "release checksum is missing for this platform",
+            UpdateError::ReleaseDownload => "official release download failed",
         },
         json!({"reason": error.reason(), "path": path}),
     )
@@ -293,7 +509,7 @@ fn update_error(error: UpdateError, path: &Path) -> CliError {
 
 #[cfg(test)]
 mod tests {
-    use super::{UpdateError, verify_artifact};
+    use super::{UpdateError, download_release_artifact, verify_artifact};
     use ed25519_dalek::{Signer, SigningKey};
     use std::fs;
 
@@ -336,5 +552,90 @@ mod tests {
             .expect_err("changed artifact should fail verification");
         assert!(matches!(error, UpdateError::ChecksumMismatch));
         let _ = fs::remove_file(artifact_path);
+    }
+
+    #[test]
+    fn downloads_the_requested_platform_artifact_and_verifies_its_checksum() {
+        let artifact = b"release artifact";
+        let expected = pandora_types::hash_artifact(artifact);
+        let manifest = format!("{}  pandora-x86_64-unknown-linux-gnu\n", &expected[7..]);
+        let mut requested = Vec::new();
+
+        let downloaded = download_release_artifact(
+            "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download",
+            "v2.0.0-alpha.6",
+            "linux",
+            "x86_64",
+            |url| {
+                requested.push(url.to_owned());
+                if url.ends_with("/checksums.txt") {
+                    Ok(manifest.as_bytes().to_vec())
+                } else if url.ends_with("/pandora-x86_64-unknown-linux-gnu") {
+                    Ok(artifact.to_vec())
+                } else {
+                    Err(UpdateError::Io)
+                }
+            },
+        )
+        .expect("the release artifact should verify");
+
+        assert_eq!(downloaded.artifact_name, "pandora-x86_64-unknown-linux-gnu");
+        assert_eq!(downloaded.verified.bytes, artifact);
+        assert_eq!(
+            requested,
+            vec![
+                "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download/v2.0.0-alpha.6/checksums.txt",
+                "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download/v2.0.0-alpha.6/pandora-x86_64-unknown-linux-gnu",
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_a_release_artifact_that_does_not_match_its_checksum() {
+        let manifest = "0000000000000000000000000000000000000000000000000000000000000000  pandora-x86_64-unknown-linux-gnu\n";
+
+        let error = download_release_artifact(
+            "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download",
+            "v2.0.0-alpha.6",
+            "linux",
+            "x86_64",
+            |url| {
+                if url.ends_with("/checksums.txt") {
+                    Ok(manifest.as_bytes().to_vec())
+                } else {
+                    Ok(b"untrusted release artifact".to_vec())
+                }
+            },
+        )
+        .expect_err("mismatched release bytes should be rejected");
+
+        assert!(matches!(error, UpdateError::ChecksumMismatch));
+    }
+
+    #[test]
+    fn accepts_a_historic_dist_prefixed_checksum_entry() {
+        let artifact = b"historic release artifact";
+        let expected = pandora_types::hash_artifact(artifact);
+        let manifest = format!(
+            "{}  dist/pandora-x86_64-unknown-linux-gnu\n",
+            &expected[7..]
+        );
+
+        let downloaded = download_release_artifact(
+            "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download",
+            "v2.0.0-alpha.6",
+            "linux",
+            "x86_64",
+            |url| {
+                if url.ends_with("/checksums.txt") {
+                    Ok(manifest.as_bytes().to_vec())
+                } else {
+                    Ok(artifact.to_vec())
+                }
+            },
+        )
+        .expect("historic release checksum entries should remain supported");
+
+        assert_eq!(downloaded.verified.bytes, artifact);
     }
 }

@@ -424,6 +424,8 @@ untouched, and migration is one-way.
 ## Verified updates and uninstall
 
 ```text
+pandora update --release v<version>
+pandora update --release v<version> --dry-run
 pandora update --artifact <path> --sha256 sha256:<64-hex-digits>
 pandora update --artifact <path> --sha256 sha256:<64-hex-digits> --dry-run
 pandora update --rollback
@@ -431,11 +433,17 @@ pandora uninstall --dry-run
 pandora uninstall --yes
 ```
 
-Updates verify the complete local artifact before staging it under the Pandora
-data directory. A detached Ed25519 signature can be checked with matching
-`--public-key <64-hex-digits>` and `--signature <128-hex-digits>` options.
-The previous staged artifact is retained for one-step rollback. No update
-operation executes an unverified artifact.
+`update --release` accepts one explicit SemVer tag, selects the matching
+Windows, macOS, or Linux asset from Pandora's official GitHub release, and
+verifies it against that release's `checksums.txt` before staging it. It never
+resolves an ambiguous latest release. Use `--dry-run` to verify a tag without
+changing files.
+
+`update --artifact` verifies a local artifact before staging it under the
+Pandora data directory. A detached Ed25519 signature can be checked with
+matching `--public-key <64-hex-digits>` and `--signature <128-hex-digits>`
+options. The previous staged artifact is retained for one-step rollback. No
+update operation executes an unverified artifact.
 
 Uninstall requires `--yes` for deletion and preserves the configured workspace.
 It refuses a data directory that contains that workspace, and removes a

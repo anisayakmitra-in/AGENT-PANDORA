@@ -1118,6 +1118,8 @@ dependencies = [
  "pandora-service",
  "pandora-types",
  "ratatui",
+ "reqwest",
+ "semver",
  "serde_json",
  "tokio",
 ]

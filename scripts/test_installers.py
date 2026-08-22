@@ -76,6 +76,13 @@ class InstallerContractTests(unittest.TestCase):
         self.assertTrue(verify_checksum(payload, digest))
         self.assertFalse(verify_checksum(payload + b"!", digest))
 
+    def test_accepts_historic_dist_prefixed_checksum_entries(self) -> None:
+        payload = b"historic Pandora release"
+        digest = hashlib.sha256(payload).hexdigest()
+        manifest = parse_checksums(f"{digest}  dist/pandora-linux\n")
+
+        self.assertEqual(expected_checksum(manifest, "pandora-linux"), digest)
+
     def test_cached_artifact_requires_matching_checksum(self) -> None:
         payload = b"cached Pandora release"
         digest = hashlib.sha256(payload).hexdigest()

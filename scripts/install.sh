@@ -44,7 +44,7 @@ base="${base%/}"
 download "$base/$version/checksums.txt" "$temporary/checksums.txt"
 download "$base/$version/$artifact" "$temporary/$artifact"
 
-expected="$(awk -v name="$artifact" '$2 == name || $2 == "*" name { print $1; exit }' "$temporary/checksums.txt")"
+expected="$(awk -v name="$artifact" '$2 == name || $2 == "*" name || $2 == "dist/" name || $2 == "*dist/" name { print $1; exit }' "$temporary/checksums.txt")"
 printf '%s' "$expected" | grep -Eq '^[0-9A-Fa-f]{64}$' || fail "release checksum is missing or malformed"
 if command -v sha256sum >/dev/null 2>&1; then
   actual="$(sha256sum "$temporary/$artifact" | awk '{print $1}')"

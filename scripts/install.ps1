@@ -45,7 +45,10 @@ try {
 
     $checksumLine = Get-Content -LiteralPath $checksumsPath | Where-Object {
         $parts = $_ -split '\s+', 2
-        $parts.Count -eq 2 -and $parts[1].TrimStart('*') -eq $artifact
+        $parts.Count -eq 2 -and (
+            $parts[1].TrimStart('*') -eq $artifact -or
+            $parts[1].TrimStart('*') -eq "dist/$artifact"
+        )
     } | Select-Object -First 1
     if ($null -eq $checksumLine) { Fail "release checksum is missing" }
     $expected = ($checksumLine -split '\s+')[0]

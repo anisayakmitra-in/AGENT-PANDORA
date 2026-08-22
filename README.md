@@ -38,6 +38,13 @@ To pin the current release explicitly:
 curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.sh | PANDORA_VERSION=v2.0.0-alpha.6 sh
 ```
 
+After installation, update to a specific published tag with the same checksum
+verification:
+
+```text
+pandora update --release v2.0.0-alpha.6
+```
+
 ## Build
 
 Requires Rust `1.97.1`.

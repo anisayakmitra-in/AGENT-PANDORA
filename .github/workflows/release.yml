@@ -210,7 +210,7 @@ jobs:
 
       - name: Generate checksums
         shell: bash
-        run: sha256sum dist/* > dist/checksums.txt
+        run: (cd dist && sha256sum * > checksums.txt)
 
       - name: Generate release notes
         shell: bash

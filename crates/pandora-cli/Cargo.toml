@@ -17,5 +17,7 @@ pandora-provider = { path = "../pandora-provider" }
 pandora-runtime = { path = "../pandora-runtime" }
 pandora-service = { path = "../pandora-service" }
 pandora-types = { path = "../pandora-types" }
+reqwest.workspace = true
+semver.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
