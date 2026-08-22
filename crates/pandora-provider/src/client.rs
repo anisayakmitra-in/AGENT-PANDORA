@@ -1,4 +1,4 @@
-use crate::manifest::{ManifestError, ModelId, ProviderId, ProviderManifest};
+use crate::manifest::{ManifestError, ModelId, ProviderId, ProviderManifest, ProviderProtocol};
 use pandora_types::{ExecutionId, SessionId};
 use reqwest::blocking::{Client, Response};
 use reqwest::redirect::Policy;
@@ -440,7 +440,29 @@ impl ModelRequest {
     }
 
     pub fn authorization_payload(&self) -> Result<Vec<u8>, ProviderError> {
-        serde_json::to_vec(&CanonicalModelRequest {
+        Self::encode_authorization_payload(&self.canonical_authorization_request())
+    }
+
+    pub fn authorization_payload_for(
+        &self,
+        manifest: &ProviderManifest,
+    ) -> Result<Vec<u8>, ProviderError> {
+        if self.provider_id != *manifest.id() {
+            return Err(ProviderError::InvalidRequest(
+                "provider request is not bound to the provider manifest".to_owned(),
+            ));
+        }
+        Self::encode_authorization_payload(&CanonicalProviderInvocation {
+            provider_id: manifest.id().as_str(),
+            protocol: manifest.protocol(),
+            base_url: manifest.base_url(),
+            credential_reference: manifest.api_key_env(),
+            request: self.canonical_authorization_request(),
+        })
+    }
+
+    fn canonical_authorization_request(&self) -> CanonicalModelRequest<'_> {
+        CanonicalModelRequest {
             provider_id: self.provider_id.as_str(),
             model_id: self.model_id.as_str(),
             messages: &self.messages,
@@ -449,8 +471,11 @@ impl ModelRequest {
             timeout_millis: self.timeout.as_millis(),
             trace_execution_id: self.trace.execution_id().map(|id| id.as_str()),
             trace_session_id: self.trace.session_id().map(|id| id.as_str()),
-        })
-        .map_err(|_| {
+        }
+    }
+
+    fn encode_authorization_payload<T: Serialize>(value: &T) -> Result<Vec<u8>, ProviderError> {
+        serde_json::to_vec(value).map_err(|_| {
             ProviderError::InvalidRequest(
                 "provider request could not be encoded for authorization".to_owned(),
             )
@@ -468,6 +493,15 @@ struct CanonicalModelRequest<'a> {
     timeout_millis: u128,
     trace_execution_id: Option<&'a str>,
     trace_session_id: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+struct CanonicalProviderInvocation<'a> {
+    provider_id: &'a str,
+    protocol: ProviderProtocol,
+    base_url: &'a str,
+    credential_reference: &'a str,
+    request: CanonicalModelRequest<'a>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

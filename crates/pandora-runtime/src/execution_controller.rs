@@ -160,7 +160,7 @@ impl ExecutionController {
         now: Timestamp,
     ) -> Result<ProviderResult, RuntimeError> {
         let authorization_payload = request
-            .authorization_payload()
+            .authorization_payload_for(provider.manifest())
             .map_err(RuntimeError::Provider)?;
         let execution_id = ExecutionId::new(format!(
             "provider-execution-{}",

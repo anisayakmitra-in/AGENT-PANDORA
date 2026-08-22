@@ -53,9 +53,10 @@ model-backed tasks.
 `provider test` sends one bounded request using the active profile's credential
 environment variable through the provider permit boundary and reports the
 selected model, response, and token usage.
-The permit binds the canonical provider request, including its model, messages,
-tools, token budget, timeout, and trace identifiers; changing any of those
-values requires a new permit.
+The permit binds the selected protocol, endpoint, and credential-variable
+reference as well as the canonical provider request. It includes the model,
+messages, tools, token budget, timeout, and trace identifiers. Changing any of
+those values requires a new permit.
 Use `pandora provider set --provider-url <url> --model <model>` to configure the
 backward-compatible `openai-compatible` profile. Multiple provider profiles can
 keep separate endpoints, models, and credential variables:

@@ -2,7 +2,7 @@ use crate::ConsumedPermit;
 use pandora_provider::{ModelRequest, ModelResponse, Provider, ProviderError};
 use pandora_types::{
     Capability, EffectOutcome, EffectReceipt, EffectTarget, Operation, ReceiptId, ResourceScope,
-    Timestamp,
+    SecretReference, Timestamp,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -73,8 +73,10 @@ fn request_matches(
     request: &ModelRequest,
 ) -> bool {
     let operation = permit.request();
+    let expected_credential = SecretReference::new(provider.manifest().api_key_env())
+        .expect("provider manifests validate credential references");
     let payload_matches = request
-        .authorization_payload()
+        .authorization_payload_for(provider.manifest())
         .ok()
         .is_some_and(|payload| operation.payload_digest_matches(&payload));
     operation.capability() == Capability::ProviderInvoke
@@ -82,8 +84,11 @@ fn request_matches(
         && matches!(operation.resource_scope(), ResourceScope::None)
         && matches!(
             operation.target(),
-            EffectTarget::Provider { provider: provider_id, .. }
-                if provider_id == provider.manifest().id().as_str()
+            EffectTarget::Provider {
+                provider: provider_id,
+                credential,
+            } if provider_id == provider.manifest().id().as_str()
+                && credential == &expected_credential
         )
         && request.provider_id() == provider.manifest().id()
         && payload_matches
@@ -135,8 +140,8 @@ mod tests {
 
     impl StubProvider {
         fn new() -> Self {
-            Self {
-                manifest: ProviderManifest::new(
+            Self::with_manifest(
+                ProviderManifest::new(
                     "provider-a",
                     "Provider A",
                     "https://provider.example.test/v1",
@@ -144,7 +149,11 @@ mod tests {
                     "PANDORA_PROVIDER_KEY",
                 )
                 .unwrap(),
-            }
+            )
+        }
+
+        fn with_manifest(manifest: ProviderManifest) -> Self {
+            Self { manifest }
         }
     }
 
@@ -190,7 +199,11 @@ mod tests {
         )
         .unwrap();
         let request = request(provider.manifest())
-            .with_payload_digest(&model_request.authorization_payload().unwrap())
+            .with_payload_digest(
+                &model_request
+                    .authorization_payload_for(provider.manifest())
+                    .unwrap(),
+            )
             .unwrap();
         let monitor = ReferenceMonitor::new(1, 60);
         let parliament = Parliament::new(1);
@@ -221,6 +234,114 @@ mod tests {
     }
 
     #[test]
+    fn provider_executor_rejects_a_permit_for_a_different_endpoint() {
+        let provider = StubProvider::new();
+        let model_request = ModelRequest::new(
+            provider.manifest().id().clone(),
+            provider.manifest().default_model().clone(),
+            vec![ChatMessage::user("hello").unwrap()],
+        )
+        .unwrap();
+        let request = request(provider.manifest())
+            .with_payload_digest(
+                &model_request
+                    .authorization_payload_for(provider.manifest())
+                    .unwrap(),
+            )
+            .unwrap();
+        let monitor = ReferenceMonitor::new(1, 60);
+        let parliament = Parliament::new(1);
+        let policy = PolicyContext::new(1, [Capability::ProviderInvoke], []);
+        let permit = monitor
+            .authorize(
+                request.clone(),
+                parliament.decide(&request, &policy),
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap();
+        let consumed = monitor
+            .store()
+            .consume(permit, &request, Timestamp::from_unix_seconds(10))
+            .unwrap();
+        let substituted_provider = StubProvider::with_manifest(
+            ProviderManifest::new(
+                "provider-a",
+                "Provider A",
+                "https://substituted.example.test/v1",
+                "model-a",
+                "PANDORA_PROVIDER_KEY",
+            )
+            .unwrap(),
+        );
+
+        let result = ProviderExecutor::new().complete(
+            &consumed,
+            &substituted_provider,
+            model_request,
+            Timestamp::from_unix_seconds(10),
+        );
+
+        assert!(matches!(
+            result.result(),
+            Err(ProviderError::InvalidRequest(_))
+        ));
+    }
+
+    #[test]
+    fn provider_executor_rejects_a_permit_for_a_different_credential_reference() {
+        let provider = StubProvider::new();
+        let model_request = ModelRequest::new(
+            provider.manifest().id().clone(),
+            provider.manifest().default_model().clone(),
+            vec![ChatMessage::user("hello").unwrap()],
+        )
+        .unwrap();
+        let request = request(provider.manifest())
+            .with_payload_digest(
+                &model_request
+                    .authorization_payload_for(provider.manifest())
+                    .unwrap(),
+            )
+            .unwrap();
+        let monitor = ReferenceMonitor::new(1, 60);
+        let parliament = Parliament::new(1);
+        let policy = PolicyContext::new(1, [Capability::ProviderInvoke], []);
+        let permit = monitor
+            .authorize(
+                request.clone(),
+                parliament.decide(&request, &policy),
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap();
+        let consumed = monitor
+            .store()
+            .consume(permit, &request, Timestamp::from_unix_seconds(10))
+            .unwrap();
+        let substituted_provider = StubProvider::with_manifest(
+            ProviderManifest::new(
+                "provider-a",
+                "Provider A",
+                "https://provider.example.test/v1",
+                "model-a",
+                "PANDORA_OTHER_PROVIDER_KEY",
+            )
+            .unwrap(),
+        );
+
+        let result = ProviderExecutor::new().complete(
+            &consumed,
+            &substituted_provider,
+            model_request,
+            Timestamp::from_unix_seconds(10),
+        );
+
+        assert!(matches!(
+            result.result(),
+            Err(ProviderError::InvalidRequest(_))
+        ));
+    }
+
+    #[test]
     fn provider_executor_rejects_a_different_provider() {
         let provider = StubProvider::new();
         let authorized_model_request = ModelRequest::new(
@@ -230,7 +351,11 @@ mod tests {
         )
         .unwrap();
         let request = request(provider.manifest())
-            .with_payload_digest(&authorized_model_request.authorization_payload().unwrap())
+            .with_payload_digest(
+                &authorized_model_request
+                    .authorization_payload_for(provider.manifest())
+                    .unwrap(),
+            )
             .unwrap();
         let monitor = ReferenceMonitor::new(1, 60);
         let parliament = Parliament::new(1);
@@ -326,7 +451,11 @@ mod tests {
         )
         .unwrap();
         let request = request(provider.manifest())
-            .with_payload_digest(&authorized_model_request.authorization_payload().unwrap())
+            .with_payload_digest(
+                &authorized_model_request
+                    .authorization_payload_for(provider.manifest())
+                    .unwrap(),
+            )
             .unwrap();
         let monitor = ReferenceMonitor::new(1, 60);
         let parliament = Parliament::new(1);
