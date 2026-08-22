@@ -18,12 +18,29 @@ GENERATED_PARTS = {
 CREDENTIAL_FILENAMES = {".env", ".env.local", ".env.production", ".env.test"}
 CREDENTIAL_SUFFIXES = {".key", ".pem", ".p12", ".pfx"}
 PRIVATE_KEY_MARKER = re.compile(rb"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
+ACTION_REFERENCE = re.compile(rb"(?m)^\s*-\s+uses:\s*([^\s#]+)")
+COMMIT_SHA = re.compile(rb"[0-9a-fA-F]{40}")
 
 
 def validate_content(relative: Path, content: bytes) -> list[str]:
+    findings: list[str] = []
     if PRIVATE_KEY_MARKER.search(content):
-        return [f"{relative}: private key content must not be tracked"]
-    return []
+        findings.append(f"{relative}: private key content must not be tracked")
+
+    if relative.parts[:2] == (".github", "workflows") and relative.suffix in {
+        ".yaml",
+        ".yml",
+    }:
+        for reference in ACTION_REFERENCE.findall(content):
+            if reference.startswith((b"./", b"docker://")):
+                continue
+            _, separator, revision = reference.rpartition(b"@")
+            if not separator or COMMIT_SHA.fullmatch(revision) is None:
+                findings.append(
+                    f"{relative}: GitHub Actions must use a full commit SHA"
+                )
+
+    return findings
 
 
 def validate_paths(root: Path, paths: list[Path]) -> list[str]:
