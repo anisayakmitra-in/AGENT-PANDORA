@@ -56,4 +56,16 @@ setup wizard when configuration is missing, then opens the Ratatui client. Use
 `pandora chat` for the line-oriented client and explicit subcommands for
 scripts and automation.
 
+Headless workers can queue the same governed `run` command without a second
+execution path:
+
+```text
+pandora job submit -- --agent "Review this workspace"
+pandora job work
+pandora job list --json
+```
+
+`job work` claims one queued record and exits. Run it from an existing service
+manager or scheduler when continuous polling is needed.
+
 The supported product target is the native CLI on Windows, macOS, and Linux. Desktop, remote execution, mobile, and package marketplace integration remain gated until their release tests and security boundaries exist.

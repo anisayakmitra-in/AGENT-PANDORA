@@ -16,6 +16,7 @@ mod completions;
 mod doctor;
 mod efficiency;
 mod harness;
+mod job;
 mod migration;
 mod package;
 mod provider;
@@ -66,6 +67,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "chat" => chat::execute(&args[1..]),
         "completions" => completions::execute(&args[1..]),
         "harness" => harness::execute(&args[1..]),
+        "job" => job::execute(&args[1..]),
         "migrate" => migration::execute(&args[1..]),
         "package" => package::execute(&args[1..]),
         "setup" => setup::execute(&args[1..]),
@@ -279,7 +281,7 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|chat|tui|harness|slash|session|skill|package|approval|provider|tool|orchestration|strategies|efficiency|completions|migrate|update|uninstall|doctor> [options]
+    r#"usage: pandora <help|setup|run|chat|tui|harness|slash|session|job|skill|package|approval|provider|tool|orchestration|strategies|efficiency|completions|migrate|update|uninstall|doctor> [options]
 
 commands:
   help (or --help)
@@ -290,6 +292,7 @@ commands:
   harness list|inspect|run [--harness-version <version>]
   slash list|resolve <command>
   session list|resume|inspect <id>
+  job submit|work|list|inspect|cancel
   skill list|inspect|install|enable|disable|suspend|remove|restore <id-or-path>
   package admit --manifest <path> --artifact <path> | install <id> [version] --registry <url> [--token-env <name>] | list | inspect <id> <version> | lock [--output <path>] | verify-lock [--lock <path>] | remove <id> <version> [--dry-run|--yes]
   tool list|inspect <id>
@@ -346,7 +349,7 @@ fn strategies(args: &[String]) -> Result<CommandResult, CliError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{needs_interactive_setup, starts_interactive_tui};
+    use super::{execute, needs_interactive_setup, starts_interactive_tui};
 
     #[test]
     fn empty_argv_opens_tui_only_for_interactive_human_sessions() {
@@ -360,5 +363,23 @@ mod tests {
     fn missing_configuration_requires_onboarding_before_the_tui() {
         assert!(needs_interactive_setup(false));
         assert!(!needs_interactive_setup(true));
+    }
+
+    #[test]
+    fn job_command_is_dispatched() {
+        let error = match execute(vec!["job".to_owned()]) {
+            Ok(_) => panic!("job without a subcommand should fail"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.message, "job requires a subcommand");
+    }
+
+    #[test]
+    fn help_lists_the_headless_job_surface() {
+        let result = execute(vec!["help".to_owned()]).unwrap();
+        let usage = result.data["usage"].as_str().unwrap();
+
+        assert!(usage.contains("job submit|work|list|inspect|cancel"));
     }
 }

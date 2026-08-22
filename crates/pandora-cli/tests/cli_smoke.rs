@@ -136,6 +136,42 @@ fn setup_and_read_only_run_return_versioned_json() {
 }
 
 #[test]
+fn headless_job_worker_executes_the_existing_run_command() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let submitted = fixture
+        .command(&["job", "submit", "--", "guide", "--json"])
+        .output()
+        .expect("job submission should start");
+    assert_success(&submitted);
+    let submitted = parse_json(&submitted);
+    let job_id = submitted["job_id"]
+        .as_str()
+        .expect("submission should return a job ID");
+    assert_eq!(submitted["status"], "queued");
+
+    let worked = fixture
+        .command(&["job", "work", "--json"])
+        .output()
+        .expect("job worker should start");
+    assert_success(&worked);
+    let worked = parse_json(&worked);
+    assert_eq!(worked["command"], "job work");
+    assert_eq!(worked["job_id"], job_id);
+    assert_eq!(worked["status"], "completed");
+    assert_eq!(worked["result"]["command"], "run");
+
+    let inspected = fixture
+        .command(&["job", "inspect", job_id, "--json"])
+        .output()
+        .expect("job inspection should start");
+    assert_success(&inspected);
+    let inspected = parse_json(&inspected);
+    assert_eq!(inspected["status"], "completed");
+    assert_eq!(inspected["result"]["command"], "run");
+}
+
+#[test]
 fn interactive_setup_configures_a_provider_without_echoing_secrets() {
     let fixture = Fixture::new();
     let mut command = fixture.command(&["setup", "--interactive", "--json"]);

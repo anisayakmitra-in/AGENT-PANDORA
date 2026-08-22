@@ -12,6 +12,7 @@ pub mod gene;
 pub mod governance;
 pub mod harness;
 pub mod ids;
+pub mod jobs;
 pub mod memory;
 pub mod observability;
 pub mod orchestration;
@@ -49,10 +50,11 @@ pub use gene::{Gene, GeneError, GeneInput, GeneKind, GeneManifest};
 pub use governance::{ParliamentDecision, PolicyContext};
 pub use harness::{Harness, HarnessKind, HarnessManifest, MetaComposition};
 pub use ids::{
-    ArtifactId, EventId, ExecutionId, GeneId, HarnessId, IdError, MemoryId, PackageId, PermitId,
-    PlanId, PrincipalId, ProposalId, ReceiptId, RequestDigest, RoleId, RunLoopId, SessionId,
-    TenantId, WorkspaceId,
+    ArtifactId, EventId, ExecutionId, GeneId, HarnessId, IdError, JobId, MemoryId, PackageId,
+    PermitId, PlanId, PrincipalId, ProposalId, ReceiptId, RequestDigest, RoleId, RunLoopId,
+    SessionId, TenantId, WorkspaceId,
 };
+pub use jobs::{JobCommand, JobContractError, JobRequest, JobStatus, MAX_JOB_ARGUMENT_BYTES};
 pub use memory::{
     MemoryApproval, MemoryAuditAction, MemoryAuditEntry, MemoryContractError, MemoryKind,
     MemoryRecord, MemoryScope, MemoryTier,

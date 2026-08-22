@@ -14,6 +14,7 @@ pub mod execution_controller;
 pub mod executors;
 pub mod harness_registry;
 pub mod human_review;
+pub mod job_store;
 pub mod memory_engine;
 pub mod mutation;
 pub mod observability;
@@ -55,6 +56,7 @@ pub use human_review::{
     HumanMode, HumanReviewEngine, ReviewDecision, ReviewError, ReviewReceipt, ReviewRecord,
     ReviewState, ReviewSubject,
 };
+pub use job_store::{JobRecord, JobStore, JobStoreError, MAX_JOB_RESULT_BYTES};
 pub use memory_engine::{MemoryEngine, MemoryError};
 pub use mutation::{MutationEngine, MutationError};
 pub use observability::{ObservabilityEngine, ObservabilityError};

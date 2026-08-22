@@ -100,10 +100,35 @@ pandora tui --session <session-id>
 pandora session list
 pandora session inspect <session-id>
 pandora session resume <session-id>
+pandora job submit -- --agent "Review this workspace"
+pandora job work
+pandora job list
+pandora job inspect <job-id>
+pandora job cancel <job-id>
 pandora approval list
 pandora approval inspect <approval-id>
 pandora approval resolve <approval-id> --allow
 ```
+
+`job submit` stores one bounded `run` request in the scoped `jobs.sqlite3`
+database. Put queue path options such as `--config`, `--data-dir`, and
+`--workspace` before the required `--` separator. Arguments after the
+separator are passed to the existing `run` command. Pandora records the
+resolved paths with the request so a worker does not depend on its current
+directory or ambient path settings.
+
+`job work` atomically claims the oldest queued job, executes it through the
+same sessions, policy, approval, permit, evaluation, and receipt path as a
+foreground run, stores the versioned CLI result, and exits. Multiple worker
+processes cannot claim the same queued record. An approval pause is stored as
+`approval_required`; it is not converted into success or retried. Submit a new
+job with the approved invocation after reviewing and resolving the approval.
+
+`job cancel` applies only to queued work. It does not terminate a running
+process. Pandora does not replay a job automatically when a worker exits after
+claiming it, because the worker may already have produced effects. Such a job
+remains `running` for inspection and operator review. This release provides a
+single-job worker command, not a resident daemon or remote Fleet node.
 
 Read-only work can complete without approval. Writes and process effects stop at
 the approval boundary and expose an inspectable, redacted request subject.
