@@ -264,6 +264,8 @@ pandora skill restore <id>
 pandora package admit --manifest <manifest.json> --artifact <artifact>
 pandora package list
 pandora package inspect <id> <version>
+pandora package lock
+pandora package verify-lock
 pandora package remove <id> <version> --dry-run
 pandora package remove <id> <version> --yes
 pandora orchestration roles
@@ -308,8 +310,15 @@ through the governed ToolEngine path.
 
 Package records are addressed by exact ID and strict SemVer version. `package admit`
 reads at most the local artifact limit plus one byte before it rejects an oversized
-artifact. `package remove
---dry-run` reports the admitted record without changing the local store;
+artifact. `package lock` writes the revalidated local package set to
+`<workspace>/pandora.lock`; `--output <path>` selects another file. The lock keeps
+the canonical manifests, exact versions, artifact hashes, dependencies, and trust
+evidence in deterministic identity order. `package verify-lock` reads at most the
+lockfile limit plus one byte and fails if the file is invalid or differs from the
+current package store. Use `--lock <path>` to verify another file. Lock writes use
+an atomic sibling replacement.
+
+`package remove --dry-run` reports the admitted record without changing the local store;
 `package remove --yes` removes it transactionally. Removal is refused when
 another admitted package has a required dependency on the target, while
 optional dependencies do not block removal. Package artifacts are local

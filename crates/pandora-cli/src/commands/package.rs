@@ -9,17 +9,78 @@ use std::path::{Path, PathBuf};
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
-        CliError::usage("package requires 'admit', 'list', 'inspect', or 'remove'")
+        CliError::usage(
+            "package requires 'admit', 'list', 'inspect', 'lock', 'verify-lock', or 'remove'",
+        )
     })?;
     match subcommand.as_str() {
         "admit" => admit(&args[1..]),
         "list" => list(&args[1..]),
         "inspect" => inspect(&args[1..]),
+        "lock" => lock(&args[1..]),
+        "verify-lock" => verify_lock(&args[1..]),
         "remove" => remove(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown package command '{unknown}'"
         ))),
     }
+}
+
+fn lock(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "output"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "package lock does not accept positional arguments",
+        ));
+    }
+    let config = load_config(&parsed)?;
+    let path = parsed
+        .value("output")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| config.workspace_dir().join("pandora.lock"));
+    let store =
+        PackageStore::open(config.data_dir().join("packages.sqlite3")).map_err(store_error)?;
+    let lock = store.write_lockfile(&path).map_err(store_error)?;
+    Ok(success(
+        "package lock",
+        json!({
+            "path": path,
+            "format_version": lock.format_version(),
+            "package_count": lock.packages().len(),
+        }),
+        format!(
+            "Locked {} package(s) in {}",
+            lock.packages().len(),
+            path.display()
+        ),
+    ))
+}
+
+fn verify_lock(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "lock"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "package verify-lock does not accept positional arguments",
+        ));
+    }
+    let config = load_config(&parsed)?;
+    let path = parsed
+        .value("lock")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| config.workspace_dir().join("pandora.lock"));
+    let store =
+        PackageStore::open(config.data_dir().join("packages.sqlite3")).map_err(store_error)?;
+    let lock = store.verify_lockfile(&path).map_err(store_error)?;
+    Ok(success(
+        "package verify-lock",
+        json!({
+            "verified": true,
+            "path": path,
+            "format_version": lock.format_version(),
+            "package_count": lock.packages().len(),
+        }),
+        format!("Package lock verified: {}", path.display()),
+    ))
 }
 
 fn admit(args: &[String]) -> Result<CommandResult, CliError> {

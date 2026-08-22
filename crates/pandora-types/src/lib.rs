@@ -66,8 +66,9 @@ pub use orchestration::{
     RoleAssignment, RunLoopConfig, RunLoopSnapshot, RunLoopState, Usage,
 };
 pub use package::{
-    PackageCompatibility, PackageDependency, PackageKind, PackageManifest, PackageManifestError,
-    TrustEvidence, TrustLevel, hash_artifact,
+    PACKAGE_LOCK_FORMAT_VERSION, PackageCompatibility, PackageDependency, PackageKind, PackageLock,
+    PackageLockError, PackageManifest, PackageManifestError, TrustEvidence, TrustLevel,
+    hash_artifact,
 };
 pub use session::{Session, TaskIntent};
 pub use skill::{SkillId, SkillManifest, SkillManifestError};

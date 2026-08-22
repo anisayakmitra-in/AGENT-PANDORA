@@ -67,6 +67,8 @@ Local package admission is explicit:
 pandora package admit --manifest <manifest.json> --artifact <artifact>
 pandora package list
 pandora package inspect <id> <version>
+pandora package lock
+pandora package verify-lock
 pandora package remove <id> <version> --dry-run
 pandora package remove <id> <version> --yes
 ```
@@ -84,6 +86,12 @@ Removal uses the exact package ID and version. A dry run changes nothing;
 confirmed removal is transactional and refuses to remove a package required by
 another admitted package or named by an admitted Meta Harness composition.
 Optional dependencies do not block removal.
+
+`package lock` writes a deterministic snapshot of every revalidated local record
+to `<workspace>/pandora.lock`. Each entry retains the canonical manifest, exact
+version, verified artifact hash, dependencies, compatibility, license, and inline
+trust evidence. `package verify-lock` rejects malformed, oversized, noncanonical,
+or stale locks. Writing the lockfile uses an atomic replacement.
 
 `pandora harness list --json` keeps built-in Harnesses under `harnesses`,
 reports the admitted Domain and Meta subset under `admitted_profiles`, and keeps

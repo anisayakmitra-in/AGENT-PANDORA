@@ -458,6 +458,92 @@ impl PackageManifest {
     }
 }
 
+pub const PACKAGE_LOCK_FORMAT_VERSION: u32 = 1;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PackageLockError {
+    InvalidFormat,
+    InvalidManifest,
+    DuplicateIdentity,
+    NonCanonicalOrder,
+}
+
+impl fmt::Display for PackageLockError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidFormat => formatter.write_str("package lock format is not supported"),
+            Self::InvalidManifest => {
+                formatter.write_str("package lock contains an invalid manifest")
+            }
+            Self::DuplicateIdentity => {
+                formatter.write_str("package lock contains a duplicate identity")
+            }
+            Self::NonCanonicalOrder => {
+                formatter.write_str("package lock is not canonically ordered")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PackageLockError {}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PackageLock {
+    format_version: u32,
+    packages: Vec<PackageManifest>,
+}
+
+impl PackageLock {
+    pub fn new(mut packages: Vec<PackageManifest>) -> Result<Self, PackageLockError> {
+        for manifest in &packages {
+            manifest
+                .validate()
+                .map_err(|_| PackageLockError::InvalidManifest)?;
+        }
+        packages.sort_by(compare_package_identity);
+        let lock = Self {
+            format_version: PACKAGE_LOCK_FORMAT_VERSION,
+            packages,
+        };
+        lock.validate()?;
+        Ok(lock)
+    }
+
+    pub const fn format_version(&self) -> u32 {
+        self.format_version
+    }
+
+    pub fn packages(&self) -> &[PackageManifest] {
+        &self.packages
+    }
+
+    pub fn validate(&self) -> Result<(), PackageLockError> {
+        if self.format_version != PACKAGE_LOCK_FORMAT_VERSION {
+            return Err(PackageLockError::InvalidFormat);
+        }
+        for manifest in &self.packages {
+            manifest
+                .validate()
+                .map_err(|_| PackageLockError::InvalidManifest)?;
+        }
+        for pair in self.packages.windows(2) {
+            match compare_package_identity(&pair[0], &pair[1]) {
+                std::cmp::Ordering::Less => {}
+                std::cmp::Ordering::Equal => return Err(PackageLockError::DuplicateIdentity),
+                std::cmp::Ordering::Greater => return Err(PackageLockError::NonCanonicalOrder),
+            }
+        }
+        Ok(())
+    }
+}
+
+fn compare_package_identity(left: &PackageManifest, right: &PackageManifest) -> std::cmp::Ordering {
+    left.id()
+        .as_str()
+        .cmp(right.id().as_str())
+        .then_with(|| left.version().cmp(right.version()))
+}
+
 pub fn hash_artifact(artifact: &[u8]) -> String {
     let digest = Sha256::digest(artifact);
     format!("sha256:{digest:x}")
@@ -720,6 +806,77 @@ mod tests {
             Err(PackageManifestError::ControlCharacter(
                 "runtime compatibility"
             ))
+        );
+    }
+
+    #[test]
+    fn package_lock_orders_exact_manifests_and_preserves_evidence() {
+        let alpha_artifact = b"alpha";
+        let alpha = PackageManifest::new(
+            "publisher/alpha",
+            "1.0.0-beta.1+build.5",
+            PackageKind::Gene,
+            "publisher",
+            hash_artifact(alpha_artifact),
+            Vec::new(),
+            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "Apache-2.0",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+        let zeta_artifact = b"zeta";
+        let zeta = PackageManifest::new(
+            "publisher/zeta",
+            "2.0.0",
+            PackageKind::Gene,
+            "publisher",
+            hash_artifact(zeta_artifact),
+            vec![PackageDependency::new("publisher/alpha", "1.0.0-beta.1+build.5", false).unwrap()],
+            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "MIT",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+
+        let lock = PackageLock::new(vec![zeta, alpha.clone()]).unwrap();
+
+        assert_eq!(lock.format_version(), PACKAGE_LOCK_FORMAT_VERSION);
+        assert_eq!(lock.packages().len(), 2);
+        assert_eq!(lock.packages()[0], alpha);
+        assert_eq!(lock.packages()[1].id().as_str(), "publisher/zeta");
+        assert_eq!(
+            lock.packages()[1].dependencies()[0].version(),
+            "1.0.0-beta.1+build.5"
+        );
+        assert!(lock.validate().is_ok());
+    }
+
+    #[test]
+    fn deserialized_package_lock_rejects_noncanonical_and_duplicate_records() {
+        let artifact = b"gene";
+        let manifest = PackageManifest::new(
+            "publisher/gene",
+            "1.0.0",
+            PackageKind::Gene,
+            "publisher",
+            hash_artifact(artifact),
+            Vec::new(),
+            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "Apache-2.0",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+        let lock = PackageLock::new(vec![manifest]).unwrap();
+        let mut encoded = serde_json::to_value(&lock).unwrap();
+        encoded["packages"] = serde_json::json!([
+            encoded["packages"][0].clone(),
+            encoded["packages"][0].clone()
+        ]);
+        let duplicate: PackageLock = serde_json::from_value(encoded).unwrap();
+
+        assert_eq!(
+            duplicate.validate(),
+            Err(PackageLockError::DuplicateIdentity)
         );
     }
 }

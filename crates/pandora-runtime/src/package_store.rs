@@ -1,12 +1,15 @@
 use crate::harness_registry::{HarnessRegistry, HarnessRegistryError, PackageRecord};
-use pandora_types::{PackageId, PackageKind, PackageManifest};
+use pandora_types::{PackageId, PackageKind, PackageLock, PackageManifest};
 use rusqlite::{Connection, TransactionBehavior, params};
 use std::fmt;
+use std::fs;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 pub const MAX_STORED_ARTIFACT_BYTES: usize = 16 * 1024 * 1024;
+const MAX_PACKAGE_LOCK_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug)]
 pub enum PackageStoreError {
@@ -16,6 +19,9 @@ pub enum PackageStoreError {
     CorruptRecord,
     LockPoisoned,
     ArtifactTooLarge,
+    InvalidLockfile,
+    LockfileTooLarge,
+    LockfileMismatch,
     HasDependents {
         id: String,
         version: String,
@@ -35,6 +41,11 @@ impl fmt::Display for PackageStoreError {
             Self::LockPoisoned => formatter.write_str("package store lock is unavailable"),
             Self::ArtifactTooLarge => {
                 formatter.write_str("package artifact exceeds the local limit")
+            }
+            Self::InvalidLockfile => formatter.write_str("package lock is invalid"),
+            Self::LockfileTooLarge => formatter.write_str("package lock exceeds the local limit"),
+            Self::LockfileMismatch => {
+                formatter.write_str("package lock does not match the admitted package set")
             }
             Self::HasDependents {
                 id,
@@ -60,6 +71,9 @@ impl std::error::Error for PackageStoreError {
             Self::CorruptRecord
             | Self::LockPoisoned
             | Self::ArtifactTooLarge
+            | Self::InvalidLockfile
+            | Self::LockfileTooLarge
+            | Self::LockfileMismatch
             | Self::HasDependents { .. } => None,
         }
     }
@@ -158,6 +172,48 @@ impl PackageStore {
         Ok(load_registry(&connection)?.get(id, version).cloned())
     }
 
+    pub fn lockfile(&self) -> Result<PackageLock, PackageStoreError> {
+        let manifests = self
+            .list()?
+            .into_iter()
+            .map(|record| record.manifest().clone())
+            .collect();
+        PackageLock::new(manifests).map_err(|_| PackageStoreError::CorruptRecord)
+    }
+
+    pub fn write_lockfile(&self, path: impl AsRef<Path>) -> Result<PackageLock, PackageStoreError> {
+        let path = path.as_ref();
+        if path.is_dir() {
+            return Err(PackageStoreError::Io(std::io::Error::new(
+                std::io::ErrorKind::IsADirectory,
+                "package lock path is a directory",
+            )));
+        }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent)?;
+        }
+        let lock = self.lockfile()?;
+        let data = serialize_lockfile(&lock)?;
+        let mut file = atomic_write_file::AtomicWriteFile::open(path)?;
+        file.write_all(&data)?;
+        file.commit()?;
+        Ok(lock)
+    }
+
+    pub fn verify_lockfile(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<PackageLock, PackageStoreError> {
+        let actual = read_lockfile(path.as_ref())?;
+        let expected = self.lockfile()?;
+        if actual != expected {
+            return Err(PackageStoreError::LockfileMismatch);
+        }
+        Ok(actual)
+    }
+
     pub fn remove(
         &self,
         id: &PackageId,
@@ -230,6 +286,33 @@ impl PackageStore {
             .lock()
             .map_err(|_| PackageStoreError::LockPoisoned)
     }
+}
+
+fn read_lockfile(path: &Path) -> Result<PackageLock, PackageStoreError> {
+    let file = fs::File::open(path)?;
+    let mut data = Vec::new();
+    file.take(MAX_PACKAGE_LOCK_BYTES as u64 + 1)
+        .read_to_end(&mut data)?;
+    if data.len() > MAX_PACKAGE_LOCK_BYTES {
+        return Err(PackageStoreError::LockfileTooLarge);
+    }
+    let lock: PackageLock =
+        serde_json::from_slice(&data).map_err(|_| PackageStoreError::InvalidLockfile)?;
+    lock.validate()
+        .map_err(|_| PackageStoreError::InvalidLockfile)?;
+    if serialize_lockfile(&lock)? != data {
+        return Err(PackageStoreError::InvalidLockfile);
+    }
+    Ok(lock)
+}
+
+fn serialize_lockfile(lock: &PackageLock) -> Result<Vec<u8>, PackageStoreError> {
+    let mut data = serde_json::to_vec_pretty(lock)?;
+    data.push(b'\n');
+    if data.len() > MAX_PACKAGE_LOCK_BYTES {
+        return Err(PackageStoreError::LockfileTooLarge);
+    }
+    Ok(data)
 }
 
 fn load_registry(connection: &rusqlite::Connection) -> Result<HarnessRegistry, PackageStoreError> {
@@ -732,5 +815,87 @@ mod tests {
         assert!(store.get(gene.id(), gene.version()).unwrap().is_none());
         assert!(store.get(domain.id(), domain.version()).unwrap().is_some());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn package_lock_round_trips_and_detects_store_drift() {
+        let artifact = b"gene";
+        let manifest = gene_manifest("example/gene", artifact);
+        let (store, root) = store();
+        store.admit(&manifest, &manifest, artifact).unwrap();
+        let path = root.join("pandora.lock");
+
+        let written = store.write_lockfile(&path).unwrap();
+        assert_eq!(written.packages().len(), 1);
+        assert_eq!(
+            written.packages()[0].content_hash(),
+            hash_artifact(artifact)
+        );
+        assert_eq!(store.verify_lockfile(&path).unwrap(), written);
+
+        store.remove(manifest.id(), manifest.version()).unwrap();
+        assert!(matches!(
+            store.verify_lockfile(&path),
+            Err(PackageStoreError::LockfileMismatch)
+        ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn invalid_existing_lockfile_fails_closed() {
+        let (store, root) = store();
+        let path = root.join("pandora.lock");
+        std::fs::write(&path, b"{not-json}\n").unwrap();
+
+        assert!(matches!(
+            store.verify_lockfile(&path),
+            Err(PackageStoreError::InvalidLockfile)
+        ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn noncanonical_existing_lockfile_fails_closed() {
+        let artifact = b"gene";
+        let manifest = gene_manifest("example/gene", artifact);
+        let (store, root) = store();
+        store.admit(&manifest, &manifest, artifact).unwrap();
+        let path = root.join("pandora.lock");
+        let lock = store.lockfile().unwrap();
+        let mut encoded = serde_json::to_value(lock).unwrap();
+        encoded["unknown"] = serde_json::json!(true);
+        std::fs::write(&path, serde_json::to_vec_pretty(&encoded).unwrap()).unwrap();
+
+        assert!(matches!(
+            store.verify_lockfile(&path),
+            Err(PackageStoreError::InvalidLockfile)
+        ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn writer_refuses_a_lock_larger_than_the_reader_limit() {
+        let manifests = (0..300)
+            .map(|index| {
+                PackageManifest::new(
+                    format!("example/gene-{index}"),
+                    "1.0.0",
+                    PackageKind::Gene,
+                    "publisher",
+                    hash_artifact(format!("gene-{index}").as_bytes()),
+                    Vec::new(),
+                    PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
+                    "x".repeat(4096),
+                    TrustEvidence::unsigned(),
+                )
+                .unwrap()
+            })
+            .collect();
+        let lock = PackageLock::new(manifests).unwrap();
+
+        assert!(matches!(
+            serialize_lockfile(&lock),
+            Err(PackageStoreError::LockfileTooLarge)
+        ));
     }
 }

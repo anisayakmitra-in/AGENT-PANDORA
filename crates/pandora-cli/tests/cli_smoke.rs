@@ -2115,6 +2115,93 @@ fn package_admission_rejects_invalid_signed_trust_evidence() {
 }
 
 #[test]
+fn package_lock_is_written_and_verified_against_the_local_store() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let artifact = b"lockable gene artifact\n";
+    let manifest = PackageManifest::new(
+        "example/gene",
+        "1.0.0-beta.1+build.5",
+        PackageKind::Gene,
+        "local-publisher",
+        hash_artifact(artifact),
+        Vec::new(),
+        PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+        "Apache-2.0",
+        TrustEvidence::unsigned(),
+    )
+    .unwrap();
+    let manifest_path = fixture.root.join("gene.json");
+    let artifact_path = fixture.root.join("gene.artifact");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+    fs::write(&artifact_path, artifact).unwrap();
+    let output = fixture
+        .command(&[
+            "package",
+            "admit",
+            "--manifest",
+            manifest_path.to_str().unwrap(),
+            "--artifact",
+            artifact_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("package admission should start");
+    assert_success(&output);
+
+    let output = fixture
+        .command(&["package", "lock", "--json"])
+        .output()
+        .expect("package lock should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["package_count"], 1);
+    assert_eq!(response["format_version"], 1);
+    assert_eq!(
+        response["path"],
+        fixture.workspace.join("pandora.lock").display().to_string()
+    );
+    let lock: Value =
+        serde_json::from_slice(&fs::read(fixture.workspace.join("pandora.lock")).unwrap()).unwrap();
+    assert_eq!(lock["packages"][0]["id"], "example/gene");
+    assert_eq!(lock["packages"][0]["version"], "1.0.0-beta.1+build.5");
+    assert_eq!(lock["packages"][0]["content_hash"], hash_artifact(artifact));
+
+    let output = fixture
+        .command(&["package", "verify-lock", "--json"])
+        .output()
+        .expect("package lock verification should start");
+    assert_success(&output);
+    assert_eq!(parse_json(&output)["verified"], true);
+
+    let output = fixture
+        .command(&[
+            "package",
+            "remove",
+            "example/gene",
+            "1.0.0-beta.1+build.5",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("package removal should start");
+    assert_success(&output);
+    let output = fixture
+        .command(&["package", "verify-lock", "--json"])
+        .output()
+        .expect("stale package lock verification should start");
+    assert_eq!(output.status.code(), Some(50));
+    assert_eq!(
+        parse_json(&output)["message"],
+        "package lock does not match the admitted package set"
+    );
+}
+
+#[test]
 fn admitted_domain_profile_runs_with_an_explicit_version() {
     let fixture = Fixture::new();
     fixture.setup();
