@@ -8,6 +8,11 @@ Parliament → Shadow Council → Harness → Gene → governed execution
 
 The `ReferenceMonitor` is the sole authority that can issue effect permits. Genes request work; effect executors perform it only with a valid, scoped, one-shot permit.
 
+Lifecycle hooks are ordered declarative veto rules evaluated before effect
+authorization. They may reduce authority, but cannot mutate requests, execute
+code, resolve approvals, or issue permits. Runtime events remain the
+observation surface.
+
 ## Status
 
 The active prerelease is `2.0.0-alpha.6` and is CLI-only. Existing legacy

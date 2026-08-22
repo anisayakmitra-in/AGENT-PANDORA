@@ -13,6 +13,7 @@ pub mod evolution;
 pub mod execution_controller;
 pub mod executors;
 pub mod harness_registry;
+pub mod hooks;
 pub mod human_review;
 pub mod job_store;
 pub mod memory_engine;
@@ -54,6 +55,7 @@ pub use evaluation_engine::{EvaluationEngine, EvaluationError};
 pub use evolution::{EvolutionEngine, EvolutionError};
 pub use execution_controller::{ExecutionController, RunStatus, RunSummary, RuntimeError};
 pub use harness_registry::{HarnessRegistry, HarnessRegistryError, PackageRecord, PackageState};
+pub use hooks::{HookPoint, HookSelector, LifecycleHook, LifecycleHooks};
 pub use human_review::{
     HumanMode, HumanReviewEngine, ReviewDecision, ReviewError, ReviewReceipt, ReviewRecord,
     ReviewState, ReviewSubject,

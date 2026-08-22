@@ -2,6 +2,7 @@ use crate::executors::{
     FilesystemError, FilesystemExecutor, ProcessError, ProcessExecutor, ProviderExecutor,
     ProviderResult, VerificationCommand, VerificationOptions, WorkspaceRoot,
 };
+use crate::hooks::{HookDecision, HookPoint, LifecycleHooks};
 use crate::parliament::Parliament;
 use crate::reference_monitor::{AuthorizationError, ReferenceMonitor};
 use crate::shadow_council::{RoutingError, ShadowCouncil};
@@ -48,6 +49,7 @@ pub struct ExecutionController {
     filesystem: FilesystemExecutor,
     process: ProcessExecutor,
     provider: ProviderExecutor,
+    hooks: LifecycleHooks,
     next_execution: AtomicU64,
     next_event: AtomicU64,
 }
@@ -115,6 +117,29 @@ impl ExecutionController {
         policy: PolicyContext,
         harnesses: HarnessCatalog,
     ) -> Self {
+        Self::with_policy_and_harnesses_and_hooks(
+            workspace,
+            policy,
+            harnesses,
+            LifecycleHooks::new(),
+        )
+    }
+
+    pub fn with_hooks(workspace: WorkspaceRoot, hooks: LifecycleHooks) -> Self {
+        Self::with_policy_and_harnesses_and_hooks(
+            workspace,
+            PolicyContext::read_only_workspace(),
+            HarnessCatalog::builtins(),
+            hooks,
+        )
+    }
+
+    pub fn with_policy_and_harnesses_and_hooks(
+        workspace: WorkspaceRoot,
+        policy: PolicyContext,
+        harnesses: HarnessCatalog,
+        hooks: LifecycleHooks,
+    ) -> Self {
         let policy_version = policy.policy_version();
         Self {
             filesystem: FilesystemExecutor::for_workspace(workspace.clone()),
@@ -126,6 +151,7 @@ impl ExecutionController {
             reference_monitor: ReferenceMonitor::new_with_policy(policy.clone(), 60),
             policy,
             harnesses,
+            hooks,
             next_execution: AtomicU64::new(1),
             next_event: AtomicU64::new(1),
         }
@@ -185,6 +211,9 @@ impl ExecutionController {
         .map_err(RuntimeError::Request)?
         .with_payload_digest(&authorization_payload)
         .map_err(RuntimeError::Request)?;
+        if let Some(reason) = self.hook_denial(&operation_request) {
+            return Err(RuntimeError::Denied(reason));
+        }
         let decision = self.parliament.decide(&operation_request, &self.policy);
         let permit = match decision {
             ParliamentDecision::Allow { .. } => self
@@ -327,6 +356,23 @@ impl ExecutionController {
                     request_digest: request.request_digest().clone(),
                 },
             ));
+            if let Some(reason) = self.hook_denial(&request) {
+                summary.events.push(self.event(
+                    EventType::PolicyDenied,
+                    self.context(
+                        &session,
+                        &execution_id,
+                        Some(summary.selected_harness.clone()),
+                        Some(summary.selected_gene.clone()),
+                        None,
+                    ),
+                    EventPayload::Policy {
+                        reason: reason.clone(),
+                    },
+                ));
+                summary.status = RunStatus::Denied { reason };
+                return Ok(summary);
+            }
             let decision = self.parliament.decide(&request, &self.policy);
             let decision_for_authorization = decision.clone();
             let permit = match decision {
@@ -507,6 +553,15 @@ impl ExecutionController {
         self.harnesses
             .find(harness_id)
             .ok_or_else(|| RuntimeError::UnsupportedHarness(harness_id.clone()))
+    }
+
+    fn hook_denial(&self, request: &OperationRequest) -> Option<String> {
+        match self.hooks.evaluate(HookPoint::BeforeAuthorization, request) {
+            HookDecision::Continue => None,
+            HookDecision::Deny { hook_id, reason } => {
+                Some(format!("lifecycle hook {hook_id} denied request: {reason}"))
+            }
+        }
     }
 
     fn execute_request(
@@ -814,7 +869,9 @@ struct ApprovalExecution<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{HookPoint, HookSelector, LifecycleHook, LifecycleHooks};
     use pandora_harnesses::HarnessCatalog;
+    use pandora_provider::{ChatMessage, ModelResponse, ProviderManifest};
     use pandora_types::{
         Capability, GeneId, HarnessId, Operation, PackageCompatibility, PackageDependency,
         PackageKind, PackageManifest, PolicyContext, PrincipalId, Session, SessionId, TaskIntent,
@@ -932,6 +989,92 @@ mod tests {
                 .iter()
                 .any(|event| event.event_type() == EventType::ApprovalRequired)
         );
+    }
+
+    #[test]
+    fn lifecycle_hooks_run_in_order_and_stop_before_authorization() {
+        let fixture = Fixture::new();
+        let hooks = LifecycleHooks::new()
+            .with_hook(LifecycleHook::deny(
+                "process-only",
+                HookPoint::BeforeAuthorization,
+                HookSelector::Capability(Capability::ProcessExecute),
+                "processes_disabled",
+            ))
+            .with_hook(LifecycleHook::deny(
+                "maintenance",
+                HookPoint::BeforeAuthorization,
+                HookSelector::Any,
+                "maintenance_window",
+            ))
+            .with_hook(LifecycleHook::deny(
+                "later-rule",
+                HookPoint::BeforeAuthorization,
+                HookSelector::Any,
+                "later_rule_should_not_win",
+            ));
+        let controller = ExecutionController::with_hooks(fixture.root.clone(), hooks);
+
+        let summary = controller
+            .run_at(
+                TaskIntent::new("read:README.md").unwrap(),
+                fixture.session(),
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap();
+
+        assert_eq!(
+            summary.status(),
+            &RunStatus::Denied {
+                reason: "lifecycle hook maintenance denied request: maintenance_window".to_owned()
+            }
+        );
+        assert!(summary.receipts().is_empty());
+        assert!(
+            summary
+                .events()
+                .iter()
+                .any(|event| event.event_type() == EventType::PolicyDenied)
+        );
+        assert!(
+            summary
+                .events()
+                .iter()
+                .all(|event| event.event_type() != EventType::EffectCompleted)
+        );
+    }
+
+    #[test]
+    fn lifecycle_hook_denies_provider_egress_before_the_provider_is_called() {
+        let fixture = Fixture::new();
+        let provider = PanickingProvider::new();
+        let hooks = LifecycleHooks::new().with_hook(LifecycleHook::deny(
+            "offline-mode",
+            HookPoint::BeforeAuthorization,
+            HookSelector::Capability(Capability::ProviderInvoke),
+            "provider_egress_disabled",
+        ));
+        let controller = ExecutionController::with_hooks(fixture.root.clone(), hooks);
+        let request = ModelRequest::new(
+            provider.manifest().id().clone(),
+            provider.manifest().default_model().clone(),
+            vec![ChatMessage::user("hello").unwrap()],
+        )
+        .unwrap();
+
+        let result = controller.invoke_provider(
+            &provider,
+            request,
+            &fixture.session(),
+            Timestamp::from_unix_seconds(10),
+        );
+
+        assert!(matches!(
+            result,
+            Err(RuntimeError::Denied(reason))
+                if reason
+                    == "lifecycle hook offline-mode denied request: provider_egress_disabled"
+        ));
     }
 
     #[test]
@@ -1070,6 +1213,35 @@ mod tests {
     struct Fixture {
         path: PathBuf,
         root: WorkspaceRoot,
+    }
+
+    struct PanickingProvider {
+        manifest: ProviderManifest,
+    }
+
+    impl PanickingProvider {
+        fn new() -> Self {
+            Self {
+                manifest: ProviderManifest::new(
+                    "test-provider",
+                    "Test provider",
+                    "http://127.0.0.1:1/v1",
+                    "test-model",
+                    "PANDORA_TEST_PROVIDER_KEY",
+                )
+                .unwrap(),
+            }
+        }
+    }
+
+    impl Provider for PanickingProvider {
+        fn manifest(&self) -> &ProviderManifest {
+            &self.manifest
+        }
+
+        fn complete(&self, _request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+            panic!("provider must not be called after hook denial")
+        }
     }
 
     impl Fixture {
