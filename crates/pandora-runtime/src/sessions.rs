@@ -35,6 +35,7 @@ pub enum SessionError {
     L1EvidenceCapacityExceeded,
     InvalidL1Evidence,
     InvalidEvaluation,
+    InvalidEventPage,
     UnsupportedSchemaVersion(i64),
 }
 
@@ -64,6 +65,7 @@ impl fmt::Display for SessionError {
             }
             Self::InvalidL1Evidence => formatter.write_str("L1 evidence record is invalid"),
             Self::InvalidEvaluation => formatter.write_str("execution evaluation is invalid"),
+            Self::InvalidEventPage => formatter.write_str("session event page is invalid"),
             Self::UnsupportedSchemaVersion(version) => {
                 write!(
                     formatter,
@@ -153,6 +155,22 @@ pub struct RecordedEvent<'a> {
     sequence: u64,
     recorded_at: Option<Timestamp>,
     event: &'a RuntimeEvent,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SessionEventPage {
+    events: Vec<RuntimeEvent>,
+    next_sequence: Option<u64>,
+}
+
+impl SessionEventPage {
+    pub fn events(&self) -> &[RuntimeEvent] {
+        &self.events
+    }
+
+    pub const fn next_sequence(&self) -> Option<u64> {
+        self.next_sequence
+    }
 }
 
 impl RecordedEvent<'_> {
@@ -321,6 +339,56 @@ impl SessionStore {
             l1_evidence_count,
             evaluations,
             agent_messages,
+        })
+    }
+
+    pub fn event_page(
+        &self,
+        session_id: &SessionId,
+        principal_id: &PrincipalId,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        after_sequence: Option<u64>,
+        limit: u16,
+    ) -> Result<SessionEventPage, SessionError> {
+        if limit == 0 {
+            return Err(SessionError::InvalidEventPage);
+        }
+        let after_sequence = after_sequence
+            .map(|sequence| i64::try_from(sequence).map_err(|_| SessionError::CorruptRecord))
+            .transpose()?
+            .unwrap_or_default();
+        let connection = self.lock()?;
+        let session =
+            load_session(&connection, session_id)?.ok_or(SessionError::SessionNotFound)?;
+        ensure_scope(&session, principal_id, tenant_id, workspace_id)?;
+        let mut statement = connection.prepare(
+            "SELECT sequence, event_json FROM session_events
+             WHERE session_id = ?1 AND sequence > ?2
+             ORDER BY sequence ASC
+             LIMIT ?3",
+        )?;
+        let rows = statement.query_map(
+            params![session_id.as_str(), after_sequence, i64::from(limit) + 1],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        )?;
+        let mut events = Vec::with_capacity(usize::from(limit) + 1);
+        for row in rows {
+            let (sequence, serialized) = row?;
+            events.push((
+                u64::try_from(sequence).map_err(|_| SessionError::CorruptRecord)?,
+                serde_json::from_str(&serialized).map_err(SessionError::Serialization)?,
+            ));
+        }
+        let next_sequence = if events.len() > usize::from(limit) {
+            events.pop();
+            events.last().map(|(sequence, _)| *sequence)
+        } else {
+            None
+        };
+        Ok(SessionEventPage {
+            events: events.into_iter().map(|(_, event)| event).collect(),
+            next_sequence,
         })
     }
 

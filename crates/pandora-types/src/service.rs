@@ -80,6 +80,17 @@ impl ServiceRunRequest {
     pub fn requested_gene(&self) -> Option<&GeneId> {
         self.requested_gene.as_ref()
     }
+
+    pub fn validate(&self) -> Result<(), ServiceContractError> {
+        crate::session::TaskIntent::new(self.task.clone())?;
+        if let Some(harness_id) = self.requested_harness() {
+            HarnessId::new(harness_id.as_str())?;
+        }
+        if let Some(gene_id) = self.requested_gene() {
+            GeneId::new(gene_id.as_str())?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -114,6 +125,11 @@ impl ServiceEventPageRequest {
 
     pub const fn limit(&self) -> u16 {
         self.limit
+    }
+
+    pub fn validate(&self) -> Result<(), ServiceContractError> {
+        SessionId::new(self.session_id.as_str())?;
+        validate_page_limit(self.limit, MAX_SERVICE_EVENT_PAGE)
     }
 }
 
@@ -197,6 +213,21 @@ impl ServiceRequest {
 
     pub const fn is_supported_protocol(&self) -> bool {
         self.protocol_version() == LOCAL_SERVICE_PROTOCOL_VERSION
+    }
+
+    pub fn validate(&self) -> Result<(), ServiceContractError> {
+        match self {
+            Self::Health { .. } => Ok(()),
+            Self::SessionList { limit, .. } => {
+                validate_page_limit(*limit, MAX_SERVICE_SESSION_PAGE)
+            }
+            Self::SessionInspect { session_id, .. } => {
+                SessionId::new(session_id.as_str())?;
+                Ok(())
+            }
+            Self::SessionEvents { request, .. } => request.validate(),
+            Self::Run { request, .. } => request.validate(),
+        }
     }
 }
 
@@ -322,6 +353,7 @@ impl ServiceEventPage {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ServiceRunResult {
+    session_id: SessionId,
     execution_id: ExecutionId,
     selected_harness: Option<HarnessId>,
     selected_gene: Option<GeneId>,
@@ -334,6 +366,7 @@ pub struct ServiceRunResult {
 impl ServiceRunResult {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        session_id: SessionId,
         execution_id: ExecutionId,
         selected_harness: Option<HarnessId>,
         selected_gene: Option<GeneId>,
@@ -343,6 +376,7 @@ impl ServiceRunResult {
         event_count: u64,
     ) -> Self {
         Self {
+            session_id,
             execution_id,
             selected_harness,
             selected_gene,
@@ -351,6 +385,10 @@ impl ServiceRunResult {
             receipt_count,
             event_count,
         }
+    }
+
+    pub fn session_id(&self) -> &SessionId {
+        &self.session_id
     }
 
     pub fn execution_id(&self) -> &ExecutionId {

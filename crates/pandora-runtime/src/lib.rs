@@ -27,6 +27,7 @@ pub mod reference_monitor;
 pub mod registry_client;
 pub mod replacement;
 pub mod run_loop;
+pub mod service;
 pub mod sessions;
 pub mod shadow_council;
 pub mod skill_engine;
@@ -70,6 +71,7 @@ pub use reference_monitor::{AuthorizationError, ReferenceMonitor};
 pub use registry_client::{PackageRegistryClient, PackageRegistryError};
 pub use replacement::{ReplacementEngine, ReplacementError};
 pub use run_loop::{RunLoop, RunLoopError};
+pub use service::{RuntimeService, RuntimeServiceError, RuntimeServiceScope};
 pub use skill_engine::{
     RemovalReceipt, SkillEngine, SkillError, SkillInspection, SkillProvenance, SkillRecord,
     SkillState,
