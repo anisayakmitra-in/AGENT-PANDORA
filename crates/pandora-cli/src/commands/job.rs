@@ -1,7 +1,7 @@
 use super::{load_config, parse_options, require_config_file, session_scope, timestamp};
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{JobRecord, JobStore, JobStoreError};
-use pandora_types::{JobCommand, JobId, JobRequest, JobStatus};
+use pandora_types::{JobCommand, JobId, JobRequest, JobStatus, JobWorkerId};
 use serde_json::{Map, Value, json};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -23,6 +23,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "list" => list(&args[1..]),
         "inspect" => inspect(&args[1..]),
         "cancel" => cancel(&args[1..]),
+        "mark-interrupted" => mark_interrupted(&args[1..]),
         unknown => Err(CliError::usage(format!("unknown job command '{unknown}'"))),
     }
 }
@@ -92,6 +93,40 @@ fn cancel(args: &[String]) -> Result<CommandResult, CliError> {
     ))
 }
 
+fn mark_interrupted(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "reason", "yes"])?;
+    if parsed.positionals.len() != 1 {
+        return Err(CliError::usage(
+            "job mark-interrupted requires exactly one job ID",
+        ));
+    }
+    if parsed.value("yes").is_none() {
+        return Err(CliError::usage(
+            "job mark-interrupted requires '--yes'; review external effects before resubmitting",
+        ));
+    }
+    let reason = parsed
+        .value("reason")
+        .filter(|reason| !reason.trim().is_empty())
+        .ok_or_else(|| CliError::usage("job mark-interrupted requires a non-empty '--reason'"))?;
+    let id = parse_job_id(&parsed.positionals[0])?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = JobStore::open(config.data_dir().join("jobs.sqlite3")).map_err(job_store_error)?;
+    let (principal, tenant, workspace) = session_scope();
+    let job = store
+        .mark_interrupted(&id, &principal, &tenant, &workspace, reason, timestamp())
+        .map_err(job_store_error)?;
+    Ok(success(
+        "job mark-interrupted",
+        job_json(&job)?,
+        format!(
+            "Marked {} interrupted; review external effects before resubmitting",
+            job.id()
+        ),
+    ))
+}
+
 fn work(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(args, &["config", "data-dir", "workspace", "max-jobs"])?;
     if !parsed.positionals.is_empty() {
@@ -104,10 +139,14 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
     require_config_file(&config)?;
     let store = JobStore::open(config.data_dir().join("jobs.sqlite3")).map_err(job_store_error)?;
     let (principal, tenant, workspace) = session_scope();
+    let worker_id = allocate_worker_id()?;
     if let Some(max_jobs) = max_jobs {
-        return drain_jobs(&store, &principal, &tenant, &workspace, max_jobs);
+        return drain_jobs(
+            &store, &principal, &tenant, &workspace, &worker_id, max_jobs,
+        );
     }
-    let Some(completed) = execute_one_job(&store, &principal, &tenant, &workspace)? else {
+    let Some(completed) = execute_one_job(&store, &principal, &tenant, &workspace, &worker_id)?
+    else {
         return Ok(success(
             "job work",
             json!({"job": null, "status": "idle"}),
@@ -143,12 +182,13 @@ fn drain_jobs(
     principal: &pandora_types::PrincipalId,
     tenant: &pandora_types::TenantId,
     workspace: &pandora_types::WorkspaceId,
+    worker_id: &JobWorkerId,
     max_jobs: usize,
 ) -> Result<CommandResult, CliError> {
     let mut jobs = Vec::with_capacity(max_jobs);
     let mut stop_reason = "limit_reached";
     for _ in 0..max_jobs {
-        match execute_one_job(store, principal, tenant, workspace) {
+        match execute_one_job(store, principal, tenant, workspace, worker_id) {
             Ok(Some(completed)) => jobs.push(job_summary(&completed)),
             Ok(None) => {
                 stop_reason = "queue_empty";
@@ -184,9 +224,10 @@ fn execute_one_job(
     principal: &pandora_types::PrincipalId,
     tenant: &pandora_types::TenantId,
     workspace: &pandora_types::WorkspaceId,
+    worker_id: &JobWorkerId,
 ) -> Result<Option<CompletedJob>, CliError> {
     let Some(job) = store
-        .claim_next(principal, tenant, workspace, timestamp())
+        .claim_next(principal, tenant, workspace, worker_id, timestamp())
         .map_err(job_store_error)?
     else {
         return Ok(None);
@@ -203,6 +244,7 @@ fn execute_one_job(
                     principal,
                     tenant,
                     workspace,
+                    worker_id,
                     JobStatus::Completed,
                     &result,
                     timestamp(),
@@ -227,6 +269,7 @@ fn execute_one_job(
                     principal,
                     tenant,
                     workspace,
+                    worker_id,
                     status,
                     &result,
                     timestamp(),
@@ -311,6 +354,15 @@ fn allocate_job_id() -> Result<JobId, CliError> {
         .map_err(|_| CliError::internal("could not allocate a job ID", json!({})))
 }
 
+fn allocate_worker_id() -> Result<JobWorkerId, CliError> {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    JobWorkerId::new(format!("worker-{}-{nonce}", std::process::id()))
+        .map_err(|_| CliError::internal("could not allocate a worker ID", json!({})))
+}
+
 fn parse_job_id(value: &str) -> Result<JobId, CliError> {
     JobId::new(value.to_owned()).map_err(|_| CliError::usage("job ID is invalid"))
 }
@@ -328,6 +380,7 @@ fn job_json(job: &JobRecord) -> Result<Value, CliError> {
         "created_at": job.created_at().as_unix_seconds(),
         "started_at": job.started_at().map(|value| value.as_unix_seconds()),
         "finished_at": job.finished_at().map(|value| value.as_unix_seconds()),
+        "worker_id": job.worker_id().map(JobWorkerId::as_str),
         "result": job.result(),
     }))
 }
@@ -337,6 +390,7 @@ fn job_store_error(error: JobStoreError) -> CliError {
     match error {
         JobStoreError::Contract(_) => CliError::usage(message),
         JobStoreError::JobNotFound
+        | JobStoreError::JobOwnedByAnotherWorker
         | JobStoreError::InvalidTransition { .. }
         | JobStoreError::ResultTooLarge => CliError::execution(message, json!({})),
         _ => CliError::internal(message, json!({})),
@@ -397,6 +451,7 @@ fn add_drain_error_details(error: &mut CliError, mut jobs: Vec<Value>) {
 mod tests {
     use super::*;
     use pandora_runtime::JobStore;
+    use pandora_types::{JobCommand, JobRequest, JobWorkerId};
     use std::fs;
 
     #[test]
@@ -668,6 +723,104 @@ mod tests {
         let inspected = execute(&inspect_args).unwrap();
         assert_eq!(inspected.data["status"], "cancelled");
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mark_interrupted_records_an_unknown_outcome_without_requeueing() {
+        let root = std::env::temp_dir().join(format!(
+            "pandora-job-interrupt-command-{}-{}",
+            std::process::id(),
+            super::super::timestamp().as_unix_seconds()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let data_dir = root.join("data");
+        let workspace = root.join("workspace");
+        let config_path = root.join("config.json");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(&config_path, b"{}").unwrap();
+        let store = JobStore::open(data_dir.join("jobs.sqlite3")).unwrap();
+        let (principal, tenant, workspace_id) = super::super::session_scope();
+        let id = JobId::new("job-interrupt-command").unwrap();
+        let request = JobRequest::new(JobCommand::Run, vec!["guide".to_owned()]).unwrap();
+        let worker = JobWorkerId::new("worker-command").unwrap();
+        store
+            .submit(
+                &id,
+                &principal,
+                &tenant,
+                &workspace_id,
+                &request,
+                super::super::timestamp(),
+            )
+            .unwrap();
+        store
+            .claim_next(
+                &principal,
+                &tenant,
+                &workspace_id,
+                &worker,
+                super::super::timestamp(),
+            )
+            .unwrap();
+
+        let result = execute(&[
+            "mark-interrupted".to_owned(),
+            id.as_str().to_owned(),
+            "--reason".to_owned(),
+            "worker exited before reporting an outcome".to_owned(),
+            "--yes".to_owned(),
+            "--config".to_owned(),
+            config_path.to_string_lossy().into_owned(),
+            "--data-dir".to_owned(),
+            data_dir.to_string_lossy().into_owned(),
+            "--workspace".to_owned(),
+            workspace.to_string_lossy().into_owned(),
+        ])
+        .unwrap();
+
+        assert_eq!(result.data["status"], "interrupted");
+        assert_eq!(result.data["worker_id"], "worker-command");
+        assert_eq!(result.data["result"]["code"], "worker_interrupted");
+        assert_eq!(result.data["result"]["outcome_known"], false);
+        assert_eq!(
+            store
+                .inspect(&id, &principal, &tenant, &workspace_id)
+                .unwrap()
+                .status(),
+            JobStatus::Interrupted
+        );
+        assert!(
+            store
+                .claim_next(
+                    &principal,
+                    &tenant,
+                    &workspace_id,
+                    &worker,
+                    super::super::timestamp(),
+                )
+                .unwrap()
+                .is_none()
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mark_interrupted_requires_explicit_confirmation() {
+        let error = match execute(&[
+            "mark-interrupted".to_owned(),
+            "job-confirmation".to_owned(),
+            "--reason".to_owned(),
+            "operator reviewed the job".to_owned(),
+        ]) {
+            Ok(_) => panic!("marking a job interrupted requires confirmation"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.code, "usage_error");
+        assert_eq!(
+            error.message,
+            "job mark-interrupted requires '--yes'; review external effects before resubmitting"
+        );
     }
 
     #[test]

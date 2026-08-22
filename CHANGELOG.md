@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-- `pandora job submit|work|list|inspect|cancel` adds a scoped, durable local
+- Jobs now persist the worker that claims them. Only that worker can finish a
+  claimed job. `pandora job mark-interrupted <job-id> --reason "..." --yes`
+  records an operator-reviewed, terminal unknown-outcome state without
+  replaying or requeueing work.
+- `pandora job submit|work|list|inspect|cancel|mark-interrupted` provides a scoped, durable local
   queue. The worker reuses the existing `run` path, can process one job or a
   bounded sequential FIFO batch, persists versioned results, stops at approval
   or failure, and never replays claimed work automatically.

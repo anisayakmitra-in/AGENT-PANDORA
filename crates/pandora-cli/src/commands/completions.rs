@@ -35,7 +35,7 @@ fn powershell() -> &'static str {
     $commands = if ($elements.Count -gt 1 -and $elements[1] -eq 'session') {
         'list','resume','inspect'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'job') {
-        'submit','work','list','inspect','cancel'
+        'submit','work','list','inspect','cancel','mark-interrupted'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'harness') {
         'list','inspect','run'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'slash') {
@@ -72,7 +72,7 @@ fn bash() -> &'static str {
     if [[ "$previous" == "session" ]]; then
         COMPREPLY=( $(compgen -W 'list resume inspect' -- "$current") )
     elif [[ "$previous" == "job" ]]; then
-        COMPREPLY=( $(compgen -W 'submit work list inspect cancel' -- "$current") )
+        COMPREPLY=( $(compgen -W 'submit work list inspect cancel mark-interrupted' -- "$current") )
     elif [[ "$previous" == "harness" ]]; then
         COMPREPLY=( $(compgen -W 'list inspect run' -- "$current") )
     elif [[ "$previous" == "slash" ]]; then
@@ -109,7 +109,7 @@ if [[ ${words[2]} == session ]]; then
 elif [[ ${words[2]} == job ]]; then
     _arguments \
         '1:command:(help setup run chat tui harness slash session job skill package approval provider tool orchestration strategies efficiency completions migrate update uninstall doctor)' \
-        '2:job command:(submit work list inspect cancel)'
+        '2:job command:(submit work list inspect cancel mark-interrupted)'
 elif [[ ${words[2]} == harness ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job skill package approval provider tool orchestration strategies efficiency completions migrate update uninstall doctor)' '2:harness command:(list inspect run)'
 elif [[ ${words[2]} == slash ]]; then
@@ -145,7 +145,7 @@ fn fish() -> &'static str {
 complete -c pandora -f -n '__fish_seen_subcommand_from harness' -a 'list inspect run'
 complete -c pandora -f -n '__fish_seen_subcommand_from slash' -a 'list resolve'
 complete -c pandora -f -n '__fish_seen_subcommand_from session' -a 'list resume inspect'
-complete -c pandora -f -n '__fish_seen_subcommand_from job' -a 'submit work list inspect cancel'
+complete -c pandora -f -n '__fish_seen_subcommand_from job' -a 'submit work list inspect cancel mark-interrupted'
 complete -c pandora -f -n '__fish_seen_subcommand_from skill' -a 'list inspect install enable disable suspend remove restore'
 complete -c pandora -f -n '__fish_seen_subcommand_from package' -a 'admit install list inspect lock verify-lock remove'
 complete -c pandora -f -n '__fish_seen_subcommand_from approval' -a 'list inspect resolve'
@@ -182,7 +182,7 @@ mod tests {
             "'admit','install','list','inspect','lock','verify-lock','remove'",
             "'list','inspect','resolve'",
             "'list','set','use','test'",
-            "'submit','work','list','inspect','cancel'",
+            "'submit','work','list','inspect','cancel','mark-interrupted'",
         ] {
             assert!(
                 powershell.contains(expected),
@@ -196,7 +196,7 @@ mod tests {
                 "admit install list inspect lock verify-lock remove",
                 "list inspect resolve",
                 "list set use test",
-                "submit work list inspect cancel",
+                "submit work list inspect cancel mark-interrupted",
                 "roles",
                 "rank",
             ] {

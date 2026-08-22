@@ -17,6 +17,7 @@ pub enum JobStatus {
     Completed,
     ApprovalRequired,
     Failed,
+    Interrupted,
     Cancelled,
 }
 
@@ -28,6 +29,7 @@ impl JobStatus {
             Self::Completed => "completed",
             Self::ApprovalRequired => "approval_required",
             Self::Failed => "failed",
+            Self::Interrupted => "interrupted",
             Self::Cancelled => "cancelled",
         }
     }
@@ -35,7 +37,11 @@ impl JobStatus {
     pub const fn is_terminal(self) -> bool {
         matches!(
             self,
-            Self::Completed | Self::ApprovalRequired | Self::Failed | Self::Cancelled
+            Self::Completed
+                | Self::ApprovalRequired
+                | Self::Failed
+                | Self::Interrupted
+                | Self::Cancelled
         )
     }
 }
@@ -145,5 +151,13 @@ mod tests {
             ),
             Err(JobContractError::ArgumentsTooLarge)
         );
+    }
+
+    #[test]
+    fn interrupted_status_is_terminal_and_has_a_stable_wire_value() {
+        let status = serde_json::from_value::<JobStatus>(json!("interrupted")).unwrap();
+
+        assert_eq!(status.as_str(), "interrupted");
+        assert!(status.is_terminal());
     }
 }

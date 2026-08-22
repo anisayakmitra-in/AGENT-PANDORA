@@ -69,6 +69,10 @@ pandora job list --json
 `job work` claims one queued record by default. `--max-jobs` processes up to 64
 records in FIFO order, one at a time. The worker exits when it reaches the
 limit, empties the queue, encounters an approval pause, or sees a failed run.
+Each invocation records its worker ID and can finish only the jobs it claimed.
+If a worker exits after a claim, Pandora leaves the job running and never
+replays it automatically. After reviewing external effects, an operator can
+record `pandora job mark-interrupted <job-id> --reason "..." --yes`.
 Run it from an existing service manager or scheduler when continuous polling
 is needed.
 

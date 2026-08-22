@@ -106,6 +106,7 @@ pandora job work --max-jobs 8
 pandora job list
 pandora job inspect <job-id>
 pandora job cancel <job-id>
+pandora job mark-interrupted <job-id> --reason "worker exited" --yes
 pandora approval list
 pandora approval inspect <approval-id>
 pandora approval resolve <approval-id> --allow
@@ -124,7 +125,8 @@ foreground run, stores the versioned CLI result, and exits. Pass
 `--max-jobs <1-64>` to process a bounded FIFO batch sequentially. The JSON
 response reports processed job IDs, statuses, and whether the worker reached
 its limit or emptied the queue. Multiple worker processes cannot claim the
-same queued record.
+same queued record. Each `job work` invocation records one worker ID. Only
+that worker can finish a job it claimed.
 
 A batch stops at the first approval pause or failed run. Its error response
 includes the jobs processed during that invocation, and later jobs remain
@@ -133,10 +135,13 @@ into success or retried. Submit a new job with the approved invocation after
 reviewing and resolving the approval.
 
 `job cancel` applies only to queued work. It does not terminate a running
-process. Pandora does not replay a job automatically when a worker exits after
-claiming it, because the worker may already have produced effects. Such a job
-remains `running` for inspection and operator review. This release provides a
-bounded worker command, not a resident daemon or remote Fleet node.
+process. Pandora never replays a claimed job automatically when a worker exits,
+because the worker may already have produced effects. Such a job remains
+`running` until an operator reviews it. Use `job mark-interrupted <job-id>
+--reason "..." --yes` to record a terminal `interrupted` outcome with unknown
+external effects. The command does not stop a process or requeue work; submit a
+new job only after that review. This release provides a bounded worker command,
+not a resident daemon or remote Fleet node.
 
 Read-only work can complete without approval. Writes and process effects stop at
 the approval boundary and expose an inspectable, redacted request subject.
