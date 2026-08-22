@@ -14,16 +14,18 @@ use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::sessions::SessionStore;
 use pandora_runtime::{
     AgentApprovalContext, AgentLoop, AgentLoopError, AgentRunRequest, ApprovalRequest,
-    ApprovalStore, MAX_AGENT_TOOL_CALLS, MAX_AGENT_TURNS, RunStatus, RuntimeError,
+    ApprovalStore, EvaluationEngine, MAX_AGENT_TOOL_CALLS, MAX_AGENT_TURNS, RunStatus,
+    RuntimeError,
 };
 use pandora_runtime::{
     DEFAULT_MAX_SAMPLES_PER_TARGET, EfficiencyEngine, EfficiencyStore, ExecutionController,
     PackageState, PackageStore, SkillEngine, SkillError,
 };
 use pandora_types::{
-    Capability, ContextClassification, EfficiencyObjective, EfficiencySample, EventPayload,
-    ExecutionId, HarnessId, MemoryKind, MemoryRecord, MemoryScope, Operation, PackageId,
-    PackageKind, PolicyContext, Session, SessionId, TaskIntent, WorkspaceId,
+    Capability, ContextClassification, EfficiencyObjective, EfficiencySample, EvaluationReceipt,
+    EvaluationRequest, EvaluationResult, EventPayload, EventType, ExecutionId, HarnessId,
+    MemoryKind, MemoryRecord, MemoryScope, Operation, PackageId, PackageKind, PolicyContext,
+    Session, SessionId, TaskIntent, WorkspaceId,
 };
 use serde_json::{Value, json};
 use std::fs;
@@ -251,12 +253,18 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             .run_at(intent, session.clone(), timestamp())
             .map_err(runtime_error)?,
     };
-    append_events(&store, &session, summary.events())?;
+    let evaluation = evaluate_and_append_execution(&store, &session, &summary)?;
+    let evaluation_value = evaluation_json(&evaluation);
     let memory_evidence_recorded = record_execution_evidence(&store, &session, "local", &summary);
     let efficiency_recorded =
         record_execution_efficiency(&config, task_class, &summary, elapsed_millis(started));
     let details = add_optimization(
-        run_details(&summary, session.id(), planning_model.as_deref()),
+        run_details(
+            &summary,
+            session.id(),
+            planning_model.as_deref(),
+            evaluation_value.clone(),
+        ),
         optimization,
         optimized_provider.as_deref(),
     );
@@ -272,6 +280,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                     "output": summary.output().map(output_text),
                     "efficiency_recorded": efficiency_recorded,
                     "memory_evidence_recorded": memory_evidence_recorded,
+                    "evaluation": evaluation_value,
                 }),
                 planning_model.as_deref(),
             );
@@ -452,6 +461,11 @@ fn execute_agent(
     };
     match result {
         Ok(summary) => {
+            let evaluations = summary
+                .runs()
+                .iter()
+                .map(|run| evaluate_and_append_execution(store, session, run))
+                .collect::<Result<Vec<_>, _>>()?;
             let efficiency_recorded = record_agent_efficiency(
                 config,
                 session,
@@ -471,9 +485,6 @@ fn execute_agent(
                 )
                 .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
             let run_count = summary.runs().len();
-            for run in summary.runs() {
-                append_events(store, session, run.events())?;
-            }
             let mut memory_evidence_recorded = 0;
             for run in summary.runs() {
                 if record_execution_evidence(store, session, provider.manifest().id().as_str(), run)
@@ -503,6 +514,7 @@ fn execute_agent(
                     "runs": run_count,
                     "efficiency_recorded": efficiency_recorded,
                     "memory_evidence_recorded": memory_evidence_recorded,
+                    "evaluations": evaluations_json(&evaluations),
                     "optimization": optimization_value(
                         options.optimization,
                         options.provider_name,
@@ -512,6 +524,11 @@ fn execute_agent(
             ))
         }
         Err(AgentLoopError::ApprovalRequired { reason, summary }) => {
+            let evaluations = summary
+                .runs()
+                .iter()
+                .map(|run| evaluate_and_append_execution(store, session, run))
+                .collect::<Result<Vec<_>, _>>()?;
             let _ = record_agent_efficiency(
                 config,
                 session,
@@ -533,9 +550,6 @@ fn execute_agent(
             let run = summary.runs().last().ok_or_else(|| {
                 CliError::internal("approval request has no execution summary", json!({}))
             })?;
-            for current in summary.runs() {
-                append_events(store, session, current.events())?;
-            }
             for run in summary.runs() {
                 let _ = record_execution_evidence(
                     store,
@@ -561,6 +575,7 @@ fn execute_agent(
                     "turn_budget": options.max_turns,
                     "tool_budget": options.max_tool_calls,
                     "approval_id": approval.id(),
+                    "evaluations": evaluations_json(&evaluations),
                     "context": {
                         "included": summary.context_receipt().included_ids(),
                         "dropped": summary.context_receipt().dropped_ids(),
@@ -649,24 +664,105 @@ fn parse_agent_budget(
     Ok(budget)
 }
 
-fn append_events(
+fn evaluate_and_append_execution(
     store: &SessionStore,
     session: &Session,
-    events: &[pandora_types::RuntimeEvent],
-) -> Result<(), CliError> {
-    for event in events {
-        store
-            .append_event_at(
-                session.id(),
-                session.principal_id(),
-                session.tenant_id(),
-                session.workspace_id(),
-                event,
-                timestamp(),
-            )
+    summary: &pandora_runtime::RunSummary,
+) -> Result<EvaluationReceipt, CliError> {
+    let status = match summary.status() {
+        RunStatus::Completed => "completed",
+        RunStatus::Denied { .. } => "denied",
+        RunStatus::ApprovalRequired { .. } => "approval_required",
+        RunStatus::Failed { .. } => "failed",
+    };
+    let policy_violations = summary
+        .events()
+        .iter()
+        .filter(|event| event.event_type() == EventType::PolicyDenied)
+        .map(|_| "policy_denied".to_owned())
+        .collect();
+    let mut request = EvaluationRequest::new(
+        summary.execution_id().clone(),
+        summary.receipts().to_vec(),
+        status,
+        policy_violations,
+    )
+    .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    if let RunStatus::Failed { code } = summary.status() {
+        request = request
+            .with_terminal_failure(code)
             .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
     }
-    Ok(())
+    let engine = EvaluationEngine::new();
+    let mut results = vec![
+        engine.evaluate_trajectory(&request, 0),
+        engine.evaluate_policy(&request),
+    ];
+    if matches!(summary.status(), RunStatus::ApprovalRequired { .. }) {
+        results.push(engine.require_human_review(&request, "explicit approval is required"));
+    }
+    let evaluated_at = timestamp();
+    let receipt = EvaluationReceipt::new(
+        session.id().clone(),
+        summary.execution_id().clone(),
+        evaluated_at,
+        results,
+    )
+    .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    store
+        .append_execution(
+            session.id(),
+            session.principal_id(),
+            session.tenant_id(),
+            session.workspace_id(),
+            summary.events(),
+            &receipt,
+            evaluated_at,
+        )
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    Ok(receipt)
+}
+
+fn evaluation_json(receipt: &EvaluationReceipt) -> Value {
+    json!({
+        "recorded": true,
+        "outcome_available": false,
+        "receipt": evaluation_receipt_json(receipt),
+    })
+}
+
+fn evaluations_json(receipts: &[EvaluationReceipt]) -> Value {
+    json!({
+        "count": receipts.len(),
+        "outcome_available": false,
+        "receipts": receipts
+            .iter()
+            .map(evaluation_receipt_json)
+            .collect::<Vec<_>>(),
+    })
+}
+
+pub(super) fn evaluation_receipt_json(receipt: &EvaluationReceipt) -> Value {
+    json!({
+        "session_id": receipt.session_id(),
+        "execution_id": receipt.execution_id(),
+        "evaluated_at": receipt.evaluated_at().as_unix_seconds(),
+        "results": receipt
+            .results()
+            .iter()
+            .map(evaluation_result_json)
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn evaluation_result_json(result: &EvaluationResult) -> Value {
+    json!({
+        "kind": result.kind().as_str(),
+        "status": result.status().as_str(),
+        "score": result.score(),
+        "reason": result.reason(),
+        "advisory": result.advisory(),
+    })
 }
 
 fn record_execution_evidence(
@@ -959,6 +1055,7 @@ fn run_details(
     summary: &pandora_runtime::RunSummary,
     session_id: &SessionId,
     planning_model: Option<&str>,
+    evaluation: Value,
 ) -> Value {
     add_planning(
         json!({
@@ -972,6 +1069,7 @@ fn run_details(
             RunStatus::ApprovalRequired { .. } => "approval_required",
             RunStatus::Failed { .. } => "failed",
         },
+        "evaluation": evaluation,
         }),
         planning_model,
     )

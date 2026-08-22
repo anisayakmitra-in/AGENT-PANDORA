@@ -134,12 +134,15 @@ matching paths with forward-slash separators.
 After an operator approves a write, rerun the exact task with its approval ID.
 The approval is bound to the original session, execution, Gene, and request
 digest, is consumed atomically, and cannot be replayed for another task.
-`session inspect` returns scoped session metadata, bounded event counts, and a
-derived observability summary without returning event payloads. It also reports
-the count of bounded, redacted L1 execution-evidence records without exposing
-their content. New CLI events include their recorded time; older events remain
-explicitly untimestamped. `session resume` returns the same evidence count with
-the full bounded transcript.
+`session inspect` returns scoped session metadata, bounded event counts, the
+latest evaluation receipt, and a derived observability summary without
+returning event payloads. It also reports the count of bounded, redacted L1
+execution-evidence records without exposing their content. Each execution
+attempt stores its canonical events and evaluation receipt in one transaction. The
+receipt evaluates trajectory and policy; outcome remains unavailable without
+an explicit expected result. New CLI events include their recorded time; older
+events remain explicitly untimestamped. `session resume` returns the evaluation
+and evidence counts with the full bounded transcript.
 
 Agent runs retrieve at most eight canonical L1 execution-evidence records from
 the exact same session and provider. The context receipt lists generated record

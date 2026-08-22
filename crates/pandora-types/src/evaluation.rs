@@ -1,5 +1,6 @@
 use crate::effect::{EffectReceipt, Timestamp};
-use crate::ids::ExecutionId;
+use crate::ids::{ExecutionId, SessionId};
+use std::collections::BTreeSet;
 use std::fmt;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -47,6 +48,9 @@ pub enum EvaluationContractError {
     EmptyField(&'static str),
     FieldTooLong(&'static str),
     ControlCharacter(&'static str),
+    EmptyResults,
+    DuplicateKind(EvaluationKind),
+    InvalidScore,
 }
 
 impl fmt::Display for EvaluationContractError {
@@ -57,6 +61,11 @@ impl fmt::Display for EvaluationContractError {
             Self::ControlCharacter(field) => {
                 write!(formatter, "{field} contains a control character")
             }
+            Self::EmptyResults => formatter.write_str("evaluation receipt requires a result"),
+            Self::DuplicateKind(kind) => {
+                write!(formatter, "evaluation receipt repeats {}", kind.as_str())
+            }
+            Self::InvalidScore => formatter.write_str("evaluation score exceeds 100"),
         }
     }
 }
@@ -69,6 +78,7 @@ pub struct EvaluationRequest {
     receipts: Vec<EffectReceipt>,
     redacted_output: String,
     policy_violations: Vec<String>,
+    terminal_failure: Option<String>,
 }
 
 impl EvaluationRequest {
@@ -88,12 +98,21 @@ impl EvaluationRequest {
             receipts,
             redacted_output,
             policy_violations,
+            terminal_failure: None,
         })
     }
 
     pub fn with_policy_violations(mut self, violations: Vec<String>) -> Self {
         self.policy_violations = violations;
         self
+    }
+
+    pub fn with_terminal_failure(
+        mut self,
+        failure: impl Into<String>,
+    ) -> Result<Self, EvaluationContractError> {
+        self.terminal_failure = Some(validate_text("terminal failure", failure.into(), 4096)?);
+        Ok(self)
     }
 
     pub fn execution_id(&self) -> &ExecutionId {
@@ -110,6 +129,10 @@ impl EvaluationRequest {
 
     pub fn policy_violations(&self) -> &[String] {
         &self.policy_violations
+    }
+
+    pub fn terminal_failure(&self) -> Option<&str> {
+        self.terminal_failure.as_deref()
     }
 
     pub fn observed_at(&self) -> Option<Timestamp> {
@@ -134,6 +157,9 @@ impl EvaluationResult {
         reason: impl Into<String>,
         advisory: bool,
     ) -> Result<Self, EvaluationContractError> {
+        if score > 100 {
+            return Err(EvaluationContractError::InvalidScore);
+        }
         Ok(Self {
             kind,
             status,
@@ -172,6 +198,59 @@ impl EvaluationResult {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EvaluationReceipt {
+    session_id: SessionId,
+    execution_id: ExecutionId,
+    evaluated_at: Timestamp,
+    results: Vec<EvaluationResult>,
+}
+
+impl EvaluationReceipt {
+    pub fn new(
+        session_id: SessionId,
+        execution_id: ExecutionId,
+        evaluated_at: Timestamp,
+        results: Vec<EvaluationResult>,
+    ) -> Result<Self, EvaluationContractError> {
+        if results.is_empty() {
+            return Err(EvaluationContractError::EmptyResults);
+        }
+        let mut kinds = BTreeSet::new();
+        for result in &results {
+            if !kinds.insert(result.kind()) {
+                return Err(EvaluationContractError::DuplicateKind(result.kind()));
+            }
+        }
+        Ok(Self {
+            session_id,
+            execution_id,
+            evaluated_at,
+            results,
+        })
+    }
+
+    pub fn session_id(&self) -> &SessionId {
+        &self.session_id
+    }
+
+    pub fn execution_id(&self) -> &ExecutionId {
+        &self.execution_id
+    }
+
+    pub const fn evaluated_at(&self) -> Timestamp {
+        self.evaluated_at
+    }
+
+    pub fn results(&self) -> &[EvaluationResult] {
+        &self.results
+    }
+
+    pub const fn can_authorize_permit(&self) -> bool {
+        false
+    }
+}
+
 fn validate_text(
     field: &'static str,
     value: String,
@@ -188,4 +267,58 @@ fn validate_text(
         return Err(EvaluationContractError::ControlCharacter(field));
     }
     Ok(trimmed.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn evaluation_receipt_requires_unique_results() {
+        let execution_id = ExecutionId::new("execution-1").unwrap();
+        let session_id = crate::SessionId::new("session-1").unwrap();
+        let result = EvaluationResult::new(
+            EvaluationKind::Trajectory,
+            EvaluationStatus::Passed,
+            100,
+            "trajectory passed",
+            false,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            EvaluationReceipt::new(
+                session_id.clone(),
+                execution_id.clone(),
+                Timestamp::from_unix_seconds(1),
+                Vec::new(),
+            ),
+            Err(EvaluationContractError::EmptyResults)
+        ));
+        assert!(matches!(
+            EvaluationReceipt::new(
+                session_id,
+                execution_id,
+                Timestamp::from_unix_seconds(1),
+                vec![result.clone(), result],
+            ),
+            Err(EvaluationContractError::DuplicateKind(
+                EvaluationKind::Trajectory
+            ))
+        ));
+    }
+
+    #[test]
+    fn evaluation_score_is_bounded_to_one_hundred() {
+        assert!(matches!(
+            EvaluationResult::new(
+                EvaluationKind::Outcome,
+                EvaluationStatus::Passed,
+                101,
+                "invalid score",
+                false,
+            ),
+            Err(EvaluationContractError::InvalidScore)
+        ));
+    }
 }

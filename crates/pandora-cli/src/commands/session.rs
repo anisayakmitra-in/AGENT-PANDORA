@@ -1,3 +1,4 @@
+use super::run::evaluation_receipt_json;
 use super::{load_config, parse_options, require_config_file, session_scope, session_store};
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{ObservabilityEngine, sessions::SessionSnapshot};
@@ -72,6 +73,7 @@ fn resume(args: &[String]) -> Result<CommandResult, CliError> {
             "event_count": event_count,
             "agent_message_count": snapshot.agent_messages().len(),
             "l1_evidence_count": snapshot.l1_evidence_count(),
+            "evaluation_count": snapshot.evaluations().len(),
             "events": events,
         }),
         format!(
@@ -117,6 +119,10 @@ fn inspect(args: &[String]) -> Result<CommandResult, CliError> {
             "event_count": event_count,
             "agent_message_count": snapshot.agent_messages().len(),
             "l1_evidence_count": snapshot.l1_evidence_count(),
+            "evaluations": {
+                "count": snapshot.evaluations().len(),
+                "latest": snapshot.evaluations().last().map(evaluation_receipt_json),
+            },
             "last_event_timestamp": last_event_timestamp,
             "last_event_type": last_event_type,
             "observability": session_observability(&snapshot)?,

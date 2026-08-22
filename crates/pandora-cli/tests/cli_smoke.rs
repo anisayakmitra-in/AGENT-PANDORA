@@ -92,6 +92,24 @@ fn setup_and_read_only_run_return_versioned_json() {
     assert_eq!(response["status"], "completed");
     assert_eq!(response["output"], "fixture\n");
     assert_eq!(response["efficiency_recorded"], true);
+    assert_eq!(response["evaluation"]["recorded"], true);
+    assert_eq!(response["evaluation"]["outcome_available"], false);
+    assert_eq!(
+        response["evaluation"]["receipt"]["results"][0]["kind"],
+        "trajectory"
+    );
+    assert_eq!(
+        response["evaluation"]["receipt"]["results"][0]["status"],
+        "passed"
+    );
+    assert_eq!(
+        response["evaluation"]["receipt"]["results"][1]["kind"],
+        "policy"
+    );
+    assert_eq!(
+        response["evaluation"]["receipt"]["results"][1]["status"],
+        "passed"
+    );
     assert!(
         !response["session_id"]
             .as_str()
@@ -570,6 +588,7 @@ fn session_resume_returns_persisted_events() {
     assert_eq!(response["event_count"], 4);
     assert_eq!(response["agent_message_count"], 0);
     assert_eq!(response["l1_evidence_count"], 1);
+    assert_eq!(response["evaluation_count"], 1);
 }
 
 #[test]
@@ -607,6 +626,15 @@ fn session_inspect_returns_metadata_without_event_payloads() {
     assert_eq!(response["observability"]["uninstrumented_event_count"], 0);
     assert_eq!(response["observability"]["error_count"], 0);
     assert_eq!(response["observability"]["reliability_bps"], 10_000);
+    assert_eq!(response["evaluations"]["count"], 1);
+    assert_eq!(
+        response["evaluations"]["latest"]["results"][0]["kind"],
+        "trajectory"
+    );
+    assert_eq!(
+        response["evaluations"]["latest"]["results"][1]["kind"],
+        "policy"
+    );
     assert!(response.get("events").is_none());
 }
 

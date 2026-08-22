@@ -36,7 +36,8 @@ pub use efficiency::{
     EfficiencyContractError, EfficiencyObjective, EfficiencySample, EfficiencySummary,
 };
 pub use evaluation::{
-    EvaluationContractError, EvaluationKind, EvaluationRequest, EvaluationResult, EvaluationStatus,
+    EvaluationContractError, EvaluationKind, EvaluationReceipt, EvaluationRequest,
+    EvaluationResult, EvaluationStatus,
 };
 pub use events::{EventContext, EventPayload, EventType, RuntimeEvent};
 pub use evolution::{

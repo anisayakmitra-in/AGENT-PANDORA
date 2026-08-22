@@ -75,6 +75,22 @@ impl EventContext {
         self.receipt_id = Some(receipt_id);
         self
     }
+
+    pub fn tenant_id(&self) -> &TenantId {
+        &self.tenant_id
+    }
+
+    pub fn workspace_id(&self) -> &WorkspaceId {
+        &self.workspace_id
+    }
+
+    pub fn session_id(&self) -> Option<&SessionId> {
+        self.session_id.as_ref()
+    }
+
+    pub fn execution_id(&self) -> Option<&ExecutionId> {
+        self.execution_id.as_ref()
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

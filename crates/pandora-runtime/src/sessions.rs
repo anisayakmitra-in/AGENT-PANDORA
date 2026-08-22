@@ -1,7 +1,8 @@
 use pandora_provider::ChatMessage;
 use pandora_types::{
-    ContextClassification, MemoryKind, MemoryRecord, MemoryScope, PrincipalId, RuntimeEvent,
-    Session, SessionId, TenantId, Timestamp, WorkspaceId,
+    ContextClassification, EvaluationKind, EvaluationReceipt, EvaluationResult, EvaluationStatus,
+    ExecutionId, MemoryKind, MemoryRecord, MemoryScope, PrincipalId, RuntimeEvent, Session,
+    SessionId, TenantId, Timestamp, WorkspaceId,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::fmt;
@@ -9,7 +10,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
-const CURRENT_SCHEMA_VERSION: i64 = 4;
+const CURRENT_SCHEMA_VERSION: i64 = 5;
 const MAX_EVENT_BYTES: usize = 1_048_576;
 const MAX_AGENT_MESSAGE_BYTES: usize = 1_048_576;
 const MAX_AGENT_TRANSCRIPT_BYTES: usize = 8 * 1_048_576;
@@ -33,6 +34,7 @@ pub enum SessionError {
     L1EvidenceAlreadyExists,
     L1EvidenceCapacityExceeded,
     InvalidL1Evidence,
+    InvalidEvaluation,
     UnsupportedSchemaVersion(i64),
 }
 
@@ -61,6 +63,7 @@ impl fmt::Display for SessionError {
                 formatter.write_str("L1 evidence capacity is exhausted")
             }
             Self::InvalidL1Evidence => formatter.write_str("L1 evidence record is invalid"),
+            Self::InvalidEvaluation => formatter.write_str("execution evaluation is invalid"),
             Self::UnsupportedSchemaVersion(version) => {
                 write!(
                     formatter,
@@ -106,6 +109,7 @@ pub struct SessionSnapshot {
     events: Vec<RuntimeEvent>,
     event_metadata: Vec<EventMetadata>,
     l1_evidence_count: usize,
+    evaluations: Vec<EvaluationReceipt>,
     agent_messages: Vec<ChatMessage>,
 }
 
@@ -133,6 +137,10 @@ impl SessionSnapshot {
 
     pub const fn l1_evidence_count(&self) -> usize {
         self.l1_evidence_count
+    }
+
+    pub fn evaluations(&self) -> &[EvaluationReceipt] {
+        &self.evaluations
     }
 
     pub fn agent_messages(&self) -> &[ChatMessage] {
@@ -293,6 +301,7 @@ impl SessionStore {
         )?;
         let l1_evidence_count =
             usize::try_from(l1_evidence_count).map_err(|_| SessionError::CorruptRecord)?;
+        let evaluations = load_evaluations(&connection, session_id)?;
         let mut statement = connection.prepare(
             "SELECT message_json FROM agent_messages
              WHERE session_id = ?1 ORDER BY sequence ASC",
@@ -310,8 +319,89 @@ impl SessionStore {
             events,
             event_metadata,
             l1_evidence_count,
+            evaluations,
             agent_messages,
         })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn append_execution(
+        &self,
+        session_id: &SessionId,
+        principal_id: &PrincipalId,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        events: &[RuntimeEvent],
+        evaluation: &EvaluationReceipt,
+        recorded_at: Timestamp,
+    ) -> Result<(), SessionError> {
+        if events.is_empty()
+            || evaluation.session_id() != session_id
+            || events.iter().any(|event| {
+                let context = event.context();
+                context.session_id() != Some(session_id)
+                    || context.execution_id() != Some(evaluation.execution_id())
+                    || context.tenant_id() != tenant_id
+                    || context.workspace_id() != workspace_id
+            })
+        {
+            return Err(SessionError::InvalidEvaluation);
+        }
+        let events = events
+            .iter()
+            .map(|event| {
+                let serialized = serde_json::to_vec(event)?;
+                if serialized.len() > MAX_EVENT_BYTES {
+                    return Err(SessionError::EventTooLarge);
+                }
+                String::from_utf8(serialized).map_err(|_| SessionError::CorruptRecord)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let recorded_at = i64::try_from(recorded_at.as_unix_seconds())
+            .map_err(|_| SessionError::CorruptRecord)?;
+        let evaluated_at = i64::try_from(evaluation.evaluated_at().as_unix_seconds())
+            .map_err(|_| SessionError::CorruptRecord)?;
+        let mut connection = self.lock()?;
+        let session =
+            load_session(&connection, session_id)?.ok_or(SessionError::SessionNotFound)?;
+        ensure_scope(&session, principal_id, tenant_id, workspace_id)?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let attempt = transaction.query_row(
+            "SELECT COALESCE(MAX(attempt), -1) + 1
+             FROM session_evaluations
+             WHERE session_id = ?1 AND execution_id = ?2",
+            params![session_id.as_str(), evaluation.execution_id().as_str()],
+            |row| row.get::<_, i64>(0),
+        )?;
+        for event in events {
+            transaction.execute(
+                "INSERT INTO session_events (session_id, event_json, recorded_at)
+                 VALUES (?1, ?2, ?3)",
+                params![session_id.as_str(), event, recorded_at],
+            )?;
+        }
+        for (index, result) in evaluation.results().iter().enumerate() {
+            transaction.execute(
+                "INSERT INTO session_evaluations
+                 (session_id, execution_id, attempt, result_index, kind, status, score, reason,
+                  advisory, evaluated_at)
+                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    session_id.as_str(),
+                    evaluation.execution_id().as_str(),
+                    attempt,
+                    i64::try_from(index).map_err(|_| SessionError::CorruptRecord)?,
+                    result.kind().as_str(),
+                    result.status().as_str(),
+                    i64::from(result.score()),
+                    result.reason(),
+                    result.advisory(),
+                    evaluated_at,
+                ],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
     }
 
     pub fn append_event(
@@ -658,9 +748,135 @@ fn migrate(connection: &mut Connection) -> Result<(), SessionError> {
                  ON session_l1_evidence(session_id, provider, created_at);
              INSERT INTO schema_migrations (version, applied_at) VALUES (4, strftime('%s', 'now'));",
         )?;
+        version = 4;
+    }
+    if version == 4 {
+        transaction.execute_batch(
+            "CREATE TABLE session_evaluations (
+                 session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                 execution_id TEXT NOT NULL,
+                 attempt INTEGER NOT NULL CHECK (attempt >= 0),
+                 result_index INTEGER NOT NULL CHECK (result_index >= 0),
+                 kind TEXT NOT NULL,
+                 status TEXT NOT NULL,
+                 score INTEGER NOT NULL CHECK (score BETWEEN 0 AND 100),
+                 reason TEXT NOT NULL,
+                 advisory INTEGER NOT NULL CHECK (advisory IN (0, 1)),
+                 evaluated_at INTEGER NOT NULL CHECK (evaluated_at >= 0),
+                 PRIMARY KEY (session_id, execution_id, attempt, kind),
+                 UNIQUE (session_id, execution_id, attempt, result_index)
+             );
+             CREATE INDEX session_evaluations_session_idx
+                 ON session_evaluations(
+                     session_id, evaluated_at, execution_id, attempt, result_index
+                 );
+             INSERT INTO schema_migrations (version, applied_at) VALUES (5, strftime('%s', 'now'));",
+        )?;
     }
     transaction.commit()?;
     Ok(())
+}
+
+fn load_evaluations(
+    connection: &Connection,
+    session_id: &SessionId,
+) -> Result<Vec<EvaluationReceipt>, SessionError> {
+    let mut statement = connection.prepare(
+        "SELECT execution_id, attempt, kind, status, score, reason, advisory, evaluated_at
+         FROM session_evaluations
+         WHERE session_id = ?1
+         ORDER BY evaluated_at ASC, execution_id ASC, attempt ASC, result_index ASC",
+    )?;
+    let rows = statement.query_map(params![session_id.as_str()], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, i64>(4)?,
+            row.get::<_, String>(5)?,
+            row.get::<_, bool>(6)?,
+            row.get::<_, i64>(7)?,
+        ))
+    })?;
+    let mut evaluations = Vec::new();
+    let mut current_key: Option<(ExecutionId, i64)> = None;
+    let mut current_at = None;
+    let mut current_results = Vec::new();
+    for row in rows {
+        let (execution_id, attempt, kind, status, score, reason, advisory, evaluated_at) = row?;
+        let execution_id =
+            ExecutionId::new(execution_id).map_err(|_| SessionError::CorruptRecord)?;
+        if attempt < 0 {
+            return Err(SessionError::CorruptRecord);
+        }
+        let evaluated_at = u64::try_from(evaluated_at)
+            .map(Timestamp::from_unix_seconds)
+            .map_err(|_| SessionError::CorruptRecord)?;
+        let key = (execution_id, attempt);
+        if current_key.as_ref().is_some_and(|current| current != &key) {
+            let (execution_id, _) = current_key.take().ok_or(SessionError::CorruptRecord)?;
+            evaluations.push(
+                EvaluationReceipt::new(
+                    session_id.clone(),
+                    execution_id,
+                    current_at.take().ok_or(SessionError::CorruptRecord)?,
+                    std::mem::take(&mut current_results),
+                )
+                .map_err(|_| SessionError::CorruptRecord)?,
+            );
+        }
+        if current_key.is_none() {
+            current_key = Some(key);
+            current_at = Some(evaluated_at);
+        } else if current_at != Some(evaluated_at) {
+            return Err(SessionError::CorruptRecord);
+        }
+        let score = u8::try_from(score).map_err(|_| SessionError::CorruptRecord)?;
+        current_results.push(
+            EvaluationResult::new(
+                parse_evaluation_kind(&kind)?,
+                parse_evaluation_status(&status)?,
+                score,
+                reason,
+                advisory,
+            )
+            .map_err(|_| SessionError::CorruptRecord)?,
+        );
+    }
+    if let Some((execution_id, _)) = current_key {
+        evaluations.push(
+            EvaluationReceipt::new(
+                session_id.clone(),
+                execution_id,
+                current_at.ok_or(SessionError::CorruptRecord)?,
+                current_results,
+            )
+            .map_err(|_| SessionError::CorruptRecord)?,
+        );
+    }
+    Ok(evaluations)
+}
+
+fn parse_evaluation_kind(value: &str) -> Result<EvaluationKind, SessionError> {
+    match value {
+        "trajectory" => Ok(EvaluationKind::Trajectory),
+        "outcome" => Ok(EvaluationKind::Outcome),
+        "policy" => Ok(EvaluationKind::Policy),
+        "human" => Ok(EvaluationKind::Human),
+        "regression" => Ok(EvaluationKind::Regression),
+        "adversarial" => Ok(EvaluationKind::Adversarial),
+        _ => Err(SessionError::CorruptRecord),
+    }
+}
+
+fn parse_evaluation_status(value: &str) -> Result<EvaluationStatus, SessionError> {
+    match value {
+        "passed" => Ok(EvaluationStatus::Passed),
+        "failed" => Ok(EvaluationStatus::Failed),
+        "human_review_required" => Ok(EvaluationStatus::HumanReviewRequired),
+        _ => Err(SessionError::CorruptRecord),
+    }
 }
 
 fn load_session(
@@ -745,6 +961,139 @@ fn set_private_permissions(path: &Path) -> Result<(), SessionError> {
 mod tests {
     use super::*;
     use pandora_provider::{ChatMessage, ToolCall};
+    use pandora_types::{
+        EvaluationKind, EvaluationReceipt, EvaluationResult, EvaluationStatus, EventContext,
+        EventId, EventPayload, EventType, ExecutionId,
+    };
+
+    #[test]
+    fn execution_events_and_evaluation_commit_atomically() {
+        let root = crate::test_support::new_temp_dir("pandora-session-evaluation-test").unwrap();
+        let store = SessionStore::open(root.join("sessions.sqlite3")).unwrap();
+        let session = Session::new(
+            SessionId::new("session-1").unwrap(),
+            PrincipalId::new("principal-1").unwrap(),
+            TenantId::new("tenant-1").unwrap(),
+            WorkspaceId::new("workspace-1").unwrap(),
+            Timestamp::from_unix_seconds(1),
+        );
+        let execution_id = ExecutionId::new("execution-1").unwrap();
+        let event = RuntimeEvent::new(
+            EventId::new("event-1").unwrap(),
+            EventType::SessionStarted,
+            EventContext::new(session.tenant_id().clone(), session.workspace_id().clone())
+                .with_session(session.id().clone())
+                .with_execution(execution_id.clone()),
+            EventPayload::Empty,
+        );
+        let evaluation = EvaluationReceipt::new(
+            session.id().clone(),
+            execution_id,
+            Timestamp::from_unix_seconds(2),
+            vec![
+                EvaluationResult::new(
+                    EvaluationKind::Trajectory,
+                    EvaluationStatus::Passed,
+                    100,
+                    "trajectory passed",
+                    false,
+                )
+                .unwrap(),
+                EvaluationResult::new(
+                    EvaluationKind::Policy,
+                    EvaluationStatus::Passed,
+                    100,
+                    "policy passed",
+                    false,
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap();
+        store.create(&session).unwrap();
+        store
+            .lock()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER fail_evaluation_insert
+                 BEFORE INSERT ON session_evaluations
+                 BEGIN
+                     SELECT RAISE(ABORT, 'forced evaluation failure');
+                 END;",
+            )
+            .unwrap();
+
+        assert!(matches!(
+            store.append_execution(
+                session.id(),
+                session.principal_id(),
+                session.tenant_id(),
+                session.workspace_id(),
+                std::slice::from_ref(&event),
+                &evaluation,
+                Timestamp::from_unix_seconds(2),
+            ),
+            Err(SessionError::Database(_))
+        ));
+        let snapshot = store
+            .resume(
+                session.id(),
+                session.principal_id(),
+                session.tenant_id(),
+                session.workspace_id(),
+            )
+            .unwrap();
+        assert!(snapshot.events().is_empty());
+        assert!(snapshot.evaluations().is_empty());
+        store
+            .lock()
+            .unwrap()
+            .execute_batch("DROP TRIGGER fail_evaluation_insert;")
+            .unwrap();
+
+        store
+            .append_execution(
+                session.id(),
+                session.principal_id(),
+                session.tenant_id(),
+                session.workspace_id(),
+                std::slice::from_ref(&event),
+                &evaluation,
+                Timestamp::from_unix_seconds(2),
+            )
+            .unwrap();
+        let second_event = RuntimeEvent::new(
+            EventId::new("event-2").unwrap(),
+            EventType::EffectCompleted,
+            EventContext::new(session.tenant_id().clone(), session.workspace_id().clone())
+                .with_session(session.id().clone())
+                .with_execution(evaluation.execution_id().clone()),
+            EventPayload::Empty,
+        );
+        store
+            .append_execution(
+                session.id(),
+                session.principal_id(),
+                session.tenant_id(),
+                session.workspace_id(),
+                &[second_event],
+                &evaluation,
+                Timestamp::from_unix_seconds(3),
+            )
+            .unwrap();
+
+        let snapshot = store
+            .resume(
+                session.id(),
+                session.principal_id(),
+                session.tenant_id(),
+                session.workspace_id(),
+            )
+            .unwrap();
+        assert_eq!(snapshot.events().len(), 2);
+        assert_eq!(snapshot.evaluations(), &[evaluation.clone(), evaluation]);
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     #[test]
     fn agent_transcript_round_trips_with_session_scope() {

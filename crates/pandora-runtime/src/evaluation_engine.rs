@@ -29,7 +29,7 @@ impl EvaluationEngine {
                 )
             })
             .count();
-        if failures <= max_failed_receipts {
+        if failures <= max_failed_receipts && input.terminal_failure().is_none() {
             result(
                 EvaluationKind::Trajectory,
                 EvaluationStatus::Passed,
@@ -231,6 +231,17 @@ mod tests {
         assert_eq!(outcome.kind(), EvaluationKind::Outcome);
         assert_eq!(trajectory.status(), EvaluationStatus::Passed);
         assert_eq!(outcome.status(), EvaluationStatus::Passed);
+    }
+
+    #[test]
+    fn terminal_execution_failure_fails_trajectory_without_a_receipt() {
+        let request = input("failed")
+            .with_terminal_failure("executor_failed")
+            .unwrap();
+
+        let result = EvaluationEngine::new().evaluate_trajectory(&request, 0);
+
+        assert_eq!(result.status(), EvaluationStatus::Failed);
     }
 
     #[test]
