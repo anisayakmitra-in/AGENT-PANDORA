@@ -89,6 +89,10 @@
 - Agent runs now assemble the constitutional prompt and enabled Skill guidance
   through ContextEngine, returning a bounded context receipt in JSON. Locally
   admitted Skill guidance is sensitive, non-cacheable, and never authoritative.
+- ContextEngine now reuses exact constitutional and active-plan assemblies
+  within the current process. Cache identity includes the tenant, workspace,
+  session, provider, model, policy, token budget, fragment contents, metadata,
+  and expiry; sensitive, dynamic, and oversized context bypasses storage.
 - Session events now retain their explicit recording time. `pandora session
   inspect` derives a bounded trace and reliability summary from those canonical
   records without exposing event payloads or inventing missing measurements.

@@ -17,3 +17,17 @@ Memory stores summaries rather than transcripts. Secret-classified content is re
 The current engine is an in-memory runtime component. The CLI also keeps a bounded, private L1 execution-evidence ledger in the session store. Each entry records only the execution ID, selected Harness and Gene, terminal status, provider scope, timestamp, and provenance; it never stores a task, output, transcript, credential, or hidden reasoning. `session inspect` exposes its count, not its contents. Agent runs retrieve at most eight canonical entries from the exact same tenant, workspace, session, and provider scope. They enter context as non-cacheable descriptive history, never as instructions or authority.
 
 Its approval object is an explicit memory contract; it does not replace Parliament approval or provide execution authority. Memory records do not grant permissions, activate packages, or execute tools.
+
+## Context assembly cache
+
+`ContextEngine` keeps up to 64 assemblies in the current process. Each entry
+must fit a 64 KiB retained-size budget. Only public or internal constitutional
+and active-plan fragments are eligible. An entry matches only when its tenant,
+workspace, session, provider, model, policy, token budget, fragment contents,
+fragment metadata, and expiry data match. An entry is discarded before reuse
+when its context has expired or time moves backward.
+
+Sensitive, secret, retrieved, conversation, and L1 fragments bypass the cache.
+The cache does not store model responses, Tool output, Skill guidance, or L1
+evidence. It saves local context assembly work; it is not provider prompt
+caching, semantic caching, or evidence of reduced token billing.
