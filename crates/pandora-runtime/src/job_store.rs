@@ -150,13 +150,14 @@ impl JobStore {
         {
             std::fs::create_dir_all(parent)?;
         }
-        let connection = Connection::open(path)?;
+        let mut connection = Connection::open(path)?;
         set_private_permissions(path)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.execute_batch(
             "PRAGMA journal_mode = WAL;
              CREATE TABLE IF NOT EXISTS jobs (
                  id TEXT PRIMARY KEY,
+                 submission_sequence INTEGER NOT NULL CHECK (submission_sequence > 0),
                  principal_id TEXT NOT NULL,
                  tenant_id TEXT NOT NULL,
                  workspace_id TEXT NOT NULL,
@@ -168,9 +169,15 @@ impl JobStore {
                  started_at INTEGER,
                  finished_at INTEGER,
                  result_json TEXT
-             );
-             CREATE INDEX IF NOT EXISTS jobs_scope_queue_idx
-                 ON jobs(principal_id, tenant_id, workspace_id, status, created_at, id);",
+             );",
+        )?;
+        ensure_submission_sequence(&mut connection)?;
+        connection.execute_batch(
+            "CREATE UNIQUE INDEX IF NOT EXISTS jobs_submission_sequence_idx
+                 ON jobs(submission_sequence);
+             CREATE INDEX IF NOT EXISTS jobs_scope_queue_sequence_idx
+                 ON jobs(principal_id, tenant_id, workspace_id, status, submission_sequence);
+             DROP INDEX IF EXISTS jobs_scope_queue_idx;",
         )?;
         Ok(Self {
             connection: Mutex::new(connection),
@@ -188,13 +195,24 @@ impl JobStore {
         created_at: Timestamp,
     ) -> Result<JobRecord, JobStoreError> {
         let request_json = serde_json::to_string(request)?;
-        let connection = self.lock()?;
-        let result = connection.execute(
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let latest_sequence =
+            transaction.query_row("SELECT MAX(submission_sequence) FROM jobs", [], |row| {
+                row.get::<_, Option<i64>>(0)
+            })?;
+        let submission_sequence = latest_sequence
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or(JobStoreError::CorruptRecord)?;
+        let result = transaction.execute(
             "INSERT INTO jobs (
-                 id, principal_id, tenant_id, workspace_id, request_json, status, created_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, 'queued', ?6)",
+                 id, submission_sequence, principal_id, tenant_id, workspace_id,
+                 request_json, status, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'queued', ?7)",
             params![
                 id.as_str(),
+                submission_sequence,
                 principal_id.as_str(),
                 tenant_id.as_str(),
                 workspace_id.as_str(),
@@ -203,18 +221,21 @@ impl JobStore {
             ],
         );
         match result {
-            Ok(_) => Ok(JobRecord {
-                id: id.clone(),
-                principal_id: principal_id.clone(),
-                tenant_id: tenant_id.clone(),
-                workspace_id: workspace_id.clone(),
-                request: request.clone(),
-                status: JobStatus::Queued,
-                created_at,
-                started_at: None,
-                finished_at: None,
-                result: None,
-            }),
+            Ok(_) => {
+                transaction.commit()?;
+                Ok(JobRecord {
+                    id: id.clone(),
+                    principal_id: principal_id.clone(),
+                    tenant_id: tenant_id.clone(),
+                    workspace_id: workspace_id.clone(),
+                    request: request.clone(),
+                    status: JobStatus::Queued,
+                    created_at,
+                    started_at: None,
+                    finished_at: None,
+                    result: None,
+                })
+            }
             Err(rusqlite::Error::SqliteFailure(error, _))
                 if error.code == rusqlite::ErrorCode::ConstraintViolation =>
             {
@@ -236,7 +257,7 @@ impl JobStore {
                     created_at, started_at, finished_at, result_json
              FROM jobs
              WHERE principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3
-             ORDER BY created_at DESC, id DESC",
+             ORDER BY submission_sequence DESC",
         )?;
         let mut rows = statement.query(params![
             principal_id.as_str(),
@@ -276,7 +297,7 @@ impl JobStore {
                 "SELECT id FROM jobs
                  WHERE principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3
                    AND status = 'queued'
-                 ORDER BY created_at ASC, id ASC LIMIT 1",
+                 ORDER BY submission_sequence ASC LIMIT 1",
                 params![
                     principal_id.as_str(),
                     tenant_id.as_str(),
@@ -415,6 +436,25 @@ impl JobStore {
             .lock()
             .map_err(|_| JobStoreError::LockPoisoned)
     }
+}
+
+fn ensure_submission_sequence(connection: &mut Connection) -> Result<(), JobStoreError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let has_sequence = transaction.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM pragma_table_info('jobs') WHERE name = 'submission_sequence'
+         )",
+        [],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !has_sequence {
+        transaction.execute_batch(
+            "ALTER TABLE jobs ADD COLUMN submission_sequence INTEGER;
+             UPDATE jobs SET submission_sequence = rowid WHERE submission_sequence IS NULL;",
+        )?;
+    }
+    transaction.commit()?;
+    Ok(())
 }
 
 fn load_scoped_job(
@@ -621,6 +661,98 @@ mod tests {
             store.inspect(&first_id, &principal, &tenant, &foreign_workspace),
             Err(JobStoreError::JobNotFound)
         ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn jobs_with_identical_timestamps_follow_submission_order() {
+        let root = crate::test_support::new_temp_dir("pandora-job-fifo-tie").unwrap();
+        let store = JobStore::open(root.join("jobs.sqlite3")).unwrap();
+        let (principal, tenant, workspace) = scope();
+        let first_id = JobId::new("job-z-first").unwrap();
+        let second_id = JobId::new("job-a-second").unwrap();
+        for (id, task) in [(&first_id, "first task"), (&second_id, "second task")] {
+            store
+                .submit(
+                    id,
+                    &principal,
+                    &tenant,
+                    &workspace,
+                    &request(task),
+                    Timestamp::from_unix_seconds(10),
+                )
+                .unwrap();
+        }
+
+        let claimed = store
+            .claim_next(
+                &principal,
+                &tenant,
+                &workspace,
+                Timestamp::from_unix_seconds(20),
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(claimed.id(), &first_id);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn opening_a_legacy_queue_preserves_existing_submission_order() {
+        let root = crate::test_support::new_temp_dir("pandora-job-fifo-migration").unwrap();
+        let database = root.join("jobs.sqlite3");
+        let connection = Connection::open(&database).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE jobs (
+                     id TEXT PRIMARY KEY,
+                     principal_id TEXT NOT NULL,
+                     tenant_id TEXT NOT NULL,
+                     workspace_id TEXT NOT NULL,
+                     request_json TEXT NOT NULL,
+                     status TEXT NOT NULL,
+                     created_at INTEGER NOT NULL,
+                     started_at INTEGER,
+                     finished_at INTEGER,
+                     result_json TEXT
+                 );",
+            )
+            .unwrap();
+        let (principal, tenant, workspace) = scope();
+        for (id, task) in [
+            ("job-z-first", "first task"),
+            ("job-a-second", "second task"),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO jobs (
+                         id, principal_id, tenant_id, workspace_id, request_json, status, created_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, 'queued', 10)",
+                    params![
+                        id,
+                        principal.as_str(),
+                        tenant.as_str(),
+                        workspace.as_str(),
+                        serde_json::to_string(&request(task)).unwrap(),
+                    ],
+                )
+                .unwrap();
+        }
+        drop(connection);
+
+        let store = JobStore::open(&database).unwrap();
+        let claimed = store
+            .claim_next(
+                &principal,
+                &tenant,
+                &workspace,
+                Timestamp::from_unix_seconds(20),
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(claimed.id().as_str(), "job-z-first");
         let _ = std::fs::remove_dir_all(root);
     }
 

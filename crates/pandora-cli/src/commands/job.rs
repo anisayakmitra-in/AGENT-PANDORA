@@ -5,6 +5,14 @@ use pandora_types::{JobCommand, JobId, JobRequest, JobStatus};
 use serde_json::{Map, Value, json};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const MAX_DRAIN_JOBS: usize = 64;
+
+struct CompletedJob {
+    id: JobId,
+    status: JobStatus,
+    result: Value,
+}
+
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args
         .first()
@@ -85,25 +93,103 @@ fn cancel(args: &[String]) -> Result<CommandResult, CliError> {
 }
 
 fn work(args: &[String]) -> Result<CommandResult, CliError> {
-    let parsed = parse_options(args, &["config", "data-dir", "workspace"])?;
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "max-jobs"])?;
     if !parsed.positionals.is_empty() {
         return Err(CliError::usage(
             "job work does not accept positional arguments",
         ));
     }
+    let max_jobs = parse_max_jobs(parsed.value("max-jobs"))?;
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
     let store = JobStore::open(config.data_dir().join("jobs.sqlite3")).map_err(job_store_error)?;
     let (principal, tenant, workspace) = session_scope();
-    let Some(job) = store
-        .claim_next(&principal, &tenant, &workspace, timestamp())
-        .map_err(job_store_error)?
-    else {
+    if let Some(max_jobs) = max_jobs {
+        return drain_jobs(&store, &principal, &tenant, &workspace, max_jobs);
+    }
+    let Some(completed) = execute_one_job(&store, &principal, &tenant, &workspace)? else {
         return Ok(success(
             "job work",
             json!({"job": null, "status": "idle"}),
             "No queued jobs",
         ));
+    };
+    Ok(success(
+        "job work",
+        json!({
+            "job_id": completed.id,
+            "status": completed.status.as_str(),
+            "result": completed.result,
+        }),
+        format!("Completed {}", completed.id),
+    ))
+}
+
+fn parse_max_jobs(value: Option<&str>) -> Result<Option<usize>, CliError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let count = value.parse::<usize>().ok();
+    if count.is_none_or(|count| !(1..=MAX_DRAIN_JOBS).contains(&count)) {
+        return Err(CliError::usage(format!(
+            "job work --max-jobs must be an integer from 1 to {MAX_DRAIN_JOBS}"
+        )));
+    }
+    Ok(count)
+}
+
+fn drain_jobs(
+    store: &JobStore,
+    principal: &pandora_types::PrincipalId,
+    tenant: &pandora_types::TenantId,
+    workspace: &pandora_types::WorkspaceId,
+    max_jobs: usize,
+) -> Result<CommandResult, CliError> {
+    let mut jobs = Vec::with_capacity(max_jobs);
+    let mut stop_reason = "limit_reached";
+    for _ in 0..max_jobs {
+        match execute_one_job(store, principal, tenant, workspace) {
+            Ok(Some(completed)) => jobs.push(job_summary(&completed)),
+            Ok(None) => {
+                stop_reason = "queue_empty";
+                break;
+            }
+            Err(mut error) => {
+                add_drain_error_details(&mut error, jobs);
+                return Err(error);
+            }
+        }
+    }
+    let processed_count = jobs.len();
+    Ok(success(
+        "job work",
+        json!({
+            "processed_count": processed_count,
+            "stop_reason": stop_reason,
+            "jobs": jobs,
+        }),
+        format!("Processed {processed_count} job(s)"),
+    ))
+}
+
+fn job_summary(job: &CompletedJob) -> Value {
+    json!({
+        "job_id": job.id,
+        "status": job.status.as_str(),
+    })
+}
+
+fn execute_one_job(
+    store: &JobStore,
+    principal: &pandora_types::PrincipalId,
+    tenant: &pandora_types::TenantId,
+    workspace: &pandora_types::WorkspaceId,
+) -> Result<Option<CompletedJob>, CliError> {
+    let Some(job) = store
+        .claim_next(principal, tenant, workspace, timestamp())
+        .map_err(job_store_error)?
+    else {
+        return Ok(None);
     };
     let result = match job.request().command() {
         JobCommand::Run => super::run::execute(job.request().arguments()),
@@ -114,23 +200,19 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
             let finished = store
                 .finish(
                     job.id(),
-                    &principal,
-                    &tenant,
-                    &workspace,
+                    principal,
+                    tenant,
+                    workspace,
                     JobStatus::Completed,
                     &result,
                     timestamp(),
                 )
                 .map_err(job_store_error)?;
-            Ok(success(
-                "job work",
-                json!({
-                    "job_id": finished.id(),
-                    "status": finished.status().as_str(),
-                    "result": result,
-                }),
-                format!("Completed {}", finished.id()),
-            ))
+            Ok(Some(CompletedJob {
+                id: finished.id().clone(),
+                status: finished.status(),
+                result,
+            }))
         }
         Err(mut error) => {
             let status = if error.code == "approval_required" {
@@ -142,9 +224,9 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
             store
                 .finish(
                     job.id(),
-                    &principal,
-                    &tenant,
-                    &workspace,
+                    principal,
+                    tenant,
+                    workspace,
                     status,
                     &result,
                     timestamp(),
@@ -278,6 +360,39 @@ fn add_job_error_details(error: &mut CliError, id: &JobId, status: JobStatus) {
     error.details = Value::Object(details);
 }
 
+fn add_drain_error_details(error: &mut CliError, mut jobs: Vec<Value>) {
+    let current_job = error
+        .details
+        .get("job_id")
+        .and_then(Value::as_str)
+        .zip(error.details.get("job_status").and_then(Value::as_str))
+        .map(|(job_id, status)| {
+            json!({
+                "job_id": job_id,
+                "status": status,
+            })
+        });
+    if let Some(current_job) = current_job {
+        jobs.push(current_job);
+    }
+    let processed_count = jobs.len();
+    let mut details = match std::mem::replace(&mut error.details, Value::Null) {
+        Value::Object(details) => details,
+        value => {
+            let mut details = Map::new();
+            details.insert("run_details".to_owned(), value);
+            details
+        }
+    };
+    details.insert("processed_count".to_owned(), json!(processed_count));
+    details.insert(
+        "stop_reason".to_owned(),
+        Value::String(error.code.to_owned()),
+    );
+    details.insert("processed_jobs".to_owned(), Value::Array(jobs));
+    error.details = Value::Object(details);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -395,6 +510,111 @@ mod tests {
     }
 
     #[test]
+    fn work_drains_the_requested_number_of_jobs_in_fifo_order() {
+        let root = std::env::temp_dir().join(format!(
+            "pandora-job-drain-{}-{}",
+            std::process::id(),
+            super::super::timestamp().as_unix_seconds()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let data_dir = root.join("data");
+        let workspace = root.join("workspace");
+        let config_path = root.join("config.json");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(&config_path, b"{}").unwrap();
+        let submit_args = [
+            "submit".to_owned(),
+            "--config".to_owned(),
+            config_path.to_string_lossy().into_owned(),
+            "--data-dir".to_owned(),
+            data_dir.to_string_lossy().into_owned(),
+            "--workspace".to_owned(),
+            workspace.to_string_lossy().into_owned(),
+            "--".to_owned(),
+            "guide".to_owned(),
+        ];
+        let first = execute(&submit_args).unwrap().data["job_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let second = execute(&submit_args).unwrap().data["job_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let result = execute(&[
+            "work".to_owned(),
+            "--max-jobs".to_owned(),
+            "2".to_owned(),
+            "--config".to_owned(),
+            config_path.to_string_lossy().into_owned(),
+            "--data-dir".to_owned(),
+            data_dir.to_string_lossy().into_owned(),
+            "--workspace".to_owned(),
+            workspace.to_string_lossy().into_owned(),
+        ])
+        .unwrap();
+
+        assert_eq!(result.command, "job work");
+        assert_eq!(result.data["processed_count"], 2);
+        assert_eq!(result.data["stop_reason"], "limit_reached");
+        assert_eq!(result.data["jobs"][0]["job_id"], first);
+        assert_eq!(result.data["jobs"][0]["status"], "completed");
+        assert_eq!(result.data["jobs"][1]["job_id"], second);
+        assert_eq!(result.data["jobs"][1]["status"], "completed");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn work_rejects_job_counts_outside_the_bounded_range() {
+        for value in ["0", "65"] {
+            let result = execute(&["work".to_owned(), "--max-jobs".to_owned(), value.to_owned()]);
+            let error = match result {
+                Ok(_) => panic!("out-of-range job counts should fail"),
+                Err(error) => error,
+            };
+
+            assert_eq!(
+                error.message,
+                "job work --max-jobs must be an integer from 1 to 64"
+            );
+        }
+    }
+
+    #[test]
+    fn drain_reports_an_empty_queue_without_processing() {
+        let root = std::env::temp_dir().join(format!(
+            "pandora-job-drain-empty-{}-{}",
+            std::process::id(),
+            super::super::timestamp().as_unix_seconds()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let data_dir = root.join("data");
+        let workspace = root.join("workspace");
+        let config_path = root.join("config.json");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(&config_path, b"{}").unwrap();
+
+        let result = execute(&[
+            "work".to_owned(),
+            "--max-jobs".to_owned(),
+            "3".to_owned(),
+            "--config".to_owned(),
+            config_path.to_string_lossy().into_owned(),
+            "--data-dir".to_owned(),
+            data_dir.to_string_lossy().into_owned(),
+            "--workspace".to_owned(),
+            workspace.to_string_lossy().into_owned(),
+        ])
+        .unwrap();
+
+        assert_eq!(result.data["processed_count"], 0);
+        assert_eq!(result.data["stop_reason"], "queue_empty");
+        assert_eq!(result.data["jobs"], json!([]));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn list_inspect_and_cancel_expose_the_scoped_queue() {
         let root = std::env::temp_dir().join(format!(
             "pandora-job-control-{}-{}",
@@ -499,6 +719,110 @@ mod tests {
         let jobs = store.list(&principal, &tenant, &workspace_id).unwrap();
         assert_eq!(jobs[0].status(), pandora_types::JobStatus::ApprovalRequired);
         assert_eq!(jobs[0].result().unwrap()["code"], "approval_required");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn drain_stops_at_approval_and_leaves_later_jobs_queued() {
+        let root = std::env::temp_dir().join(format!(
+            "pandora-job-drain-approval-{}-{}",
+            std::process::id(),
+            super::super::timestamp().as_unix_seconds()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let data_dir = root.join("data");
+        let workspace = root.join("workspace");
+        let config_path = root.join("config.json");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(&config_path, b"{}").unwrap();
+        fs::write(workspace.join("README.md"), b"unchanged").unwrap();
+        let queue_options = [
+            "--config".to_owned(),
+            config_path.to_string_lossy().into_owned(),
+            "--data-dir".to_owned(),
+            data_dir.to_string_lossy().into_owned(),
+            "--workspace".to_owned(),
+            workspace.to_string_lossy().into_owned(),
+        ];
+        for task in ["guide", "patch:README.md:changed", "guide"] {
+            let mut args = vec!["submit".to_owned()];
+            args.extend_from_slice(&queue_options);
+            args.extend(["--".to_owned(), task.to_owned()]);
+            execute(&args).unwrap();
+        }
+        let mut work_args = vec!["work".to_owned(), "--max-jobs".to_owned(), "3".to_owned()];
+        work_args.extend_from_slice(&queue_options);
+
+        let error = match execute(&work_args) {
+            Ok(_) => panic!("drain should stop when a job requires approval"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.code, "approval_required");
+        assert_eq!(error.details["processed_count"], 2);
+        assert_eq!(error.details["stop_reason"], "approval_required");
+        assert_eq!(error.details["processed_jobs"][0]["status"], "completed");
+        assert_eq!(
+            error.details["processed_jobs"][1]["status"],
+            "approval_required"
+        );
+        let store = JobStore::open(data_dir.join("jobs.sqlite3")).unwrap();
+        let (principal, tenant, workspace_id) = super::super::session_scope();
+        let jobs = store.list(&principal, &tenant, &workspace_id).unwrap();
+        assert_eq!(jobs.len(), 3);
+        assert_eq!(jobs[0].status(), JobStatus::Queued);
+        assert_eq!(jobs[1].status(), JobStatus::ApprovalRequired);
+        assert_eq!(jobs[2].status(), JobStatus::Completed);
+        assert_eq!(fs::read(workspace.join("README.md")).unwrap(), b"unchanged");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn drain_stops_at_execution_failure() {
+        let root = std::env::temp_dir().join(format!(
+            "pandora-job-drain-failure-{}-{}",
+            std::process::id(),
+            super::super::timestamp().as_unix_seconds()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let data_dir = root.join("data");
+        let workspace = root.join("workspace");
+        let config_path = root.join("config.json");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(&config_path, b"{}").unwrap();
+        let queue_options = [
+            "--config".to_owned(),
+            config_path.to_string_lossy().into_owned(),
+            "--data-dir".to_owned(),
+            data_dir.to_string_lossy().into_owned(),
+            "--workspace".to_owned(),
+            workspace.to_string_lossy().into_owned(),
+        ];
+        for task in ["guide", "summarize the workspace", "guide"] {
+            let mut args = vec!["submit".to_owned()];
+            args.extend_from_slice(&queue_options);
+            args.extend(["--".to_owned(), task.to_owned()]);
+            execute(&args).unwrap();
+        }
+        let mut work_args = vec!["work".to_owned(), "--max-jobs".to_owned(), "3".to_owned()];
+        work_args.extend_from_slice(&queue_options);
+
+        let error = match execute(&work_args) {
+            Ok(_) => panic!("drain should stop when a job fails"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.code, "execution_failed");
+        assert_eq!(error.details["processed_count"], 2);
+        assert_eq!(error.details["stop_reason"], "execution_failed");
+        assert_eq!(error.details["processed_jobs"][0]["status"], "completed");
+        assert_eq!(error.details["processed_jobs"][1]["status"], "failed");
+        let store = JobStore::open(data_dir.join("jobs.sqlite3")).unwrap();
+        let (principal, tenant, workspace_id) = super::super::session_scope();
+        let jobs = store.list(&principal, &tenant, &workspace_id).unwrap();
+        assert_eq!(jobs[0].status(), JobStatus::Queued);
+        assert_eq!(jobs[1].status(), JobStatus::Failed);
+        assert_eq!(jobs[2].status(), JobStatus::Completed);
         let _ = fs::remove_dir_all(root);
     }
 }

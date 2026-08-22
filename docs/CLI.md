@@ -102,6 +102,7 @@ pandora session inspect <session-id>
 pandora session resume <session-id>
 pandora job submit -- --agent "Review this workspace"
 pandora job work
+pandora job work --max-jobs 8
 pandora job list
 pandora job inspect <job-id>
 pandora job cancel <job-id>
@@ -119,16 +120,23 @@ directory or ambient path settings.
 
 `job work` atomically claims the oldest queued job, executes it through the
 same sessions, policy, approval, permit, evaluation, and receipt path as a
-foreground run, stores the versioned CLI result, and exits. Multiple worker
-processes cannot claim the same queued record. An approval pause is stored as
-`approval_required`; it is not converted into success or retried. Submit a new
-job with the approved invocation after reviewing and resolving the approval.
+foreground run, stores the versioned CLI result, and exits. Pass
+`--max-jobs <1-64>` to process a bounded FIFO batch sequentially. The JSON
+response reports processed job IDs, statuses, and whether the worker reached
+its limit or emptied the queue. Multiple worker processes cannot claim the
+same queued record.
+
+A batch stops at the first approval pause or failed run. Its error response
+includes the jobs processed during that invocation, and later jobs remain
+queued. An approval pause is stored as `approval_required`; it is not converted
+into success or retried. Submit a new job with the approved invocation after
+reviewing and resolving the approval.
 
 `job cancel` applies only to queued work. It does not terminate a running
 process. Pandora does not replay a job automatically when a worker exits after
 claiming it, because the worker may already have produced effects. Such a job
 remains `running` for inspection and operator review. This release provides a
-single-job worker command, not a resident daemon or remote Fleet node.
+bounded worker command, not a resident daemon or remote Fleet node.
 
 Read-only work can complete without approval. Writes and process effects stop at
 the approval boundary and expose an inspectable, redacted request subject.

@@ -292,7 +292,7 @@ commands:
   harness list|inspect|run [--harness-version <version>]
   slash list|resolve <command>
   session list|resume|inspect <id>
-  job submit|work|list|inspect|cancel
+  job submit|work|list|inspect|cancel (work accepts --max-jobs <1-64>)
   skill list|inspect|install|enable|disable|suspend|remove|restore <id-or-path>
   package admit --manifest <path> --artifact <path> | install <id> [version] --registry <url> [--token-env <name>] | list | inspect <id> <version> | lock [--output <path>] | verify-lock [--lock <path>] | remove <id> <version> [--dry-run|--yes]
   tool list|inspect <id>
@@ -381,5 +381,6 @@ mod tests {
         let usage = result.data["usage"].as_str().unwrap();
 
         assert!(usage.contains("job submit|work|list|inspect|cancel"));
+        assert!(usage.contains("work accepts --max-jobs <1-64>"));
     }
 }

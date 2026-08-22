@@ -3,9 +3,9 @@
 ## Unreleased
 
 - `pandora job submit|work|list|inspect|cancel` adds a scoped, durable local
-  queue. The single-job worker reuses the existing `run` path, persists its
-  versioned result, preserves approval pauses, and never replays claimed work
-  automatically.
+  queue. The worker reuses the existing `run` path, can process one job or a
+  bounded sequential FIFO batch, persists versioned results, stops at approval
+  or failure, and never replays claimed work automatically.
 - Direct runs now reject unclassified natural-language tasks instead of routing
   them to an unregistered default Harness; use `run --agent` for those tasks.
 - Built-in Harness construction and lookup now use one shared catalog across the

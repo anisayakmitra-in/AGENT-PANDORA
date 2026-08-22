@@ -172,6 +172,46 @@ fn headless_job_worker_executes_the_existing_run_command() {
 }
 
 #[test]
+fn headless_job_worker_drains_a_bounded_fifo_batch() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let mut job_ids = Vec::new();
+    for _ in 0..3 {
+        let submitted = fixture
+            .command(&["job", "submit", "--", "guide", "--json"])
+            .output()
+            .expect("job submission should start");
+        assert_success(&submitted);
+        job_ids.push(
+            parse_json(&submitted)["job_id"]
+                .as_str()
+                .expect("submission should return a job ID")
+                .to_owned(),
+        );
+    }
+
+    let worked = fixture
+        .command(&["job", "work", "--max-jobs", "2", "--json"])
+        .output()
+        .expect("batch worker should start");
+    assert_success(&worked);
+    let worked = parse_json(&worked);
+    assert_eq!(worked["command"], "job work");
+    assert_eq!(worked["processed_count"], 2);
+    assert_eq!(worked["stop_reason"], "limit_reached");
+    assert_eq!(worked["jobs"][0]["job_id"], job_ids[0]);
+    assert_eq!(worked["jobs"][1]["job_id"], job_ids[1]);
+    assert!(worked["jobs"][0].get("result").is_none());
+
+    let remaining = fixture
+        .command(&["job", "work", "--json"])
+        .output()
+        .expect("remaining job worker should start");
+    assert_success(&remaining);
+    assert_eq!(parse_json(&remaining)["job_id"], job_ids[2]);
+}
+
+#[test]
 fn interactive_setup_configures_a_provider_without_echoing_secrets() {
     let fixture = Fixture::new();
     let mut command = fixture.command(&["setup", "--interactive", "--json"]);
