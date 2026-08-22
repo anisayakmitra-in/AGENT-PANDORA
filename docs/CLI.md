@@ -262,6 +262,8 @@ pandora skill remove <id> --dry-run
 pandora skill remove <id> --yes
 pandora skill restore <id>
 pandora package admit --manifest <manifest.json> --artifact <artifact>
+pandora package install <id> [version] --registry <url>
+pandora package install <id> [version] --registry <url> --token-env <name>
 pandora package list
 pandora package inspect <id> <version>
 pandora package lock
@@ -310,7 +312,24 @@ through the governed ToolEngine path.
 
 Package records are addressed by exact ID and strict SemVer version. `package admit`
 reads at most the local artifact limit plus one byte before it rejects an oversized
-artifact. `package lock` writes the revalidated local package set to
+artifact.
+
+`package install` reads current or exact-version metadata from an M-Place-compatible
+registry, then downloads that release from the registry's exact-version endpoint.
+The client follows no redirects, never contacts the package's `artifact_url`, and
+reads at most the artifact limit plus one byte. Registry URLs must use HTTPS;
+loopback HTTP is allowed for local development. Set `PANDORA_REGISTRY_URL` instead
+of `--registry` if preferred. Public reads need no token. For a protected registry,
+put the token in `PANDORA_REGISTRY_TOKEN` or name another environment variable with
+`--token-env`; tokens are not accepted as command-line values.
+
+Remote admission currently accepts Gene records with no unresolved capability
+requirements and one valid Pandora runtime requirement. Other package kinds fail
+before download or local mutation. A registry package remains metadata and verified
+bytes: installation does not load native code, enable a Harness, issue a permit, or
+grant runtime authority.
+
+`package lock` writes the revalidated local package set to
 `<workspace>/pandora.lock`; `--output <path>` selects another file. The lock keeps
 the canonical manifests, exact versions, artifact hashes, dependencies, and trust
 evidence in deterministic identity order. `package verify-lock` reads at most the
@@ -322,10 +341,12 @@ an atomic sibling replacement.
 `package remove --yes` removes it transactionally. Removal is refused when
 another admitted package has a required dependency on the target, while
 optional dependencies do not block removal. Package artifacts are local
-admission evidence and are not executable authority. A `verified` manifest must
-include fixed-width hexadecimal Ed25519 evidence over
-`{id}:{version}:{publisher}:{content_hash}`. An `official` claim is rejected
-until a publisher trust root is configured.
+admission evidence and are not executable authority. A signed manifest must include
+an Ed25519 public key and signature over
+`{id}:{version}:{publisher}:{content_hash}`. Local hexadecimal evidence remains
+supported. Registry evidence retains its bare standard-base64 or lowercase
+`base64:` representation. An `official` local claim is rejected until a publisher
+trust root is configured.
 
 ## Configuration migration
 

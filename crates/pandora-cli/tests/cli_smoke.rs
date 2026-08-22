@@ -2052,6 +2052,131 @@ fn package_meta_admission_survives_cli_restart_without_runtime_authority() {
 }
 
 #[test]
+fn package_install_fetches_and_admits_one_exact_registry_release() {
+    let artifact = b"registry gene artifact\n";
+    let content_hash = hash_artifact(artifact);
+    let server_content_hash = content_hash.clone();
+    let listener = TcpListener::bind("127.0.0.1:0").expect("registry fixture should bind");
+    let address = listener
+        .local_addr()
+        .expect("registry fixture should expose its address");
+    let server = thread::spawn(move || {
+        for (expected_path, body, content_type) in [
+            (
+                "/api/v1/packages/owner%2Fpackage/versions/1.0.0-beta.1%2Bbuild.5",
+                serde_json::to_vec(&serde_json::json!({
+                    "id": "owner/package",
+                    "name": "Package",
+                    "version": "1.0.0-beta.1+build.5",
+                    "kind": "gene",
+                    "description": "Registry fixture",
+                    "author": "owner",
+                    "license": "Apache-2.0",
+                    "trust": {
+                        "level": "community",
+                        "signature": null,
+                        "public_key": null,
+                        "content_hash": server_content_hash,
+                        "publisher": "owner"
+                    },
+                    "capabilities": {"provides": ["fixture"], "requires": []},
+                    "downloads": 0,
+                    "success_rate": 0.0,
+                    "compatibility": {
+                        "runtimes": ["pandora>=2.0.0-alpha.1"],
+                        "platforms": []
+                    },
+                    "repository": "https://example.com/owner/package",
+                    "artifact_url": "https://127.0.0.1:9/must-not-be-contacted",
+                    "homepage": null,
+                    "tags": ["fixture"],
+                    "yanked": false,
+                    "deprecated": null,
+                    "provenance": null,
+                    "created_at": "2026-08-22T00:00:00Z",
+                    "updated_at": "2026-08-22T00:00:00Z"
+                }))
+                .unwrap(),
+                "application/json",
+            ),
+            (
+                "/api/v1/packages/owner%2Fpackage/versions/1.0.0-beta.1%2Bbuild.5/download",
+                artifact.to_vec(),
+                "application/octet-stream",
+            ),
+        ] {
+            let (mut stream, _) = listener.accept().expect("Pandora should connect");
+            let mut request = Vec::new();
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let mut chunk = [0_u8; 1_024];
+                let bytes_read = stream.read(&mut chunk).expect("request should be readable");
+                assert_ne!(bytes_read, 0, "request ended before its headers");
+                request.extend_from_slice(&chunk[..bytes_read]);
+            }
+            let headers = String::from_utf8_lossy(&request);
+            assert!(
+                headers.starts_with(&format!("GET {expected_path} HTTP/1.1\r\n")),
+                "unexpected registry request: {headers}"
+            );
+            assert!(
+                headers
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer registry-secret\r\n")
+            );
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .expect("response headers should be written");
+            stream
+                .write_all(&body)
+                .expect("response body should be written");
+        }
+    });
+
+    let fixture = Fixture::new();
+    let registry = format!("http://{address}");
+    let output = fixture
+        .command(&[
+            "package",
+            "install",
+            "owner/package",
+            "1.0.0-beta.1+build.5",
+            "--registry",
+            &registry,
+            "--token-env",
+            "PANDORA_TEST_REGISTRY_TOKEN",
+            "--json",
+        ])
+        .env("PANDORA_TEST_REGISTRY_TOKEN", "registry-secret")
+        .output()
+        .expect("registry installation should start");
+    assert_success_with_context(&output, "package install");
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("registry-secret"));
+    let response = parse_json(&output);
+    assert_eq!(response["package"]["id"], "owner/package");
+    assert_eq!(response["package"]["version"], "1.0.0-beta.1+build.5");
+    assert_eq!(response["package"]["kind"], "gene");
+    assert_eq!(response["package"]["state"], "installed");
+    assert_eq!(response["package"]["runtime_authority"], false);
+
+    let output = fixture
+        .command(&[
+            "package",
+            "inspect",
+            "owner/package",
+            "1.0.0-beta.1+build.5",
+            "--json",
+        ])
+        .output()
+        .expect("installed package inspection should start");
+    assert_success(&output);
+    assert_eq!(parse_json(&output)["package"]["content_hash"], content_hash);
+    server.join().expect("registry fixture should finish");
+}
+
+#[test]
 fn package_admission_rejects_invalid_signed_trust_evidence() {
     let fixture = Fixture::new();
     let artifact = b"signed gene artifact\n";

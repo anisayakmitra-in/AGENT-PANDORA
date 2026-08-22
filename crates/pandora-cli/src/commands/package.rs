@@ -1,20 +1,26 @@
 use super::{load_config, parse_options};
 use crate::output::{CliError, CommandResult, success};
-use pandora_runtime::{MAX_STORED_ARTIFACT_BYTES, PackageRecord, PackageStore, PackageStoreError};
+use pandora_runtime::{
+    MAX_STORED_ARTIFACT_BYTES, PackageRecord, PackageRegistryClient, PackageRegistryError,
+    PackageStore, PackageStoreError,
+};
 use pandora_types::{PackageId, PackageManifest};
 use serde_json::json;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
+const DEFAULT_REGISTRY_TOKEN_ENV: &str = "PANDORA_REGISTRY_TOKEN";
+
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "package requires 'admit', 'list', 'inspect', 'lock', 'verify-lock', or 'remove'",
+            "package requires 'admit', 'install', 'list', 'inspect', 'lock', 'verify-lock', or 'remove'",
         )
     })?;
     match subcommand.as_str() {
         "admit" => admit(&args[1..]),
+        "install" => install(&args[1..]),
         "list" => list(&args[1..]),
         "inspect" => inspect(&args[1..]),
         "lock" => lock(&args[1..]),
@@ -24,6 +30,62 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "unknown package command '{unknown}'"
         ))),
     }
+}
+
+fn install(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "registry", "token-env"],
+    )?;
+    if !(1..=2).contains(&parsed.positionals.len()) {
+        return Err(CliError::usage(
+            "package install requires an ID and accepts one optional exact version",
+        ));
+    }
+    let id = PackageId::new(parsed.positionals[0].clone())
+        .map_err(|_| CliError::usage("package ID is invalid"))?;
+    let version = parsed.positionals.get(1).map(String::as_str);
+    let registry = parsed
+        .value("registry")
+        .map(str::to_owned)
+        .or_else(|| std::env::var("PANDORA_REGISTRY_URL").ok())
+        .ok_or_else(|| {
+            CliError::configuration(
+                "package install requires '--registry <url>' or PANDORA_REGISTRY_URL",
+                json!({}),
+            )
+        })?;
+    let token_env = parsed.value("token-env");
+    if token_env.is_some_and(str::is_empty) {
+        return Err(CliError::usage("--token-env requires a non-empty name"));
+    }
+    let token_name = token_env.unwrap_or(DEFAULT_REGISTRY_TOKEN_ENV);
+    let token = match std::env::var(token_name) {
+        Ok(token) => Some(token),
+        Err(_) if token_env.is_some() => {
+            return Err(CliError::configuration(
+                "configured registry token environment variable is unavailable",
+                json!({"token_env": token_name}),
+            ));
+        }
+        Err(_) => None,
+    };
+    let client = PackageRegistryClient::new(&registry, token).map_err(registry_error)?;
+    let record = client
+        .install(&store(&parsed)?, &id, version)
+        .map_err(registry_error)?;
+    Ok(success(
+        "package install",
+        json!({
+            "registry": registry,
+            "package": package_value(&record),
+        }),
+        format!(
+            "Package {}@{} installed from the registry",
+            record.manifest().id().as_str(),
+            record.manifest().version()
+        ),
+    ))
 }
 
 fn lock(args: &[String]) -> Result<CommandResult, CliError> {
@@ -326,6 +388,10 @@ fn removal_error(error: PackageStoreError) -> CliError {
         ),
         other => store_error(other),
     }
+}
+
+fn registry_error(error: PackageRegistryError) -> CliError {
+    CliError::execution(error.to_string(), json!({}))
 }
 
 #[cfg(test)]

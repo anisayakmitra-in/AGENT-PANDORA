@@ -291,7 +291,7 @@ commands:
   slash list|resolve <command>
   session list|resume|inspect <id>
   skill list|inspect|install|enable|disable|suspend|remove|restore <id-or-path>
-  package admit --manifest <path> --artifact <path> | list | inspect <id> <version> | lock [--output <path>] | verify-lock [--lock <path>] | remove <id> <version> [--dry-run|--yes]
+  package admit --manifest <path> --artifact <path> | install <id> [version] --registry <url> [--token-env <name>] | list | inspect <id> <version> | lock [--output <path>] | verify-lock [--lock <path>] | remove <id> <version> [--dry-run|--yes]
   tool list|inspect <id>
   approval list|inspect|resolve
   provider list|set|use|test

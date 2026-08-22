@@ -41,7 +41,7 @@ fn powershell() -> &'static str {
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'skill') {
         'list','inspect','install','enable','disable','suspend','remove','restore'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'package') {
-        'admit','list','inspect','lock','verify-lock','remove'
+        'admit','install','list','inspect','lock','verify-lock','remove'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'approval') {
         'list','inspect','resolve'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'provider') {
@@ -76,7 +76,7 @@ fn bash() -> &'static str {
     elif [[ "$previous" == "skill" ]]; then
         COMPREPLY=( $(compgen -W 'list inspect install enable disable suspend remove restore' -- "$current") )
     elif [[ "$previous" == "package" ]]; then
-        COMPREPLY=( $(compgen -W 'admit list inspect lock verify-lock remove' -- "$current") )
+        COMPREPLY=( $(compgen -W 'admit install list inspect lock verify-lock remove' -- "$current") )
     elif [[ "$previous" == "approval" ]]; then
         COMPREPLY=( $(compgen -W 'list inspect resolve' -- "$current") )
     elif [[ "$previous" == "provider" ]]; then
@@ -113,7 +113,7 @@ elif [[ ${words[2]} == skill ]]; then
 elif [[ ${words[2]} == package ]]; then
     _arguments \
         '1:command:(help setup run chat tui harness slash session skill package approval provider tool orchestration strategies efficiency completions migrate update uninstall doctor)' \
-        '2:package command:(admit list inspect lock verify-lock remove)'
+        '2:package command:(admit install list inspect lock verify-lock remove)'
 elif [[ ${words[2]} == approval ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session skill package approval provider tool orchestration strategies efficiency completions migrate update uninstall doctor)' '2:approval command:(list inspect resolve)'
 elif [[ ${words[2]} == provider ]]; then
@@ -138,7 +138,7 @@ complete -c pandora -f -n '__fish_seen_subcommand_from harness' -a 'list inspect
 complete -c pandora -f -n '__fish_seen_subcommand_from slash' -a 'list resolve'
 complete -c pandora -f -n '__fish_seen_subcommand_from session' -a 'list resume inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from skill' -a 'list inspect install enable disable suspend remove restore'
-complete -c pandora -f -n '__fish_seen_subcommand_from package' -a 'admit list inspect lock verify-lock remove'
+complete -c pandora -f -n '__fish_seen_subcommand_from package' -a 'admit install list inspect lock verify-lock remove'
 complete -c pandora -f -n '__fish_seen_subcommand_from approval' -a 'list inspect resolve'
 complete -c pandora -f -n '__fish_seen_subcommand_from provider' -a 'list set use test'
 complete -c pandora -f -n '__fish_seen_subcommand_from tool' -a 'list inspect'
@@ -170,7 +170,7 @@ mod tests {
         for expected in [
             "'list','inspect','run'",
             "'list','resolve'",
-            "'admit','list','inspect','lock','verify-lock','remove'",
+            "'admit','install','list','inspect','lock','verify-lock','remove'",
             "'list','inspect','resolve'",
             "'list','set','use','test'",
         ] {
@@ -183,7 +183,7 @@ mod tests {
             for expected in [
                 "list inspect run",
                 "list resolve",
-                "admit list inspect lock verify-lock remove",
+                "admit install list inspect lock verify-lock remove",
                 "list inspect resolve",
                 "list set use test",
                 "roles",

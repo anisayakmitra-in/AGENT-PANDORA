@@ -1,3 +1,4 @@
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use pandora_harnesses::{CodingGene, builtin_harnesses};
 use pandora_types::{
@@ -340,14 +341,27 @@ fn verify_package_signature(manifest: &PackageManifest) -> Result<(), HarnessReg
     let Some(signature) = manifest.trust().signature() else {
         return Err(HarnessRegistryError::SignatureRequired);
     };
-    let public_key = decode_hex::<32>(public_key)?;
-    let signature = decode_hex::<64>(signature)?;
+    let public_key = decode_signature_bytes::<32>(public_key)?;
+    let signature = decode_signature_bytes::<64>(signature)?;
     let public_key = VerifyingKey::from_bytes(&public_key)
         .map_err(|_| HarnessRegistryError::InvalidSignatureEncoding)?;
     let signature = Signature::from_bytes(&signature);
     public_key
         .verify(manifest.signing_message().as_bytes(), &signature)
         .map_err(|_| HarnessRegistryError::InvalidSignature)
+}
+
+fn decode_signature_bytes<const N: usize>(value: &str) -> Result<[u8; N], HarnessRegistryError> {
+    if value.len() == N * 2 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return decode_hex(value);
+    }
+    let encoded = value.strip_prefix("base64:").unwrap_or(value);
+    let decoded = BASE64
+        .decode(encoded)
+        .map_err(|_| HarnessRegistryError::InvalidSignatureEncoding)?;
+    decoded
+        .try_into()
+        .map_err(|_| HarnessRegistryError::InvalidSignatureEncoding)
 }
 
 fn decode_hex<const N: usize>(value: &str) -> Result<[u8; N], HarnessRegistryError> {
@@ -375,6 +389,7 @@ fn hex_digit(value: u8) -> Result<u8, HarnessRegistryError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::engine::general_purpose::STANDARD as BASE64;
     use ed25519_dalek::{Signer, SigningKey};
     use pandora_types::{
         HarnessId, MetaComposition, PackageCompatibility, PackageDependency, PackageKind,
@@ -457,6 +472,49 @@ mod tests {
         let mut registry = HarnessRegistry::new();
 
         assert!(registry.install(&package, &package, artifact).is_ok());
+    }
+
+    #[test]
+    fn palace_base64_signature_evidence_is_verified_without_reencoding() {
+        let artifact = b"signed registry gene artifact";
+        let signing_key = SigningKey::from_bytes(&[11_u8; 32]);
+        let content_hash = hash_artifact(artifact);
+        let message = format!("publisher/gene:1.0.0:publisher:{content_hash}");
+        let signature = signing_key.sign(message.as_bytes());
+        let encoded_signature = BASE64.encode(signature.to_bytes());
+        let encoded_key = format!(
+            "base64:{}",
+            BASE64.encode(signing_key.verifying_key().to_bytes())
+        );
+        let package = PackageManifest::new(
+            "publisher/gene",
+            "1.0.0",
+            PackageKind::Gene,
+            "publisher",
+            content_hash,
+            Vec::new(),
+            PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
+            "Apache-2.0",
+            TrustEvidence::new(
+                TrustLevel::Verified,
+                Some(encoded_signature.clone()),
+                Some(encoded_key.clone()),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let mut registry = HarnessRegistry::new();
+
+        let installed = registry.install(&package, &package, artifact).unwrap();
+
+        assert_eq!(
+            installed.manifest().trust().signature(),
+            Some(encoded_signature.as_str())
+        );
+        assert_eq!(
+            installed.manifest().trust().public_key(),
+            Some(encoded_key.as_str())
+        );
     }
 
     #[test]

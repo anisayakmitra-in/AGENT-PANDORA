@@ -65,6 +65,7 @@ Local package admission is explicit:
 
 ```text
 pandora package admit --manifest <manifest.json> --artifact <artifact>
+pandora package install <id> [version] --registry <url>
 pandora package list
 pandora package inspect <id> <version>
 pandora package lock
@@ -73,13 +74,22 @@ pandora package remove <id> <version> --dry-run
 pandora package remove <id> <version> --yes
 ```
 
-The command uses one local manifest as both the declared and embedded record.
-Local admission verifies `verified` trust evidence when the public key and
-signature are fixed-width hexadecimal Ed25519 values. The signed message is
+`package admit` uses one local manifest as both the declared and embedded record.
+Local hexadecimal trust evidence remains supported. `package install` consumes
+current or exact-version M-Place metadata, requests the direct exact-version bytes
+from the same configured registry, and retains the registry's base64 evidence
+without re-encoding it. The client follows no redirects and does not request the
+registry-controlled upstream `artifact_url`.
+
+Remote admission is Gene-only in this release. It requires an artifact, a canonical
+lowercase SHA-256 digest, no unresolved capability requirements, and one valid
+Pandora runtime requirement. Other recognized registry kinds fail before download
+or durable state change. The signed message is
 `{id}:{version}:{publisher}:{content_hash}`, using the exact manifest strings.
 This proves that the evidence matches the declared package and artifact; it
-does not establish publisher trust. `official` claims remain rejected until a
-publisher trust root is configured. Admission still records metadata only: it
+does not establish publisher trust. Local `official` claims remain rejected
+until a publisher trust root is configured. Registry moderation levels are not
+promoted into local `Official` trust. Admission still records metadata only: it
 does not load code, enable a Harness, issue a permit, or grant runtime
 authority.
 Removal uses the exact package ID and version. A dry run changes nothing;

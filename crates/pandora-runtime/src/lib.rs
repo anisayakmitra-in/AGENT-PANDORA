@@ -23,6 +23,7 @@ pub mod package_store;
 pub mod parliament;
 pub mod permit_store;
 pub mod reference_monitor;
+pub mod registry_client;
 pub mod replacement;
 pub mod run_loop;
 pub mod sessions;
@@ -64,6 +65,7 @@ pub use package_store::{MAX_STORED_ARTIFACT_BYTES, PackageStore, PackageStoreErr
 pub use parliament::Parliament;
 pub use permit_store::{ConsumedPermit, PermitError, PermitStore};
 pub use reference_monitor::{AuthorizationError, ReferenceMonitor};
+pub use registry_client::{PackageRegistryClient, PackageRegistryError};
 pub use replacement::{ReplacementEngine, ReplacementError};
 pub use run_loop::{RunLoop, RunLoopError};
 pub use skill_engine::{
