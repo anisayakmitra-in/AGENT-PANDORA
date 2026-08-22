@@ -1,6 +1,6 @@
 use pandora_types::{
-    ArtifactId, Capability, EffectTarget, ExecutionId, GeneId, Operation, OperationRequest,
-    PrincipalId, RequestError, ResourceScope, SessionId, TaskIntent,
+    ArtifactId, Capability, EffectTarget, ExecutionId, GeneId, HarnessId, Operation,
+    OperationRequest, PrincipalId, RequestError, ResourceScope, SessionId, TaskIntent,
 };
 use serde_json::Value;
 use serde_json::json;
@@ -274,6 +274,49 @@ impl ToolEngine {
                 .expect("built-in verification tool schema is valid"),
             )
             .expect("built-in verification tool ID is unique");
+        for definition in [
+            ToolDefinition::new(
+                "daedalus.audit",
+                "0.1.0",
+                "Inventory the workspace for an evidence-led audit",
+                json!({"type": "object", "properties": {}, "additionalProperties": false}),
+                Capability::FilesystemRead,
+                Operation::Read,
+            ),
+            ToolDefinition::new(
+                "argus.review",
+                "0.1.0",
+                "Review one workspace file",
+                json!({
+                    "type": "object",
+                    "required": ["path"],
+                    "properties": {"path": {"type": "string"}},
+                    "additionalProperties": false
+                }),
+                Capability::FilesystemRead,
+                Operation::Read,
+            ),
+            ToolDefinition::new(
+                "ariadne.debt",
+                "0.1.0",
+                "Find explicit technical-debt markers",
+                json!({"type": "object", "properties": {}, "additionalProperties": false}),
+                Capability::FilesystemRead,
+                Operation::Read,
+            ),
+            ToolDefinition::new(
+                "hephaestus.measure",
+                "0.1.0",
+                "Run the fixed repository verifier",
+                json!({"type": "object", "properties": {}, "additionalProperties": false}),
+                Capability::ProcessExecute,
+                Operation::Execute,
+            ),
+        ] {
+            engine
+                .register(definition.expect("built-in workflow tool schema is valid"))
+                .expect("built-in workflow tool ID is unique");
+        }
         engine
     }
 
@@ -322,12 +365,26 @@ impl ToolEngine {
             }
             "workspace.verify" => TaskIntent::new("verify")
                 .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
+            "daedalus.audit" => TaskIntent::new("audit")
+                .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
+            "argus.review" => task_from_argument(arguments, "deep-review", "path")?,
+            "ariadne.debt" => TaskIntent::new("debt")
+                .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
+            "hephaestus.measure" => TaskIntent::new("measure")
+                .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
             _ => {
                 return Err(ToolError::UnsupportedTool(
                     definition.id().as_str().to_owned(),
                 ));
             }
         };
+        let gene_id = gene_id_for_tool(definition.id().as_str())?;
+        let task = task
+            .with_harness(
+                HarnessId::new(pandora_harnesses::CODING_HARNESS_ID)
+                    .expect("built-in Coding Harness ID is valid"),
+            )
+            .with_gene(gene_id);
         Ok(ToolInvocation {
             tool_id: definition.id().clone(),
             task,
@@ -405,6 +462,21 @@ impl ToolEngine {
             .cloned()
             .ok_or_else(|| ToolError::UnknownTool(tool_id.to_owned()))
     }
+}
+
+fn gene_id_for_tool(tool_id: &str) -> Result<GeneId, ToolError> {
+    let gene_id = match tool_id {
+        "workspace.read" => "workspace.read",
+        "workspace.search" => "workspace.search",
+        "workspace.patch" => "patch.apply",
+        "workspace.verify" => "verification.run",
+        "daedalus.audit" => "daedalus.audit",
+        "argus.review" => "argus.review",
+        "ariadne.debt" => "ariadne.debt",
+        "hephaestus.measure" => "hephaestus.measure",
+        unknown => return Err(ToolError::UnsupportedTool(unknown.to_owned())),
+    };
+    Ok(GeneId::new(gene_id).expect("built-in Gene ID is valid"))
 }
 
 impl Default for ToolEngine {
@@ -717,6 +789,62 @@ mod tests {
                 .summary(),
             "verify"
         );
+        for (tool, arguments, expected) in [
+            ("daedalus.audit", json!({}), "audit"),
+            (
+                "argus.review",
+                json!({"path": "src/lib.rs"}),
+                "deep-review:src/lib.rs",
+            ),
+            ("ariadne.debt", json!({}), "debt"),
+            ("hephaestus.measure", json!({}), "measure"),
+        ] {
+            assert_eq!(
+                engine
+                    .prepare_invocation(tool, &arguments)
+                    .unwrap()
+                    .task()
+                    .summary(),
+                expected
+            );
+        }
+        for (tool, arguments, expected_gene) in [
+            (
+                "workspace.read",
+                json!({"path": "README.md"}),
+                "workspace.read",
+            ),
+            (
+                "workspace.search",
+                json!({"query": "needle"}),
+                "workspace.search",
+            ),
+            (
+                "workspace.patch",
+                json!({"path": "README.md", "content": "updated"}),
+                "patch.apply",
+            ),
+            ("workspace.verify", json!({}), "verification.run"),
+            ("daedalus.audit", json!({}), "daedalus.audit"),
+            (
+                "argus.review",
+                json!({"path": "src/lib.rs"}),
+                "argus.review",
+            ),
+            ("ariadne.debt", json!({}), "ariadne.debt"),
+            ("hephaestus.measure", json!({}), "hephaestus.measure"),
+        ] {
+            assert_eq!(
+                engine
+                    .prepare_invocation(tool, &arguments)
+                    .unwrap()
+                    .task()
+                    .requested_gene()
+                    .unwrap()
+                    .as_str(),
+                expected_gene
+            );
+        }
     }
 
     #[test]

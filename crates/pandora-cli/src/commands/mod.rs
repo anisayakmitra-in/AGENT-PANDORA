@@ -23,6 +23,7 @@ mod run;
 mod session;
 mod setup;
 mod skill;
+mod slash;
 mod tool;
 mod tui;
 mod uninstall;
@@ -56,6 +57,9 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         .first()
         .ok_or_else(|| CliError::usage(usage()))?
         .as_str();
+    if command.starts_with('/') {
+        return slash::execute_direct(command, &args[1..]);
+    }
     match command {
         "approval" => approval::execute(&args[1..]),
         "chat" if json_requested => Err(CliError::usage("chat does not support --json")),
@@ -67,6 +71,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "setup" => setup::execute(&args[1..]),
         "run" => run::execute(&args[1..]),
         "session" => session::execute(&args[1..]),
+        "slash" => slash::execute(&args[1..]),
         "skill" => skill::execute(&args[1..]),
         "provider" => provider::execute(&args[1..]),
         "strategies" => strategies(&args[1..]),
@@ -274,7 +279,7 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|chat|tui|harness|session|skill|package|approval|provider|tool|orchestration|strategies|efficiency|completions|migrate|update|uninstall|doctor> [options]
+    r#"usage: pandora <help|setup|run|chat|tui|harness|slash|session|skill|package|approval|provider|tool|orchestration|strategies|efficiency|completions|migrate|update|uninstall|doctor> [options]
 
 commands:
   help (or --help)
@@ -283,6 +288,7 @@ commands:
   chat [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>]
   tui [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>]
   harness list|inspect|run [--harness-version <version>]
+  slash list|resolve <command>
   session list|resume|inspect <id>
   skill list|inspect|install|enable|disable|suspend|remove|restore <id-or-path>
   package admit --manifest <path> --artifact <path> | list | inspect <id> <version> | remove <id> <version> [--dry-run|--yes]

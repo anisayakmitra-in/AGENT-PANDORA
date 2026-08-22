@@ -5,6 +5,7 @@ pub mod genes;
 pub mod harness;
 pub mod manifest;
 pub mod profile;
+pub mod slash;
 
 pub use catalog::HarnessCatalog;
 
@@ -94,7 +95,9 @@ mod catalog_tests {
     }
 }
 
-pub use genes::{CodingAction, CodingGene, CodingGeneRole, CodingRequest, PlanningContext};
+pub use genes::{
+    CodingAction, CodingGene, CodingGeneRole, CodingRequest, PlanningContext, coding_static_output,
+};
 pub use harness::{CodingHarness, CoordinationMetaHarness, CoreSourceHarness};
 pub use manifest::{
     CODING_HARNESS_ID, CODING_HARNESS_VERSION, COORDINATION_META_HARNESS_ID,
@@ -102,6 +105,10 @@ pub use manifest::{
 };
 pub use profile::{
     DeclarativeDomainHarness, DeclarativeMetaHarness, DomainProfileError, MetaProfileError,
+};
+pub use slash::{
+    SlashCommand, SlashCommandCatalog, SlashCommandError, SlashCommandKind, canonical_gene_command,
+    canonical_harness_command, canonical_profile_gene_command, canonical_profile_harness_command,
 };
 
 pub fn builtin_harnesses() -> Vec<Box<dyn pandora_types::Harness>> {
@@ -150,6 +157,108 @@ mod tests {
                 .allowed_domains()
                 .iter()
                 .any(|id| id.as_str() == "coding-domain")
+        );
+    }
+
+    #[test]
+    fn coding_domain_exposes_the_governed_analysis_workflows() {
+        let coding = builtin_harnesses()
+            .into_iter()
+            .find(|harness| harness.manifest().id().as_str() == "coding-domain")
+            .expect("the built-in catalog should include the Coding Domain Harness");
+        let genes = coding
+            .genes()
+            .iter()
+            .map(|gene| (gene.manifest().id().as_str(), gene.manifest().kind()))
+            .collect::<Vec<_>>();
+
+        for id in [
+            "daedalus.audit",
+            "argus.review",
+            "ariadne.debt",
+            "hephaestus.measure",
+            "athena.guide",
+        ] {
+            assert!(
+                genes.iter().any(|(gene_id, kind)| {
+                    *gene_id == id && *kind == pandora_types::GeneKind::Workflow
+                }),
+                "missing governed workflow Gene {id}"
+            );
+        }
+    }
+
+    #[test]
+    fn slash_catalog_covers_the_coding_harness_and_every_gene() {
+        let harnesses = HarnessCatalog::builtins();
+        let commands = SlashCommandCatalog::from_harnesses(harnesses.iter()).unwrap();
+
+        assert!(commands.resolve("/coding").is_some());
+        for command in [
+            "/read",
+            "/search",
+            "/patch",
+            "/verify",
+            "/review",
+            "/audit",
+            "/argus-review",
+            "/debt",
+            "/measure",
+            "/guide",
+        ] {
+            assert!(commands.resolve(command).is_some(), "missing {command}");
+        }
+        for gene in harnesses
+            .find(&pandora_types::HarnessId::new("coding-domain").unwrap())
+            .unwrap()
+            .genes()
+        {
+            let command = canonical_gene_command("coding-domain", gene.manifest().id().as_str());
+            assert!(commands.resolve(&command).is_some(), "missing {command}");
+        }
+    }
+
+    #[test]
+    fn custom_harness_commands_are_namespaced_and_cannot_claim_core_aliases() {
+        let artifact = b"custom domain";
+        let package = pandora_types::PackageManifest::new(
+            "owner/custom-domain",
+            "1.0.0",
+            pandora_types::PackageKind::DomainHarness,
+            "publisher",
+            pandora_types::hash_artifact(artifact),
+            vec![
+                pandora_types::PackageDependency::new("workspace.read", "0.1.0", false).unwrap(),
+                pandora_types::PackageDependency::new("unavailable.gene", "1.0.0", true).unwrap(),
+            ],
+            pandora_types::PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "Apache-2.0",
+            pandora_types::TrustEvidence::unsigned(),
+        )
+        .unwrap();
+        let mut commands =
+            SlashCommandCatalog::from_harnesses(HarnessCatalog::builtins().iter()).unwrap();
+
+        commands.add_profile(&package).unwrap();
+
+        assert!(
+            commands
+                .resolve("/harness:owner%2Fcustom-domain@1.0.0")
+                .is_some()
+        );
+        assert!(
+            commands
+                .resolve("/gene:owner%2Fcustom-domain@1.0.0:workspace.read")
+                .is_some()
+        );
+        assert!(
+            commands
+                .resolve("/gene:owner%2Fcustom-domain@1.0.0:unavailable.gene")
+                .is_none()
+        );
+        assert_eq!(
+            commands.resolve("/coding").unwrap().harness_id().as_str(),
+            "coding-domain"
         );
     }
 }

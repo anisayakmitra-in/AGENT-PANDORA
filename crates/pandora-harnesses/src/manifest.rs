@@ -26,6 +26,11 @@ pub fn coding_manifest() -> Result<HarnessManifest, ManifestError> {
         "patch.apply",
         "verification.run",
         "change.review",
+        "daedalus.audit",
+        "argus.review",
+        "ariadne.debt",
+        "hephaestus.measure",
+        "athena.guide",
     ]
     .into_iter()
     .map(|id| GeneId::new(id).expect("built-in Gene ID is valid"))

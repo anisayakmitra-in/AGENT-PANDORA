@@ -6,7 +6,7 @@ use crate::parliament::Parliament;
 use crate::reference_monitor::{AuthorizationError, ReferenceMonitor};
 use crate::shadow_council::{RoutingError, ShadowCouncil};
 use crate::{ApprovalError, ApprovalStore, ConsumedPermit, PermitError};
-use pandora_harnesses::{CodingRequest, HarnessCatalog, PlanningContext};
+use pandora_harnesses::{CodingRequest, HarnessCatalog, PlanningContext, coding_static_output};
 use pandora_provider::{ModelRequest, Provider, ProviderError};
 use pandora_types::{
     Capability, EffectReceipt, EffectTarget, EventContext, EventId, EventPayload, EventType,
@@ -297,12 +297,13 @@ impl ExecutionController {
             .ok_or(RuntimeError::UnknownGene)?;
         let (input, payload) = coding_input(&intent, &gene_id, &session, &execution_id)?;
         let requests = gene.plan(&input).map_err(RuntimeError::Planning)?;
+        let static_output = coding_static_output(&gene_id).map(|value| value.as_bytes().to_vec());
         let mut summary = RunSummary {
             execution_id: execution_id.clone(),
             selected_harness: harness.manifest().id().clone(),
             selected_gene: gene_id,
             status: RunStatus::Completed,
-            output: None,
+            output: static_output,
             receipts: Vec::new(),
             events: vec![self.event(
                 EventType::SessionStarted,
@@ -527,8 +528,19 @@ impl ExecutionController {
                         ));
                     }
                 };
-                let (receipt, result) = if permit.request().gene_id().as_str() == "workspace.search"
-                {
+                let gene_id = permit.request().gene_id().as_str();
+                let (receipt, result) = if gene_id == "daedalus.audit" {
+                    let target = self
+                        .workspace
+                        .path(path)
+                        .map_err(RuntimeError::Filesystem)?;
+                    let response = self.filesystem.inventory(permit, &target, now);
+                    let receipt = response.receipt().clone();
+                    let result = response
+                        .into_result()
+                        .map(|files| files.join("\n").into_bytes());
+                    (receipt, result)
+                } else if matches!(gene_id, "workspace.search" | "ariadne.debt") {
                     let target = self.workspace.path(".").map_err(RuntimeError::Filesystem)?;
                     let response = self.filesystem.search(permit, &target, path, now);
                     let receipt = response.receipt().clone();
@@ -561,9 +573,13 @@ impl ExecutionController {
                         request_digest: permit.request().request_digest().clone(),
                     },
                 ));
-                result
-                    .map(|bytes| output.output = Some(bytes))
-                    .map_err(RuntimeError::Filesystem)
+                let bytes = result.map_err(RuntimeError::Filesystem)?;
+                if gene_id == "ariadne.debt" {
+                    append_labeled_output(output, path, &bytes);
+                } else {
+                    output.output = Some(bytes);
+                }
+                Ok(())
             }
             Capability::ProcessExecute => {
                 let command = VerificationCommand::cargo_check_locked(self.workspace.clone());
@@ -711,6 +727,11 @@ fn default_gene_id(intent: &TaskIntent) -> GeneId {
         "patch" => GeneId::new("patch.apply").expect("built-in Gene ID is valid"),
         "verify" => GeneId::new("verification.run").expect("built-in Gene ID is valid"),
         "review" => GeneId::new("change.review").expect("built-in Gene ID is valid"),
+        "audit" => GeneId::new("daedalus.audit").expect("built-in Gene ID is valid"),
+        "deep-review" => GeneId::new("argus.review").expect("built-in Gene ID is valid"),
+        "debt" => GeneId::new("ariadne.debt").expect("built-in Gene ID is valid"),
+        "measure" => GeneId::new("hephaestus.measure").expect("built-in Gene ID is valid"),
+        "guide" => GeneId::new("athena.guide").expect("built-in Gene ID is valid"),
         _ => GeneId::new("unknown.gene").expect("built-in fallback Gene ID is valid"),
     }
 }
@@ -741,6 +762,19 @@ fn coding_input(
         "workspace.read" if action == "read" => CodingRequest::read(context, remainder),
         "workspace.search" if action == "search" => CodingRequest::search(context, remainder),
         "change.review" if action == "review" => CodingRequest::review(context, remainder),
+        "daedalus.audit" if action == "audit" && remainder.is_empty() => {
+            CodingRequest::audit(context)
+        }
+        "argus.review" if action == "deep-review" => {
+            CodingRequest::argus_review(context, remainder)
+        }
+        "ariadne.debt" if action == "debt" && remainder.is_empty() => CodingRequest::debt(context),
+        "hephaestus.measure" if action == "measure" && remainder.is_empty() => {
+            CodingRequest::measure(context)
+        }
+        "athena.guide" if action == "guide" && remainder.is_empty() => {
+            CodingRequest::guide(context)
+        }
         "patch.apply" if action == "patch" => {
             let (path, content) = remainder
                 .split_once(':')
@@ -760,6 +794,16 @@ fn coding_input(
     };
     let input = request.into_gene_input().map_err(RuntimeError::Planning)?;
     Ok((input, payload))
+}
+
+fn append_labeled_output(summary: &mut RunSummary, label: &str, bytes: &[u8]) {
+    let output = summary.output.get_or_insert_with(Vec::new);
+    if !output.is_empty() {
+        output.push(b'\n');
+    }
+    output.extend_from_slice(label.as_bytes());
+    output.extend_from_slice(b":\n");
+    output.extend_from_slice(bytes);
 }
 
 struct ApprovalExecution<'a> {
@@ -959,6 +1003,68 @@ mod tests {
                 })
             );
         }
+    }
+
+    #[test]
+    fn daedalus_audit_returns_a_bounded_workspace_inventory() {
+        let fixture = Fixture::new();
+        std::fs::create_dir(fixture.path.join("src")).unwrap();
+        std::fs::write(fixture.path.join("src/lib.rs"), b"pub fn example() {}\n").unwrap();
+        let controller = ExecutionController::new(fixture.root.clone());
+        let intent = TaskIntent::new("audit")
+            .unwrap()
+            .with_gene(GeneId::new("daedalus.audit").unwrap());
+
+        let summary = controller
+            .run_at(intent, fixture.session(), Timestamp::from_unix_seconds(10))
+            .unwrap();
+
+        assert_eq!(summary.status(), &RunStatus::Completed);
+        assert_eq!(summary.receipts().len(), 1);
+        assert_eq!(summary.output().unwrap(), b"README.md\nsrc/lib.rs");
+    }
+
+    #[test]
+    fn ariadne_debt_aggregates_only_evidence_backed_matches() {
+        let fixture = Fixture::new();
+        std::fs::create_dir(fixture.path.join("src")).unwrap();
+        std::fs::write(
+            fixture.path.join("src/lib.rs"),
+            b"// TODO: replace fixture\n",
+        )
+        .unwrap();
+        std::fs::write(fixture.path.join("src/clean.rs"), b"pub fn clean() {}\n").unwrap();
+        let controller = ExecutionController::new(fixture.root.clone());
+        let intent = TaskIntent::new("debt")
+            .unwrap()
+            .with_gene(GeneId::new("ariadne.debt").unwrap());
+
+        let summary = controller
+            .run_at(intent, fixture.session(), Timestamp::from_unix_seconds(10))
+            .unwrap();
+
+        assert_eq!(summary.status(), &RunStatus::Completed);
+        assert_eq!(summary.receipts().len(), 4);
+        let output = String::from_utf8(summary.output().unwrap().to_vec()).unwrap();
+        assert!(output.contains("TODO:\nsrc/lib.rs"));
+        assert!(!output.contains("src/clean.rs"));
+    }
+
+    #[test]
+    fn athena_guide_completes_without_requesting_an_effect() {
+        let fixture = Fixture::new();
+        let controller = ExecutionController::new(fixture.root.clone());
+        let intent = TaskIntent::new("guide")
+            .unwrap()
+            .with_gene(GeneId::new("athena.guide").unwrap());
+
+        let summary = controller
+            .run_at(intent, fixture.session(), Timestamp::from_unix_seconds(10))
+            .unwrap();
+
+        assert_eq!(summary.status(), &RunStatus::Completed);
+        assert!(summary.receipts().is_empty());
+        assert!(String::from_utf8_lossy(summary.output().unwrap()).contains("Daedalus"));
     }
 
     struct Fixture {

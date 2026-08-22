@@ -1717,6 +1717,21 @@ fn harness_discovery_exposes_the_coding_domain_without_runtime_internals() {
     assert_success(&output);
     let response = parse_json(&output);
     assert_eq!(response["harness"]["id"], "coding-domain");
+    let gene_ids = response["harness"]["genes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|gene| gene["id"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    for expected in [
+        "daedalus.audit",
+        "argus.review",
+        "ariadne.debt",
+        "hephaestus.measure",
+        "athena.guide",
+    ] {
+        assert!(gene_ids.contains(&expected));
+    }
 
     let output = fixture
         .command(&["harness", "run", "core-source", "--json"])
@@ -1793,6 +1808,59 @@ fn direct_run_rejects_unclassified_tasks_without_a_phantom_harness() {
     let response = parse_json(&output);
     assert_eq!(response["code"], "execution_failed");
     assert_eq!(response["message"], "no default harness is available");
+}
+
+#[test]
+fn slash_commands_cover_the_coding_domain_and_execute_workflow_genes() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    let output = fixture
+        .command(&["slash", "list", "--json"])
+        .output()
+        .expect("slash list should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    let commands = response["commands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|command| command["command"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    for expected in [
+        "/coding",
+        "/read",
+        "/search",
+        "/patch",
+        "/verify",
+        "/review",
+        "/audit",
+        "/argus-review",
+        "/debt",
+        "/measure",
+        "/guide",
+    ] {
+        assert!(commands.contains(&expected), "missing {expected}");
+    }
+
+    let output = fixture
+        .command(&["slash", "resolve", "/audit", "--json"])
+        .output()
+        .expect("slash resolve should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["target"]["harness_id"], "coding-domain");
+    assert_eq!(response["target"]["gene_id"], "daedalus.audit");
+
+    let output = fixture
+        .command(&["/guide", "--json"])
+        .output()
+        .expect("direct slash command should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["harness_id"], "coding-domain");
+    assert_eq!(response["gene_id"], "athena.guide");
+    assert!(response["output"].as_str().unwrap().contains("Daedalus"));
 }
 
 #[test]
@@ -2162,6 +2230,20 @@ fn admitted_domain_profile_runs_with_an_explicit_version() {
     assert_eq!(response["command"], "harness run");
     assert_eq!(response["status"], "completed");
     assert_eq!(response["harness_id"], "example/domain");
+
+    let output = fixture
+        .command(&[
+            "/gene:example%2Fdomain@1.0.0:workspace.read",
+            "README.md",
+            "--json",
+        ])
+        .output()
+        .expect("custom Domain Harness slash command should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["status"], "completed");
+    assert_eq!(response["harness_id"], "example/domain");
+    assert_eq!(response["gene_id"], "workspace.read");
 }
 
 #[test]

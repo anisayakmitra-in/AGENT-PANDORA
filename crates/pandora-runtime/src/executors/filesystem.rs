@@ -303,6 +303,29 @@ impl FilesystemExecutor {
         }
     }
 
+    pub fn inventory(
+        &self,
+        permit: &ConsumedPermit,
+        target: &WorkspacePath,
+        now: Timestamp,
+    ) -> FilesystemResult<Vec<String>> {
+        self.execute(
+            permit,
+            target,
+            Capability::FilesystemRead,
+            Operation::Read,
+            now,
+            || {
+                let mut files = collect_workspace_files(target)?
+                    .into_iter()
+                    .map(|(_, relative)| relative)
+                    .collect::<Vec<_>>();
+                files.sort();
+                Ok(files)
+            },
+        )
+    }
+
     pub fn write_patch(
         &self,
         permit: &ConsumedPermit,
@@ -466,6 +489,52 @@ fn checked_metadata(
         return Err(FilesystemError::SymlinkNotAllowed);
     }
     Ok(metadata)
+}
+
+fn collect_workspace_files(
+    target: &WorkspacePath,
+) -> Result<Vec<(PathBuf, String)>, FilesystemError> {
+    let metadata = checked_metadata(target, "inventory metadata")?;
+    if !metadata.is_dir() {
+        return Err(FilesystemError::NotDirectory);
+    }
+    let mut pending = vec![target.absolute().to_path_buf()];
+    let mut files = Vec::new();
+    let mut visited = 0;
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory).map_err(|_| FilesystemError::Io {
+            operation: "inventory directory",
+        })? {
+            visited += 1;
+            if visited > MAX_SEARCH_ENTRIES {
+                return Err(FilesystemError::TooManyEntries);
+            }
+            let entry = entry.map_err(|_| FilesystemError::Io {
+                operation: "inventory entry",
+            })?;
+            let file_type = entry.file_type().map_err(|_| FilesystemError::Io {
+                operation: "inventory entry type",
+            })?;
+            if file_type.is_symlink() {
+                return Err(FilesystemError::SymlinkNotAllowed);
+            }
+            if file_type.is_dir() {
+                pending.push(entry.path());
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+            let absolute = entry.path();
+            let relative = absolute
+                .strip_prefix(target.root.as_path())
+                .map_err(|_| FilesystemError::PathOutsideWorkspace)?
+                .to_string_lossy()
+                .replace('\\', "/");
+            files.push((absolute, relative));
+        }
+    }
+    Ok(files)
 }
 
 fn read_bounded(reader: &mut impl Read) -> Result<Vec<u8>, FilesystemError> {

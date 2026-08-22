@@ -95,6 +95,42 @@ exact-version governed run.
 Meta Harnesses coordinate existing Domain Harnesses. They do not augment a
 constitutional service, execute effects, install packages, or grant permits.
 
+## Coding Domain Harness
+
+The built-in `coding-domain` Harness owns ten Genes. Five are narrow execution
+primitives:
+
+- `workspace.read` reads one scoped file;
+- `workspace.search` searches bounded regular files;
+- `patch.apply` writes one scoped file after approval;
+- `verification.run` runs the fixed verifier after approval;
+- `change.review` reads one file for review.
+
+Five are bounded coding workflows:
+
+- `daedalus.audit` inventories the workspace without following symlinks;
+- `argus.review` reads one named file for focused review;
+- `ariadne.debt` searches only the four fixed debt markers defined by the runtime;
+- `hephaestus.measure` runs only `cargo check --locked`;
+- `athena.guide` returns static command guidance and requests no effect.
+
+Each effectful workflow creates the same typed operation requests as the narrow
+Genes. Parliament decides policy, the Reference Monitor issues a one-shot
+permit, and the executor records the result. A workflow cannot bypass that
+path.
+
+Every built-in Harness and Gene has a canonical slash command. The Coding short
+aliases are `/coding`, `/read`, `/search`, `/patch`, `/verify`, `/review`,
+`/audit`, `/argus-review`, `/debt`, `/measure`, and `/guide`. Canonical commands
+encode their identities, for example `/harness:coding-domain` and
+`/gene:coding-domain:daedalus.audit`.
+
+Admitted custom Domain and Meta profiles receive exact-version Harness commands.
+Custom Domain profiles receive Gene commands only for dependencies that resolve
+to available built-in Genes at the declared version. Their commands are
+namespaced, such as `/gene:owner%2Fdomain@1.0.0:workspace.read`, and cannot
+replace built-in aliases.
+
 ## Domain profiles
 
 `DomainAgent` is a runtime profile of a Domain Harness, not a fourth Harness

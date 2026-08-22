@@ -1,7 +1,7 @@
 use pandora_types::gene::{GeneError, GeneKind};
 use pandora_types::{
-    ArtifactId, Capability, EffectTarget, ExecutionId, Gene, GeneInput, GeneManifest, Operation,
-    OperationRequest, PrincipalId, ResourceScope, SessionId, WorkspaceId,
+    ArtifactId, Capability, EffectTarget, ExecutionId, Gene, GeneId, GeneInput, GeneManifest,
+    Operation, OperationRequest, PrincipalId, ResourceScope, SessionId, WorkspaceId,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path};
@@ -9,15 +9,22 @@ use std::path::{Component, Path};
 const MAX_PATH_BYTES: usize = 4_096;
 const MAX_PATCH_BYTES: usize = 1_048_576;
 const VERIFICATION_SPEC: &str = "cargo check --locked";
+const DEBT_MARKERS: [&str; 4] = ["TODO", "FIXME", "HACK", "XXX"];
+const CODING_GUIDE: &str = "Daedalus inventories the workspace for evidence-led audits.\nArgus reviews one scoped change.\nAriadne finds explicit debt markers.\nHephaestus measures the repository with the fixed verifier.\nAthena explains the governed coding workflow.\nAll filesystem and process effects require Pandora permits and receipts.";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CodingAction {
+    Audit,
     Read,
     Search,
     Patch,
     Verify,
     Review,
+    DeepReview,
+    Debt,
+    Measure,
+    Guide,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -62,6 +69,10 @@ pub struct CodingRequest {
 }
 
 impl CodingRequest {
+    pub fn audit(context: PlanningContext) -> Self {
+        Self::without_path(CodingAction::Audit, context)
+    }
+
     pub fn read(context: PlanningContext, path: impl Into<String>) -> Self {
         Self::for_path(CodingAction::Read, context, path)
     }
@@ -72,6 +83,28 @@ impl CodingRequest {
 
     pub fn review(context: PlanningContext, path: impl Into<String>) -> Self {
         Self::for_path(CodingAction::Review, context, path)
+    }
+
+    pub fn argus_review(context: PlanningContext, path: impl Into<String>) -> Self {
+        Self::for_path(CodingAction::DeepReview, context, path)
+    }
+
+    pub fn debt(context: PlanningContext) -> Self {
+        Self::without_path(CodingAction::Debt, context)
+    }
+
+    pub fn measure(context: PlanningContext) -> Self {
+        Self {
+            action: CodingAction::Measure,
+            context,
+            path: None,
+            content: None,
+            command: Some(VERIFICATION_SPEC.to_owned()),
+        }
+    }
+
+    pub fn guide(context: PlanningContext) -> Self {
+        Self::without_path(CodingAction::Guide, context)
     }
 
     pub fn patch(
@@ -124,6 +157,16 @@ impl CodingRequest {
             command: None,
         }
     }
+
+    fn without_path(action: CodingAction, context: PlanningContext) -> Self {
+        Self {
+            action,
+            context,
+            path: None,
+            content: None,
+            command: None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -133,6 +176,11 @@ pub enum CodingGeneRole {
     Patch,
     Verify,
     Review,
+    DaedalusAudit,
+    ArgusReview,
+    AriadneDebt,
+    HephaestusMeasure,
+    AthenaGuide,
 }
 
 impl CodingGeneRole {
@@ -143,6 +191,11 @@ impl CodingGeneRole {
             Self::Patch => CodingAction::Patch,
             Self::Verify => CodingAction::Verify,
             Self::Review => CodingAction::Review,
+            Self::DaedalusAudit => CodingAction::Audit,
+            Self::ArgusReview => CodingAction::DeepReview,
+            Self::AriadneDebt => CodingAction::Debt,
+            Self::HephaestusMeasure => CodingAction::Measure,
+            Self::AthenaGuide => CodingAction::Guide,
         }
     }
 
@@ -153,22 +206,50 @@ impl CodingGeneRole {
             Self::Patch => "patch.apply",
             Self::Verify => "verification.run",
             Self::Review => "change.review",
+            Self::DaedalusAudit => "daedalus.audit",
+            Self::ArgusReview => "argus.review",
+            Self::AriadneDebt => "ariadne.debt",
+            Self::HephaestusMeasure => "hephaestus.measure",
+            Self::AthenaGuide => "athena.guide",
         }
     }
 
-    const fn capability(self) -> Capability {
+    const fn capability(self) -> Option<Capability> {
         match self {
-            Self::Patch => Capability::FilesystemWrite,
-            Self::Verify => Capability::ProcessExecute,
-            Self::Read | Self::Search | Self::Review => Capability::FilesystemRead,
+            Self::Patch => Some(Capability::FilesystemWrite),
+            Self::Verify | Self::HephaestusMeasure => Some(Capability::ProcessExecute),
+            Self::Read
+            | Self::Search
+            | Self::Review
+            | Self::DaedalusAudit
+            | Self::ArgusReview
+            | Self::AriadneDebt => Some(Capability::FilesystemRead),
+            Self::AthenaGuide => None,
         }
     }
 
-    const fn operation(self) -> Operation {
+    const fn operation(self) -> Option<Operation> {
         match self {
-            Self::Patch => Operation::Write,
-            Self::Verify => Operation::Execute,
-            Self::Read | Self::Search | Self::Review => Operation::Read,
+            Self::Patch => Some(Operation::Write),
+            Self::Verify | Self::HephaestusMeasure => Some(Operation::Execute),
+            Self::Read
+            | Self::Search
+            | Self::Review
+            | Self::DaedalusAudit
+            | Self::ArgusReview
+            | Self::AriadneDebt => Some(Operation::Read),
+            Self::AthenaGuide => None,
+        }
+    }
+
+    const fn kind(self) -> GeneKind {
+        match self {
+            Self::DaedalusAudit
+            | Self::ArgusReview
+            | Self::AriadneDebt
+            | Self::HephaestusMeasure
+            | Self::AthenaGuide => GeneKind::Workflow,
+            _ => GeneKind::Tool,
         }
     }
 }
@@ -180,8 +261,12 @@ pub struct CodingGene {
 
 impl CodingGene {
     pub fn new(role: CodingGeneRole) -> Result<Self, GeneError> {
-        let manifest =
-            GeneManifest::new(role.id(), "0.1.0", GeneKind::Tool, vec![role.capability()])?;
+        let manifest = GeneManifest::new(
+            role.id(),
+            "0.1.0",
+            role.kind(),
+            role.capability().into_iter().collect(),
+        )?;
         Ok(Self { manifest, role })
     }
 
@@ -192,6 +277,11 @@ impl CodingGene {
             CodingGeneRole::Patch,
             CodingGeneRole::Verify,
             CodingGeneRole::Review,
+            CodingGeneRole::DaedalusAudit,
+            CodingGeneRole::ArgusReview,
+            CodingGeneRole::AriadneDebt,
+            CodingGeneRole::HephaestusMeasure,
+            CodingGeneRole::AthenaGuide,
         ]
         .into_iter()
         .map(|role| {
@@ -214,39 +304,81 @@ impl Gene for CodingGene {
                 "coding input action does not match Gene",
             ));
         }
-        let patch_content = request.content.as_deref();
-        let path = request.path.as_deref();
+        if self.role == CodingGeneRole::AthenaGuide {
+            return Ok(Vec::new());
+        }
+        if self.role == CodingGeneRole::AriadneDebt {
+            return DEBT_MARKERS
+                .into_iter()
+                .map(|marker| self.operation_request(&request, EffectTarget::path(marker)))
+                .collect();
+        }
         let target = match self.role {
-            CodingGeneRole::Verify => EffectTarget::process(VERIFICATION_SPEC),
-            CodingGeneRole::Read | CodingGeneRole::Search | CodingGeneRole::Review => {
-                EffectTarget::path(path.ok_or(GeneError::InvalidInput("path is required"))?)
+            CodingGeneRole::Verify | CodingGeneRole::HephaestusMeasure => {
+                EffectTarget::process(VERIFICATION_SPEC)
             }
-            CodingGeneRole::Patch => {
-                EffectTarget::path(path.ok_or(GeneError::InvalidInput("path is required"))?)
-            }
+            CodingGeneRole::DaedalusAudit => EffectTarget::path("."),
+            CodingGeneRole::Read
+            | CodingGeneRole::Search
+            | CodingGeneRole::Review
+            | CodingGeneRole::ArgusReview
+            | CodingGeneRole::Patch => EffectTarget::path(
+                request
+                    .path
+                    .as_deref()
+                    .ok_or(GeneError::InvalidInput("path is required"))?,
+            ),
+            CodingGeneRole::AriadneDebt | CodingGeneRole::AthenaGuide => unreachable!(),
         };
-        let request = OperationRequest::new(
+        let planned = self.operation_request(&request, target)?;
+        if self.role == CodingGeneRole::Patch {
+            let content = request
+                .content
+                .as_deref()
+                .ok_or(GeneError::InvalidInput("patch content is required"))?;
+            return Ok(vec![planned.with_payload_digest(content.as_bytes())?]);
+        }
+        Ok(vec![planned])
+    }
+}
+
+impl CodingGene {
+    fn operation_request(
+        &self,
+        request: &CodingRequest,
+        target: EffectTarget,
+    ) -> Result<OperationRequest, GeneError> {
+        Ok(OperationRequest::new(
             request.context.execution_id.clone(),
             request.context.session_id.clone(),
             request.context.principal_id.clone(),
             self.manifest.id().clone(),
             request.context.artifact_id.clone(),
-            self.role.capability(),
-            self.role.operation(),
+            self.role
+                .capability()
+                .ok_or(GeneError::InvalidInput("workflow has no effect capability"))?,
+            self.role
+                .operation()
+                .ok_or(GeneError::InvalidInput("workflow has no effect operation"))?,
             target,
             ResourceScope::workspace(request.context.workspace_id.as_str()),
-        )?;
-        if self.role == CodingGeneRole::Patch {
-            let content =
-                patch_content.ok_or(GeneError::InvalidInput("patch content is required"))?;
-            return Ok(vec![request.with_payload_digest(content.as_bytes())?]);
-        }
-        Ok(vec![request])
+        )?)
     }
+}
+
+pub fn coding_static_output(gene_id: &GeneId) -> Option<&'static str> {
+    (gene_id.as_str() == "athena.guide").then_some(CODING_GUIDE)
 }
 
 fn validate_request(request: &CodingRequest) -> Result<(), GeneError> {
     match request.action {
+        CodingAction::Audit | CodingAction::Debt | CodingAction::Guide => {
+            if request.path.is_some() || request.content.is_some() || request.command.is_some() {
+                return Err(GeneError::InvalidInput(
+                    "path, content, and command are not valid for this workflow",
+                ));
+            }
+        }
         CodingAction::Search => {
             validate_query(
                 request
@@ -260,7 +392,7 @@ fn validate_request(request: &CodingRequest) -> Result<(), GeneError> {
                 ));
             }
         }
-        CodingAction::Read | CodingAction::Review => {
+        CodingAction::Read | CodingAction::Review | CodingAction::DeepReview => {
             validate_path(
                 request
                     .path
@@ -290,7 +422,7 @@ fn validate_request(request: &CodingRequest) -> Result<(), GeneError> {
                 ));
             }
         }
-        CodingAction::Verify => {
+        CodingAction::Verify | CodingAction::Measure => {
             if request.command.as_deref() != Some(VERIFICATION_SPEC) {
                 return Err(GeneError::InvalidInput("unsupported verification command"));
             }
@@ -435,5 +567,67 @@ mod tests {
         let request = CodingRequest::verify(context()).with_command("sh -c unsafe");
 
         assert!(request.into_gene_input().is_err());
+    }
+
+    #[test]
+    fn daedalus_audit_requests_a_bounded_workspace_inventory() {
+        let gene = CodingGene::new(CodingGeneRole::DaedalusAudit).unwrap();
+        let requests = gene
+            .plan(&CodingRequest::audit(context()).into_gene_input().unwrap())
+            .unwrap();
+
+        assert_eq!(gene.manifest().kind(), GeneKind::Workflow);
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].capability(), Capability::FilesystemRead);
+        assert_eq!(requests[0].target(), &EffectTarget::path("."));
+    }
+
+    #[test]
+    fn ariadne_debt_uses_only_the_fixed_evidence_markers() {
+        let gene = CodingGene::new(CodingGeneRole::AriadneDebt).unwrap();
+        let requests = gene
+            .plan(&CodingRequest::debt(context()).into_gene_input().unwrap())
+            .unwrap();
+        let targets = requests
+            .iter()
+            .map(|request| match request.target() {
+                EffectTarget::Path { path } => path.as_str(),
+                _ => panic!("debt discovery must remain read-only"),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(targets, ["TODO", "FIXME", "HACK", "XXX"]);
+        assert!(
+            requests
+                .iter()
+                .all(|request| request.capability() == Capability::FilesystemRead)
+        );
+    }
+
+    #[test]
+    fn athena_guide_is_a_pure_workflow_with_bounded_static_output() {
+        let gene = CodingGene::new(CodingGeneRole::AthenaGuide).unwrap();
+        let requests = gene
+            .plan(&CodingRequest::guide(context()).into_gene_input().unwrap())
+            .unwrap();
+
+        assert!(requests.is_empty());
+        assert!(coding_static_output(gene.manifest().id()).is_some());
+        assert!(gene.manifest().capabilities().is_empty());
+    }
+
+    #[test]
+    fn hephaestus_measure_uses_only_the_fixed_verifier() {
+        let gene = CodingGene::new(CodingGeneRole::HephaestusMeasure).unwrap();
+        let requests = gene
+            .plan(&CodingRequest::measure(context()).into_gene_input().unwrap())
+            .unwrap();
+
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].capability(), Capability::ProcessExecute);
+        assert_eq!(
+            requests[0].target(),
+            &EffectTarget::process("cargo check --locked")
+        );
     }
 }

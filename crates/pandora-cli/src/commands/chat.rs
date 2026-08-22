@@ -1,5 +1,5 @@
 use super::{ParsedArgs, parse_options};
-use super::{approval, run};
+use super::{approval, run, slash};
 use crate::output::{CliError, CommandResult, success};
 use serde_json::{Value, json};
 use std::io::{self, BufRead, Write};
@@ -7,8 +7,13 @@ use std::io::{self, BufRead, Write};
 const MAX_DISPLAY_CHARS: usize = 64 * 1024;
 
 struct PendingTask {
-    task: String,
+    invocation: PendingInvocation,
     approval_id: String,
+}
+
+enum PendingInvocation {
+    Agent(String),
+    Slash(String),
 }
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
@@ -62,6 +67,14 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             value if value.starts_with("/approve ") || value.starts_with("/deny ") => {
                 println!("usage: /approve and /deny do not accept arguments");
             }
+            command if command.starts_with('/') => run_slash(
+                &parsed,
+                &mut session_id,
+                &mut pending,
+                command,
+                None,
+                &mut turns,
+            ),
             task => {
                 run_task(
                     &parsed,
@@ -117,7 +130,46 @@ fn run_task(
                     "approval> inspect with 'pandora approval inspect {approval_id}', then use /approve or /deny"
                 );
                 *pending = Some(PendingTask {
-                    task: task.to_owned(),
+                    invocation: PendingInvocation::Agent(task.to_owned()),
+                    approval_id,
+                });
+            }
+        }
+    }
+    *turns = turns.saturating_add(1);
+}
+
+fn run_slash(
+    parsed: &ParsedArgs,
+    session_id: &mut Option<String>,
+    pending: &mut Option<PendingTask>,
+    line: &str,
+    approval_id: Option<&str>,
+    turns: &mut u32,
+) {
+    if approval_id.is_none() && pending.is_some() {
+        println!("approval> resolve the pending approval first");
+        return;
+    }
+    match slash::execute_interactive(line, parsed, session_id.as_deref(), approval_id) {
+        Ok(result) => {
+            update_session(session_id, result.data.get("session_id"));
+            print_result(&result);
+        }
+        Err(error) => {
+            update_session(session_id, error.details.get("session_id"));
+            let approval_id = error
+                .details
+                .get("approval_id")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            print_error(&error);
+            if let Some(approval_id) = approval_id {
+                println!(
+                    "approval> inspect with 'pandora approval inspect {approval_id}', then use /approve or /deny"
+                );
+                *pending = Some(PendingTask {
+                    invocation: PendingInvocation::Slash(line.to_owned()),
                     approval_id,
                 });
             }
@@ -137,23 +189,40 @@ fn resolve_pending(
         println!("approval> no pending approval");
         return;
     };
-    match approval::execute(&approval_args(parsed, &pending_task.approval_id, allow)) {
+    let PendingTask {
+        invocation,
+        approval_id,
+    } = pending_task;
+    match approval::execute(&approval_args(parsed, &approval_id, allow)) {
         Ok(result) => {
             print_result(&result);
             if allow {
-                run_task(
-                    parsed,
-                    session_id,
-                    pending,
-                    &pending_task.task,
-                    Some(&pending_task.approval_id),
-                    turns,
-                );
+                match invocation {
+                    PendingInvocation::Agent(task) => run_task(
+                        parsed,
+                        session_id,
+                        pending,
+                        &task,
+                        Some(&approval_id),
+                        turns,
+                    ),
+                    PendingInvocation::Slash(line) => run_slash(
+                        parsed,
+                        session_id,
+                        pending,
+                        &line,
+                        Some(&approval_id),
+                        turns,
+                    ),
+                }
             }
         }
         Err(error) => {
             print_error(&error);
-            *pending = Some(pending_task);
+            *pending = Some(PendingTask {
+                invocation,
+                approval_id,
+            });
         }
     }
 }
@@ -223,6 +292,9 @@ fn print_help() {
     println!("/deny       deny the pending task");
     println!("/exit       close the chat");
     println!("/quit       close the chat");
+    println!("/coding     inspect the Coding Domain Harness");
+    println!("/read, /search, /patch, /verify, /review run its core Genes");
+    println!("/audit, /argus-review, /debt, /measure, /guide run its workflow Genes");
     println!("Any other line is sent as a bounded agent task.");
 }
 

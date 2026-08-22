@@ -1,4 +1,4 @@
-use super::{ParsedArgs, parse_options};
+use super::{ParsedArgs, parse_options, slash};
 use crate::output::{CliError, CommandResult, success};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::execute;
@@ -118,8 +118,13 @@ struct App {
 }
 
 struct PendingTask {
-    task: String,
+    invocation: PendingInvocation,
     approval_id: String,
+}
+
+enum PendingInvocation {
+    Agent(String),
+    Slash(String),
 }
 
 impl App {
@@ -236,6 +241,9 @@ impl App {
                     "/clear      clear the transcript",
                     "/approve    approve and resume the pending task",
                     "/deny       deny the pending task",
+                    "/coding     inspect the Coding Domain Harness",
+                    "/read, /search, /patch, /verify, /review run core Coding Genes",
+                    "/audit, /argus-review, /debt, /measure, /guide run workflow Genes",
                     "/exit       close the TUI",
                 ] {
                     self.push_message(message);
@@ -253,6 +261,7 @@ impl App {
             value if value.starts_with("/approve ") || value.starts_with("/deny ") => {
                 self.push_message("usage> /approve and /deny do not accept arguments");
             }
+            value if value.starts_with('/') => self.run_slash(value.to_owned(), None),
             _ => self.run_task(task),
         }
         if !line.trim().is_empty()
@@ -298,7 +307,41 @@ impl App {
                 {
                     self.messages[message_index].push_str(&format!(" (approval: {approval_id})"));
                     self.pending = Some(PendingTask {
-                        task,
+                        invocation: PendingInvocation::Agent(task),
+                        approval_id: approval_id.to_owned(),
+                    });
+                }
+            }
+        }
+        self.turns = self.turns.saturating_add(1);
+    }
+
+    fn run_slash(&mut self, line: String, approval_id: Option<&str>) {
+        if approval_id.is_none() && self.pending.is_some() {
+            self.push_message("approval> resolve the pending approval first");
+            return;
+        }
+        self.push_message(format!("you> {line}"));
+        let message_index = self.push_message("pandora> working...");
+        match slash::execute_interactive(&line, &self.args, self.session_id.as_deref(), approval_id)
+        {
+            Ok(result) => {
+                update_session(&mut self.session_id, result.data.get("session_id"));
+                let output = result
+                    .data
+                    .get("output")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&result.human);
+                self.messages[message_index] = format!("pandora> {}", clean_text(output));
+            }
+            Err(error) => {
+                update_session(&mut self.session_id, error.details.get("session_id"));
+                self.messages[message_index] = format!("error> {}", clean_text(&error.message));
+                if let Some(approval_id) = error.details.get("approval_id").and_then(Value::as_str)
+                {
+                    self.messages[message_index].push_str(&format!(" (approval: {approval_id})"));
+                    self.pending = Some(PendingTask {
+                        invocation: PendingInvocation::Slash(line),
                         approval_id: approval_id.to_owned(),
                     });
                 }
@@ -312,17 +355,31 @@ impl App {
             self.push_message("approval> no pending approval");
             return;
         };
-        let approval_args = self.approval_args(&pending.approval_id, allow);
+        let PendingTask {
+            invocation,
+            approval_id,
+        } = pending;
+        let approval_args = self.approval_args(&approval_id, allow);
         match super::approval::execute(&approval_args) {
             Ok(result) => {
                 self.push_message(format!("approval> {}", result.human));
                 if allow {
-                    self.run_task_with_approval(pending.task, Some(&pending.approval_id));
+                    match invocation {
+                        PendingInvocation::Agent(task) => {
+                            self.run_task_with_approval(task, Some(&approval_id));
+                        }
+                        PendingInvocation::Slash(line) => {
+                            self.run_slash(line, Some(&approval_id));
+                        }
+                    }
                 }
             }
             Err(error) => {
                 self.push_message(format!("error> {}", error.message));
-                self.pending = Some(pending);
+                self.pending = Some(PendingTask {
+                    invocation,
+                    approval_id,
+                });
             }
         }
     }
@@ -587,6 +644,16 @@ mod tests {
                 .iter()
                 .any(|message| message == "/deny       deny the pending task")
         );
+    }
+
+    #[test]
+    fn help_lists_every_coding_workflow_alias() {
+        let mut app = app();
+        app.input = "/help".chars().collect();
+        app.submit();
+        assert!(app.messages.iter().any(|message| {
+            message == "/audit, /argus-review, /debt, /measure, /guide run workflow Genes"
+        }));
     }
 
     #[test]

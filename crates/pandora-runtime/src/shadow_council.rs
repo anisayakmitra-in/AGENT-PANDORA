@@ -51,8 +51,21 @@ impl ShadowCouncil {
 
         let summary = task.summary().to_ascii_lowercase();
         let is_coding_task = [
-            "code", "rust", "bug", "test", "compiler", "read:", "search:", "patch:", "verify",
+            "code",
+            "rust",
+            "bug",
+            "test",
+            "compiler",
+            "read:",
+            "search:",
+            "patch:",
+            "verify",
             "review:",
+            "audit",
+            "deep-review:",
+            "debt",
+            "measure",
+            "guide",
         ]
         .iter()
         .any(|term| summary.contains(term));
