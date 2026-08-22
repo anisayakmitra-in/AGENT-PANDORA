@@ -17,6 +17,7 @@ pub mod memory;
 pub mod observability;
 pub mod orchestration;
 pub mod package;
+pub mod service;
 pub mod session;
 pub mod skill;
 
@@ -71,6 +72,12 @@ pub use package::{
     PACKAGE_LOCK_FORMAT_VERSION, PackageCompatibility, PackageDependency, PackageKind, PackageLock,
     PackageLockError, PackageManifest, PackageManifestError, TrustEvidence, TrustLevel,
     hash_artifact,
+};
+pub use service::{
+    LOCAL_SERVICE_PROTOCOL_VERSION, MAX_SERVICE_EVENT_PAGE, MAX_SERVICE_SESSION_PAGE,
+    ServiceContractError, ServiceEventPage, ServiceEventPageRequest, ServiceHealth, ServiceRequest,
+    ServiceResponse, ServiceRunRequest, ServiceRunResult, ServiceSessionDetail,
+    ServiceSessionSummary,
 };
 pub use session::{Session, TaskIntent};
 pub use skill::{SkillId, SkillManifest, SkillManifestError};
