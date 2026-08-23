@@ -9,6 +9,7 @@ pub mod efficiency;
 pub mod evaluation;
 pub mod events;
 pub mod evolution;
+pub mod execution_profile;
 pub mod gene;
 pub mod governance;
 pub mod harness;
@@ -56,6 +57,10 @@ pub use evolution::{
     ArtifactSignature, CanaryResult, EvolutionContractError, EvolutionMode, EvolutionPolicy,
     EvolutionSource, EvolutionState, HoldoutEvaluation, MutationProposal, ParliamentApproval,
     ReflexionArtifact, ReplacementReceipt, RollbackReceipt,
+};
+pub use execution_profile::{
+    EXECUTION_PROFILE_VERSION, ExecutionProfile, ExecutionProfileBinding,
+    ExecutionProfileBindingKind, ExecutionProfileContractError, ExecutionProfileDigest,
 };
 pub use gene::{Gene, GeneError, GeneInput, GeneKind, GeneManifest};
 pub use governance::{ParliamentDecision, PolicyContext};

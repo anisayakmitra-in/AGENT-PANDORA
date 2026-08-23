@@ -186,6 +186,7 @@ mod tests {
             ExecutionId::new("execution-1").unwrap(),
             SessionId::new("session-1").unwrap(),
             PrincipalId::new("principal-1").unwrap(),
+            crate::test_support::execution_profile("provider"),
             GeneId::new("provider.invoke").unwrap(),
             None,
             Capability::ProviderInvoke,

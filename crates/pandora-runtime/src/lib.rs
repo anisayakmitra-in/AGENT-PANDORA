@@ -13,6 +13,7 @@ pub mod efficiency_store;
 pub mod evaluation_engine;
 pub mod evolution;
 pub mod execution_controller;
+mod execution_profile;
 pub mod executors;
 pub mod harness_registry;
 pub mod hooks;
@@ -68,6 +69,7 @@ pub use evolution::{EvolutionEngine, EvolutionError};
 pub use execution_controller::{
     ExecutionController, RunStatus, RunSummary, RuntimeError, WorktreeExecutionContext,
 };
+pub use execution_profile::ExecutionProfileAssemblyError;
 pub use executors::{
     GitWorktreeExecutor, WorktreeChange, WorktreeCommand, WorktreeError, WorktreeResult,
 };

@@ -16,6 +16,14 @@ Irreversible actions remain pending until explicitly approved. Each review expos
 
 Telemetry has no raw prompt or output field. Debug exports must be redacted before they enter the projection. Runtime events remain the authoritative event stream; observability is a derived view and cannot authorize execution, approve memory promotion, or change policy.
 
+## Execution profiles
+
+Pandora assembles a versioned `ExecutionProfile` before an effect request reaches Parliament. The profile records the Pandora version, operating system, architecture, policy version, a digest of the canonical workspace root, the shipped containment snapshot digest, and sorted bindings for the selected executor and runtime components. Coding runs bind their Harness and Gene; MCP runs bind the server configuration or immutable catalog revision; provider calls bind the provider and model.
+
+The raw workspace path, credentials, prompts, context, model output, Tool output, environment values, and hidden reasoning are not stored in the profile. Deserialization recomputes the profile digest and rejects modified evidence.
+
+Operation-request protocol v2 includes the profile digest in its canonical request digest. The existing one-shot permit and effect receipt already bind that request digest, so substituting a profile invalidates the permit. Profiles remain evidence only: they cannot approve an operation, mint a permit, or weaken executor checks.
+
 ## Rollout evidence
 
 `RolloutReducer` creates a deterministic, versioned projection from one context-manifest digest, ordered runtime events, and linked effect receipts. The projection binds tenant, workspace, session, and execution scope; chains each record to the previous digest; and can be replay-verified without creating another event store.

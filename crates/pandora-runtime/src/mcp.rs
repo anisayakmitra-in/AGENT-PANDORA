@@ -1616,6 +1616,7 @@ mod tests {
             ExecutionId::new("execution-1").unwrap(),
             SessionId::new("session-1").unwrap(),
             PrincipalId::new("principal-1").unwrap(),
+            crate::test_support::execution_profile("mcp_stdio"),
             GeneId::new("mcp.local.spawn").unwrap(),
             None,
             Capability::ProcessExecute,
@@ -1850,6 +1851,7 @@ mod tests {
             ExecutionId::new("execution-catalog-1").unwrap(),
             fixture.session().id().clone(),
             fixture.session().principal_id().clone(),
+            crate::test_support::execution_profile("mcp_stdio"),
             None,
         );
         let plan = engine
@@ -1894,6 +1896,7 @@ mod tests {
             ExecutionId::new("execution-stale-1").unwrap(),
             fixture.session().id().clone(),
             fixture.session().principal_id().clone(),
+            crate::test_support::execution_profile("mcp_stdio"),
             None,
         );
         let plan = engine

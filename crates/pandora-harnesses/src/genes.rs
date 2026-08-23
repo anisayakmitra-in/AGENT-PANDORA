@@ -1,7 +1,7 @@
 use pandora_types::gene::{GeneError, GeneKind};
 use pandora_types::{
-    ArtifactId, Capability, EffectTarget, ExecutionId, Gene, GeneId, GeneInput, GeneManifest,
-    Operation, OperationRequest, PrincipalId, ResourceScope, SessionId, WorkspaceId,
+    ArtifactId, Capability, EffectTarget, ExecutionId, ExecutionProfile, Gene, GeneId, GeneInput,
+    GeneManifest, Operation, OperationRequest, PrincipalId, ResourceScope, SessionId, WorkspaceId,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path};
@@ -33,6 +33,7 @@ pub struct PlanningContext {
     session_id: SessionId,
     principal_id: PrincipalId,
     workspace_id: WorkspaceId,
+    execution_profile: ExecutionProfile,
     artifact_id: Option<ArtifactId>,
 }
 
@@ -42,12 +43,14 @@ impl PlanningContext {
         session_id: SessionId,
         principal_id: PrincipalId,
         workspace_id: WorkspaceId,
+        execution_profile: ExecutionProfile,
     ) -> Self {
         Self {
             execution_id,
             session_id,
             principal_id,
             workspace_id,
+            execution_profile,
             artifact_id: None,
         }
     }
@@ -352,6 +355,7 @@ impl CodingGene {
             request.context.execution_id.clone(),
             request.context.session_id.clone(),
             request.context.principal_id.clone(),
+            request.context.execution_profile.clone(),
             self.manifest.id().clone(),
             request.context.artifact_id.clone(),
             self.role
@@ -469,8 +473,31 @@ fn validate_path(path: &str) -> Result<(), GeneError> {
 mod tests {
     use super::*;
     use pandora_types::{
-        EffectTarget, ExecutionId, Gene, Operation, PrincipalId, SessionId, WorkspaceId,
+        EffectTarget, ExecutionId, ExecutionProfile, ExecutionProfileBinding,
+        ExecutionProfileBindingKind, Gene, Operation, PrincipalId, SessionId, WorkspaceId,
+        hash_artifact,
     };
+
+    fn execution_profile() -> ExecutionProfile {
+        ExecutionProfile::new(
+            "2.0.0-alpha.6",
+            "windows",
+            "x86_64",
+            1,
+            "workspace-1",
+            hash_artifact(b"containment"),
+            vec![
+                ExecutionProfileBinding::new(
+                    ExecutionProfileBindingKind::Executor,
+                    "filesystem",
+                    Some("2.0.0-alpha.6"),
+                    hash_artifact(b"filesystem"),
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap()
+    }
 
     fn context() -> PlanningContext {
         PlanningContext::new(
@@ -478,6 +505,7 @@ mod tests {
             SessionId::new("session-1").unwrap(),
             PrincipalId::new("principal-1").unwrap(),
             WorkspaceId::new("workspace-1").unwrap(),
+            execution_profile(),
         )
     }
 

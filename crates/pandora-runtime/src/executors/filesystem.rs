@@ -767,6 +767,7 @@ mod tests {
                 ExecutionId::new("execution-1").unwrap(),
                 SessionId::new("session-1").unwrap(),
                 PrincipalId::new("principal-1").unwrap(),
+                crate::test_support::execution_profile("filesystem"),
                 GeneId::new("filesystem").unwrap(),
                 None,
                 capability,

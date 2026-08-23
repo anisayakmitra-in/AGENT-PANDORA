@@ -5,7 +5,32 @@ use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use pandora_types::{
+    ExecutionProfile, ExecutionProfileBinding, ExecutionProfileBindingKind, hash_artifact,
+};
+
 static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(1);
+
+pub(crate) fn execution_profile(executor: &str) -> ExecutionProfile {
+    ExecutionProfile::new(
+        "2.0.0-alpha.6",
+        "windows",
+        "x86_64",
+        1,
+        "workspace-1",
+        hash_artifact(b"containment"),
+        vec![
+            ExecutionProfileBinding::new(
+                ExecutionProfileBindingKind::Executor,
+                executor,
+                Some("2.0.0-alpha.6"),
+                hash_artifact(executor.as_bytes()),
+            )
+            .unwrap(),
+        ],
+    )
+    .unwrap()
+}
 
 pub(crate) fn new_temp_dir(prefix: &str) -> io::Result<PathBuf> {
     for _ in 0..100 {

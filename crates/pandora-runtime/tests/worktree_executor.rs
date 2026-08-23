@@ -3,8 +3,9 @@ use pandora_runtime::{
     WorktreeError,
 };
 use pandora_types::{
-    Capability, EffectOutcome, EffectTarget, ExecutionId, GeneId, Operation, OperationRequest,
-    PolicyContext, PrincipalId, ResourceScope, SessionId, Timestamp,
+    Capability, EffectOutcome, EffectTarget, ExecutionId, ExecutionProfile,
+    ExecutionProfileBinding, ExecutionProfileBindingKind, GeneId, Operation, OperationRequest,
+    PolicyContext, PrincipalId, ResourceScope, SessionId, Timestamp, hash_artifact,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -319,6 +320,24 @@ fn consumed_permit(
         ExecutionId::new("execution-worktree-1").unwrap(),
         SessionId::new("session-worktree-1").unwrap(),
         PrincipalId::new("principal-worktree-1").unwrap(),
+        ExecutionProfile::new(
+            "2.0.0-alpha.6",
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            1,
+            &managed_root.to_string_lossy(),
+            hash_artifact(b"containment"),
+            vec![
+                ExecutionProfileBinding::new(
+                    ExecutionProfileBindingKind::Executor,
+                    "git_worktree",
+                    Some("2.0.0-alpha.6"),
+                    hash_artifact(b"git_worktree"),
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap(),
         GeneId::new(gene_id).unwrap(),
         None,
         Capability::ProcessExecute,

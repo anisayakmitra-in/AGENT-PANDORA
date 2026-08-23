@@ -1,4 +1,5 @@
 use crate::capability::{Capability, Operation};
+use crate::execution_profile::ExecutionProfile;
 use crate::ids::{
     ArtifactId, ExecutionId, GeneId, PermitId, PrincipalId, ReceiptId, RequestDigest, SessionId,
 };
@@ -6,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
 
-const REQUEST_PROTOCOL_VERSION: u16 = 1;
+const REQUEST_PROTOCOL_VERSION: u16 = 2;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RequestError {
@@ -146,6 +147,7 @@ pub struct OperationRequest {
     execution_id: ExecutionId,
     session_id: SessionId,
     principal_id: PrincipalId,
+    execution_profile: ExecutionProfile,
     gene_id: GeneId,
     artifact_id: Option<ArtifactId>,
     capability: Capability,
@@ -162,6 +164,7 @@ impl OperationRequest {
         execution_id: ExecutionId,
         session_id: SessionId,
         principal_id: PrincipalId,
+        execution_profile: ExecutionProfile,
         gene_id: GeneId,
         artifact_id: Option<ArtifactId>,
         capability: Capability,
@@ -177,6 +180,7 @@ impl OperationRequest {
             execution_id,
             session_id,
             principal_id,
+            execution_profile,
             gene_id,
             artifact_id,
             capability,
@@ -200,6 +204,10 @@ impl OperationRequest {
 
     pub fn principal_id(&self) -> &PrincipalId {
         &self.principal_id
+    }
+
+    pub fn execution_profile(&self) -> &ExecutionProfile {
+        &self.execution_profile
     }
 
     pub fn gene_id(&self) -> &GeneId {
@@ -252,7 +260,7 @@ impl OperationRequest {
         hasher.update(self.canonical_json().as_bytes());
         let digest = hasher.finalize();
         let value = format!(
-            "pandora-request-v1:sha256:{}",
+            "pandora-request-v2:sha256:{}",
             digest
                 .iter()
                 .map(|byte| format!("{byte:02x}"))
@@ -267,6 +275,7 @@ impl OperationRequest {
             execution_id: self.execution_id.as_str(),
             session_id: self.session_id.as_str(),
             principal_id: self.principal_id.as_str(),
+            execution_profile_digest: self.execution_profile.digest().as_str(),
             gene_id: self.gene_id.as_str(),
             artifact_id: self.artifact_id.as_ref().map(|id| id.as_str()),
             capability: self.capability.as_str(),
@@ -424,6 +433,7 @@ struct CanonicalOperationRequest<'a> {
     execution_id: &'a str,
     session_id: &'a str,
     principal_id: &'a str,
+    execution_profile_digest: &'a str,
     gene_id: &'a str,
     artifact_id: Option<&'a str>,
     capability: &'static str,
@@ -579,12 +589,39 @@ fn digest_bytes(prefix: &'static str, bytes: &[u8]) -> Result<RequestDigest, Req
 mod tests {
     use super::*;
     use crate::ids::{ArtifactId, ExecutionId, GeneId, PrincipalId, SessionId};
+    use crate::{ExecutionProfile, ExecutionProfileBinding, ExecutionProfileBindingKind};
+
+    fn profile(executor: &str) -> ExecutionProfile {
+        ExecutionProfile::new(
+            "2.0.0-alpha.6",
+            "windows",
+            "x86_64",
+            1,
+            r"C:\work\pandora",
+            format!("sha256:{}", "2".repeat(64)),
+            vec![
+                ExecutionProfileBinding::new(
+                    ExecutionProfileBindingKind::Executor,
+                    executor,
+                    Some("2.0.0-alpha.6"),
+                    format!("sha256:{}", "1".repeat(64)),
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap()
+    }
 
     fn request(path: &str) -> OperationRequest {
+        request_with_profile(path, profile("filesystem"))
+    }
+
+    fn request_with_profile(path: &str, profile: ExecutionProfile) -> OperationRequest {
         OperationRequest::new(
             ExecutionId::new("execution-1").unwrap(),
             SessionId::new("session-1").unwrap(),
             PrincipalId::new("principal-1").unwrap(),
+            profile,
             GeneId::new("workspace.read").unwrap(),
             Some(ArtifactId::new("artifact-1").unwrap()),
             Capability::FilesystemRead,
@@ -612,6 +649,18 @@ mod tests {
     }
 
     #[test]
+    fn changing_only_the_execution_profile_changes_the_request_digest() {
+        let filesystem = request_with_profile("src/lib.rs", profile("filesystem"));
+        let process = request_with_profile("src/lib.rs", profile("process"));
+
+        assert_ne!(filesystem.request_digest(), process.request_digest());
+        assert_eq!(
+            filesystem.execution_profile().digest(),
+            profile("filesystem").digest()
+        );
+    }
+
+    #[test]
     fn payload_digest_binds_the_exact_write_content() {
         let payload_request = request("src/lib.rs")
             .with_payload_digest(b"first patch")
@@ -631,6 +680,7 @@ mod tests {
             ExecutionId::new("execution-1").unwrap(),
             SessionId::new("session-1").unwrap(),
             PrincipalId::new("principal-1").unwrap(),
+            profile("provider"),
             GeneId::new("provider.invoke").unwrap(),
             None,
             Capability::ProviderInvoke,

@@ -1,6 +1,6 @@
 use pandora_types::{
-    ArtifactId, Capability, EffectTarget, ExecutionId, GeneId, HarnessId, Operation,
-    OperationRequest, PrincipalId, RequestError, ResourceScope, SessionId, TaskIntent,
+    ArtifactId, Capability, EffectTarget, ExecutionId, ExecutionProfile, GeneId, HarnessId,
+    Operation, OperationRequest, PrincipalId, RequestError, ResourceScope, SessionId, TaskIntent,
 };
 use serde_json::Value;
 use serde_json::json;
@@ -108,6 +108,7 @@ pub struct ToolContext {
     execution_id: ExecutionId,
     session_id: SessionId,
     principal_id: PrincipalId,
+    execution_profile: ExecutionProfile,
     artifact_id: Option<ArtifactId>,
 }
 
@@ -116,12 +117,14 @@ impl ToolContext {
         execution_id: ExecutionId,
         session_id: SessionId,
         principal_id: PrincipalId,
+        execution_profile: ExecutionProfile,
         artifact_id: Option<ArtifactId>,
     ) -> Self {
         Self {
             execution_id,
             session_id,
             principal_id,
+            execution_profile,
             artifact_id,
         }
     }
@@ -136,6 +139,10 @@ impl ToolContext {
 
     pub fn principal_id(&self) -> &PrincipalId {
         &self.principal_id
+    }
+
+    pub fn execution_profile(&self) -> &ExecutionProfile {
+        &self.execution_profile
     }
 
     pub fn artifact_id(&self) -> Option<&ArtifactId> {
@@ -492,6 +499,7 @@ impl ToolEngine {
             context.execution_id().clone(),
             context.session_id().clone(),
             context.principal_id().clone(),
+            context.execution_profile().clone(),
             definition.id().clone(),
             context.artifact_id().cloned(),
             definition.capability(),
@@ -711,6 +719,7 @@ fn bounded_text(value: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pandora_types::{ExecutionProfileBinding, ExecutionProfileBindingKind, hash_artifact};
     use serde_json::json;
 
     fn definition() -> ToolDefinition {
@@ -751,6 +760,24 @@ mod tests {
             ExecutionId::new("execution-1").unwrap(),
             SessionId::new("session-1").unwrap(),
             PrincipalId::new("principal-1").unwrap(),
+            ExecutionProfile::new(
+                "2.0.0-alpha.6",
+                "windows",
+                "x86_64",
+                1,
+                "workspace-1",
+                hash_artifact(b"containment"),
+                vec![
+                    ExecutionProfileBinding::new(
+                        ExecutionProfileBindingKind::Executor,
+                        "filesystem",
+                        Some("2.0.0-alpha.6"),
+                        hash_artifact(b"filesystem"),
+                    )
+                    .unwrap(),
+                ],
+            )
+            .unwrap(),
             Some(ArtifactId::new("artifact-1").unwrap()),
         )
     }

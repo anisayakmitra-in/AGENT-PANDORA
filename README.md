@@ -8,6 +8,8 @@ Parliament → Shadow Council → Harness → Gene → governed execution
 
 The `ReferenceMonitor` is the sole authority that can issue effect permits. Genes request work; effect executors perform it only with a valid, scoped, one-shot permit.
 
+Every effect request carries an immutable `ExecutionProfile` assembled before Parliament evaluates it. The profile binds the runtime, platform, policy version, workspace identity digest, containment snapshot, executor, and selected components. Its digest is part of the versioned operation-request digest, so a permit or receipt cannot be reused after the execution environment changes. The profile is evidence only; it cannot grant authority.
+
 Lifecycle hooks are ordered declarative veto rules evaluated before effect
 authorization. They may reduce authority, but cannot mutate requests, execute
 code, resolve approvals, or issue permits. Runtime events remain the

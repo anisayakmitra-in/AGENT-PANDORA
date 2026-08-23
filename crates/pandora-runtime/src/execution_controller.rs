@@ -1,3 +1,4 @@
+use crate::execution_profile::{ExecutionProfileAssemblyError, assemble_execution_profile};
 use crate::executors::{
     FilesystemError, FilesystemExecutor, GitWorktreeExecutor, ProcessError, ProcessExecutor,
     ProviderExecutor, ProviderResult, VerificationCommand, VerificationOptions, WorkspaceRoot,
@@ -8,18 +9,22 @@ use crate::mcp::{
     McpError, McpExecutor, McpFailure, McpInvocation, McpProtocolMode, McpServer, McpStart,
     McpStartOutcome, McpStdioConfig, McpWireEra, SpawnPurpose, map_catalog_error, map_tool_error,
 };
-use crate::mcp_catalog::McpCatalogSupervisor;
+use crate::mcp_catalog::{McpCatalogRevision, McpCatalogSupervisor, McpCatalogTool};
 use crate::parliament::Parliament;
 use crate::reference_monitor::{AuthorizationError, ReferenceMonitor};
 use crate::shadow_council::{RoutingError, ShadowCouncil};
 use crate::{ApprovalError, ApprovalStore, ConsumedPermit, PermitError, ToolContext, ToolEngine};
-use pandora_harnesses::{CodingRequest, HarnessCatalog, PlanningContext, coding_static_output};
-use pandora_provider::{ModelRequest, Provider, ProviderError};
+use pandora_harnesses::{
+    CodingRequest, HarnessCatalog, PlanningContext, canonical_harness_binding_digest,
+    coding_static_output,
+};
+use pandora_provider::{ModelRequest, Provider, ProviderError, ProviderManifest};
 use pandora_types::{
     Capability, EffectReceipt, EffectTarget, EventContext, EventId, EventPayload, EventType,
-    ExecutionId, GeneError, GeneId, GeneInput, Harness, HarnessId, HarnessKind, Operation,
-    OperationRequest, ParliamentDecision, PolicyContext, PrincipalId, RequestError, ResourceScope,
-    RuntimeEvent, SecretReference, Session, SessionId, TaskIntent, Timestamp,
+    ExecutionId, ExecutionProfile, ExecutionProfileBinding, ExecutionProfileBindingKind, GeneError,
+    GeneId, GeneInput, GeneManifest, Harness, HarnessId, HarnessKind, Operation, OperationRequest,
+    ParliamentDecision, PolicyContext, PrincipalId, RequestError, ResourceScope, RuntimeEvent,
+    SecretReference, Session, SessionId, TaskIntent, Timestamp, hash_artifact,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -42,6 +47,7 @@ pub enum RuntimeError {
     Request(RequestError),
     Filesystem(FilesystemError),
     Process(ProcessError),
+    ExecutionProfile(ExecutionProfileAssemblyError),
     UnsupportedOperation(Capability),
 }
 
@@ -190,6 +196,20 @@ impl ExecutionController {
         self.policy.policy_version()
     }
 
+    fn execution_profile(
+        &self,
+        executor_id: &str,
+        bindings: Vec<ExecutionProfileBinding>,
+    ) -> Result<ExecutionProfile, RuntimeError> {
+        assemble_execution_profile(
+            &self.workspace,
+            self.policy.policy_version(),
+            executor_id,
+            bindings,
+        )
+        .map_err(RuntimeError::ExecutionProfile)
+    }
+
     pub(crate) fn trusted_harness_gene_ids(
         &self,
         harness_id: &HarnessId,
@@ -226,10 +246,15 @@ impl ExecutionController {
             .ok_or(RuntimeError::InvalidIntent(
                 "managed worktree root must be Unicode",
             ))?;
+        let execution_profile = self.execution_profile(
+            "git_worktree",
+            worktree_profile_bindings(gene_id, command.operation(), command.spec(), managed_root)?,
+        )?;
         let request = OperationRequest::new(
             context.execution_id,
             context.session_id,
             context.principal_id,
+            execution_profile,
             GeneId::new(gene_id).expect("built-in worktree Gene ID is valid"),
             None,
             Capability::ProcessExecute,
@@ -451,10 +476,26 @@ impl ExecutionController {
         let execution_id = self
             .next_mcp_execution_id()
             .map_err(|error| McpFailure::new(error, receipts.clone(), events.clone()))?;
+        let revision = server.catalog_revision();
+        let tool = revision
+            .tool(local_tool)
+            .ok_or(McpError::UnknownTool)
+            .map_err(|error| McpFailure::new(error, receipts.clone(), events.clone()))?;
+        let execution_profile = self
+            .execution_profile(
+                "mcp_stdio",
+                mcp_invocation_profile_bindings(revision, local_tool, tool).map_err(|_| {
+                    McpFailure::new(McpError::RequestRejected, receipts.clone(), events.clone())
+                })?,
+            )
+            .map_err(|_| {
+                McpFailure::new(McpError::RequestRejected, receipts.clone(), events.clone())
+            })?;
         let context = ToolContext::new(
             execution_id,
             session.id().clone(),
             session.principal_id().clone(),
+            execution_profile,
             None,
         );
         let plan = tool_engine
@@ -495,12 +536,36 @@ impl ExecutionController {
     ) -> Result<OperationRequest, McpError> {
         let execution_id = self.next_mcp_execution_id()?;
         let payload = config.authorization_payload(purpose)?;
+        let config_digest = config.catalog_config_digest()?;
+        let gene_id = format!("mcp.{}.spawn", config.server_id());
+        let execution_profile = self
+            .execution_profile(
+                "mcp_stdio",
+                vec![
+                    profile_binding(
+                        ExecutionProfileBindingKind::Gene,
+                        &gene_id,
+                        Some(env!("CARGO_PKG_VERSION")),
+                        &gene_id,
+                    ),
+                    profile_binding(
+                        ExecutionProfileBindingKind::Configuration,
+                        config.server_id(),
+                        Some(purpose.as_str()),
+                        &config_digest,
+                    ),
+                ]
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| McpError::RequestRejected)?,
+            )
+            .map_err(|_| McpError::RequestRejected)?;
         OperationRequest::new(
             execution_id,
             session.id().clone(),
             session.principal_id().clone(),
-            GeneId::new(format!("mcp.{}.spawn", config.server_id()))
-                .map_err(|_| McpError::RequestRejected)?,
+            execution_profile,
+            GeneId::new(gene_id).map_err(|_| McpError::RequestRejected)?,
             None,
             Capability::ProcessExecute,
             Operation::Execute,
@@ -684,10 +749,16 @@ impl ExecutionController {
             self.next_execution.fetch_add(1, Ordering::Relaxed)
         ))
         .map_err(|_| RuntimeError::InvalidIntent("could not allocate provider execution ID"))?;
+        let model_id = request.model_id().as_str();
+        let execution_profile = self.execution_profile(
+            "provider",
+            provider_profile_bindings(provider.manifest(), model_id)?,
+        )?;
         let operation_request = OperationRequest::new(
             execution_id,
             session.id().clone(),
             session.principal_id().clone(),
+            execution_profile,
             GeneId::new("provider.invoke").expect("built-in provider Gene ID is valid"),
             None,
             Capability::ProviderInvoke,
@@ -815,7 +886,26 @@ impl ExecutionController {
             .iter()
             .find(|gene| gene.manifest().id() == &gene_id)
             .ok_or(RuntimeError::UnknownGene)?;
-        let (input, payload) = coding_input(&intent, &gene_id, &session, &execution_id)?;
+        let harness_evidence = canonical_harness_binding_digest(harness.manifest());
+        let execution_profile = self.execution_profile(
+            executor_for_gene(gene.manifest()),
+            vec![
+                profile_binding(
+                    ExecutionProfileBindingKind::Harness,
+                    harness.manifest().id().as_str(),
+                    Some(harness.manifest().version()),
+                    &harness_evidence,
+                )?,
+                gene_profile_binding(gene.manifest())?,
+            ],
+        )?;
+        let (input, payload) = coding_input(
+            &intent,
+            &gene_id,
+            &session,
+            &execution_id,
+            execution_profile,
+        )?;
         let requests = gene.plan(&input).map_err(RuntimeError::Planning)?;
         let static_output = coding_static_output(&gene_id).map(|value| value.as_bytes().to_vec());
         let mut summary = RunSummary {
@@ -1237,6 +1327,147 @@ impl ExecutionController {
     }
 }
 
+fn profile_binding(
+    kind: ExecutionProfileBindingKind,
+    id: &str,
+    version: Option<&str>,
+    canonical_evidence: &str,
+) -> Result<ExecutionProfileBinding, RuntimeError> {
+    ExecutionProfileBinding::new(
+        kind,
+        id,
+        version,
+        hash_artifact(canonical_evidence.as_bytes()),
+    )
+    .map_err(|error| RuntimeError::ExecutionProfile(ExecutionProfileAssemblyError::Contract(error)))
+}
+
+fn worktree_profile_bindings(
+    gene_id: &str,
+    operation: &str,
+    command_spec: &str,
+    managed_root: &str,
+) -> Result<Vec<ExecutionProfileBinding>, RuntimeError> {
+    Ok(vec![
+        profile_binding(
+            ExecutionProfileBindingKind::Gene,
+            gene_id,
+            Some(env!("CARGO_PKG_VERSION")),
+            gene_id,
+        )?,
+        profile_binding(
+            ExecutionProfileBindingKind::Configuration,
+            operation,
+            None,
+            command_spec,
+        )?,
+        profile_binding(
+            ExecutionProfileBindingKind::Configuration,
+            "managed_worktree_root",
+            None,
+            managed_root,
+        )?,
+    ])
+}
+
+fn mcp_invocation_profile_bindings(
+    revision: &McpCatalogRevision,
+    local_tool: &str,
+    tool: &McpCatalogTool,
+) -> Result<Vec<ExecutionProfileBinding>, RuntimeError> {
+    let generation = revision.generation().to_string();
+    let configuration_evidence = format!(
+        "mcp_configuration\0{}\0{}\0{}",
+        revision.server_id(),
+        revision.process_id(),
+        revision.config_digest()
+    );
+    Ok(vec![
+        profile_binding(
+            ExecutionProfileBindingKind::ToolCatalog,
+            revision.server_id(),
+            Some(&generation),
+            revision.catalog_digest(),
+        )?,
+        profile_binding(
+            ExecutionProfileBindingKind::Gene,
+            local_tool,
+            Some(revision.protocol_era().as_str()),
+            tool.schema_digest(),
+        )?,
+        profile_binding(
+            ExecutionProfileBindingKind::Configuration,
+            revision.server_id(),
+            Some(revision.protocol_era().as_str()),
+            &configuration_evidence,
+        )?,
+    ])
+}
+
+fn provider_profile_bindings(
+    manifest: &ProviderManifest,
+    model_id: &str,
+) -> Result<Vec<ExecutionProfileBinding>, RuntimeError> {
+    let provider_evidence = serde_json::to_string(manifest).map_err(|_| {
+        RuntimeError::InvalidIntent("provider manifest could not be encoded for the profile")
+    })?;
+    Ok(vec![
+        profile_binding(
+            ExecutionProfileBindingKind::Provider,
+            manifest.id().as_str(),
+            None,
+            &provider_evidence,
+        )?,
+        profile_binding(ExecutionProfileBindingKind::Model, model_id, None, model_id)?,
+        profile_binding(
+            ExecutionProfileBindingKind::Gene,
+            "provider.invoke",
+            Some(env!("CARGO_PKG_VERSION")),
+            "provider.invoke",
+        )?,
+    ])
+}
+
+fn gene_profile_binding(manifest: &GeneManifest) -> Result<ExecutionProfileBinding, RuntimeError> {
+    let mut capabilities = manifest
+        .capabilities()
+        .iter()
+        .map(|capability| capability.as_str())
+        .collect::<Vec<_>>();
+    capabilities.sort_unstable();
+    let evidence = format!(
+        "gene\0{}\0{}\0{}\0{}",
+        manifest.id(),
+        manifest.version(),
+        manifest.kind().as_str(),
+        capabilities.join("\0")
+    );
+    profile_binding(
+        ExecutionProfileBindingKind::Gene,
+        manifest.id().as_str(),
+        Some(manifest.version()),
+        &evidence,
+    )
+}
+
+fn executor_for_gene(manifest: &GeneManifest) -> &'static str {
+    if manifest
+        .capabilities()
+        .contains(&Capability::ProcessExecute)
+    {
+        "process"
+    } else if manifest
+        .capabilities()
+        .contains(&Capability::ProviderInvoke)
+    {
+        "provider"
+    } else if manifest.capabilities().contains(&Capability::McpInvoke) {
+        "mcp_stdio"
+    } else {
+        "filesystem"
+    }
+}
+
 fn runtime_error_code(error: &RuntimeError) -> &'static str {
     match error {
         RuntimeError::InvalidIntent(_) => "invalid_intent",
@@ -1255,6 +1486,7 @@ fn runtime_error_code(error: &RuntimeError) -> &'static str {
         RuntimeError::Request(_) => "request_failed",
         RuntimeError::Filesystem(_) => "filesystem_failed",
         RuntimeError::Process(_) => "process_failed",
+        RuntimeError::ExecutionProfile(_) => "execution_profile_failed",
         RuntimeError::UnsupportedOperation(_) => "unsupported_operation",
     }
 }
@@ -1287,12 +1519,14 @@ fn coding_input(
     gene_id: &GeneId,
     session: &Session,
     execution_id: &ExecutionId,
+    execution_profile: ExecutionProfile,
 ) -> Result<(GeneInput, Option<Vec<u8>>), RuntimeError> {
     let context = PlanningContext::new(
         execution_id.clone(),
         session.id().clone(),
         session.principal_id().clone(),
         session.workspace_id().clone(),
+        execution_profile,
     );
     let summary = intent.summary();
     let (action, remainder) = summary.split_once(':').unwrap_or((summary, ""));
@@ -1569,6 +1803,127 @@ mod tests {
                 if reason
                     == "lifecycle hook offline-mode denied request: provider_egress_disabled"
         ));
+    }
+
+    #[test]
+    fn provider_profile_bindings_cover_endpoint_and_builtin_gene() {
+        let first = ProviderManifest::new(
+            "provider-a",
+            "Provider A",
+            "https://first.example.test/v1",
+            "model-a",
+            "PANDORA_PROVIDER_A_KEY",
+        )
+        .unwrap();
+        let second = ProviderManifest::new(
+            "provider-a",
+            "Provider A",
+            "https://second.example.test/v1",
+            "model-a",
+            "PANDORA_PROVIDER_A_KEY",
+        )
+        .unwrap();
+
+        let first_bindings = provider_profile_bindings(&first, "model-a").unwrap();
+        let second_bindings = provider_profile_bindings(&second, "model-a").unwrap();
+        let first_provider = first_bindings
+            .iter()
+            .find(|binding| binding.kind() == ExecutionProfileBindingKind::Provider)
+            .unwrap();
+        let second_provider = second_bindings
+            .iter()
+            .find(|binding| binding.kind() == ExecutionProfileBindingKind::Provider)
+            .unwrap();
+
+        assert_ne!(first_provider.digest(), second_provider.digest());
+        assert!(first_bindings.iter().any(|binding| {
+            binding.kind() == ExecutionProfileBindingKind::Gene && binding.id() == "provider.invoke"
+        }));
+        let serialized = serde_json::to_string(&first_bindings).unwrap();
+        assert!(!serialized.contains("first.example.test"));
+        assert!(!serialized.contains("PANDORA_PROVIDER_A_KEY"));
+    }
+
+    #[test]
+    fn mcp_invocation_profile_bindings_cover_process_and_configuration() {
+        let first_supervisor = McpCatalogSupervisor::new();
+        let first_reservation = first_supervisor.reserve("local", "config-a").unwrap();
+        let first_tool = crate::mcp_catalog::McpCatalogTool::new(
+            "mcp.local.echo",
+            "echo",
+            &serde_json::json!({"type": "object"}),
+        )
+        .unwrap();
+        let first_revision = first_reservation
+            .activate(McpWireEra::Modern, 41, vec![first_tool])
+            .unwrap();
+        let second_supervisor = McpCatalogSupervisor::new();
+        let second_reservation = second_supervisor.reserve("local", "config-b").unwrap();
+        let second_tool = crate::mcp_catalog::McpCatalogTool::new(
+            "mcp.local.echo",
+            "echo",
+            &serde_json::json!({"type": "object"}),
+        )
+        .unwrap();
+        let second_revision = second_reservation
+            .activate(McpWireEra::Modern, 42, vec![second_tool])
+            .unwrap();
+
+        let first_bindings = mcp_invocation_profile_bindings(
+            &first_revision,
+            "mcp.local.echo",
+            first_revision.tool("mcp.local.echo").unwrap(),
+        )
+        .unwrap();
+        let second_bindings = mcp_invocation_profile_bindings(
+            &second_revision,
+            "mcp.local.echo",
+            second_revision.tool("mcp.local.echo").unwrap(),
+        )
+        .unwrap();
+        let first_configuration = first_bindings
+            .iter()
+            .find(|binding| binding.kind() == ExecutionProfileBindingKind::Configuration)
+            .unwrap();
+        let second_configuration = second_bindings
+            .iter()
+            .find(|binding| binding.kind() == ExecutionProfileBindingKind::Configuration)
+            .unwrap();
+
+        assert_ne!(first_configuration.digest(), second_configuration.digest());
+        assert!(first_bindings.iter().any(|binding| {
+            binding.kind() == ExecutionProfileBindingKind::ToolCatalog && binding.id() == "local"
+        }));
+    }
+
+    #[test]
+    fn worktree_profile_bindings_cover_the_managed_root_without_exposing_it() {
+        let first = worktree_profile_bindings(
+            "coordination.worktree.create",
+            "git_worktree_create",
+            r#"{"operation":"git_worktree_create"}"#,
+            r"C:\work\pandora\managed-a",
+        )
+        .unwrap();
+        let second = worktree_profile_bindings(
+            "coordination.worktree.create",
+            "git_worktree_create",
+            r#"{"operation":"git_worktree_create"}"#,
+            r"C:\work\pandora\managed-b",
+        )
+        .unwrap();
+        let first_root = first
+            .iter()
+            .find(|binding| binding.id() == "managed_worktree_root")
+            .unwrap();
+        let second_root = second
+            .iter()
+            .find(|binding| binding.id() == "managed_worktree_root")
+            .unwrap();
+
+        assert_ne!(first_root.digest(), second_root.digest());
+        let serialized = serde_json::to_string(&first).unwrap();
+        assert!(!serialized.contains(r"C:\work\pandora\managed-a"));
     }
 
     #[test]

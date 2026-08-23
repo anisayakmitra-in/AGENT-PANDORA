@@ -1395,6 +1395,9 @@ fn runtime_error(error: RuntimeError) -> CliError {
             CliError::execution("filesystem execution failed", json!({}))
         }
         RuntimeError::Process(_) => CliError::execution("process execution failed", json!({})),
+        RuntimeError::ExecutionProfile(_) => {
+            CliError::execution("execution profile assembly failed", json!({}))
+        }
         RuntimeError::UnsupportedOperation(_) => {
             CliError::execution("requested operation is not supported", json!({}))
         }

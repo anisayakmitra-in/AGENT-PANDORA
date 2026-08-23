@@ -124,8 +124,9 @@ mod tests {
     use std::thread;
 
     use pandora_types::{
-        Capability, EffectTarget, ExecutionId, GeneId, Operation, PolicyContext, PrincipalId,
-        ResourceScope, SessionId, Timestamp,
+        Capability, EffectTarget, ExecutionId, ExecutionProfile, ExecutionProfileBinding,
+        ExecutionProfileBindingKind, GeneId, Operation, PolicyContext, PrincipalId, ResourceScope,
+        SessionId, Timestamp, hash_artifact,
     };
 
     use super::*;
@@ -133,10 +134,46 @@ mod tests {
     use crate::reference_monitor::ReferenceMonitor;
 
     fn make_request(session: &str, path: &str) -> pandora_types::OperationRequest {
+        make_request_with_executor(session, path, "filesystem")
+    }
+
+    fn make_request_with_executor(
+        session: &str,
+        path: &str,
+        executor: &str,
+    ) -> pandora_types::OperationRequest {
+        make_request_with_executor_version(session, path, executor, Some("2.0.0-alpha.6"))
+    }
+
+    fn make_request_with_executor_version(
+        session: &str,
+        path: &str,
+        executor: &str,
+        version: Option<&str>,
+    ) -> pandora_types::OperationRequest {
+        let profile = ExecutionProfile::new(
+            "2.0.0-alpha.6",
+            "windows",
+            "x86_64",
+            1,
+            "workspace-1",
+            hash_artifact(b"containment"),
+            vec![
+                ExecutionProfileBinding::new(
+                    ExecutionProfileBindingKind::Executor,
+                    executor,
+                    version,
+                    hash_artifact(executor.as_bytes()),
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap();
         pandora_types::OperationRequest::new(
             ExecutionId::new("execution-1").unwrap(),
             SessionId::new(session).unwrap(),
             PrincipalId::new("principal-1").unwrap(),
+            profile,
             GeneId::new("workspace.read").unwrap(),
             None,
             Capability::FilesystemRead,
@@ -184,6 +221,50 @@ mod tests {
             monitor.store().consume(
                 permit,
                 &make_request("session-2", "src/lib.rs"),
+                Timestamp::from_unix_seconds(11),
+            ),
+            Err(PermitError::RequestMismatch)
+        );
+    }
+
+    #[test]
+    fn permit_rejects_execution_profile_substitution() {
+        let monitor = ReferenceMonitor::new(1, 60);
+        let original_request = make_request_with_executor("session-1", "src/lib.rs", "filesystem");
+        let substituted_request = make_request_with_executor("session-1", "src/lib.rs", "process");
+        let permit = permit_for(&monitor, &original_request, 10);
+
+        assert_eq!(
+            monitor.store().consume(
+                permit,
+                &substituted_request,
+                Timestamp::from_unix_seconds(11),
+            ),
+            Err(PermitError::RequestMismatch)
+        );
+    }
+
+    #[test]
+    fn permit_rejects_absent_profile_version_substituted_with_literal_none() {
+        let monitor = ReferenceMonitor::new(1, 60);
+        let original_request =
+            make_request_with_executor_version("session-1", "src/lib.rs", "filesystem", None);
+        let substituted_request = make_request_with_executor_version(
+            "session-1",
+            "src/lib.rs",
+            "filesystem",
+            Some("none"),
+        );
+        let permit = permit_for(&monitor, &original_request, 10);
+
+        assert_ne!(
+            original_request.request_digest(),
+            substituted_request.request_digest()
+        );
+        assert_eq!(
+            monitor.store().consume(
+                permit,
+                &substituted_request,
                 Timestamp::from_unix_seconds(11),
             ),
             Err(PermitError::RequestMismatch)
