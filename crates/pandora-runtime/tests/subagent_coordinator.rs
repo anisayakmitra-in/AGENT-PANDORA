@@ -2,7 +2,7 @@ use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::{
     ExecutionController, GitWorktreeExecutor, SubagentCleanupContext, SubagentCoordinator,
     SubagentCoordinatorError, SubagentPreparation, SubagentScope, SubagentSpawnContext,
-    SubagentStore, WorktreeError,
+    SubagentStore, SubagentStoreError, WorktreeError,
 };
 use pandora_types::{
     Capability, EffectOutcome, ExecutionId, JobId, JobWorkerId, PolicyContext, PrincipalId,
@@ -14,6 +14,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Barrier};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const SUBAGENT_PATH_DIGEST: &str =
@@ -107,6 +108,119 @@ fn cleanup_requires_a_fresh_permit_and_preserves_dirty_worktree() {
         remove_receipt.permit_id(),
         "cleanup must consume a fresh permit"
     );
+    assert!(fixture.destination().join("dirty.txt").exists());
+}
+
+#[test]
+fn repeated_cleanup_rejection_does_not_execute_or_replace_the_receipt() {
+    let fixture = CoordinatorFixture::new();
+    fixture.completed();
+    let dirty_path = fixture.destination().join("dirty.txt");
+    fs::write(&dirty_path, "keep").unwrap();
+
+    let first = fixture.coordinator().cleanup(
+        &fixture.subagent_id,
+        fixture.cleanup_context_named("first"),
+        fixture.now(),
+    );
+    assert!(matches!(
+        first,
+        Err(SubagentCoordinatorError::Worktree(
+            WorktreeError::DirtyWorktree
+        ))
+    ));
+    let first_receipt_id = fixture
+        .store
+        .inspect(&fixture.subagent_id, &fixture.scope)
+        .unwrap()
+        .remove_receipt()
+        .unwrap()
+        .receipt_id()
+        .clone();
+    fs::remove_file(dirty_path).unwrap();
+
+    let repeated = fixture.coordinator().cleanup(
+        &fixture.subagent_id,
+        fixture.cleanup_context_named("second"),
+        Timestamp::from_unix_seconds(11),
+    );
+
+    assert!(matches!(
+        repeated,
+        Err(SubagentCoordinatorError::Store(
+            SubagentStoreError::InvalidTransition { .. }
+        ))
+    ));
+    let stored = fixture
+        .store
+        .inspect(&fixture.subagent_id, &fixture.scope)
+        .unwrap();
+    assert_eq!(
+        stored.remove_receipt().unwrap().receipt_id(),
+        &first_receipt_id
+    );
+    assert!(
+        fixture.destination().exists(),
+        "claim rejection must occur before Git can remove the worktree"
+    );
+}
+
+#[test]
+fn concurrent_cleanup_allows_only_one_effect_attempt() {
+    let fixture = CoordinatorFixture::new();
+    fixture.completed();
+    fs::write(fixture.destination().join("dirty.txt"), "keep").unwrap();
+    let barrier = Arc::new(Barrier::new(3));
+
+    let results = std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for name in ["first", "second"] {
+            let barrier = Arc::clone(&barrier);
+            let coordinator = fixture.coordinator();
+            let id = fixture.subagent_id.clone();
+            let context = fixture.cleanup_context_named(name);
+            handles.push(scope.spawn(move || {
+                barrier.wait();
+                coordinator.cleanup(&id, context, Timestamp::from_unix_seconds(12))
+            }));
+        }
+        barrier.wait();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| matches!(
+                result,
+                Err(SubagentCoordinatorError::Worktree(
+                    WorktreeError::DirtyWorktree
+                ))
+            ))
+            .count(),
+        1
+    );
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| matches!(
+                result,
+                Err(SubagentCoordinatorError::Store(
+                    SubagentStoreError::InvalidTransition { .. }
+                ))
+            ))
+            .count(),
+        1
+    );
+    let stored = fixture
+        .store
+        .inspect(&fixture.subagent_id, &fixture.scope)
+        .unwrap();
+    assert_eq!(stored.worktree_state(), SubagentWorktreeState::Preserved);
+    assert!(stored.remove_receipt().is_some());
     assert!(fixture.destination().join("dirty.txt").exists());
 }
 
@@ -266,10 +380,14 @@ impl CoordinatorFixture {
     }
 
     fn cleanup_context(&self) -> SubagentCleanupContext {
+        self.cleanup_context_named("1")
+    }
+
+    fn cleanup_context_named(&self, name: &str) -> SubagentCleanupContext {
         SubagentCleanupContext::new(
             self.scope.clone(),
-            SessionId::new("session-cleanup-1").unwrap(),
-            ExecutionId::new("execution-cleanup-1").unwrap(),
+            SessionId::new(format!("session-cleanup-{name}")).unwrap(),
+            ExecutionId::new(format!("execution-cleanup-{name}")).unwrap(),
         )
     }
 

@@ -203,7 +203,7 @@ impl<'a> SubagentCoordinator<'a> {
         match result.into_result() {
             Ok(_) => self
                 .store
-                .queue(&context.id, &receipt, now)
+                .queue(&context.id, &context.scope, &receipt, now)
                 .map_err(Into::into),
             Err(error) => {
                 self.store.fail_preparing(
@@ -260,6 +260,7 @@ impl<'a> SubagentCoordinator<'a> {
             current.worktree_path(),
             current.request().exact_commit(),
         )?;
+        self.store.claim_cleanup(id, &context.scope, now)?;
         let execution_context = WorktreeExecutionContext::new(
             context.execution_id,
             context.session_id,

@@ -105,6 +105,7 @@ pub struct SubagentRecord {
     worker_id: Option<JobWorkerId>,
     cancel_requested_at: Option<Timestamp>,
     create_receipt: Option<EffectReceipt>,
+    cleanup_claimed_at: Option<Timestamp>,
     remove_receipt: Option<EffectReceipt>,
     created_at: Timestamp,
     started_at: Option<Timestamp>,
@@ -311,7 +312,7 @@ pub struct SubagentStore {
 
 impl SubagentStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, SubagentStoreError> {
-        let connection = open_job_connection(path.as_ref())?;
+        let mut connection = open_job_connection(path.as_ref())?;
         connection.execute_batch(
             "CREATE TABLE IF NOT EXISTS subagents (
                  subagent_id TEXT PRIMARY KEY,
@@ -338,6 +339,7 @@ impl SubagentStore {
                  worker_id TEXT,
                  cancel_requested_at INTEGER,
                  create_receipt_json TEXT,
+                 cleanup_claimed_at INTEGER,
                  remove_receipt_json TEXT,
                  created_at INTEGER NOT NULL,
                  started_at INTEGER,
@@ -347,6 +349,22 @@ impl SubagentStore {
              CREATE INDEX IF NOT EXISTS subagents_scope_status_idx
                  ON subagents(principal_id, tenant_id, workspace_id, status);",
         )?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let cleanup_claim_exists = transaction
+            .query_row(
+                "SELECT 1 FROM pragma_table_info('subagents') WHERE name = 'cleanup_claimed_at'",
+                [],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !cleanup_claim_exists {
+            transaction.execute(
+                "ALTER TABLE subagents ADD COLUMN cleanup_claimed_at INTEGER",
+                [],
+            )?;
+        }
+        transaction.commit()?;
         Ok(Self {
             connection: Mutex::new(connection),
         })
@@ -406,6 +424,7 @@ impl SubagentStore {
                 worker_id: None,
                 cancel_requested_at: None,
                 create_receipt: None,
+                cleanup_claimed_at: None,
                 remove_receipt: None,
                 created_at: input.created_at,
                 started_at: None,
@@ -424,6 +443,7 @@ impl SubagentStore {
     pub fn queue(
         &self,
         id: &SubagentId,
+        scope: &SubagentScope,
         receipt: &EffectReceipt,
         now: Timestamp,
     ) -> Result<SubagentRecord, SubagentStoreError> {
@@ -433,8 +453,8 @@ impl SubagentStore {
         let receipt_json = encode_receipt(receipt)?;
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let mut current =
-            load_subagent_by_id(&transaction, id)?.ok_or(SubagentStoreError::SubagentNotFound)?;
+        let mut current = load_scoped_subagent(&transaction, id, scope)?
+            .ok_or(SubagentStoreError::SubagentNotFound)?;
         if current.status != SubagentStatus::Preparing
             || current.worktree_state != SubagentWorktreeState::Pending
         {
@@ -465,8 +485,15 @@ impl SubagentStore {
         let changed = transaction.execute(
             "UPDATE subagents
              SET status = 'queued', worktree_state = 'ready', create_receipt_json = ?1
-             WHERE subagent_id = ?2 AND status = 'preparing' AND worktree_state = 'pending'",
-            params![receipt_json, id.as_str()],
+             WHERE subagent_id = ?2 AND principal_id = ?3 AND tenant_id = ?4
+               AND workspace_id = ?5 AND status = 'preparing' AND worktree_state = 'pending'",
+            params![
+                receipt_json,
+                id.as_str(),
+                scope.principal_id().as_str(),
+                scope.tenant_id().as_str(),
+                scope.workspace_id().as_str(),
+            ],
         )?;
         if changed != 1 {
             return Err(SubagentStoreError::CorruptRecord);
@@ -598,6 +625,55 @@ impl SubagentStore {
         Ok(current)
     }
 
+    pub(crate) fn claim_cleanup(
+        &self,
+        id: &SubagentId,
+        scope: &SubagentScope,
+        now: Timestamp,
+    ) -> Result<SubagentRecord, SubagentStoreError> {
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut current = load_scoped_subagent(&transaction, id, scope)?
+            .ok_or(SubagentStoreError::SubagentNotFound)?;
+        if !is_terminal_status(current.status)
+            || !matches!(
+                current.worktree_state,
+                SubagentWorktreeState::Ready | SubagentWorktreeState::Preserved
+            )
+            || current.cleanup_claimed_at.is_some()
+            || current.remove_receipt.is_some()
+        {
+            return Err(SubagentStoreError::InvalidTransition {
+                status: current.status,
+                action: "claim worktree cleanup for",
+            });
+        }
+        let changed = transaction.execute(
+            "UPDATE subagents SET cleanup_claimed_at = ?1
+             WHERE subagent_id = ?2 AND principal_id = ?3 AND tenant_id = ?4
+               AND workspace_id = ?5
+               AND status IN ('approval_required', 'completed', 'failed', 'interrupted', 'cancelled')
+               AND worktree_state IN ('ready', 'preserved')
+               AND cleanup_claimed_at IS NULL AND remove_receipt_json IS NULL",
+            params![
+                to_i64(now.as_unix_seconds())?,
+                id.as_str(),
+                scope.principal_id().as_str(),
+                scope.tenant_id().as_str(),
+                scope.workspace_id().as_str(),
+            ],
+        )?;
+        if changed != 1 {
+            return Err(SubagentStoreError::InvalidTransition {
+                status: current.status,
+                action: "claim worktree cleanup for",
+            });
+        }
+        transaction.commit()?;
+        current.cleanup_claimed_at = Some(now);
+        Ok(current)
+    }
+
     pub(crate) fn record_cleanup(
         &self,
         id: &SubagentId,
@@ -619,6 +695,8 @@ impl SubagentStore {
                 current.worktree_state,
                 SubagentWorktreeState::Ready | SubagentWorktreeState::Preserved
             )
+            || current.cleanup_claimed_at.is_none()
+            || current.remove_receipt.is_some()
         {
             return Err(SubagentStoreError::InvalidTransition {
                 status: current.status,
@@ -628,7 +706,10 @@ impl SubagentStore {
         let changed = transaction.execute(
             "UPDATE subagents SET worktree_state = ?1, remove_receipt_json = ?2
              WHERE subagent_id = ?3 AND principal_id = ?4 AND tenant_id = ?5
-               AND workspace_id = ?6 AND worktree_state IN ('ready', 'preserved')",
+               AND workspace_id = ?6
+               AND status IN ('approval_required', 'completed', 'failed', 'interrupted', 'cancelled')
+               AND worktree_state IN ('ready', 'preserved')
+               AND cleanup_claimed_at IS NOT NULL AND remove_receipt_json IS NULL",
             params![
                 worktree_state_text(worktree_state),
                 receipt_json,
@@ -639,7 +720,10 @@ impl SubagentStore {
             ],
         )?;
         if changed != 1 {
-            return Err(SubagentStoreError::CorruptRecord);
+            return Err(SubagentStoreError::InvalidTransition {
+                status: current.status,
+                action: "record worktree cleanup for",
+            });
         }
         transaction.commit()?;
         current.worktree_state = worktree_state;
@@ -986,8 +1070,8 @@ fn subagent_select_sql(predicate: &str) -> String {
                 child_session_id, child_execution_id, parent_session_id, parent_execution_id,
                 repository_path, worktree_path, exact_commit, request_json,
                 provider_binding_digest, harness_binding_digest, status, worktree_state,
-                worker_id, cancel_requested_at, create_receipt_json, remove_receipt_json,
-                created_at, started_at, finished_at, result_json
+                worker_id, cancel_requested_at, create_receipt_json, cleanup_claimed_at,
+                remove_receipt_json, created_at, started_at, finished_at, result_json
          FROM subagents WHERE {predicate}"
     )
 }
@@ -1036,21 +1120,25 @@ fn decode_subagent_inner(row: &rusqlite::Row<'_>) -> Result<SubagentRecord, Suba
         .get::<_, Option<String>>(19)?
         .map(decode_receipt)
         .transpose()?;
-    let remove_receipt = row
-        .get::<_, Option<String>>(20)?
-        .map(decode_receipt)
-        .transpose()?;
-    let created_at = decode_timestamp(row.get::<_, i64>(21)?)?;
-    let started_at = row
-        .get::<_, Option<i64>>(22)?
+    let cleanup_claimed_at = row
+        .get::<_, Option<i64>>(20)?
         .map(decode_timestamp)
         .transpose()?;
-    let finished_at = row
+    let remove_receipt = row
+        .get::<_, Option<String>>(21)?
+        .map(decode_receipt)
+        .transpose()?;
+    let created_at = decode_timestamp(row.get::<_, i64>(22)?)?;
+    let started_at = row
         .get::<_, Option<i64>>(23)?
         .map(decode_timestamp)
         .transpose()?;
+    let finished_at = row
+        .get::<_, Option<i64>>(24)?
+        .map(decode_timestamp)
+        .transpose()?;
     let result = row
-        .get::<_, Option<String>>(24)?
+        .get::<_, Option<String>>(25)?
         .map(|value| serde_json::from_str(&value))
         .transpose()?;
     validate_subagent_record(
@@ -1062,7 +1150,12 @@ fn decode_subagent_inner(row: &rusqlite::Row<'_>) -> Result<SubagentRecord, Suba
         finished_at,
         result.as_ref(),
     )?;
-    validate_cleanup_record(worktree_state, remove_receipt.as_ref())?;
+    validate_cleanup_record(
+        status,
+        worktree_state,
+        cleanup_claimed_at,
+        remove_receipt.as_ref(),
+    )?;
     Ok(SubagentRecord {
         id,
         job_id,
@@ -1079,6 +1172,7 @@ fn decode_subagent_inner(row: &rusqlite::Row<'_>) -> Result<SubagentRecord, Suba
         worker_id,
         cancel_requested_at,
         create_receipt,
+        cleanup_claimed_at,
         remove_receipt,
         created_at,
         started_at,
@@ -1166,15 +1260,27 @@ fn validate_subagent_record(
 }
 
 fn validate_cleanup_record(
+    status: SubagentStatus,
     worktree_state: SubagentWorktreeState,
+    cleanup_claimed_at: Option<Timestamp>,
     remove_receipt: Option<&EffectReceipt>,
 ) -> Result<(), SubagentStoreError> {
-    let valid = match remove_receipt {
-        None => worktree_state != SubagentWorktreeState::Removed,
-        Some(receipt) if matches!(receipt.outcome(), EffectOutcome::Succeeded) => {
-            worktree_state == SubagentWorktreeState::Removed
+    let valid = match (cleanup_claimed_at, remove_receipt) {
+        (None, None) => worktree_state != SubagentWorktreeState::Removed,
+        (Some(_), None) => {
+            is_terminal_status(status)
+                && matches!(
+                    worktree_state,
+                    SubagentWorktreeState::Ready | SubagentWorktreeState::Preserved
+                )
         }
-        Some(_) => worktree_state == SubagentWorktreeState::Preserved,
+        (Some(_), Some(receipt)) if matches!(receipt.outcome(), EffectOutcome::Succeeded) => {
+            is_terminal_status(status) && worktree_state == SubagentWorktreeState::Removed
+        }
+        (Some(_), Some(_)) => {
+            is_terminal_status(status) && worktree_state == SubagentWorktreeState::Preserved
+        }
+        (None, Some(_)) => false,
     };
     if valid {
         Ok(())
@@ -1328,6 +1434,7 @@ mod tests {
                 .store
                 .queue(
                     prepared.id(),
+                    &fixture.scope,
                     &fixture.successful_worktree_receipt(),
                     fixture.now(),
                 )
@@ -1422,7 +1529,7 @@ mod tests {
 
         let queued = fixture
             .store
-            .queue(prepared.id(), &receipt, fixture.now())
+            .queue(prepared.id(), &fixture.scope, &receipt, fixture.now())
             .unwrap();
 
         assert_eq!(queued.status(), SubagentStatus::Queued);
@@ -1450,6 +1557,33 @@ mod tests {
     }
 
     #[test]
+    fn queue_rejects_a_scope_that_does_not_own_the_subagent() {
+        let fixture = StoreFixture::new();
+        let prepared = fixture.store.prepare(fixture.preparation()).unwrap();
+        let wrong_scope = SubagentScope::new(
+            PrincipalId::new("principal-2").unwrap(),
+            TenantId::new("tenant-2").unwrap(),
+            WorkspaceId::new("child-workspace-2").unwrap(),
+        );
+
+        let error = fixture
+            .store
+            .queue(
+                prepared.id(),
+                &wrong_scope,
+                &fixture.successful_worktree_receipt(),
+                fixture.now(),
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, SubagentStoreError::SubagentNotFound));
+        let stored = fixture.store.inspect(&fixture.id, &fixture.scope).unwrap();
+        assert_eq!(stored.status(), SubagentStatus::Preparing);
+        assert_eq!(stored.worktree_state(), SubagentWorktreeState::Pending);
+        assert!(stored.create_receipt().is_none());
+    }
+
+    #[test]
     fn failed_worktree_receipt_does_not_queue_a_job() {
         let fixture = StoreFixture::new();
         let prepared = fixture.store.prepare(fixture.preparation()).unwrap();
@@ -1458,6 +1592,7 @@ mod tests {
             .store
             .queue(
                 prepared.id(),
+                &fixture.scope,
                 &fixture.failed_worktree_receipt(),
                 fixture.now(),
             )
@@ -1493,6 +1628,7 @@ mod tests {
                 .store
                 .queue(
                     prepared.id(),
+                    &fixture.scope,
                     &fixture.successful_worktree_receipt(),
                     fixture.now(),
                 )
@@ -1653,6 +1789,32 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id().as_str(), "legacy-job");
         assert_eq!(listed[0].request(), &request);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn opening_subagent_store_adds_cleanup_claim_to_existing_schema() {
+        let root = crate::test_support::new_temp_dir("pandora-subagent-claim-migration").unwrap();
+        let database = root.join("jobs.sqlite3");
+        drop(SubagentStore::open(&database).unwrap());
+        let connection = Connection::open(&database).unwrap();
+        connection
+            .execute("ALTER TABLE subagents DROP COLUMN cleanup_claimed_at", [])
+            .unwrap();
+        drop(connection);
+
+        drop(SubagentStore::open(&database).unwrap());
+        let connection = Connection::open(&database).unwrap();
+        let mut statement = connection.prepare("PRAGMA table_info(subagents)").unwrap();
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert!(columns.iter().any(|column| column == "cleanup_claimed_at"));
+        drop(statement);
+        drop(connection);
         let _ = std::fs::remove_dir_all(root);
     }
 }
