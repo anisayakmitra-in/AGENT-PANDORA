@@ -7,13 +7,13 @@ use pandora_types::{
 };
 use serde_json::Value;
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(1);
 
@@ -167,6 +167,41 @@ fn seed_subagent(fixture: &Fixture, id: &str, scope: SubagentScope, running: boo
             .unwrap()
             .expect("queued subagent should be claimable");
     }
+}
+
+fn loopback_provider_calls(listener: TcpListener) -> thread::JoinHandle<usize> {
+    listener
+        .set_nonblocking(true)
+        .expect("provider fixture should become non-blocking");
+    thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let mut request = [0_u8; 1_024];
+                    let _ = stream.read(&mut request);
+                    let response = br#"{"choices":[{"message":{"content":"fixture complete"}}],"usage":{"prompt_tokens":2,"completion_tokens":1}}"#;
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        response.len()
+                    )
+                    .expect("provider response headers should be written");
+                    stream
+                        .write_all(response)
+                        .expect("provider response should be written");
+                    return 1;
+                }
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return 0;
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("provider fixture should accept: {error}"),
+            }
+        }
+    })
 }
 
 #[test]
@@ -497,6 +532,62 @@ fn subagent_list_and_inspect_filter_legacy_approval_details() {
 }
 
 #[test]
+fn subagent_list_and_inspect_reject_arbitrary_legacy_result_shapes() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let cases = [
+        ("string", serde_json::json!("approval-secret"), Value::Null),
+        ("array", serde_json::json!(["provider-secret"]), Value::Null),
+        (
+            "nested",
+            serde_json::json!({"reason": {"approval_id": "approval-secret"}}),
+            Value::Null,
+        ),
+        (
+            "unknown",
+            serde_json::json!({"code": "completed", "raw_response": "provider-secret"}),
+            Value::Null,
+        ),
+        (
+            "valid",
+            serde_json::json!({"code": "worker_interrupted", "outcome_known": false}),
+            serde_json::json!({"code": "worker_interrupted", "outcome_known": false}),
+        ),
+    ];
+
+    for (suffix, result, expected) in &cases {
+        let id = format!("subagent-legacy-{suffix}");
+        seed_subagent(&fixture, &id, local_subagent_scope(), true);
+        SubagentStore::open(fixture.data.join("jobs.sqlite3"))
+            .unwrap()
+            .finish(
+                &SubagentId::new(&id).unwrap(),
+                &JobWorkerId::new(format!("worker-{id}")).unwrap(),
+                pandora_types::SubagentStatus::Failed,
+                result,
+                Timestamp::from_unix_seconds(40),
+            )
+            .unwrap();
+        let inspected = fixture
+            .command(&["subagent", "inspect", &id, "--json"])
+            .output()
+            .expect("subagent inspect should start");
+        assert_success(&inspected);
+        assert_eq!(parse_json(&inspected)["result"], *expected, "{suffix}");
+    }
+
+    let listed = fixture
+        .command(&["subagent", "list", "--json"])
+        .output()
+        .expect("subagent list should start");
+    assert_success(&listed);
+    let listed = parse_json(&listed);
+    assert_eq!(listed["count"], cases.len());
+    assert!(!listed.to_string().contains("approval-secret"));
+    assert!(!listed.to_string().contains("provider-secret"));
+}
+
+#[test]
 fn subagent_spawn_materializes_default_bindings_for_a_scoped_parent_execution() {
     let fixture = Fixture::new();
     let exact_commit = fixture.initialize_git_workspace();
@@ -555,6 +646,222 @@ fn subagent_spawn_materializes_default_bindings_for_a_scoped_parent_execution() 
     assert!(spawned["request"]["harness"]["version"].is_string());
     assert_eq!(spawned["worktree"]["state"], "ready");
     assert!(spawned["receipts"]["create"]["receipt_id"].is_string());
+}
+
+#[test]
+fn subagent_work_rejects_explicit_provider_binding_drift_before_provider_call() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("provider fixture should bind");
+    let provider_url = format!(
+        "http://{}/v1",
+        listener
+            .local_addr()
+            .expect("provider fixture should expose its address")
+    );
+    let server = loopback_provider_calls(listener);
+    let fixture = Fixture::new();
+    fixture.initialize_git_workspace();
+    fixture.setup();
+    let parent = fixture
+        .command(&["run", "read:README.md", "--json"])
+        .output()
+        .expect("parent run should start");
+    assert_success(&parent);
+    let parent = parse_json(&parent);
+    let configured = fixture
+        .command(&[
+            "provider",
+            "set",
+            "--provider-url",
+            &provider_url,
+            "--model",
+            "fixture-model",
+            "--json",
+        ])
+        .output()
+        .expect("provider setup should start");
+    assert_success(&configured);
+    let spawned = fixture
+        .command(&[
+            "subagent",
+            "spawn",
+            "--session",
+            parent["session_id"].as_str().unwrap(),
+            "--execution",
+            parent["execution_id"].as_str().unwrap(),
+            "--provider",
+            "openai-compatible",
+            "--harness",
+            "coding",
+            "Read the README",
+            "--json",
+        ])
+        .output()
+        .expect("subagent spawn should start");
+    assert_success(&spawned);
+    let configured = fixture
+        .command(&[
+            "provider",
+            "set",
+            "--provider-url",
+            "http://127.0.0.1:9/v1",
+            "--model",
+            "fixture-model-drifted",
+            "--json",
+        ])
+        .output()
+        .expect("provider drift should be configured");
+    assert_success(&configured);
+
+    let worked = fixture
+        .command(&["subagent", "work", "--json"])
+        .output()
+        .expect("subagent work should start");
+    assert_success(&worked);
+    let worked = parse_json(&worked);
+    assert_eq!(worked["subagents"][0]["lifecycle"]["status"], "failed");
+    assert_eq!(
+        worked["subagents"][0]["result"],
+        serde_json::json!({"code": "subagent_binding_changed", "status": "failed"})
+    );
+    assert_eq!(server.join().expect("provider fixture should finish"), 0);
+}
+
+#[test]
+fn subagent_cleanup_preserves_a_dirty_managed_worktree() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("provider fixture should bind");
+    let provider_url = format!(
+        "http://{}/v1",
+        listener
+            .local_addr()
+            .expect("provider fixture should expose its address")
+    );
+    let server = loopback_provider_calls(listener);
+    let fixture = Fixture::new();
+    fixture.initialize_git_workspace();
+    fixture.setup();
+    let parent = fixture
+        .command(&["run", "read:README.md", "--json"])
+        .output()
+        .expect("parent run should start");
+    assert_success(&parent);
+    let parent = parse_json(&parent);
+    let configured = fixture
+        .command(&[
+            "provider",
+            "set",
+            "--provider-url",
+            &provider_url,
+            "--model",
+            "fixture-model",
+            "--json",
+        ])
+        .output()
+        .expect("provider setup should start");
+    assert_success(&configured);
+    let spawned = fixture
+        .command(&[
+            "subagent",
+            "spawn",
+            "--session",
+            parent["session_id"].as_str().unwrap(),
+            "--execution",
+            parent["execution_id"].as_str().unwrap(),
+            "Read the README",
+            "--json",
+        ])
+        .output()
+        .expect("subagent spawn should start");
+    assert_success(&spawned);
+    let subagent_id = parse_json(&spawned)["subagent_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let worked = fixture
+        .command(&["subagent", "work", "--json"])
+        .env("PANDORA_PROVIDER_API_KEY", "fixture-provider-key")
+        .output()
+        .expect("subagent work should start");
+    assert_success(&worked);
+    assert_eq!(
+        parse_json(&worked)["subagents"][0]["lifecycle"]["status"],
+        "completed",
+        "{}",
+        parse_json(&worked)
+    );
+    assert_eq!(server.join().expect("provider fixture should finish"), 1);
+    let inspected = fixture
+        .command(&["subagent", "inspect", &subagent_id, "--json"])
+        .output()
+        .expect("subagent inspect should start");
+    assert_success(&inspected);
+    let worktree = PathBuf::from(parse_json(&inspected)["worktree"]["path"].as_str().unwrap());
+    let dirty_file = worktree.join("dirty.txt");
+    fs::write(&dirty_file, "preserve\n").expect("child worktree should become dirty");
+
+    let cleaned = fixture
+        .command(&["subagent", "cleanup", &subagent_id, "--yes", "--json"])
+        .output()
+        .expect("subagent cleanup should start");
+    assert_eq!(cleaned.status.code(), Some(50));
+    assert_eq!(parse_json(&cleaned)["code"], "execution_failed");
+    assert!(worktree.is_dir());
+    assert!(dirty_file.is_file());
+    let inspected = fixture
+        .command(&["subagent", "inspect", &subagent_id, "--json"])
+        .output()
+        .expect("subagent inspect should start");
+    assert_success(&inspected);
+    let inspected = parse_json(&inspected);
+    assert_eq!(inspected["lifecycle"]["status"], "completed");
+    assert_eq!(inspected["worktree"]["state"], "preserved");
+    assert_eq!(
+        inspected["receipts"]["remove"]["outcome"]["status"],
+        "failed"
+    );
+}
+
+#[test]
+fn subagent_help_and_completion_surfaces_list_all_lifecycle_commands() {
+    let fixture = Fixture::new();
+    let help = fixture
+        .command(&["help"])
+        .output()
+        .expect("help should start");
+    assert_success(&help);
+    let help = String::from_utf8(help.stdout).expect("help should be UTF-8");
+    assert!(help.contains("subagent"));
+    for command in [
+        "spawn",
+        "work",
+        "list",
+        "inspect",
+        "cancel",
+        "mark-interrupted",
+        "cleanup",
+    ] {
+        assert!(help.contains(command), "help missing {command}");
+    }
+
+    for shell in ["powershell", "bash", "zsh", "fish"] {
+        let output = fixture
+            .command(&["completions", shell, "--json"])
+            .output()
+            .expect("completion generation should start");
+        assert_success(&output);
+        let script = parse_json(&output)["script"].as_str().unwrap().to_owned();
+        assert!(script.contains("subagent"), "{shell} missing subagent");
+        for command in [
+            "spawn",
+            "work",
+            "list",
+            "inspect",
+            "cancel",
+            "mark-interrupted",
+            "cleanup",
+        ] {
+            assert!(script.contains(command), "{shell} missing {command}");
+        }
+    }
 }
 
 #[test]

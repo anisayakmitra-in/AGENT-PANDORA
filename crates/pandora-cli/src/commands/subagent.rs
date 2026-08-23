@@ -607,19 +607,68 @@ fn terminal_result(
 }
 
 fn stable_result(result: Option<&Value>) -> Option<Value> {
-    match result {
-        Some(Value::Object(result)) => {
-            let mut stable = serde_json::Map::new();
-            for field in ["code", "status", "reason", "outcome_known"] {
-                if let Some(value) = result.get(field) {
-                    stable.insert(field.to_owned(), value.clone());
-                }
-            }
-            Some(Value::Object(stable))
+    let result = result?.as_object()?;
+    let code = result.get("code")?.as_str()?;
+    match code {
+        "completed" if exact_summary(result, "completed", "completed") => {
+            Some(json!({"code": "completed", "status": "completed"}))
         }
-        Some(result) => Some(result.clone()),
-        None => None,
+        "approval_required" if exact_summary(result, "approval_required", "approval_required") => {
+            Some(json!({"code": "approval_required", "status": "approval_required"}))
+        }
+        "agent_controlled_stop"
+            if exact_summary(result, "agent_controlled_stop", "cancelled")
+                && result.get("reason").and_then(Value::as_str) == Some("cancelled")
+                && result.len() == 3 =>
+        {
+            Some(json!({
+                "code": "agent_controlled_stop",
+                "status": "cancelled",
+                "reason": "cancelled",
+            }))
+        }
+        "worker_interrupted"
+            if result.get("outcome_known").and_then(Value::as_bool) == Some(false)
+                && result.keys().all(|key| {
+                    matches!(
+                        key.as_str(),
+                        "code" | "outcome_known" | "reason" | "worker_id"
+                    )
+                })
+                && result
+                    .get("reason")
+                    .is_none_or(|value| value.as_str().is_some_and(is_bounded_text))
+                && result
+                    .get("worker_id")
+                    .is_none_or(|value| value.as_str().is_some_and(is_bounded_text)) =>
+        {
+            Some(json!({"code": "worker_interrupted", "outcome_known": false}))
+        }
+        "subagent_binding_changed"
+            if exact_summary(result, "subagent_binding_changed", "failed") =>
+        {
+            Some(json!({"code": "subagent_binding_changed", "status": "failed"}))
+        }
+        "subagent_worktree_changed"
+            if exact_summary(result, "subagent_worktree_changed", "failed") =>
+        {
+            Some(json!({"code": "subagent_worktree_changed", "status": "failed"}))
+        }
+        "execution_failed" if exact_summary(result, "execution_failed", "failed") => {
+            Some(json!({"code": "execution_failed", "status": "failed"}))
+        }
+        _ => None,
     }
+}
+
+fn exact_summary(result: &serde_json::Map<String, Value>, code: &str, status: &str) -> bool {
+    result.len() == 2
+        && result.get("code").and_then(Value::as_str) == Some(code)
+        && result.get("status").and_then(Value::as_str) == Some(status)
+}
+
+fn is_bounded_text(value: &str) -> bool {
+    value.len() <= 256 && !value.chars().any(char::is_control)
 }
 
 fn terminal_status_text(status: SubagentStatus) -> &'static str {
@@ -788,17 +837,25 @@ mod tests {
     }
 
     #[test]
-    fn stable_result_removes_legacy_terminal_details() {
-        let result = stable_result(Some(&json!({
-            "code": "approval_required",
-            "details": {"approval_id": "approval-secret", "raw_response": "provider-secret"},
-        })))
-        .expect("legacy result should be represented");
+    fn stable_result_rejects_arbitrary_legacy_shapes() {
+        for result in [
+            json!("approval-secret"),
+            json!(["provider-secret"]),
+            json!({"reason": {"approval_id": "approval-secret"}}),
+            json!({"code": "completed", "raw_response": "provider-secret"}),
+        ] {
+            assert_eq!(stable_result(Some(&result)), None, "{result}");
+        }
+    }
 
-        assert_eq!(result["code"], "approval_required");
-        assert!(!result.to_string().contains("approval_id"));
-        assert!(!result.to_string().contains("approval-secret"));
-        assert!(!result.to_string().contains("provider-secret"));
+    #[test]
+    fn stable_result_keeps_a_valid_known_terminal_summary() {
+        let result = json!({
+            "code": "worker_interrupted",
+            "outcome_known": false,
+        });
+
+        assert_eq!(stable_result(Some(&result)), Some(result));
     }
 
     #[test]
