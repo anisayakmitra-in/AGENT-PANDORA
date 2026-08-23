@@ -26,6 +26,7 @@ mod session;
 mod setup;
 mod skill;
 mod slash;
+mod subagent;
 #[allow(dead_code)]
 pub(crate) mod subagent_run;
 mod tool;
@@ -79,6 +80,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "session" => session::execute(&args[1..]),
         "slash" => slash::execute(&args[1..]),
         "skill" => skill::execute(&args[1..]),
+        "subagent" => subagent::execute(&args[1..]),
         "provider" => provider::execute(&args[1..]),
         "strategies" => strategies(&args[1..]),
         "tool" => tool::execute(&args[1..]),
@@ -285,7 +287,7 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|service|chat|tui|harness|slash|session|job|skill|package|approval|provider|tool|orchestration|strategies|efficiency|completions|migrate|update|uninstall|doctor> [options]
+    r#"usage: pandora <help|setup|run|service|chat|tui|harness|slash|session|job|subagent|skill|package|approval|provider|tool|orchestration|strategies|efficiency|completions|migrate|update|uninstall|doctor> [options]
 
 commands:
   help (or --help)
@@ -298,6 +300,8 @@ commands:
   slash list|resolve <command>
   session list|resume|inspect <id>
   job submit|work|list|inspect|cancel|mark-interrupted (work accepts --max-jobs <1-64>)
+  subagent spawn --session <id> --execution <id> [--commit <sha>] [--provider <name>] [--harness <id> --harness-version <version>] [--max-turns <n>] [--max-tools <n>] [--max-tokens <n>] [--max-duration <seconds>] [--max-depth <n>] [--max-result-bytes <n>] <task>
+  subagent list|inspect|cancel|mark-interrupted|cleanup <id> | work [--max-agents <1-8>]
   skill list|inspect|install|enable|disable|suspend|remove|restore <id-or-path>
   package admit --manifest <path> --artifact <path> | install <id> [version] --registry <url> [--token-env <name>] | list | inspect <id> <version> | lock [--output <path>] | verify-lock [--lock <path>] | remove <id> <version> [--dry-run|--yes]
   tool list|inspect <id>

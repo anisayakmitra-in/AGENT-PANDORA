@@ -795,6 +795,24 @@ impl SubagentStore {
         load_scoped_subagent(&connection, id, scope)?.ok_or(SubagentStoreError::SubagentNotFound)
     }
 
+    pub fn list(&self, scope: &SubagentScope) -> Result<Vec<SubagentRecord>, SubagentStoreError> {
+        let connection = self.lock()?;
+        let sql = format!(
+            "{} ORDER BY created_at ASC, subagent_id ASC",
+            subagent_select_sql("principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3")
+        );
+        let mut statement = connection.prepare(&sql)?;
+        let rows = statement.query_map(
+            params![
+                scope.principal_id().as_str(),
+                scope.tenant_id().as_str(),
+                scope.workspace_id().as_str(),
+            ],
+            decode_subagent,
+        )?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
     pub fn is_cancel_requested(
         &self,
         id: &SubagentId,

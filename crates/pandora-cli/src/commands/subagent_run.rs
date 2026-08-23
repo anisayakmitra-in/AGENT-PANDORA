@@ -110,7 +110,10 @@ fn verify_bindings(
     Ok(())
 }
 
-fn provider_binding_digest(config: &RuntimeConfig, name: &str) -> Result<String, CliError> {
+pub(crate) fn provider_binding_digest(
+    config: &RuntimeConfig,
+    name: &str,
+) -> Result<String, CliError> {
     let profile = config
         .provider_profile(name)
         .ok_or_else(|| binding_changed_message("the bound provider profile is unavailable"))?;

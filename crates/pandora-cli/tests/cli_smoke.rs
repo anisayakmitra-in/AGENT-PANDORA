@@ -65,6 +65,37 @@ impl Fixture {
         assert_success(&output);
         parse_json(&output)
     }
+
+    fn initialize_git_workspace(&self) -> String {
+        for arguments in [
+            ["init"].as_slice(),
+            ["config", "user.email", "fixture@example.test"].as_slice(),
+            ["config", "user.name", "Pandora Fixture"].as_slice(),
+            ["add", "README.md"].as_slice(),
+            ["commit", "-m", "fixture"].as_slice(),
+        ] {
+            let output = Command::new("git")
+                .args(arguments)
+                .current_dir(&self.workspace)
+                .output()
+                .expect("git fixture command should start");
+            assert!(
+                output.status.success(),
+                "git fixture command failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let output = Command::new("git")
+            .args(["rev-parse", "--verify", "HEAD"])
+            .current_dir(&self.workspace)
+            .output()
+            .expect("git revision lookup should start");
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .expect("git revision should be UTF-8")
+            .trim()
+            .to_owned()
+    }
 }
 
 impl Drop for Fixture {
@@ -222,6 +253,203 @@ fn release_update_rejects_an_invalid_tag_before_network_access() {
     let response = parse_json(&output);
     assert_eq!(response["code"], "update_error");
     assert_eq!(response["details"]["reason"], "invalid_release");
+}
+
+#[test]
+fn subagent_list_returns_a_versioned_scoped_empty_lifecycle() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    let output = fixture
+        .command(&["subagent", "list", "--json"])
+        .output()
+        .expect("subagent list should start");
+
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["version"], "0.1");
+    assert_eq!(response["command"], "subagent list");
+    assert_eq!(response["count"], 0);
+    assert_eq!(response["subagents"], serde_json::json!([]));
+}
+
+#[test]
+fn subagent_spawn_materializes_default_bindings_for_a_scoped_parent_execution() {
+    let fixture = Fixture::new();
+    let exact_commit = fixture.initialize_git_workspace();
+    fixture.setup();
+
+    let parent = fixture
+        .command(&["run", "read:README.md", "--json"])
+        .output()
+        .expect("parent run should start");
+    assert_success(&parent);
+    let parent = parse_json(&parent);
+    let session_id = parent["session_id"]
+        .as_str()
+        .expect("parent run should return a session ID");
+    let execution_id = parent["execution_id"]
+        .as_str()
+        .expect("parent run should return an execution ID");
+
+    let spawned = fixture
+        .command(&[
+            "subagent",
+            "spawn",
+            "--session",
+            session_id,
+            "--execution",
+            execution_id,
+            "--max-turns",
+            "1",
+            "--max-tools",
+            "1",
+            "--max-tokens",
+            "100",
+            "--max-duration",
+            "60",
+            "--max-depth",
+            "1",
+            "--max-result-bytes",
+            "8192",
+            "Read the README",
+            "--json",
+        ])
+        .output()
+        .expect("subagent spawn should start");
+    assert_success_with_context(&spawned, "subagent spawn");
+    let spawned = parse_json(&spawned);
+    assert_eq!(spawned["command"], "subagent spawn");
+    assert_eq!(spawned["lifecycle"]["status"], "queued");
+    assert_eq!(spawned["request"]["exact_commit"], exact_commit);
+    assert_eq!(spawned["request"]["provider_profile"], "openai-compatible");
+    assert!(spawned["request"]["harness"]["harness_id"].is_string());
+    assert!(spawned["request"]["harness"]["version"].is_string());
+    assert_eq!(spawned["worktree"]["state"], "ready");
+    assert!(spawned["receipts"]["create"]["receipt_id"].is_string());
+}
+
+#[test]
+fn subagent_work_inspect_and_cleanup_complete_an_exact_commit_lifecycle() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("provider fixture should bind");
+    let address = listener
+        .local_addr()
+        .expect("provider fixture should expose its address");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("subagent should connect");
+        let mut request = Vec::new();
+        let header_end = loop {
+            let mut chunk = [0_u8; 1_024];
+            let bytes_read = stream
+                .read(&mut chunk)
+                .expect("subagent request should read");
+            request.extend_from_slice(&chunk[..bytes_read]);
+            if let Some(position) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                break position + 4;
+            }
+        };
+        let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+        let content_length = headers
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .expect("subagent should send a content length");
+        while request.len() < header_end + content_length {
+            let mut chunk = [0_u8; 1_024];
+            let bytes_read = stream.read(&mut chunk).expect("subagent body should read");
+            request.extend_from_slice(&chunk[..bytes_read]);
+        }
+        let response = br#"{"choices":[{"message":{"content":"subagent complete"}}],"usage":{"prompt_tokens":2,"completion_tokens":1}}"#;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            response.len()
+        )
+        .expect("subagent response headers should be written");
+        stream
+            .write_all(response)
+            .expect("subagent response should be written");
+    });
+
+    let fixture = Fixture::new();
+    fixture.initialize_git_workspace();
+    fixture.setup();
+    let parent = fixture
+        .command(&["run", "read:README.md", "--json"])
+        .output()
+        .expect("parent run should start");
+    assert_success(&parent);
+    let parent = parse_json(&parent);
+    let provider_url = format!("http://{address}/v1");
+    let configured = fixture
+        .command(&[
+            "provider",
+            "set",
+            "--provider-url",
+            &provider_url,
+            "--model",
+            "fixture-model",
+            "--json",
+        ])
+        .output()
+        .expect("provider setup should start");
+    assert_success(&configured);
+    let spawned = fixture
+        .command(&[
+            "subagent",
+            "spawn",
+            "--session",
+            parent["session_id"].as_str().unwrap(),
+            "--execution",
+            parent["execution_id"].as_str().unwrap(),
+            "--max-turns",
+            "1",
+            "--max-tools",
+            "1",
+            "Read the README",
+            "--json",
+        ])
+        .output()
+        .expect("subagent spawn should start");
+    assert_success(&spawned);
+    let subagent_id = parse_json(&spawned)["subagent_id"]
+        .as_str()
+        .expect("spawn should return a subagent ID")
+        .to_owned();
+
+    let worked = fixture
+        .command(&["subagent", "work", "--max-agents", "1", "--json"])
+        .env("PANDORA_PROVIDER_API_KEY", "fixture-provider-key")
+        .output()
+        .expect("subagent work should start");
+    assert_success_with_context(&worked, "subagent work");
+    let worked = parse_json(&worked);
+    assert_eq!(worked["command"], "subagent work");
+    assert_eq!(worked["worker_count"], 1);
+    assert_eq!(worked["processed_count"], 1);
+    assert_eq!(
+        worked["subagents"][0]["lifecycle"]["status"], "completed",
+        "{worked}"
+    );
+
+    let inspected = fixture
+        .command(&["subagent", "inspect", &subagent_id, "--json"])
+        .output()
+        .expect("subagent inspect should start");
+    assert_success(&inspected);
+    let inspected = parse_json(&inspected);
+    assert_eq!(inspected["lifecycle"]["status"], "completed");
+    assert_eq!(inspected["result"]["output"], "subagent complete");
+    assert!(!inspected.to_string().contains("fixture-provider-key"));
+
+    let cleaned = fixture
+        .command(&["subagent", "cleanup", &subagent_id, "--yes", "--json"])
+        .output()
+        .expect("subagent cleanup should start");
+    assert_success_with_context(&cleaned, "subagent cleanup");
+    assert_eq!(parse_json(&cleaned)["worktree"]["state"], "removed");
+
+    server.join().expect("provider fixture should finish");
 }
 
 #[test]

@@ -88,6 +88,21 @@ record `pandora job mark-interrupted <job-id> --reason "..." --yes`.
 Run it from an existing service manager or scheduler when continuous polling
 is needed.
 
+Local isolated subagents use the same governed runtime path with durable,
+scoped records and exact-commit Git worktrees:
+
+```text
+pandora subagent spawn --session <id> --execution <id> "Review this workspace"
+pandora subagent work --max-agents 2
+pandora subagent inspect <subagent-id> --json
+pandora subagent cleanup <subagent-id> --yes
+```
+
+`spawn` materializes the active provider and coding Harness when omitted.
+`cancel` terminalizes queued work or requests cooperative cancellation for a
+running child. Cleanup remains local, requires explicit confirmation, and
+preserves dirty or commit-mismatched worktrees.
+
 For a local client such as the future desktop app, start the authenticated
 loopback runtime service:
 
