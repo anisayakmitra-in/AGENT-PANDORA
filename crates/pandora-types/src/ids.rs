@@ -46,6 +46,45 @@ macro_rules! define_id {
             }
         }
     };
+    ($name:ident, validated_deserialize) => {
+        #[derive(Clone, Debug, Serialize, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        pub struct $name(String);
+
+        impl $name {
+            pub fn new(value: impl Into<String>) -> Result<Self, IdError> {
+                let value = value.into();
+                if value.trim().is_empty() {
+                    return Err(IdError::Empty);
+                }
+                if value.len() > 256 {
+                    return Err(IdError::TooLong);
+                }
+                Ok(Self(value))
+            }
+
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<Deserializer>(
+                deserializer: Deserializer,
+            ) -> Result<Self, Deserializer::Error>
+            where
+                Deserializer: serde::Deserializer<'de>,
+            {
+                let value = String::deserialize(deserializer)?;
+                Self::new(value).map_err(serde::de::Error::custom)
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str(&self.0)
+            }
+        }
+    };
 }
 
 define_id!(ExecutionId);
@@ -68,4 +107,4 @@ define_id!(RunLoopId);
 define_id!(ProposalId);
 define_id!(JobId);
 define_id!(JobWorkerId);
-define_id!(SubagentId);
+define_id!(SubagentId, validated_deserialize);

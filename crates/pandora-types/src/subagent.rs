@@ -150,6 +150,7 @@ impl SubagentBudgets {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SubagentBudgetsWire {
     max_turns: u32,
     max_tool_calls: u32,
@@ -204,6 +205,7 @@ impl SubagentHarnessBinding {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SubagentHarnessBindingWire {
     harness_id: String,
     version: String,
@@ -309,6 +311,7 @@ impl SubagentRequest {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SubagentRequestWire {
     parent_session_id: String,
     parent_execution_id: String,
@@ -384,7 +387,8 @@ fn validate_text(field: &'static str, value: String) -> Result<String, SubagentC
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ExecutionId, HarnessId, SessionId};
+    use crate::{ExecutionId, HarnessId, SessionId, SubagentId};
+    use serde_json::json;
 
     #[test]
     fn request_has_a_stable_bounded_wire_contract() {
@@ -437,5 +441,45 @@ mod tests {
             ),
             Err(SubagentContractError::InvalidCommit)
         ));
+    }
+
+    #[test]
+    fn request_rejects_forbidden_task_payload_fields() {
+        for field in [
+            "workspace",
+            "permit",
+            "approval_id",
+            "credential",
+            "command",
+        ] {
+            let mut value = serde_json::to_value(
+                &SubagentRequest::new(
+                    SessionId::new("session-parent").unwrap(),
+                    ExecutionId::new("execution-parent").unwrap(),
+                    0,
+                    "a".repeat(40),
+                    "task",
+                    SubagentBudgets::new(1, 1, 1, 1, 0, 1).unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            value[field] = json!("forbidden");
+
+            assert!(
+                serde_json::from_value::<SubagentRequest>(value).is_err(),
+                "forbidden field {field} was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn subagent_id_deserialization_rejects_empty_values() {
+        assert!(serde_json::from_value::<SubagentId>(json!("")).is_err());
+    }
+
+    #[test]
+    fn subagent_id_deserialization_rejects_overlong_values() {
+        assert!(serde_json::from_value::<SubagentId>(json!("a".repeat(257))).is_err());
     }
 }
