@@ -753,6 +753,7 @@ fn subagent_binding_provider_model_drift_stops_before_provider_call() {
 
     let worked = fixture
         .command(&["subagent", "work", "--json"])
+        .env("PANDORA_PROVIDER_API_KEY", "fixture-provider-key")
         .output()
         .expect("subagent work should start");
     assert_success(&worked);
