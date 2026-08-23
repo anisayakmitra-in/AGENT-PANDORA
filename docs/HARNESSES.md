@@ -137,6 +137,18 @@ Genes. Parliament decides policy, the Reference Monitor issues a one-shot
 permit, and the executor records the result. A workflow cannot bypass that
 path.
 
+`CodingFeedbackLoop` composes the existing evaluation, Reflexion, adaptation,
+and run-loop contracts around coding evidence. A verified iteration completes
+without adaptation. A failed retryable iteration records trajectory, outcome,
+and policy results, creates a redacted Reflexion artifact, and selects only an
+approved candidate that remains within the adaptation policy. Non-retryable or
+budget-exhausted work stops without selecting another strategy.
+
+The feedback loop evaluates evidence; it does not call a model, run a Gene,
+mint a permit, mutate code, or change policy. The current CLI does not start
+this loop automatically. A caller must supply the expected outcome, usage,
+retry classification, and approved adaptation candidates.
+
 Every built-in Harness and Gene has a canonical slash command. The Coding short
 aliases are `/coding`, `/read`, `/search`, `/patch`, `/verify`, `/review`,
 `/audit`, `/argus-review`, `/debt`, `/measure`, and `/guide`. Canonical commands

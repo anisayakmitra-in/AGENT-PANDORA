@@ -123,17 +123,20 @@ impl RunLoop {
             self.state = RunLoopState::Completed;
             return Ok(LoopDecision::Completed);
         }
-        if !outcome.progress() && self.config.termination() == LoopTermination::NoProgress {
-            self.state = RunLoopState::Completed;
-            return Ok(LoopDecision::Completed);
-        }
         if outcome.failed() {
-            if outcome.retryable() && self.retries < self.config.max_retries() {
+            if outcome.retryable()
+                && self.retries < self.config.max_retries()
+                && self.iterations < self.config.max_iterations()
+            {
                 self.retries += 1;
                 return Ok(LoopDecision::Retry);
             }
             self.state = RunLoopState::Exhausted;
             return Ok(LoopDecision::Exhausted);
+        }
+        if !outcome.progress() && self.config.termination() == LoopTermination::NoProgress {
+            self.state = RunLoopState::Completed;
+            return Ok(LoopDecision::Completed);
         }
         if self.iterations >= self.config.max_iterations() {
             self.state = RunLoopState::Exhausted;

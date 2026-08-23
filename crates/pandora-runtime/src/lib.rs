@@ -3,6 +3,7 @@
 pub mod adaptive_engine;
 pub mod agent_loop;
 pub mod approvals;
+pub mod coding_feedback;
 pub mod config;
 pub mod context_engine;
 pub mod context_recovery;
@@ -47,6 +48,9 @@ pub use agent_loop::{
 };
 pub use approvals::{
     ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, PendingApproval,
+};
+pub use coding_feedback::{
+    CodingFeedbackError, CodingFeedbackInput, CodingFeedbackLoop, CodingFeedbackResult,
 };
 pub use context_engine::{ContextCacheStats, ContextEngine, ContextError};
 pub use context_recovery::{ContextRecovery, RecoveryDecision, RecoveryInput, RecoveryStep};
