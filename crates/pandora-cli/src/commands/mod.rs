@@ -26,6 +26,8 @@ mod session;
 mod setup;
 mod skill;
 mod slash;
+#[allow(dead_code)]
+pub(crate) mod subagent_run;
 mod tool;
 mod tui;
 mod uninstall;

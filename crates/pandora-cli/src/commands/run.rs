@@ -206,7 +206,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         (parsed.positionals[0].clone(), None)
     };
     if parsed.value("agent").is_some() {
-        return execute_agent(
+        return execute_agent_core(
             &config,
             &controller,
             &session,
@@ -222,6 +222,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                 optimization,
                 max_turns,
                 max_tool_calls,
+                control: None,
             },
         );
     }
@@ -386,7 +387,7 @@ fn canonical_harness_id(value: &str) -> &str {
     }
 }
 
-fn require_runnable_harness(
+pub(super) fn require_runnable_harness(
     harnesses: &HarnessCatalog,
     requested: Option<&str>,
 ) -> Result<(), CliError> {
@@ -410,7 +411,7 @@ fn require_runnable_harness(
     ))
 }
 
-fn execute_agent(
+pub(super) fn execute_agent_core(
     config: &RuntimeConfig,
     controller: &ExecutionController,
     session: &Session,
@@ -451,13 +452,16 @@ fn execute_agent(
             skill_context.as_deref(),
             options.task,
         ),
-        None => loop_engine.run_with_request(
-            provider.as_ref(),
-            controller,
-            AgentRunRequest::new(session.clone(), options.history, options.task, timestamp())
-                .with_skill_context(skill_context.as_deref())
-                .with_l1_evidence(Some(&l1_evidence)),
-        ),
+        None => {
+            let mut request =
+                AgentRunRequest::new(session.clone(), options.history, options.task, timestamp())
+                    .with_skill_context(skill_context.as_deref())
+                    .with_l1_evidence(Some(&l1_evidence));
+            if let Some(control) = options.control {
+                request = request.with_control(control);
+            }
+            loop_engine.run_with_request(provider.as_ref(), controller, request)
+        }
     };
     match result {
         Ok(summary) => {
@@ -630,16 +634,17 @@ fn active_skill_context(config: &RuntimeConfig) -> Result<Option<String>, CliErr
         })
 }
 
-struct AgentOptions<'a> {
-    task: &'a str,
-    task_class: &'a str,
-    history: Vec<ChatMessage>,
-    approval_id: Option<&'a str>,
-    model_override: Option<&'a str>,
-    provider_name: Option<&'a str>,
-    optimization: Option<EfficiencyObjective>,
-    max_turns: u32,
-    max_tool_calls: u32,
+pub(super) struct AgentOptions<'a> {
+    pub task: &'a str,
+    pub task_class: &'a str,
+    pub history: Vec<ChatMessage>,
+    pub approval_id: Option<&'a str>,
+    pub model_override: Option<&'a str>,
+    pub provider_name: Option<&'a str>,
+    pub optimization: Option<EfficiencyObjective>,
+    pub max_turns: u32,
+    pub max_tool_calls: u32,
+    pub control: Option<&'a dyn pandora_runtime::AgentRunControl>,
 }
 
 fn parse_agent_budget(
