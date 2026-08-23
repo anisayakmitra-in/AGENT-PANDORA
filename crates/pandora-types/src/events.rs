@@ -92,6 +92,22 @@ impl EventContext {
     pub fn execution_id(&self) -> Option<&ExecutionId> {
         self.execution_id.as_ref()
     }
+
+    pub fn harness_id(&self) -> Option<&HarnessId> {
+        self.harness_id.as_ref()
+    }
+
+    pub fn gene_id(&self) -> Option<&GeneId> {
+        self.gene_id.as_ref()
+    }
+
+    pub const fn policy_version(&self) -> Option<u32> {
+        self.policy_version
+    }
+
+    pub fn receipt_id(&self) -> Option<&ReceiptId> {
+        self.receipt_id.as_ref()
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

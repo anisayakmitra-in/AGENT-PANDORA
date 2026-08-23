@@ -16,6 +16,14 @@ Irreversible actions remain pending until explicitly approved. Each review expos
 
 Telemetry has no raw prompt or output field. Debug exports must be redacted before they enter the projection. Runtime events remain the authoritative event stream; observability is a derived view and cannot authorize execution, approve memory promotion, or change policy.
 
+## Rollout evidence
+
+`RolloutReducer` creates a deterministic, versioned projection from one context-manifest digest, ordered runtime events, and linked effect receipts. The projection binds tenant, workspace, session, and execution scope; chains each record to the previous digest; and can be replay-verified without creating another event store.
+
+Rollout records keep typed event kinds, bounded identifiers and failure codes, request digests, receipt and permit IDs, policy versions, provider IDs, MCP era evidence, timestamps, and effect outcomes. Policy and denial reasons are represented only by SHA-256 digests. Credentials, prompts, assembled context, model output, Tool output, environment values, arbitrary error text, and hidden reasoning are excluded.
+
+The reducer is evaluation evidence only. It cannot issue a permit, approve an operation, promote memory, modify canonical events, or replace the session store. Callers may inspect the projection version, record count, and final digest from the in-memory result; Pandora does not claim durable rollout storage until the existing session authority explicitly persists that projection.
+
 ## Evaluation
 
 Each CLI execution attempt produces one bounded evaluation receipt. The receipt records
