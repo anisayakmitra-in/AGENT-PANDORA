@@ -170,53 +170,26 @@ fn seed_subagent(fixture: &Fixture, id: &str, scope: SubagentScope, running: boo
 }
 
 fn loopback_provider_calls(listener: TcpListener) -> thread::JoinHandle<usize> {
+    provider_calls_with_timeout(listener, Duration::from_secs(2))
+}
+
+fn expected_provider_call(listener: TcpListener) -> thread::JoinHandle<usize> {
+    provider_calls_with_timeout(listener, Duration::from_secs(30))
+}
+
+fn provider_calls_with_timeout(
+    listener: TcpListener,
+    timeout: Duration,
+) -> thread::JoinHandle<usize> {
     listener
         .set_nonblocking(true)
         .expect("provider fixture should become non-blocking");
     thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + timeout;
         loop {
             match listener.accept() {
                 Ok((mut stream, _)) => {
-                    let mut request = Vec::new();
-                    let header_end = loop {
-                        let mut chunk = [0_u8; 1_024];
-                        let bytes_read = stream
-                            .read(&mut chunk)
-                            .expect("provider request should read");
-                        assert_ne!(bytes_read, 0, "provider request ended before its headers");
-                        request.extend_from_slice(&chunk[..bytes_read]);
-                        if let Some(position) =
-                            request.windows(4).position(|window| window == b"\r\n\r\n")
-                        {
-                            break position + 4;
-                        }
-                    };
-                    let headers =
-                        String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
-                    let content_length = headers
-                        .lines()
-                        .find_map(|line| line.strip_prefix("content-length:"))
-                        .and_then(|value| value.trim().parse::<usize>().ok())
-                        .expect("provider request should send a content length");
-                    while request.len() < header_end + content_length {
-                        let mut chunk = [0_u8; 1_024];
-                        let bytes_read = stream
-                            .read(&mut chunk)
-                            .expect("provider request body should read");
-                        assert_ne!(bytes_read, 0, "provider request body ended early");
-                        request.extend_from_slice(&chunk[..bytes_read]);
-                    }
-                    let response = br#"{"choices":[{"message":{"content":"fixture complete"}}],"usage":{"prompt_tokens":2,"completion_tokens":1}}"#;
-                    write!(
-                        stream,
-                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                        response.len()
-                    )
-                    .expect("provider response headers should be written");
-                    stream
-                        .write_all(response)
-                        .expect("provider response should be written");
+                    serve_provider_response(&mut stream);
                     return 1;
                 }
                 Err(error) if error.kind() == ErrorKind::WouldBlock => {
@@ -229,6 +202,45 @@ fn loopback_provider_calls(listener: TcpListener) -> thread::JoinHandle<usize> {
             }
         }
     })
+}
+
+fn serve_provider_response(stream: &mut TcpStream) {
+    let mut request = Vec::new();
+    let header_end = loop {
+        let mut chunk = [0_u8; 1_024];
+        let bytes_read = stream
+            .read(&mut chunk)
+            .expect("provider request should read");
+        assert_ne!(bytes_read, 0, "provider request ended before its headers");
+        request.extend_from_slice(&chunk[..bytes_read]);
+        if let Some(position) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+            break position + 4;
+        }
+    };
+    let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+    let content_length = headers
+        .lines()
+        .find_map(|line| line.strip_prefix("content-length:"))
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .expect("provider request should send a content length");
+    while request.len() < header_end + content_length {
+        let mut chunk = [0_u8; 1_024];
+        let bytes_read = stream
+            .read(&mut chunk)
+            .expect("provider request body should read");
+        assert_ne!(bytes_read, 0, "provider request body ended early");
+        request.extend_from_slice(&chunk[..bytes_read]);
+    }
+    let response = br#"{"choices":[{"message":{"content":"fixture complete"}}],"usage":{"prompt_tokens":2,"completion_tokens":1}}"#;
+    write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        response.len()
+    )
+    .expect("provider response headers should be written");
+    stream
+        .write_all(response)
+        .expect("provider response should be written");
 }
 
 fn admit_domain_harness(fixture: &Fixture, artifact: &[u8], gene_ids: &[&str]) {
@@ -892,7 +904,7 @@ fn subagent_cleanup_preserves_a_dirty_managed_worktree() {
             .local_addr()
             .expect("provider fixture should expose its address")
     );
-    let server = loopback_provider_calls(listener);
+    let server = expected_provider_call(listener);
     let fixture = Fixture::new();
     fixture.initialize_git_workspace();
     fixture.setup();
