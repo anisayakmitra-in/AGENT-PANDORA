@@ -113,6 +113,13 @@ pandora job list
 pandora job inspect <job-id>
 pandora job cancel <job-id>
 pandora job mark-interrupted <job-id> --reason "worker exited" --yes
+pandora subagent spawn --session <session-id> --execution <execution-id> "Review the README"
+pandora subagent work --max-agents 1
+pandora subagent list
+pandora subagent inspect <subagent-id>
+pandora subagent cancel <subagent-id>
+pandora subagent mark-interrupted <subagent-id> --reason "worker exited" --yes
+pandora subagent cleanup <subagent-id> --yes
 pandora approval list
 pandora approval inspect <approval-id>
 pandora approval resolve <approval-id> --allow
@@ -148,6 +155,14 @@ because the worker may already have produced effects. Such a job remains
 external effects. The command does not stop a process or requeue work; submit a
 new job only after that review. The job worker is a bounded command, not a
 remote Fleet node.
+
+`subagent spawn` creates one scoped, exact-commit child worktree request bound
+to its resolved provider profile and coding Harness. `subagent work` claims and
+finishes queued records locally; `--max-agents` accepts `1-8`. Use `list`,
+`inspect`, and `cancel` within the same local scope. Running cancellation is
+cooperative. `mark-interrupted` requires a non-empty reason and `--yes`.
+`cleanup --yes` removes clean child worktrees and preserves dirty ones for
+review.
 
 ## Local service
 

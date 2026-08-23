@@ -111,9 +111,14 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
                             control: &control,
                         },
                     ) {
-                        Ok(result) => (SubagentStatus::Completed, result),
-                        Err(error) => (terminal_status(&error), error.envelope()),
+                        Ok(result) => (SubagentStatus::Completed, Ok(result)),
+                        Err(error) => (terminal_status(&error), Err(error)),
                     };
+                    let outcome = terminal_result(
+                        outcome.0,
+                        outcome.1,
+                        claimed.request().budgets().max_result_bytes(),
+                    );
                     let finished = match store.finish(
                         claimed.id(),
                         &worker,
@@ -501,7 +506,7 @@ fn subagent_json(record: &SubagentRecord) -> Result<Value, CliError> {
             "create": record.create_receipt().map(effect_receipt_json),
             "remove": record.remove_receipt().map(effect_receipt_json),
         },
-        "result": record.result(),
+        "result": stable_result(record.result()),
     }))
 }
 
@@ -568,6 +573,66 @@ fn terminal_status(error: &CliError) -> SubagentStatus {
         return SubagentStatus::Cancelled;
     }
     SubagentStatus::Failed
+}
+
+fn terminal_result(
+    status: SubagentStatus,
+    outcome: Result<Value, CliError>,
+    max_result_bytes: usize,
+) -> (SubagentStatus, Value) {
+    let result = match outcome {
+        Ok(_) => json!({
+            "code": "completed",
+            "status": terminal_status_text(status),
+        }),
+        Err(error) => {
+            let mut result = serde_json::Map::new();
+            result.insert("code".to_owned(), Value::String(error.code.to_owned()));
+            result.insert(
+                "status".to_owned(),
+                Value::String(terminal_status_text(status).to_owned()),
+            );
+            if error.code == "agent_controlled_stop"
+                && error.details.get("reason").and_then(Value::as_str) == Some("cancelled")
+            {
+                result.insert("reason".to_owned(), Value::String("cancelled".to_owned()));
+            }
+            Value::Object(result)
+        }
+    };
+    match serde_json::to_vec(&result) {
+        Ok(bytes) if bytes.len() <= max_result_bytes => (status, result),
+        _ => (SubagentStatus::Failed, json!(0)),
+    }
+}
+
+fn stable_result(result: Option<&Value>) -> Option<Value> {
+    match result {
+        Some(Value::Object(result)) => {
+            let mut stable = serde_json::Map::new();
+            for field in ["code", "status", "reason", "outcome_known"] {
+                if let Some(value) = result.get(field) {
+                    stable.insert(field.to_owned(), value.clone());
+                }
+            }
+            Some(Value::Object(stable))
+        }
+        Some(result) => Some(result.clone()),
+        None => None,
+    }
+}
+
+fn terminal_status_text(status: SubagentStatus) -> &'static str {
+    match status {
+        SubagentStatus::ApprovalRequired => "approval_required",
+        SubagentStatus::Completed => "completed",
+        SubagentStatus::Failed => "failed",
+        SubagentStatus::Cancelled => "cancelled",
+        SubagentStatus::Preparing
+        | SubagentStatus::Queued
+        | SubagentStatus::Running
+        | SubagentStatus::Interrupted => "failed",
+    }
 }
 
 fn parse_session_id(value: &str) -> Result<SessionId, CliError> {
@@ -694,5 +759,71 @@ fn subagent_store_error(error: SubagentStoreError) -> CliError {
             CliError::execution(message, json!({}))
         }
         _ => CliError::internal(message, json!({})),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_result_removes_approval_payloads_and_provider_details() {
+        let error = CliError::approval(
+            "approval required",
+            json!({
+                "approval_id": "approval-secret",
+                "provider_response": "provider-secret",
+                "reason": "approval_required",
+            }),
+        );
+
+        let result = terminal_result(SubagentStatus::ApprovalRequired, Err(error), 8_192);
+
+        assert_eq!(result.0, SubagentStatus::ApprovalRequired);
+        assert_eq!(result.1["code"], "approval_required");
+        assert_eq!(result.1["status"], "approval_required");
+        assert!(!result.1.to_string().contains("approval_id"));
+        assert!(!result.1.to_string().contains("approval-secret"));
+        assert!(!result.1.to_string().contains("provider-secret"));
+    }
+
+    #[test]
+    fn stable_result_removes_legacy_terminal_details() {
+        let result = stable_result(Some(&json!({
+            "code": "approval_required",
+            "details": {"approval_id": "approval-secret", "raw_response": "provider-secret"},
+        })))
+        .expect("legacy result should be represented");
+
+        assert_eq!(result["code"], "approval_required");
+        assert!(!result.to_string().contains("approval_id"));
+        assert!(!result.to_string().contains("approval-secret"));
+        assert!(!result.to_string().contains("provider-secret"));
+    }
+
+    #[test]
+    fn terminal_result_keeps_an_exact_budget_boundary() {
+        let result = json!({"code": "completed", "status": "completed"});
+        let budget = serde_json::to_vec(&result)
+            .expect("terminal result should serialize")
+            .len();
+
+        assert_eq!(
+            terminal_result(SubagentStatus::Completed, Ok(json!({})), budget),
+            (SubagentStatus::Completed, result)
+        );
+    }
+
+    #[test]
+    fn terminal_result_overflow_fails_with_a_value_that_fits_the_tiny_budget() {
+        let (status, result) = terminal_result(
+            SubagentStatus::Completed,
+            Ok(json!({"output": "provider response that does not fit"})),
+            1,
+        );
+
+        assert_eq!(status, SubagentStatus::Failed);
+        assert_eq!(result, json!(0));
+        assert_eq!(serde_json::to_vec(&result).unwrap().len(), 1);
     }
 }

@@ -1,6 +1,9 @@
+use pandora_runtime::{SubagentPreparation, SubagentScope, SubagentStore};
 use pandora_types::{
-    HarnessId, MetaComposition, PackageCompatibility, PackageDependency, PackageKind,
-    PackageManifest, TrustEvidence, hash_artifact,
+    EffectOutcome, EffectReceipt, ExecutionId, HarnessId, JobId, JobWorkerId, MetaComposition,
+    PackageCompatibility, PackageDependency, PackageKind, PackageManifest, PermitId, PrincipalId,
+    ReceiptId, RequestDigest, SessionId, SubagentBudgets, SubagentId, SubagentRequest, TenantId,
+    Timestamp, TrustEvidence, WorkspaceId, hash_artifact,
 };
 use serde_json::Value;
 use std::fs;
@@ -101,6 +104,68 @@ impl Fixture {
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn local_subagent_scope() -> SubagentScope {
+    SubagentScope::new(
+        PrincipalId::new("local-user").unwrap(),
+        TenantId::new("local-tenant").unwrap(),
+        WorkspaceId::new("local-workspace").unwrap(),
+    )
+}
+
+fn seed_subagent(fixture: &Fixture, id: &str, scope: SubagentScope, running: bool) {
+    let store = SubagentStore::open(fixture.data.join("jobs.sqlite3")).unwrap();
+    let id = SubagentId::new(id).unwrap();
+    let request = SubagentRequest::new(
+        SessionId::new(format!("parent-session-{}", id.as_str())).unwrap(),
+        ExecutionId::new(format!("parent-execution-{}", id.as_str())).unwrap(),
+        0,
+        "a".repeat(40),
+        "fixture task",
+        SubagentBudgets::new(1, 1, 1, 1, 0, 8_192).unwrap(),
+    )
+    .unwrap();
+    let prepared = store
+        .prepare(SubagentPreparation::new(
+            id.clone(),
+            JobId::new(format!("job-{}", id.as_str())).unwrap(),
+            scope.clone(),
+            SessionId::new(format!("child-session-{}", id.as_str())).unwrap(),
+            ExecutionId::new(format!("child-execution-{}", id.as_str())).unwrap(),
+            request,
+            fixture.workspace.clone(),
+            fixture.data.join("subagents").join(id.as_str()),
+            None,
+            None,
+            Timestamp::from_unix_seconds(10),
+        ))
+        .unwrap();
+    let receipt = EffectReceipt::new(
+        ReceiptId::new(format!("create-receipt-{}", id.as_str())).unwrap(),
+        PermitId::new(format!("create-permit-{}", id.as_str())).unwrap(),
+        RequestDigest::new(format!("create-digest-{}", id.as_str())).unwrap(),
+        Timestamp::from_unix_seconds(20),
+        EffectOutcome::Succeeded,
+    );
+    store
+        .queue(
+            prepared.id(),
+            &scope,
+            &receipt,
+            Timestamp::from_unix_seconds(20),
+        )
+        .unwrap();
+    if running {
+        store
+            .claim_next(
+                &scope,
+                &JobWorkerId::new(format!("worker-{}", id.as_str())).unwrap(),
+                Timestamp::from_unix_seconds(30),
+            )
+            .unwrap()
+            .expect("queued subagent should be claimable");
     }
 }
 
@@ -274,6 +339,164 @@ fn subagent_list_returns_a_versioned_scoped_empty_lifecycle() {
 }
 
 #[test]
+fn subagent_cli_scopes_cancellation_interruption_and_worker_limits() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let scope = local_subagent_scope();
+    seed_subagent(&fixture, "subagent-running", scope.clone(), true);
+    seed_subagent(&fixture, "subagent-queued", scope.clone(), false);
+    seed_subagent(
+        &fixture,
+        "subagent-other-scope",
+        SubagentScope::new(
+            PrincipalId::new("other-user").unwrap(),
+            TenantId::new("other-tenant").unwrap(),
+            WorkspaceId::new("other-workspace").unwrap(),
+        ),
+        false,
+    );
+
+    let listed = fixture
+        .command(&["subagent", "list", "--json"])
+        .output()
+        .expect("subagent list should start");
+    assert_success(&listed);
+    assert_eq!(parse_json(&listed)["count"], 2);
+    assert!(!parse_json(&listed).to_string().contains("other-scope"));
+
+    let queued = fixture
+        .command(&["subagent", "cancel", "subagent-queued", "--json"])
+        .output()
+        .expect("queued cancellation should start");
+    assert_success(&queued);
+    assert_eq!(parse_json(&queued)["lifecycle"]["status"], "cancelled");
+
+    let running = fixture
+        .command(&["subagent", "cancel", "subagent-running", "--json"])
+        .output()
+        .expect("running cancellation should start");
+    assert_success(&running);
+    let running = parse_json(&running);
+    assert_eq!(running["lifecycle"]["status"], "running");
+    assert!(running["worker"]["cancel_requested_at"].is_u64());
+
+    for args in [
+        ["subagent", "mark-interrupted", "subagent-running", "--json"].as_slice(),
+        [
+            "subagent",
+            "mark-interrupted",
+            "subagent-running",
+            "--yes",
+            "--reason",
+            "   ",
+            "--json",
+        ]
+        .as_slice(),
+    ] {
+        let output = fixture
+            .command(args)
+            .output()
+            .expect("invalid interruption should start");
+        assert_eq!(output.status.code(), Some(2));
+        assert_eq!(parse_json(&output)["code"], "usage_error");
+    }
+
+    let interrupted = fixture
+        .command(&[
+            "subagent",
+            "mark-interrupted",
+            "subagent-running",
+            "--yes",
+            "--reason",
+            "worker exited",
+            "--json",
+        ])
+        .output()
+        .expect("interruption should start");
+    assert_success(&interrupted);
+    let interrupted = parse_json(&interrupted);
+    assert_eq!(interrupted["lifecycle"]["status"], "interrupted");
+    assert_eq!(interrupted["result"]["code"], "worker_interrupted");
+    assert_eq!(interrupted["result"]["outcome_known"], false);
+
+    for count in ["0", "9"] {
+        let output = fixture
+            .command(&["subagent", "work", "--max-agents", count, "--json"])
+            .output()
+            .expect("invalid worker limit should start");
+        assert_eq!(output.status.code(), Some(2));
+        assert_eq!(parse_json(&output)["code"], "usage_error");
+    }
+
+    for command in ["inspect", "cancel"] {
+        let output = fixture
+            .command(&["subagent", command, "subagent-other-scope", "--json"])
+            .output()
+            .expect("cross-scope operation should start");
+        assert_eq!(output.status.code(), Some(50));
+        assert_eq!(parse_json(&output)["code"], "execution_failed");
+    }
+}
+
+#[test]
+fn subagent_work_returns_multiple_records_in_id_order() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let scope = local_subagent_scope();
+    seed_subagent(&fixture, "subagent-order-z", scope.clone(), false);
+    seed_subagent(&fixture, "subagent-order-a", scope, false);
+
+    let worked = fixture
+        .command(&["subagent", "work", "--max-agents", "2", "--json"])
+        .output()
+        .expect("subagent work should start");
+    assert_success(&worked);
+    let worked = parse_json(&worked);
+    assert_eq!(worked["processed_count"], 2);
+    assert_eq!(worked["subagents"][0]["subagent_id"], "subagent-order-a");
+    assert_eq!(worked["subagents"][1]["subagent_id"], "subagent-order-z");
+    assert_eq!(worked["subagents"][0]["lifecycle"]["status"], "failed");
+    assert_eq!(worked["subagents"][1]["lifecycle"]["status"], "failed");
+}
+
+#[test]
+fn subagent_list_and_inspect_filter_legacy_approval_details() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let scope = local_subagent_scope();
+    seed_subagent(&fixture, "subagent-approval-result", scope, true);
+    let store = SubagentStore::open(fixture.data.join("jobs.sqlite3")).unwrap();
+    store
+        .finish(
+            &SubagentId::new("subagent-approval-result").unwrap(),
+            &JobWorkerId::new("worker-subagent-approval-result").unwrap(),
+            pandora_types::SubagentStatus::ApprovalRequired,
+            &serde_json::json!({
+                "code": "approval_required",
+                "details": {"approval_id": "approval-secret", "raw_response": "provider-secret"},
+            }),
+            Timestamp::from_unix_seconds(40),
+        )
+        .unwrap();
+
+    for args in [
+        ["subagent", "list", "--json"].as_slice(),
+        ["subagent", "inspect", "subagent-approval-result", "--json"].as_slice(),
+    ] {
+        let output = fixture
+            .command(args)
+            .output()
+            .expect("subagent query should start");
+        assert_success(&output);
+        let response = parse_json(&output);
+        assert!(response.to_string().contains("approval_required"));
+        assert!(!response.to_string().contains("approval_id"));
+        assert!(!response.to_string().contains("approval-secret"));
+        assert!(!response.to_string().contains("provider-secret"));
+    }
+}
+
+#[test]
 fn subagent_spawn_materializes_default_bindings_for_a_scoped_parent_execution() {
     let fixture = Fixture::new();
     let exact_commit = fixture.initialize_git_workspace();
@@ -300,6 +523,10 @@ fn subagent_spawn_materializes_default_bindings_for_a_scoped_parent_execution() 
             session_id,
             "--execution",
             execution_id,
+            "--provider",
+            "openai-compatible",
+            "--harness",
+            "coding",
             "--max-turns",
             "1",
             "--max-tools",
@@ -323,6 +550,7 @@ fn subagent_spawn_materializes_default_bindings_for_a_scoped_parent_execution() 
     assert_eq!(spawned["lifecycle"]["status"], "queued");
     assert_eq!(spawned["request"]["exact_commit"], exact_commit);
     assert_eq!(spawned["request"]["provider_profile"], "openai-compatible");
+    assert_eq!(spawned["request"]["harness"]["harness_id"], "coding-domain");
     assert!(spawned["request"]["harness"]["harness_id"].is_string());
     assert!(spawned["request"]["harness"]["version"].is_string());
     assert_eq!(spawned["worktree"]["state"], "ready");
@@ -439,7 +667,9 @@ fn subagent_work_inspect_and_cleanup_complete_an_exact_commit_lifecycle() {
     assert_success(&inspected);
     let inspected = parse_json(&inspected);
     assert_eq!(inspected["lifecycle"]["status"], "completed");
-    assert_eq!(inspected["result"]["output"], "subagent complete");
+    assert_eq!(inspected["result"]["code"], "completed");
+    assert_eq!(inspected["result"]["status"], "completed");
+    assert!(inspected["result"].get("output").is_none());
     assert!(!inspected.to_string().contains("fixture-provider-key"));
 
     let cleaned = fixture
