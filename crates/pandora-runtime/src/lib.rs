@@ -55,6 +55,9 @@ pub use efficiency_store::{EfficiencyStore, EfficiencyStoreError};
 pub use evaluation_engine::{EvaluationEngine, EvaluationError};
 pub use evolution::{EvolutionEngine, EvolutionError};
 pub use execution_controller::{ExecutionController, RunStatus, RunSummary, RuntimeError};
+pub use executors::{
+    GitWorktreeExecutor, WorktreeChange, WorktreeCommand, WorktreeError, WorktreeResult,
+};
 pub use harness_registry::{HarnessRegistry, HarnessRegistryError, PackageRecord, PackageState};
 pub use hooks::{HookPoint, HookSelector, LifecycleHook, LifecycleHooks};
 pub use human_review::{

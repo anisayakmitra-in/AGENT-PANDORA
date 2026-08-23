@@ -1,6 +1,7 @@
 pub mod filesystem;
 pub mod process;
 pub mod provider;
+pub mod worktree;
 
 pub use filesystem::{
     FilesystemError, FilesystemExecutor, FilesystemResult, WorkspacePath, WorkspaceRoot,
@@ -10,3 +11,6 @@ pub use process::{
     VerificationCommand, VerificationOptions,
 };
 pub use provider::{ProviderExecutor, ProviderResult};
+pub use worktree::{
+    GitWorktreeExecutor, WorktreeChange, WorktreeCommand, WorktreeError, WorktreeResult,
+};
