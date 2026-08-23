@@ -226,6 +226,7 @@ pub enum SubagentStoreError {
     JobOwnedByAnotherWorker,
     ResultTooLarge,
     WorktreeCreationNotSuccessful,
+    WorktreeCreationDidNotFail,
     InvalidTransition {
         status: SubagentStatus,
         action: &'static str,
@@ -252,6 +253,9 @@ impl fmt::Display for SubagentStoreError {
             Self::ResultTooLarge => formatter.write_str("subagent result exceeds the size limit"),
             Self::WorktreeCreationNotSuccessful => {
                 formatter.write_str("worktree creation receipt is not successful")
+            }
+            Self::WorktreeCreationDidNotFail => {
+                formatter.write_str("worktree creation receipt is not a failure")
             }
             Self::InvalidTransition { status, action } => {
                 write!(
@@ -471,6 +475,175 @@ impl SubagentStore {
         current.status = SubagentStatus::Queued;
         current.worktree_state = SubagentWorktreeState::Ready;
         current.create_receipt = Some(receipt.clone());
+        Ok(current)
+    }
+
+    pub(crate) fn fail_preparing(
+        &self,
+        id: &SubagentId,
+        scope: &SubagentScope,
+        receipt: &EffectReceipt,
+        preserve_destination: bool,
+        now: Timestamp,
+    ) -> Result<SubagentRecord, SubagentStoreError> {
+        if matches!(receipt.outcome(), EffectOutcome::Succeeded) {
+            return Err(SubagentStoreError::WorktreeCreationDidNotFail);
+        }
+        let receipt_json = encode_receipt(receipt)?;
+        let worktree_state = if preserve_destination {
+            SubagentWorktreeState::Preserved
+        } else {
+            SubagentWorktreeState::Pending
+        };
+        let result = serde_json::json!({
+            "code": "worktree_create_failed",
+            "outcome_known": true,
+        });
+        let result_json = bounded_result_json(&result)?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut current = load_scoped_subagent(&transaction, id, scope)?
+            .ok_or(SubagentStoreError::SubagentNotFound)?;
+        if current.status != SubagentStatus::Preparing
+            || current.worktree_state != SubagentWorktreeState::Pending
+        {
+            return Err(SubagentStoreError::InvalidTransition {
+                status: current.status,
+                action: "record failed worktree creation for",
+            });
+        }
+        let changed = transaction.execute(
+            "UPDATE subagents
+             SET status = 'failed', worktree_state = ?1, create_receipt_json = ?2,
+                 finished_at = ?3, result_json = ?4
+             WHERE subagent_id = ?5 AND principal_id = ?6 AND tenant_id = ?7
+               AND workspace_id = ?8 AND status = 'preparing' AND worktree_state = 'pending'",
+            params![
+                worktree_state_text(worktree_state),
+                receipt_json,
+                to_i64(now.as_unix_seconds())?,
+                result_json,
+                id.as_str(),
+                scope.principal_id().as_str(),
+                scope.tenant_id().as_str(),
+                scope.workspace_id().as_str(),
+            ],
+        )?;
+        if changed != 1 {
+            return Err(SubagentStoreError::CorruptRecord);
+        }
+        transaction.commit()?;
+        current.status = SubagentStatus::Failed;
+        current.worktree_state = worktree_state;
+        current.create_receipt = Some(receipt.clone());
+        current.finished_at = Some(now);
+        current.result = Some(result);
+        Ok(current)
+    }
+
+    pub(crate) fn interrupt_preparing(
+        &self,
+        id: &SubagentId,
+        scope: &SubagentScope,
+        preserve_destination: bool,
+        reason: &str,
+        now: Timestamp,
+    ) -> Result<SubagentRecord, SubagentStoreError> {
+        let worktree_state = if preserve_destination {
+            SubagentWorktreeState::Preserved
+        } else {
+            SubagentWorktreeState::Pending
+        };
+        let result = serde_json::json!({
+            "code": "worktree_create_interrupted",
+            "outcome_known": false,
+            "reason": reason,
+        });
+        let result_json = bounded_result_json(&result)?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut current = load_scoped_subagent(&transaction, id, scope)?
+            .ok_or(SubagentStoreError::SubagentNotFound)?;
+        if current.status != SubagentStatus::Preparing
+            || current.worktree_state != SubagentWorktreeState::Pending
+        {
+            return Err(SubagentStoreError::InvalidTransition {
+                status: current.status,
+                action: "reconcile worktree preparation for",
+            });
+        }
+        let changed = transaction.execute(
+            "UPDATE subagents
+             SET status = 'interrupted', worktree_state = ?1, finished_at = ?2, result_json = ?3
+             WHERE subagent_id = ?4 AND principal_id = ?5 AND tenant_id = ?6
+               AND workspace_id = ?7 AND status = 'preparing' AND worktree_state = 'pending'",
+            params![
+                worktree_state_text(worktree_state),
+                to_i64(now.as_unix_seconds())?,
+                result_json,
+                id.as_str(),
+                scope.principal_id().as_str(),
+                scope.tenant_id().as_str(),
+                scope.workspace_id().as_str(),
+            ],
+        )?;
+        if changed != 1 {
+            return Err(SubagentStoreError::CorruptRecord);
+        }
+        transaction.commit()?;
+        current.status = SubagentStatus::Interrupted;
+        current.worktree_state = worktree_state;
+        current.finished_at = Some(now);
+        current.result = Some(result);
+        Ok(current)
+    }
+
+    pub(crate) fn record_cleanup(
+        &self,
+        id: &SubagentId,
+        scope: &SubagentScope,
+        receipt: &EffectReceipt,
+    ) -> Result<SubagentRecord, SubagentStoreError> {
+        let worktree_state = if matches!(receipt.outcome(), EffectOutcome::Succeeded) {
+            SubagentWorktreeState::Removed
+        } else {
+            SubagentWorktreeState::Preserved
+        };
+        let receipt_json = encode_receipt(receipt)?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut current = load_scoped_subagent(&transaction, id, scope)?
+            .ok_or(SubagentStoreError::SubagentNotFound)?;
+        if !is_terminal_status(current.status)
+            || !matches!(
+                current.worktree_state,
+                SubagentWorktreeState::Ready | SubagentWorktreeState::Preserved
+            )
+        {
+            return Err(SubagentStoreError::InvalidTransition {
+                status: current.status,
+                action: "record worktree cleanup for",
+            });
+        }
+        let changed = transaction.execute(
+            "UPDATE subagents SET worktree_state = ?1, remove_receipt_json = ?2
+             WHERE subagent_id = ?3 AND principal_id = ?4 AND tenant_id = ?5
+               AND workspace_id = ?6 AND worktree_state IN ('ready', 'preserved')",
+            params![
+                worktree_state_text(worktree_state),
+                receipt_json,
+                id.as_str(),
+                scope.principal_id().as_str(),
+                scope.tenant_id().as_str(),
+                scope.workspace_id().as_str(),
+            ],
+        )?;
+        if changed != 1 {
+            return Err(SubagentStoreError::CorruptRecord);
+        }
+        transaction.commit()?;
+        current.worktree_state = worktree_state;
+        current.remove_receipt = Some(receipt.clone());
         Ok(current)
     }
 
@@ -889,6 +1062,7 @@ fn decode_subagent_inner(row: &rusqlite::Row<'_>) -> Result<SubagentRecord, Suba
         finished_at,
         result.as_ref(),
     )?;
+    validate_cleanup_record(worktree_state, remove_receipt.as_ref())?;
     Ok(SubagentRecord {
         id,
         job_id,
@@ -922,7 +1096,7 @@ fn validate_subagent_record(
     finished_at: Option<Timestamp>,
     result: Option<&Value>,
 ) -> Result<(), SubagentStoreError> {
-    let valid = match status {
+    let lifecycle_valid = match status {
         SubagentStatus::Preparing => {
             worktree_state == SubagentWorktreeState::Pending
                 && worker_id.is_none()
@@ -947,6 +1121,25 @@ fn validate_subagent_record(
                 && finished_at.is_none()
                 && result.is_none()
         }
+        SubagentStatus::Failed if started_at.is_none() => {
+            matches!(
+                worktree_state,
+                SubagentWorktreeState::Pending | SubagentWorktreeState::Preserved
+            ) && worker_id.is_none()
+                && create_receipt
+                    .is_some_and(|receipt| !matches!(receipt.outcome(), EffectOutcome::Succeeded))
+                && finished_at.is_some()
+                && result.is_some()
+        }
+        SubagentStatus::Interrupted if started_at.is_none() => {
+            matches!(
+                worktree_state,
+                SubagentWorktreeState::Pending | SubagentWorktreeState::Preserved
+            ) && worker_id.is_none()
+                && create_receipt.is_none()
+                && finished_at.is_some()
+                && result.is_some()
+        }
         SubagentStatus::Cancelled if started_at.is_none() => {
             worker_id.is_none()
                 && create_receipt.is_some()
@@ -964,6 +1157,24 @@ fn validate_subagent_record(
                 && finished_at.is_some()
                 && result.is_some()
         }
+    };
+    if lifecycle_valid {
+        Ok(())
+    } else {
+        Err(SubagentStoreError::CorruptRecord)
+    }
+}
+
+fn validate_cleanup_record(
+    worktree_state: SubagentWorktreeState,
+    remove_receipt: Option<&EffectReceipt>,
+) -> Result<(), SubagentStoreError> {
+    let valid = match remove_receipt {
+        None => worktree_state != SubagentWorktreeState::Removed,
+        Some(receipt) if matches!(receipt.outcome(), EffectOutcome::Succeeded) => {
+            worktree_state == SubagentWorktreeState::Removed
+        }
+        Some(_) => worktree_state == SubagentWorktreeState::Preserved,
     };
     if valid {
         Ok(())
@@ -1039,6 +1250,26 @@ fn decode_worktree_state(value: &str) -> Result<SubagentWorktreeState, SubagentS
         "removed" => Ok(SubagentWorktreeState::Removed),
         _ => Err(SubagentStoreError::CorruptRecord),
     }
+}
+
+fn worktree_state_text(state: SubagentWorktreeState) -> &'static str {
+    match state {
+        SubagentWorktreeState::Pending => "pending",
+        SubagentWorktreeState::Ready => "ready",
+        SubagentWorktreeState::Preserved => "preserved",
+        SubagentWorktreeState::Removed => "removed",
+    }
+}
+
+fn is_terminal_status(status: SubagentStatus) -> bool {
+    matches!(
+        status,
+        SubagentStatus::ApprovalRequired
+            | SubagentStatus::Completed
+            | SubagentStatus::Failed
+            | SubagentStatus::Interrupted
+            | SubagentStatus::Cancelled
+    )
 }
 
 fn to_i64(value: u64) -> Result<i64, SubagentStoreError> {

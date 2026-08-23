@@ -111,6 +111,22 @@ impl WorktreeCommand {
         &self.spec
     }
 
+    pub fn repository(&self) -> &Path {
+        &self.repository
+    }
+
+    pub fn destination(&self) -> &Path {
+        &self.destination
+    }
+
+    pub fn commit(&self) -> &str {
+        &self.commit
+    }
+
+    pub fn operation(&self) -> &'static str {
+        self.operation.as_str()
+    }
+
     fn new(
         operation: WorktreeOperation,
         repository: PathBuf,
@@ -201,6 +217,14 @@ impl GitWorktreeExecutor {
             repository,
             managed_root,
         })
+    }
+
+    pub fn repository(&self) -> &Path {
+        &self.repository
+    }
+
+    pub fn managed_root(&self) -> &Path {
+        &self.managed_root
     }
 
     pub fn execute(

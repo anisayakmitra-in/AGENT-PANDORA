@@ -1,6 +1,7 @@
 use crate::executors::{
-    FilesystemError, FilesystemExecutor, ProcessError, ProcessExecutor, ProviderExecutor,
-    ProviderResult, VerificationCommand, VerificationOptions, WorkspaceRoot,
+    FilesystemError, FilesystemExecutor, GitWorktreeExecutor, ProcessError, ProcessExecutor,
+    ProviderExecutor, ProviderResult, VerificationCommand, VerificationOptions, WorkspaceRoot,
+    WorktreeCommand, WorktreeResult,
 };
 use crate::hooks::{HookDecision, HookPoint, LifecycleHooks};
 use crate::mcp::{
@@ -16,8 +17,8 @@ use pandora_provider::{ModelRequest, Provider, ProviderError};
 use pandora_types::{
     Capability, EffectReceipt, EffectTarget, EventContext, EventId, EventPayload, EventType,
     ExecutionId, GeneError, GeneId, GeneInput, Harness, HarnessId, HarnessKind, Operation,
-    OperationRequest, ParliamentDecision, PolicyContext, RequestError, ResourceScope, RuntimeEvent,
-    SecretReference, Session, TaskIntent, Timestamp,
+    OperationRequest, ParliamentDecision, PolicyContext, PrincipalId, RequestError, ResourceScope,
+    RuntimeEvent, SecretReference, Session, SessionId, TaskIntent, Timestamp,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -56,6 +57,27 @@ pub struct ExecutionController {
     hooks: LifecycleHooks,
     next_execution: AtomicU64,
     next_event: AtomicU64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorktreeExecutionContext {
+    execution_id: ExecutionId,
+    session_id: SessionId,
+    principal_id: PrincipalId,
+}
+
+impl WorktreeExecutionContext {
+    pub fn new(
+        execution_id: ExecutionId,
+        session_id: SessionId,
+        principal_id: PrincipalId,
+    ) -> Self {
+        Self {
+            execution_id,
+            session_id,
+            principal_id,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -163,6 +185,62 @@ impl ExecutionController {
 
     pub fn policy_version(&self) -> u32 {
         self.policy.policy_version()
+    }
+
+    pub fn execute_worktree(
+        &self,
+        executor: &GitWorktreeExecutor,
+        command: &WorktreeCommand,
+        context: WorktreeExecutionContext,
+        now: Timestamp,
+    ) -> Result<WorktreeResult, RuntimeError> {
+        let gene_id = match command.operation() {
+            "git_worktree_create" => "coordination.worktree.create",
+            "git_worktree_remove" => "coordination.worktree.remove",
+            _ => {
+                return Err(RuntimeError::InvalidIntent(
+                    "unsupported worktree operation",
+                ));
+            }
+        };
+        let managed_root = executor
+            .managed_root()
+            .to_str()
+            .ok_or(RuntimeError::InvalidIntent(
+                "managed worktree root must be Unicode",
+            ))?;
+        let request = OperationRequest::new(
+            context.execution_id,
+            context.session_id,
+            context.principal_id,
+            GeneId::new(gene_id).expect("built-in worktree Gene ID is valid"),
+            None,
+            Capability::ProcessExecute,
+            Operation::Execute,
+            EffectTarget::process(command.spec()),
+            ResourceScope::path(managed_root),
+        )
+        .map_err(RuntimeError::Request)?;
+        if let Some(reason) = self.hook_denial(&request) {
+            return Err(RuntimeError::Denied(reason));
+        }
+        let decision = self.parliament.decide(&request, &self.policy);
+        let permit = match decision {
+            ParliamentDecision::Allow { .. } => self
+                .reference_monitor
+                .authorize(request.clone(), decision, now)
+                .map_err(RuntimeError::Authorization)?,
+            ParliamentDecision::Deny { reason, .. } => return Err(RuntimeError::Denied(reason)),
+            ParliamentDecision::RequireApproval { reason, .. } => {
+                return Err(RuntimeError::ApprovalRequired(reason));
+            }
+        };
+        let consumed = self
+            .reference_monitor
+            .store()
+            .consume(permit, &request, now)
+            .map_err(RuntimeError::Permit)?;
+        Ok(executor.execute(&consumed, command, now))
     }
 
     pub fn start_mcp(

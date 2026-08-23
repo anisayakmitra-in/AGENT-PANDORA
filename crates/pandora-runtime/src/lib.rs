@@ -36,6 +36,7 @@ pub mod sessions;
 pub mod shadow_council;
 pub mod skill_engine;
 pub mod strategies;
+pub mod subagent;
 pub mod subagent_store;
 pub mod tool_engine;
 
@@ -59,7 +60,9 @@ pub use efficiency_engine::{DEFAULT_MAX_SAMPLES_PER_TARGET, EfficiencyEngine, Ef
 pub use efficiency_store::{EfficiencyStore, EfficiencyStoreError};
 pub use evaluation_engine::{EvaluationEngine, EvaluationError};
 pub use evolution::{EvolutionEngine, EvolutionError};
-pub use execution_controller::{ExecutionController, RunStatus, RunSummary, RuntimeError};
+pub use execution_controller::{
+    ExecutionController, RunStatus, RunSummary, RuntimeError, WorktreeExecutionContext,
+};
 pub use executors::{
     GitWorktreeExecutor, WorktreeChange, WorktreeCommand, WorktreeError, WorktreeResult,
 };
@@ -94,6 +97,9 @@ pub use skill_engine::{
     SkillState,
 };
 pub use strategies::{StrategyBudget, StrategyError, StrategyProfile};
+pub use subagent::{
+    SubagentCleanupContext, SubagentCoordinator, SubagentCoordinatorError, SubagentSpawnContext,
+};
 pub use subagent_store::{
     ClaimedSubagent, SubagentPreparation, SubagentRecord, SubagentScope, SubagentStore,
     SubagentStoreError,
