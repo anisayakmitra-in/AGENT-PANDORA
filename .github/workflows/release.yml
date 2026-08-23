@@ -38,13 +38,8 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Check tag matches workspace version
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag_version="${GITHUB_REF_NAME#v}"
-          cargo_version="$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)"
-          test "$tag_version" = "$cargo_version"
+      - name: Check release identity
+        run: python scripts/release_identity.py "$GITHUB_REF_NAME"
 
       - name: Check formatting
         run: cargo fmt --all -- --check
