@@ -450,6 +450,30 @@ impl ToolEngine {
         target: EffectTarget,
         resource_scope: ResourceScope,
     ) -> Result<ToolPlan, ToolError> {
+        let payload = serde_json::to_vec(&arguments)
+            .map_err(|error| ToolError::InvalidArguments(error.to_string()))?;
+        self.plan_with_payload(
+            tool_id,
+            context,
+            arguments,
+            idempotency_key,
+            target,
+            resource_scope,
+            &payload,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn plan_with_payload(
+        &self,
+        tool_id: &str,
+        context: &ToolContext,
+        arguments: Value,
+        idempotency_key: &str,
+        target: EffectTarget,
+        resource_scope: ResourceScope,
+        authorization_payload: &[u8],
+    ) -> Result<ToolPlan, ToolError> {
         let definition = {
             let definitions = self
                 .definitions
@@ -464,8 +488,6 @@ impl ToolEngine {
         };
         validate_idempotency_key(idempotency_key)?;
         validate_arguments(definition.input_schema(), &arguments)?;
-        let payload = serde_json::to_vec(&arguments)
-            .map_err(|error| ToolError::InvalidArguments(error.to_string()))?;
         let request = OperationRequest::new(
             context.execution_id().clone(),
             context.session_id().clone(),
@@ -478,7 +500,7 @@ impl ToolEngine {
             resource_scope,
         )
         .map_err(ToolError::Request)?
-        .with_payload_digest(&payload)
+        .with_payload_digest(authorization_payload)
         .map_err(ToolError::Request)?;
         let plan = ToolPlan {
             tool_id: definition.id().clone(),

@@ -29,9 +29,21 @@ spawn and every tool call still require Parliament policy, a ReferenceMonitor
 one-shot permit, an executor recheck of the exact target and payload, a receipt,
 and canonical runtime events. Protocol selection never grants authority.
 
+Each connected child owns one catalog revision. The revision records the child
+process ID, protocol era, exact launch-configuration digest, catalog digest,
+and each imported tool's local ID, remote name, and schema digest. Pandora
+rejects a second active child with the same server ID. Dropping or terminating
+the owner removes only that revision and its imported tools; reconnecting gets
+a new generation.
+
+Tool-call permits bind the active generation, catalog and schema digests,
+process ID, exact remote tool name, and canonical arguments. A permit created
+for an earlier child or catalog fails before Pandora writes an RPC request.
+
 This governance boundary authorizes and audits server spawn and tool calls; it
 does not OS-sandbox a malicious local MCP executable. Operators must treat the
-configured program as trusted code. This preview does not support HTTP/SSE,
+configured program as trusted code. Process identity and catalog revision
+evidence do not provide host containment. This preview does not support HTTP/SSE,
 OAuth, package or marketplace discovery, hooks supplied by MCP servers,
 subagents, progress/tasks, sessions, or server-originated requests and
 notifications.

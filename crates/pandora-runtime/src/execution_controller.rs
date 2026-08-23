@@ -6,8 +6,9 @@ use crate::executors::{
 use crate::hooks::{HookDecision, HookPoint, LifecycleHooks};
 use crate::mcp::{
     McpError, McpExecutor, McpFailure, McpInvocation, McpProtocolMode, McpServer, McpStart,
-    McpStartOutcome, McpStdioConfig, McpWireEra, SpawnPurpose, map_tool_error,
+    McpStartOutcome, McpStdioConfig, McpWireEra, SpawnPurpose, map_catalog_error, map_tool_error,
 };
+use crate::mcp_catalog::McpCatalogSupervisor;
 use crate::parliament::Parliament;
 use crate::reference_monitor::{AuthorizationError, ReferenceMonitor};
 use crate::shadow_council::{RoutingError, ShadowCouncil};
@@ -55,6 +56,7 @@ pub struct ExecutionController {
     process: ProcessExecutor,
     provider: ProviderExecutor,
     hooks: LifecycleHooks,
+    mcp_catalogs: McpCatalogSupervisor,
     next_execution: AtomicU64,
     next_event: AtomicU64,
 }
@@ -178,6 +180,7 @@ impl ExecutionController {
             policy,
             harnesses,
             hooks,
+            mcp_catalogs: McpCatalogSupervisor::new(),
             next_execution: AtomicU64::new(1),
             next_event: AtomicU64::new(1),
         }
@@ -266,6 +269,14 @@ impl ExecutionController {
     ) -> Result<McpStart, McpFailure> {
         let mut receipts = Vec::new();
         let mut events = Vec::new();
+        let config_digest = config
+            .catalog_config_digest()
+            .map_err(|error| McpFailure::new(error, receipts.clone(), events.clone()))?;
+        let catalog_reservation = self
+            .mcp_catalogs
+            .reserve(config.server_id(), config_digest)
+            .map_err(map_catalog_error)
+            .map_err(|error| McpFailure::new(error, receipts.clone(), events.clone()))?;
         let (server, selected_era, downgraded, selected_request) = match config.mode() {
             McpProtocolMode::ModernOnly => {
                 let request = self
@@ -278,6 +289,7 @@ impl ExecutionController {
                     &consumed,
                     tool_engine.clone(),
                     config,
+                    &catalog_reservation,
                     SpawnPurpose::Modern,
                     false,
                     now,
@@ -307,8 +319,13 @@ impl ExecutionController {
                 let consumed = self
                     .authorize_mcp_request(&request, session, now, &mut events)
                     .map_err(|error| McpFailure::new(error, receipts.clone(), events.clone()))?;
-                let execution =
-                    McpExecutor::start_legacy(&consumed, tool_engine.clone(), config, now);
+                let execution = McpExecutor::start_legacy(
+                    &consumed,
+                    tool_engine.clone(),
+                    config,
+                    &catalog_reservation,
+                    now,
+                );
                 let (result, receipt) = execution.into_parts();
                 self.record_mcp_completion(
                     &request,
@@ -333,6 +350,7 @@ impl ExecutionController {
                     &consumed,
                     tool_engine.clone(),
                     config.clone(),
+                    &catalog_reservation,
                     SpawnPurpose::ModernProbe,
                     true,
                     now,
@@ -361,8 +379,13 @@ impl ExecutionController {
                             .map_err(|error| {
                                 McpFailure::new(error, receipts.clone(), events.clone())
                             })?;
-                        let execution =
-                            McpExecutor::start_legacy(&consumed, tool_engine.clone(), config, now);
+                        let execution = McpExecutor::start_legacy(
+                            &consumed,
+                            tool_engine.clone(),
+                            config,
+                            &catalog_reservation,
+                            now,
+                        );
                         let (legacy_result, receipt) = execution.into_parts();
                         self.record_mcp_completion(
                             &legacy_request,
@@ -422,6 +445,9 @@ impl ExecutionController {
             .remote_tool(local_tool)
             .map(str::to_owned)
             .map_err(|error| McpFailure::new(error, receipts.clone(), events.clone()))?;
+        let invocation_payload = server
+            .invocation_payload(local_tool, &arguments)
+            .map_err(|error| McpFailure::new(error, receipts.clone(), events.clone()))?;
         let execution_id = self
             .next_mcp_execution_id()
             .map_err(|error| McpFailure::new(error, receipts.clone(), events.clone()))?;
@@ -432,13 +458,14 @@ impl ExecutionController {
             None,
         );
         let plan = tool_engine
-            .plan(
+            .plan_with_payload(
                 local_tool,
                 &context,
                 arguments,
                 idempotency_key,
                 EffectTarget::mcp(server.server_id(), &remote_tool),
                 ResourceScope::none(),
+                &invocation_payload,
             )
             .map_err(map_tool_error)
             .map_err(|error| McpFailure::new(error, receipts.clone(), events.clone()))?;

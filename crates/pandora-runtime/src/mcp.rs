@@ -1,3 +1,6 @@
+use crate::mcp_catalog::{
+    McpCatalogError, McpCatalogReservation, McpCatalogRevision, McpCatalogTool, digest_bytes,
+};
 use crate::{ConsumedPermit, ToolDefinition, ToolEngine, ToolError, ToolPlan};
 use pandora_types::{
     Capability, EffectOutcome, EffectReceipt, EffectTarget, Operation, ReceiptId, ResourceScope,
@@ -130,6 +133,17 @@ impl McpStdioConfig {
         }))
         .map_err(|_| McpError::RequestRejected)
     }
+
+    pub(crate) fn catalog_config_digest(&self) -> Result<String, McpError> {
+        let payload = serde_json::to_vec(&json!({
+            "server": self.server_id,
+            "program": self.program,
+            "arguments": self.arguments,
+            "mode": self.mode.as_str(),
+        }))
+        .map_err(|_| McpError::RequestRejected)?;
+        Ok(digest_bytes(&payload))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -177,6 +191,7 @@ pub enum McpError {
     InvalidToolName,
     UnsupportedSchema,
     DuplicateTool,
+    DuplicateServer,
     UnknownTool,
     InvalidArguments,
     InvalidResult,
@@ -214,6 +229,7 @@ impl McpError {
             Self::InvalidToolName => "invalid_tool_name",
             Self::UnsupportedSchema => "unsupported_schema",
             Self::DuplicateTool => "duplicate_tool",
+            Self::DuplicateServer => "duplicate_server",
             Self::UnknownTool => "unknown_tool",
             Self::InvalidArguments => "invalid_arguments",
             Self::InvalidResult => "invalid_result",
@@ -232,6 +248,7 @@ impl McpError {
             self,
             Self::PermissionDenied
                 | Self::Rpc { .. }
+                | Self::DuplicateServer
                 | Self::UnknownTool
                 | Self::InvalidArguments
                 | Self::RequestRejected
@@ -803,6 +820,10 @@ impl McpProcess {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+
+    fn id(&self) -> u32 {
+        self.child.id()
+    }
 }
 
 impl Drop for McpProcess {
@@ -831,6 +852,8 @@ pub struct McpServer {
     remote_names: HashMap<String, String>,
     tool_engine: ToolEngine,
     imported_ids: Vec<pandora_types::GeneId>,
+    catalog_revision: McpCatalogRevision,
+    catalog_reservation: Option<McpCatalogReservation>,
     active: bool,
 }
 
@@ -840,6 +863,7 @@ impl fmt::Debug for McpServer {
             .debug_struct("McpServer")
             .field("server_id", &self.server_id)
             .field("era", &self.era)
+            .field("catalog_revision", &self.catalog_revision)
             .field("active", &self.active)
             .finish_non_exhaustive()
     }
@@ -854,6 +878,10 @@ impl McpServer {
         self.era
     }
 
+    pub fn catalog_revision(&self) -> &McpCatalogRevision {
+        &self.catalog_revision
+    }
+
     pub(crate) fn remote_tool(&self, local_tool: &str) -> Result<&str, McpError> {
         self.remote_names
             .get(local_tool)
@@ -861,11 +889,40 @@ impl McpServer {
             .ok_or(McpError::UnknownTool)
     }
 
+    pub(crate) fn invocation_payload(
+        &self,
+        local_tool: &str,
+        arguments: &Value,
+    ) -> Result<Vec<u8>, McpError> {
+        let remote_tool = self.remote_tool(local_tool)?;
+        let tool = self
+            .catalog_revision
+            .tool(local_tool)
+            .ok_or(McpError::UnknownTool)?;
+        if tool.remote_name() != remote_tool {
+            return Err(McpError::RequestRejected);
+        }
+        serde_json::to_vec(&json!({
+            "server": self.catalog_revision.server_id(),
+            "generation": self.catalog_revision.generation(),
+            "protocol_era": self.catalog_revision.protocol_era().as_str(),
+            "process_id": self.catalog_revision.process_id(),
+            "config_digest": self.catalog_revision.config_digest(),
+            "catalog_digest": self.catalog_revision.catalog_digest(),
+            "local_tool": local_tool,
+            "remote_tool": remote_tool,
+            "schema_digest": tool.schema_digest(),
+            "arguments": arguments,
+        }))
+        .map_err(|_| McpError::RequestRejected)
+    }
+
     fn terminate(&mut self) {
         if self.active {
             self.active = false;
             self.process.terminate();
             self.tool_engine.unregister_batch(&self.imported_ids);
+            self.catalog_reservation.take();
         }
     }
 }
@@ -905,11 +962,19 @@ impl McpExecutor {
         permit: &ConsumedPermit,
         tool_engine: ToolEngine,
         config: McpStdioConfig,
+        catalog_reservation: &McpCatalogReservation,
         purpose: SpawnPurpose,
         allow_legacy: bool,
         now: Timestamp,
     ) -> McpExecutorResult<McpStartOutcome> {
-        let result = Self::start_modern_inner(permit, tool_engine, config, purpose, allow_legacy);
+        let result = Self::start_modern_inner(
+            permit,
+            tool_engine,
+            config,
+            catalog_reservation,
+            purpose,
+            allow_legacy,
+        );
         executor_result(permit, now, result)
     }
 
@@ -917,6 +982,7 @@ impl McpExecutor {
         permit: &ConsumedPermit,
         tool_engine: ToolEngine,
         config: McpStdioConfig,
+        catalog_reservation: &McpCatalogReservation,
         purpose: SpawnPurpose,
         allow_legacy: bool,
     ) -> Result<McpStartOutcome, McpError> {
@@ -955,6 +1021,7 @@ impl McpExecutor {
             McpWireEra::Modern,
             process,
             &listed,
+            catalog_reservation,
         )
         .map(|server| McpStartOutcome::Connected(Box::new(server)))
     }
@@ -963,9 +1030,10 @@ impl McpExecutor {
         permit: &ConsumedPermit,
         tool_engine: ToolEngine,
         config: McpStdioConfig,
+        catalog_reservation: &McpCatalogReservation,
         now: Timestamp,
     ) -> McpExecutorResult<McpServer> {
-        let result = Self::start_legacy_inner(permit, tool_engine, config);
+        let result = Self::start_legacy_inner(permit, tool_engine, config, catalog_reservation);
         executor_result(permit, now, result)
     }
 
@@ -973,6 +1041,7 @@ impl McpExecutor {
         permit: &ConsumedPermit,
         tool_engine: ToolEngine,
         config: McpStdioConfig,
+        catalog_reservation: &McpCatalogReservation,
     ) -> Result<McpServer, McpError> {
         recheck_spawn(permit, &config, SpawnPurpose::Legacy)?;
         let mut process = McpProcess::spawn(&config)?;
@@ -1004,6 +1073,7 @@ impl McpExecutor {
             McpWireEra::Legacy,
             process,
             &listed,
+            catalog_reservation,
         )
     }
 
@@ -1045,6 +1115,7 @@ fn import_server(
     era: McpWireEra,
     mut process: McpProcess,
     listed: &Value,
+    catalog_reservation: &McpCatalogReservation,
 ) -> Result<McpServer, McpError> {
     let imported = match definitions_from_list_for_era(&server_id, era, listed) {
         Ok(imported) => imported,
@@ -1066,6 +1137,17 @@ fn import_server(
             )
         })
         .collect::<HashMap<_, _>>();
+    let catalog_tools = imported
+        .iter()
+        .map(|tool| {
+            McpCatalogTool::new(
+                tool.definition.id().as_str(),
+                &tool.remote_name,
+                tool.definition.input_schema(),
+            )
+            .map_err(map_catalog_error)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let definitions = imported
         .into_iter()
         .map(|tool| tool.definition)
@@ -1074,6 +1156,14 @@ fn import_server(
         process.terminate();
         return Err(map_tool_error(error));
     }
+    let catalog_revision = match catalog_reservation.activate(era, process.id(), catalog_tools) {
+        Ok(revision) => revision,
+        Err(error) => {
+            tool_engine.unregister_batch(&imported_ids);
+            process.terminate();
+            return Err(map_catalog_error(error));
+        }
+    };
     Ok(McpServer {
         server_id,
         era,
@@ -1081,8 +1171,20 @@ fn import_server(
         remote_names,
         tool_engine,
         imported_ids,
+        catalog_revision,
+        catalog_reservation: Some(catalog_reservation.clone()),
         active: true,
     })
+}
+
+pub(crate) fn map_catalog_error(error: McpCatalogError) -> McpError {
+    match error {
+        McpCatalogError::AlreadyActive => McpError::DuplicateServer,
+        McpCatalogError::AlreadyActivated
+        | McpCatalogError::InvalidIdentity
+        | McpCatalogError::GenerationExhausted
+        | McpCatalogError::ReservationLost => McpError::RequestRejected,
+    }
 }
 
 fn recheck_spawn(
@@ -1110,7 +1212,7 @@ fn recheck_invocation(
     remote_name: &str,
 ) -> Result<(), McpError> {
     let request = permit.request();
-    let payload = serde_json::to_vec(plan.arguments()).map_err(|_| McpError::RequestRejected)?;
+    let payload = server.invocation_payload(plan.tool_id().as_str(), plan.arguments())?;
     if request != plan.request()
         || request.capability() != Capability::McpInvoke
         || request.operation() != Operation::Invoke
@@ -1283,7 +1385,7 @@ impl McpInvocation {
 mod tests {
     use super::*;
     use crate::executors::WorkspaceRoot;
-    use crate::{ExecutionController, Parliament, ReferenceMonitor, ToolEngine};
+    use crate::{ExecutionController, Parliament, ReferenceMonitor, ToolContext, ToolEngine};
     use pandora_types::{
         Capability, EffectTarget, EventPayload, EventType, ExecutionId, GeneId, Operation,
         OperationRequest, PolicyContext, PrincipalId, ResourceScope, Session, SessionId, TenantId,
@@ -1537,11 +1639,16 @@ mod tests {
             .store()
             .consume(permit, &request, Timestamp::from_unix_seconds(10))
             .unwrap();
+        let catalogs = crate::mcp_catalog::McpCatalogSupervisor::new();
+        let reservation = catalogs
+            .reserve("local", allowed.catalog_config_digest().unwrap())
+            .unwrap();
 
         let result = McpExecutor::start_modern(
             &consumed,
             ToolEngine::new(),
             substituted,
+            &reservation,
             SpawnPurpose::Modern,
             false,
             Timestamp::from_unix_seconds(10),
@@ -1590,6 +1697,253 @@ mod tests {
         ] {
             governed_round_trip(mode, fixture_mode, expected_era);
         }
+    }
+
+    #[test]
+    fn catalog_revision_blocks_duplicate_server_until_the_owner_drops() {
+        let fixture = Fixture::new();
+        let log = fixture.path.join("catalog-lifecycle.log");
+        let engine = ToolEngine::new();
+        let controller = controller(&fixture);
+        let first = controller
+            .start_mcp(
+                &engine,
+                config_with_log("modern", McpProtocolMode::ModernOnly, &log),
+                &fixture.session(),
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap()
+            .into_server();
+        assert_eq!(first.catalog_revision().generation(), 1);
+        assert!(first.catalog_revision().process_id() > 0);
+        assert_eq!(first.catalog_revision().catalog_digest().len(), 64);
+        let request_count = std::fs::read_to_string(&log).unwrap().lines().count();
+
+        let duplicate = controller
+            .start_mcp(
+                &engine,
+                config_with_log("modern", McpProtocolMode::ModernOnly, &log),
+                &fixture.session(),
+                Timestamp::from_unix_seconds(11),
+            )
+            .unwrap_err();
+        assert_eq!(duplicate.error(), &McpError::DuplicateServer);
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap().lines().count(),
+            request_count
+        );
+
+        drop(first);
+        let second = controller
+            .start_mcp(
+                &engine,
+                config_with_log("modern", McpProtocolMode::ModernOnly, &log),
+                &fixture.session(),
+                Timestamp::from_unix_seconds(12),
+            )
+            .unwrap()
+            .into_server();
+        assert_eq!(second.catalog_revision().generation(), 2);
+    }
+
+    #[test]
+    fn failed_atomic_import_leaves_no_catalog_or_tools() {
+        let fixture = Fixture::new();
+        let engine = ToolEngine::new();
+        let controller = controller(&fixture);
+
+        let failure = controller
+            .start_mcp(
+                &engine,
+                config("unsupported-schema", McpProtocolMode::ModernOnly),
+                &fixture.session(),
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap_err();
+        assert_eq!(failure.error(), &McpError::UnsupportedSchema);
+        assert!(engine.list().is_empty());
+
+        let server = controller
+            .start_mcp(
+                &engine,
+                config("modern", McpProtocolMode::ModernOnly),
+                &fixture.session(),
+                Timestamp::from_unix_seconds(11),
+            )
+            .unwrap()
+            .into_server();
+        assert_eq!(server.catalog_revision().generation(), 2);
+    }
+
+    #[test]
+    fn fatal_server_termination_releases_the_catalog_before_drop() {
+        let fixture = Fixture::new();
+        let engine = ToolEngine::new();
+        let controller = controller(&fixture);
+        let mut terminated = controller
+            .start_mcp(
+                &engine,
+                config("invalid-result", McpProtocolMode::ModernOnly),
+                &fixture.session(),
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap()
+            .into_server();
+        let failure = controller
+            .invoke_mcp(
+                &engine,
+                &mut terminated,
+                "mcp.local.echo",
+                json!({"value": "hello"}),
+                "fatal-call-1",
+                &fixture.session(),
+                Timestamp::from_unix_seconds(11),
+            )
+            .unwrap_err();
+        assert_eq!(failure.error(), &McpError::InvalidResult);
+        assert!(engine.list().is_empty());
+
+        let replacement = controller
+            .start_mcp(
+                &engine,
+                config("modern", McpProtocolMode::ModernOnly),
+                &fixture.session(),
+                Timestamp::from_unix_seconds(12),
+            )
+            .unwrap()
+            .into_server();
+        assert_eq!(replacement.catalog_revision().generation(), 2);
+    }
+
+    #[test]
+    fn invocation_request_binds_revision_catalog_and_schema_digests() {
+        let fixture = Fixture::new();
+        let engine = ToolEngine::new();
+        let controller = controller(&fixture);
+        let server = controller
+            .start_mcp(
+                &engine,
+                config("modern", McpProtocolMode::ModernOnly),
+                &fixture.session(),
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap()
+            .into_server();
+        let arguments = json!({"value": "hello"});
+        let payload = server
+            .invocation_payload("mcp.local.echo", &arguments)
+            .unwrap();
+        let decoded: Value = serde_json::from_slice(&payload).unwrap();
+        let tool = server.catalog_revision().tool("mcp.local.echo").unwrap();
+        assert_eq!(decoded["server"], "local");
+        assert_eq!(decoded["generation"], 1);
+        assert_eq!(
+            decoded["catalog_digest"],
+            server.catalog_revision().catalog_digest()
+        );
+        assert_eq!(decoded["local_tool"], "mcp.local.echo");
+        assert_eq!(decoded["remote_tool"], "echo");
+        assert_eq!(decoded["schema_digest"], tool.schema_digest());
+        assert_eq!(decoded["arguments"], arguments);
+
+        let context = ToolContext::new(
+            ExecutionId::new("execution-catalog-1").unwrap(),
+            fixture.session().id().clone(),
+            fixture.session().principal_id().clone(),
+            None,
+        );
+        let plan = engine
+            .plan_with_payload(
+                "mcp.local.echo",
+                &context,
+                arguments.clone(),
+                "catalog-call-1",
+                EffectTarget::mcp("local", "echo"),
+                ResourceScope::none(),
+                &payload,
+            )
+            .unwrap();
+        assert!(plan.request().payload_digest_matches(&payload));
+        assert!(
+            !plan
+                .request()
+                .payload_digest_matches(&serde_json::to_vec(&arguments).unwrap())
+        );
+    }
+
+    #[test]
+    fn stale_catalog_revision_is_rejected_before_rpc() {
+        let fixture = Fixture::new();
+        let log = fixture.path.join("stale-catalog.log");
+        let engine = ToolEngine::new();
+        let controller = controller(&fixture);
+        let first = controller
+            .start_mcp(
+                &engine,
+                config_with_log("modern", McpProtocolMode::ModernOnly, &log),
+                &fixture.session(),
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap()
+            .into_server();
+        let arguments = json!({"value": "hello"});
+        let payload = first
+            .invocation_payload("mcp.local.echo", &arguments)
+            .unwrap();
+        let context = ToolContext::new(
+            ExecutionId::new("execution-stale-1").unwrap(),
+            fixture.session().id().clone(),
+            fixture.session().principal_id().clone(),
+            None,
+        );
+        let plan = engine
+            .plan_with_payload(
+                "mcp.local.echo",
+                &context,
+                arguments,
+                "stale-call-1",
+                EffectTarget::mcp("local", "echo"),
+                ResourceScope::none(),
+                &payload,
+            )
+            .unwrap();
+        let policy = PolicyContext::new(1, [Capability::McpInvoke], []);
+        let monitor = ReferenceMonitor::new_with_policy(policy.clone(), 60);
+        let permit = monitor
+            .authorize(
+                plan.request().clone(),
+                Parliament::new(1).decide(plan.request(), &policy),
+                Timestamp::from_unix_seconds(11),
+            )
+            .unwrap();
+        let consumed = monitor
+            .store()
+            .consume(permit, plan.request(), Timestamp::from_unix_seconds(11))
+            .unwrap();
+        drop(first);
+
+        let mut second = controller
+            .start_mcp(
+                &engine,
+                config_with_log("modern", McpProtocolMode::ModernOnly, &log),
+                &fixture.session(),
+                Timestamp::from_unix_seconds(12),
+            )
+            .unwrap()
+            .into_server();
+        assert_eq!(second.catalog_revision().generation(), 2);
+        let request_count = std::fs::read_to_string(&log).unwrap().lines().count();
+        let execution = McpExecutor::invoke(
+            &consumed,
+            &mut second,
+            &plan,
+            Timestamp::from_unix_seconds(13),
+        );
+        assert_eq!(execution.result().unwrap_err(), &McpError::PermissionDenied);
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap().lines().count(),
+            request_count
+        );
     }
 
     #[test]

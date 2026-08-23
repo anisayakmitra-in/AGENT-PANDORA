@@ -18,6 +18,7 @@ pub mod hooks;
 pub mod human_review;
 pub mod job_store;
 pub mod mcp;
+pub mod mcp_catalog;
 pub mod memory_engine;
 pub mod mutation;
 pub mod observability;
@@ -78,6 +79,7 @@ pub use mcp::{
     MCP_LEGACY_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION, McpError, McpFailure, McpInvocation,
     McpProtocolMode, McpServer, McpStart, McpStdioConfig, McpToolResult, McpWireEra,
 };
+pub use mcp_catalog::{McpCatalogRevision, McpCatalogTool};
 pub use memory_engine::{MemoryEngine, MemoryError};
 pub use mutation::{MutationEngine, MutationError};
 pub use observability::{ObservabilityEngine, ObservabilityError};
