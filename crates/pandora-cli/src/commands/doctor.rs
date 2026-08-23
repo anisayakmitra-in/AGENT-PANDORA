@@ -1,5 +1,6 @@
 use super::{load_config, parse_options};
 use crate::output::{CliError, CommandResult, success};
+use pandora_runtime::shipped_executor_containment;
 use serde_json::{Value, json};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -14,6 +15,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let storage_write_ok = directory_is_writable(config.data_dir());
     let workspace_ok = directory_is_readable(config.workspace_dir());
     let provider_configured = config.provider_url().is_some();
+    let containment = containment_json()?;
     let credential_available = config
         .provider_api_key_env()
         .is_some_and(credential_is_available);
@@ -110,6 +112,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "mode": "governed",
             "effect_boundary": "reference_monitor",
         },
+        "containment": containment,
         "checks": checks,
     });
     if !healthy {
@@ -123,6 +126,21 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         data,
         "Pandora diagnostics passed; provider connectivity was not checked",
     ))
+}
+
+fn containment_json() -> Result<Value, CliError> {
+    let snapshot = shipped_executor_containment().map_err(|error| {
+        CliError::internal(
+            "could not build executor containment evidence",
+            json!({ "reason": error.to_string() }),
+        )
+    })?;
+    serde_json::to_value(snapshot).map_err(|_| {
+        CliError::internal(
+            "could not serialize executor containment evidence",
+            json!({}),
+        )
+    })
 }
 
 fn directory_is_readable(path: &std::path::Path) -> bool {

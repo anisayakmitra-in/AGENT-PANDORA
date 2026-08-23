@@ -42,13 +42,19 @@ default. The flag-based form creates or updates the same active
 credential environment without storing a credential value.
 
 `doctor` reports the platform, CLI version, configuration path, storage path and
-writeability, workspace path, policy mode, provider configuration state, and remediation. If
+writeability, workspace path, policy mode, provider configuration state, executor containment evidence, and remediation. If
 a provider is configured, it also verifies that the configured credential
 environment variable contains a usable value without exposing that value.
 Provider connectivity is deliberately `not_checked`; diagnostics do not send a
 request. A valid local-only setup is healthy for read-only tasks and reports
 the provider check as `not_configured`; configure a provider before running
 model-backed tasks.
+
+Containment entries are deterministic inspection evidence for the shipped
+executor implementations. `partial` lists the controls Pandora applies and the
+remaining limitation. `unavailable` means that boundary is not contained. The
+report does not grant authority and does not describe the process, Git
+worktree, or MCP child programs as sandboxed.
 
 `provider test` sends one bounded request using the active profile's credential
 environment variable through the provider permit boundary and reports the

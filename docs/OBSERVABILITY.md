@@ -24,6 +24,18 @@ Rollout records keep typed event kinds, bounded identifiers and failure codes, r
 
 The reducer is evaluation evidence only. It cannot issue a permit, approve an operation, promote memory, modify canonical events, or replace the session store. Callers may inspect the projection version, record count, and final digest from the in-memory result; Pandora does not claim durable rollout storage until the existing session authority explicitly persists that projection.
 
+## Containment evidence
+
+`pandora doctor --json` reports a versioned containment snapshot for the shipped filesystem, process, Git worktree, provider, and MCP executors. Each entry has a stable executor identity, implementation version, worker class, deterministic digest, enforced controls, and fixed limitation codes.
+
+The status values are deliberately narrow:
+
+- `partial` means the executor applies the listed controls but does not isolate the whole boundary.
+- `unavailable` means Pandora provides no containment for that boundary and names the limitation.
+- `enforced` is reserved for a boundary the executor fully blocks; the current snapshot makes no such claim.
+
+This snapshot is inspection evidence, not authority. It cannot mint a permit or weaken Parliament, ReferenceMonitor, or EffectExecutor checks. The process, Git worktree, and local MCP executors run trusted native child programs without an operating-system sandbox or network isolation. Provider execution occurs outside Pandora's local boundary.
+
 ## Evaluation
 
 Each CLI execution attempt produces one bounded evaluation receipt. The receipt records

@@ -2674,6 +2674,14 @@ fn doctor_reports_missing_configuration_with_stable_error() {
     assert_eq!(response["code"], "configuration_error");
     assert!(response["message"].as_str().is_some());
     assert!(response.get("details").is_some());
+    assert_eq!(response["details"]["containment"]["version"], 1);
+    assert_eq!(
+        response["details"]["containment"]["executors"]
+            .as_array()
+            .expect("doctor should report containment even when unhealthy")
+            .len(),
+        5
+    );
 }
 
 #[test]
@@ -2705,6 +2713,45 @@ fn doctor_accepts_a_valid_local_only_setup_without_a_provider() {
     assert_eq!(response["healthy"], true);
     assert_eq!(response["provider"]["configured"], false);
     assert_eq!(response["provider"]["connectivity"], "not_configured");
+    let containment = &response["containment"];
+    assert_eq!(containment["version"], 1);
+    assert!(
+        containment["digest"]
+            .as_str()
+            .is_some_and(|digest| digest.starts_with("sha256:"))
+    );
+    let executors = containment["executors"]
+        .as_array()
+        .expect("doctor should report executor containment");
+    assert_eq!(
+        executors
+            .iter()
+            .map(|executor| executor["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        [
+            "filesystem",
+            "git_worktree",
+            "mcp_stdio",
+            "process",
+            "provider"
+        ]
+    );
+    let mcp = executors
+        .iter()
+        .find(|executor| executor["id"] == "mcp_stdio")
+        .expect("doctor should report MCP containment");
+    assert_eq!(mcp["worker_class"], "child_process");
+    assert!(
+        mcp["boundaries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|boundary| {
+                boundary["kind"] == "network"
+                    && boundary["level"] == "unavailable"
+                    && boundary["limitation"] == "network_not_restricted"
+            })
+    );
     let storage_write = response["checks"]
         .as_array()
         .expect("doctor checks should be an array")

@@ -5,6 +5,7 @@ pub mod agent_loop;
 pub mod approvals;
 pub mod coding_feedback;
 pub mod config;
+pub mod containment;
 pub mod context_engine;
 pub mod context_recovery;
 pub mod efficiency_engine;
@@ -57,6 +58,7 @@ pub use approvals::{
 pub use coding_feedback::{
     CodingFeedbackError, CodingFeedbackInput, CodingFeedbackLoop, CodingFeedbackResult,
 };
+pub use containment::shipped_executor_containment;
 pub use context_engine::{ContextCacheStats, ContextEngine, ContextError};
 pub use context_recovery::{ContextRecovery, RecoveryDecision, RecoveryInput, RecoveryStep};
 pub use efficiency_engine::{DEFAULT_MAX_SAMPLES_PER_TARGET, EfficiencyEngine, EfficiencyError};

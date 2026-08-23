@@ -2,6 +2,7 @@
 
 pub mod adaptation;
 pub mod capability;
+pub mod containment;
 pub mod context;
 pub mod effect;
 pub mod efficiency;
@@ -28,6 +29,11 @@ pub use adaptation::{
     AdaptationReceipt, AdaptationRequest, AdaptationTarget,
 };
 pub use capability::{Capability, Operation};
+pub use containment::{
+    CONTAINMENT_EVIDENCE_VERSION, ContainmentBoundary, ContainmentBoundaryKind,
+    ContainmentContractError, ContainmentControl, ContainmentEvidence, ContainmentLevel,
+    ContainmentLimitation, ContainmentSnapshot, ExecutorIdentity, ExecutorWorkerClass,
+};
 pub use context::{
     CONTEXT_PROJECTION_VERSION, ContextAssembly, ContextCacheDisposition, ContextCacheKey,
     ContextClassification, ContextContractError, ContextEntry, ContextFragment,
