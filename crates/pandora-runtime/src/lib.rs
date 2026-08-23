@@ -36,6 +36,7 @@ pub mod sessions;
 pub mod shadow_council;
 pub mod skill_engine;
 pub mod strategies;
+pub mod subagent_store;
 pub mod tool_engine;
 
 #[cfg(test)]
@@ -93,6 +94,10 @@ pub use skill_engine::{
     SkillState,
 };
 pub use strategies::{StrategyBudget, StrategyError, StrategyProfile};
+pub use subagent_store::{
+    ClaimedSubagent, SubagentPreparation, SubagentRecord, SubagentScope, SubagentStore,
+    SubagentStoreError,
+};
 pub use tool_engine::{
     ToolContext, ToolDefinition, ToolEngine, ToolError, ToolInvocation, ToolPlan,
 };

@@ -152,43 +152,7 @@ pub struct JobStore {
 
 impl JobStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, JobStoreError> {
-        let path = path.as_ref();
-        if let Some(parent) = path.parent()
-            && !parent.as_os_str().is_empty()
-        {
-            std::fs::create_dir_all(parent)?;
-        }
-        let mut connection = Connection::open(path)?;
-        set_private_permissions(path)?;
-        connection.busy_timeout(Duration::from_secs(5))?;
-        connection.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             CREATE TABLE IF NOT EXISTS jobs (
-                 id TEXT PRIMARY KEY,
-                 submission_sequence INTEGER NOT NULL CHECK (submission_sequence > 0),
-                 principal_id TEXT NOT NULL,
-                 tenant_id TEXT NOT NULL,
-                 workspace_id TEXT NOT NULL,
-                 request_json TEXT NOT NULL,
-                 status TEXT NOT NULL CHECK (
-                     status IN ('queued', 'running', 'completed', 'approval_required', 'failed', 'interrupted', 'cancelled')
-                 ),
-                 created_at INTEGER NOT NULL,
-                 started_at INTEGER,
-                 finished_at INTEGER,
-                 worker_id TEXT,
-                 result_json TEXT
-             );",
-        )?;
-        ensure_submission_sequence(&mut connection)?;
-        ensure_worker_ownership_schema(&mut connection)?;
-        connection.execute_batch(
-            "CREATE UNIQUE INDEX IF NOT EXISTS jobs_submission_sequence_idx
-                 ON jobs(submission_sequence);
-             CREATE INDEX IF NOT EXISTS jobs_scope_queue_sequence_idx
-                 ON jobs(principal_id, tenant_id, workspace_id, status, submission_sequence);
-             DROP INDEX IF EXISTS jobs_scope_queue_idx;",
-        )?;
+        let connection = open_job_connection(path.as_ref())?;
         Ok(Self {
             connection: Mutex::new(connection),
         })
@@ -218,8 +182,8 @@ impl JobStore {
         let result = transaction.execute(
             "INSERT INTO jobs (
                  id, submission_sequence, principal_id, tenant_id, workspace_id,
-                 request_json, status, created_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'queued', ?7)",
+                 request_json, status, created_at, job_kind
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'queued', ?7, 'run')",
             params![
                 id.as_str(),
                 submission_sequence,
@@ -268,6 +232,7 @@ impl JobStore {
                     created_at, started_at, finished_at, worker_id, result_json
              FROM jobs
              WHERE principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3
+               AND job_kind = 'run'
              ORDER BY submission_sequence DESC",
         )?;
         let mut rows = statement.query(params![
@@ -308,7 +273,7 @@ impl JobStore {
             .query_row(
                 "SELECT id FROM jobs
                  WHERE principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3
-                   AND status = 'queued'
+                   AND status = 'queued' AND job_kind = 'run'
                  ORDER BY submission_sequence ASC LIMIT 1",
                 params![
                     principal_id.as_str(),
@@ -326,7 +291,7 @@ impl JobStore {
         let changed = transaction.execute(
             "UPDATE jobs SET status = 'running', started_at = ?1, worker_id = ?2
              WHERE id = ?3 AND principal_id = ?4 AND tenant_id = ?5 AND workspace_id = ?6
-               AND status = 'queued'",
+               AND status = 'queued' AND job_kind = 'run'",
             params![
                 to_i64(started_at.as_unix_seconds())?,
                 worker_id.as_str(),
@@ -391,7 +356,7 @@ impl JobStore {
         transaction.execute(
             "UPDATE jobs SET status = ?1, finished_at = ?2, result_json = ?3
              WHERE id = ?4 AND principal_id = ?5 AND tenant_id = ?6 AND workspace_id = ?7
-               AND worker_id = ?8 AND status = 'running'",
+               AND worker_id = ?8 AND status = 'running' AND job_kind = 'run'",
             params![
                 status.as_str(),
                 to_i64(finished_at.as_unix_seconds())?,
@@ -447,7 +412,7 @@ impl JobStore {
         transaction.execute(
             "UPDATE jobs SET status = 'interrupted', finished_at = ?1, result_json = ?2
              WHERE id = ?3 AND principal_id = ?4 AND tenant_id = ?5 AND workspace_id = ?6
-               AND status = 'running'",
+               AND status = 'running' AND job_kind = 'run'",
             params![
                 to_i64(finished_at.as_unix_seconds())?,
                 result_json,
@@ -487,7 +452,7 @@ impl JobStore {
         transaction.execute(
             "UPDATE jobs SET status = 'cancelled', finished_at = ?1
              WHERE id = ?2 AND principal_id = ?3 AND tenant_id = ?4 AND workspace_id = ?5
-               AND status = 'queued'",
+               AND status = 'queued' AND job_kind = 'run'",
             params![
                 to_i64(finished_at.as_unix_seconds())?,
                 id.as_str(),
@@ -509,6 +474,48 @@ impl JobStore {
             .lock()
             .map_err(|_| JobStoreError::LockPoisoned)
     }
+}
+
+pub(crate) fn open_job_connection(path: &Path) -> Result<Connection, JobStoreError> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut connection = Connection::open(path)?;
+    set_private_permissions(path)?;
+    connection.busy_timeout(Duration::from_secs(5))?;
+    connection.execute_batch(
+        "PRAGMA journal_mode = WAL;
+         CREATE TABLE IF NOT EXISTS jobs (
+             id TEXT PRIMARY KEY,
+             submission_sequence INTEGER NOT NULL CHECK (submission_sequence > 0),
+             principal_id TEXT NOT NULL,
+             tenant_id TEXT NOT NULL,
+             workspace_id TEXT NOT NULL,
+             request_json TEXT NOT NULL,
+             status TEXT NOT NULL CHECK (
+                 status IN ('queued', 'running', 'completed', 'approval_required', 'failed', 'interrupted', 'cancelled')
+             ),
+             created_at INTEGER NOT NULL,
+             started_at INTEGER,
+             finished_at INTEGER,
+             worker_id TEXT,
+             result_json TEXT,
+             job_kind TEXT NOT NULL DEFAULT 'run' CHECK (job_kind IN ('run', 'subagent'))
+         );",
+    )?;
+    ensure_submission_sequence(&mut connection)?;
+    ensure_worker_ownership_schema(&mut connection)?;
+    ensure_job_kind_schema(&mut connection)?;
+    connection.execute_batch(
+        "CREATE UNIQUE INDEX IF NOT EXISTS jobs_submission_sequence_idx
+             ON jobs(submission_sequence);
+         CREATE INDEX IF NOT EXISTS jobs_scope_queue_sequence_idx
+             ON jobs(job_kind, principal_id, tenant_id, workspace_id, status, submission_sequence);
+         DROP INDEX IF EXISTS jobs_scope_queue_idx;",
+    )?;
+    Ok(connection)
 }
 
 fn ensure_submission_sequence(connection: &mut Connection) -> Result<(), JobStoreError> {
@@ -544,6 +551,13 @@ fn ensure_worker_ownership_schema(connection: &mut Connection) -> Result<(), Job
         [],
         |row| row.get::<_, String>(0),
     )?;
+    let has_job_kind = transaction.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM pragma_table_info('jobs') WHERE name = 'job_kind'
+         )",
+        [],
+        |row| row.get::<_, bool>(0),
+    )?;
     if !has_worker_id || !table_sql.contains("'interrupted'") {
         transaction.execute_batch(
             "CREATE TABLE jobs_recovered (
@@ -560,17 +574,53 @@ fn ensure_worker_ownership_schema(connection: &mut Connection) -> Result<(), Job
                  started_at INTEGER,
                  finished_at INTEGER,
                  worker_id TEXT,
-                 result_json TEXT
-             );
-             INSERT INTO jobs_recovered (
-                 id, submission_sequence, principal_id, tenant_id, workspace_id, request_json,
-                 status, created_at, started_at, finished_at, worker_id, result_json
-             )
-             SELECT id, submission_sequence, principal_id, tenant_id, workspace_id, request_json,
-                    status, created_at, started_at, finished_at, NULL, result_json
-             FROM jobs;
-             DROP TABLE jobs;
+                 result_json TEXT,
+                 job_kind TEXT NOT NULL DEFAULT 'run' CHECK (job_kind IN ('run', 'subagent'))
+             );",
+        )?;
+        if has_job_kind {
+            transaction.execute_batch(
+                "INSERT INTO jobs_recovered (
+                     id, submission_sequence, principal_id, tenant_id, workspace_id, request_json,
+                     status, created_at, started_at, finished_at, worker_id, result_json, job_kind
+                 )
+                 SELECT id, submission_sequence, principal_id, tenant_id, workspace_id, request_json,
+                        status, created_at, started_at, finished_at, NULL, result_json, job_kind
+                 FROM jobs;",
+            )?;
+        } else {
+            transaction.execute_batch(
+                "INSERT INTO jobs_recovered (
+                     id, submission_sequence, principal_id, tenant_id, workspace_id, request_json,
+                     status, created_at, started_at, finished_at, worker_id, result_json, job_kind
+                 )
+                 SELECT id, submission_sequence, principal_id, tenant_id, workspace_id, request_json,
+                        status, created_at, started_at, finished_at, NULL, result_json, 'run'
+                 FROM jobs;",
+            )?;
+        }
+        transaction.execute_batch(
+            "DROP TABLE jobs;
              ALTER TABLE jobs_recovered RENAME TO jobs;",
+        )?;
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
+fn ensure_job_kind_schema(connection: &mut Connection) -> Result<(), JobStoreError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let has_job_kind = transaction.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM pragma_table_info('jobs') WHERE name = 'job_kind'
+         )",
+        [],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !has_job_kind {
+        transaction.execute_batch(
+            "ALTER TABLE jobs ADD COLUMN job_kind TEXT NOT NULL DEFAULT 'run'
+                 CHECK (job_kind IN ('run', 'subagent'));",
         )?;
     }
     transaction.commit()?;
@@ -588,7 +638,8 @@ fn load_scoped_job(
         "SELECT id, principal_id, tenant_id, workspace_id, request_json, status,
                 created_at, started_at, finished_at, worker_id, result_json
          FROM jobs
-         WHERE id = ?1 AND principal_id = ?2 AND tenant_id = ?3 AND workspace_id = ?4",
+         WHERE id = ?1 AND principal_id = ?2 AND tenant_id = ?3 AND workspace_id = ?4
+           AND job_kind = 'run'",
     )?;
     let mut rows = statement.query(params![
         id.as_str(),
