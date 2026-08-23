@@ -20,6 +20,7 @@ pub mod package;
 pub mod service;
 pub mod session;
 pub mod skill;
+pub mod subagent;
 
 pub use adaptation::{
     AdaptationCandidate, AdaptationContractError, AdaptationDecision, AdaptationPolicy,
@@ -53,7 +54,7 @@ pub use harness::{Harness, HarnessKind, HarnessManifest, MetaComposition};
 pub use ids::{
     ArtifactId, EventId, ExecutionId, GeneId, HarnessId, IdError, JobId, JobWorkerId, MemoryId,
     PackageId, PermitId, PlanId, PrincipalId, ProposalId, ReceiptId, RequestDigest, RoleId,
-    RunLoopId, SessionId, TenantId, WorkspaceId,
+    RunLoopId, SessionId, SubagentId, TenantId, WorkspaceId,
 };
 pub use jobs::{JobCommand, JobContractError, JobRequest, JobStatus, MAX_JOB_ARGUMENT_BYTES};
 pub use memory::{
@@ -81,3 +82,9 @@ pub use service::{
 };
 pub use session::{Session, TaskIntent};
 pub use skill::{SkillId, SkillManifest, SkillManifestError};
+pub use subagent::{
+    MAX_SUBAGENT_DELEGATION_DEPTH, MAX_SUBAGENT_DURATION_SECONDS, MAX_SUBAGENT_RESULT_BYTES,
+    MAX_SUBAGENT_TASK_BYTES, MAX_SUBAGENT_TOKENS, MAX_SUBAGENT_TOOL_CALLS, MAX_SUBAGENT_TURNS,
+    SubagentBudgets, SubagentContractError, SubagentHarnessBinding, SubagentRequest,
+    SubagentStatus, SubagentWorktreeState,
+};

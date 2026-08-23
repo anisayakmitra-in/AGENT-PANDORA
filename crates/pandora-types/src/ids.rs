@@ -68,3 +68,4 @@ define_id!(RunLoopId);
 define_id!(ProposalId);
 define_id!(JobId);
 define_id!(JobWorkerId);
+define_id!(SubagentId);
