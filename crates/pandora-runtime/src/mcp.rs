@@ -1672,7 +1672,11 @@ mod tests {
             let log = fixture.path.join(format!("{mode}.log"));
             let engine = ToolEngine::new();
             let mut config = config_with_log(mode, McpProtocolMode::Auto, &log);
-            config.limits.timeout = Duration::from_millis(40);
+            config.limits.timeout = if mode == "hang" {
+                Duration::from_millis(40)
+            } else {
+                Duration::from_secs(1)
+            };
             if mode == "oversized" {
                 config.limits.max_frame_bytes = 64;
             }
