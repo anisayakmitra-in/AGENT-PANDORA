@@ -453,7 +453,7 @@ mod tests {
             "command",
         ] {
             let mut value = serde_json::to_value(
-                &SubagentRequest::new(
+                SubagentRequest::new(
                     SessionId::new("session-parent").unwrap(),
                     ExecutionId::new("execution-parent").unwrap(),
                     0,
