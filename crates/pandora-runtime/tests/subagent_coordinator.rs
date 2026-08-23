@@ -319,6 +319,12 @@ impl CoordinatorFixture {
             PolicyContext::new(1, [Capability::ProcessExecute], []),
         );
         let executor = GitWorktreeExecutor::new(&repository, &managed_root).unwrap();
+        let managed_root = executor.managed_root().to_path_buf();
+        #[cfg(windows)]
+        let managed_root = {
+            let value = managed_root.to_string_lossy();
+            PathBuf::from(value.strip_prefix(r"\\?\").unwrap_or(&value))
+        };
         Self {
             root,
             repository,
