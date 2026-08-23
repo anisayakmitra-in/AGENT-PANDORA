@@ -291,7 +291,6 @@ fn rejects_a_non_unicode_repository_before_authorization_spec_creation() {
     let root = unique_temp_dir("pandora-worktree-non-unicode-repository");
     fs::create_dir_all(&root).unwrap();
     let repository = non_unicode_destination(&root);
-    fs::create_dir(&repository).unwrap();
 
     let result = WorktreeCommand::create(
         &repository,
@@ -307,7 +306,6 @@ fn rejects_a_non_unicode_repository_before_authorization_spec_creation() {
 fn rejects_a_non_unicode_managed_root_during_executor_construction() {
     let fixture = RepositoryFixture::new();
     let managed_root = non_unicode_destination(&fixture.root);
-    fs::create_dir(&managed_root).unwrap();
 
     let result = GitWorktreeExecutor::new(fixture.repository(), &managed_root);
 
