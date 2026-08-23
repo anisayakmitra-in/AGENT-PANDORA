@@ -41,10 +41,8 @@ fn creates_a_worktree_at_the_exact_authorized_commit() {
         })
     );
     assert_eq!(result.receipt().outcome(), &EffectOutcome::Succeeded);
-    assert_eq!(
-        fs::read_to_string(fixture.destination().join("version.txt")).unwrap(),
-        "one\n"
-    );
+    let contents = fs::read_to_string(fixture.destination().join("version.txt")).unwrap();
+    assert_eq!(contents.lines().collect::<Vec<_>>(), vec!["one"]);
     assert_eq!(
         git_output(fixture.destination(), &["rev-parse", "HEAD"]),
         fixture.first_commit()
