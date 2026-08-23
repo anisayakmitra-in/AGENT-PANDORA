@@ -28,8 +28,10 @@ pub use adaptation::{
 };
 pub use capability::{Capability, Operation};
 pub use context::{
-    ContextAssembly, ContextCacheKey, ContextClassification, ContextContractError, ContextEntry,
-    ContextFragment, ContextReceipt, ContextRequest, ContextSource, ContextTrust,
+    CONTEXT_PROJECTION_VERSION, ContextAssembly, ContextCacheDisposition, ContextCacheKey,
+    ContextClassification, ContextContractError, ContextEntry, ContextFragment,
+    ContextFragmentManifest, ContextManifest, ContextOrigin, ContextReceipt, ContextRequest,
+    ContextSource, ContextTrust,
 };
 pub use effect::{
     EffectOutcome, EffectPermit, EffectReceipt, EffectTarget, OperationRequest, RequestError,

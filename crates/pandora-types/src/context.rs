@@ -1,6 +1,9 @@
 use crate::effect::Timestamp;
 use crate::ids::{SessionId, TenantId, WorkspaceId};
+use sha2::{Digest, Sha256};
 use std::fmt;
+
+pub const CONTEXT_PROJECTION_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum ContextClassification {
@@ -62,6 +65,43 @@ impl ContextTrust {
             Self::Admitted => "admitted",
             Self::Unverified => "unverified",
         }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ContextOrigin {
+    producer: Option<String>,
+    reference: Option<String>,
+}
+
+impl ContextOrigin {
+    pub fn new(
+        producer: impl Into<String>,
+        reference: impl Into<String>,
+    ) -> Result<Self, ContextContractError> {
+        Ok(Self {
+            producer: Some(validate_origin_text("origin producer", producer.into())?),
+            reference: Some(validate_origin_text("origin reference", reference.into())?),
+        })
+    }
+
+    pub const fn incomplete() -> Self {
+        Self {
+            producer: None,
+            reference: None,
+        }
+    }
+
+    pub fn producer(&self) -> Option<&str> {
+        self.producer.as_deref()
+    }
+
+    pub fn reference(&self) -> Option<&str> {
+        self.reference.as_deref()
+    }
+
+    pub const fn is_complete(&self) -> bool {
+        self.producer.is_some() && self.reference.is_some()
     }
 }
 
@@ -173,6 +213,8 @@ impl ContextRequest {
             provider: self.provider.clone(),
             model: self.model.clone(),
             policy_version: self.policy_version,
+            projection_version: CONTEXT_PROJECTION_VERSION,
+            token_budget: self.token_budget,
             classification_boundary: self.classification_boundary,
         }
     }
@@ -186,8 +228,10 @@ pub struct ContextFragment {
     classification: ContextClassification,
     priority: u8,
     content: String,
+    content_digest: String,
     token_cost: u32,
     expires_at: Option<Timestamp>,
+    origin: ContextOrigin,
 }
 
 impl ContextFragment {
@@ -202,12 +246,7 @@ impl ContextFragment {
         token_cost: u32,
         expires_at: Option<Timestamp>,
     ) -> Result<Self, ContextContractError> {
-        let id = validate_text("fragment id", id.into())?;
-        let content = content.into();
-        if content.contains('\0') {
-            return Err(ContextContractError::ControlCharacter("content"));
-        }
-        Ok(Self {
+        Self::new_with_origin(
             id,
             source,
             trust,
@@ -216,6 +255,39 @@ impl ContextFragment {
             content,
             token_cost,
             expires_at,
+            ContextOrigin::incomplete(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_origin(
+        id: impl Into<String>,
+        source: ContextSource,
+        trust: ContextTrust,
+        classification: ContextClassification,
+        priority: u8,
+        content: impl Into<String>,
+        token_cost: u32,
+        expires_at: Option<Timestamp>,
+        origin: ContextOrigin,
+    ) -> Result<Self, ContextContractError> {
+        let id = validate_text("fragment id", id.into())?;
+        let content = content.into();
+        if content.contains('\0') {
+            return Err(ContextContractError::ControlCharacter("content"));
+        }
+        let content_digest = sha256_digest(content.as_bytes());
+        Ok(Self {
+            id,
+            source,
+            trust,
+            classification,
+            priority,
+            content,
+            content_digest,
+            token_cost,
+            expires_at,
+            origin,
         })
     }
 
@@ -243,12 +315,20 @@ impl ContextFragment {
         &self.content
     }
 
+    pub fn content_digest(&self) -> &str {
+        &self.content_digest
+    }
+
     pub const fn token_cost(&self) -> u32 {
         self.token_cost
     }
 
     pub const fn expires_at(&self) -> Option<Timestamp> {
         self.expires_at
+    }
+
+    pub const fn origin(&self) -> &ContextOrigin {
+        &self.origin
     }
 
     pub const fn is_expired(&self, now: Timestamp) -> bool {
@@ -260,6 +340,86 @@ impl ContextFragment {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContextFragmentManifest {
+    id: String,
+    source: ContextSource,
+    trust: ContextTrust,
+    classification: ContextClassification,
+    priority: u8,
+    content_digest: String,
+    token_cost: u32,
+    expires_at: Option<Timestamp>,
+    origin: ContextOrigin,
+}
+
+impl ContextFragmentManifest {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn content_digest(&self) -> &str {
+        &self.content_digest
+    }
+
+    pub const fn origin(&self) -> &ContextOrigin {
+        &self.origin
+    }
+}
+
+impl From<&ContextFragment> for ContextFragmentManifest {
+    fn from(fragment: &ContextFragment) -> Self {
+        Self {
+            id: fragment.id().to_owned(),
+            source: fragment.source(),
+            trust: fragment.trust(),
+            classification: fragment.classification(),
+            priority: fragment.priority(),
+            content_digest: fragment.content_digest().to_owned(),
+            token_cost: fragment.token_cost(),
+            expires_at: fragment.expires_at(),
+            origin: fragment.origin().clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContextManifest {
+    fragments: Vec<ContextFragmentManifest>,
+    digest: String,
+    provenance_complete: bool,
+}
+
+impl ContextManifest {
+    pub fn from_fragments(fragments: &[ContextFragment]) -> Self {
+        let fragments = fragments
+            .iter()
+            .map(ContextFragmentManifest::from)
+            .collect::<Vec<_>>();
+        let provenance_complete = fragments
+            .iter()
+            .all(|fragment| fragment.origin.is_complete());
+        let digest = digest_manifest(&fragments);
+        Self {
+            fragments,
+            digest,
+            provenance_complete,
+        }
+    }
+
+    pub fn fragments(&self) -> &[ContextFragmentManifest] {
+        &self.fragments
+    }
+
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+
+    pub const fn provenance_complete(&self) -> bool {
+        self.provenance_complete
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContextCacheKey {
     tenant_id: TenantId,
     workspace_id: WorkspaceId,
@@ -267,6 +427,8 @@ pub struct ContextCacheKey {
     provider: String,
     model: String,
     policy_version: u32,
+    projection_version: u32,
+    token_budget: u32,
     classification_boundary: ContextClassification,
 }
 
@@ -293,6 +455,14 @@ impl ContextCacheKey {
 
     pub const fn policy_version(&self) -> u32 {
         self.policy_version
+    }
+
+    pub const fn projection_version(&self) -> u32 {
+        self.projection_version
+    }
+
+    pub const fn token_budget(&self) -> u32 {
+        self.token_budget
     }
 
     pub const fn classification_boundary(&self) -> ContextClassification {
@@ -361,12 +531,33 @@ impl ContextEntry {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContextCacheDisposition {
+    Hit,
+    Miss,
+    Bypass,
+}
+
+impl ContextCacheDisposition {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Hit => "hit",
+            Self::Miss => "miss",
+            Self::Bypass => "bypass",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContextReceipt {
     included_ids: Vec<String>,
     dropped_ids: Vec<String>,
     token_cost: u32,
     cacheable: bool,
+    manifest_digest: Option<String>,
+    projection_version: u32,
+    provenance_complete: bool,
+    cache_disposition: ContextCacheDisposition,
 }
 
 impl ContextReceipt {
@@ -381,6 +572,30 @@ impl ContextReceipt {
             dropped_ids,
             token_cost,
             cacheable,
+            manifest_digest: None,
+            projection_version: CONTEXT_PROJECTION_VERSION,
+            provenance_complete: false,
+            cache_disposition: ContextCacheDisposition::Bypass,
+        }
+    }
+
+    pub fn new_with_evidence(
+        included_ids: Vec<String>,
+        dropped_ids: Vec<String>,
+        token_cost: u32,
+        cacheable: bool,
+        manifest: &ContextManifest,
+        cache_disposition: ContextCacheDisposition,
+    ) -> Self {
+        Self {
+            included_ids,
+            dropped_ids,
+            token_cost,
+            cacheable,
+            manifest_digest: Some(manifest.digest().to_owned()),
+            projection_version: CONTEXT_PROJECTION_VERSION,
+            provenance_complete: manifest.provenance_complete(),
+            cache_disposition,
         }
     }
 
@@ -398,6 +613,27 @@ impl ContextReceipt {
 
     pub const fn cacheable(&self) -> bool {
         self.cacheable
+    }
+
+    pub fn manifest_digest(&self) -> Option<&str> {
+        self.manifest_digest.as_deref()
+    }
+
+    pub const fn projection_version(&self) -> u32 {
+        self.projection_version
+    }
+
+    pub const fn provenance_complete(&self) -> bool {
+        self.provenance_complete
+    }
+
+    pub const fn cache_disposition(&self) -> ContextCacheDisposition {
+        self.cache_disposition
+    }
+
+    pub fn with_cache_disposition(mut self, disposition: ContextCacheDisposition) -> Self {
+        self.cache_disposition = disposition;
+        self
     }
 }
 
@@ -457,4 +693,135 @@ fn validate_text(field: &'static str, value: String) -> Result<String, ContextCo
         return Err(ContextContractError::ControlCharacter(field));
     }
     Ok(trimmed.to_owned())
+}
+
+fn validate_origin_text(
+    field: &'static str,
+    value: String,
+) -> Result<String, ContextContractError> {
+    let value = validate_text(field, value)?;
+    if value.len() > 512 {
+        return Err(ContextContractError::FieldTooLong(field));
+    }
+    Ok(value)
+}
+
+fn digest_manifest(fragments: &[ContextFragmentManifest]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"pandora-context-manifest");
+    hasher.update(CONTEXT_PROJECTION_VERSION.to_be_bytes());
+    hasher.update(
+        u64::try_from(fragments.len())
+            .unwrap_or(u64::MAX)
+            .to_be_bytes(),
+    );
+    for fragment in fragments {
+        digest_text(&mut hasher, &fragment.id);
+        digest_text(&mut hasher, fragment.source.as_str());
+        digest_text(&mut hasher, fragment.trust.as_str());
+        digest_text(&mut hasher, fragment.classification.as_str());
+        hasher.update([fragment.priority]);
+        digest_text(&mut hasher, &fragment.content_digest);
+        hasher.update(fragment.token_cost.to_be_bytes());
+        match fragment.expires_at {
+            Some(expires_at) => {
+                hasher.update([1]);
+                hasher.update(expires_at.as_unix_seconds().to_be_bytes());
+            }
+            None => hasher.update([0]),
+        }
+        digest_optional_text(&mut hasher, fragment.origin.producer());
+        digest_optional_text(&mut hasher, fragment.origin.reference());
+    }
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn sha256_digest(value: &[u8]) -> String {
+    format!("sha256:{:x}", Sha256::digest(value))
+}
+
+fn digest_optional_text(hasher: &mut Sha256, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            hasher.update([1]);
+            digest_text(hasher, value);
+        }
+        None => hasher.update([0]),
+    }
+}
+
+fn digest_text(hasher: &mut Sha256, value: &str) {
+    hasher.update(u64::try_from(value.len()).unwrap_or(u64::MAX).to_be_bytes());
+    hasher.update(value.as_bytes());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(token_budget: u32) -> ContextRequest {
+        ContextRequest::new(
+            TenantId::new("tenant-1").unwrap(),
+            WorkspaceId::new("workspace-1").unwrap(),
+            SessionId::new("session-1").unwrap(),
+            "provider-a",
+            "model-a",
+            7,
+            token_budget,
+            Timestamp::from_unix_seconds(100),
+        )
+        .unwrap()
+    }
+
+    fn fragment(origin: ContextOrigin) -> ContextFragment {
+        ContextFragment::new_with_origin(
+            "constitution",
+            ContextSource::Constitutional,
+            ContextTrust::Constitutional,
+            ContextClassification::Internal,
+            100,
+            "constitutional rules",
+            4,
+            None,
+            origin,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn fragment_origin_and_content_digest_are_stable() {
+        let origin = ContextOrigin::new("pandora-runtime", "agent.system-prompt").unwrap();
+        let first = fragment(origin.clone());
+        let second = fragment(origin);
+
+        assert_eq!(first.origin(), second.origin());
+        assert!(first.origin().is_complete());
+        assert_eq!(first.content_digest(), second.content_digest());
+        assert!(first.content_digest().starts_with("sha256:"));
+    }
+
+    #[test]
+    fn manifest_digest_changes_when_provenance_changes() {
+        let first = ContextManifest::from_fragments(&[fragment(
+            ContextOrigin::new("pandora-runtime", "agent.system-prompt").unwrap(),
+        )]);
+        let second = ContextManifest::from_fragments(&[fragment(
+            ContextOrigin::new("pandora-runtime", "agent.revised-system-prompt").unwrap(),
+        )]);
+
+        assert!(first.provenance_complete());
+        assert!(second.provenance_complete());
+        assert_ne!(first.digest(), second.digest());
+    }
+
+    #[test]
+    fn cache_key_includes_projection_version_and_token_budget() {
+        let first = request(20).cache_key();
+        let second = request(21).cache_key();
+
+        assert_eq!(first.projection_version(), CONTEXT_PROJECTION_VERSION);
+        assert_eq!(first.token_budget(), 20);
+        assert_eq!(second.token_budget(), 21);
+        assert_ne!(first, second);
+    }
 }

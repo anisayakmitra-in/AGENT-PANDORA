@@ -2086,6 +2086,14 @@ fn agent_run_executes_a_bounded_read_then_returns_the_final_answer() {
     );
     assert_eq!(response["context"]["dropped"], serde_json::json!([]));
     assert_eq!(response["context"]["cacheable"], false);
+    assert_eq!(response["context"]["cache_disposition"], "bypass");
+    assert_eq!(response["context"]["projection_version"], 1);
+    assert_eq!(response["context"]["provenance_complete"], true);
+    assert!(
+        response["context"]["manifest_digest"]
+            .as_str()
+            .is_some_and(|digest| digest.starts_with("sha256:"))
+    );
     assert!(response["context"]["token_cost"].as_u64().unwrap() > 0);
     assert_eq!(response["output"], "The README says fixture.");
 

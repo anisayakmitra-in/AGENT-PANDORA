@@ -1,9 +1,9 @@
 use crate::context_recovery::ContextRecovery;
 use pandora_types::{
-    ContextAssembly, ContextCacheKey, ContextClassification, ContextEntry, ContextFragment,
-    ContextReceipt, ContextRequest, ContextSource, ContextTrust, Timestamp,
+    ContextAssembly, ContextCacheDisposition, ContextCacheKey, ContextClassification, ContextEntry,
+    ContextFragment, ContextManifest, ContextReceipt, ContextRequest, ContextSource, ContextTrust,
+    Timestamp,
 };
-use sha2::{Digest, Sha256};
 use std::collections::{HashSet, VecDeque};
 use std::fmt;
 use std::sync::Mutex;
@@ -50,8 +50,7 @@ impl ContextCacheStats {
 
 struct ContextCacheEntry {
     key: ContextCacheKey,
-    token_budget: u32,
-    fragment_digest: [u8; 32],
+    manifest_digest: String,
     assembled_at: Timestamp,
     valid_until: Option<Timestamp>,
     assembly: ContextAssembly,
@@ -99,7 +98,7 @@ impl ContextEngine {
                 .then_with(|| left.id().cmp(right.id()))
         });
         let cache_key = request.cache_key();
-        let fragment_digest = digest_fragments(&candidates);
+        let manifest = ContextManifest::from_fragments(&candidates);
         let valid_until = candidates
             .iter()
             .filter_map(ContextFragment::expires_at)
@@ -111,12 +110,10 @@ impl ContextEngine {
                     fragment.source(),
                     ContextSource::Constitutional | ContextSource::ActivePlan
                 )
-        });
+        }) && manifest.provenance_complete();
         if cache_candidate && let Ok(mut cache) = self.cache.lock() {
             if let Some(index) = cache.entries.iter().position(|entry| {
-                entry.key == cache_key
-                    && entry.token_budget == request.token_budget()
-                    && entry.fragment_digest == fragment_digest
+                entry.key == cache_key && entry.manifest_digest == manifest.digest()
             }) {
                 let entry = &cache.entries[index];
                 let request_time = request.now().as_unix_seconds();
@@ -125,7 +122,17 @@ impl ContextEngine {
                         .valid_until
                         .is_none_or(|expires_at| request_time < expires_at.as_unix_seconds());
                 if valid {
-                    let assembly = entry.assembly.clone();
+                    let cached = entry.assembly.clone();
+                    let receipt = cached
+                        .receipt()
+                        .clone()
+                        .with_cache_disposition(ContextCacheDisposition::Hit);
+                    let assembly = ContextAssembly::new(
+                        cached.entries().to_vec(),
+                        cached.text().to_owned(),
+                        receipt,
+                        cache_key,
+                    );
                     cache.hits = cache.hits.saturating_add(1);
                     return Ok(assembly);
                 }
@@ -138,7 +145,7 @@ impl ContextEngine {
         let mut dropped_ids = Vec::new();
         let mut entries = Vec::new();
         let mut token_cost = 0_u32;
-        let mut cacheable = true;
+        let mut cacheable = cache_candidate;
 
         for fragment in candidates {
             if fragment.is_expired(request.now())
@@ -193,7 +200,19 @@ impl ContextEngine {
             .collect::<Vec<_>>()
             .join("\n");
         let included_ids = entries.iter().map(|entry| entry.id().to_owned()).collect();
-        let receipt = ContextReceipt::new(included_ids, dropped_ids, token_cost, cacheable);
+        let cache_disposition = if cache_candidate {
+            ContextCacheDisposition::Miss
+        } else {
+            ContextCacheDisposition::Bypass
+        };
+        let receipt = ContextReceipt::new_with_evidence(
+            included_ids,
+            dropped_ids,
+            token_cost,
+            cacheable,
+            &manifest,
+            cache_disposition,
+        );
         let assembly = ContextAssembly::new(entries, text, receipt, cache_key.clone());
         if cache_candidate
             && assembly.receipt().cacheable()
@@ -205,8 +224,7 @@ impl ContextEngine {
             }
             cache.entries.push_back(ContextCacheEntry {
                 key: cache_key,
-                token_budget: request.token_budget(),
-                fragment_digest,
+                manifest_digest: manifest.digest().to_owned(),
                 assembled_at: request.now(),
                 valid_until,
                 assembly: assembly.clone(),
@@ -237,33 +255,6 @@ impl Default for ContextEngine {
     }
 }
 
-fn digest_fragments(fragments: &[ContextFragment]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(b"pandora-context-fragments-v1");
-    for fragment in fragments {
-        digest_text(&mut hasher, fragment.id());
-        digest_text(&mut hasher, fragment.source().as_str());
-        digest_text(&mut hasher, fragment.trust().as_str());
-        digest_text(&mut hasher, fragment.classification().as_str());
-        hasher.update([fragment.priority()]);
-        digest_text(&mut hasher, fragment.content());
-        hasher.update(fragment.token_cost().to_be_bytes());
-        match fragment.expires_at() {
-            Some(expires_at) => {
-                hasher.update([1]);
-                hasher.update(expires_at.as_unix_seconds().to_be_bytes());
-            }
-            None => hasher.update([0]),
-        }
-    }
-    hasher.finalize().into()
-}
-
-fn digest_text(hasher: &mut Sha256, value: &str) {
-    hasher.update(value.len().to_be_bytes());
-    hasher.update(value.as_bytes());
-}
-
 fn cached_assembly_bytes(assembly: &ContextAssembly) -> usize {
     let mut bytes = std::mem::size_of::<ContextAssembly>()
         .saturating_add(std::mem::size_of::<ContextCacheEntry>())
@@ -283,6 +274,9 @@ fn cached_assembly_bytes(assembly: &ContextAssembly) -> usize {
         bytes = bytes
             .saturating_add(std::mem::size_of::<String>())
             .saturating_add(id.len());
+    }
+    if let Some(manifest_digest) = assembly.receipt().manifest_digest() {
+        bytes = bytes.saturating_add(manifest_digest.len().saturating_mul(2));
     }
     let key = assembly.cache_key();
     let key_bytes = key
@@ -336,8 +330,8 @@ mod tests {
     use super::*;
     use crate::context_recovery::{RecoveryInput, RecoveryStep};
     use pandora_types::{
-        ContextClassification, ContextFragment, ContextRequest, ContextSource, ContextTrust,
-        SessionId, TenantId, Timestamp, WorkspaceId,
+        ContextCacheDisposition, ContextClassification, ContextFragment, ContextOrigin,
+        ContextRequest, ContextSource, ContextTrust, SessionId, TenantId, Timestamp, WorkspaceId,
     };
 
     fn request(budget: u32) -> ContextRequest {
@@ -412,7 +406,7 @@ mod tests {
         token_cost: u32,
         expires_at: Option<u64>,
     ) -> ContextFragment {
-        ContextFragment::new(
+        ContextFragment::new_with_origin(
             id,
             source,
             trust,
@@ -421,6 +415,21 @@ mod tests {
             content,
             token_cost,
             expires_at.map(Timestamp::from_unix_seconds),
+            ContextOrigin::new("pandora-runtime-test", id).unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn incomplete_fragment(id: &str, content: &str) -> ContextFragment {
+        ContextFragment::new(
+            id,
+            ContextSource::Constitutional,
+            ContextTrust::Constitutional,
+            ContextClassification::Internal,
+            100,
+            content,
+            4,
+            None,
         )
         .unwrap()
     }
@@ -778,10 +787,164 @@ mod tests {
         let second = engine.assemble(&request(20), fragments).unwrap();
         let stats = engine.cache_stats();
 
-        assert_eq!(first, second);
+        assert_eq!(first.entries(), second.entries());
+        assert_eq!(first.text(), second.text());
+        assert_eq!(first.cache_key(), second.cache_key());
+        assert_eq!(
+            first.receipt().cache_disposition(),
+            ContextCacheDisposition::Miss
+        );
+        assert_eq!(
+            second.receipt().cache_disposition(),
+            ContextCacheDisposition::Hit
+        );
         assert_eq!(stats.hits(), 1);
         assert_eq!(stats.misses(), 1);
         assert_eq!(stats.entries(), 1);
+    }
+
+    #[test]
+    fn cache_hit_returns_hit_receipt_without_changing_assembly_text() {
+        let engine = ContextEngine::new();
+        let fragments = vec![fragment(
+            "constitution",
+            ContextSource::Constitutional,
+            ContextTrust::Constitutional,
+            ContextClassification::Internal,
+            100,
+            "constitutional rules",
+            4,
+            None,
+        )];
+
+        let first = engine.assemble(&request(20), fragments.clone()).unwrap();
+        let second = engine.assemble(&request(20), fragments).unwrap();
+
+        assert_eq!(first.text(), second.text());
+        assert_eq!(
+            first.receipt().cache_disposition(),
+            ContextCacheDisposition::Miss
+        );
+        assert_eq!(
+            second.receipt().cache_disposition(),
+            ContextCacheDisposition::Hit
+        );
+        assert_eq!(
+            first.receipt().manifest_digest(),
+            second.receipt().manifest_digest()
+        );
+    }
+
+    #[test]
+    fn cache_miss_returns_manifest_evidence() {
+        let assembly = ContextEngine::new()
+            .assemble(
+                &request(20),
+                vec![fragment(
+                    "plan",
+                    ContextSource::ActivePlan,
+                    ContextTrust::Verified,
+                    ContextClassification::Internal,
+                    100,
+                    "active plan",
+                    4,
+                    None,
+                )],
+            )
+            .unwrap();
+
+        assert_eq!(
+            assembly.receipt().cache_disposition(),
+            ContextCacheDisposition::Miss
+        );
+        assert!(assembly.receipt().provenance_complete());
+        assert!(
+            assembly
+                .receipt()
+                .manifest_digest()
+                .is_some_and(|digest| digest.starts_with("sha256:"))
+        );
+        assert_eq!(
+            assembly.receipt().projection_version(),
+            pandora_types::CONTEXT_PROJECTION_VERSION
+        );
+    }
+
+    #[test]
+    fn retained_size_counts_both_manifest_digest_copies() {
+        let assembly = ContextEngine::new()
+            .assemble(
+                &request(20),
+                vec![fragment(
+                    "plan",
+                    ContextSource::ActivePlan,
+                    ContextTrust::Verified,
+                    ContextClassification::Internal,
+                    100,
+                    "active plan",
+                    4,
+                    None,
+                )],
+            )
+            .unwrap();
+        let digest_bytes = assembly.receipt().manifest_digest().unwrap().len();
+        let without_evidence = ContextAssembly::new(
+            assembly.entries().to_vec(),
+            assembly.text().to_owned(),
+            ContextReceipt::new(
+                assembly.receipt().included_ids().to_vec(),
+                assembly.receipt().dropped_ids().to_vec(),
+                assembly.receipt().token_cost(),
+                assembly.receipt().cacheable(),
+            ),
+            assembly.cache_key().clone(),
+        );
+
+        assert_eq!(
+            cached_assembly_bytes(&assembly) - cached_assembly_bytes(&without_evidence),
+            digest_bytes * 2
+        );
+    }
+
+    #[test]
+    fn incomplete_or_dynamic_provenance_bypasses_cache() {
+        let engine = ContextEngine::new();
+        let incomplete = vec![incomplete_fragment("constitution", "constitutional rules")];
+
+        let first = engine.assemble(&request(20), incomplete.clone()).unwrap();
+        let second = engine.assemble(&request(20), incomplete).unwrap();
+
+        assert_eq!(
+            first.receipt().cache_disposition(),
+            ContextCacheDisposition::Bypass
+        );
+        assert_eq!(
+            second.receipt().cache_disposition(),
+            ContextCacheDisposition::Bypass
+        );
+        assert!(!first.receipt().provenance_complete());
+        assert_eq!(engine.cache_stats().entries(), 0);
+
+        let dynamic = ContextEngine::new()
+            .assemble(
+                &request(20),
+                vec![fragment(
+                    "conversation",
+                    ContextSource::Conversation,
+                    ContextTrust::Admitted,
+                    ContextClassification::Internal,
+                    100,
+                    "latest conversation",
+                    4,
+                    None,
+                )],
+            )
+            .unwrap();
+        assert_eq!(
+            dynamic.receipt().cache_disposition(),
+            ContextCacheDisposition::Bypass
+        );
+        assert!(dynamic.receipt().provenance_complete());
     }
 
     #[test]

@@ -23,9 +23,16 @@ Its approval object is an explicit memory contract; it does not replace Parliame
 `ContextEngine` keeps up to 64 assemblies in the current process. Each entry
 must fit a 64 KiB retained-size budget. Only public or internal constitutional
 and active-plan fragments are eligible. An entry matches only when its tenant,
-workspace, session, provider, model, policy, token budget, fragment contents,
-fragment metadata, and expiry data match. An entry is discarded before reuse
-when its context has expired or time moves backward.
+workspace, session, provider, model, policy, projection version, token budget,
+fragment contents, provenance, metadata, and expiry data match. An entry is
+discarded before reuse when its context has expired or time moves backward.
+
+Every assembly records a versioned manifest digest over the ordered fragments,
+their exact content digests, trust and classification metadata, and bounded
+origin references. Receipts report whether provenance is complete and whether
+the operation was a cache `hit`, eligible `miss`, or policy `bypass`. A fragment
+without complete origin evidence is assembled normally but cannot enter the
+cache.
 
 Sensitive, secret, retrieved, conversation, and L1 fragments bypass the cache.
 The cache does not store model responses, Tool output, Skill guidance, or L1

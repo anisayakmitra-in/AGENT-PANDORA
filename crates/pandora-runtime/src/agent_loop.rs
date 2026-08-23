@@ -9,8 +9,9 @@ use pandora_provider::{
     ToolSchema, TraceMetadata,
 };
 use pandora_types::{
-    ContextAssembly, ContextClassification, ContextFragment, ContextReceipt, ContextRequest,
-    ContextSource, ContextTrust, HarnessId, Session, SubagentBudgets, SubagentId, Timestamp,
+    ContextAssembly, ContextClassification, ContextFragment, ContextOrigin, ContextReceipt,
+    ContextRequest, ContextSource, ContextTrust, HarnessId, Session, SubagentBudgets, SubagentId,
+    Timestamp,
 };
 use std::fmt;
 use std::sync::Arc;
@@ -821,6 +822,8 @@ impl AgentLoop {
             ContextClassification::Internal,
             2,
             SYSTEM_PROMPT,
+            "pandora-runtime",
+            CONTEXT_CONSTITUTION_ID,
         )?];
         if let Some(l1_evidence) = l1_evidence {
             if !l1_evidence.matches(session, provider.manifest().id().as_str()) {
@@ -834,6 +837,8 @@ impl AgentLoop {
                     ContextClassification::Internal,
                     1,
                     L1_EVIDENCE_BOUNDARY,
+                    "pandora-runtime",
+                    CONTEXT_L1_EVIDENCE_BOUNDARY_ID,
                 )?);
                 for (index, record) in l1_evidence.records().iter().enumerate() {
                     fragments.push(context_fragment(
@@ -843,6 +848,8 @@ impl AgentLoop {
                         ContextClassification::Sensitive,
                         u8::MAX.saturating_sub(index as u8),
                         format!("<l1-evidence>{}</l1-evidence>", record.summary()),
+                        "pandora-memory",
+                        record.id().as_str(),
                     )?);
                 }
             }
@@ -855,6 +862,8 @@ impl AgentLoop {
                 ContextClassification::Internal,
                 1,
                 SKILL_GUIDANCE_BOUNDARY,
+                "pandora-runtime",
+                CONTEXT_SKILL_BOUNDARY_ID,
             )?);
             fragments.push(context_fragment(
                 CONTEXT_ENABLED_SKILLS_ID,
@@ -863,6 +872,8 @@ impl AgentLoop {
                 ContextClassification::Sensitive,
                 0,
                 format!("{skill_context}</enabled-skills>"),
+                "pandora-skill-engine",
+                CONTEXT_ENABLED_SKILLS_ID,
             )?);
         }
         self.context
@@ -914,6 +925,7 @@ fn check_control(
         })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn context_fragment(
     id: &str,
     source: ContextSource,
@@ -921,9 +933,13 @@ fn context_fragment(
     classification: ContextClassification,
     priority: u8,
     content: impl Into<String>,
+    origin_producer: &str,
+    origin_reference: &str,
 ) -> Result<ContextFragment, AgentLoopError> {
     let content = content.into();
-    ContextFragment::new(
+    let origin = ContextOrigin::new(origin_producer, origin_reference)
+        .map_err(|error| AgentLoopError::Context(error.to_string()))?;
+    ContextFragment::new_with_origin(
         id,
         source,
         trust,
@@ -932,6 +948,7 @@ fn context_fragment(
         &content,
         estimated_token_cost(&content),
         None,
+        origin,
     )
     .map_err(|error| AgentLoopError::Context(error.to_string()))
 }
