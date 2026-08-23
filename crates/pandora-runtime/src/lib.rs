@@ -45,8 +45,9 @@ mod test_support;
 
 pub use adaptive_engine::{AdaptationResult, AdaptiveEngine, AdaptiveError};
 pub use agent_loop::{
-    AgentApprovalContext, AgentLoop, AgentLoopError, AgentRunRequest, AgentRunSummary,
-    MAX_AGENT_TOOL_CALLS, MAX_AGENT_TURNS,
+    AgentApprovalContext, AgentCheckpoint, AgentCheckpointKind, AgentControlStop, AgentLoop,
+    AgentLoopError, AgentRunControl, AgentRunRequest, AgentRunSummary, MAX_AGENT_TOOL_CALLS,
+    MAX_AGENT_TURNS,
 };
 pub use approvals::{
     ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, PendingApproval,

@@ -1054,7 +1054,10 @@ fn agent_error(error: AgentLoopError) -> CliError {
         ),
         AgentLoopError::EmptyResponse
         | AgentLoopError::ToolBudgetExceeded
-        | AgentLoopError::TurnBudgetExceeded => CliError::execution(error.to_string(), json!({})),
+        | AgentLoopError::TurnBudgetExceeded
+        | AgentLoopError::ControlledStop { .. } => {
+            CliError::execution(error.to_string(), json!({}))
+        }
         AgentLoopError::Execution(error) => runtime_error(error),
         AgentLoopError::ApprovalRequired { reason, .. } => CliError::approval(reason, json!({})),
     }

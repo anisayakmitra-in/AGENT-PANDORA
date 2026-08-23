@@ -28,6 +28,71 @@ const CONTEXT_SKILL_BOUNDARY_ID: &str = "agent.skill-boundary";
 const CONTEXT_ENABLED_SKILLS_ID: &str = "agent.enabled-skills";
 const CONTEXT_L1_EVIDENCE_BOUNDARY_ID: &str = "agent.l1-evidence-boundary";
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AgentControlStop {
+    Cancelled,
+    TokenBudgetExceeded,
+    DurationBudgetExceeded,
+}
+
+impl fmt::Display for AgentControlStop {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Cancelled => formatter.write_str("agent run was cancelled"),
+            Self::TokenBudgetExceeded => formatter.write_str("agent token budget exceeded"),
+            Self::DurationBudgetExceeded => formatter.write_str("agent duration budget exceeded"),
+        }
+    }
+}
+
+pub trait AgentRunControl: Send + Sync {
+    fn checkpoint(&self, checkpoint: AgentCheckpoint<'_>) -> Result<(), AgentControlStop>;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AgentCheckpointKind {
+    BeforeTurn,
+    BeforeProvider,
+    AfterProvider,
+    BeforeEffectAuthorization,
+    AfterEffect,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AgentCheckpoint<'a> {
+    kind: AgentCheckpointKind,
+    turns: u32,
+    tool_calls: u32,
+    usage: &'a TokenUsage,
+}
+
+impl<'a> AgentCheckpoint<'a> {
+    fn new(kind: AgentCheckpointKind, turns: u32, tool_calls: u32, usage: &'a TokenUsage) -> Self {
+        Self {
+            kind,
+            turns,
+            tool_calls,
+            usage,
+        }
+    }
+
+    pub const fn kind(&self) -> AgentCheckpointKind {
+        self.kind
+    }
+
+    pub const fn turns(&self) -> u32 {
+        self.turns
+    }
+
+    pub const fn tool_calls(&self) -> u32 {
+        self.tool_calls
+    }
+
+    pub const fn usage(&self) -> &TokenUsage {
+        self.usage
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AgentLoopError {
     InvalidBudget,
@@ -45,6 +110,10 @@ pub enum AgentLoopError {
     TurnBudgetExceeded,
     ApprovalRequired {
         reason: String,
+        summary: AgentRunSummary,
+    },
+    ControlledStop {
+        reason: AgentControlStop,
         summary: AgentRunSummary,
     },
     Execution(RuntimeError),
@@ -72,6 +141,7 @@ impl fmt::Display for AgentLoopError {
             Self::ApprovalRequired { reason, .. } => {
                 write!(formatter, "agent action requires approval: {reason}")
             }
+            Self::ControlledStop { reason, .. } => reason.fmt(formatter),
             Self::Execution(error) => write!(formatter, "agent tool execution failed: {error:?}"),
         }
     }
@@ -136,6 +206,7 @@ pub struct AgentRunRequest<'a> {
     history: Vec<ChatMessage>,
     skill_context: Option<&'a str>,
     l1_evidence: Option<&'a L1EvidenceContext>,
+    control: Option<&'a dyn AgentRunControl>,
     task: String,
     now: Timestamp,
 }
@@ -152,6 +223,7 @@ impl<'a> AgentRunRequest<'a> {
             history,
             skill_context: None,
             l1_evidence: None,
+            control: None,
             task: task.into(),
             now,
         }
@@ -164,6 +236,11 @@ impl<'a> AgentRunRequest<'a> {
 
     pub fn with_l1_evidence(mut self, l1_evidence: Option<&'a L1EvidenceContext>) -> Self {
         self.l1_evidence = l1_evidence;
+        self
+    }
+
+    pub fn with_control(mut self, control: &'a dyn AgentRunControl) -> Self {
+        self.control = Some(control);
         self
     }
 }
@@ -230,6 +307,7 @@ impl AgentLoop {
             history,
             skill_context,
             l1_evidence,
+            control,
             task,
             now,
         } = request;
@@ -242,6 +320,7 @@ impl AgentLoop {
                 now,
                 approval: None,
                 l1_evidence,
+                control,
             },
             skill_context,
             task,
@@ -272,6 +351,7 @@ impl AgentLoop {
                 now,
                 approval: Some(AgentApproval { store, id }),
                 l1_evidence,
+                control: None,
             },
             None,
             task,
@@ -303,6 +383,7 @@ impl AgentLoop {
                 now,
                 approval: Some(AgentApproval { store, id }),
                 l1_evidence,
+                control: None,
             },
             skill_context,
             task,
@@ -323,6 +404,7 @@ impl AgentLoop {
             now,
             approval,
             l1_evidence,
+            control,
         } = context;
         let task = task.into();
         if task.trim().is_empty() {
@@ -392,11 +474,23 @@ impl AgentLoop {
         let mut usage = TokenUsage::default();
         let mut runs = Vec::new();
         let mut provider_receipts = Vec::new();
+        let mut turns = 0;
         let mut tool_calls: u32 = 0;
 
         if let Some(approval) = approval.as_ref() {
             for call in pending_tool_calls {
                 tool_calls = tool_calls.saturating_add(1);
+                check_control(
+                    control,
+                    AgentCheckpointKind::BeforeEffectAuthorization,
+                    turns,
+                    tool_calls,
+                    &usage,
+                    &runs,
+                    &provider_receipts,
+                    &context_receipt,
+                    &messages,
+                )?;
                 match self.execute_tool(
                     &call,
                     controller,
@@ -407,9 +501,31 @@ impl AgentLoop {
                 )? {
                     ToolExecution::Output(result) => {
                         messages.push(untrusted_tool_result(call.id(), &result)?);
+                        check_control(
+                            control,
+                            AgentCheckpointKind::AfterEffect,
+                            turns,
+                            tool_calls,
+                            &usage,
+                            &runs,
+                            &provider_receipts,
+                            &context_receipt,
+                            &messages,
+                        )?;
                     }
                     ToolExecution::Approval { reason, summary } => {
                         runs.push(summary);
+                        check_control(
+                            control,
+                            AgentCheckpointKind::AfterEffect,
+                            turns,
+                            tool_calls,
+                            &usage,
+                            &runs,
+                            &provider_receipts,
+                            &context_receipt,
+                            &messages,
+                        )?;
                         return Err(AgentLoopError::ApprovalRequired {
                             reason,
                             summary: AgentRunSummary {
@@ -429,6 +545,17 @@ impl AgentLoop {
         }
 
         for turn in 1..=self.max_turns {
+            check_control(
+                control,
+                AgentCheckpointKind::BeforeTurn,
+                turns,
+                tool_calls,
+                &usage,
+                &runs,
+                &provider_receipts,
+                &context_receipt,
+                &messages,
+            )?;
             let request = ModelRequest::new(
                 provider.manifest().id().clone(),
                 provider.manifest().default_model().clone(),
@@ -437,6 +564,17 @@ impl AgentLoop {
             .with_tools(schemas.clone())?
             .with_max_output_tokens(1_024)?
             .with_trace_metadata(TraceMetadata::new().with_session_id(session.id().clone()));
+            check_control(
+                control,
+                AgentCheckpointKind::BeforeProvider,
+                turns,
+                tool_calls,
+                &usage,
+                &runs,
+                &provider_receipts,
+                &context_receipt,
+                &messages,
+            )?;
             let invocation = controller
                 .invoke_provider(provider, request, &session, now)
                 .map_err(AgentLoopError::Execution)?;
@@ -451,6 +589,18 @@ impl AgentLoop {
                 }
             };
             usage = add_usage(&usage, response.usage());
+            turns = turn;
+            check_control(
+                control,
+                AgentCheckpointKind::AfterProvider,
+                turns,
+                tool_calls,
+                &usage,
+                &runs,
+                &provider_receipts,
+                &context_receipt,
+                &messages,
+            )?;
 
             if response.tool_calls().is_empty() {
                 if response.text().trim().is_empty() {
@@ -459,7 +609,7 @@ impl AgentLoop {
                 messages.push(ChatMessage::assistant(response.text())?);
                 return Ok(AgentRunSummary {
                     final_text: response.text().to_owned(),
-                    turns: turn,
+                    turns,
                     tool_calls,
                     usage,
                     runs: Arc::from(runs.into_boxed_slice()),
@@ -479,6 +629,17 @@ impl AgentLoop {
                     call,
                 ))?);
                 tool_calls = tool_calls.saturating_add(1);
+                check_control(
+                    control,
+                    AgentCheckpointKind::BeforeEffectAuthorization,
+                    turns,
+                    tool_calls,
+                    &usage,
+                    &runs,
+                    &provider_receipts,
+                    &context_receipt,
+                    &messages,
+                )?;
                 match self.execute_tool(
                     call,
                     controller,
@@ -489,9 +650,31 @@ impl AgentLoop {
                 )? {
                     ToolExecution::Output(result) => {
                         messages.push(untrusted_tool_result(call.id(), &result)?);
+                        check_control(
+                            control,
+                            AgentCheckpointKind::AfterEffect,
+                            turns,
+                            tool_calls,
+                            &usage,
+                            &runs,
+                            &provider_receipts,
+                            &context_receipt,
+                            &messages,
+                        )?;
                     }
                     ToolExecution::Approval { reason, summary } => {
                         runs.push(summary);
+                        check_control(
+                            control,
+                            AgentCheckpointKind::AfterEffect,
+                            turns,
+                            tool_calls,
+                            &usage,
+                            &runs,
+                            &provider_receipts,
+                            &context_receipt,
+                            &messages,
+                        )?;
                         return Err(AgentLoopError::ApprovalRequired {
                             reason,
                             summary: AgentRunSummary {
@@ -641,6 +824,38 @@ fn persisted_messages(messages: &[ChatMessage]) -> Arc<[ChatMessage]> {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+fn check_control(
+    control: Option<&dyn AgentRunControl>,
+    kind: AgentCheckpointKind,
+    turns: u32,
+    tool_calls: u32,
+    usage: &TokenUsage,
+    runs: &[RunSummary],
+    provider_receipts: &[pandora_types::EffectReceipt],
+    context_receipt: &ContextReceipt,
+    messages: &[ChatMessage],
+) -> Result<(), AgentLoopError> {
+    let Some(control) = control else {
+        return Ok(());
+    };
+    control
+        .checkpoint(AgentCheckpoint::new(kind, turns, tool_calls, usage))
+        .map_err(|reason| AgentLoopError::ControlledStop {
+            reason,
+            summary: AgentRunSummary {
+                final_text: String::new(),
+                turns,
+                tool_calls,
+                usage: usage.clone(),
+                runs: Arc::from(runs.to_vec().into_boxed_slice()),
+                provider_receipts: Arc::from(provider_receipts.to_vec().into_boxed_slice()),
+                context_receipt: Box::new(context_receipt.clone()),
+                messages: persisted_messages(messages),
+            },
+        })
+}
+
 fn context_fragment(
     id: &str,
     source: ContextSource,
@@ -776,6 +991,7 @@ struct AgentRunContext<'a> {
     now: Timestamp,
     approval: Option<AgentApproval<'a>>,
     l1_evidence: Option<&'a L1EvidenceContext>,
+    control: Option<&'a dyn AgentRunControl>,
 }
 
 #[cfg(test)]
