@@ -6,6 +6,7 @@ use pandora_types::{
     Capability, EffectOutcome, EffectReceipt, EffectTarget, Operation, ReceiptId, ResourceScope,
     Timestamp,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -24,15 +25,17 @@ const MAX_TOOLS: usize = 128;
 const MAX_CONTENT_ITEMS: usize = 128;
 static NEXT_RECEIPT_ID: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum McpProtocolMode {
     ModernOnly,
     LegacyOnly,
+    #[default]
     Auto,
 }
 
 impl McpProtocolMode {
-    const fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::ModernOnly => "modern_only",
             Self::LegacyOnly => "legacy_only",
@@ -117,6 +120,10 @@ impl McpStdioConfig {
 
     pub fn program(&self) -> &str {
         &self.program
+    }
+
+    pub fn arguments(&self) -> &[String] {
+        &self.arguments
     }
 
     pub const fn mode(&self) -> McpProtocolMode {

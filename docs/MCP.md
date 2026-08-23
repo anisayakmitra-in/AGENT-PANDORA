@@ -1,10 +1,25 @@
-# Local MCP preview
+# Local MCP stdio
 
-Pandora's MCP client is an internal runtime preview for one explicitly
-configured local stdio server. Configuration contains an exact absolute
-executable path and argument vector. Pandora starts it directly without a
-shell, clears its inherited environment, and bounds protocol frames, stderr,
-and request time.
+Pandora stores local MCP server profiles in its normal configuration file. A
+profile contains an exact absolute executable path, an argument vector, and a
+protocol mode. Configuration does not start the program.
+
+```text
+pandora mcp set local --program /absolute/path/to/server --arguments-json '["--flag","value"]' --mode auto
+pandora mcp list
+pandora mcp inspect local
+pandora mcp remove local --yes
+```
+
+`--mode` accepts `auto`, `modern-only`, or `legacy-only`. Arguments must be a
+JSON array of strings. Removing a profile requires `--yes`. These commands do
+not execute the configured server; the governed connection runtime remains a
+bounded preview. CLI output reports only the number of configured arguments;
+it never echoes their values. Do not put credentials in MCP arguments.
+
+When invoked by Pandora's runtime, the program starts directly without a shell,
+inherits no environment, and uses bounded protocol frames, stderr, and request
+time.
 
 The protocol mode is explicit:
 

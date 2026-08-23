@@ -1754,6 +1754,195 @@ fn session_inspect_missing_session_preserves_resume_error() {
 }
 
 #[test]
+fn mcp_profiles_round_trip_without_starting_the_server() {
+    let fixture = Fixture::new();
+    let program = PathBuf::from(env!("CARGO_BIN_EXE_pandora"))
+        .canonicalize()
+        .expect("Pandora binary path should be absolute");
+    let program = program
+        .to_str()
+        .expect("Pandora binary path should be UTF-8");
+
+    for (server_id, cli_mode, stored_mode) in [
+        ("auto", "auto", "auto"),
+        ("modern", "modern-only", "modern_only"),
+        ("legacy", "legacy-only", "legacy_only"),
+    ] {
+        let first_argument = format!("argument-alpha-{server_id}-7f0ac4");
+        let second_argument = format!("argument-omega-{server_id}-c91de2");
+        let arguments = serde_json::to_string(&[&first_argument, &second_argument]).unwrap();
+        let output = fixture
+            .command(&[
+                "mcp",
+                "set",
+                server_id,
+                "--program",
+                program,
+                "--arguments-json",
+                &arguments,
+                "--mode",
+                cli_mode,
+                "--json",
+            ])
+            .output()
+            .expect("MCP profile configuration should start");
+        assert_success(&output);
+        let response = parse_json(&output);
+        assert_eq!(response["command"], "mcp set");
+        assert_eq!(response["server"]["id"], server_id);
+        assert_eq!(response["server"]["program"], program);
+        assert_eq!(response["server"]["argument_count"], 2);
+        assert_eq!(response["server"]["mode"], stored_mode);
+        for argument in [&first_argument, &second_argument] {
+            assert!(!String::from_utf8_lossy(&output.stdout).contains(argument));
+            assert!(!String::from_utf8_lossy(&output.stderr).contains(argument));
+        }
+
+        let stored: Value = serde_json::from_slice(&fs::read(&fixture.config).unwrap()).unwrap();
+        assert_eq!(
+            stored["mcp_servers"][server_id]["arguments"],
+            serde_json::json!([first_argument, second_argument])
+        );
+        assert_eq!(stored["mcp_servers"][server_id]["program"], program);
+        assert_eq!(stored["mcp_servers"][server_id]["mode"], stored_mode);
+
+        let output = fixture
+            .command(&[
+                "mcp",
+                "set",
+                server_id,
+                "--program",
+                program,
+                "--arguments-json",
+                &arguments,
+                "--mode",
+                cli_mode,
+            ])
+            .output()
+            .expect("MCP profile human-readable configuration should start");
+        assert_success(&output);
+        for argument in [&first_argument, &second_argument] {
+            assert!(!String::from_utf8_lossy(&output.stdout).contains(argument));
+            assert!(!String::from_utf8_lossy(&output.stderr).contains(argument));
+        }
+
+        let output = fixture
+            .command(&["mcp", "inspect", server_id, "--json"])
+            .output()
+            .expect("MCP profile inspection should start");
+        assert_success(&output);
+        assert_eq!(parse_json(&output)["server"]["mode"], stored_mode);
+        for argument in [&first_argument, &second_argument] {
+            assert!(!String::from_utf8_lossy(&output.stdout).contains(argument));
+            assert!(!String::from_utf8_lossy(&output.stderr).contains(argument));
+        }
+
+        let output = fixture
+            .command(&["mcp", "inspect", server_id])
+            .output()
+            .expect("MCP profile human-readable inspection should start");
+        assert_success(&output);
+        for argument in [&first_argument, &second_argument] {
+            assert!(!String::from_utf8_lossy(&output.stdout).contains(argument));
+            assert!(!String::from_utf8_lossy(&output.stderr).contains(argument));
+        }
+
+        let output = fixture
+            .command(&["mcp", "list"])
+            .output()
+            .expect("MCP profile human-readable list should start");
+        assert_success(&output);
+        for argument in [&first_argument, &second_argument] {
+            assert!(!String::from_utf8_lossy(&output.stdout).contains(argument));
+            assert!(!String::from_utf8_lossy(&output.stderr).contains(argument));
+        }
+
+        let output = fixture
+            .command(&["mcp", "remove", server_id, "--yes", "--json"])
+            .output()
+            .expect("MCP profile removal should start");
+        assert_success(&output);
+        assert_eq!(parse_json(&output)["server"]["state"], "removed");
+    }
+
+    let output = fixture
+        .command(&["mcp", "list", "--json"])
+        .output()
+        .expect("empty MCP profile list should start");
+    assert_success(&output);
+    assert!(
+        parse_json(&output)["servers"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn mcp_profile_commands_never_launch_the_configured_program() {
+    let fixture = Fixture::new();
+    let program = PathBuf::from(env!("CARGO_BIN_EXE_pandora"))
+        .canonicalize()
+        .expect("Pandora binary path should be absolute");
+    let program = program
+        .to_str()
+        .expect("Pandora binary path should be UTF-8");
+    let marker_config = fixture.root.join("spawned-config.json");
+    let marker_data = fixture.root.join("spawned-data");
+    let marker_workspace = fixture.root.join("spawned-workspace");
+    let arguments = vec![
+        "setup".to_owned(),
+        "--config".to_owned(),
+        marker_config.display().to_string(),
+        "--data-dir".to_owned(),
+        marker_data.display().to_string(),
+        "--workspace".to_owned(),
+        marker_workspace.display().to_string(),
+        "--json".to_owned(),
+    ];
+    let arguments_json = serde_json::to_string(&arguments).unwrap();
+
+    let outputs = [
+        fixture
+            .command(&[
+                "mcp",
+                "set",
+                "no-spawn",
+                "--program",
+                program,
+                "--arguments-json",
+                &arguments_json,
+                "--json",
+            ])
+            .output()
+            .expect("MCP profile configuration should start"),
+        fixture
+            .command(&["mcp", "list", "--json"])
+            .output()
+            .expect("MCP profile list should start"),
+        fixture
+            .command(&["mcp", "inspect", "no-spawn", "--json"])
+            .output()
+            .expect("MCP profile inspection should start"),
+        fixture
+            .command(&["mcp", "remove", "no-spawn", "--yes", "--json"])
+            .output()
+            .expect("MCP profile removal should start"),
+    ];
+
+    for output in outputs {
+        assert_success(&output);
+        for argument in &arguments {
+            assert!(!String::from_utf8_lossy(&output.stdout).contains(argument));
+            assert!(!String::from_utf8_lossy(&output.stderr).contains(argument));
+        }
+        assert!(!marker_config.exists());
+        assert!(!marker_data.exists());
+        assert!(!marker_workspace.exists());
+    }
+}
+
+#[test]
 fn provider_set_and_list_use_the_public_configuration_api() {
     let fixture = Fixture::new();
     let output = fixture

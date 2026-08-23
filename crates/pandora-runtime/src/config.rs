@@ -1,3 +1,4 @@
+use crate::mcp::{McpProtocolMode, McpStdioConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -17,6 +18,7 @@ pub enum ConfigError {
     InvalidProviderModel,
     InvalidCredentialEnvironment,
     InvalidProviderFallback,
+    InvalidMcpServer,
     UnknownProvider,
     InvalidPath(&'static str),
     Serialization(serde_json::Error),
@@ -36,6 +38,7 @@ impl fmt::Display for ConfigError {
             Self::InvalidProviderFallback => {
                 formatter.write_str("provider fallback configuration is invalid")
             }
+            Self::InvalidMcpServer => formatter.write_str("MCP server configuration is invalid"),
             Self::UnknownProvider => formatter.write_str("provider is not configured"),
             Self::InvalidPath(field) => write!(formatter, "{field} path is invalid"),
             Self::Serialization(_) => formatter.write_str("could not serialize configuration"),
@@ -225,6 +228,7 @@ pub struct RuntimeConfig {
     active_provider: Option<String>,
     provider_url: Option<String>,
     provider_model: Option<String>,
+    mcp_servers: BTreeMap<String, McpStdioConfig>,
     data_dir: PathBuf,
     workspace_dir: PathBuf,
 }
@@ -332,6 +336,20 @@ impl RuntimeConfig {
             return Err(ConfigError::UnknownProvider);
         }
         validate_fallbacks(&provider_profiles)?;
+        let mcp_servers = file
+            .mcp_servers
+            .into_iter()
+            .map(|(server_id, server)| {
+                let config = McpStdioConfig::new(
+                    server_id.clone(),
+                    server.program,
+                    server.arguments,
+                    server.mode,
+                )
+                .map_err(|_| ConfigError::InvalidMcpServer)?;
+                Ok((server_id, config))
+            })
+            .collect::<Result<BTreeMap<_, _>, ConfigError>>()?;
         let data_dir = resolve_path(
             overrides
                 .data_dir
@@ -362,6 +380,7 @@ impl RuntimeConfig {
             active_provider,
             provider_url,
             provider_model,
+            mcp_servers,
             data_dir,
             workspace_dir,
         })
@@ -392,6 +411,20 @@ impl RuntimeConfig {
                 })
                 .collect(),
             active_provider: self.active_provider.clone(),
+            mcp_servers: self
+                .mcp_servers
+                .iter()
+                .map(|(server_id, server)| {
+                    (
+                        server_id.clone(),
+                        FileMcpServer {
+                            program: server.program().to_owned(),
+                            arguments: server.arguments().to_vec(),
+                            mode: server.mode(),
+                        },
+                    )
+                })
+                .collect(),
             data_dir: Some(self.data_dir.display().to_string()),
             workspace_dir: Some(self.workspace_dir.display().to_string()),
         })
@@ -475,6 +508,23 @@ impl RuntimeConfig {
             })
     }
 
+    pub fn mcp_server_ids(&self) -> Vec<String> {
+        self.mcp_servers.keys().cloned().collect()
+    }
+
+    pub fn mcp_server(&self, server_id: &str) -> Option<&McpStdioConfig> {
+        self.mcp_servers.get(server_id)
+    }
+
+    pub fn set_mcp_server(&mut self, server: McpStdioConfig) {
+        self.mcp_servers
+            .insert(server.server_id().to_owned(), server);
+    }
+
+    pub fn remove_mcp_server(&mut self, server_id: &str) -> bool {
+        self.mcp_servers.remove(server_id).is_some()
+    }
+
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
     }
@@ -498,6 +548,8 @@ struct FileConfig {
     #[serde(default)]
     providers: BTreeMap<String, FileProviderProfile>,
     active_provider: Option<String>,
+    #[serde(default)]
+    mcp_servers: BTreeMap<String, FileMcpServer>,
     data_dir: Option<String>,
     workspace_dir: Option<String>,
 }
@@ -511,6 +563,15 @@ struct FileProviderProfile {
     fallback_provider: Option<String>,
     #[serde(default)]
     pricing: Option<ProviderPricing>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct FileMcpServer {
+    program: String,
+    #[serde(default)]
+    arguments: Vec<String>,
+    #[serde(default)]
+    mode: McpProtocolMode,
 }
 
 fn validate_fallbacks(

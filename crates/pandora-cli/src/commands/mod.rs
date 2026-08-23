@@ -17,6 +17,7 @@ mod doctor;
 mod efficiency;
 mod harness;
 mod job;
+mod mcp;
 mod migration;
 mod package;
 mod provider;
@@ -73,6 +74,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "harness" => harness::execute(&args[1..]),
         "job" => job::execute(&args[1..]),
         "migrate" => migration::execute(&args[1..]),
+        "mcp" => mcp::execute(&args[1..]),
         "package" => package::execute(&args[1..]),
         "setup" => setup::execute(&args[1..]),
         "run" => run::execute(&args[1..]),
@@ -287,7 +289,7 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|service|chat|tui|harness|slash|session|job|subagent|skill|package|approval|provider|tool|orchestration|strategies|efficiency|completions|migrate|update|uninstall|doctor> [options]
+    r#"usage: pandora <help|setup|run|service|chat|tui|harness|slash|session|job|subagent|skill|package|approval|provider|mcp|tool|orchestration|strategies|efficiency|completions|migrate|update|uninstall|doctor> [options]
 
 commands:
   help (or --help)
@@ -307,6 +309,7 @@ commands:
   tool list|inspect <id>
   approval list|inspect|resolve
   provider list|set|use|test
+  mcp list|inspect|set|remove
   orchestration roles
   strategies list
   efficiency rank [--task-class <name>] [--objective <cost|latency|tokens|certainty>]

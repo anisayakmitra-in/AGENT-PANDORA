@@ -357,6 +357,10 @@ pandora package lock
 pandora package verify-lock
 pandora package remove <id> <version> --dry-run
 pandora package remove <id> <version> --yes
+pandora mcp set <id> --program <absolute-path> --arguments-json <json-array> --mode <auto|modern-only|legacy-only>
+pandora mcp list
+pandora mcp inspect <id>
+pandora mcp remove <id> --yes
 pandora orchestration roles
 pandora strategies list
 pandora completions powershell
@@ -380,6 +384,10 @@ surface and do not execute a command or inspect credentials.
 `tool list` and `tool inspect` expose the built-in tool contract only: version,
 name, required capability, operation, and input schema. They do not execute a
 tool or bypass the governed execution path.
+
+`mcp set`, `list`, `inspect`, and `remove` manage local stdio server profiles.
+They do not start a server. List and inspection output omit argument values;
+see [Local MCP stdio](MCP.md) for protocol and containment boundaries.
 
 Skills are stored in the configured data directory under `skills/`. Use
 `skill install <local-skill-directory>` to admit one local `SKILL.md` package.
