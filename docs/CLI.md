@@ -78,8 +78,14 @@ uses integer micro-units per million input and output tokens. Both rates must be
 provided together. A profile can name one fallback profile.
 Pandora uses it only for credential, transport, timeout, rate-limit, or server
 failures; invalid requests and other client errors return immediately. Fallback
-selection does not grant tools or permissions, and nested fallback chains are
-rejected.
+selection does not grant tools or permissions. The controller creates a new
+request, policy decision, one-shot permit, and receipt for the fallback attempt;
+the primary permit cannot authorize the fallback provider. Nested fallback
+chains are rejected.
+
+If every configured provider attempt fails, JSON errors include the ordered
+receipt IDs and safe outcomes for each call. Credentials, prompts, and request
+payloads are excluded from that audit summary.
 
 ## Sessions and execution
 

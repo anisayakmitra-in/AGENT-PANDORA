@@ -1031,6 +1031,27 @@ fn agent_error(error: AgentLoopError) -> CliError {
         | AgentLoopError::InvalidL1Evidence
         | AgentLoopError::Context(_) => CliError::execution(error.to_string(), json!({})),
         AgentLoopError::Provider(error) => CliError::provider(error.to_string(), json!({})),
+        AgentLoopError::ProviderExecution { error, receipts } => CliError::provider(
+            error.to_string(),
+            json!({
+                "provider_calls": receipts.len(),
+                "receipts": receipts.iter().map(|receipt| {
+                    let outcome = match receipt.outcome() {
+                        pandora_types::EffectOutcome::Succeeded => json!({"status": "succeeded"}),
+                        pandora_types::EffectOutcome::Failed { code } => {
+                            json!({"status": "failed", "code": code})
+                        }
+                        pandora_types::EffectOutcome::Denied { reason } => {
+                            json!({"status": "denied", "reason": reason})
+                        }
+                    };
+                    json!({
+                        "receipt_id": receipt.receipt_id().as_str(),
+                        "outcome": outcome,
+                    })
+                }).collect::<Vec<_>>(),
+            }),
+        ),
         AgentLoopError::EmptyResponse
         | AgentLoopError::ToolBudgetExceeded
         | AgentLoopError::TurnBudgetExceeded => CliError::execution(error.to_string(), json!({})),

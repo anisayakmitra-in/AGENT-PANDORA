@@ -611,6 +611,10 @@ impl ModelResponse {
 pub trait Provider: Send + Sync {
     fn manifest(&self) -> &ProviderManifest;
     fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError>;
+
+    fn fallback_provider(&self) -> Option<&dyn Provider> {
+        None
+    }
 }
 
 struct SecretValue(String);

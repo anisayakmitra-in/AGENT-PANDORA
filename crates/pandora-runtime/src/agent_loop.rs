@@ -36,6 +36,10 @@ pub enum AgentLoopError {
     InvalidL1Evidence,
     Context(String),
     Provider(ProviderError),
+    ProviderExecution {
+        error: ProviderError,
+        receipts: Arc<[pandora_types::EffectReceipt]>,
+    },
     EmptyResponse,
     ToolBudgetExceeded,
     TurnBudgetExceeded,
@@ -61,6 +65,7 @@ impl fmt::Display for AgentLoopError {
             }
             Self::Context(error) => write!(formatter, "agent context assembly failed: {error}"),
             Self::Provider(error) => error.fmt(formatter),
+            Self::ProviderExecution { error, .. } => error.fmt(formatter),
             Self::EmptyResponse => formatter.write_str("provider returned an empty final response"),
             Self::ToolBudgetExceeded => formatter.write_str("agent tool-call budget exceeded"),
             Self::TurnBudgetExceeded => formatter.write_str("agent turn budget exceeded"),
@@ -435,8 +440,16 @@ impl AgentLoop {
             let invocation = controller
                 .invoke_provider(provider, request, &session, now)
                 .map_err(AgentLoopError::Execution)?;
-            provider_receipts.push(invocation.receipt().clone());
-            let response = invocation.into_result()?;
+            provider_receipts.extend(invocation.receipts().iter().cloned());
+            let response = match invocation.into_result() {
+                Ok(response) => response,
+                Err(error) => {
+                    return Err(AgentLoopError::ProviderExecution {
+                        error,
+                        receipts: Arc::from(provider_receipts.into_boxed_slice()),
+                    });
+                }
+            };
             usage = add_usage(&usage, response.usage());
 
             if response.tool_calls().is_empty() {
@@ -772,8 +785,8 @@ mod tests {
     use crate::executors::WorkspaceRoot;
     use crate::sessions::SessionStore;
     use pandora_provider::{
-        ChatMessage, ModelRequest, ModelResponse, Provider, ProviderError, ProviderManifest,
-        TokenUsage, ToolCall,
+        ChatMessage, FailoverProvider, ModelRequest, ModelResponse, Provider, ProviderError,
+        ProviderManifest, TokenUsage, ToolCall,
     };
     use pandora_types::{
         Capability, ContextClassification, MemoryKind, MemoryRecord, MemoryScope, Operation,
@@ -786,6 +799,41 @@ mod tests {
         manifest: ProviderManifest,
         responses: Mutex<Vec<ModelResponse>>,
         requests: Mutex<Vec<Vec<pandora_provider::ChatMessage>>>,
+    }
+
+    struct ErrorProvider {
+        manifest: ProviderManifest,
+        error: ProviderError,
+    }
+
+    impl ErrorProvider {
+        fn new(error: ProviderError) -> Self {
+            Self::named("primary-provider", error)
+        }
+
+        fn named(id: &str, error: ProviderError) -> Self {
+            Self {
+                manifest: ProviderManifest::new(
+                    id,
+                    id,
+                    format!("https://{id}.example.test/v1"),
+                    "primary-model",
+                    format!("PANDORA_{}_KEY", id.replace('-', "_").to_uppercase()),
+                )
+                .unwrap(),
+                error,
+            }
+        }
+    }
+
+    impl Provider for ErrorProvider {
+        fn manifest(&self) -> &ProviderManifest {
+            &self.manifest
+        }
+
+        fn complete(&self, _request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+            Err(self.error.clone())
+        }
     }
 
     impl SequenceProvider {
@@ -874,6 +922,77 @@ mod tests {
             vec![CONTEXT_CONSTITUTION_ID]
         );
         assert!(result.context_receipt().cacheable());
+    }
+
+    #[test]
+    fn agent_loop_records_every_governed_provider_attempt() {
+        let fixture = Fixture::new();
+        let primary = ErrorProvider::new(ProviderError::Transport);
+        let fallback = SequenceProvider::new(vec![ModelResponse::new(
+            "done",
+            Vec::new(),
+            TokenUsage::new(4, 2),
+        )]);
+        let provider = FailoverProvider::new(Box::new(primary), Box::new(fallback));
+        let controller = ExecutionController::new(fixture.root.clone());
+
+        let result = AgentLoop::new(1, 1)
+            .unwrap()
+            .run(
+                &provider,
+                &controller,
+                fixture.session(),
+                "Answer directly",
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap();
+
+        assert_eq!(result.final_text(), "done");
+        assert_eq!(result.provider_receipts().len(), 2);
+        assert!(matches!(
+            result.provider_receipts()[0].outcome(),
+            pandora_types::EffectOutcome::Failed { code } if code == "transport"
+        ));
+        assert!(matches!(
+            result.provider_receipts()[1].outcome(),
+            pandora_types::EffectOutcome::Succeeded
+        ));
+    }
+
+    #[test]
+    fn agent_loop_preserves_receipts_when_primary_and_fallback_fail() {
+        let fixture = Fixture::new();
+        let primary = ErrorProvider::named("provider-a", ProviderError::Transport);
+        let fallback =
+            ErrorProvider::named("provider-b", ProviderError::HttpStatus { status: 503 });
+        let provider = FailoverProvider::new(Box::new(primary), Box::new(fallback));
+        let controller = ExecutionController::new(fixture.root.clone());
+
+        let error = AgentLoop::new(1, 1)
+            .unwrap()
+            .run(
+                &provider,
+                &controller,
+                fixture.session(),
+                "Answer directly",
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap_err();
+
+        let AgentLoopError::ProviderExecution { error, receipts } = error else {
+            panic!("expected terminal provider execution error");
+        };
+        assert!(matches!(error, ProviderError::HttpStatus { status: 503 }));
+        assert_eq!(receipts.len(), 2);
+        assert!(matches!(
+            receipts[0].outcome(),
+            pandora_types::EffectOutcome::Failed { code } if code == "transport"
+        ));
+        assert!(matches!(
+            receipts[1].outcome(),
+            pandora_types::EffectOutcome::Failed { code } if code == "http_status"
+        ));
+        assert_ne!(receipts[0].permit_id(), receipts[1].permit_id());
     }
 
     #[test]

@@ -10,7 +10,7 @@ static NEXT_RECEIPT_ID: AtomicU64 = AtomicU64::new(1);
 
 pub struct ProviderResult {
     result: Result<ModelResponse, ProviderError>,
-    receipt: EffectReceipt,
+    receipts: Vec<EffectReceipt>,
 }
 
 impl ProviderResult {
@@ -23,7 +23,17 @@ impl ProviderResult {
     }
 
     pub fn receipt(&self) -> &EffectReceipt {
-        &self.receipt
+        self.receipts
+            .last()
+            .expect("provider results always contain a receipt")
+    }
+
+    pub fn receipts(&self) -> &[EffectReceipt] {
+        &self.receipts
+    }
+
+    pub(crate) fn prepend_receipt(&mut self, receipt: EffectReceipt) {
+        self.receipts.insert(0, receipt);
     }
 }
 
@@ -56,7 +66,7 @@ impl ProviderExecutor {
         };
         ProviderResult {
             result,
-            receipt: receipt_for(permit, now, outcome),
+            receipts: vec![receipt_for(permit, now, outcome)],
         }
     }
 }

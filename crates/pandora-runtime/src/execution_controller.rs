@@ -528,6 +528,35 @@ impl ExecutionController {
         session: &Session,
         now: Timestamp,
     ) -> Result<ProviderResult, RuntimeError> {
+        let fallback_request = request.clone();
+        let primary = self.invoke_provider_once(provider, request, session, now)?;
+        let should_fallback = primary
+            .result()
+            .err()
+            .is_some_and(ProviderError::is_retryable);
+        let Some(fallback) = provider.fallback_provider().filter(|_| should_fallback) else {
+            return Ok(primary);
+        };
+        let fallback_request = fallback_request.for_provider(
+            fallback.manifest().id().clone(),
+            fallback.manifest().default_model().clone(),
+        );
+        let Ok(mut fallback_result) =
+            self.invoke_provider_once(fallback, fallback_request, session, now)
+        else {
+            return Ok(primary);
+        };
+        fallback_result.prepend_receipt(primary.receipt().clone());
+        Ok(fallback_result)
+    }
+
+    fn invoke_provider_once(
+        &self,
+        provider: &dyn Provider,
+        request: ModelRequest,
+        session: &Session,
+        now: Timestamp,
+    ) -> Result<ProviderResult, RuntimeError> {
         let authorization_payload = request
             .authorization_payload_for(provider.manifest())
             .map_err(RuntimeError::Provider)?;
@@ -1214,13 +1243,16 @@ mod tests {
     use super::*;
     use crate::{HookPoint, HookSelector, LifecycleHook, LifecycleHooks};
     use pandora_harnesses::HarnessCatalog;
-    use pandora_provider::{ChatMessage, ModelResponse, ProviderManifest};
+    use pandora_provider::{
+        ChatMessage, FailoverProvider, ModelResponse, ProviderManifest, TokenUsage,
+    };
     use pandora_types::{
         Capability, GeneId, HarnessId, Operation, PackageCompatibility, PackageDependency,
         PackageKind, PackageManifest, PolicyContext, PrincipalId, Session, SessionId, TaskIntent,
         TenantId, Timestamp, TrustEvidence, WorkspaceId, hash_artifact,
     };
     use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn read_only_coding_task_completes_with_receipt_and_events() {
@@ -1421,6 +1453,121 @@ mod tests {
     }
 
     #[test]
+    fn provider_fallback_requires_a_fresh_permit_and_receipt() {
+        let fixture = Fixture::new();
+        let primary_requests = Arc::new(Mutex::new(Vec::new()));
+        let fallback_requests = Arc::new(Mutex::new(Vec::new()));
+        let primary = StubProvider::new(
+            "provider-a",
+            "model-a",
+            Err(ProviderError::Transport),
+            Arc::clone(&primary_requests),
+        );
+        let fallback = StubProvider::new(
+            "provider-b",
+            "model-b",
+            Ok(ModelResponse::new(
+                "fallback-ready",
+                Vec::new(),
+                TokenUsage::new(2, 1),
+            )),
+            Arc::clone(&fallback_requests),
+        );
+        let provider = FailoverProvider::new(Box::new(primary), Box::new(fallback));
+        let request = ModelRequest::new(
+            provider.manifest().id().clone(),
+            provider.manifest().default_model().clone(),
+            vec![ChatMessage::user("hello").unwrap()],
+        )
+        .unwrap();
+        let expected_messages = request.messages().to_vec();
+        let controller = ExecutionController::new(fixture.root.clone());
+
+        let result = controller
+            .invoke_provider(
+                &provider,
+                request,
+                &fixture.session(),
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap();
+
+        assert_eq!(result.result().unwrap().text(), "fallback-ready");
+        assert_eq!(primary_requests.lock().unwrap().len(), 1);
+        let fallback_requests = fallback_requests.lock().unwrap();
+        assert_eq!(fallback_requests.len(), 1);
+        assert_eq!(fallback_requests[0].provider_id().as_str(), "provider-b");
+        assert_eq!(fallback_requests[0].model_id().as_str(), "model-b");
+        assert_eq!(fallback_requests[0].messages(), expected_messages);
+        assert_eq!(result.receipts().len(), 2);
+        assert!(matches!(
+            result.receipts()[0].outcome(),
+            pandora_types::EffectOutcome::Failed { code } if code == "transport"
+        ));
+        assert!(matches!(
+            result.receipts()[1].outcome(),
+            pandora_types::EffectOutcome::Succeeded
+        ));
+        assert_ne!(
+            result.receipts()[0].permit_id(),
+            result.receipts()[1].permit_id()
+        );
+        assert_ne!(
+            result.receipts()[0].request_digest(),
+            result.receipts()[1].request_digest()
+        );
+        assert_eq!(result.receipt(), &result.receipts()[1]);
+    }
+
+    #[test]
+    fn non_retryable_provider_error_does_not_invoke_fallback() {
+        let fixture = Fixture::new();
+        let primary_requests = Arc::new(Mutex::new(Vec::new()));
+        let fallback_requests = Arc::new(Mutex::new(Vec::new()));
+        let primary = StubProvider::new(
+            "provider-a",
+            "model-a",
+            Err(ProviderError::InvalidRequest("invalid request".to_owned())),
+            Arc::clone(&primary_requests),
+        );
+        let fallback = StubProvider::new(
+            "provider-b",
+            "model-b",
+            Ok(ModelResponse::new(
+                "must-not-run",
+                Vec::new(),
+                TokenUsage::default(),
+            )),
+            Arc::clone(&fallback_requests),
+        );
+        let provider = FailoverProvider::new(Box::new(primary), Box::new(fallback));
+        let request = ModelRequest::new(
+            provider.manifest().id().clone(),
+            provider.manifest().default_model().clone(),
+            vec![ChatMessage::user("hello").unwrap()],
+        )
+        .unwrap();
+        let controller = ExecutionController::new(fixture.root.clone());
+
+        let result = controller
+            .invoke_provider(
+                &provider,
+                request,
+                &fixture.session(),
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap();
+
+        assert!(matches!(
+            result.result(),
+            Err(ProviderError::InvalidRequest(message)) if message == "invalid request"
+        ));
+        assert_eq!(primary_requests.lock().unwrap().len(), 1);
+        assert!(fallback_requests.lock().unwrap().is_empty());
+        assert_eq!(result.receipts().len(), 1);
+    }
+
+    #[test]
     fn path_escape_is_rejected_before_effect_authorization() {
         let fixture = Fixture::new();
         let controller = ExecutionController::new(fixture.root.clone());
@@ -1560,6 +1707,49 @@ mod tests {
 
     struct PanickingProvider {
         manifest: ProviderManifest,
+    }
+
+    struct StubProvider {
+        manifest: ProviderManifest,
+        result: Mutex<Option<Result<ModelResponse, ProviderError>>>,
+        requests: Arc<Mutex<Vec<ModelRequest>>>,
+    }
+
+    impl StubProvider {
+        fn new(
+            id: &str,
+            model: &str,
+            result: Result<ModelResponse, ProviderError>,
+            requests: Arc<Mutex<Vec<ModelRequest>>>,
+        ) -> Self {
+            Self {
+                manifest: ProviderManifest::new(
+                    id,
+                    id,
+                    format!("https://{id}.example.test/v1"),
+                    model,
+                    format!("PANDORA_{}_KEY", id.replace('-', "_").to_uppercase()),
+                )
+                .unwrap(),
+                result: Mutex::new(Some(result)),
+                requests,
+            }
+        }
+    }
+
+    impl Provider for StubProvider {
+        fn manifest(&self) -> &ProviderManifest {
+            &self.manifest
+        }
+
+        fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+            self.requests.lock().unwrap().push(request);
+            self.result
+                .lock()
+                .unwrap()
+                .take()
+                .expect("stub provider called more than once")
+        }
     }
 
     impl PanickingProvider {

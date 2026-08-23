@@ -17,17 +17,11 @@ impl Provider for FailoverProvider {
     }
 
     fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
-        match self.primary.complete(request.clone()) {
-            Ok(response) => Ok(response),
-            Err(error) if error.is_retryable() => {
-                let fallback_request = request.for_provider(
-                    self.fallback.manifest().id().clone(),
-                    self.fallback.manifest().default_model().clone(),
-                );
-                self.fallback.complete(fallback_request)
-            }
-            Err(error) => Err(error),
-        }
+        self.primary.complete(request)
+    }
+
+    fn fallback_provider(&self) -> Option<&dyn Provider> {
+        Some(self.fallback.as_ref())
     }
 }
 
@@ -95,7 +89,7 @@ mod tests {
     }
 
     #[test]
-    fn retryable_primary_failure_uses_fallback_and_rebinds_request() {
+    fn direct_completion_never_invokes_fallback_below_the_controller() {
         let primary_requests = Arc::new(Mutex::new(Vec::new()));
         let fallback_requests = Arc::new(Mutex::new(Vec::new()));
         let primary = StubProvider::new(
@@ -103,9 +97,8 @@ mod tests {
             Err(ProviderError::Transport),
             primary_requests,
         );
-        let fallback_manifest = manifest("fallback", "fallback-model");
         let fallback = StubProvider::new(
-            fallback_manifest.clone(),
+            manifest("fallback", "fallback-model"),
             Ok(ModelResponse::new(
                 "ready",
                 Vec::new(),
@@ -116,20 +109,10 @@ mod tests {
         let provider = FailoverProvider::new(Box::new(primary), Box::new(fallback));
         let original = request();
 
-        let response = provider.complete(original.clone()).unwrap();
+        let error = provider.complete(original).unwrap_err();
 
-        assert_eq!(response.text(), "ready");
-        let requests = fallback_requests.lock().unwrap();
-        assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].provider_id(), fallback_manifest.id());
-        assert_eq!(requests[0].model_id(), fallback_manifest.default_model());
-        assert_eq!(requests[0].messages(), original.messages());
-        assert_eq!(requests[0].tools(), original.tools());
-        assert_eq!(
-            requests[0].max_output_tokens(),
-            original.max_output_tokens()
-        );
-        assert_eq!(requests[0].timeout(), original.timeout());
+        assert_eq!(error, ProviderError::Transport);
+        assert!(fallback_requests.lock().unwrap().is_empty());
     }
 
     #[test]
