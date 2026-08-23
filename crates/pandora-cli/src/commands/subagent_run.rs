@@ -2,6 +2,7 @@ use super::run::{
     AgentOptions, configured_harnesses, execute_agent_core, require_runnable_harness,
 };
 use crate::output::CliError;
+use pandora_harnesses::{HarnessCatalog, canonical_harness_binding_digest};
 use pandora_runtime::config::{ProviderProfile, RuntimeConfig};
 use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::sessions::SessionStore;
@@ -19,19 +20,18 @@ pub(crate) struct TrustedSubagentRun<'a> {
 }
 
 pub(crate) fn execute_trusted_subagent(input: TrustedSubagentRun<'_>) -> Result<Value, CliError> {
-    verify_bindings(input.config, input.record)?;
-    let workspace = verified_worktree(input.record)?;
     let request = input.record.request();
-    let harness = request.harness();
+    let harness = request
+        .harness()
+        .ok_or_else(|| binding_changed_message("the bound Harness is unavailable"))?;
     let harnesses = configured_harnesses(
         input.config,
-        harness.map(|binding| binding.harness_id().as_str()),
-        harness.map(|binding| binding.version()),
+        Some(harness.harness_id().as_str()),
+        Some(harness.version()),
     )?;
-    require_runnable_harness(
-        &harnesses,
-        harness.map(|binding| binding.harness_id().as_str()),
-    )?;
+    require_runnable_harness(&harnesses, Some(harness.harness_id().as_str()))?;
+    verify_bindings(input.config, input.record, &harnesses)?;
+    let workspace = verified_worktree(input.record)?;
     let child_workspace = child_workspace_id(input.record)?;
     let session = Session::new(
         input.record.child_session_id().clone(),
@@ -72,27 +72,38 @@ pub(crate) fn execute_trusted_subagent(input: TrustedSubagentRun<'_>) -> Result<
             max_turns: request.budgets().max_turns(),
             max_tool_calls: request.budgets().max_tool_calls(),
             control: Some(input.control),
+            trusted_harness: Some(harness.harness_id()),
         },
     )?;
     Ok(result.data)
 }
 
-fn verify_bindings(config: &RuntimeConfig, record: &ClaimedSubagent) -> Result<(), CliError> {
-    let provider_digest = record
+fn verify_bindings(
+    config: &RuntimeConfig,
+    record: &ClaimedSubagent,
+    harnesses: &HarnessCatalog,
+) -> Result<(), CliError> {
+    let provider_name = record
         .request()
         .provider_profile()
-        .map(|name| provider_binding_digest(config, name))
-        .transpose()?;
-    let harness_digest = record.request().harness().map(|binding| {
-        let canonical = format!(
-            "harness-binding-v1\0{}\0{}\0",
-            binding.harness_id(),
-            binding.version()
-        );
-        format!("harness-{}", hash_artifact(canonical.as_bytes()))
-    });
-    if record.provider_binding_digest() != provider_digest.as_deref()
-        || record.harness_binding_digest() != harness_digest.as_deref()
+        .ok_or_else(|| binding_changed_message("the bound provider profile is unavailable"))?;
+    let recorded_provider_digest = record
+        .provider_binding_digest()
+        .ok_or_else(|| binding_changed_message("the provider binding digest is unavailable"))?;
+    let provider_digest = provider_binding_digest(config, provider_name)?;
+    let harness_binding = record
+        .request()
+        .harness()
+        .ok_or_else(|| binding_changed_message("the bound Harness is unavailable"))?;
+    let recorded_harness_digest = record
+        .harness_binding_digest()
+        .ok_or_else(|| binding_changed_message("the Harness binding digest is unavailable"))?;
+    let harness = harnesses
+        .find(harness_binding.harness_id())
+        .ok_or_else(|| binding_changed_message("the bound Harness manifest is unavailable"))?;
+    if harness.manifest().version() != harness_binding.version()
+        || recorded_provider_digest != provider_digest
+        || recorded_harness_digest != canonical_harness_binding_digest(harness.manifest())
     {
         return Err(binding_changed(record));
     }

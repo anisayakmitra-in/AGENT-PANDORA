@@ -13,9 +13,9 @@ use pandora_runtime::config::RuntimeConfig;
 use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::sessions::SessionStore;
 use pandora_runtime::{
-    AgentApprovalContext, AgentLoop, AgentLoopError, AgentRunRequest, ApprovalRequest,
-    ApprovalStore, EvaluationEngine, MAX_AGENT_TOOL_CALLS, MAX_AGENT_TURNS, RunStatus,
-    RuntimeError,
+    AgentApprovalContext, AgentControlStop, AgentLoop, AgentLoopError, AgentRunRequest,
+    ApprovalRequest, ApprovalStore, EvaluationEngine, MAX_AGENT_TOOL_CALLS, MAX_AGENT_TURNS,
+    RunStatus, RuntimeError,
 };
 use pandora_runtime::{
     DEFAULT_MAX_SAMPLES_PER_TARGET, EfficiencyEngine, EfficiencyStore, ExecutionController,
@@ -223,6 +223,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                 max_turns,
                 max_tool_calls,
                 control: None,
+                trusted_harness: None,
             },
         );
     }
@@ -460,6 +461,9 @@ pub(super) fn execute_agent_core(
             if let Some(control) = options.control {
                 request = request.with_control(control);
             }
+            if let Some(harness) = options.trusted_harness {
+                request = request.with_trusted_harness(harness.clone());
+            }
             loop_engine.run_with_request(provider.as_ref(), controller, request)
         }
     };
@@ -593,6 +597,69 @@ pub(super) fn execute_agent_core(
                 }),
             ))
         }
+        Err(AgentLoopError::ControlledStop { reason, summary }) => {
+            let evaluations = summary
+                .runs()
+                .iter()
+                .map(|run| evaluate_and_append_execution(store, session, run))
+                .collect::<Result<Vec<_>, _>>()?;
+            let efficiency_recorded = record_agent_efficiency(
+                config,
+                session,
+                options.task_class,
+                provider.as_ref(),
+                &summary,
+                elapsed_millis(started),
+                false,
+            );
+            store
+                .save_agent_transcript(
+                    session.id(),
+                    session.principal_id(),
+                    session.tenant_id(),
+                    session.workspace_id(),
+                    summary.messages(),
+                )
+                .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+            let mut memory_evidence_recorded = 0;
+            for run in summary.runs() {
+                if record_execution_evidence(store, session, provider.manifest().id().as_str(), run)
+                {
+                    memory_evidence_recorded += 1;
+                }
+            }
+            Err(CliError {
+                code: "agent_controlled_stop",
+                message: reason.to_string(),
+                details: json!({
+                    "agent": true,
+                    "session_id": session.id(),
+                    "reason": controlled_stop_reason(reason),
+                    "turns": summary.turns(),
+                    "tool_calls": summary.tool_calls(),
+                    "turn_budget": options.max_turns,
+                    "tool_budget": options.max_tool_calls,
+                    "provider_calls": summary.provider_receipts().len(),
+                    "provider_receipts": effect_receipts_json(summary.provider_receipts()),
+                    "context": {
+                        "included": summary.context_receipt().included_ids(),
+                        "dropped": summary.context_receipt().dropped_ids(),
+                        "token_cost": summary.context_receipt().token_cost(),
+                        "cacheable": summary.context_receipt().cacheable(),
+                    },
+                    "usage": usage_json(summary.usage()),
+                    "runs": summary.runs().len(),
+                    "efficiency_recorded": efficiency_recorded,
+                    "memory_evidence_recorded": memory_evidence_recorded,
+                    "evaluations": evaluations_json(&evaluations),
+                    "optimization": optimization_value(
+                        options.optimization,
+                        options.provider_name,
+                    ),
+                }),
+                exit_code: 50,
+            })
+        }
         Err(error) => {
             let _ = record_agent_failure(
                 config,
@@ -604,6 +671,38 @@ pub(super) fn execute_agent_core(
             Err(agent_error(error))
         }
     }
+}
+
+fn controlled_stop_reason(reason: AgentControlStop) -> &'static str {
+    match reason {
+        AgentControlStop::Cancelled => "cancelled",
+        AgentControlStop::CancellationStateUnavailable => "cancellation_state_unavailable",
+        AgentControlStop::TokenBudgetExceeded => "token_budget_exceeded",
+        AgentControlStop::DurationBudgetExceeded => "duration_budget_exceeded",
+    }
+}
+
+fn effect_receipts_json(receipts: &[pandora_types::EffectReceipt]) -> Value {
+    json!(
+        receipts
+            .iter()
+            .map(|receipt| {
+                let outcome = match receipt.outcome() {
+                    pandora_types::EffectOutcome::Succeeded => json!({"status": "succeeded"}),
+                    pandora_types::EffectOutcome::Failed { code } => {
+                        json!({"status": "failed", "code": code})
+                    }
+                    pandora_types::EffectOutcome::Denied { reason } => {
+                        json!({"status": "denied", "reason": reason})
+                    }
+                };
+                json!({
+                    "receipt_id": receipt.receipt_id().as_str(),
+                    "outcome": outcome,
+                })
+            })
+            .collect::<Vec<_>>()
+    )
 }
 
 fn active_skill_context(config: &RuntimeConfig) -> Result<Option<String>, CliError> {
@@ -645,6 +744,7 @@ pub(super) struct AgentOptions<'a> {
     pub max_turns: u32,
     pub max_tool_calls: u32,
     pub control: Option<&'a dyn pandora_runtime::AgentRunControl>,
+    pub trusted_harness: Option<&'a HarnessId>,
 }
 
 fn parse_agent_budget(

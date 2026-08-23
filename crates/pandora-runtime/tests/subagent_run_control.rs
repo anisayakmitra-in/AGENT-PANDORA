@@ -1,3 +1,4 @@
+use pandora_harnesses::HarnessCatalog;
 use pandora_provider::{
     ModelRequest, ModelResponse, Provider, ProviderError, ProviderManifest, TokenUsage, ToolCall,
 };
@@ -8,9 +9,10 @@ use pandora_runtime::{
     SubagentPreparation, SubagentRunControl, SubagentScope, SubagentStore,
 };
 use pandora_types::{
-    Capability, EffectOutcome, EffectReceipt, ExecutionId, JobId, Operation, PermitId,
-    PolicyContext, PrincipalId, ReceiptId, RequestDigest, Session, SessionId, SubagentBudgets,
-    SubagentId, SubagentRequest, TenantId, Timestamp, WorkspaceId,
+    Capability, EffectOutcome, EffectReceipt, ExecutionId, JobId, Operation, PackageCompatibility,
+    PackageDependency, PackageKind, PackageManifest, PermitId, PolicyContext, PrincipalId,
+    ReceiptId, RequestDigest, Session, SessionId, SubagentBudgets, SubagentId, SubagentRequest,
+    TenantId, Timestamp, TrustEvidence, WorkspaceId, hash_artifact,
 };
 use std::collections::VecDeque;
 use std::fs;
@@ -20,6 +22,55 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(1);
+
+#[test]
+fn trusted_harness_binding_controls_tool_execution_intent() {
+    let fixture = Fixture::new();
+    let provider = CountingProvider::new(vec![
+        tool_response(TokenUsage::new(2, 1)),
+        direct_response(TokenUsage::new(2, 1)),
+    ]);
+    let package = PackageManifest::new(
+        "example/domain",
+        "1.0.0",
+        PackageKind::DomainHarness,
+        "example",
+        hash_artifact(b"example domain"),
+        vec![PackageDependency::new("workspace.read", "0.1.0", false).unwrap()],
+        PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+        "Apache-2.0",
+        TrustEvidence::unsigned(),
+    )
+    .unwrap();
+    let harnesses = HarnessCatalog::builtins()
+        .with_declarative_domain(&package)
+        .unwrap();
+    let controller = ExecutionController::with_policy_and_harnesses(
+        WorkspaceRoot::new(&fixture.path).unwrap(),
+        PolicyContext::new(
+            1,
+            [Capability::FilesystemRead, Capability::ProviderInvoke],
+            [],
+        ),
+        harnesses,
+    );
+
+    let summary = loop_engine()
+        .run_with_request(
+            &provider,
+            &controller,
+            fixture
+                .request()
+                .with_trusted_harness(pandora_types::HarnessId::new("example/domain").unwrap()),
+        )
+        .unwrap();
+
+    assert_eq!(summary.runs().len(), 1);
+    assert_eq!(
+        summary.runs()[0].selected_harness().as_str(),
+        "example/domain"
+    );
+}
 
 #[test]
 fn store_backed_control_honors_persisted_cancellation() {

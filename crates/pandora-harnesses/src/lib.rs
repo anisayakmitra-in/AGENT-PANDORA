@@ -9,13 +9,189 @@ pub mod slash;
 
 pub use catalog::HarnessCatalog;
 
+pub fn canonical_harness_binding_digest(manifest: &pandora_types::HarnessManifest) -> String {
+    let mut owned_genes = manifest
+        .owned_genes()
+        .iter()
+        .map(|id| id.as_str())
+        .collect::<Vec<_>>();
+    owned_genes.sort_unstable();
+
+    let mut canonical = format!(
+        "harness-binding-v2\0id\0{}\0version\0{}\0name\0{}\0kind\0{}\0constitutional-service\0{}\0constitutional-service-version\0{}\0",
+        manifest.id(),
+        manifest.version(),
+        manifest.name(),
+        manifest.kind().as_str(),
+        manifest.constitutional_service().unwrap_or_default(),
+        manifest
+            .constitutional_service_version()
+            .unwrap_or_default(),
+    );
+    for gene in owned_genes {
+        canonical.push_str("owned-gene\0");
+        canonical.push_str(gene);
+        canonical.push('\0');
+    }
+    if let Some(composition) = manifest.meta_composition() {
+        canonical.push_str("meta-composition\0present\0max-handoffs\0");
+        canonical.push_str(&composition.max_handoffs().to_string());
+        canonical.push('\0');
+        let mut components = composition
+            .allowed_domains()
+            .iter()
+            .map(|id| id.as_str())
+            .collect::<Vec<_>>();
+        components.sort_unstable();
+        for component in components {
+            canonical.push_str("component-id\0");
+            canonical.push_str(component);
+            canonical.push('\0');
+        }
+    } else {
+        canonical.push_str("meta-composition\0absent\0");
+    }
+    format!(
+        "harness-{}",
+        pandora_types::hash_artifact(canonical.as_bytes())
+    )
+}
+
 #[cfg(test)]
 mod catalog_tests {
-    use super::HarnessCatalog;
+    use super::{HarnessCatalog, canonical_harness_binding_digest};
     use pandora_types::{
-        HarnessId, HarnessKind, MetaComposition, PackageCompatibility, PackageDependency,
-        PackageKind, PackageManifest, TrustEvidence, hash_artifact,
+        GeneId, HarnessId, HarnessKind, HarnessManifest, MetaComposition, PackageCompatibility,
+        PackageDependency, PackageKind, PackageManifest, TrustEvidence, hash_artifact,
     };
+
+    #[test]
+    fn harness_binding_digest_covers_domain_identity_and_sorts_owned_genes() {
+        let manifest = HarnessManifest::new(
+            "example/domain",
+            "1.2.3",
+            "Example Domain",
+            HarnessKind::Domain,
+            None,
+            vec![
+                GeneId::new("workspace.search").unwrap(),
+                GeneId::new("workspace.read").unwrap(),
+            ],
+        )
+        .unwrap();
+        let reordered = HarnessManifest::new(
+            "example/domain",
+            "1.2.3",
+            "Example Domain",
+            HarnessKind::Domain,
+            None,
+            vec![
+                GeneId::new("workspace.read").unwrap(),
+                GeneId::new("workspace.search").unwrap(),
+            ],
+        )
+        .unwrap();
+        let renamed = HarnessManifest::new(
+            "example/domain",
+            "1.2.3",
+            "Renamed Domain",
+            HarnessKind::Domain,
+            None,
+            manifest.owned_genes().to_vec(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            canonical_harness_binding_digest(&manifest),
+            canonical_harness_binding_digest(&reordered)
+        );
+        assert_ne!(
+            canonical_harness_binding_digest(&manifest),
+            canonical_harness_binding_digest(&renamed)
+        );
+    }
+
+    #[test]
+    fn harness_binding_digest_covers_source_service_binding() {
+        let first = HarnessManifest::new_source(
+            "memory-source",
+            "1.0.0",
+            "Memory Source",
+            "memory",
+            "1.0.0",
+            Vec::new(),
+        )
+        .unwrap();
+        let second = HarnessManifest::new_source(
+            "memory-source",
+            "1.0.0",
+            "Memory Source",
+            "memory",
+            "1.1.0",
+            Vec::new(),
+        )
+        .unwrap();
+
+        assert_ne!(
+            canonical_harness_binding_digest(&first),
+            canonical_harness_binding_digest(&second)
+        );
+    }
+
+    #[test]
+    fn harness_binding_digest_covers_meta_limit_and_component_ids() {
+        let first = HarnessManifest::new_meta(
+            "coordination-meta",
+            "1.0.0",
+            "Coordination Meta",
+            MetaComposition::new(
+                vec![
+                    HarnessId::new("research-domain").unwrap(),
+                    HarnessId::new("coding-domain").unwrap(),
+                ],
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let reordered = HarnessManifest::new_meta(
+            "coordination-meta",
+            "1.0.0",
+            "Coordination Meta",
+            MetaComposition::new(
+                vec![
+                    HarnessId::new("coding-domain").unwrap(),
+                    HarnessId::new("research-domain").unwrap(),
+                ],
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let different_limit = HarnessManifest::new_meta(
+            "coordination-meta",
+            "1.0.0",
+            "Coordination Meta",
+            MetaComposition::new(
+                vec![
+                    HarnessId::new("coding-domain").unwrap(),
+                    HarnessId::new("research-domain").unwrap(),
+                ],
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            canonical_harness_binding_digest(&first),
+            canonical_harness_binding_digest(&reordered)
+        );
+        assert_ne!(
+            canonical_harness_binding_digest(&first),
+            canonical_harness_binding_digest(&different_limit)
+        );
+    }
 
     #[test]
     fn built_in_catalog_resolves_harnesses_by_id() {

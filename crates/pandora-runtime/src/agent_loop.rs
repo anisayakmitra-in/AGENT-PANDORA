@@ -10,7 +10,7 @@ use pandora_provider::{
 };
 use pandora_types::{
     ContextAssembly, ContextClassification, ContextFragment, ContextReceipt, ContextRequest,
-    ContextSource, ContextTrust, Session, SubagentBudgets, SubagentId, Timestamp,
+    ContextSource, ContextTrust, HarnessId, Session, SubagentBudgets, SubagentId, Timestamp,
 };
 use std::fmt;
 use std::sync::Arc;
@@ -255,6 +255,7 @@ pub struct AgentRunRequest<'a> {
     skill_context: Option<&'a str>,
     l1_evidence: Option<&'a L1EvidenceContext>,
     control: Option<&'a dyn AgentRunControl>,
+    trusted_harness: Option<HarnessId>,
     task: String,
     now: Timestamp,
 }
@@ -272,6 +273,7 @@ impl<'a> AgentRunRequest<'a> {
             skill_context: None,
             l1_evidence: None,
             control: None,
+            trusted_harness: None,
             task: task.into(),
             now,
         }
@@ -289,6 +291,11 @@ impl<'a> AgentRunRequest<'a> {
 
     pub fn with_control(mut self, control: &'a dyn AgentRunControl) -> Self {
         self.control = Some(control);
+        self
+    }
+
+    pub fn with_trusted_harness(mut self, harness: HarnessId) -> Self {
+        self.trusted_harness = Some(harness);
         self
     }
 }
@@ -356,6 +363,7 @@ impl AgentLoop {
             skill_context,
             l1_evidence,
             control,
+            trusted_harness,
             task,
             now,
         } = request;
@@ -369,6 +377,7 @@ impl AgentLoop {
                 approval: None,
                 l1_evidence,
                 control,
+                trusted_harness,
             },
             skill_context,
             task,
@@ -400,6 +409,7 @@ impl AgentLoop {
                 approval: Some(AgentApproval { store, id }),
                 l1_evidence,
                 control: None,
+                trusted_harness: None,
             },
             None,
             task,
@@ -432,6 +442,7 @@ impl AgentLoop {
                 approval: Some(AgentApproval { store, id }),
                 l1_evidence,
                 control: None,
+                trusted_harness: None,
             },
             skill_context,
             task,
@@ -453,6 +464,7 @@ impl AgentLoop {
             approval,
             l1_evidence,
             control,
+            trusted_harness,
         } = context;
         let task = task.into();
         if task.trim().is_empty() {
@@ -546,6 +558,7 @@ impl AgentLoop {
                     now,
                     &mut runs,
                     Some(approval),
+                    trusted_harness.as_ref(),
                 )? {
                     ToolExecution::Output(result) => {
                         messages.push(untrusted_tool_result(call.id(), &result)?);
@@ -684,6 +697,7 @@ impl AgentLoop {
                     now,
                     &mut runs,
                     approval.as_ref(),
+                    trusted_harness.as_ref(),
                 )? {
                     ToolExecution::Output(result) => {
                         messages.push(untrusted_tool_result(call.id(), &result)?);
@@ -722,6 +736,7 @@ impl AgentLoop {
         Err(AgentLoopError::TurnBudgetExceeded)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn execute_tool(
         &self,
         call: &ToolCall,
@@ -730,8 +745,16 @@ impl AgentLoop {
         now: Timestamp,
         runs: &mut Vec<RunSummary>,
         approval: Option<&AgentApproval<'_>>,
+        trusted_harness: Option<&HarnessId>,
     ) -> Result<ToolExecution, AgentLoopError> {
-        let intent = match self.tools.prepare_invocation(call.name(), call.arguments()) {
+        let invocation = match trusted_harness {
+            Some(harness) => {
+                self.tools
+                    .prepare_invocation_for_harness(call.name(), call.arguments(), harness)
+            }
+            None => self.tools.prepare_invocation(call.name(), call.arguments()),
+        };
+        let intent = match invocation {
             Ok(invocation) => invocation.task().clone(),
             Err(error) => return Ok(ToolExecution::Output(error.agent_message())),
         };
@@ -1018,6 +1041,7 @@ struct AgentRunContext<'a> {
     approval: Option<AgentApproval<'a>>,
     l1_evidence: Option<&'a L1EvidenceContext>,
     control: Option<&'a dyn AgentRunControl>,
+    trusted_harness: Option<HarnessId>,
 }
 
 #[cfg(test)]

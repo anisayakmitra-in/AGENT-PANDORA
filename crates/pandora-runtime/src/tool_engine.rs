@@ -385,6 +385,17 @@ impl ToolEngine {
         tool_id: &str,
         arguments: &Value,
     ) -> Result<ToolInvocation, ToolError> {
+        let harness = HarnessId::new(pandora_harnesses::CODING_HARNESS_ID)
+            .expect("built-in Coding Harness ID is valid");
+        self.prepare_invocation_for_harness(tool_id, arguments, &harness)
+    }
+
+    pub fn prepare_invocation_for_harness(
+        &self,
+        tool_id: &str,
+        arguments: &Value,
+        harness: &HarnessId,
+    ) -> Result<ToolInvocation, ToolError> {
         let definition = self.definition(tool_id)?;
         validate_arguments(definition.input_schema(), arguments)?;
         let task = match definition.id().as_str() {
@@ -412,12 +423,7 @@ impl ToolEngine {
             }
         };
         let gene_id = gene_id_for_tool(definition.id().as_str())?;
-        let task = task
-            .with_harness(
-                HarnessId::new(pandora_harnesses::CODING_HARNESS_ID)
-                    .expect("built-in Coding Harness ID is valid"),
-            )
-            .with_gene(gene_id);
+        let task = task.with_harness(harness.clone()).with_gene(gene_id);
         Ok(ToolInvocation {
             tool_id: definition.id().clone(),
             task,
