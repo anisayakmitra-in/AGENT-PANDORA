@@ -204,6 +204,45 @@ fn loopback_provider_calls(listener: TcpListener) -> thread::JoinHandle<usize> {
     })
 }
 
+fn admit_domain_harness(fixture: &Fixture, artifact: &[u8], gene_ids: &[&str]) {
+    let manifest = PackageManifest::new(
+        "example/subagent-domain",
+        "1.0.0",
+        PackageKind::DomainHarness,
+        "local-publisher",
+        hash_artifact(artifact),
+        gene_ids
+            .iter()
+            .map(|gene_id| PackageDependency::new(*gene_id, "0.1.0", false).unwrap())
+            .collect(),
+        PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+        "Apache-2.0",
+        TrustEvidence::unsigned(),
+    )
+    .unwrap();
+    let manifest_path = fixture.root.join("subagent-domain.json");
+    let artifact_path = fixture.root.join("subagent-domain.artifact");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+    fs::write(&artifact_path, artifact).unwrap();
+    let admitted = fixture
+        .command(&[
+            "package",
+            "admit",
+            "--manifest",
+            manifest_path.to_str().unwrap(),
+            "--artifact",
+            artifact_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("domain Harness admission should start");
+    assert_success(&admitted);
+}
+
 #[test]
 fn setup_and_read_only_run_return_versioned_json() {
     let fixture = Fixture::new();
@@ -649,7 +688,7 @@ fn subagent_spawn_materializes_default_bindings_for_a_scoped_parent_execution() 
 }
 
 #[test]
-fn subagent_work_rejects_explicit_provider_binding_drift_before_provider_call() {
+fn subagent_binding_provider_model_drift_stops_before_provider_call() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("provider fixture should bind");
     let provider_url = format!(
         "http://{}/v1",
@@ -703,7 +742,7 @@ fn subagent_work_rejects_explicit_provider_binding_drift_before_provider_call() 
             "provider",
             "set",
             "--provider-url",
-            "http://127.0.0.1:9/v1",
+            &provider_url,
             "--model",
             "fixture-model-drifted",
             "--json",
@@ -714,6 +753,96 @@ fn subagent_work_rejects_explicit_provider_binding_drift_before_provider_call() 
 
     let worked = fixture
         .command(&["subagent", "work", "--json"])
+        .output()
+        .expect("subagent work should start");
+    assert_success(&worked);
+    let worked = parse_json(&worked);
+    assert_eq!(worked["subagents"][0]["lifecycle"]["status"], "failed");
+    assert_eq!(
+        worked["subagents"][0]["result"],
+        serde_json::json!({"code": "subagent_binding_changed", "status": "failed"})
+    );
+    assert_eq!(server.join().expect("provider fixture should finish"), 0);
+}
+
+#[test]
+fn subagent_binding_harness_drift_stops_before_provider_call() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("provider fixture should bind");
+    let provider_url = format!(
+        "http://{}/v1",
+        listener
+            .local_addr()
+            .expect("provider fixture should expose its address")
+    );
+    let server = loopback_provider_calls(listener);
+    let fixture = Fixture::new();
+    fixture.initialize_git_workspace();
+    fixture.setup();
+    admit_domain_harness(
+        &fixture,
+        b"subagent Harness original\n",
+        &["workspace.read"],
+    );
+    let parent = fixture
+        .command(&["run", "read:README.md", "--json"])
+        .output()
+        .expect("parent run should start");
+    assert_success(&parent);
+    let parent = parse_json(&parent);
+    let configured = fixture
+        .command(&[
+            "provider",
+            "set",
+            "--provider-url",
+            &provider_url,
+            "--model",
+            "fixture-model",
+            "--json",
+        ])
+        .output()
+        .expect("provider setup should start");
+    assert_success(&configured);
+    let spawned = fixture
+        .command(&[
+            "subagent",
+            "spawn",
+            "--session",
+            parent["session_id"].as_str().unwrap(),
+            "--execution",
+            parent["execution_id"].as_str().unwrap(),
+            "--provider",
+            "openai-compatible",
+            "--harness",
+            "example/subagent-domain",
+            "--harness-version",
+            "1.0.0",
+            "Read the README",
+            "--json",
+        ])
+        .output()
+        .expect("subagent spawn should start");
+    assert_success(&spawned);
+    let removed = fixture
+        .command(&[
+            "package",
+            "remove",
+            "example/subagent-domain",
+            "1.0.0",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("domain Harness removal should start");
+    assert_success(&removed);
+    admit_domain_harness(
+        &fixture,
+        b"subagent Harness changed\n",
+        &["workspace.read", "workspace.search"],
+    );
+
+    let worked = fixture
+        .command(&["subagent", "work", "--json"])
+        .env("PANDORA_PROVIDER_API_KEY", "fixture-provider-key")
         .output()
         .expect("subagent work should start");
     assert_success(&worked);
