@@ -178,8 +178,35 @@ fn loopback_provider_calls(listener: TcpListener) -> thread::JoinHandle<usize> {
         loop {
             match listener.accept() {
                 Ok((mut stream, _)) => {
-                    let mut request = [0_u8; 1_024];
-                    let _ = stream.read(&mut request);
+                    let mut request = Vec::new();
+                    let header_end = loop {
+                        let mut chunk = [0_u8; 1_024];
+                        let bytes_read = stream
+                            .read(&mut chunk)
+                            .expect("provider request should read");
+                        assert_ne!(bytes_read, 0, "provider request ended before its headers");
+                        request.extend_from_slice(&chunk[..bytes_read]);
+                        if let Some(position) =
+                            request.windows(4).position(|window| window == b"\r\n\r\n")
+                        {
+                            break position + 4;
+                        }
+                    };
+                    let headers =
+                        String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length:"))
+                        .and_then(|value| value.trim().parse::<usize>().ok())
+                        .expect("provider request should send a content length");
+                    while request.len() < header_end + content_length {
+                        let mut chunk = [0_u8; 1_024];
+                        let bytes_read = stream
+                            .read(&mut chunk)
+                            .expect("provider request body should read");
+                        assert_ne!(bytes_read, 0, "provider request body ended early");
+                        request.extend_from_slice(&chunk[..bytes_read]);
+                    }
                     let response = br#"{"choices":[{"message":{"content":"fixture complete"}}],"usage":{"prompt_tokens":2,"completion_tokens":1}}"#;
                     write!(
                         stream,
