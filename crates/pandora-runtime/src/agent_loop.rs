@@ -1,4 +1,5 @@
 use crate::sessions::L1EvidenceContext;
+use crate::subagent_store::{SubagentScope, SubagentStore};
 use crate::{
     ApprovalStore, ContextEngine, ExecutionController, RunStatus, RunSummary, RuntimeError,
     ToolEngine,
@@ -9,10 +10,11 @@ use pandora_provider::{
 };
 use pandora_types::{
     ContextAssembly, ContextClassification, ContextFragment, ContextReceipt, ContextRequest,
-    ContextSource, ContextTrust, Session, Timestamp,
+    ContextSource, ContextTrust, Session, SubagentBudgets, SubagentId, Timestamp,
 };
 use std::fmt;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 const MAX_TOOL_RESULT_BYTES: usize = 32 * 1024;
 const MAX_SKILL_CONTEXT_BYTES: usize = 24 * 1024;
@@ -31,6 +33,7 @@ const CONTEXT_L1_EVIDENCE_BOUNDARY_ID: &str = "agent.l1-evidence-boundary";
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AgentControlStop {
     Cancelled,
+    CancellationStateUnavailable,
     TokenBudgetExceeded,
     DurationBudgetExceeded,
 }
@@ -39,6 +42,9 @@ impl fmt::Display for AgentControlStop {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Cancelled => formatter.write_str("agent run was cancelled"),
+            Self::CancellationStateUnavailable => {
+                formatter.write_str("agent cancellation state is unavailable")
+            }
             Self::TokenBudgetExceeded => formatter.write_str("agent token budget exceeded"),
             Self::DurationBudgetExceeded => formatter.write_str("agent duration budget exceeded"),
         }
@@ -90,6 +96,48 @@ impl<'a> AgentCheckpoint<'a> {
 
     pub const fn usage(&self) -> &TokenUsage {
         self.usage
+    }
+}
+
+pub struct SubagentRunControl<'a> {
+    store: &'a SubagentStore,
+    id: SubagentId,
+    scope: SubagentScope,
+    budgets: SubagentBudgets,
+    started_at: Instant,
+}
+
+impl<'a> SubagentRunControl<'a> {
+    pub fn new(
+        store: &'a SubagentStore,
+        id: &SubagentId,
+        scope: &SubagentScope,
+        budgets: &SubagentBudgets,
+    ) -> Self {
+        Self {
+            store,
+            id: id.clone(),
+            scope: scope.clone(),
+            budgets: budgets.clone(),
+            started_at: Instant::now(),
+        }
+    }
+}
+
+impl AgentRunControl for SubagentRunControl<'_> {
+    fn checkpoint(&self, checkpoint: AgentCheckpoint<'_>) -> Result<(), AgentControlStop> {
+        match self.store.is_cancel_requested(&self.id, &self.scope) {
+            Ok(true) => return Err(AgentControlStop::Cancelled),
+            Ok(false) => {}
+            Err(_) => return Err(AgentControlStop::CancellationStateUnavailable),
+        }
+        if checkpoint.usage().total_tokens() >= self.budgets.max_tokens() {
+            return Err(AgentControlStop::TokenBudgetExceeded);
+        }
+        if self.started_at.elapsed() >= Duration::from_secs(self.budgets.max_duration_seconds()) {
+            return Err(AgentControlStop::DurationBudgetExceeded);
+        }
+        Ok(())
     }
 }
 
@@ -515,17 +563,6 @@ impl AgentLoop {
                     }
                     ToolExecution::Approval { reason, summary } => {
                         runs.push(summary);
-                        check_control(
-                            control,
-                            AgentCheckpointKind::AfterEffect,
-                            turns,
-                            tool_calls,
-                            &usage,
-                            &runs,
-                            &provider_receipts,
-                            &context_receipt,
-                            &messages,
-                        )?;
                         return Err(AgentLoopError::ApprovalRequired {
                             reason,
                             summary: AgentRunSummary {
@@ -664,17 +701,6 @@ impl AgentLoop {
                     }
                     ToolExecution::Approval { reason, summary } => {
                         runs.push(summary);
-                        check_control(
-                            control,
-                            AgentCheckpointKind::AfterEffect,
-                            turns,
-                            tool_calls,
-                            &usage,
-                            &runs,
-                            &provider_receipts,
-                            &context_receipt,
-                            &messages,
-                        )?;
                         return Err(AgentLoopError::ApprovalRequired {
                             reason,
                             summary: AgentRunSummary {
