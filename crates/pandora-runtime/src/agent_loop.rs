@@ -508,6 +508,12 @@ impl AgentLoop {
             return Err(AgentLoopError::InvalidSkillContext);
         }
 
+        let trusted_gene_ids = trusted_harness
+            .as_ref()
+            .map(|harness_id| controller.trusted_harness_gene_ids(harness_id))
+            .transpose()
+            .map_err(AgentLoopError::Execution)?;
+
         let context_assembly = self.assemble_system_context(
             provider,
             controller,
@@ -517,7 +523,10 @@ impl AgentLoop {
             now,
         )?;
         let context_receipt = context_assembly.receipt().clone();
-        let tools = self.tools.list();
+        let tools = match trusted_gene_ids.as_deref() {
+            Some(gene_ids) => self.tools.list_for_genes(gene_ids),
+            None => self.tools.list(),
+        };
         let schemas = tools
             .iter()
             .map(|definition| {

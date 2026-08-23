@@ -375,6 +375,17 @@ impl ToolEngine {
         values
     }
 
+    pub(crate) fn list_for_genes(&self, gene_ids: &[GeneId]) -> Vec<ToolDefinition> {
+        let gene_ids = gene_ids.iter().cloned().collect::<HashSet<_>>();
+        self.list()
+            .into_iter()
+            .filter(|definition| {
+                gene_id_for_tool(definition.id().as_str())
+                    .is_ok_and(|gene_id| gene_ids.contains(&gene_id))
+            })
+            .collect()
+    }
+
     pub fn validate_call(&self, tool_id: &str, arguments: &Value) -> Result<(), ToolError> {
         let definition = self.definition(tool_id)?;
         validate_arguments(definition.input_schema(), arguments)

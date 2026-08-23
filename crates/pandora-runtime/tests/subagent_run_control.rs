@@ -6,7 +6,7 @@ use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::{
     AgentCheckpoint, AgentCheckpointKind, AgentControlStop, AgentLoop, AgentLoopError,
     AgentRunControl, AgentRunRequest, AgentRunSummary, ExecutionController, RunStatus,
-    SubagentPreparation, SubagentRunControl, SubagentScope, SubagentStore,
+    RuntimeError, SubagentPreparation, SubagentRunControl, SubagentScope, SubagentStore,
 };
 use pandora_types::{
     Capability, EffectOutcome, EffectReceipt, ExecutionId, JobId, Operation, PackageCompatibility,
@@ -70,6 +70,83 @@ fn trusted_harness_binding_controls_tool_execution_intent() {
         summary.runs()[0].selected_harness().as_str(),
         "example/domain"
     );
+    assert_eq!(
+        provider.advertised_tools(),
+        vec![
+            vec!["workspace.read".to_owned()],
+            vec!["workspace.read".to_owned()]
+        ]
+    );
+}
+
+#[test]
+fn ordinary_run_advertises_the_complete_default_tool_catalog() {
+    let fixture = Fixture::new();
+    let provider = CountingProvider::new(vec![direct_response(TokenUsage::new(2, 1))]);
+
+    loop_engine()
+        .run_with_request(&provider, &fixture.controller, fixture.request())
+        .unwrap();
+
+    assert_eq!(
+        provider.advertised_tools(),
+        vec![vec![
+            "argus.review".to_owned(),
+            "ariadne.debt".to_owned(),
+            "daedalus.audit".to_owned(),
+            "hephaestus.measure".to_owned(),
+            "workspace.patch".to_owned(),
+            "workspace.read".to_owned(),
+            "workspace.search".to_owned(),
+            "workspace.verify".to_owned(),
+        ]]
+    );
+}
+
+#[test]
+fn unknown_trusted_harness_stops_before_provider_invocation() {
+    let fixture = Fixture::new();
+    let provider = CountingProvider::new(vec![direct_response(TokenUsage::new(2, 1))]);
+
+    let error = loop_engine()
+        .run_with_request(
+            &provider,
+            &fixture.controller,
+            fixture
+                .request()
+                .with_trusted_harness(pandora_types::HarnessId::new("unknown-domain").unwrap()),
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        AgentLoopError::Execution(RuntimeError::UnsupportedHarness(_))
+    ));
+    assert_eq!(provider.calls(), 0);
+    assert!(provider.advertised_tools().is_empty());
+}
+
+#[test]
+fn non_runnable_trusted_harness_stops_before_provider_invocation() {
+    let fixture = Fixture::new();
+    let provider = CountingProvider::new(vec![direct_response(TokenUsage::new(2, 1))]);
+
+    let error = loop_engine()
+        .run_with_request(
+            &provider,
+            &fixture.controller,
+            fixture
+                .request()
+                .with_trusted_harness(pandora_types::HarnessId::new("core-source").unwrap()),
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        AgentLoopError::Execution(RuntimeError::NonExecutableHarness { .. })
+    ));
+    assert_eq!(provider.calls(), 0);
+    assert!(provider.advertised_tools().is_empty());
 }
 
 #[test]
@@ -473,6 +550,7 @@ impl AgentRunControl for BudgetControl {
 struct CountingProvider {
     manifest: ProviderManifest,
     responses: Mutex<VecDeque<ModelResponse>>,
+    advertised_tools: Mutex<Vec<Vec<String>>>,
     calls: AtomicU32,
 }
 
@@ -488,12 +566,17 @@ impl CountingProvider {
             )
             .unwrap(),
             responses: Mutex::new(responses.into()),
+            advertised_tools: Mutex::new(Vec::new()),
             calls: AtomicU32::new(0),
         }
     }
 
     fn calls(&self) -> u32 {
         self.calls.load(Ordering::Relaxed)
+    }
+
+    fn advertised_tools(&self) -> Vec<Vec<String>> {
+        self.advertised_tools.lock().unwrap().clone()
     }
 }
 
@@ -502,7 +585,14 @@ impl Provider for CountingProvider {
         &self.manifest
     }
 
-    fn complete(&self, _request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+    fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+        self.advertised_tools.lock().unwrap().push(
+            request
+                .tools()
+                .iter()
+                .map(|tool| tool.name().to_owned())
+                .collect(),
+        );
         self.calls.fetch_add(1, Ordering::Relaxed);
         self.responses
             .lock()

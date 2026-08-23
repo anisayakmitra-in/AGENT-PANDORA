@@ -187,6 +187,20 @@ impl ExecutionController {
         self.policy.policy_version()
     }
 
+    pub(crate) fn trusted_harness_gene_ids(
+        &self,
+        harness_id: &HarnessId,
+    ) -> Result<Vec<GeneId>, RuntimeError> {
+        let harness = self.find_harness(harness_id)?;
+        if !harness.is_runnable() {
+            return Err(RuntimeError::NonExecutableHarness {
+                id: harness.manifest().id().clone(),
+                kind: harness.manifest().kind(),
+            });
+        }
+        Ok(harness.manifest().owned_genes().to_vec())
+    }
+
     pub fn execute_worktree(
         &self,
         executor: &GitWorktreeExecutor,
