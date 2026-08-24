@@ -2901,7 +2901,7 @@ fn doctor_reports_missing_configuration_with_stable_error() {
             .as_array()
             .expect("doctor should report containment even when unhealthy")
             .len(),
-        5
+        6
     );
 }
 
@@ -2954,7 +2954,8 @@ fn doctor_accepts_a_valid_local_only_setup_without_a_provider() {
             "git_worktree",
             "mcp_stdio",
             "process",
-            "provider"
+            "provider",
+            "wasm"
         ]
     );
     let mcp = executors
@@ -3877,6 +3878,138 @@ fn admitted_domain_profile_runs_with_an_explicit_version() {
     assert_eq!(response["status"], "completed");
     assert_eq!(response["harness_id"], "example/domain");
     assert_eq!(response["gene_id"], "workspace.read");
+}
+
+#[test]
+fn admitted_wasm_gene_is_versioned_approved_and_receipted() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let wasm = wat::parse_str(
+        r#"(module
+            (memory (export "memory") 1)
+            (func (export "pandora_alloc") (param i32) (result i32) i32.const 0)
+            (func (export "pandora_run") (param i32 i32) (result i64)
+                local.get 0
+                i64.extend_i32_u
+                i64.const 32
+                i64.shl
+                local.get 1
+                i64.extend_i32_u
+                i64.or))"#,
+    )
+    .unwrap();
+    let gene = PackageManifest::new(
+        "example/echo",
+        "1.0.0",
+        PackageKind::Gene,
+        "local-publisher",
+        hash_artifact(&wasm),
+        Vec::new(),
+        PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+        "Apache-2.0",
+        TrustEvidence::unsigned(),
+    )
+    .unwrap();
+    let domain_artifact = b"wasm domain\n";
+    let domain = PackageManifest::new(
+        "example/wasm-domain",
+        "1.0.0",
+        PackageKind::DomainHarness,
+        "local-publisher",
+        hash_artifact(domain_artifact),
+        vec![PackageDependency::new("example/echo", "1.0.0", false).unwrap()],
+        PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+        "Apache-2.0",
+        TrustEvidence::unsigned(),
+    )
+    .unwrap();
+    for (name, manifest, artifact) in [
+        ("echo", &gene, wasm.as_slice()),
+        ("wasm-domain", &domain, domain_artifact.as_slice()),
+    ] {
+        let manifest_path = fixture.root.join(format!("{name}.json"));
+        let artifact_path = fixture.root.join(format!("{name}.artifact"));
+        fs::write(&manifest_path, serde_json::to_vec_pretty(manifest).unwrap()).unwrap();
+        fs::write(&artifact_path, artifact).unwrap();
+        let output = fixture
+            .command(&[
+                "package",
+                "admit",
+                "--manifest",
+                manifest_path.to_str().unwrap(),
+                "--artifact",
+                artifact_path.to_str().unwrap(),
+                "--json",
+            ])
+            .output()
+            .expect("package admission should start");
+        assert_success(&output);
+    }
+
+    let output = fixture
+        .command(&["slash", "list", "--json"])
+        .output()
+        .expect("slash listing should start");
+    assert_success_with_context(&output, "slash list for Wasm Gene");
+    assert!(
+        parse_json(&output)["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|command| {
+                command["command"] == "/gene:example%2Fwasm-domain@1.0.0:example%2Fecho"
+            })
+    );
+
+    let task = r#"{"value":42}"#;
+    let output = fixture
+        .command(&[
+            "/gene:example%2Fwasm-domain@1.0.0:example%2Fecho",
+            task,
+            "--json",
+        ])
+        .output()
+        .expect("Wasm Gene run should request approval");
+    assert_eq!(output.status.code(), Some(40));
+    let response = parse_json(&output);
+    let approval_id = response["details"]["approval_id"].as_str().unwrap();
+    let session_id = response["details"]["session_id"].as_str().unwrap();
+
+    let output = fixture
+        .command(&["approval", "inspect", approval_id, "--json"])
+        .output()
+        .expect("Wasm Gene approval should be inspectable");
+    assert_success(&output);
+    let response = parse_json(&output);
+    let request_summary = response["approval"]["request_summary"].as_str().unwrap();
+    assert!(request_summary.contains("example/wasm-domain@1.0.0"));
+    assert!(request_summary.contains("example/echo@1.0.0"));
+    assert!(request_summary.contains("local-publisher"));
+    assert!(request_summary.contains(gene.content_hash()));
+    assert!(!response.to_string().contains(task));
+
+    let output = fixture
+        .command(&["approval", "resolve", approval_id, "--allow", "--json"])
+        .output()
+        .expect("Wasm Gene approval should resolve");
+    assert_success(&output);
+    let output = fixture
+        .command(&[
+            "/gene:example%2Fwasm-domain@1.0.0:example%2Fecho",
+            task,
+            "--session",
+            session_id,
+            "--approval",
+            approval_id,
+            "--json",
+        ])
+        .output()
+        .expect("approved Wasm Gene should run");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["status"], "completed");
+    assert_eq!(response["output"], task);
+    assert_eq!(response["gene_id"], "example/echo");
 }
 
 #[test]

@@ -14,6 +14,7 @@ pub fn shipped_executor_containment() -> Result<ContainmentSnapshot, Containment
             mcp_evidence()?,
             process_evidence()?,
             provider_evidence()?,
+            wasm_evidence()?,
         ],
     )
 }
@@ -141,6 +142,21 @@ fn provider_evidence() -> Result<ContainmentEvidence, ContainmentContractError> 
     )
 }
 
+fn wasm_evidence() -> Result<ContainmentEvidence, ContainmentContractError> {
+    ContainmentEvidence::new(
+        identity("wasm", ExecutorWorkerClass::InProcess)?,
+        vec![partial(
+            ContainmentBoundaryKind::Process,
+            vec![
+                ContainmentControl::PermitRequestBinding,
+                ContainmentControl::PayloadDigestBinding,
+                ContainmentControl::BoundedIo,
+            ],
+            ContainmentLimitation::HostProcessNotSandboxed,
+        )?],
+    )
+}
+
 fn identity(
     id: &str,
     worker_class: ExecutorWorkerClass,
@@ -186,7 +202,8 @@ mod tests {
                 "git_worktree",
                 "mcp_stdio",
                 "process",
-                "provider"
+                "provider",
+                "wasm"
             ]
         );
         assert!(snapshot.digest().starts_with("sha256:"));

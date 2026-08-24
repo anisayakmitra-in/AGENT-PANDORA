@@ -131,6 +131,29 @@ impl SlashCommandCatalog {
         Ok(())
     }
 
+    pub fn add_profile_harness(&mut self, harness: &dyn Harness) -> Result<(), SlashCommandError> {
+        let harness_id = harness.manifest().id().clone();
+        let version = harness.manifest().version();
+        self.add_command(SlashCommand {
+            command: canonical_profile_harness_command(harness_id.as_str(), version),
+            kind: SlashCommandKind::Harness,
+            harness_id: harness_id.clone(),
+            harness_version: version.to_owned(),
+            gene_id: None,
+            alias: false,
+        })?;
+        for gene in harness.genes() {
+            self.add_gene(
+                &harness_id,
+                version,
+                gene.manifest().id().clone(),
+                false,
+                true,
+            )?;
+        }
+        Ok(())
+    }
+
     pub fn list(&self) -> Vec<&SlashCommand> {
         self.commands.values().collect()
     }

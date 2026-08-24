@@ -67,6 +67,10 @@ pub enum EffectTarget {
         server: String,
         tool: String,
     },
+    Wasm {
+        package_id: String,
+        version: String,
+    },
     Package {
         package_id: String,
         version: String,
@@ -102,6 +106,13 @@ impl EffectTarget {
         Self::Mcp {
             server: server.into(),
             tool: tool.into(),
+        }
+    }
+
+    pub fn wasm(package_id: impl Into<String>, version: impl Into<String>) -> Self {
+        Self::Wasm {
+            package_id: package_id.into(),
+            version: version.into(),
         }
     }
 
@@ -487,6 +498,15 @@ impl<'a> From<&'a EffectTarget> for CanonicalTarget<'a> {
                 port: None,
                 secondary: Some(tool),
             },
+            EffectTarget::Wasm {
+                package_id,
+                version,
+            } => Self {
+                kind: "wasm",
+                value: package_id,
+                port: None,
+                secondary: Some(version),
+            },
             EffectTarget::Package {
                 package_id,
                 version,
@@ -544,6 +564,13 @@ fn validate_target(target: &EffectTarget) -> Result<(), RequestError> {
         EffectTarget::Mcp { server, tool } => {
             validate_text("MCP server", server)?;
             validate_text("MCP tool", tool)
+        }
+        EffectTarget::Wasm {
+            package_id,
+            version,
+        } => {
+            validate_text("Wasm package ID", package_id)?;
+            validate_text("Wasm package version", version)
         }
         EffectTarget::Package {
             package_id,
@@ -693,5 +720,43 @@ mod tests {
         let canonical = request.canonical_json();
         assert!(canonical.contains("credential-1"));
         assert!(!canonical.contains("sk-live-secret"));
+    }
+
+    #[test]
+    fn wasm_requests_bind_the_exact_package_and_payload() {
+        let request = OperationRequest::new(
+            ExecutionId::new("execution-1").unwrap(),
+            SessionId::new("session-1").unwrap(),
+            PrincipalId::new("principal-1").unwrap(),
+            profile("wasm"),
+            GeneId::new("owner/transform").unwrap(),
+            Some(ArtifactId::new("sha256:artifact").unwrap()),
+            Capability::WasmExecute,
+            Operation::Execute,
+            EffectTarget::wasm("owner/transform", "1.0.0"),
+            ResourceScope::none(),
+        )
+        .unwrap()
+        .with_payload_digest(br#"{"value":1}"#)
+        .unwrap();
+        let other_version = OperationRequest::new(
+            ExecutionId::new("execution-1").unwrap(),
+            SessionId::new("session-1").unwrap(),
+            PrincipalId::new("principal-1").unwrap(),
+            profile("wasm"),
+            GeneId::new("owner/transform").unwrap(),
+            Some(ArtifactId::new("sha256:artifact").unwrap()),
+            Capability::WasmExecute,
+            Operation::Execute,
+            EffectTarget::wasm("owner/transform", "1.0.1"),
+            ResourceScope::none(),
+        )
+        .unwrap()
+        .with_payload_digest(br#"{"value":1}"#)
+        .unwrap();
+
+        assert!(request.payload_digest_matches(br#"{"value":1}"#));
+        assert!(!request.payload_digest_matches(br#"{"value":2}"#));
+        assert_ne!(request.request_digest(), other_version.request_digest());
     }
 }

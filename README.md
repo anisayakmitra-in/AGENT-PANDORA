@@ -116,4 +116,4 @@ It prints one JSON readiness record with the bound endpoint and protected token
 file path, then remains in the foreground until Ctrl-C. It never prints the
 token or accepts non-loopback connections. See [CLI reference](docs/CLI.md).
 
-The supported product target is the native CLI on Windows, macOS, and Linux. Desktop, remote execution, mobile, and package marketplace integration remain gated until their release tests and security boundaries exist. The CLI can manage profiles for the runtime's governed local stdio MCP preview; its boundaries are documented in [MCP.md](docs/MCP.md).
+The supported product target is the native CLI on Windows, macOS, and Linux. Desktop, remote execution, mobile, and package marketplace integration remain gated until their release tests and security boundaries exist. The CLI can manage profiles for the runtime's governed local stdio MCP preview and execute import-free WebAssembly package Genes through an admitted Domain Harness. See [MCP.md](docs/MCP.md) and [WebAssembly package Genes](docs/WASM.md).

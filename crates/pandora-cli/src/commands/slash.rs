@@ -165,6 +165,7 @@ fn catalog(parsed: &ParsedArgs) -> Result<SlashCommandCatalog, CliError> {
     let harnesses = HarnessCatalog::builtins();
     let mut catalog = SlashCommandCatalog::from_harnesses(harnesses.iter())
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let config = super::load_config(parsed)?;
     let records = package::store(parsed)?
         .list()
         .map_err(package::store_error)?;
@@ -175,8 +176,19 @@ fn catalog(parsed: &ParsedArgs) -> Result<SlashCommandCatalog, CliError> {
                 PackageKind::DomainHarness | PackageKind::MetaHarness
             )
         {
+            let harnesses = run::configured_harnesses(
+                &config,
+                Some(record.manifest().id().as_str()),
+                Some(record.manifest().version()),
+            )?;
+            let harness_id =
+                pandora_types::HarnessId::new(record.manifest().id().as_str().to_owned())
+                    .map_err(|_| CliError::internal("admitted Harness ID is invalid", json!({})))?;
+            let harness = harnesses.find(&harness_id).ok_or_else(|| {
+                CliError::internal("admitted Harness profile is unavailable", json!({}))
+            })?;
             catalog
-                .add_profile(record.manifest())
+                .add_profile_harness(harness)
                 .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
         }
     }
@@ -242,8 +254,9 @@ fn task_for(gene_id: &str, values: &[String]) -> Result<String, CliError> {
         }
         "citation.inventory" => no_argument("citation-inventory", values),
         "research.guide" => no_argument("research-guide", values),
+        _ if values.len() == 1 => Ok(values[0].clone()),
         _ => Err(CliError::usage(format!(
-            "Gene '{gene_id}' has no slash-command invocation contract"
+            "Gene '{gene_id}' requires exactly one JSON argument"
         ))),
     }
 }

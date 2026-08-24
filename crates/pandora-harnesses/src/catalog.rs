@@ -2,7 +2,7 @@ use crate::harness::{CodingHarness, CoordinationMetaHarness, CoreSourceHarness, 
 use crate::profile::{
     DeclarativeDomainHarness, DeclarativeMetaHarness, DomainProfileError, MetaProfileError,
 };
-use pandora_types::{Harness, HarnessId, PackageManifest};
+use pandora_types::{Gene, Harness, HarnessId, PackageManifest};
 
 pub struct HarnessCatalog {
     harnesses: Vec<Box<dyn Harness>>,
@@ -34,6 +34,18 @@ impl HarnessCatalog {
     ) -> Result<Self, DomainProfileError> {
         self.harnesses
             .push(Box::new(DeclarativeDomainHarness::from_package(package)?));
+        Ok(self)
+    }
+
+    pub fn with_declarative_domain_genes(
+        mut self,
+        package: &PackageManifest,
+        genes: Vec<Box<dyn Gene>>,
+    ) -> Result<Self, DomainProfileError> {
+        self.harnesses
+            .push(Box::new(DeclarativeDomainHarness::from_package_with_genes(
+                package, genes,
+            )?));
         Ok(self)
     }
 

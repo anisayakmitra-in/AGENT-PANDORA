@@ -208,8 +208,9 @@ It also recognizes the Research actions `evidence-inventory`,
 `research-guide`. Other natural-language tasks require `run --agent`; Pandora
 does not silently route them to an unregistered default Harness.
 `harness run` accepts the same canonical catalog IDs and only runs a Domain
-Harness with executable Genes. A package-backed profile is assembled only from
-matching built-in Genes; its artifact is never loaded as code. A metadata-only
+Harness with executable Genes. A package-backed profile may bind matching
+built-in Genes or exact installed WebAssembly Genes; the profile artifact is
+never loaded as code. A metadata-only
 Source Harness is inspectable but returns a clear non-runnable error.
 `harness inspect <id> --harness-version <version>` resolves an admitted Domain
 or Meta profile through the same exact-version boundary. Domain profiles show
@@ -396,7 +397,9 @@ aliases are `/evidence-inventory`, `/evidence-search`, `/source-read`,
 An admitted custom Domain Harness uses exact-version commands such as
 `/harness:owner%2Fdomain@1.0.0` and
 `/gene:owner%2Fdomain@1.0.0:workspace.read`. Custom packages cannot claim the
-built-in short aliases. Pandora lists only commands backed by available Genes.
+built-in short aliases. Installed WebAssembly Genes use the same exact-version
+form, for example `/gene:owner%2Fdomain@1.0.0:owner%2Ftransform`. Pandora lists
+only commands backed by available Genes. See [WebAssembly package Genes](WASM.md).
 
 Completion commands print a shell script. They describe the public command
 surface and do not execute a command or inspect credentials.
@@ -441,8 +444,10 @@ put the token in `PANDORA_REGISTRY_TOKEN` or name another environment variable w
 Remote admission currently accepts Gene records with no unresolved capability
 requirements and one valid Pandora runtime requirement. Other package kinds fail
 before download or local mutation. A registry package remains metadata and verified
-bytes: installation does not load native code, enable a Harness, issue a permit, or
-grant runtime authority.
+bytes: installation does not load native code, enable a Harness, issue a permit,
+or grant runtime authority. A later exact-version run may execute an import-free
+WebAssembly Gene only through an admitted Domain Harness and the normal approval,
+permit, executor, and receipt path.
 
 `package lock` writes the revalidated local package set to
 `<workspace>/pandora.lock`; `--output <path>` selects another file. The lock keeps

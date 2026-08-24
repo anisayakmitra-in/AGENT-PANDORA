@@ -6,6 +6,7 @@ pub enum Capability {
     NetworkConnect,
     ProviderInvoke,
     McpInvoke,
+    WasmExecute,
     PackageInstall,
 }
 
@@ -18,6 +19,7 @@ impl Capability {
             Self::NetworkConnect => "network.connect",
             Self::ProviderInvoke => "provider.invoke",
             Self::McpInvoke => "mcp.invoke",
+            Self::WasmExecute => "wasm.execute",
             Self::PackageInstall => "package.install",
         }
     }

@@ -13,6 +13,7 @@ use crate::mcp_catalog::{McpCatalogRevision, McpCatalogSupervisor, McpCatalogToo
 use crate::parliament::Parliament;
 use crate::reference_monitor::{AuthorizationError, ReferenceMonitor};
 use crate::shadow_council::{RoutingError, ShadowCouncil};
+use crate::wasm::{WasmError, WasmExecutor, WasmGeneRequest};
 use crate::{ApprovalError, ApprovalStore, ConsumedPermit, PermitError, ToolContext, ToolEngine};
 use pandora_harnesses::{
     CodingRequest, HarnessCatalog, PlanningContext, ResearchRequest,
@@ -48,6 +49,7 @@ pub enum RuntimeError {
     Request(RequestError),
     Filesystem(FilesystemError),
     Process(ProcessError),
+    Wasm(WasmError),
     ExecutionProfile(ExecutionProfileAssemblyError),
     UnsupportedOperation(Capability),
 }
@@ -62,6 +64,7 @@ pub struct ExecutionController {
     filesystem: FilesystemExecutor,
     process: ProcessExecutor,
     provider: ProviderExecutor,
+    wasm: WasmExecutor,
     hooks: LifecycleHooks,
     mcp_catalogs: McpCatalogSupervisor,
     next_execution: AtomicU64,
@@ -180,6 +183,7 @@ impl ExecutionController {
             filesystem: FilesystemExecutor::for_workspace(workspace.clone()),
             process: ProcessExecutor::new(workspace.clone()),
             provider: ProviderExecutor::new(),
+            wasm: WasmExecutor::new(),
             workspace,
             shadow_council: ShadowCouncil::new(),
             parliament: Parliament::new(policy_version),
@@ -195,6 +199,11 @@ impl ExecutionController {
 
     pub fn policy_version(&self) -> u32 {
         self.policy.policy_version()
+    }
+
+    pub fn with_wasm_executor(mut self, wasm: WasmExecutor) -> Self {
+        self.wasm = wasm;
+        self
     }
 
     fn execution_profile(
@@ -888,19 +897,31 @@ impl ExecutionController {
             .find(|gene| gene.manifest().id() == &gene_id)
             .ok_or(RuntimeError::UnknownGene)?;
         let harness_evidence = canonical_harness_binding_digest(harness.manifest());
-        let execution_profile = self.execution_profile(
-            executor_for_gene(gene.manifest()),
-            vec![
-                profile_binding(
-                    ExecutionProfileBindingKind::Harness,
-                    harness.manifest().id().as_str(),
-                    Some(harness.manifest().version()),
-                    &harness_evidence,
-                )?,
-                gene_profile_binding(gene.manifest())?,
-            ],
-        )?;
-        let (input, payload) = if is_research_gene(&gene_id) {
+        let mut profile_bindings = vec![
+            profile_binding(
+                ExecutionProfileBindingKind::Harness,
+                harness.manifest().id().as_str(),
+                Some(harness.manifest().version()),
+                &harness_evidence,
+            )?,
+            gene_profile_binding(gene.manifest())?,
+        ];
+        if gene
+            .manifest()
+            .capabilities()
+            .contains(&Capability::WasmExecute)
+        {
+            profile_bindings.push(self.wasm_artifact_binding(gene.manifest())?);
+        }
+        let execution_profile =
+            self.execution_profile(executor_for_gene(gene.manifest()), profile_bindings)?;
+        let (input, payload) = if gene
+            .manifest()
+            .capabilities()
+            .contains(&Capability::WasmExecute)
+        {
+            wasm_input(&intent, &session, &execution_id, execution_profile)?
+        } else if is_research_gene(&gene_id) {
             research_input(
                 &intent,
                 &gene_id,
@@ -1306,8 +1327,49 @@ impl ExecutionController {
                     .map(|_| ())
                     .map_err(|error| RuntimeError::Filesystem(error.clone()))
             }
+            Capability::WasmExecute => {
+                let payload = payload.ok_or(RuntimeError::Wasm(WasmError::InvalidInput))?;
+                let response = self.wasm.execute(permit, payload, now);
+                let receipt = response.receipt().clone();
+                output.receipts.push(receipt.clone());
+                output.events.push(self.event(
+                    EventType::EffectCompleted,
+                    self.context(
+                        session,
+                        execution_id,
+                        Some(output.selected_harness.clone()),
+                        Some(output.selected_gene.clone()),
+                        Some(receipt),
+                    ),
+                    EventPayload::Effect {
+                        capability: permit.request().capability().as_str().to_owned(),
+                        request_digest: permit.request().request_digest().clone(),
+                    },
+                ));
+                output.output = Some(response.into_result().map_err(RuntimeError::Wasm)?);
+                Ok(())
+            }
             capability => Err(RuntimeError::UnsupportedOperation(capability)),
         }
+    }
+
+    fn wasm_artifact_binding(
+        &self,
+        manifest: &GeneManifest,
+    ) -> Result<ExecutionProfileBinding, RuntimeError> {
+        let content_hash = self
+            .wasm
+            .content_hash(manifest.id().as_str(), manifest.version())
+            .ok_or(RuntimeError::Wasm(WasmError::UnknownPackage))?;
+        ExecutionProfileBinding::new(
+            ExecutionProfileBindingKind::Artifact,
+            manifest.id().as_str(),
+            Some(manifest.version()),
+            content_hash,
+        )
+        .map_err(|error| {
+            RuntimeError::ExecutionProfile(ExecutionProfileAssemblyError::Contract(error))
+        })
     }
 
     fn context(
@@ -1474,7 +1536,9 @@ fn gene_profile_binding(manifest: &GeneManifest) -> Result<ExecutionProfileBindi
 }
 
 fn executor_for_gene(manifest: &GeneManifest) -> &'static str {
-    if manifest
+    if manifest.capabilities().contains(&Capability::WasmExecute) {
+        "wasm"
+    } else if manifest
         .capabilities()
         .contains(&Capability::ProcessExecute)
     {
@@ -1509,6 +1573,7 @@ fn runtime_error_code(error: &RuntimeError) -> &'static str {
         RuntimeError::Request(_) => "request_failed",
         RuntimeError::Filesystem(_) => "filesystem_failed",
         RuntimeError::Process(_) => "process_failed",
+        RuntimeError::Wasm(_) => "wasm_failed",
         RuntimeError::ExecutionProfile(_) => "execution_profile_failed",
         RuntimeError::UnsupportedOperation(_) => "unsupported_operation",
     }
@@ -1658,6 +1723,25 @@ fn research_input(
     Ok((input, None))
 }
 
+fn wasm_input(
+    intent: &TaskIntent,
+    session: &Session,
+    execution_id: &ExecutionId,
+    execution_profile: ExecutionProfile,
+) -> Result<(GeneInput, Option<Vec<u8>>), RuntimeError> {
+    let request = WasmGeneRequest::new(
+        execution_id.clone(),
+        session.id().clone(),
+        session.principal_id().clone(),
+        execution_profile,
+        intent.summary(),
+    )
+    .map_err(RuntimeError::Planning)?;
+    let payload = request.payload().to_vec();
+    let input = request.into_gene_input().map_err(RuntimeError::Planning)?;
+    Ok((input, Some(payload)))
+}
+
 fn append_labeled_output(summary: &mut RunSummary, label: &str, bytes: &[u8]) {
     let output = summary.output.get_or_insert_with(Vec::new);
     if !output.is_empty() {
@@ -1676,7 +1760,9 @@ struct ApprovalExecution<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{HookPoint, HookSelector, LifecycleHook, LifecycleHooks};
+    use crate::{
+        ApprovalRequest, HookPoint, HookSelector, LifecycleHook, LifecycleHooks, WasmGene,
+    };
     use pandora_harnesses::HarnessCatalog;
     use pandora_provider::{
         ChatMessage, FailoverProvider, ModelResponse, ProviderManifest, TokenUsage,
@@ -1747,6 +1833,117 @@ mod tests {
         assert_eq!(summary.output().unwrap(), b"fixture\n");
         assert_eq!(summary.selected_harness().as_str(), "example/domain");
         assert_eq!(summary.selected_gene().as_str(), "workspace.read");
+    }
+
+    #[test]
+    fn package_wasm_gene_requires_one_exact_approval_before_execution() {
+        let fixture = Fixture::new();
+        let artifact = wat::parse_str(
+            r#"(module
+                (memory (export "memory") 1)
+                (func (export "pandora_alloc") (param i32) (result i32) i32.const 0)
+                (func (export "pandora_run") (param i32 i32) (result i64)
+                    local.get 0
+                    i64.extend_i32_u
+                    i64.const 32
+                    i64.shl
+                    local.get 1
+                    i64.extend_i32_u
+                    i64.or))"#,
+        )
+        .unwrap();
+        let gene_package = PackageManifest::new(
+            "example/echo",
+            "1.0.0",
+            PackageKind::Gene,
+            "publisher",
+            hash_artifact(&artifact),
+            Vec::new(),
+            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "Apache-2.0",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+        let domain_package = PackageManifest::new(
+            "example/wasm-domain",
+            "1.0.0",
+            PackageKind::DomainHarness,
+            "publisher",
+            hash_artifact(b"domain profile"),
+            vec![PackageDependency::new("example/echo", "1.0.0", false).unwrap()],
+            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "Apache-2.0",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+        let gene = WasmGene::from_package(&gene_package).unwrap();
+        let harnesses = HarnessCatalog::builtins()
+            .with_declarative_domain_genes(&domain_package, vec![Box::new(gene)])
+            .unwrap();
+        let mut wasm = WasmExecutor::new();
+        wasm.register(&gene_package, &artifact).unwrap();
+        let policy = PolicyContext::new(1, [Capability::WasmExecute], [Operation::Execute]);
+        let controller =
+            ExecutionController::with_policy_and_harnesses(fixture.root.clone(), policy, harnesses)
+                .with_wasm_executor(wasm);
+        let intent = TaskIntent::new(r#"{"value":42}"#)
+            .unwrap()
+            .with_harness(HarnessId::new("example/wasm-domain").unwrap())
+            .with_gene(GeneId::new("example/echo").unwrap());
+        let session = fixture.session();
+        let now = Timestamp::from_unix_seconds(10);
+
+        let pending = controller
+            .run_at(intent.clone(), session.clone(), now)
+            .unwrap();
+        assert!(matches!(
+            pending.status(),
+            RunStatus::ApprovalRequired { .. }
+        ));
+        assert!(pending.receipts().is_empty());
+        let request_digest = pending
+            .events()
+            .iter()
+            .find_map(|event| match event.payload() {
+                EventPayload::Effect { request_digest, .. } => Some(request_digest.clone()),
+                _ => None,
+            })
+            .unwrap();
+        let approval_path = fixture.path.join("approvals.sqlite3");
+        let approvals = ApprovalStore::open(&approval_path).unwrap();
+        approvals
+            .create(
+                ApprovalRequest::new(
+                    "approval-wasm",
+                    session.id().clone(),
+                    pending.execution_id().clone(),
+                    session.principal_id().clone(),
+                    GeneId::new("example/echo").unwrap(),
+                    request_digest,
+                    "execute example/echo@1.0.0",
+                    1,
+                    Timestamp::from_unix_seconds(100),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        approvals
+            .resolve(
+                "approval-wasm",
+                session.principal_id(),
+                &PrincipalId::new("approver-1").unwrap(),
+                true,
+                now,
+            )
+            .unwrap();
+
+        let completed = controller
+            .run_with_approval(intent, session, &approvals, "approval-wasm", now)
+            .unwrap();
+
+        assert_eq!(completed.status(), &RunStatus::Completed);
+        assert_eq!(completed.output(), Some(br#"{"value":42}"#.as_slice()));
+        assert_eq!(completed.receipts().len(), 1);
     }
 
     #[test]

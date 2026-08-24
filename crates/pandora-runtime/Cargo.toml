@@ -20,3 +20,7 @@ semver.workspace = true
 sha2.workspace = true
 subtle.workspace = true
 url.workspace = true
+wasmi.workspace = true
+
+[dev-dependencies]
+wat = "1"

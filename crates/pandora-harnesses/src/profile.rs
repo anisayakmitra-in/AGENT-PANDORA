@@ -19,6 +19,7 @@ pub enum DomainProfileError {
     UnsupportedPackageKind(PackageKind),
     InvalidPackage(PackageManifestError),
     MissingGeneImplementation { id: String, version: String },
+    DuplicateGeneImplementation { id: String, version: String },
     NoExecutableGenes,
     InvalidManifest(pandora_types::harness::ManifestError),
 }
@@ -36,8 +37,14 @@ impl fmt::Display for DomainProfileError {
             Self::InvalidPackage(error) => error.fmt(formatter),
             Self::MissingGeneImplementation { id, version } => write!(
                 formatter,
-                "no built-in Gene implementation is available for {id}@{version}"
+                "no Gene implementation is available for {id}@{version}"
             ),
+            Self::DuplicateGeneImplementation { id, version } => {
+                write!(
+                    formatter,
+                    "multiple Gene implementations match {id}@{version}"
+                )
+            }
             Self::NoExecutableGenes => {
                 formatter.write_str("Domain Harness profile has no executable Genes")
             }
@@ -75,6 +82,13 @@ impl std::error::Error for MetaProfileError {}
 
 impl DeclarativeDomainHarness {
     pub fn from_package(package: &PackageManifest) -> Result<Self, DomainProfileError> {
+        Self::from_package_with_genes(package, Vec::new())
+    }
+
+    pub fn from_package_with_genes(
+        package: &PackageManifest,
+        genes: Vec<Box<dyn Gene>>,
+    ) -> Result<Self, DomainProfileError> {
         package
             .validate()
             .map_err(DomainProfileError::InvalidPackage)?;
@@ -83,16 +97,28 @@ impl DeclarativeDomainHarness {
         }
 
         let mut available = builtin_genes();
+        available.extend(genes);
         let mut genes = Vec::new();
         for dependency in package.dependencies() {
-            let index = available.iter().position(|gene| {
-                gene.manifest().id().as_str() == dependency.id().as_str()
-                    && gene.manifest().version() == dependency.version()
-            });
-            match index {
-                Some(index) => genes.push(available.remove(index)),
-                None if dependency.optional() => {}
-                None => {
+            let matches = available
+                .iter()
+                .enumerate()
+                .filter_map(|(index, gene)| {
+                    (gene.manifest().id().as_str() == dependency.id().as_str()
+                        && gene.manifest().version() == dependency.version())
+                    .then_some(index)
+                })
+                .collect::<Vec<_>>();
+            match matches.as_slice() {
+                [index] => genes.push(available.remove(*index)),
+                [_, _, ..] => {
+                    return Err(DomainProfileError::DuplicateGeneImplementation {
+                        id: dependency.id().as_str().to_owned(),
+                        version: dependency.version().to_owned(),
+                    });
+                }
+                [] if dependency.optional() => {}
+                [] => {
                     return Err(DomainProfileError::MissingGeneImplementation {
                         id: dependency.id().as_str().to_owned(),
                         version: dependency.version().to_owned(),

@@ -21,3 +21,6 @@ reqwest.workspace = true
 semver.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+wat = "1"

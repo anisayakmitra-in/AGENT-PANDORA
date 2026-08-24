@@ -19,21 +19,24 @@ use pandora_runtime::{
 };
 use pandora_runtime::{
     DEFAULT_MAX_SAMPLES_PER_TARGET, EfficiencyEngine, EfficiencyStore, ExecutionController,
-    PackageState, PackageStore, SkillEngine, SkillError,
+    PackageState, PackageStore, SkillEngine, SkillError, WasmExecutor, WasmGene,
 };
 use pandora_types::{
     Capability, ContextClassification, EfficiencyObjective, EfficiencySample, EvaluationReceipt,
-    EvaluationRequest, EvaluationResult, EventPayload, EventType, ExecutionId, HarnessId,
-    MemoryKind, MemoryRecord, MemoryScope, Operation, PackageId, PackageKind, PolicyContext,
-    Session, SessionId, TaskIntent, WorkspaceId,
+    EvaluationRequest, EvaluationResult, EventPayload, EventType, ExecutionId, Gene, HarnessId,
+    MemoryKind, MemoryRecord, MemoryScope, Operation, PackageId, PackageKind, PackageManifest,
+    PolicyContext, Session, SessionId, TaskIntent, WorkspaceId,
 };
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::fs;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const MAX_PLANNED_TASK_BYTES: usize = 8 * 1024;
 const DEFAULT_AGENT_MAX_TURNS: u32 = 8;
 const DEFAULT_AGENT_MAX_TOOL_CALLS: u32 = 16;
+
+type PackageWasmGenes = (Vec<Box<dyn Gene>>, BTreeMap<String, String>);
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
@@ -125,7 +128,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let optimization = parsed.value("optimize").map(parse_objective).transpose()?;
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
-    let harnesses = configured_harnesses(
+    let (harnesses, wasm, wasm_approval_subjects) = configured_runtime(
         &config,
         parsed.value("harness"),
         parsed.value("harness-version"),
@@ -189,10 +192,12 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             Capability::FilesystemWrite,
             Capability::ProcessExecute,
             Capability::ProviderInvoke,
+            Capability::WasmExecute,
         ],
         [Operation::Write, Operation::Execute],
     );
-    let controller = ExecutionController::with_policy_and_harnesses(workspace, policy, harnesses);
+    let controller = ExecutionController::with_policy_and_harnesses(workspace, policy, harnesses)
+        .with_wasm_executor(wasm);
     let (task, planning_model) = if parsed.value("plan").is_some() {
         plan_task(
             &config,
@@ -304,6 +309,9 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                 session.id(),
                 session.principal_id(),
                 &task,
+                wasm_approval_subjects
+                    .get(summary.selected_gene().as_str())
+                    .map(String::as_str),
             )?;
             let details = add_detail(details, "approval_id", approval.id());
             Err(CliError::approval(reason.clone(), details))
@@ -317,9 +325,17 @@ pub(super) fn configured_harnesses(
     requested: Option<&str>,
     version: Option<&str>,
 ) -> Result<HarnessCatalog, CliError> {
+    configured_runtime(config, requested, version).map(|(harnesses, _, _)| harnesses)
+}
+
+fn configured_runtime(
+    config: &RuntimeConfig,
+    requested: Option<&str>,
+    version: Option<&str>,
+) -> Result<(HarnessCatalog, WasmExecutor, BTreeMap<String, String>), CliError> {
     let harnesses = HarnessCatalog::builtins();
     let Some(requested) = requested else {
-        return Ok(harnesses);
+        return Ok((harnesses, WasmExecutor::new(), BTreeMap::new()));
     };
     let requested = canonical_harness_id(requested);
     let harness_id = HarnessId::new(requested.to_owned())
@@ -335,7 +351,7 @@ pub(super) fn configured_harnesses(
                 version
             )));
         }
-        return Ok(harnesses);
+        return Ok((harnesses, WasmExecutor::new(), BTreeMap::new()));
     }
 
     let version = version.ok_or_else(|| {
@@ -370,15 +386,78 @@ pub(super) fn configured_harnesses(
             }),
         ));
     }
+    let mut wasm = WasmExecutor::new();
     match record.manifest().kind() {
-        PackageKind::DomainHarness => harnesses
-            .with_declarative_domain(record.manifest())
-            .map_err(|error| CliError::execution(error.to_string(), json!({}))),
+        PackageKind::DomainHarness => {
+            let (genes, approval_subjects) =
+                package_wasm_genes(&store, record.manifest(), &mut wasm)?;
+            let harnesses = harnesses
+                .with_declarative_domain_genes(record.manifest(), genes)
+                .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+            Ok((harnesses, wasm, approval_subjects))
+        }
         PackageKind::MetaHarness => harnesses
             .with_declarative_meta(record.manifest())
+            .map(|harnesses| (harnesses, wasm, BTreeMap::new()))
             .map_err(|error| CliError::execution(error.to_string(), json!({}))),
         _ => unreachable!("admitted Harness profile kind was validated"),
     }
+}
+
+fn package_wasm_genes(
+    store: &PackageStore,
+    harness: &PackageManifest,
+    wasm: &mut WasmExecutor,
+) -> Result<PackageWasmGenes, CliError> {
+    let mut genes: Vec<Box<dyn Gene>> = Vec::new();
+    let mut approval_subjects = BTreeMap::new();
+    for dependency in harness.dependencies() {
+        let Some(record) = store
+            .get(dependency.id(), dependency.version())
+            .map_err(|error| CliError::execution(error.to_string(), json!({})))?
+        else {
+            continue;
+        };
+        if record.state() != PackageState::Installed
+            || record.manifest().kind() != PackageKind::Gene
+        {
+            return Err(CliError::execution(
+                "Domain Harness dependency is not an installed Gene package",
+                json!({
+                    "id": dependency.id(),
+                    "version": dependency.version(),
+                }),
+            ));
+        }
+        let artifact = store
+            .load_artifact(dependency.id(), dependency.version())
+            .map_err(|error| CliError::execution(error.to_string(), json!({})))?
+            .ok_or_else(|| CliError::execution("Gene artifact is unavailable", json!({})))?;
+        wasm.register(record.manifest(), &artifact)
+            .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+        approval_subjects.insert(
+            record.manifest().id().as_str().to_owned(),
+            wasm_approval_subject(harness, record.manifest()),
+        );
+        genes.push(Box::new(
+            WasmGene::from_package(record.manifest())
+                .map_err(|error| CliError::execution(error.to_string(), json!({})))?,
+        ));
+    }
+    Ok((genes, approval_subjects))
+}
+
+fn wasm_approval_subject(harness: &PackageManifest, gene: &PackageManifest) -> String {
+    format!(
+        "execute package Gene {}@{} (publisher {}, artifact {}) through Harness {}@{} (publisher {})",
+        gene.id(),
+        gene.version(),
+        gene.publisher(),
+        gene.content_hash(),
+        harness.id(),
+        harness.version(),
+        harness.publisher(),
+    )
 }
 
 fn canonical_harness_id(value: &str) -> &str {
@@ -577,6 +656,7 @@ pub(super) fn execute_agent_core(
                 session.id(),
                 session.principal_id(),
                 options.task,
+                None,
             )?;
             Err(CliError::approval(
                 reason,
@@ -1316,12 +1396,16 @@ fn create_approval(
     session_id: &SessionId,
     principal_id: &pandora_types::PrincipalId,
     task: &str,
+    wasm_subject: Option<&str>,
 ) -> Result<pandora_runtime::PendingApproval, CliError> {
-    let request_digest = summary
+    let (capability, request_digest) = summary
         .events()
         .iter()
         .find_map(|event| match event.payload() {
-            EventPayload::Effect { request_digest, .. } => Some(request_digest.clone()),
+            EventPayload::Effect {
+                capability,
+                request_digest,
+            } => Some((capability.as_str(), request_digest.clone())),
             _ => None,
         })
         .ok_or_else(|| CliError::internal("approval request has no effect digest", json!({})))?;
@@ -1333,7 +1417,7 @@ fn create_approval(
         principal_id.clone(),
         summary.selected_gene().clone(),
         request_digest,
-        approval_summary(task),
+        approval_summary(task, capability, summary.selected_gene(), wasm_subject)?,
         1,
         pandora_types::Timestamp::from_unix_seconds(expires_at),
     )
@@ -1343,11 +1427,24 @@ fn create_approval(
         .map_err(|error| CliError::internal(error.to_string(), json!({})))
 }
 
-fn approval_summary(task: &str) -> String {
+fn approval_summary(
+    task: &str,
+    capability: &str,
+    gene_id: &pandora_types::GeneId,
+    wasm_subject: Option<&str>,
+) -> Result<String, CliError> {
+    if capability == Capability::WasmExecute.as_str() {
+        return wasm_subject.map(str::to_owned).ok_or_else(|| {
+            CliError::internal(
+                "Wasm approval subject is unavailable",
+                json!({"gene_id": gene_id}),
+            )
+        });
+    }
     let mut parts = task.splitn(3, ':');
     let action = parts.next().unwrap_or("task");
     let path = parts.next().unwrap_or("workspace");
-    format!("coding {action} operation for {path}")
+    Ok(format!("coding {action} operation for {path}"))
 }
 
 fn add_detail(mut details: Value, key: &str, value: impl Into<Value>) -> Value {
@@ -1396,6 +1493,7 @@ fn runtime_error(error: RuntimeError) -> CliError {
             CliError::execution("filesystem execution failed", json!({}))
         }
         RuntimeError::Process(_) => CliError::execution("process execution failed", json!({})),
+        RuntimeError::Wasm(error) => CliError::execution(error.to_string(), json!({})),
         RuntimeError::ExecutionProfile(_) => {
             CliError::execution("execution profile assembly failed", json!({}))
         }

@@ -29,7 +29,10 @@ stable release and does not admit a package into the `2.0.0-alpha` line.
 
 `pandora-runtime::PackageStore` compares the declared package metadata with the embedded manifest, hashes the supplied bytes, checks required dependencies, and records the verified metadata in the local `packages.sqlite3` store. The store retains the artifact bytes so a later process can revalidate the record before using it.
 
-The package store does not load code, enable a Harness, issue a permit, or grant runtime authority. A recorded package is metadata that passed admission, not an executable extension.
+The package store does not load code, enable a Harness, issue a permit, or grant
+runtime authority. A recorded package is metadata and verified bytes. A later
+exact-version run may assemble an installed WebAssembly Gene through the
+separate boundary documented in [WebAssembly package Genes](WASM.md).
 
 The built-in `core-source` Harness is the runtime's Source Harness. It binds the
 `pandora-runtime` constitutional service and its exact implementation version,
@@ -180,10 +183,10 @@ The Research short aliases are `/research`, `/evidence-inventory`,
 and `/research-guide`.
 
 Admitted custom Domain and Meta profiles receive exact-version Harness commands.
-Custom Domain profiles receive Gene commands only for dependencies that resolve
-to available built-in Genes at the declared version. Their commands are
-namespaced, such as `/gene:owner%2Fdomain@1.0.0:workspace.read`, and cannot
-replace built-in aliases.
+Custom Domain profiles receive Gene commands for dependencies that resolve to
+an available built-in Gene or an installed WebAssembly Gene at the declared
+version. Their commands are namespaced, such as
+`/gene:owner%2Fdomain@1.0.0:workspace.read`, and cannot replace built-in aliases.
 
 ## Domain profiles
 
@@ -205,8 +208,10 @@ The external vocabulary is closed and uses these exact values:
 
 `gene`, `domain_harness`, `meta_harness`, `source_harness`, `package`, `provider`, and `skill`.
 
-`gene` packages can be admitted as verified local records, but they do not load
-third-party executable code in this release. `meta_harness` packages can pass
+`gene` packages can be installed as verified local records. A Gene artifact may
+run only as import-free WebAssembly through an exact admitted Domain Harness
+dependency, explicit policy approval, a one-shot permit, and the bounded
+interpreter. Native package code is not supported. `meta_harness` packages can pass
 the separate composition-profile admission boundary described below.
 `domain_harness` packages can pass a profile-only admission boundary when they
 declare at least one required dependency that resolves to an available Gene,
@@ -229,15 +234,16 @@ Built-in Harness IDs are reserved. A package can add a new Domain or Meta
 profile but cannot shadow `core-source`, `coordination-meta`, `coding-domain`,
 `research-domain`, or another built-in identity.
 
-The built-in Coding and Research Genes are the executable Gene implementations
-available to declarative Domain profiles. An admitted custom Domain profile can
-be selected with its exact version when every required dependency maps to one
-of those built-in Genes. The profile still uses the existing execution
-controller and effect policy. Its artifact is never loaded as code, and the
-profile cannot issue permits or grant runtime authority.
+The built-in Coding and Research Genes and installed WebAssembly Genes are the
+executable Gene implementations available to declarative Domain profiles. An
+admitted custom Domain profile can be selected with its exact version when
+every required dependency resolves exactly. The profile still uses the existing
+execution controller and effect policy. The profile artifact is never loaded as
+code, and the profile cannot issue permits or grant runtime authority.
 
 ## Ownership
 
 The package envelope is owned by `pandora-types`. Existing Harness and Gene manifests remain implementation contracts; `PackageManifest::from_harness` is the explicit adapter between them.
 
-K-O Palace remains a separate registry. Pandora may consume verified package metadata later, but Palace does not own activation, permissions, runtime events, or execution policy.
+M-Place remains a separate registry. It does not own activation, permissions,
+runtime events, or execution policy.

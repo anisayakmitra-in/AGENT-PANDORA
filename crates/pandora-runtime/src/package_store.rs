@@ -1,6 +1,6 @@
 use crate::harness_registry::{HarnessRegistry, HarnessRegistryError, PackageRecord};
-use pandora_types::{PackageId, PackageKind, PackageLock, PackageManifest};
-use rusqlite::{Connection, TransactionBehavior, params};
+use pandora_types::{PackageId, PackageKind, PackageLock, PackageManifest, hash_artifact};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::fmt;
 use std::fs;
 use std::io::{Read, Write};
@@ -170,6 +170,32 @@ impl PackageStore {
     ) -> Result<Option<PackageRecord>, PackageStoreError> {
         let connection = self.lock()?;
         Ok(load_registry(&connection)?.get(id, version).cloned())
+    }
+
+    pub fn load_artifact(
+        &self,
+        id: &PackageId,
+        version: &str,
+    ) -> Result<Option<Vec<u8>>, PackageStoreError> {
+        let connection = self.lock()?;
+        let registry = load_registry(&connection)?;
+        let Some(record) = registry.get(id, version) else {
+            return Ok(None);
+        };
+        let artifact = connection
+            .query_row(
+                "SELECT artifact FROM package_records WHERE id = ?1 AND version = ?2",
+                params![id.as_str(), version],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional()?
+            .ok_or(PackageStoreError::CorruptRecord)?;
+        if artifact.len() > MAX_STORED_ARTIFACT_BYTES
+            || hash_artifact(&artifact) != record.manifest().content_hash()
+        {
+            return Err(PackageStoreError::CorruptRecord);
+        }
+        Ok(Some(artifact))
     }
 
     pub fn lockfile(&self) -> Result<PackageLock, PackageStoreError> {
@@ -521,6 +547,35 @@ mod tests {
             .expect("domain profile should survive reopen");
         assert_eq!(profile_record.state(), PackageState::Admitted);
         assert!(!profile_record.grants_runtime_authority());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn stored_artifacts_are_revalidated_when_loaded() {
+        let artifact = b"stored gene";
+        let manifest = gene_manifest("example/gene", artifact);
+        let (store, root) = store();
+        store.admit(&manifest, &manifest, artifact).unwrap();
+
+        assert_eq!(
+            store
+                .load_artifact(manifest.id(), manifest.version())
+                .unwrap(),
+            Some(artifact.to_vec())
+        );
+
+        store
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE package_records SET artifact = ?1 WHERE id = ?2 AND version = ?3",
+                params![b"tampered", manifest.id().as_str(), manifest.version()],
+            )
+            .unwrap();
+        assert!(matches!(
+            store.load_artifact(manifest.id(), manifest.version()),
+            Err(PackageStoreError::CorruptRecord)
+        ));
         let _ = std::fs::remove_dir_all(root);
     }
 

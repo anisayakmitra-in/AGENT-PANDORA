@@ -43,6 +43,7 @@ pub mod strategies;
 pub mod subagent;
 pub mod subagent_store;
 pub mod tool_engine;
+pub mod wasm;
 
 #[cfg(test)]
 mod test_support;
@@ -118,4 +119,8 @@ pub use subagent_store::{
 };
 pub use tool_engine::{
     ToolContext, ToolDefinition, ToolEngine, ToolError, ToolInvocation, ToolPlan,
+};
+pub use wasm::{
+    DEFAULT_WASM_FUEL, MAX_WASM_INPUT_BYTES, MAX_WASM_MEMORY_BYTES, MAX_WASM_OUTPUT_BYTES,
+    WasmError, WasmExecutor, WasmGene, WasmGeneRequest, WasmResult,
 };

@@ -62,9 +62,24 @@ pub fn canonical_harness_binding_digest(manifest: &pandora_types::HarnessManifes
 mod catalog_tests {
     use super::{HarnessCatalog, canonical_harness_binding_digest};
     use pandora_types::{
-        GeneId, HarnessId, HarnessKind, HarnessManifest, MetaComposition, PackageCompatibility,
+        Capability, Gene, GeneError, GeneId, GeneInput, GeneKind, GeneManifest, HarnessId,
+        HarnessKind, HarnessManifest, MetaComposition, OperationRequest, PackageCompatibility,
         PackageDependency, PackageKind, PackageManifest, TrustEvidence, hash_artifact,
     };
+
+    struct PackageGene {
+        manifest: GeneManifest,
+    }
+
+    impl Gene for PackageGene {
+        fn manifest(&self) -> &GeneManifest {
+            &self.manifest
+        }
+
+        fn plan(&self, _input: &GeneInput) -> Result<Vec<OperationRequest>, GeneError> {
+            Ok(Vec::new())
+        }
+    }
 
     #[test]
     fn harness_binding_digest_covers_domain_identity_and_sorts_owned_genes() {
@@ -233,6 +248,46 @@ mod catalog_tests {
             harness.genes()[0].manifest().id().as_str(),
             "workspace.read"
         );
+    }
+
+    #[test]
+    fn declarative_domain_profile_binds_an_exact_package_gene() {
+        let artifact = b"domain profile";
+        let package = PackageManifest::new(
+            "example/domain",
+            "1.0.0",
+            PackageKind::DomainHarness,
+            "publisher",
+            hash_artifact(artifact),
+            vec![PackageDependency::new("owner/transform", "1.2.3", false).unwrap()],
+            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "Apache-2.0",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+        let gene = PackageGene {
+            manifest: GeneManifest::new(
+                "owner/transform",
+                "1.2.3",
+                GeneKind::Tool,
+                vec![Capability::WasmExecute],
+            )
+            .unwrap(),
+        };
+
+        let catalog = HarnessCatalog::builtins()
+            .with_declarative_domain_genes(&package, vec![Box::new(gene)])
+            .unwrap();
+        let harness = catalog
+            .find(&HarnessId::new("example/domain").unwrap())
+            .unwrap();
+
+        assert_eq!(harness.genes().len(), 1);
+        assert_eq!(
+            harness.genes()[0].manifest().id().as_str(),
+            "owner/transform"
+        );
+        assert_eq!(harness.genes()[0].manifest().version(), "1.2.3");
     }
 
     #[test]
