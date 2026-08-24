@@ -253,13 +253,13 @@ jobs:
       contents: read
     env:
       PANDORA_VERSION: ${{ github.ref_name }}
-      PANDORA_INSTALL_DIR: ${{ runner.temp }}/pandora-bin
     steps:
       - name: Install and verify published CLI (Unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail
+          export PANDORA_INSTALL_DIR="$RUNNER_TEMP/pandora-bin"
           installer="$RUNNER_TEMP/install.sh"
           curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
             --output "$installer" \
@@ -273,6 +273,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $env:PANDORA_INSTALL_DIR = Join-Path $env:RUNNER_TEMP "pandora-bin"
           $installer = Join-Path $env:RUNNER_TEMP "install.ps1"
           Invoke-WebRequest `
             -Uri "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download/$env:GITHUB_REF_NAME/install.ps1" `

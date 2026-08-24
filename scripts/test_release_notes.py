@@ -85,7 +85,14 @@ Older notes.
             self.assertIn(f"- os: {operating_system}", workflow)
         self.assertIn("releases/download/${GITHUB_REF_NAME}/install.sh", workflow)
         self.assertIn("releases/download/$env:GITHUB_REF_NAME/install.ps1", workflow)
-        self.assertIn('PANDORA_INSTALL_DIR: ${{ runner.temp }}/pandora-bin', workflow)
+        self.assertNotIn('PANDORA_INSTALL_DIR: ${{ runner.temp }}', workflow)
+        self.assertIn(
+            'export PANDORA_INSTALL_DIR="$RUNNER_TEMP/pandora-bin"', workflow
+        )
+        self.assertIn(
+            '$env:PANDORA_INSTALL_DIR = Join-Path $env:RUNNER_TEMP "pandora-bin"',
+            workflow,
+        )
         self.assertIn('PANDORA_VERSION: ${{ github.ref_name }}', workflow)
         self.assertIn('expected="pandora ${GITHUB_REF_NAME#v}"', workflow)
         self.assertIn(
