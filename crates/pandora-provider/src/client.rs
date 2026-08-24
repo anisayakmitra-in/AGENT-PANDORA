@@ -680,10 +680,11 @@ impl HttpProvider {
     }
 
     fn endpoint(&self) -> String {
-        format!(
-            "{}/chat/completions",
-            self.manifest.base_url().trim_end_matches('/')
-        )
+        let path = match self.manifest.protocol() {
+            ProviderProtocol::OpenAiCompatible => "chat/completions",
+            ProviderProtocol::AnthropicMessages => "messages",
+        };
+        format!("{}/{path}", self.manifest.base_url().trim_end_matches('/'))
     }
 }
 
@@ -699,21 +700,33 @@ impl Provider for HttpProvider {
                 "request provider does not match the client".to_owned(),
             ));
         }
-        let body = OpenAiRequest::from_request(&request);
-        let response = self
-            .client
-            .post(self.endpoint())
-            .timeout(request.timeout())
-            .bearer_auth(self.api_key.expose())
-            .json(&body)
-            .send()
-            .map_err(|_| ProviderError::Transport)?;
+        let response = match self.manifest.protocol() {
+            ProviderProtocol::OpenAiCompatible => self
+                .client
+                .post(self.endpoint())
+                .timeout(request.timeout())
+                .bearer_auth(self.api_key.expose())
+                .json(&OpenAiRequest::from_request(&request))
+                .send(),
+            ProviderProtocol::AnthropicMessages => self
+                .client
+                .post(self.endpoint())
+                .timeout(request.timeout())
+                .header("x-api-key", self.api_key.expose())
+                .header("anthropic-version", "2023-06-01")
+                .json(&AnthropicRequest::from_request(&request)?)
+                .send(),
+        }
+        .map_err(|_| ProviderError::Transport)?;
         let status = response.status().as_u16();
         let bytes = read_limited(response)?;
         if !(200..300).contains(&status) {
             return Err(ProviderError::HttpStatus { status });
         }
-        parse_response(&bytes)
+        match self.manifest.protocol() {
+            ProviderProtocol::OpenAiCompatible => parse_response(&bytes),
+            ProviderProtocol::AnthropicMessages => parse_anthropic_response(&bytes),
+        }
     }
 }
 
@@ -905,6 +918,225 @@ struct OpenAiFunctionCall {
 struct OpenAiUsage {
     prompt_tokens: u32,
     completion_tokens: u32,
+}
+
+#[derive(Serialize)]
+struct AnthropicRequest {
+    model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system: Option<String>,
+    messages: Vec<AnthropicMessage>,
+    tools: Vec<AnthropicTool>,
+    max_tokens: u32,
+}
+
+impl AnthropicRequest {
+    fn from_request(request: &ModelRequest) -> Result<Self, ProviderError> {
+        let system = request
+            .messages()
+            .iter()
+            .filter(|message| message.role() == MessageRole::System)
+            .map(ChatMessage::content)
+            .collect::<Vec<_>>();
+        let messages = request
+            .messages()
+            .iter()
+            .filter(|message| message.role() != MessageRole::System)
+            .map(AnthropicMessage::from_message)
+            .collect::<Result<Vec<_>, ProviderError>>()?;
+        if messages.is_empty() {
+            return Err(ProviderError::InvalidRequest(
+                "Anthropic requests require at least one conversation message".to_owned(),
+            ));
+        }
+        Ok(Self {
+            model: request.model_id().as_str().to_owned(),
+            system: (!system.is_empty()).then(|| system.join("\n\n")),
+            messages,
+            tools: request
+                .tools()
+                .iter()
+                .map(AnthropicTool::from_schema)
+                .collect(),
+            max_tokens: request.max_output_tokens(),
+        })
+    }
+}
+
+#[derive(Serialize)]
+struct AnthropicMessage {
+    role: AnthropicRole,
+    content: AnthropicContent,
+}
+
+impl AnthropicMessage {
+    fn from_message(message: &ChatMessage) -> Result<Self, ProviderError> {
+        match message.role() {
+            MessageRole::System => Err(ProviderError::InvalidRequest(
+                "system messages must use the Anthropic system field".to_owned(),
+            )),
+            MessageRole::User => Ok(Self {
+                role: AnthropicRole::User,
+                content: AnthropicContent::Text(message.content().to_owned()),
+            }),
+            MessageRole::Assistant => {
+                let calls = message.tool_calls()?;
+                if calls.is_empty() {
+                    return Ok(Self {
+                        role: AnthropicRole::Assistant,
+                        content: AnthropicContent::Text(message.content().to_owned()),
+                    });
+                }
+                let mut blocks = Vec::with_capacity(calls.len() + 1);
+                if !message.content().is_empty() {
+                    blocks.push(AnthropicContentBlock::Text {
+                        text: message.content().to_owned(),
+                    });
+                }
+                blocks.extend(
+                    calls
+                        .into_iter()
+                        .map(|call| AnthropicContentBlock::ToolUse {
+                            id: call.id().to_owned(),
+                            name: call.name().to_owned(),
+                            input: call.arguments().clone(),
+                        }),
+                );
+                Ok(Self {
+                    role: AnthropicRole::Assistant,
+                    content: AnthropicContent::Blocks(blocks),
+                })
+            }
+            MessageRole::Tool => {
+                let tool_use_id = message.tool_call_id().ok_or_else(|| {
+                    ProviderError::InvalidRequest(
+                        "Anthropic tool results require a tool call ID".to_owned(),
+                    )
+                })?;
+                Ok(Self {
+                    role: AnthropicRole::User,
+                    content: AnthropicContent::Blocks(vec![AnthropicContentBlock::ToolResult {
+                        tool_use_id: tool_use_id.to_owned(),
+                        content: message.content().to_owned(),
+                    }]),
+                })
+            }
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "lowercase")]
+enum AnthropicRole {
+    User,
+    Assistant,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum AnthropicContent {
+    Text(String),
+    Blocks(Vec<AnthropicContentBlock>),
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum AnthropicContentBlock {
+    Text {
+        text: String,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+        input: Value,
+    },
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+    },
+}
+
+#[derive(Serialize)]
+struct AnthropicTool {
+    name: String,
+    description: String,
+    input_schema: Value,
+}
+
+impl AnthropicTool {
+    fn from_schema(schema: &ToolSchema) -> Self {
+        Self {
+            name: schema.name().to_owned(),
+            description: schema.description.clone(),
+            input_schema: schema.input_schema().clone(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct AnthropicResponse {
+    content: Vec<AnthropicResponseBlock>,
+    usage: Option<AnthropicUsage>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum AnthropicResponseBlock {
+    Text {
+        text: String,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+        input: Value,
+    },
+}
+
+#[derive(Deserialize)]
+struct AnthropicUsage {
+    input_tokens: u32,
+    output_tokens: u32,
+}
+
+fn parse_anthropic_response(bytes: &[u8]) -> Result<ModelResponse, ProviderError> {
+    if bytes.len() > MAX_RESPONSE_BYTES as usize {
+        return Err(ProviderError::ResponseTooLarge);
+    }
+    let response: AnthropicResponse =
+        serde_json::from_slice(bytes).map_err(|_| ProviderError::InvalidResponse)?;
+    let mut text = String::new();
+    let mut seen_ids = BTreeSet::new();
+    let mut tool_calls = Vec::new();
+    for block in response.content {
+        match block {
+            AnthropicResponseBlock::Text { text: block } => {
+                if text.len().saturating_add(block.len()) > MAX_RESPONSE_TEXT_BYTES {
+                    return Err(ProviderError::ResponseTooLarge);
+                }
+                text.push_str(&block);
+            }
+            AnthropicResponseBlock::ToolUse { id, name, input } => {
+                if validate_tool_call_id(&id).is_err() {
+                    return Err(ProviderError::InvalidResponse);
+                }
+                if !seen_ids.insert(id.clone()) {
+                    return Err(ProviderError::DuplicateToolCallId { call_id: id });
+                }
+                let call = ToolCall::new(id, name, input).map_err(|error| match error {
+                    ProviderError::InvalidToolArguments { call_id } => {
+                        ProviderError::InvalidToolArguments { call_id }
+                    }
+                    _ => ProviderError::InvalidResponse,
+                })?;
+                tool_calls.push(call);
+            }
+        }
+    }
+    let usage = response
+        .usage
+        .map(|usage| TokenUsage::new(usage.input_tokens, usage.output_tokens))
+        .unwrap_or_default();
+    Ok(ModelResponse::new(text, tool_calls, usage))
 }
 
 fn parse_response(bytes: &[u8]) -> Result<ModelResponse, ProviderError> {
@@ -1127,6 +1359,99 @@ mod tests {
     }
 
     #[test]
+    fn anthropic_request_translates_system_tools_and_tool_results() {
+        let manifest = ProviderManifest::new_with_protocol(
+            "anthropic",
+            "Anthropic",
+            ProviderProtocol::AnthropicMessages,
+            "https://api.anthropic.com/v1",
+            "claude-sonnet-4-20250514",
+            "PANDORA_ANTHROPIC_API_KEY",
+        )
+        .unwrap();
+        let call =
+            ToolCall::new("toolu-1", "workspace.read", json!({"path": "README.md"})).unwrap();
+        let request = ModelRequest::new(
+            manifest.id().clone(),
+            manifest.default_model().clone(),
+            vec![
+                ChatMessage::system("Follow policy.").unwrap(),
+                ChatMessage::user("Read README.").unwrap(),
+                ChatMessage::assistant_tool_calls(&[call]).unwrap(),
+                ChatMessage::tool_result("toolu-1", "fixture").unwrap(),
+            ],
+        )
+        .unwrap()
+        .with_tools(vec![
+            ToolSchema::new(
+                "workspace.read",
+                "Read a workspace file",
+                json!({
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"]
+                }),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+
+        let body = serde_json::to_value(AnthropicRequest::from_request(&request).unwrap()).unwrap();
+
+        assert_eq!(body["system"], "Follow policy.");
+        assert_eq!(
+            body["messages"][0],
+            json!({"role":"user","content":"Read README."})
+        );
+        assert_eq!(
+            body["messages"][1],
+            json!({
+                "role": "assistant",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "toolu-1",
+                    "name": "workspace.read",
+                    "input": {"path": "README.md"}
+                }]
+            })
+        );
+        assert_eq!(
+            body["messages"][2],
+            json!({
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "toolu-1",
+                    "content": "fixture"
+                }]
+            })
+        );
+        assert_eq!(body["tools"][0]["name"], "workspace.read");
+        assert_eq!(body["tools"][0]["input_schema"]["required"][0], "path");
+    }
+
+    #[test]
+    fn anthropic_response_normalizes_text_tools_and_usage() {
+        let response = parse_anthropic_response(
+            br#"{
+                "content": [
+                    {"type":"text","text":"Checking."},
+                    {"type":"tool_use","id":"toolu-1","name":"workspace.read","input":{"path":"README.md"}}
+                ],
+                "usage":{"input_tokens":7,"output_tokens":3}
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(response.text(), "Checking.");
+        assert_eq!(response.tool_calls().len(), 1);
+        assert_eq!(response.tool_calls()[0].id(), "toolu-1");
+        assert_eq!(response.tool_calls()[0].name(), "workspace.read");
+        assert_eq!(response.usage().prompt_tokens(), 7);
+        assert_eq!(response.usage().completion_tokens(), 3);
+    }
+
+    #[test]
     fn empty_tool_results_use_a_bounded_placeholder() {
         let message = ChatMessage::tool_result("call-1", "").unwrap();
 
@@ -1187,6 +1512,73 @@ mod tests {
         )
         .unwrap();
         let provider = HttpProvider::new(provider_manifest, "sk-live-secret").unwrap();
+
+        let response = provider.complete(request).unwrap();
+
+        server.join().unwrap();
+        assert_eq!(response.text(), "ready");
+        assert_eq!(response.usage().total_tokens(), 3);
+    }
+
+    #[test]
+    fn anthropic_provider_uses_native_endpoint_headers_and_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let header_end = loop {
+                let mut chunk = [0_u8; 1_024];
+                let bytes_read = stream.read(&mut chunk).unwrap();
+                request.extend_from_slice(&chunk[..bytes_read]);
+                if let Some(position) = request.windows(4).position(|window| window == b"\r\n\r\n")
+                {
+                    break position + 4;
+                }
+            };
+            let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+            let content_length = headers
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .and_then(|value| value.trim().parse::<usize>().ok())
+                .unwrap();
+            while request.len() < header_end + content_length {
+                let mut chunk = [0_u8; 1_024];
+                let bytes_read = stream.read(&mut chunk).unwrap();
+                request.extend_from_slice(&chunk[..bytes_read]);
+            }
+            let request_line = headers.lines().next().unwrap();
+            let body = String::from_utf8_lossy(&request[header_end..header_end + content_length]);
+            assert!(request_line.contains("post /v1/messages http/1.1"));
+            assert!(headers.contains("x-api-key: anthropic-secret"));
+            assert!(headers.contains("anthropic-version: 2023-06-01"));
+            assert!(!headers.contains("authorization: bearer"));
+            assert!(body.contains("\"model\":\"claude-sonnet-4-20250514\""));
+            let response = br#"{"content":[{"type":"text","text":"ready"}],"usage":{"input_tokens":2,"output_tokens":1}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                response.len()
+            )
+            .unwrap();
+            stream.write_all(response).unwrap();
+        });
+        let manifest = ProviderManifest::new_with_protocol(
+            "anthropic",
+            "Anthropic",
+            ProviderProtocol::AnthropicMessages,
+            format!("http://{address}/v1"),
+            "claude-sonnet-4-20250514",
+            "PANDORA_ANTHROPIC_API_KEY",
+        )
+        .unwrap();
+        let request = ModelRequest::new(
+            manifest.id().clone(),
+            manifest.default_model().clone(),
+            vec![ChatMessage::user("hello").unwrap()],
+        )
+        .unwrap();
+        let provider = HttpProvider::new(manifest, "anthropic-secret").unwrap();
 
         let response = provider.complete(request).unwrap();
 

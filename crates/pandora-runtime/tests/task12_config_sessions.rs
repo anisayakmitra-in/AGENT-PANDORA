@@ -1,3 +1,4 @@
+use pandora_provider::ProviderProtocol;
 use pandora_runtime::config::{ConfigOverrides, ProviderPricing, RuntimeConfig};
 use pandora_runtime::sessions::{
     MAX_L1_EVIDENCE_CONTEXT_RECORDS, MAX_L1_EVIDENCE_PER_SCOPE, SessionStore,
@@ -123,6 +124,7 @@ fn named_provider_profiles_round_trip_and_select() {
         r#"{
             "providers": {
                 "design": {
+                    "protocol": "anthropic_messages",
                     "base_url": "https://design.example/v1",
                     "model": "vision-model",
                     "api_key_env": "PANDORA_DESIGN_API_KEY"
@@ -153,6 +155,10 @@ fn named_provider_profiles_round_trip_and_select() {
     assert_eq!(config.provider_url(), Some("https://design.example/v1"));
     assert_eq!(config.provider_model(), Some("vision-model"));
     assert_eq!(
+        config.provider_profile("design").unwrap().protocol(),
+        ProviderProtocol::AnthropicMessages
+    );
+    assert_eq!(
         config.provider_api_key_env(),
         Some("PANDORA_DESIGN_API_KEY")
     );
@@ -180,6 +186,10 @@ fn named_provider_profiles_round_trip_and_select() {
 
     assert_eq!(reloaded.active_provider(), Some("design"));
     assert_eq!(reloaded.provider_model(), Some("vision-model"));
+    assert_eq!(
+        reloaded.provider_profile("design").unwrap().protocol(),
+        ProviderProtocol::AnthropicMessages
+    );
     assert_eq!(
         reloaded
             .provider_profile("coding")

@@ -2,6 +2,7 @@ use super::{load_config, parse_options, timestamp, write_config};
 use crate::output::{CliError, CommandResult, success};
 use pandora_provider::{
     ChatMessage, FailoverProvider, HttpProvider, ModelRequest, Provider, ProviderManifest,
+    ProviderProtocol,
 };
 use pandora_runtime::ExecutionController;
 use pandora_runtime::config::{
@@ -51,9 +52,18 @@ pub(crate) fn configured_provider_for(
         .map(ProviderProfile::api_key_env)
         .or_else(|| config.provider_api_key_env())
         .unwrap_or(DEFAULT_PROVIDER_API_KEY_ENV);
-    let manifest =
-        ProviderManifest::new(provider_name, provider_name, base_url, model, api_key_env)
-            .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
+    let protocol = selected_profile
+        .map(ProviderProfile::protocol)
+        .unwrap_or_default();
+    let manifest = ProviderManifest::new_with_protocol(
+        provider_name,
+        provider_name,
+        protocol,
+        base_url,
+        model,
+        api_key_env,
+    )
+    .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
     let primary = HttpProvider::from_environment(manifest)
         .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
 
@@ -66,9 +76,10 @@ pub(crate) fn configured_provider_for(
     let fallback_profile = config
         .provider_profile(fallback_name)
         .ok_or_else(|| CliError::configuration("provider is not configured", json!({})))?;
-    let fallback_manifest = ProviderManifest::new(
+    let fallback_manifest = ProviderManifest::new_with_protocol(
         fallback_profile.name(),
         fallback_profile.name(),
+        fallback_profile.protocol(),
         fallback_profile.base_url(),
         fallback_profile.model(),
         fallback_profile.api_key_env(),
@@ -107,9 +118,10 @@ fn list(args: &[String]) -> Result<CommandResult, CliError> {
             let profile = config
                 .provider_profile(&name)
                 .expect("provider names must resolve to profiles");
-            let manifest = ProviderManifest::new(
+            let manifest = ProviderManifest::new_with_protocol(
                 profile.name(),
                 profile.name(),
+                profile.protocol(),
                 profile.base_url(),
                 profile.model(),
                 profile.api_key_env(),
@@ -161,6 +173,7 @@ fn set(args: &[String]) -> Result<CommandResult, CliError> {
             "data-dir",
             "workspace",
             "name",
+            "protocol",
             "provider-url",
             "model",
             "api-key-env",
@@ -188,6 +201,13 @@ fn set(args: &[String]) -> Result<CommandResult, CliError> {
                 .map(ProviderProfile::api_key_env)
         })
         .unwrap_or(DEFAULT_PROVIDER_API_KEY_ENV);
+    let protocol = parsed
+        .value("protocol")
+        .map(str::parse::<ProviderProtocol>)
+        .transpose()
+        .map_err(|error| CliError::usage(error.to_string()))?
+        .or_else(|| config.provider_profile(name).map(ProviderProfile::protocol))
+        .unwrap_or_default();
     let fallback_provider = parsed.value("fallback-provider").or_else(|| {
         config
             .provider_profile(name)
@@ -212,8 +232,9 @@ fn set(args: &[String]) -> Result<CommandResult, CliError> {
             ));
         }
     };
-    let mut profile = ProviderProfile::new(
+    let mut profile = ProviderProfile::new_with_protocol(
         name,
+        protocol,
         parsed
             .value("provider-url")
             .expect("provider URL was checked"),
@@ -238,6 +259,7 @@ fn set(args: &[String]) -> Result<CommandResult, CliError> {
         "provider set",
         json!({
             "provider": name,
+            "protocol": protocol,
             "base_url": config.provider_url(),
             "model": config.provider_model().unwrap_or("default"),
             "api_key_env": config.provider_api_key_env(),

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::str::FromStr;
 
 const MAX_IDENTIFIER_BYTES: usize = 128;
 const MAX_NAME_BYTES: usize = 256;
@@ -11,6 +12,7 @@ pub enum ManifestError {
     InvalidIdentifier(&'static str),
     FieldTooLong(&'static str),
     InvalidEnvironmentName,
+    InvalidProtocol,
 }
 
 impl fmt::Display for ManifestError {
@@ -22,6 +24,7 @@ impl fmt::Display for ManifestError {
             Self::InvalidEnvironmentName => {
                 formatter.write_str("invalid credential environment name")
             }
+            Self::InvalidProtocol => formatter.write_str("invalid provider protocol"),
         }
     }
 }
@@ -54,10 +57,39 @@ macro_rules! define_provider_id {
 define_provider_id!(ProviderId, "provider identifier");
 define_provider_id!(ModelId, "model identifier");
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderProtocol {
+    #[default]
     OpenAiCompatible,
+    AnthropicMessages,
+}
+
+impl ProviderProtocol {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OpenAiCompatible => "open_ai_compatible",
+            Self::AnthropicMessages => "anthropic_messages",
+        }
+    }
+}
+
+impl fmt::Display for ProviderProtocol {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ProviderProtocol {
+    type Err = ManifestError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "open_ai_compatible" => Ok(Self::OpenAiCompatible),
+            "anthropic_messages" => Ok(Self::AnthropicMessages),
+            _ => Err(ManifestError::InvalidProtocol),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -78,6 +110,24 @@ impl ProviderManifest {
         default_model: impl Into<String>,
         api_key_env: impl Into<String>,
     ) -> Result<Self, ManifestError> {
+        Self::new_with_protocol(
+            id,
+            name,
+            ProviderProtocol::OpenAiCompatible,
+            base_url,
+            default_model,
+            api_key_env,
+        )
+    }
+
+    pub fn new_with_protocol(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        protocol: ProviderProtocol,
+        base_url: impl Into<String>,
+        default_model: impl Into<String>,
+        api_key_env: impl Into<String>,
+    ) -> Result<Self, ManifestError> {
         let name = bounded_text("provider name", name.into(), MAX_NAME_BYTES)?;
         let base_url = bounded_text("provider URL", base_url.into(), MAX_URL_BYTES)?;
         let api_key_env = api_key_env.into();
@@ -87,7 +137,7 @@ impl ProviderManifest {
         Ok(Self {
             id: ProviderId::new(id)?,
             name,
-            protocol: ProviderProtocol::OpenAiCompatible,
+            protocol,
             base_url,
             default_model: ModelId::new(default_model)?,
             api_key_env,
@@ -188,6 +238,34 @@ mod tests {
                 "PANDORA_OPENAI_API_KEY",
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn manifest_supports_anthropic_messages_without_changing_the_default() {
+        let default = ProviderManifest::new(
+            "default",
+            "Default",
+            "https://provider.example/v1",
+            "model",
+            "PANDORA_PROVIDER_KEY",
+        )
+        .unwrap();
+        let anthropic = ProviderManifest::new_with_protocol(
+            "anthropic",
+            "Anthropic",
+            ProviderProtocol::AnthropicMessages,
+            "https://api.anthropic.com/v1",
+            "claude-sonnet-4-20250514",
+            "PANDORA_ANTHROPIC_API_KEY",
+        )
+        .unwrap();
+
+        assert_eq!(default.protocol(), ProviderProtocol::OpenAiCompatible);
+        assert_eq!(anthropic.protocol(), ProviderProtocol::AnthropicMessages);
+        assert_eq!(
+            serde_json::to_value(anthropic).unwrap()["protocol"],
+            "anthropic_messages"
         );
     }
 }

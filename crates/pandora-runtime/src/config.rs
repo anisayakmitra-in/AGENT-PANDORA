@@ -1,4 +1,5 @@
 use crate::mcp::{McpProtocolMode, McpStdioConfig};
+use pandora_provider::ProviderProtocol;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -103,6 +104,7 @@ impl ProviderPricing {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProviderProfile {
     name: String,
+    protocol: ProviderProtocol,
     base_url: String,
     model: String,
     api_key_env: String,
@@ -113,6 +115,22 @@ pub struct ProviderProfile {
 impl ProviderProfile {
     pub fn new(
         name: impl Into<String>,
+        base_url: impl Into<String>,
+        model: impl Into<String>,
+        api_key_env: impl Into<String>,
+    ) -> Result<Self, ConfigError> {
+        Self::new_with_protocol(
+            name,
+            ProviderProtocol::OpenAiCompatible,
+            base_url,
+            model,
+            api_key_env,
+        )
+    }
+
+    pub fn new_with_protocol(
+        name: impl Into<String>,
+        protocol: ProviderProtocol,
         base_url: impl Into<String>,
         model: impl Into<String>,
         api_key_env: impl Into<String>,
@@ -132,6 +150,7 @@ impl ProviderProfile {
         }
         Ok(Self {
             name,
+            protocol,
             base_url,
             model,
             api_key_env,
@@ -142,6 +161,10 @@ impl ProviderProfile {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn protocol(&self) -> ProviderProtocol {
+        self.protocol
     }
 
     pub fn base_url(&self) -> &str {
@@ -288,8 +311,9 @@ impl RuntimeConfig {
             .providers
             .into_iter()
             .map(|(name, file_profile)| {
-                let mut profile = ProviderProfile::new(
+                let mut profile = ProviderProfile::new_with_protocol(
                     name.clone(),
+                    file_profile.protocol,
                     file_profile.base_url,
                     file_profile.model,
                     file_profile.api_key_env,
@@ -401,6 +425,7 @@ impl RuntimeConfig {
                     (
                         name.clone(),
                         FileProviderProfile {
+                            protocol: profile.protocol,
                             base_url: profile.base_url.clone(),
                             model: profile.model.clone(),
                             api_key_env: profile.api_key_env.clone(),
@@ -556,6 +581,8 @@ struct FileConfig {
 
 #[derive(Debug, Deserialize, Serialize)]
 struct FileProviderProfile {
+    #[serde(default)]
+    protocol: ProviderProtocol,
     base_url: String,
     model: String,
     api_key_env: String,

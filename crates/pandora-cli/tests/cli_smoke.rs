@@ -2006,6 +2006,42 @@ fn provider_set_and_list_use_the_public_configuration_api() {
         "http://127.0.0.1:4317/v1"
     );
     assert_eq!(response["providers"][0]["default_model"], "fixture-model");
+    assert_eq!(response["providers"][0]["protocol"], "open_ai_compatible");
+}
+
+#[test]
+fn provider_protocol_is_configurable_and_persisted() {
+    let fixture = Fixture::new();
+    let output = fixture
+        .command(&[
+            "provider",
+            "set",
+            "--name",
+            "anthropic",
+            "--protocol",
+            "anthropic_messages",
+            "--provider-url",
+            "https://api.anthropic.com/v1",
+            "--model",
+            "claude-sonnet-4-20250514",
+            "--api-key-env",
+            "PANDORA_ANTHROPIC_API_KEY",
+            "--json",
+        ])
+        .output()
+        .expect("provider set should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["protocol"], "anthropic_messages");
+
+    let output = fixture
+        .command(&["provider", "list", "--json"])
+        .output()
+        .expect("provider list should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["providers"][0]["id"], "anthropic");
+    assert_eq!(response["providers"][0]["protocol"], "anthropic_messages");
 }
 
 #[test]

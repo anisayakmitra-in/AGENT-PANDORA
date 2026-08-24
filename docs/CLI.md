@@ -66,11 +66,13 @@ reference as well as the canonical provider request. It includes the model,
 messages, tools, token budget, timeout, and trace identifiers. Changing any of
 those values requires a new permit.
 Use `pandora provider set --provider-url <url> --model <model>` to configure the
-backward-compatible `openai-compatible` profile. Multiple provider profiles can
-keep separate endpoints, models, and credential variables:
+default `open_ai_compatible` protocol. Native Anthropic Messages profiles use
+`--protocol anthropic_messages`. Multiple provider profiles can keep separate
+protocols, endpoints, models, and credential variables:
 
 ```text
 pandora provider set --name coding --provider-url https://coding.example/v1 --model coding-model --api-key-env PANDORA_CODING_API_KEY
+pandora provider set --name anthropic --protocol anthropic_messages --provider-url https://api.anthropic.com/v1 --model claude-sonnet-4-20250514 --api-key-env PANDORA_ANTHROPIC_API_KEY
 pandora provider set --name design --provider-url https://design.example/v1 --model vision-model --api-key-env PANDORA_DESIGN_API_KEY
 pandora provider set --name coding --provider-url https://coding.example/v1 --model coding-model --fallback-provider design
 pandora provider set --name coding --provider-url https://coding.example/v1 --model coding-model --input-micros-per-million-tokens 2000000 --output-micros-per-million-tokens 4000000
@@ -80,8 +82,8 @@ pandora provider test --provider design --json
 ```
 
 Use `pandora run --provider coding ...` for a one-run selection. Profiles store
-only endpoint, model, environment-variable names, and optional declared token
-pricing; Pandora never stores API key values in configuration or output. Pricing
+only protocol, endpoint, model, environment-variable names, and optional declared
+token pricing; Pandora never stores API key values in configuration or output. Pricing
 uses integer micro-units per million input and output tokens. Both rates must be
 provided together. A profile can name one fallback profile.
 Pandora uses it only for credential, transport, timeout, rate-limit, or server
