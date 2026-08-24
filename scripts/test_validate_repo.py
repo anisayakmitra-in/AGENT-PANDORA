@@ -1,7 +1,11 @@
 import unittest
 from pathlib import Path
 
-from scripts.validate_repo import validate_content, validate_paths
+from scripts.validate_repo import (
+    validate_content,
+    validate_paths,
+    validate_release_changelog,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,6 +62,66 @@ class ValidateRepositoryTests(unittest.TestCase):
         content = workflow.read_text(encoding="utf-8")
         self.assertIn("languages: rust", content)
         self.assertIn("build-mode: none", content)
+
+    def test_release_train_tags_require_nonempty_changelog_sections(self) -> None:
+        changelog = """# Changelog
+
+## v2.0.0-alpha.2
+
+Shipped behavior.
+
+## v2.0.0-alpha.1
+
+First preview.
+"""
+
+        self.assertEqual(
+            validate_release_changelog(
+                changelog,
+                ["v2.0.0-alpha.1", "v2.0.0-alpha.2", "v2.0.0-anubis.1"],
+            ),
+            [],
+        )
+
+    def test_release_validation_rejects_missing_and_empty_sections(self) -> None:
+        changelog = """# Changelog
+
+## v2.0.0-beta.1
+
+## v2.0.0-alpha.6
+
+Previous release.
+"""
+
+        findings = validate_release_changelog(
+            changelog,
+            ["v2.0.0-beta.1", "v2.0.0-alpha.7", "v2.0.0-alpha.6"],
+        )
+
+        self.assertEqual(
+            findings,
+            [
+                "CHANGELOG.md: release section v2.0.0-alpha.7 is missing",
+                "CHANGELOG.md: release section v2.0.0-beta.1 is empty",
+            ],
+        )
+
+    def test_release_validation_rejects_duplicate_sections(self) -> None:
+        changelog = """# Changelog
+
+## v2.0.0-alpha.6
+
+First section.
+
+## v2.0.0-alpha.6
+
+Duplicate section.
+"""
+
+        self.assertEqual(
+            validate_release_changelog(changelog, ["v2.0.0-alpha.6"]),
+            ["CHANGELOG.md: release section v2.0.0-alpha.6 is duplicated"],
+        )
 
 
 if __name__ == "__main__":
