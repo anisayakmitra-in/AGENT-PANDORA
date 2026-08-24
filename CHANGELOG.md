@@ -2,6 +2,64 @@
 
 ## Unreleased
 
+## v2.0.0-beta.1
+
+This beta consolidates Pandora's governed CLI, local service, extensibility,
+isolation, research evolution, and release boundaries without changing the
+one-shot effect-authority model.
+
+### Shipped
+
+- Every effect request now carries an immutable `ExecutionProfile` that binds
+  runtime, platform, policy, workspace, containment, executor, provider,
+  Harness, Gene, Skill, and tool-catalog evidence without storing credentials
+  or unrestricted paths.
+- Executor containment is reported as bounded evidence. Partial and unavailable
+  boundaries remain explicit and cannot grant authority.
+- Declarative lifecycle hooks can veto work before Parliament evaluation. They
+  cannot mutate requests, resolve approvals, execute code, or issue permits.
+- An authenticated loopback RPC service exposes the existing scoped runtime
+  facade through a private local bearer token; it does not create a second
+  execution path.
+- Local MCP stdio supports the modern `2026-07-28` protocol and an isolated
+  legacy `2025-11-25` compatibility path. Spawn and tool calls use the same
+  Parliament, ReferenceMonitor, one-shot permit, receipt, and event boundary as
+  built-in tools.
+- MCP profiles are metadata-only until explicitly started. Catalog revisions,
+  schemas, canonical arguments, and exact remote tool names are digest-bound so
+  stale or mismatched calls fail before RPC.
+- Isolated subagents use scoped identities, durable lifecycle records, bounded
+  cooperative controls, managed Git worktrees, exact provider and Harness
+  bindings, and explicit cleanup permits. Unknown outcomes are never replayed
+  automatically.
+- Managed worktree creation and cleanup are effectful operations with canonical
+  destinations, no-replace behavior, dirty-worktree preservation, and separate
+  one-shot permits.
+- Coding runs can use a governed feedback loop that separates verified success,
+  retryable failure, policy failure, reflection, and approved adaptation without
+  persisting raw model output.
+- Canonical context provenance and redacted rollout evidence bind assembled
+  context, permits, receipts, policy digests, and replay order without retaining
+  hidden reasoning or credentials.
+- A research-only population strategy adds bounded candidate populations,
+  novelty-aware deterministic selection, train and holdout failure evidence,
+  mutation prechecks, atomic generation receipts, and bounded lineage queries.
+  It cannot activate candidates or bypass evaluation and governance.
+- Exact registry releases can be downloaded, verified, admitted, and locked by
+  canonical identity, strict SemVer, artifact hash, trust evidence, dependency
+  graph, and runtime compatibility. Admission does not grant execution authority.
+- The coding Domain Harness ships bounded analysis, debt, review, measurement,
+  guidance, read, search, patch, and verification Genes with namespaced slash
+  commands and operation-specific effect requests.
+- Execution evaluations are persisted atomically with session events, while
+  trajectory, outcome, policy, regression, adversarial, and human evaluation
+  remain separate evidence classes.
+- Release-critical JSON envelope `0.1` is regression-tested for version, setup,
+  doctor, update, rollback, uninstall, and bounded errors.
+- Local and published release tests cover clean setup, diagnostics, install,
+  upgrade, downgrade, checksum-verified update, rollback, uninstall, workspace
+  preservation, and cross-platform reliability baselines.
+
 - Jobs now persist the worker that claims them. Only that worker can finish a
   claimed job. `pandora job mark-interrupted <job-id> --reason "..." --yes`
   records an operator-reviewed, terminal unknown-outcome state without

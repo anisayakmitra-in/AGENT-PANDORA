@@ -12,11 +12,20 @@ history and reproducibility, but they are not the active release line or
 recommended install targets.
 
 The canonical prerelease tags for this line are `v2.0.0-alpha.1` through
-`v2.0.0-alpha.6`.
+`v2.0.0-alpha.6`, followed by `v2.0.0-beta.1`.
+
+## v2.0.0-beta.1
+
+This is the current CLI-only beta. It consolidates the governed local runtime,
+authenticated loopback service, durable jobs, isolated subagents, local MCP,
+signed package admission, bounded research evolution, release lifecycle tests,
+and stable JSON automation contract recorded in [CHANGELOG.md](CHANGELOG.md).
+Every effect remains bound to Parliament policy, a scoped execution profile,
+the ReferenceMonitor, and a one-shot permit.
 
 ## v2.0.0-alpha.6
 
-This is the current CLI-only prerelease. Enabled Skills now contribute bounded
+This was the final alpha prerelease. Enabled Skills contribute bounded
 reference guidance to agent context. Disabled and suspended Skills are omitted,
 oversized guidance fails closed, and Skill text cannot authorize effects,
 change policy, satisfy approvals, or execute scripts.

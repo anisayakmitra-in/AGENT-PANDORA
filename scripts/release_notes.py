@@ -25,7 +25,7 @@ def extract_release_notes(changelog: str, tag: str) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Extract one tagged Pandora release section")
-    parser.add_argument("tag", help="release tag, for example v2.0.0-alpha.6")
+    parser.add_argument("tag", help="release tag, for example v2.0.0-beta.1")
     parser.add_argument("--changelog", type=Path, default=Path("CHANGELOG.md"))
     arguments = parser.parse_args()
 
