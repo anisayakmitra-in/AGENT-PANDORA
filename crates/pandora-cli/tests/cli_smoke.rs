@@ -189,6 +189,12 @@ fn provider_calls_with_timeout(
         loop {
             match listener.accept() {
                 Ok((mut stream, _)) => {
+                    stream
+                        .set_nonblocking(false)
+                        .expect("provider connection should become blocking");
+                    stream
+                        .set_read_timeout(Some(timeout))
+                        .expect("provider connection should keep a bounded read");
                     serve_provider_response(&mut stream);
                     return 1;
                 }
@@ -241,6 +247,28 @@ fn serve_provider_response(stream: &mut TcpStream) {
     stream
         .write_all(response)
         .expect("provider response should be written");
+}
+
+#[test]
+fn provider_fixture_waits_for_request_bytes_after_accept() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("provider fixture should bind");
+    let address = listener
+        .local_addr()
+        .expect("provider fixture should expose its address");
+    let server = provider_calls_with_timeout(listener, Duration::from_secs(2));
+    let mut stream = TcpStream::connect(address).expect("provider client should connect");
+
+    thread::sleep(Duration::from_millis(50));
+    stream
+        .write_all(b"POST /v1 HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}")
+        .expect("provider request should be written");
+    let mut response = Vec::new();
+    stream
+        .read_to_end(&mut response)
+        .expect("provider response should be read");
+
+    assert_eq!(server.join().expect("provider fixture should finish"), 1);
+    assert!(response.starts_with(b"HTTP/1.1 200 OK"));
 }
 
 fn admit_domain_harness(fixture: &Fixture, artifact: &[u8], gene_ids: &[&str]) {
