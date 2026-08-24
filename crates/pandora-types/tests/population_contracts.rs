@@ -1,7 +1,8 @@
 use pandora_types::{
-    ArtifactId, FailureCorpus, FailureEvidence, FailureId, FailurePartition, LineageLimits,
-    MutationLimits, PopulationCandidate, PopulationContractError, PopulationId, PopulationPolicy,
-    PopulationScope, RequestDigest, SessionId, TenantId, Timestamp, Usage, WorkspaceId,
+    ArtifactId, CandidateDisposition, CandidateOutcome, FailureCorpus, FailureEvidence, FailureId,
+    FailurePartition, GenerationReceipt, GenerationStats, LineageLimits, MutationLimits,
+    PopulationCandidate, PopulationContractError, PopulationId, PopulationPolicy, PopulationScope,
+    RequestDigest, SessionId, TenantId, Timestamp, Usage, WorkspaceId,
 };
 
 fn failure(
@@ -149,4 +150,32 @@ fn population_policy_rejects_zero_or_excessive_limits() {
         ),
         Err(PopulationContractError::InvalidScore)
     ));
+}
+
+#[test]
+fn generation_receipts_reject_inconsistent_statistics() {
+    let outcome = CandidateOutcome::new(
+        ArtifactId::new("candidate-b").unwrap(),
+        ArtifactId::new("candidate-a").unwrap(),
+        CandidateDisposition::Accepted,
+        RequestDigest::new("precheck-digest").unwrap(),
+        Some(RequestDigest::new("evaluation-digest").unwrap()),
+        Some(90),
+        Usage::new(100, 1, 2, 300),
+    )
+    .unwrap();
+
+    assert_eq!(
+        GenerationReceipt::new(
+            PopulationId::new("population-1").unwrap(),
+            1,
+            RequestDigest::new("plan-digest").unwrap(),
+            RequestDigest::new("starting-digest").unwrap(),
+            RequestDigest::new("resulting-digest").unwrap(),
+            vec![outcome],
+            GenerationStats::new(0, 0, 0, 0, Usage::new(0, 0, 0, 0)),
+            Timestamp::from_unix_seconds(30),
+        ),
+        Err(PopulationContractError::InvalidGenerationStats)
+    );
 }

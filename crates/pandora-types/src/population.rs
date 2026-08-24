@@ -1,6 +1,6 @@
 use crate::{
-    ArtifactId, EvaluationKind, ExecutionId, FailureId, IdError, PopulationId, RequestDigest,
-    SessionId, TenantId, Timestamp, Usage, WorkspaceId,
+    ArtifactId, EvaluationKind, EvaluationReceipt, ExecutionId, FailureId, IdError, PopulationId,
+    RequestDigest, SessionId, TenantId, Timestamp, Usage, WorkspaceId,
 };
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -79,6 +79,11 @@ pub enum PopulationContractError {
     DuplicateParent(ArtifactId),
     DuplicateTrainingFailure(FailureId),
     ParentMatchesCandidate,
+    PrecheckRequestMismatch,
+    InvalidPrecheckDisposition,
+    InvalidOutcomeShape,
+    InvalidGenerationStats,
+    UsageOverflow,
 }
 
 impl fmt::Display for PopulationContractError {
@@ -103,6 +108,19 @@ impl fmt::Display for PopulationContractError {
             Self::ParentMatchesCandidate => {
                 formatter.write_str("candidate artifact cannot be its own parent")
             }
+            Self::PrecheckRequestMismatch => {
+                formatter.write_str("mutation precheck does not match the request")
+            }
+            Self::InvalidPrecheckDisposition => {
+                formatter.write_str("mutation precheck has the wrong disposition")
+            }
+            Self::InvalidOutcomeShape => {
+                formatter.write_str("candidate outcome has inconsistent evaluation evidence")
+            }
+            Self::InvalidGenerationStats => {
+                formatter.write_str("generation statistics do not match candidate outcomes")
+            }
+            Self::UsageOverflow => formatter.write_str("generation usage overflowed"),
         }
     }
 }
@@ -281,6 +299,341 @@ impl MutationPrecheckReceipt {
 
     pub const fn passed(&self) -> bool {
         matches!(self.disposition, PrecheckDisposition::Passed)
+    }
+
+    pub const fn can_authorize_permit(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PopulationEvaluation {
+    request: PopulationMutationRequest,
+    parents: Vec<ArtifactId>,
+    training_failures: Vec<FailureId>,
+    precheck: MutationPrecheckReceipt,
+    evaluation: Option<EvaluationReceipt>,
+    holdout_digest: Option<RequestDigest>,
+    holdout_count: Option<usize>,
+    usage: Usage,
+}
+
+impl PopulationEvaluation {
+    #[allow(clippy::too_many_arguments)]
+    pub fn evaluated(
+        request: PopulationMutationRequest,
+        mut parents: Vec<ArtifactId>,
+        mut training_failures: Vec<FailureId>,
+        precheck: MutationPrecheckReceipt,
+        evaluation: EvaluationReceipt,
+        holdout_digest: RequestDigest,
+        holdout_count: usize,
+        usage: Usage,
+    ) -> Result<Self, PopulationContractError> {
+        validate_precheck(&request, &precheck, true)?;
+        validate_candidate_links(&request, &mut parents, &mut training_failures)?;
+        Ok(Self {
+            request,
+            parents,
+            training_failures,
+            precheck,
+            evaluation: Some(evaluation),
+            holdout_digest: Some(holdout_digest),
+            holdout_count: Some(holdout_count),
+            usage,
+        })
+    }
+
+    pub fn precheck_rejected(
+        request: PopulationMutationRequest,
+        precheck: MutationPrecheckReceipt,
+        usage: Usage,
+    ) -> Result<Self, PopulationContractError> {
+        validate_precheck(&request, &precheck, false)?;
+        Ok(Self {
+            request,
+            parents: Vec::new(),
+            training_failures: Vec::new(),
+            precheck,
+            evaluation: None,
+            holdout_digest: None,
+            holdout_count: None,
+            usage,
+        })
+    }
+
+    pub fn request(&self) -> &PopulationMutationRequest {
+        &self.request
+    }
+
+    pub fn parents(&self) -> &[ArtifactId] {
+        &self.parents
+    }
+
+    pub fn training_failures(&self) -> &[FailureId] {
+        &self.training_failures
+    }
+
+    pub fn precheck(&self) -> &MutationPrecheckReceipt {
+        &self.precheck
+    }
+
+    pub fn evaluation(&self) -> Option<&EvaluationReceipt> {
+        self.evaluation.as_ref()
+    }
+
+    pub fn holdout_digest(&self) -> Option<&RequestDigest> {
+        self.holdout_digest.as_ref()
+    }
+
+    pub const fn holdout_count(&self) -> Option<usize> {
+        self.holdout_count
+    }
+
+    pub const fn usage(&self) -> Usage {
+        self.usage
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum CandidateDisposition {
+    Accepted,
+    RejectedPrecheck,
+    RejectedEvaluation,
+}
+
+impl CandidateDisposition {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Accepted => "accepted",
+            Self::RejectedPrecheck => "rejected_precheck",
+            Self::RejectedEvaluation => "rejected_evaluation",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CandidateOutcome {
+    candidate_artifact: ArtifactId,
+    parent_artifact: ArtifactId,
+    disposition: CandidateDisposition,
+    precheck_digest: RequestDigest,
+    evaluation_digest: Option<RequestDigest>,
+    score: Option<u8>,
+    usage: Usage,
+}
+
+impl CandidateOutcome {
+    pub fn new(
+        candidate_artifact: ArtifactId,
+        parent_artifact: ArtifactId,
+        disposition: CandidateDisposition,
+        precheck_digest: RequestDigest,
+        evaluation_digest: Option<RequestDigest>,
+        score: Option<u8>,
+        usage: Usage,
+    ) -> Result<Self, PopulationContractError> {
+        if score.is_some_and(|score| score > 100) {
+            return Err(PopulationContractError::InvalidScore);
+        }
+        let has_evaluation = evaluation_digest.is_some() && score.is_some();
+        let valid = match disposition {
+            CandidateDisposition::Accepted | CandidateDisposition::RejectedEvaluation => {
+                has_evaluation
+            }
+            CandidateDisposition::RejectedPrecheck => {
+                evaluation_digest.is_none() && score.is_none()
+            }
+        };
+        if !valid {
+            return Err(PopulationContractError::InvalidOutcomeShape);
+        }
+        Ok(Self {
+            candidate_artifact,
+            parent_artifact,
+            disposition,
+            precheck_digest,
+            evaluation_digest,
+            score,
+            usage,
+        })
+    }
+
+    pub fn candidate_artifact(&self) -> &ArtifactId {
+        &self.candidate_artifact
+    }
+
+    pub fn parent_artifact(&self) -> &ArtifactId {
+        &self.parent_artifact
+    }
+
+    pub const fn disposition(&self) -> CandidateDisposition {
+        self.disposition
+    }
+
+    pub fn precheck_digest(&self) -> &RequestDigest {
+        &self.precheck_digest
+    }
+
+    pub fn evaluation_digest(&self) -> Option<&RequestDigest> {
+        self.evaluation_digest.as_ref()
+    }
+
+    pub const fn score(&self) -> Option<u8> {
+        self.score
+    }
+
+    pub const fn usage(&self) -> Usage {
+        self.usage
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GenerationStats {
+    attempted: usize,
+    accepted: usize,
+    precheck_rejected: usize,
+    evaluation_rejected: usize,
+    usage: Usage,
+}
+
+impl GenerationStats {
+    pub const fn new(
+        attempted: usize,
+        accepted: usize,
+        precheck_rejected: usize,
+        evaluation_rejected: usize,
+        usage: Usage,
+    ) -> Self {
+        Self {
+            attempted,
+            accepted,
+            precheck_rejected,
+            evaluation_rejected,
+            usage,
+        }
+    }
+
+    pub const fn attempted(self) -> usize {
+        self.attempted
+    }
+
+    pub const fn accepted(self) -> usize {
+        self.accepted
+    }
+
+    pub const fn precheck_rejected(self) -> usize {
+        self.precheck_rejected
+    }
+
+    pub const fn evaluation_rejected(self) -> usize {
+        self.evaluation_rejected
+    }
+
+    pub const fn usage(self) -> Usage {
+        self.usage
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GenerationReceipt {
+    protocol_version: u16,
+    population_id: PopulationId,
+    generation: u32,
+    plan_digest: RequestDigest,
+    starting_population_digest: RequestDigest,
+    resulting_population_digest: RequestDigest,
+    outcomes: Vec<CandidateOutcome>,
+    stats: GenerationStats,
+    completed_at: Timestamp,
+    digest: RequestDigest,
+}
+
+impl GenerationReceipt {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        population_id: PopulationId,
+        generation: u32,
+        plan_digest: RequestDigest,
+        starting_population_digest: RequestDigest,
+        resulting_population_digest: RequestDigest,
+        mut outcomes: Vec<CandidateOutcome>,
+        stats: GenerationStats,
+        completed_at: Timestamp,
+    ) -> Result<Self, PopulationContractError> {
+        outcomes.sort_by(|left, right| left.candidate_artifact().cmp(right.candidate_artifact()));
+        for pair in outcomes.windows(2) {
+            if pair[0].candidate_artifact() == pair[1].candidate_artifact() {
+                return Err(PopulationContractError::DuplicateCandidate(
+                    pair[0].candidate_artifact().clone(),
+                ));
+            }
+        }
+        if stats != generation_stats(&outcomes)? {
+            return Err(PopulationContractError::InvalidGenerationStats);
+        }
+        let digest = digest_generation_receipt(
+            &population_id,
+            generation,
+            &plan_digest,
+            &starting_population_digest,
+            &resulting_population_digest,
+            &outcomes,
+            stats,
+            completed_at,
+        );
+        Ok(Self {
+            protocol_version: POPULATION_PROTOCOL_VERSION,
+            population_id,
+            generation,
+            plan_digest,
+            starting_population_digest,
+            resulting_population_digest,
+            outcomes,
+            stats,
+            completed_at,
+            digest,
+        })
+    }
+
+    pub const fn protocol_version(&self) -> u16 {
+        self.protocol_version
+    }
+
+    pub fn population_id(&self) -> &PopulationId {
+        &self.population_id
+    }
+
+    pub const fn generation(&self) -> u32 {
+        self.generation
+    }
+
+    pub fn plan_digest(&self) -> &RequestDigest {
+        &self.plan_digest
+    }
+
+    pub fn starting_population_digest(&self) -> &RequestDigest {
+        &self.starting_population_digest
+    }
+
+    pub fn resulting_population_digest(&self) -> &RequestDigest {
+        &self.resulting_population_digest
+    }
+
+    pub fn outcomes(&self) -> &[CandidateOutcome] {
+        &self.outcomes
+    }
+
+    pub const fn stats(&self) -> GenerationStats {
+        self.stats
+    }
+
+    pub const fn completed_at(&self) -> Timestamp {
+        self.completed_at
+    }
+
+    pub fn digest(&self) -> &RequestDigest {
+        &self.digest
     }
 
     pub const fn can_authorize_permit(&self) -> bool {
@@ -724,6 +1077,9 @@ impl PopulationCandidate {
         evaluation_digest: RequestDigest,
         mut training_failures: Vec<FailureId>,
     ) -> Result<Self, PopulationContractError> {
+        if score > 100 {
+            return Err(PopulationContractError::InvalidScore);
+        }
         if parents.len() > MAX_PARENTS {
             return Err(PopulationContractError::TooManyParents);
         }
@@ -832,6 +1188,50 @@ impl CandidatePopulation {
     }
 }
 
+fn validate_precheck(
+    request: &PopulationMutationRequest,
+    precheck: &MutationPrecheckReceipt,
+    expected_passed: bool,
+) -> Result<(), PopulationContractError> {
+    if request.request_digest() != precheck.request_digest() {
+        return Err(PopulationContractError::PrecheckRequestMismatch);
+    }
+    if precheck.passed() != expected_passed {
+        return Err(PopulationContractError::InvalidPrecheckDisposition);
+    }
+    Ok(())
+}
+
+fn validate_candidate_links(
+    request: &PopulationMutationRequest,
+    parents: &mut [ArtifactId],
+    training_failures: &mut [FailureId],
+) -> Result<(), PopulationContractError> {
+    if parents.len() > MAX_PARENTS {
+        return Err(PopulationContractError::TooManyParents);
+    }
+    parents.sort();
+    for parent in parents.iter() {
+        if parent == request.candidate_artifact() {
+            return Err(PopulationContractError::ParentMatchesCandidate);
+        }
+    }
+    for pair in parents.windows(2) {
+        if pair[0] == pair[1] {
+            return Err(PopulationContractError::DuplicateParent(pair[0].clone()));
+        }
+    }
+    training_failures.sort();
+    for pair in training_failures.windows(2) {
+        if pair[0] == pair[1] {
+            return Err(PopulationContractError::DuplicateTrainingFailure(
+                pair[0].clone(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn digest_failures(
     failures: &[&FailureEvidence],
 ) -> Result<RequestDigest, PopulationContractError> {
@@ -898,6 +1298,104 @@ fn digest_precheck(
     }
     hasher.update(evaluated_at.as_unix_seconds().to_be_bytes());
     sha256_request_digest(hasher)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn digest_generation_receipt(
+    population_id: &PopulationId,
+    generation: u32,
+    plan_digest: &RequestDigest,
+    starting_population_digest: &RequestDigest,
+    resulting_population_digest: &RequestDigest,
+    outcomes: &[CandidateOutcome],
+    stats: GenerationStats,
+    completed_at: Timestamp,
+) -> RequestDigest {
+    let mut hasher = Sha256::new();
+    hasher.update(POPULATION_PROTOCOL_VERSION.to_be_bytes());
+    update_text(&mut hasher, population_id.as_str());
+    hasher.update(generation.to_be_bytes());
+    update_text(&mut hasher, plan_digest.as_str());
+    update_text(&mut hasher, starting_population_digest.as_str());
+    update_text(&mut hasher, resulting_population_digest.as_str());
+    hasher.update((outcomes.len() as u64).to_be_bytes());
+    for outcome in outcomes {
+        update_text(&mut hasher, outcome.candidate_artifact().as_str());
+        update_text(&mut hasher, outcome.parent_artifact().as_str());
+        update_text(&mut hasher, outcome.disposition().as_str());
+        update_text(&mut hasher, outcome.precheck_digest().as_str());
+        hash_optional_digest(&mut hasher, outcome.evaluation_digest());
+        match outcome.score() {
+            Some(score) => hasher.update([1, score]),
+            None => hasher.update([0, 0]),
+        }
+        hash_usage(&mut hasher, outcome.usage());
+    }
+    hasher.update((stats.attempted() as u64).to_be_bytes());
+    hasher.update((stats.accepted() as u64).to_be_bytes());
+    hasher.update((stats.precheck_rejected() as u64).to_be_bytes());
+    hasher.update((stats.evaluation_rejected() as u64).to_be_bytes());
+    hash_usage(&mut hasher, stats.usage());
+    hasher.update(completed_at.as_unix_seconds().to_be_bytes());
+    sha256_request_digest(hasher)
+}
+
+fn generation_stats(
+    outcomes: &[CandidateOutcome],
+) -> Result<GenerationStats, PopulationContractError> {
+    let mut accepted = 0usize;
+    let mut precheck_rejected = 0usize;
+    let mut evaluation_rejected = 0usize;
+    let mut usage = Usage::new(0, 0, 0, 0);
+    for outcome in outcomes {
+        match outcome.disposition() {
+            CandidateDisposition::Accepted => accepted += 1,
+            CandidateDisposition::RejectedPrecheck => precheck_rejected += 1,
+            CandidateDisposition::RejectedEvaluation => evaluation_rejected += 1,
+        }
+        usage = Usage::new(
+            usage
+                .tokens()
+                .checked_add(outcome.usage().tokens())
+                .ok_or(PopulationContractError::UsageOverflow)?,
+            usage
+                .tools()
+                .checked_add(outcome.usage().tools())
+                .ok_or(PopulationContractError::UsageOverflow)?,
+            usage
+                .duration_seconds()
+                .checked_add(outcome.usage().duration_seconds())
+                .ok_or(PopulationContractError::UsageOverflow)?,
+            usage
+                .cost_micros()
+                .checked_add(outcome.usage().cost_micros())
+                .ok_or(PopulationContractError::UsageOverflow)?,
+        );
+    }
+    Ok(GenerationStats::new(
+        outcomes.len(),
+        accepted,
+        precheck_rejected,
+        evaluation_rejected,
+        usage,
+    ))
+}
+
+fn hash_optional_digest(hasher: &mut Sha256, digest: Option<&RequestDigest>) {
+    match digest {
+        Some(digest) => {
+            hasher.update([1]);
+            update_text(hasher, digest.as_str());
+        }
+        None => hasher.update([0]),
+    }
+}
+
+fn hash_usage(hasher: &mut Sha256, usage: Usage) {
+    hasher.update(usage.tokens().to_be_bytes());
+    hasher.update(usage.tools().to_be_bytes());
+    hasher.update(usage.duration_seconds().to_be_bytes());
+    hasher.update(usage.cost_micros().to_be_bytes());
 }
 
 fn update_text(hasher: &mut Sha256, value: &str) {

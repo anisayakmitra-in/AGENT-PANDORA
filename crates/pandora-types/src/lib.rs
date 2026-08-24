@@ -90,9 +90,10 @@ pub use package::{
     hash_artifact,
 };
 pub use population::{
-    CandidatePopulation, FailureCorpus, FailureEvidence, FailurePartition, LineageLimits,
-    MutationBatch, MutationLimits, MutationPrecheckReceipt, POPULATION_PROTOCOL_VERSION,
-    PopulationCandidate, PopulationContractError, PopulationMutationRequest, PopulationPolicy,
+    CandidateDisposition, CandidateOutcome, CandidatePopulation, FailureCorpus, FailureEvidence,
+    FailurePartition, GenerationReceipt, GenerationStats, LineageLimits, MutationBatch,
+    MutationLimits, MutationPrecheckReceipt, POPULATION_PROTOCOL_VERSION, PopulationCandidate,
+    PopulationContractError, PopulationEvaluation, PopulationMutationRequest, PopulationPolicy,
     PopulationScope, PrecheckDisposition, PrecheckFailure,
 };
 pub use rollout::{
