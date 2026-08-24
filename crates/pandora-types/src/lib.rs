@@ -91,10 +91,11 @@ pub use package::{
 };
 pub use population::{
     CandidateDisposition, CandidateOutcome, CandidatePopulation, FailureCorpus, FailureEvidence,
-    FailurePartition, GenerationReceipt, GenerationStats, LineageLimits, MutationBatch,
-    MutationLimits, MutationPrecheckReceipt, POPULATION_PROTOCOL_VERSION, PopulationCandidate,
-    PopulationContractError, PopulationEvaluation, PopulationMutationRequest, PopulationPolicy,
-    PopulationScope, PrecheckDisposition, PrecheckFailure,
+    FailurePartition, GenerationReceipt, GenerationStats, LineageAttempt, LineageDirection,
+    LineageLesson, LineageLimits, LineageMemory, LineageNode, LineageQuery, LineageView,
+    MutationBatch, MutationLimits, MutationPrecheckReceipt, POPULATION_PROTOCOL_VERSION,
+    PopulationCandidate, PopulationContractError, PopulationEvaluation, PopulationMutationRequest,
+    PopulationPolicy, PopulationScope, PrecheckDisposition, PrecheckFailure,
 };
 pub use rollout::{
     MAX_ROLLOUT_RECORDS, ROLLOUT_PROJECTION_VERSION, Rollout, RolloutContractError, RolloutDigest,

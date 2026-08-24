@@ -1,13 +1,16 @@
 use super::StrategyProfile;
+use crate::{MemoryEngine, MemoryError};
 use pandora_types::{
-    ArtifactId, CandidateDisposition, CandidateOutcome, CandidatePopulation, EvaluationKind,
-    EvaluationReceipt, EvaluationStatus, FailureCorpus, GenerationReceipt, GenerationStats,
-    MutationBatch, MutationPrecheckReceipt, POPULATION_PROTOCOL_VERSION, PopulationCandidate,
+    ArtifactId, CandidateDisposition, CandidateOutcome, CandidatePopulation, ContextClassification,
+    EvaluationKind, EvaluationReceipt, EvaluationStatus, FailureCorpus, GenerationReceipt,
+    GenerationStats, LineageAttempt, LineageDirection, LineageLesson, LineageNode, LineageQuery,
+    LineageView, MemoryId, MemoryKind, MemoryRecord, MemoryScope, MemoryTier, MutationBatch,
+    MutationPrecheckReceipt, POPULATION_PROTOCOL_VERSION, PopulationCandidate,
     PopulationContractError, PopulationEvaluation, PopulationId, PopulationMutationRequest,
-    PopulationPolicy, PrecheckFailure, RequestDigest, Timestamp, Usage,
+    PopulationPolicy, PopulationScope, PrecheckFailure, RequestDigest, Timestamp, Usage,
 };
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::sync::Mutex;
 
@@ -29,7 +32,14 @@ pub enum PopulationStrategyError {
     InvalidOutcome(ArtifactId, &'static str),
     UsageOverflow,
     UsageLimitExceeded(&'static str),
+    LineageScopeMismatch,
+    LineageLimitExceeded(&'static str),
+    LineageCandidateNotFound(ArtifactId),
+    LineageReceiptNotCommitted,
+    LineageAttemptCountMismatch,
+    LineageEvidenceMismatch(ArtifactId),
     StateUnavailable,
+    Memory(MemoryError),
     Contract(PopulationContractError),
 }
 
@@ -80,7 +90,30 @@ impl fmt::Display for PopulationStrategyError {
             Self::UsageLimitExceeded(limit) => {
                 write!(formatter, "generation exceeds the {limit} limit")
             }
+            Self::LineageScopeMismatch => {
+                formatter.write_str("lineage memory scope does not match the population")
+            }
+            Self::LineageLimitExceeded(limit) => {
+                write!(formatter, "lineage query exceeds the {limit} policy limit")
+            }
+            Self::LineageCandidateNotFound(artifact_id) => write!(
+                formatter,
+                "lineage candidate {} is not registered",
+                artifact_id.as_str()
+            ),
+            Self::LineageReceiptNotCommitted => {
+                formatter.write_str("lineage receipt is not a committed generation")
+            }
+            Self::LineageAttemptCountMismatch => {
+                formatter.write_str("lineage attempts do not match generation outcomes")
+            }
+            Self::LineageEvidenceMismatch(artifact_id) => write!(
+                formatter,
+                "lineage evidence for {} does not match the committed generation",
+                artifact_id.as_str()
+            ),
             Self::StateUnavailable => formatter.write_str("population state is unavailable"),
+            Self::Memory(error) => write!(formatter, "lineage memory failed: {error:?}"),
             Self::Contract(error) => error.fmt(formatter),
         }
     }
@@ -94,11 +127,44 @@ impl From<PopulationContractError> for PopulationStrategyError {
     }
 }
 
+impl From<MemoryError> for PopulationStrategyError {
+    fn from(error: MemoryError) -> Self {
+        Self::Memory(error)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PopulationState {
+    population: CandidatePopulation,
+    graph: BTreeMap<ArtifactId, Vec<ArtifactId>>,
+    receipts: BTreeSet<RequestDigest>,
+}
+
+impl PopulationState {
+    fn new(population: CandidatePopulation) -> Self {
+        let mut graph = BTreeMap::new();
+        for candidate in population.candidates() {
+            graph.insert(
+                candidate.artifact_id().clone(),
+                candidate.parents().to_vec(),
+            );
+            for parent in candidate.parents() {
+                graph.entry(parent.clone()).or_default();
+            }
+        }
+        Self {
+            population,
+            graph,
+            receipts: BTreeSet::new(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct PopulationStrategy {
     profile: StrategyProfile,
     policy: PopulationPolicy,
-    populations: Mutex<BTreeMap<PopulationId, CandidatePopulation>>,
+    populations: Mutex<BTreeMap<PopulationId, PopulationState>>,
 }
 
 impl PopulationStrategy {
@@ -133,7 +199,7 @@ impl PopulationStrategy {
                 population_id,
             ));
         }
-        populations.insert(population_id, population);
+        populations.insert(population_id, PopulationState::new(population));
         Ok(())
     }
 
@@ -145,7 +211,7 @@ impl PopulationStrategy {
             .lock()
             .map_err(|_| PopulationStrategyError::StateUnavailable)?
             .get(population_id)
-            .cloned()
+            .map(|state| state.population.clone())
             .ok_or_else(|| PopulationStrategyError::PopulationNotRegistered(population_id.clone()))
     }
 
@@ -309,12 +375,262 @@ impl PopulationStrategy {
             .populations
             .lock()
             .map_err(|_| PopulationStrategyError::StateUnavailable)?;
-        let current = populations.get(plan.population_id()).ok_or_else(|| {
+        let state = populations.get_mut(plan.population_id()).ok_or_else(|| {
             PopulationStrategyError::PopulationNotRegistered(plan.population_id().clone())
         })?;
-        self.validate_plan_state(current, plan)?;
-        populations.insert(plan.population_id().clone(), resulting);
+        self.validate_plan_state(&state.population, plan)?;
+        for outcome in receipt.outcomes() {
+            if state.graph.contains_key(outcome.candidate_artifact()) {
+                return Err(PopulationStrategyError::InvalidOutcome(
+                    outcome.candidate_artifact().clone(),
+                    "reuses a historical artifact identity",
+                ));
+            }
+        }
+        for candidate in resulting.candidates() {
+            state.graph.insert(
+                candidate.artifact_id().clone(),
+                candidate.parents().to_vec(),
+            );
+            for parent in candidate.parents() {
+                state.graph.entry(parent.clone()).or_default();
+            }
+        }
+        for outcome in receipt.outcomes() {
+            state
+                .graph
+                .entry(outcome.candidate_artifact().clone())
+                .or_insert_with(|| vec![outcome.parent_artifact().clone()]);
+            state
+                .graph
+                .entry(outcome.parent_artifact().clone())
+                .or_default();
+        }
+        state.receipts.insert(receipt.digest().clone());
+        state.population = resulting;
         Ok(receipt)
+    }
+
+    pub fn record_lineage(
+        &self,
+        memory: &MemoryEngine,
+        scope: MemoryScope,
+        receipt: &GenerationReceipt,
+        mut attempts: Vec<LineageAttempt>,
+    ) -> Result<Vec<MemoryRecord>, PopulationStrategyError> {
+        if self.profile == StrategyProfile::Production {
+            return Err(PopulationStrategyError::DisabledInProduction);
+        }
+        attempts.sort_by(|left, right| left.artifact_id().cmp(right.artifact_id()));
+        for pair in attempts.windows(2) {
+            if pair[0].artifact_id() == pair[1].artifact_id() {
+                return Err(PopulationContractError::DuplicateLineageAttempt(
+                    pair[0].artifact_id().clone(),
+                )
+                .into());
+            }
+        }
+
+        let population_scope = {
+            let populations = self
+                .populations
+                .lock()
+                .map_err(|_| PopulationStrategyError::StateUnavailable)?;
+            let state = populations.get(receipt.population_id()).ok_or_else(|| {
+                PopulationStrategyError::PopulationNotRegistered(receipt.population_id().clone())
+            })?;
+            validate_lineage_scope(state.population.scope(), &scope)?;
+            if !state.receipts.contains(receipt.digest()) {
+                return Err(PopulationStrategyError::LineageReceiptNotCommitted);
+            }
+            if attempts.len() != receipt.outcomes().len() {
+                return Err(PopulationStrategyError::LineageAttemptCountMismatch);
+            }
+            for outcome in receipt.outcomes() {
+                let Some(attempt) = attempts
+                    .iter()
+                    .find(|attempt| attempt.artifact_id() == outcome.candidate_artifact())
+                else {
+                    return Err(PopulationStrategyError::LineageAttemptCountMismatch);
+                };
+                let parents = state.graph.get(attempt.artifact_id()).ok_or_else(|| {
+                    PopulationStrategyError::LineageEvidenceMismatch(attempt.artifact_id().clone())
+                })?;
+                if !parents.contains(outcome.parent_artifact()) {
+                    return Err(PopulationStrategyError::LineageEvidenceMismatch(
+                        attempt.artifact_id().clone(),
+                    ));
+                }
+            }
+            state.population.scope().clone()
+        };
+
+        let existing = memory
+            .recall(&scope, MemoryTier::L1, receipt.completed_at())
+            .into_iter()
+            .map(|record| (record.id().clone(), record))
+            .collect::<BTreeMap<_, _>>();
+        let outcomes = receipt
+            .outcomes()
+            .iter()
+            .map(|outcome| (outcome.candidate_artifact(), outcome))
+            .collect::<BTreeMap<_, _>>();
+        let mut records = Vec::with_capacity(attempts.len());
+        for attempt in attempts {
+            let outcome = outcomes
+                .get(attempt.artifact_id())
+                .expect("validated lineage attempt has a generation outcome");
+            let provenance = lineage_provenance(&population_scope, attempt.artifact_id());
+            let memory_id = lineage_memory_id(receipt.digest(), attempt.artifact_id());
+            let score = outcome
+                .score()
+                .map_or_else(|| "none".to_owned(), |score| score.to_string());
+            let summary = format!(
+                "attempted: {}; outcome: {}; score: {score}",
+                attempt.redacted_change(),
+                outcome.disposition().as_str(),
+            );
+            if let Some(record) = existing.get(&memory_id) {
+                if record.kind() != MemoryKind::Lineage
+                    || record.provenance() != provenance.as_str()
+                    || record.summary() != summary
+                {
+                    return Err(PopulationStrategyError::LineageEvidenceMismatch(
+                        attempt.artifact_id().clone(),
+                    ));
+                }
+                records.push(record.clone());
+                continue;
+            }
+            records.push(memory.distill_l1(
+                scope.clone(),
+                memory_id.as_str(),
+                MemoryKind::Lineage,
+                summary,
+                ContextClassification::Internal,
+                receipt.completed_at(),
+                provenance.as_str(),
+            )?);
+        }
+        Ok(records)
+    }
+
+    pub fn lineage_view(
+        &self,
+        memory: &MemoryEngine,
+        scope: &MemoryScope,
+        query: &LineageQuery,
+        now: Timestamp,
+    ) -> Result<LineageView, PopulationStrategyError> {
+        if self.profile == StrategyProfile::Production {
+            return Err(PopulationStrategyError::DisabledInProduction);
+        }
+        self.validate_lineage_limits(query)?;
+        let (population_scope, graph) = {
+            let populations = self
+                .populations
+                .lock()
+                .map_err(|_| PopulationStrategyError::StateUnavailable)?;
+            let state = populations.get(query.population_id()).ok_or_else(|| {
+                PopulationStrategyError::PopulationNotRegistered(query.population_id().clone())
+            })?;
+            validate_lineage_scope(state.population.scope(), scope)?;
+            if !state.graph.contains_key(query.artifact_id()) {
+                return Err(PopulationStrategyError::LineageCandidateNotFound(
+                    query.artifact_id().clone(),
+                ));
+            }
+            (state.population.scope().clone(), state.graph.clone())
+        };
+
+        let nodes = lineage_nodes(&graph, query);
+        let eligible = nodes
+            .iter()
+            .map(|node| {
+                let provenance = lineage_provenance(&population_scope, node.artifact_id());
+                (
+                    provenance.as_str().to_owned(),
+                    (provenance, node.artifact_id().clone(), node.distance()),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut records = BTreeMap::new();
+        for tier in [MemoryTier::L1, MemoryTier::L2] {
+            if query.memory().includes(tier) {
+                for record in memory.recall(scope, tier, now) {
+                    records.insert(record.id().clone(), record);
+                }
+            }
+        }
+        let mut lessons = records
+            .into_values()
+            .filter(|record| matches!(record.kind(), MemoryKind::Lineage | MemoryKind::Lesson))
+            .filter_map(|record| {
+                let (provenance, artifact_id, distance) =
+                    eligible.get(record.provenance())?.clone();
+                Some(LineageLesson::new(
+                    record.id().clone(),
+                    artifact_id,
+                    distance,
+                    record.tier(),
+                    record.kind(),
+                    record.summary(),
+                    record.created_at(),
+                    provenance,
+                ))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        lessons.sort_by(|left, right| {
+            left.distance()
+                .cmp(&right.distance())
+                .then_with(|| left.created_at().cmp(&right.created_at()))
+                .then_with(|| left.memory_id().cmp(right.memory_id()))
+        });
+
+        let mut total_bytes = 0usize;
+        let mut bounded = Vec::new();
+        for lesson in lessons {
+            if bounded.len() == query.max_records() {
+                break;
+            }
+            let Some(next_bytes) = total_bytes.checked_add(lesson.summary().len()) else {
+                break;
+            };
+            if next_bytes > query.max_bytes() {
+                break;
+            }
+            total_bytes = next_bytes;
+            bounded.push(lesson);
+        }
+        Ok(LineageView::new(
+            population_scope.population_id().clone(),
+            query.artifact_id().clone(),
+            query.direction(),
+            nodes,
+            bounded,
+            total_bytes,
+            now,
+        ))
+    }
+
+    fn validate_lineage_limits(&self, query: &LineageQuery) -> Result<(), PopulationStrategyError> {
+        let limits = self.policy.lineage();
+        if query.max_depth() > limits.max_depth() {
+            return Err(PopulationStrategyError::LineageLimitExceeded(
+                "lineage depth",
+            ));
+        }
+        if query.max_records() > limits.max_records() {
+            return Err(PopulationStrategyError::LineageLimitExceeded(
+                "lineage records",
+            ));
+        }
+        if query.max_bytes() > limits.max_bytes() {
+            return Err(PopulationStrategyError::LineageLimitExceeded(
+                "lineage bytes",
+            ));
+        }
+        Ok(())
     }
 
     fn prepare_generation(
@@ -770,6 +1086,102 @@ impl PopulationPlan {
     pub fn plan_digest(&self) -> &RequestDigest {
         &self.plan_digest
     }
+}
+
+fn validate_lineage_scope(
+    population: &PopulationScope,
+    memory: &MemoryScope,
+) -> Result<(), PopulationStrategyError> {
+    if population.tenant_id() != memory.tenant_id()
+        || population.workspace_id() != memory.workspace_id()
+        || population.session_id() != memory.session_id()
+    {
+        return Err(PopulationStrategyError::LineageScopeMismatch);
+    }
+    Ok(())
+}
+
+fn lineage_nodes(
+    graph: &BTreeMap<ArtifactId, Vec<ArtifactId>>,
+    query: &LineageQuery,
+) -> Vec<LineageNode> {
+    let mut children = BTreeMap::<ArtifactId, BTreeSet<ArtifactId>>::new();
+    if query.direction() == LineageDirection::Neighborhood {
+        for (child, parents) in graph {
+            for parent in parents {
+                children
+                    .entry(parent.clone())
+                    .or_default()
+                    .insert(child.clone());
+            }
+        }
+    }
+
+    let mut distances = BTreeMap::new();
+    distances.insert(query.artifact_id().clone(), 0u32);
+    let mut pending = VecDeque::from([(query.artifact_id().clone(), 0u32)]);
+    while let Some((artifact_id, distance)) = pending.pop_front() {
+        if distance >= query.max_depth() {
+            continue;
+        }
+        let mut adjacent = graph
+            .get(&artifact_id)
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        if query.direction() == LineageDirection::Neighborhood
+            && let Some(candidate_children) = children.get(&artifact_id)
+        {
+            adjacent.extend(candidate_children.iter().cloned());
+        }
+        for candidate in adjacent {
+            if distances.contains_key(&candidate) {
+                continue;
+            }
+            let next_distance = distance + 1;
+            distances.insert(candidate.clone(), next_distance);
+            pending.push_back((candidate, next_distance));
+        }
+    }
+
+    let mut nodes = distances
+        .into_iter()
+        .map(|(artifact_id, distance)| LineageNode::new(artifact_id, distance))
+        .collect::<Vec<_>>();
+    nodes.sort_by(|left, right| {
+        left.distance()
+            .cmp(&right.distance())
+            .then_with(|| left.artifact_id().cmp(right.artifact_id()))
+    });
+    nodes.truncate(query.max_records());
+    nodes
+}
+
+fn lineage_provenance(scope: &PopulationScope, artifact_id: &ArtifactId) -> RequestDigest {
+    let mut hasher = Sha256::new();
+    hasher.update(POPULATION_PROTOCOL_VERSION.to_be_bytes());
+    hash_text(&mut hasher, "lineage");
+    hash_text(&mut hasher, scope.population_id().as_str());
+    hash_text(&mut hasher, scope.tenant_id().as_str());
+    hash_text(&mut hasher, scope.workspace_id().as_str());
+    hash_text(&mut hasher, scope.session_id().as_str());
+    hash_text(&mut hasher, artifact_id.as_str());
+    sha256_digest(hasher)
+}
+
+fn lineage_memory_id(receipt_digest: &RequestDigest, artifact_id: &ArtifactId) -> MemoryId {
+    let mut hasher = Sha256::new();
+    hasher.update(POPULATION_PROTOCOL_VERSION.to_be_bytes());
+    hash_text(&mut hasher, "lineage-memory");
+    hash_text(&mut hasher, receipt_digest.as_str());
+    hash_text(&mut hasher, artifact_id.as_str());
+    let digest = sha256_digest(hasher);
+    MemoryId::new(format!(
+        "lineage-{}",
+        digest.as_str().trim_start_matches("sha256:")
+    ))
+    .expect("SHA-256 lineage memory ID is valid")
 }
 
 fn digest_population(population: &CandidatePopulation) -> RequestDigest {

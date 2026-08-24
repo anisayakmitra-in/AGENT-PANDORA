@@ -1,8 +1,9 @@
 use pandora_types::{
     ArtifactId, CandidateDisposition, CandidateOutcome, FailureCorpus, FailureEvidence, FailureId,
-    FailurePartition, GenerationReceipt, GenerationStats, LineageLimits, MutationLimits,
-    PopulationCandidate, PopulationContractError, PopulationId, PopulationPolicy, PopulationScope,
-    RequestDigest, SessionId, TenantId, Timestamp, Usage, WorkspaceId,
+    FailurePartition, GenerationReceipt, GenerationStats, LineageDirection, LineageLimits,
+    LineageMemory, LineageQuery, MutationLimits, PopulationCandidate, PopulationContractError,
+    PopulationId, PopulationPolicy, PopulationScope, RequestDigest, SessionId, TenantId, Timestamp,
+    Usage, WorkspaceId,
 };
 
 fn failure(
@@ -150,6 +151,46 @@ fn population_policy_rejects_zero_or_excessive_limits() {
         ),
         Err(PopulationContractError::InvalidScore)
     ));
+}
+
+#[test]
+fn lineage_queries_reject_zero_bounds() {
+    assert_eq!(
+        LineageQuery::new(
+            PopulationId::new("population-1").unwrap(),
+            ArtifactId::new("candidate-a").unwrap(),
+            LineageDirection::Ancestors,
+            LineageMemory::Both,
+            0,
+            8,
+            1024,
+        ),
+        Err(PopulationContractError::InvalidLimit("lineage depth"))
+    );
+    assert_eq!(
+        LineageQuery::new(
+            PopulationId::new("population-1").unwrap(),
+            ArtifactId::new("candidate-a").unwrap(),
+            LineageDirection::Neighborhood,
+            LineageMemory::L1,
+            2,
+            0,
+            1024,
+        ),
+        Err(PopulationContractError::InvalidLimit("lineage records"))
+    );
+    assert_eq!(
+        LineageQuery::new(
+            PopulationId::new("population-1").unwrap(),
+            ArtifactId::new("candidate-a").unwrap(),
+            LineageDirection::Neighborhood,
+            LineageMemory::L2,
+            2,
+            8,
+            0,
+        ),
+        Err(PopulationContractError::InvalidLimit("lineage bytes"))
+    );
 }
 
 #[test]

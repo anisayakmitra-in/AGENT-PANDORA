@@ -1,6 +1,7 @@
 use crate::{
-    ArtifactId, EvaluationKind, EvaluationReceipt, ExecutionId, FailureId, IdError, PopulationId,
-    RequestDigest, SessionId, TenantId, Timestamp, Usage, WorkspaceId,
+    ArtifactId, EvaluationKind, EvaluationReceipt, ExecutionId, FailureId, IdError, MemoryId,
+    MemoryKind, MemoryTier, PopulationId, RequestDigest, SessionId, TenantId, Timestamp, Usage,
+    WorkspaceId,
 };
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -10,6 +11,7 @@ pub const POPULATION_PROTOCOL_VERSION: u16 = 1;
 const MAX_FAILURES: usize = 256;
 const MAX_CATEGORY_BYTES: usize = 256;
 const MAX_SUMMARY_BYTES: usize = 4096;
+const MAX_LINEAGE_SUMMARY_BYTES: usize = 16_384;
 const MAX_PARENTS: usize = 16;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -78,6 +80,7 @@ pub enum PopulationContractError {
     DuplicateCandidate(ArtifactId),
     DuplicateParent(ArtifactId),
     DuplicateTrainingFailure(FailureId),
+    DuplicateLineageAttempt(ArtifactId),
     ParentMatchesCandidate,
     PrecheckRequestMismatch,
     InvalidPrecheckDisposition,
@@ -104,6 +107,9 @@ impl fmt::Display for PopulationContractError {
             Self::DuplicateParent(id) => write!(formatter, "parent {id} is duplicated"),
             Self::DuplicateTrainingFailure(id) => {
                 write!(formatter, "training failure {id} is duplicated")
+            }
+            Self::DuplicateLineageAttempt(id) => {
+                write!(formatter, "lineage attempt {id} is duplicated")
             }
             Self::ParentMatchesCandidate => {
                 formatter.write_str("candidate artifact cannot be its own parent")
@@ -873,6 +879,284 @@ pub struct LineageLimits {
     max_depth: u32,
     max_records: usize,
     max_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LineageDirection {
+    Ancestors,
+    Neighborhood,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LineageMemory {
+    L1,
+    L2,
+    Both,
+}
+
+impl LineageMemory {
+    pub const fn includes(self, tier: MemoryTier) -> bool {
+        matches!(
+            (self, tier),
+            (Self::L1, MemoryTier::L1)
+                | (Self::L2, MemoryTier::L2)
+                | (Self::Both, MemoryTier::L1 | MemoryTier::L2)
+        )
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LineageQuery {
+    population_id: PopulationId,
+    artifact_id: ArtifactId,
+    direction: LineageDirection,
+    memory: LineageMemory,
+    max_depth: u32,
+    max_records: usize,
+    max_bytes: usize,
+}
+
+impl LineageQuery {
+    pub fn new(
+        population_id: PopulationId,
+        artifact_id: ArtifactId,
+        direction: LineageDirection,
+        memory: LineageMemory,
+        max_depth: u32,
+        max_records: usize,
+        max_bytes: usize,
+    ) -> Result<Self, PopulationContractError> {
+        if max_depth == 0 {
+            return Err(PopulationContractError::InvalidLimit("lineage depth"));
+        }
+        if max_records == 0 {
+            return Err(PopulationContractError::InvalidLimit("lineage records"));
+        }
+        if max_bytes == 0 {
+            return Err(PopulationContractError::InvalidLimit("lineage bytes"));
+        }
+        Ok(Self {
+            population_id,
+            artifact_id,
+            direction,
+            memory,
+            max_depth,
+            max_records,
+            max_bytes,
+        })
+    }
+
+    pub fn population_id(&self) -> &PopulationId {
+        &self.population_id
+    }
+
+    pub fn artifact_id(&self) -> &ArtifactId {
+        &self.artifact_id
+    }
+
+    pub const fn direction(&self) -> LineageDirection {
+        self.direction
+    }
+
+    pub const fn memory(&self) -> LineageMemory {
+        self.memory
+    }
+
+    pub const fn max_depth(&self) -> u32 {
+        self.max_depth
+    }
+
+    pub const fn max_records(&self) -> usize {
+        self.max_records
+    }
+
+    pub const fn max_bytes(&self) -> usize {
+        self.max_bytes
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LineageAttempt {
+    artifact_id: ArtifactId,
+    redacted_change: String,
+}
+
+impl LineageAttempt {
+    pub fn new(
+        artifact_id: ArtifactId,
+        redacted_change: impl Into<String>,
+    ) -> Result<Self, PopulationContractError> {
+        Ok(Self {
+            artifact_id,
+            redacted_change: validate_text(
+                "redacted lineage change",
+                redacted_change.into(),
+                MAX_SUMMARY_BYTES,
+            )?,
+        })
+    }
+
+    pub fn artifact_id(&self) -> &ArtifactId {
+        &self.artifact_id
+    }
+
+    pub fn redacted_change(&self) -> &str {
+        &self.redacted_change
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LineageNode {
+    artifact_id: ArtifactId,
+    distance: u32,
+}
+
+impl LineageNode {
+    pub const fn new(artifact_id: ArtifactId, distance: u32) -> Self {
+        Self {
+            artifact_id,
+            distance,
+        }
+    }
+
+    pub fn artifact_id(&self) -> &ArtifactId {
+        &self.artifact_id
+    }
+
+    pub const fn distance(&self) -> u32 {
+        self.distance
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LineageLesson {
+    memory_id: MemoryId,
+    artifact_id: ArtifactId,
+    distance: u32,
+    tier: MemoryTier,
+    kind: MemoryKind,
+    summary: String,
+    created_at: Timestamp,
+    provenance: RequestDigest,
+}
+
+impl LineageLesson {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        memory_id: MemoryId,
+        artifact_id: ArtifactId,
+        distance: u32,
+        tier: MemoryTier,
+        kind: MemoryKind,
+        summary: impl Into<String>,
+        created_at: Timestamp,
+        provenance: RequestDigest,
+    ) -> Result<Self, PopulationContractError> {
+        Ok(Self {
+            memory_id,
+            artifact_id,
+            distance,
+            tier,
+            kind,
+            summary: validate_text("lineage summary", summary.into(), MAX_LINEAGE_SUMMARY_BYTES)?,
+            created_at,
+            provenance,
+        })
+    }
+
+    pub fn memory_id(&self) -> &MemoryId {
+        &self.memory_id
+    }
+
+    pub fn artifact_id(&self) -> &ArtifactId {
+        &self.artifact_id
+    }
+
+    pub const fn distance(&self) -> u32 {
+        self.distance
+    }
+
+    pub const fn tier(&self) -> MemoryTier {
+        self.tier
+    }
+
+    pub const fn kind(&self) -> MemoryKind {
+        self.kind
+    }
+
+    pub fn summary(&self) -> &str {
+        &self.summary
+    }
+
+    pub const fn created_at(&self) -> Timestamp {
+        self.created_at
+    }
+
+    pub fn provenance(&self) -> &RequestDigest {
+        &self.provenance
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LineageView {
+    population_id: PopulationId,
+    root_artifact: ArtifactId,
+    direction: LineageDirection,
+    nodes: Vec<LineageNode>,
+    lessons: Vec<LineageLesson>,
+    total_bytes: usize,
+    generated_at: Timestamp,
+}
+
+impl LineageView {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        population_id: PopulationId,
+        root_artifact: ArtifactId,
+        direction: LineageDirection,
+        nodes: Vec<LineageNode>,
+        lessons: Vec<LineageLesson>,
+        total_bytes: usize,
+        generated_at: Timestamp,
+    ) -> Self {
+        Self {
+            population_id,
+            root_artifact,
+            direction,
+            nodes,
+            lessons,
+            total_bytes,
+            generated_at,
+        }
+    }
+
+    pub fn population_id(&self) -> &PopulationId {
+        &self.population_id
+    }
+
+    pub fn root_artifact(&self) -> &ArtifactId {
+        &self.root_artifact
+    }
+
+    pub const fn direction(&self) -> LineageDirection {
+        self.direction
+    }
+
+    pub fn nodes(&self) -> &[LineageNode] {
+        &self.nodes
+    }
+
+    pub fn lessons(&self) -> &[LineageLesson] {
+        &self.lessons
+    }
+
+    pub const fn total_bytes(&self) -> usize {
+        self.total_bytes
+    }
+
+    pub const fn generated_at(&self) -> Timestamp {
+        self.generated_at
+    }
 }
 
 impl LineageLimits {

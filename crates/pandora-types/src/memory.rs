@@ -49,10 +49,7 @@ impl MemoryKind {
     }
 
     const fn can_be_l1(self) -> bool {
-        !matches!(
-            self,
-            Self::Trace | Self::Lineage | Self::PolicyDecision | Self::Replacement
-        )
+        !matches!(self, Self::Trace | Self::PolicyDecision | Self::Replacement)
     }
 
     const fn can_be_l2(self) -> bool {

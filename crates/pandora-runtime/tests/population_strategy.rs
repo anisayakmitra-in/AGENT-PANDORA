@@ -1,10 +1,12 @@
-use pandora_runtime::{PopulationStrategy, PopulationStrategyError, StrategyProfile};
+use pandora_runtime::{MemoryEngine, PopulationStrategy, PopulationStrategyError, StrategyProfile};
 use pandora_types::{
     ArtifactId, CandidateDisposition, CandidatePopulation, EvaluationKind, EvaluationReceipt,
     EvaluationResult, EvaluationStatus, ExecutionId, FailureCorpus, FailureEvidence, FailureId,
-    FailurePartition, LineageLimits, MutationLimits, PopulationCandidate, PopulationEvaluation,
-    PopulationId, PopulationMutationRequest, PopulationPolicy, PopulationScope, RequestDigest,
-    SessionId, TenantId, Timestamp, Usage, WorkspaceId,
+    FailurePartition, GenerationReceipt, LineageAttempt, LineageDirection, LineageLimits,
+    LineageMemory, LineageQuery, MemoryApproval, MemoryKind, MemoryScope, MemoryTier,
+    MutationLimits, PopulationCandidate, PopulationEvaluation, PopulationId,
+    PopulationMutationRequest, PopulationPolicy, PopulationScope, RequestDigest, SessionId,
+    TenantId, Timestamp, Usage, WorkspaceId,
 };
 
 fn policy(max_parents: usize) -> PopulationPolicy {
@@ -44,6 +46,34 @@ fn candidate(id: &str, score: u8, child_count: u32, failures: &[&str]) -> Popula
             .iter()
             .map(|failure| FailureId::new(*failure).unwrap())
             .collect(),
+    )
+    .unwrap()
+}
+
+fn lineage_candidate(id: &str, parents: &[&str], generation: u32) -> PopulationCandidate {
+    PopulationCandidate::new(
+        ArtifactId::new(id).unwrap(),
+        parents
+            .iter()
+            .map(|parent| ArtifactId::new(*parent).unwrap())
+            .collect(),
+        generation,
+        80,
+        true,
+        0,
+        RequestDigest::new(format!("evaluation-{id}")).unwrap(),
+        Vec::new(),
+    )
+    .unwrap()
+}
+
+fn memory_scope(provider: &str) -> MemoryScope {
+    let population_scope = scope();
+    MemoryScope::new(
+        population_scope.tenant_id().clone(),
+        population_scope.workspace_id().clone(),
+        population_scope.session_id().clone(),
+        provider,
     )
     .unwrap()
 }
@@ -117,6 +147,52 @@ fn registered_strategy(
     let strategy = PopulationStrategy::new(StrategyProfile::Research, policy);
     strategy.register_population(population.clone()).unwrap();
     strategy
+}
+
+fn completed_lineage_run() -> (
+    PopulationStrategy,
+    MemoryEngine,
+    MemoryScope,
+    GenerationReceipt,
+) {
+    let limited = PopulationPolicy::new(
+        2,
+        1,
+        4,
+        1,
+        MutationLimits::new(1, 128, 1).unwrap(),
+        LineageLimits::new(3, 16, 2_048).unwrap(),
+        70,
+        5_000,
+        Usage::new(10_000, 50, 300, 100_000),
+    )
+    .unwrap();
+    let population = CandidatePopulation::new(
+        scope(),
+        0,
+        vec![candidate("candidate-a", 90, 0, &["train-1"])],
+    )
+    .unwrap();
+    let strategy = registered_strategy(limited, &population);
+    let plan = strategy.plan(&population, &corpus()).unwrap();
+    let evaluation = evaluated_candidate(
+        &strategy,
+        &plan,
+        "candidate-a",
+        "candidate-b",
+        full_evaluation("full-b", EvaluationStatus::Passed, 90),
+        plan.holdout_count(),
+        Usage::new(100, 1, 2, 300),
+    );
+    let receipt = strategy
+        .complete_generation(&plan, vec![evaluation], Timestamp::from_unix_seconds(30))
+        .unwrap();
+    (
+        strategy,
+        MemoryEngine::new(4),
+        memory_scope("provider-a"),
+        receipt,
+    )
 }
 
 fn evaluated_candidate(
@@ -569,5 +645,451 @@ fn generation_receipt_accounts_for_all_work_and_cost() {
     assert_ne!(
         receipt.starting_population_digest(),
         receipt.resulting_population_digest()
+    );
+}
+
+#[test]
+fn lineage_queries_follow_ancestors_and_neighborhood_by_distance() {
+    let population = CandidatePopulation::new(
+        scope(),
+        2,
+        vec![
+            lineage_candidate("candidate-a", &[], 0),
+            lineage_candidate("candidate-b", &["candidate-a"], 1),
+            lineage_candidate("candidate-c", &["candidate-b"], 2),
+            lineage_candidate("candidate-d", &["candidate-b"], 2),
+        ],
+    )
+    .unwrap();
+    let strategy = registered_strategy(policy(2), &population);
+    let memory = MemoryEngine::new(4);
+    let scope = memory_scope("provider-a");
+
+    let ancestors = strategy
+        .lineage_view(
+            &memory,
+            &scope,
+            &LineageQuery::new(
+                PopulationId::new("population-1").unwrap(),
+                ArtifactId::new("candidate-c").unwrap(),
+                LineageDirection::Ancestors,
+                LineageMemory::Both,
+                2,
+                16,
+                2_048,
+            )
+            .unwrap(),
+            Timestamp::from_unix_seconds(40),
+        )
+        .unwrap();
+    assert_eq!(
+        ancestors
+            .nodes()
+            .iter()
+            .map(|node| (node.artifact_id().as_str(), node.distance()))
+            .collect::<Vec<_>>(),
+        vec![("candidate-c", 0), ("candidate-b", 1), ("candidate-a", 2)]
+    );
+
+    let neighborhood = strategy
+        .lineage_view(
+            &memory,
+            &scope,
+            &LineageQuery::new(
+                PopulationId::new("population-1").unwrap(),
+                ArtifactId::new("candidate-b").unwrap(),
+                LineageDirection::Neighborhood,
+                LineageMemory::Both,
+                1,
+                16,
+                2_048,
+            )
+            .unwrap(),
+            Timestamp::from_unix_seconds(40),
+        )
+        .unwrap();
+    assert_eq!(
+        neighborhood
+            .nodes()
+            .iter()
+            .map(|node| (node.artifact_id().as_str(), node.distance()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("candidate-b", 0),
+            ("candidate-a", 1),
+            ("candidate-c", 1),
+            ("candidate-d", 1),
+        ]
+    );
+}
+
+#[test]
+fn lineage_records_are_receipt_bound_and_recalled_by_exact_scope_and_tier() {
+    let (strategy, memory, scope, receipt) = completed_lineage_run();
+    let records = strategy
+        .record_lineage(
+            &memory,
+            scope.clone(),
+            &receipt,
+            vec![
+                LineageAttempt::new(
+                    ArtifactId::new("candidate-b").unwrap(),
+                    "replace the linear scan with a bounded index",
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap();
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].kind(), MemoryKind::Lineage);
+    assert_eq!(records[0].tier(), MemoryTier::L1);
+    assert!(records[0].summary().contains("bounded index"));
+    assert!(records[0].summary().contains("accepted"));
+
+    let lesson = memory
+        .distill_l1(
+            scope.clone(),
+            "lesson-b",
+            MemoryKind::Lesson,
+            "retain the indexed lookup after regression checks",
+            pandora_types::ContextClassification::Internal,
+            Timestamp::from_unix_seconds(29),
+            records[0].provenance(),
+        )
+        .unwrap();
+    memory
+        .distill_l1(
+            scope.clone(),
+            "unrelated",
+            MemoryKind::Lesson,
+            "unrelated evidence",
+            pandora_types::ContextClassification::Internal,
+            Timestamp::from_unix_seconds(28),
+            "sha256:unrelated",
+        )
+        .unwrap();
+    let other_provider = memory_scope("provider-b");
+    memory
+        .distill_l1(
+            other_provider,
+            "other-provider",
+            MemoryKind::Lesson,
+            "same artifact but another provider scope",
+            pandora_types::ContextClassification::Internal,
+            Timestamp::from_unix_seconds(27),
+            records[0].provenance(),
+        )
+        .unwrap();
+
+    let query = LineageQuery::new(
+        PopulationId::new("population-1").unwrap(),
+        ArtifactId::new("candidate-b").unwrap(),
+        LineageDirection::Ancestors,
+        LineageMemory::L1,
+        1,
+        16,
+        2_048,
+    )
+    .unwrap();
+    let view = strategy
+        .lineage_view(&memory, &scope, &query, Timestamp::from_unix_seconds(40))
+        .unwrap();
+    assert_eq!(
+        view.lessons()
+            .iter()
+            .map(|entry| entry.memory_id().as_str())
+            .collect::<Vec<_>>(),
+        vec!["lesson-b", records[0].id().as_str()]
+    );
+    assert!(
+        view.lessons()
+            .iter()
+            .all(|entry| entry.artifact_id().as_str() == "candidate-b")
+    );
+
+    let approval = MemoryApproval::new("lineage-approval", "operator").unwrap();
+    memory
+        .promote_l2(
+            &scope,
+            lesson.id(),
+            Some(approval),
+            Timestamp::from_unix_seconds(35),
+        )
+        .unwrap();
+    memory
+        .promote_l2(
+            &scope,
+            records[0].id(),
+            Some(MemoryApproval::new("lineage-record-approval", "operator").unwrap()),
+            Timestamp::from_unix_seconds(36),
+        )
+        .unwrap();
+    let l2_view = strategy
+        .lineage_view(
+            &memory,
+            &scope,
+            &LineageQuery::new(
+                PopulationId::new("population-1").unwrap(),
+                ArtifactId::new("candidate-b").unwrap(),
+                LineageDirection::Ancestors,
+                LineageMemory::L2,
+                1,
+                16,
+                2_048,
+            )
+            .unwrap(),
+            Timestamp::from_unix_seconds(40),
+        )
+        .unwrap();
+    assert_eq!(l2_view.lessons().len(), 2);
+    assert_eq!(l2_view.lessons()[0].memory_id().as_str(), "lesson-b");
+    assert_eq!(l2_view.lessons()[1].memory_id(), records[0].id());
+    let both_view = strategy
+        .lineage_view(
+            &memory,
+            &scope,
+            &LineageQuery::new(
+                PopulationId::new("population-1").unwrap(),
+                ArtifactId::new("candidate-b").unwrap(),
+                LineageDirection::Ancestors,
+                LineageMemory::Both,
+                1,
+                16,
+                2_048,
+            )
+            .unwrap(),
+            Timestamp::from_unix_seconds(40),
+        )
+        .unwrap();
+    assert_eq!(both_view.lessons().len(), 2);
+    assert!(
+        both_view
+            .lessons()
+            .iter()
+            .all(|entry| entry.tier() == MemoryTier::L2)
+    );
+
+    let wrong_tenant = MemoryScope::new(
+        TenantId::new("tenant-2").unwrap(),
+        scope.workspace_id().clone(),
+        scope.session_id().clone(),
+        scope.provider(),
+    )
+    .unwrap();
+    assert_eq!(
+        strategy.lineage_view(
+            &memory,
+            &wrong_tenant,
+            &query,
+            Timestamp::from_unix_seconds(40)
+        ),
+        Err(PopulationStrategyError::LineageScopeMismatch)
+    );
+    let wrong_workspace = MemoryScope::new(
+        scope.tenant_id().clone(),
+        WorkspaceId::new("workspace-2").unwrap(),
+        scope.session_id().clone(),
+        scope.provider(),
+    )
+    .unwrap();
+    assert_eq!(
+        strategy.lineage_view(
+            &memory,
+            &wrong_workspace,
+            &query,
+            Timestamp::from_unix_seconds(40)
+        ),
+        Err(PopulationStrategyError::LineageScopeMismatch)
+    );
+    let wrong_session = MemoryScope::new(
+        scope.tenant_id().clone(),
+        scope.workspace_id().clone(),
+        SessionId::new("session-2").unwrap(),
+        scope.provider(),
+    )
+    .unwrap();
+    assert_eq!(
+        strategy.lineage_view(
+            &memory,
+            &wrong_session,
+            &query,
+            Timestamp::from_unix_seconds(40)
+        ),
+        Err(PopulationStrategyError::LineageScopeMismatch)
+    );
+    assert!(
+        strategy
+            .lineage_view(
+                &memory,
+                &memory_scope("provider-c"),
+                &query,
+                Timestamp::from_unix_seconds(40),
+            )
+            .unwrap()
+            .lessons()
+            .is_empty()
+    );
+}
+
+#[test]
+fn lineage_rejects_a_receipt_not_committed_by_the_population() {
+    let (_, _, _, receipt) = completed_lineage_run();
+    let population = CandidatePopulation::new(
+        scope(),
+        0,
+        vec![candidate("candidate-a", 90, 0, &["train-1"])],
+    )
+    .unwrap();
+    let strategy = registered_strategy(policy(1), &population);
+    let memory = MemoryEngine::new(4);
+
+    assert_eq!(
+        strategy.record_lineage(
+            &memory,
+            memory_scope("provider-a"),
+            &receipt,
+            vec![
+                LineageAttempt::new(
+                    ArtifactId::new("candidate-b").unwrap(),
+                    "uncommitted change",
+                )
+                .unwrap(),
+            ],
+        ),
+        Err(PopulationStrategyError::LineageReceiptNotCommitted)
+    );
+    assert!(
+        memory
+            .recall(
+                &memory_scope("provider-a"),
+                MemoryTier::L1,
+                Timestamp::from_unix_seconds(40),
+            )
+            .is_empty()
+    );
+}
+
+#[test]
+fn committed_lineage_artifact_ids_cannot_be_reused_when_pruned() {
+    let (strategy, _, _, _) = completed_lineage_run();
+    let current = strategy
+        .population(&PopulationId::new("population-1").unwrap())
+        .unwrap();
+    let plan = strategy.plan(&current, &corpus()).unwrap();
+    assert_eq!(plan.parents()[0].artifact_id().as_str(), "candidate-a");
+    let reused = evaluated_candidate(
+        &strategy,
+        &plan,
+        "candidate-a",
+        "candidate-b",
+        full_evaluation("full-reused-b", EvaluationStatus::Passed, 90),
+        plan.holdout_count(),
+        Usage::new(100, 1, 2, 300),
+    );
+
+    assert_eq!(
+        strategy.complete_generation(&plan, vec![reused], Timestamp::from_unix_seconds(40)),
+        Err(PopulationStrategyError::InvalidOutcome(
+            ArtifactId::new("candidate-b").unwrap(),
+            "reuses a historical artifact identity",
+        ))
+    );
+    assert_eq!(
+        strategy
+            .population(&PopulationId::new("population-1").unwrap())
+            .unwrap(),
+        current
+    );
+}
+
+#[test]
+fn lineage_queries_enforce_policy_record_and_byte_bounds() {
+    let (strategy, memory, scope, receipt) = completed_lineage_run();
+    let records = strategy
+        .record_lineage(
+            &memory,
+            scope.clone(),
+            &receipt,
+            vec![
+                LineageAttempt::new(ArtifactId::new("candidate-b").unwrap(), "bounded change")
+                    .unwrap(),
+            ],
+        )
+        .unwrap();
+    for (id, summary, at) in [("lesson-a", "12345", 10), ("lesson-b", "67890", 11)] {
+        memory
+            .distill_l1(
+                scope.clone(),
+                id,
+                MemoryKind::Lesson,
+                summary,
+                pandora_types::ContextClassification::Internal,
+                Timestamp::from_unix_seconds(at),
+                records[0].provenance(),
+            )
+            .unwrap();
+    }
+
+    let one_record = strategy
+        .lineage_view(
+            &memory,
+            &scope,
+            &LineageQuery::new(
+                PopulationId::new("population-1").unwrap(),
+                ArtifactId::new("candidate-b").unwrap(),
+                LineageDirection::Ancestors,
+                LineageMemory::L1,
+                1,
+                1,
+                2_048,
+            )
+            .unwrap(),
+            Timestamp::from_unix_seconds(40),
+        )
+        .unwrap();
+    assert_eq!(one_record.lessons().len(), 1);
+    assert_eq!(one_record.lessons()[0].memory_id().as_str(), "lesson-a");
+
+    let byte_bounded = strategy
+        .lineage_view(
+            &memory,
+            &scope,
+            &LineageQuery::new(
+                PopulationId::new("population-1").unwrap(),
+                ArtifactId::new("candidate-b").unwrap(),
+                LineageDirection::Ancestors,
+                LineageMemory::L1,
+                1,
+                16,
+                9,
+            )
+            .unwrap(),
+            Timestamp::from_unix_seconds(40),
+        )
+        .unwrap();
+    assert_eq!(byte_bounded.lessons().len(), 1);
+    assert_eq!(byte_bounded.total_bytes(), 5);
+
+    let over_policy = LineageQuery::new(
+        PopulationId::new("population-1").unwrap(),
+        ArtifactId::new("candidate-b").unwrap(),
+        LineageDirection::Ancestors,
+        LineageMemory::Both,
+        4,
+        16,
+        2_048,
+    )
+    .unwrap();
+    assert_eq!(
+        strategy.lineage_view(
+            &memory,
+            &scope,
+            &over_policy,
+            Timestamp::from_unix_seconds(40)
+        ),
+        Err(PopulationStrategyError::LineageLimitExceeded(
+            "lineage depth"
+        ))
     );
 }
