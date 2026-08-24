@@ -236,3 +236,49 @@ jobs:
           name: Pandora ${{ github.ref_name }}
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: dist/*
+
+  smoke-install:
+    name: Install published CLI on ${{ matrix.os }}
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: macos-15-intel
+          - os: macos-14
+          - os: windows-latest
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    env:
+      PANDORA_VERSION: ${{ github.ref_name }}
+      PANDORA_INSTALL_DIR: ${{ runner.temp }}/pandora-bin
+    steps:
+      - name: Install and verify published CLI (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          installer="$RUNNER_TEMP/install.sh"
+          curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
+            --output "$installer" \
+            "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download/${GITHUB_REF_NAME}/install.sh"
+          sh "$installer"
+          expected="pandora ${GITHUB_REF_NAME#v}"
+          actual="$("$PANDORA_INSTALL_DIR/pandora" --version)"
+          test "$actual" = "$expected"
+
+      - name: Install and verify published CLI (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP "install.ps1"
+          Invoke-WebRequest `
+            -Uri "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download/$env:GITHUB_REF_NAME/install.ps1" `
+            -OutFile $installer
+          & $installer
+          $expected = "pandora " + $env:GITHUB_REF_NAME.Substring(1)
+          $actual = (& (Join-Path $env:PANDORA_INSTALL_DIR "pandora.exe") --version).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "installed Pandora CLI smoke test failed" }
+          if ($actual -ne $expected) { throw "expected '$expected' but received '$actual'" }

@@ -68,3 +68,26 @@ Older notes.
         self.assertIn(
             '$expected = "pandora " + $env:GITHUB_REF_NAME.Substring(1)', workflow
         )
+
+    def test_release_workflow_smokes_published_installers_on_fresh_runners(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("smoke-install:", workflow)
+        self.assertIn("needs: publish", workflow)
+        for operating_system in (
+            "ubuntu-latest",
+            "macos-15-intel",
+            "macos-14",
+            "windows-latest",
+        ):
+            self.assertIn(f"- os: {operating_system}", workflow)
+        self.assertIn("releases/download/${GITHUB_REF_NAME}/install.sh", workflow)
+        self.assertIn("releases/download/$env:GITHUB_REF_NAME/install.ps1", workflow)
+        self.assertIn('PANDORA_INSTALL_DIR: ${{ runner.temp }}/pandora-bin', workflow)
+        self.assertIn('PANDORA_VERSION: ${{ github.ref_name }}', workflow)
+        self.assertIn('expected="pandora ${GITHUB_REF_NAME#v}"', workflow)
+        self.assertIn(
+            '$expected = "pandora " + $env:GITHUB_REF_NAME.Substring(1)', workflow
+        )
