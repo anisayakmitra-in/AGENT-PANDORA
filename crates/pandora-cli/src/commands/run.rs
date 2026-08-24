@@ -5,7 +5,7 @@ use super::{
     session_store, timestamp,
 };
 use crate::output::{CliError, CommandResult, success};
-use pandora_harnesses::{CODING_HARNESS_ID, HarnessCatalog};
+use pandora_harnesses::{CODING_HARNESS_ID, HarnessCatalog, RESEARCH_HARNESS_ID};
 use pandora_provider::{
     ChatMessage, FallbackPolicy, ModelRequest, TraceMetadata, parse_and_validate,
 };
@@ -384,6 +384,7 @@ pub(super) fn configured_harnesses(
 fn canonical_harness_id(value: &str) -> &str {
     match value {
         "coding" => CODING_HARNESS_ID,
+        "research" => RESEARCH_HARNESS_ID,
         value => value,
     }
 }

@@ -59,6 +59,30 @@ impl PlanningContext {
         self.artifact_id = Some(artifact_id);
         self
     }
+
+    pub(crate) fn execution_id(&self) -> &ExecutionId {
+        &self.execution_id
+    }
+
+    pub(crate) fn session_id(&self) -> &SessionId {
+        &self.session_id
+    }
+
+    pub(crate) fn principal_id(&self) -> &PrincipalId {
+        &self.principal_id
+    }
+
+    pub(crate) fn workspace_id(&self) -> &WorkspaceId {
+        &self.workspace_id
+    }
+
+    pub(crate) fn execution_profile(&self) -> &ExecutionProfile {
+        &self.execution_profile
+    }
+
+    pub(crate) fn artifact_id(&self) -> Option<&ArtifactId> {
+        self.artifact_id.as_ref()
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -440,14 +464,14 @@ fn validate_request(request: &CodingRequest) -> Result<(), GeneError> {
     Ok(())
 }
 
-fn validate_query(query: &str) -> Result<(), GeneError> {
+pub(crate) fn validate_query(query: &str) -> Result<(), GeneError> {
     if query.trim().is_empty() || query.len() > MAX_PATH_BYTES || query.contains('\0') {
         return Err(GeneError::InvalidInput("invalid search query"));
     }
     Ok(())
 }
 
-fn validate_path(path: &str) -> Result<(), GeneError> {
+pub(crate) fn validate_path(path: &str) -> Result<(), GeneError> {
     if path.is_empty() || path.len() > MAX_PATH_BYTES || path.contains('\0') {
         return Err(GeneError::InvalidInput("invalid workspace path"));
     }

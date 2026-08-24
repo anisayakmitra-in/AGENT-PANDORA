@@ -5,6 +5,7 @@ pub mod genes;
 pub mod harness;
 pub mod manifest;
 pub mod profile;
+pub mod research;
 pub mod slash;
 
 pub use catalog::HarnessCatalog;
@@ -274,10 +275,11 @@ mod catalog_tests {
 pub use genes::{
     CodingAction, CodingGene, CodingGeneRole, CodingRequest, PlanningContext, coding_static_output,
 };
-pub use harness::{CodingHarness, CoordinationMetaHarness, CoreSourceHarness};
+pub use harness::{CodingHarness, CoordinationMetaHarness, CoreSourceHarness, ResearchHarness};
 pub use manifest::{
     CODING_HARNESS_ID, CODING_HARNESS_VERSION, COORDINATION_META_HARNESS_ID,
     COORDINATION_META_HARNESS_VERSION, CORE_SOURCE_HARNESS_ID, CORE_SOURCE_HARNESS_VERSION,
+    RESEARCH_HARNESS_ID, RESEARCH_HARNESS_VERSION,
 };
 pub use profile::{
     DeclarativeDomainHarness, DeclarativeMetaHarness, DomainProfileError, MetaProfileError,
@@ -286,6 +288,17 @@ pub use slash::{
     SlashCommand, SlashCommandCatalog, SlashCommandError, SlashCommandKind, canonical_gene_command,
     canonical_harness_command, canonical_profile_gene_command, canonical_profile_harness_command,
 };
+
+pub use research::{
+    ResearchAction, ResearchGene, ResearchGeneRole, ResearchRequest, is_research_gene,
+    research_static_output,
+};
+
+pub fn builtin_genes() -> Vec<Box<dyn pandora_types::Gene>> {
+    let mut genes = CodingGene::all();
+    genes.extend(ResearchGene::all());
+    genes
+}
 
 pub fn builtin_harnesses() -> Vec<Box<dyn pandora_types::Harness>> {
     HarnessCatalog::builtins().into_harnesses()
@@ -334,6 +347,12 @@ mod tests {
                 .iter()
                 .any(|id| id.as_str() == "coding-domain")
         );
+        assert!(
+            composition
+                .allowed_domains()
+                .iter()
+                .any(|id| id.as_str() == "research-domain")
+        );
     }
 
     #[test]
@@ -365,6 +384,36 @@ mod tests {
     }
 
     #[test]
+    fn research_domain_exposes_only_bounded_read_workflows() {
+        let research = builtin_harnesses()
+            .into_iter()
+            .find(|harness| harness.manifest().id().as_str() == "research-domain")
+            .expect("the built-in catalog should include the Research Domain Harness");
+        let genes = research
+            .genes()
+            .iter()
+            .map(|gene| gene.manifest())
+            .collect::<Vec<_>>();
+
+        assert_eq!(research.manifest().kind(), HarnessKind::Domain);
+        assert_eq!(genes.len(), 6);
+        for id in [
+            "evidence.inventory",
+            "evidence.search",
+            "source.read",
+            "source.compare",
+            "citation.inventory",
+            "research.guide",
+        ] {
+            assert!(genes.iter().any(|gene| gene.id().as_str() == id));
+        }
+        assert!(genes.iter().all(|gene| {
+            gene.capabilities().is_empty()
+                || gene.capabilities() == [pandora_types::Capability::FilesystemRead]
+        }));
+    }
+
+    #[test]
     fn slash_catalog_covers_the_coding_harness_and_every_gene() {
         let harnesses = HarnessCatalog::builtins();
         let commands = SlashCommandCatalog::from_harnesses(harnesses.iter()).unwrap();
@@ -392,6 +441,62 @@ mod tests {
             let command = canonical_gene_command("coding-domain", gene.manifest().id().as_str());
             assert!(commands.resolve(&command).is_some(), "missing {command}");
         }
+    }
+
+    #[test]
+    fn slash_catalog_covers_the_research_harness_and_every_gene() {
+        let harnesses = HarnessCatalog::builtins();
+        let commands = SlashCommandCatalog::from_harnesses(harnesses.iter()).unwrap();
+
+        for command in [
+            "/research",
+            "/evidence-inventory",
+            "/evidence-search",
+            "/source-read",
+            "/source-compare",
+            "/citation-inventory",
+            "/research-guide",
+        ] {
+            assert!(commands.resolve(command).is_some(), "missing {command}");
+        }
+        for gene in harnesses
+            .find(&pandora_types::HarnessId::new("research-domain").unwrap())
+            .unwrap()
+            .genes()
+        {
+            let command = canonical_gene_command("research-domain", gene.manifest().id().as_str());
+            assert!(commands.resolve(&command).is_some(), "missing {command}");
+        }
+    }
+
+    #[test]
+    fn custom_domain_profiles_can_bind_research_genes() {
+        let artifact = b"custom research domain";
+        let package = pandora_types::PackageManifest::new(
+            "owner/custom-research",
+            "1.0.0",
+            pandora_types::PackageKind::DomainHarness,
+            "publisher",
+            pandora_types::hash_artifact(artifact),
+            vec![pandora_types::PackageDependency::new("evidence.search", "0.1.0", false).unwrap()],
+            pandora_types::PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "Apache-2.0",
+            pandora_types::TrustEvidence::unsigned(),
+        )
+        .unwrap();
+
+        let catalog = HarnessCatalog::builtins()
+            .with_declarative_domain(&package)
+            .unwrap();
+        let custom = catalog
+            .find(&pandora_types::HarnessId::new("owner/custom-research").unwrap())
+            .unwrap();
+
+        assert_eq!(custom.genes().len(), 1);
+        assert_eq!(
+            custom.genes()[0].manifest().id().as_str(),
+            "evidence.search"
+        );
     }
 
     #[test]

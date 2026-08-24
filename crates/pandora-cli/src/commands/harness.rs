@@ -1,6 +1,6 @@
 use super::{parse_options, run};
 use crate::output::{CliError, CommandResult, success};
-use pandora_harnesses::{CODING_HARNESS_ID, HarnessCatalog};
+use pandora_harnesses::{CODING_HARNESS_ID, HarnessCatalog, RESEARCH_HARNESS_ID};
 use pandora_runtime::{PackageRecord, PackageState};
 use pandora_types::{HarnessKind, PackageKind};
 use serde_json::json;
@@ -66,6 +66,7 @@ fn inspect(args: &[String]) -> Result<CommandResult, CliError> {
     }
     let requested_id = match parsed.positionals[0].as_str() {
         "coding" => CODING_HARNESS_ID,
+        "research" => RESEARCH_HARNESS_ID,
         requested_id => requested_id,
     };
     let harness_id = pandora_types::HarnessId::new(requested_id.to_owned())
@@ -128,6 +129,7 @@ fn run_harness(args: &[String]) -> Result<CommandResult, CliError> {
     }
     let requested_id = match parsed.positionals[0].as_str() {
         "coding" => CODING_HARNESS_ID,
+        "research" => RESEARCH_HARNESS_ID,
         requested_id => requested_id,
     };
     let harnesses = HarnessCatalog::builtins();

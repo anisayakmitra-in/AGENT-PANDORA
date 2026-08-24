@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added the built-in `research-domain` Harness with bounded evidence inventory,
+  search, source reading, source comparison, citation-marker inventory, and
+  static guidance Genes. Every effect is workspace-scoped and read-only.
+- `coordination-meta` can now compose the Coding and Research Domains. Research
+  Genes are available to declarative Domain profiles, the ToolEngine, canonical
+  slash commands, and the existing governed execution path.
+
 ## v2.0.0-beta.1
 
 This beta consolidates Pandora's governed CLI, local service, extensibility,

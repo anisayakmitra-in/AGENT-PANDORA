@@ -1,4 +1,4 @@
-use crate::harness::{CodingHarness, CoordinationMetaHarness, CoreSourceHarness};
+use crate::harness::{CodingHarness, CoordinationMetaHarness, CoreSourceHarness, ResearchHarness};
 use crate::profile::{
     DeclarativeDomainHarness, DeclarativeMetaHarness, DomainProfileError, MetaProfileError,
 };
@@ -14,6 +14,7 @@ impl HarnessCatalog {
             harnesses: vec![
                 Box::new(CoreSourceHarness::new()),
                 Box::new(CodingHarness::new()),
+                Box::new(ResearchHarness::new()),
                 Box::new(CoordinationMetaHarness::new()),
             ],
         }

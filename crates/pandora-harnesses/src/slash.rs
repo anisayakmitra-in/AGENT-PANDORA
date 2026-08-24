@@ -1,4 +1,4 @@
-use crate::CodingGene;
+use crate::builtin_genes;
 use pandora_types::{GeneId, Harness, HarnessId, PackageKind, PackageManifest};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -110,7 +110,7 @@ impl SlashCommandCatalog {
             alias: false,
         })?;
         if package.kind() == PackageKind::DomainHarness {
-            let available_genes = CodingGene::all();
+            let available_genes = builtin_genes();
             for dependency in package.dependencies() {
                 if !available_genes.iter().any(|gene| {
                     gene.manifest().id().as_str() == dependency.id().as_str()
@@ -264,6 +264,7 @@ fn built_in_harness_alias(id: &str) -> Option<&'static str> {
     match id {
         "core-source" => Some("/core"),
         "coding-domain" => Some("/coding"),
+        "research-domain" => Some("/research"),
         "coordination-meta" => Some("/coordination"),
         _ => None,
     }
@@ -281,6 +282,12 @@ fn built_in_gene_alias(id: &str) -> Option<&'static str> {
         "ariadne.debt" => Some("/debt"),
         "hephaestus.measure" => Some("/measure"),
         "athena.guide" => Some("/guide"),
+        "evidence.inventory" => Some("/evidence-inventory"),
+        "evidence.search" => Some("/evidence-search"),
+        "source.read" => Some("/source-read"),
+        "source.compare" => Some("/source-compare"),
+        "citation.inventory" => Some("/citation-inventory"),
+        "research.guide" => Some("/research-guide"),
         _ => None,
     }
 }

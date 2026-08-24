@@ -1,4 +1,4 @@
-use crate::genes::CodingGene;
+use crate::builtin_genes;
 use pandora_types::{
     Gene, Harness, HarnessKind, HarnessManifest, PackageKind, PackageManifest, PackageManifestError,
 };
@@ -82,7 +82,7 @@ impl DeclarativeDomainHarness {
             return Err(DomainProfileError::UnsupportedPackageKind(package.kind()));
         }
 
-        let mut available = CodingGene::all();
+        let mut available = builtin_genes();
         let mut genes = Vec::new();
         for dependency in package.dependencies() {
             let index = available.iter().position(|gene| {

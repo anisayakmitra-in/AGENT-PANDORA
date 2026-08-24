@@ -229,6 +229,19 @@ fn task_for(gene_id: &str, values: &[String]) -> Result<String, CliError> {
         "ariadne.debt" => no_argument("debt", values),
         "hephaestus.measure" => no_argument("measure", values),
         "athena.guide" => no_argument("guide", values),
+        "evidence.inventory" => no_argument("evidence-inventory", values),
+        "evidence.search" => joined_argument("evidence-search", values),
+        "source.read" => one_argument("source-read", values),
+        "source.compare" => {
+            if values.len() != 2 {
+                return Err(CliError::usage(
+                    "/source-compare requires exactly two paths",
+                ));
+            }
+            Ok(format!("source-compare:{}|{}", values[0], values[1]))
+        }
+        "citation.inventory" => no_argument("citation-inventory", values),
+        "research.guide" => no_argument("research-guide", values),
         _ => Err(CliError::usage(format!(
             "Gene '{gene_id}' has no slash-command invocation contract"
         ))),

@@ -3007,7 +3007,7 @@ fn doctor_rejects_a_configured_provider_without_a_credential() {
 }
 
 #[test]
-fn harness_discovery_exposes_the_coding_domain_without_runtime_internals() {
+fn harness_discovery_exposes_the_built_in_domains_without_runtime_internals() {
     let fixture = Fixture::new();
     fixture.setup();
 
@@ -3032,6 +3032,11 @@ fn harness_discovery_exposes_the_coding_domain_without_runtime_internals() {
             .iter()
             .any(|harness| harness["id"] == "coding-domain")
     );
+    assert!(
+        harnesses
+            .iter()
+            .any(|harness| harness["id"] == "research-domain")
+    );
     let meta = harnesses
         .iter()
         .find(|harness| harness["id"] == "coordination-meta")
@@ -3040,9 +3045,18 @@ fn harness_discovery_exposes_the_coding_domain_without_runtime_internals() {
     assert_eq!(meta["execution"]["runnable"], false);
     assert_eq!(meta["execution"]["mode"], "composition_only");
     assert_eq!(meta["meta_composition"]["max_handoffs"], 8);
-    assert_eq!(
-        meta["meta_composition"]["allowed_domains"][0],
-        "coding-domain"
+    let allowed_domains = meta["meta_composition"]["allowed_domains"]
+        .as_array()
+        .unwrap();
+    assert!(
+        allowed_domains
+            .iter()
+            .any(|domain| domain == "coding-domain")
+    );
+    assert!(
+        allowed_domains
+            .iter()
+            .any(|domain| domain == "research-domain")
     );
 
     let output = fixture
@@ -3107,6 +3121,16 @@ fn harness_discovery_exposes_the_coding_domain_without_runtime_internals() {
     ] {
         assert!(gene_ids.contains(&expected));
     }
+
+    let output = fixture
+        .command(&["harness", "inspect", "research", "--json"])
+        .output()
+        .expect("research harness inspect should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["harness"]["id"], "research-domain");
+    assert_eq!(response["harness"]["kind"], "domain");
+    assert_eq!(response["harness"]["execution"]["runnable"], true);
 
     let output = fixture
         .command(&["harness", "run", "core-source", "--json"])
@@ -3186,7 +3210,7 @@ fn direct_run_rejects_unclassified_tasks_without_a_phantom_harness() {
 }
 
 #[test]
-fn slash_commands_cover_the_coding_domain_and_execute_workflow_genes() {
+fn slash_commands_cover_the_built_in_domains_and_execute_workflow_genes() {
     let fixture = Fixture::new();
     fixture.setup();
 
@@ -3214,6 +3238,13 @@ fn slash_commands_cover_the_coding_domain_and_execute_workflow_genes() {
         "/debt",
         "/measure",
         "/guide",
+        "/research",
+        "/evidence-inventory",
+        "/evidence-search",
+        "/source-read",
+        "/source-compare",
+        "/citation-inventory",
+        "/research-guide",
     ] {
         assert!(commands.contains(&expected), "missing {expected}");
     }
@@ -3236,6 +3267,21 @@ fn slash_commands_cover_the_coding_domain_and_execute_workflow_genes() {
     assert_eq!(response["harness_id"], "coding-domain");
     assert_eq!(response["gene_id"], "athena.guide");
     assert!(response["output"].as_str().unwrap().contains("Daedalus"));
+
+    let output = fixture
+        .command(&["/research-guide", "--json"])
+        .output()
+        .expect("research guide slash command should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["harness_id"], "research-domain");
+    assert_eq!(response["gene_id"], "research.guide");
+    assert!(
+        response["output"]
+            .as_str()
+            .unwrap()
+            .contains("Evidence inventory")
+    );
 }
 
 #[test]

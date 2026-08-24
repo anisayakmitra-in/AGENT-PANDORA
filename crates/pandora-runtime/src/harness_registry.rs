@@ -1,6 +1,6 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use pandora_harnesses::{CodingGene, builtin_harnesses};
+use pandora_harnesses::{builtin_genes, builtin_harnesses};
 use pandora_types::{
     HarnessId, HarnessKind, PackageId, PackageKind, PackageManifest, TrustLevel, hash_artifact,
 };
@@ -329,7 +329,7 @@ impl HarnessRegistry {
 }
 
 fn builtin_gene_available(id: &str, version: &str) -> bool {
-    CodingGene::all()
+    builtin_genes()
         .iter()
         .any(|gene| gene.manifest().id().as_str() == id && gene.manifest().version() == version)
 }

@@ -50,6 +50,8 @@ may coordinate and its handoff ceiling. It owns no Genes. The orchestration
 engine checks those limits before registering a plan, so a plan cannot introduce
 an undeclared Domain Harness through a Meta Harness.
 
+Its built-in composition contains `coding-domain` and `research-domain`.
+
 `pandora harness inspect coordination-meta --json` exposes that composition
 boundary as `meta_composition.allowed_domains` and
 `meta_composition.max_handoffs`. This is metadata for routing and validation;
@@ -137,6 +139,24 @@ Genes. Parliament decides policy, the Reference Monitor issues a one-shot
 permit, and the executor records the result. A workflow cannot bypass that
 path.
 
+## Research Domain Harness
+
+The built-in `research-domain` Harness owns six Genes:
+
+- `evidence.inventory` lists bounded workspace files;
+- `evidence.search` searches bounded workspace evidence;
+- `source.read` reads one scoped source;
+- `source.compare` reads two distinct scoped sources and labels both results;
+- `citation.inventory` searches the fixed `http://`, `https://`, and `doi:`
+  markers without claiming that a citation is valid;
+- `research.guide` returns static usage guidance and requests no effect.
+
+The effectful Research Genes request only `filesystem.read`. They use the same
+execution profile, Parliament decision, Reference Monitor permit, filesystem
+executor, receipts, and runtime events as Coding Genes. They do not grant
+network access. External retrieval requires a separately configured governed
+tool or MCP server.
+
 `CodingFeedbackLoop` composes the existing evaluation, Reflexion, adaptation,
 and run-loop contracts around coding evidence. A verified iteration completes
 without adaptation. A failed retryable iteration records trajectory, outcome,
@@ -154,6 +174,10 @@ aliases are `/coding`, `/read`, `/search`, `/patch`, `/verify`, `/review`,
 `/audit`, `/argus-review`, `/debt`, `/measure`, and `/guide`. Canonical commands
 encode their identities, for example `/harness:coding-domain` and
 `/gene:coding-domain:daedalus.audit`.
+
+The Research short aliases are `/research`, `/evidence-inventory`,
+`/evidence-search`, `/source-read`, `/source-compare`, `/citation-inventory`,
+and `/research-guide`.
 
 Admitted custom Domain and Meta profiles receive exact-version Harness commands.
 Custom Domain profiles receive Gene commands only for dependencies that resolve
@@ -203,14 +227,14 @@ of the same custom ID are rejected during admission.
 
 Built-in Harness IDs are reserved. A package can add a new Domain or Meta
 profile but cannot shadow `core-source`, `coordination-meta`, `coding-domain`,
-or another built-in identity.
+`research-domain`, or another built-in identity.
 
-The built-in Coding Genes are the only executable Gene implementations in the
-current preview. An admitted custom Domain profile can be selected with its
-exact version when every required dependency maps to one of those built-in
-Genes. The profile still uses the existing execution controller and effect
-policy. Its artifact is never loaded as code, and the profile cannot issue
-permits or grant runtime authority.
+The built-in Coding and Research Genes are the executable Gene implementations
+available to declarative Domain profiles. An admitted custom Domain profile can
+be selected with its exact version when every required dependency maps to one
+of those built-in Genes. The profile still uses the existing execution
+controller and effect policy. Its artifact is never loaded as code, and the
+profile cannot issue permits or grant runtime authority.
 
 ## Ownership
 

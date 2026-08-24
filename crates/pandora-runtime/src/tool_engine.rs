@@ -325,6 +325,70 @@ impl ToolEngine {
                 .register(definition.expect("built-in workflow tool schema is valid"))
                 .expect("built-in workflow tool ID is unique");
         }
+        for definition in [
+            ToolDefinition::new(
+                "evidence.inventory",
+                "0.1.0",
+                "Inventory files available in the bounded workspace",
+                json!({"type": "object", "properties": {}, "additionalProperties": false}),
+                Capability::FilesystemRead,
+                Operation::Read,
+            ),
+            ToolDefinition::new(
+                "evidence.search",
+                "0.1.0",
+                "Search bounded workspace evidence",
+                json!({
+                    "type": "object",
+                    "required": ["query"],
+                    "properties": {"query": {"type": "string"}},
+                    "additionalProperties": false
+                }),
+                Capability::FilesystemRead,
+                Operation::Read,
+            ),
+            ToolDefinition::new(
+                "source.read",
+                "0.1.0",
+                "Read one bounded workspace source",
+                json!({
+                    "type": "object",
+                    "required": ["path"],
+                    "properties": {"path": {"type": "string"}},
+                    "additionalProperties": false
+                }),
+                Capability::FilesystemRead,
+                Operation::Read,
+            ),
+            ToolDefinition::new(
+                "source.compare",
+                "0.1.0",
+                "Read two bounded workspace sources for comparison",
+                json!({
+                    "type": "object",
+                    "required": ["left", "right"],
+                    "properties": {
+                        "left": {"type": "string"},
+                        "right": {"type": "string"}
+                    },
+                    "additionalProperties": false
+                }),
+                Capability::FilesystemRead,
+                Operation::Read,
+            ),
+            ToolDefinition::new(
+                "citation.inventory",
+                "0.1.0",
+                "Find explicit URL and DOI markers in workspace sources",
+                json!({"type": "object", "properties": {}, "additionalProperties": false}),
+                Capability::FilesystemRead,
+                Operation::Read,
+            ),
+        ] {
+            engine
+                .register(definition.expect("built-in research tool schema is valid"))
+                .expect("built-in research tool ID is unique");
+        }
         engine
     }
 
@@ -403,8 +467,12 @@ impl ToolEngine {
         tool_id: &str,
         arguments: &Value,
     ) -> Result<ToolInvocation, ToolError> {
-        let harness = HarnessId::new(pandora_harnesses::CODING_HARNESS_ID)
-            .expect("built-in Coding Harness ID is valid");
+        let harness_id = if is_research_tool(tool_id) {
+            pandora_harnesses::RESEARCH_HARNESS_ID
+        } else {
+            pandora_harnesses::CODING_HARNESS_ID
+        };
+        let harness = HarnessId::new(harness_id).expect("built-in Harness ID is valid");
         self.prepare_invocation_for_harness(tool_id, arguments, &harness)
     }
 
@@ -433,6 +501,18 @@ impl ToolEngine {
             "ariadne.debt" => TaskIntent::new("debt")
                 .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
             "hephaestus.measure" => TaskIntent::new("measure")
+                .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
+            "evidence.inventory" => TaskIntent::new("evidence-inventory")
+                .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
+            "evidence.search" => task_from_argument(arguments, "evidence-search", "query")?,
+            "source.read" => task_from_argument(arguments, "source-read", "path")?,
+            "source.compare" => {
+                let left = required_text_argument(arguments, "left")?;
+                let right = required_text_argument(arguments, "right")?;
+                TaskIntent::new(format!("source-compare:{left}|{right}"))
+                    .map_err(|error| ToolError::InvalidArguments(error.to_string()))?
+            }
+            "citation.inventory" => TaskIntent::new("citation-inventory")
                 .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
             _ => {
                 return Err(ToolError::UnsupportedTool(
@@ -554,9 +634,25 @@ fn gene_id_for_tool(tool_id: &str) -> Result<GeneId, ToolError> {
         "argus.review" => "argus.review",
         "ariadne.debt" => "ariadne.debt",
         "hephaestus.measure" => "hephaestus.measure",
+        "evidence.inventory" => "evidence.inventory",
+        "evidence.search" => "evidence.search",
+        "source.read" => "source.read",
+        "source.compare" => "source.compare",
+        "citation.inventory" => "citation.inventory",
         unknown => return Err(ToolError::UnsupportedTool(unknown.to_owned())),
     };
     Ok(GeneId::new(gene_id).expect("built-in Gene ID is valid"))
+}
+
+fn is_research_tool(tool_id: &str) -> bool {
+    matches!(
+        tool_id,
+        "evidence.inventory"
+            | "evidence.search"
+            | "source.read"
+            | "source.compare"
+            | "citation.inventory"
+    )
 }
 
 impl Default for ToolEngine {
@@ -970,6 +1066,23 @@ mod tests {
             ),
             ("ariadne.debt", json!({}), "debt"),
             ("hephaestus.measure", json!({}), "measure"),
+            ("evidence.inventory", json!({}), "evidence-inventory"),
+            (
+                "evidence.search",
+                json!({"query": "governance"}),
+                "evidence-search:governance",
+            ),
+            (
+                "source.read",
+                json!({"path": "docs/source.md"}),
+                "source-read:docs/source.md",
+            ),
+            (
+                "source.compare",
+                json!({"left": "first.md", "right": "second.md"}),
+                "source-compare:first.md|second.md",
+            ),
+            ("citation.inventory", json!({}), "citation-inventory"),
         ] {
             assert_eq!(
                 engine

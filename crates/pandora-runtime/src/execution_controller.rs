@@ -15,8 +15,9 @@ use crate::reference_monitor::{AuthorizationError, ReferenceMonitor};
 use crate::shadow_council::{RoutingError, ShadowCouncil};
 use crate::{ApprovalError, ApprovalStore, ConsumedPermit, PermitError, ToolContext, ToolEngine};
 use pandora_harnesses::{
-    CodingRequest, HarnessCatalog, PlanningContext, canonical_harness_binding_digest,
-    coding_static_output,
+    CodingRequest, HarnessCatalog, PlanningContext, ResearchRequest,
+    canonical_harness_binding_digest, coding_static_output, is_research_gene,
+    research_static_output,
 };
 use pandora_provider::{ModelRequest, Provider, ProviderError, ProviderManifest};
 use pandora_types::{
@@ -899,15 +900,27 @@ impl ExecutionController {
                 gene_profile_binding(gene.manifest())?,
             ],
         )?;
-        let (input, payload) = coding_input(
-            &intent,
-            &gene_id,
-            &session,
-            &execution_id,
-            execution_profile,
-        )?;
+        let (input, payload) = if is_research_gene(&gene_id) {
+            research_input(
+                &intent,
+                &gene_id,
+                &session,
+                &execution_id,
+                execution_profile,
+            )?
+        } else {
+            coding_input(
+                &intent,
+                &gene_id,
+                &session,
+                &execution_id,
+                execution_profile,
+            )?
+        };
         let requests = gene.plan(&input).map_err(RuntimeError::Planning)?;
-        let static_output = coding_static_output(&gene_id).map(|value| value.as_bytes().to_vec());
+        let static_output = coding_static_output(&gene_id)
+            .or_else(|| research_static_output(&gene_id))
+            .map(|value| value.as_bytes().to_vec());
         let mut summary = RunSummary {
             execution_id: execution_id.clone(),
             selected_harness: harness.manifest().id().clone(),
@@ -1165,35 +1178,42 @@ impl ExecutionController {
                     }
                 };
                 let gene_id = permit.request().gene_id().as_str();
-                let (receipt, result) = if gene_id == "daedalus.audit" {
-                    let target = self
-                        .workspace
-                        .path(path)
-                        .map_err(RuntimeError::Filesystem)?;
-                    let response = self.filesystem.inventory(permit, &target, now);
-                    let receipt = response.receipt().clone();
-                    let result = response
-                        .into_result()
-                        .map(|files| files.join("\n").into_bytes());
-                    (receipt, result)
-                } else if matches!(gene_id, "workspace.search" | "ariadne.debt") {
-                    let target = self.workspace.path(".").map_err(RuntimeError::Filesystem)?;
-                    let response = self.filesystem.search(permit, &target, path, now);
-                    let receipt = response.receipt().clone();
-                    let result = response
-                        .into_result()
-                        .map(|matches| matches.join("\n").into_bytes());
-                    (receipt, result)
-                } else {
-                    let target = self
-                        .workspace
-                        .path(path)
-                        .map_err(RuntimeError::Filesystem)?;
-                    let response = self.filesystem.read(permit, &target, now);
-                    let receipt = response.receipt().clone();
-                    let result = response.into_result();
-                    (receipt, result)
-                };
+                let (receipt, result) =
+                    if matches!(gene_id, "daedalus.audit" | "evidence.inventory") {
+                        let target = self
+                            .workspace
+                            .path(path)
+                            .map_err(RuntimeError::Filesystem)?;
+                        let response = self.filesystem.inventory(permit, &target, now);
+                        let receipt = response.receipt().clone();
+                        let result = response
+                            .into_result()
+                            .map(|files| files.join("\n").into_bytes());
+                        (receipt, result)
+                    } else if matches!(
+                        gene_id,
+                        "workspace.search"
+                            | "ariadne.debt"
+                            | "evidence.search"
+                            | "citation.inventory"
+                    ) {
+                        let target = self.workspace.path(".").map_err(RuntimeError::Filesystem)?;
+                        let response = self.filesystem.search(permit, &target, path, now);
+                        let receipt = response.receipt().clone();
+                        let result = response
+                            .into_result()
+                            .map(|matches| matches.join("\n").into_bytes());
+                        (receipt, result)
+                    } else {
+                        let target = self
+                            .workspace
+                            .path(path)
+                            .map_err(RuntimeError::Filesystem)?;
+                        let response = self.filesystem.read(permit, &target, now);
+                        let receipt = response.receipt().clone();
+                        let result = response.into_result();
+                        (receipt, result)
+                    };
                 output.receipts.push(receipt.clone());
                 output.events.push(self.event(
                     EventType::EffectCompleted,
@@ -1210,7 +1230,10 @@ impl ExecutionController {
                     },
                 ));
                 let bytes = result.map_err(RuntimeError::Filesystem)?;
-                if gene_id == "ariadne.debt" {
+                if matches!(
+                    gene_id,
+                    "ariadne.debt" | "source.compare" | "citation.inventory"
+                ) {
                     append_labeled_output(output, path, &bytes);
                 } else {
                     output.output = Some(bytes);
@@ -1510,6 +1533,16 @@ fn default_gene_id(intent: &TaskIntent) -> GeneId {
         "debt" => GeneId::new("ariadne.debt").expect("built-in Gene ID is valid"),
         "measure" => GeneId::new("hephaestus.measure").expect("built-in Gene ID is valid"),
         "guide" => GeneId::new("athena.guide").expect("built-in Gene ID is valid"),
+        "evidence-inventory" => {
+            GeneId::new("evidence.inventory").expect("built-in Gene ID is valid")
+        }
+        "evidence-search" => GeneId::new("evidence.search").expect("built-in Gene ID is valid"),
+        "source-read" => GeneId::new("source.read").expect("built-in Gene ID is valid"),
+        "source-compare" => GeneId::new("source.compare").expect("built-in Gene ID is valid"),
+        "citation-inventory" => {
+            GeneId::new("citation.inventory").expect("built-in Gene ID is valid")
+        }
+        "research-guide" => GeneId::new("research.guide").expect("built-in Gene ID is valid"),
         _ => GeneId::new("unknown.gene").expect("built-in fallback Gene ID is valid"),
     }
 }
@@ -1574,6 +1607,55 @@ fn coding_input(
     };
     let input = request.into_gene_input().map_err(RuntimeError::Planning)?;
     Ok((input, payload))
+}
+
+fn research_input(
+    intent: &TaskIntent,
+    gene_id: &GeneId,
+    session: &Session,
+    execution_id: &ExecutionId,
+    execution_profile: ExecutionProfile,
+) -> Result<(GeneInput, Option<Vec<u8>>), RuntimeError> {
+    let context = PlanningContext::new(
+        execution_id.clone(),
+        session.id().clone(),
+        session.principal_id().clone(),
+        session.workspace_id().clone(),
+        execution_profile,
+    );
+    let summary = intent.summary();
+    let (action, remainder) = summary.split_once(':').unwrap_or((summary, ""));
+    let action = action.to_ascii_lowercase();
+    let request = match gene_id.as_str() {
+        "evidence.inventory" if action == "evidence-inventory" && remainder.is_empty() => {
+            ResearchRequest::inventory(context)
+        }
+        "evidence.search" if action == "evidence-search" => {
+            ResearchRequest::search(context, remainder)
+        }
+        "source.read" if action == "source-read" => ResearchRequest::read(context, remainder),
+        "source.compare" if action == "source-compare" => {
+            let (left, right) = remainder
+                .split_once('|')
+                .ok_or(RuntimeError::InvalidIntent(
+                    "source comparison requires two paths",
+                ))?;
+            ResearchRequest::compare(context, left, right)
+        }
+        "citation.inventory" if action == "citation-inventory" && remainder.is_empty() => {
+            ResearchRequest::citation_inventory(context)
+        }
+        "research.guide" if action == "research-guide" && remainder.is_empty() => {
+            ResearchRequest::guide(context)
+        }
+        _ => {
+            return Err(RuntimeError::InvalidIntent(
+                "intent does not match the selected Gene",
+            ));
+        }
+    };
+    let input = request.into_gene_input().map_err(RuntimeError::Planning)?;
+    Ok((input, None))
 }
 
 fn append_labeled_output(summary: &mut RunSummary, label: &str, bytes: &[u8]) {
@@ -1685,6 +1767,55 @@ mod tests {
         assert_eq!(summary.status(), &RunStatus::Completed);
         assert_eq!(summary.output().unwrap(), b"src/lib.rs");
         assert_eq!(summary.selected_gene().as_str(), "workspace.search");
+    }
+
+    #[test]
+    fn research_source_comparison_is_read_only_and_receipted() {
+        let fixture = Fixture::new();
+        std::fs::write(fixture.path.join("first.txt"), b"first evidence\n").unwrap();
+        std::fs::write(fixture.path.join("second.txt"), b"second evidence\n").unwrap();
+        let controller = ExecutionController::new(fixture.root.clone());
+        let intent = TaskIntent::new("source-compare:first.txt|second.txt")
+            .unwrap()
+            .with_harness(HarnessId::new("research-domain").unwrap())
+            .with_gene(GeneId::new("source.compare").unwrap());
+
+        let summary = controller
+            .run_at(intent, fixture.session(), Timestamp::from_unix_seconds(10))
+            .unwrap();
+
+        assert_eq!(summary.status(), &RunStatus::Completed);
+        assert_eq!(summary.selected_harness().as_str(), "research-domain");
+        assert_eq!(summary.selected_gene().as_str(), "source.compare");
+        assert_eq!(summary.receipts().len(), 2);
+        let output = std::str::from_utf8(summary.output().unwrap()).unwrap();
+        assert!(output.contains("first.txt:\nfirst evidence"));
+        assert!(output.contains("second.txt:\nsecond evidence"));
+    }
+
+    #[test]
+    fn research_citation_inventory_uses_fixed_read_only_markers() {
+        let fixture = Fixture::new();
+        std::fs::write(
+            fixture.path.join("sources.md"),
+            b"https://example.test\ndoi:10.1000/example\n",
+        )
+        .unwrap();
+        let controller = ExecutionController::new(fixture.root.clone());
+        let intent = TaskIntent::new("citation-inventory")
+            .unwrap()
+            .with_harness(HarnessId::new("research-domain").unwrap())
+            .with_gene(GeneId::new("citation.inventory").unwrap());
+
+        let summary = controller
+            .run_at(intent, fixture.session(), Timestamp::from_unix_seconds(10))
+            .unwrap();
+
+        assert_eq!(summary.status(), &RunStatus::Completed);
+        assert_eq!(summary.receipts().len(), 3);
+        let output = std::str::from_utf8(summary.output().unwrap()).unwrap();
+        assert!(output.contains("https://:\nsources.md"));
+        assert!(output.contains("doi::\nsources.md"));
     }
 
     #[test]

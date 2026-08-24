@@ -93,8 +93,13 @@ fn ordinary_run_advertises_the_complete_default_tool_catalog() {
         vec![vec![
             "argus.review".to_owned(),
             "ariadne.debt".to_owned(),
+            "citation.inventory".to_owned(),
             "daedalus.audit".to_owned(),
+            "evidence.inventory".to_owned(),
+            "evidence.search".to_owned(),
             "hephaestus.measure".to_owned(),
+            "source.compare".to_owned(),
+            "source.read".to_owned(),
             "workspace.patch".to_owned(),
             "workspace.read".to_owned(),
             "workspace.search".to_owned(),

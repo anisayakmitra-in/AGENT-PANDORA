@@ -197,15 +197,16 @@ or expose provider, MCP, package, or remote-execution methods.
 Read-only work can complete without approval. Writes and process effects stop at
 the approval boundary and expose an inspectable, redacted request subject.
 `--harness` selects a built-in Harness or an admitted package profile by ID;
-`coding` is an alias for the built-in `coding-domain` Harness. Package-backed
-Domain profiles require the exact `--harness-version <version>` value. The
-runtime rejects an unknown, unsupported, or unavailable profile before Gene
-planning.
-Direct `run` uses the Coding Domain Harness only for recognized action prefixes
-such as `read:`, `search:`, `patch:`, `verify:`, `review:`, `deep-review:`,
-`audit`, `debt`, `measure`, and `guide`. Natural-language tasks require
-`run --agent`; Pandora does not silently route them to an unregistered default
-Harness.
+`coding` and `research` are aliases for the built-in `coding-domain` and
+`research-domain` Harnesses. Package-backed Domain profiles require the exact
+`--harness-version <version>` value. The runtime rejects an unknown,
+unsupported, or unavailable profile before Gene planning.
+Direct `run` recognizes the Coding actions `read:`, `search:`, `patch:`,
+`verify`, `review:`, `deep-review:`, `audit`, `debt`, `measure`, and `guide`.
+It also recognizes the Research actions `evidence-inventory`,
+`evidence-search:`, `source-read:`, `source-compare:`, `citation-inventory`, and
+`research-guide`. Other natural-language tasks require `run --agent`; Pandora
+does not silently route them to an unregistered default Harness.
 `harness run` accepts the same canonical catalog IDs and only runs a Domain
 Harness with executable Genes. A package-backed profile is assembled only from
 matching built-in Genes; its artifact is never loaded as code. A metadata-only
@@ -249,8 +250,9 @@ resume the pending task, `/deny` to reject it, and `/exit` or `/quit` to close
 it. Inspect the returned approval ID with `pandora approval inspect <id>`
 before approving. Each other line is sent through the same bounded AgentLoop
 and governed execution path as `run --agent`; the session is reused for later
-turns. Coding slash commands resolve to an exact Harness, version, and Gene
-before execution. Chat output is intended for terminals and rejects `--json`.
+turns. Coding and Research slash commands resolve to an exact Harness, version,
+and Gene before execution. Chat output is intended for terminals and rejects
+`--json`.
 `tui` opens the full-screen terminal client in an interactive terminal. It uses
 the same session, provider, AgentLoop, approval, and effect-policy path as
 `run --agent`; it does not add a second runtime. Enter submits a task, Up and
@@ -258,8 +260,9 @@ Down browse task history, `/help` lists commands, `/session` shows the active
 session, `/clear` clears the transcript, `/approve` approves and resumes the
 pending task, `/deny` denies it, and Escape or Ctrl-C closes the client. The
 in-memory transcript and task history are bounded; the session store remains
-the source for later resume. The TUI accepts the same Coding slash commands as
-the direct CLI and preserves quoted arguments such as `/read "My Project/README.md"`.
+the source for later resume. The TUI accepts the same Coding and Research slash
+commands as the direct CLI and preserves quoted arguments such as
+`/read "My Project/README.md"`.
 The TUI requires a real terminal and rejects `--json` and positional tasks.
 `run --plan` sends the request to the active or explicitly selected provider as a bounded,
 tool-free planning call. The planning request passes through the runtime's
@@ -271,7 +274,9 @@ variable named by that profile for planning.
 `run --agent` enables the bounded multi-turn loop. Each model request passes
 through the same provider permit boundary. The model can call
 `workspace.read`, `workspace.search`, `workspace.patch`, `workspace.verify`,
-`daedalus.audit`, `argus.review`, `ariadne.debt`, and `hephaestus.measure`.
+`daedalus.audit`, `argus.review`, `ariadne.debt`, `hephaestus.measure`,
+`evidence.inventory`, `evidence.search`, `source.read`, `source.compare`, and
+`citation.inventory`.
 Each call is validated by the ToolEngine, routed through the same governed
 runtime, and recorded in the session. Read and search use the current read-only
 policy; patch and verify stop at the existing approval boundary before any
@@ -328,7 +333,10 @@ pandora harness list
 pandora harness inspect core-source
 pandora harness inspect coding
 pandora harness inspect coding-domain
+pandora harness inspect research
+pandora harness inspect research-domain
 pandora harness run coding --gene workspace.read --task "read:README.md"
+pandora harness run research --gene source.compare --task "source-compare:README.md|CHANGELOG.md"
 pandora slash list
 pandora slash resolve /audit
 pandora /coding
@@ -339,6 +347,13 @@ pandora /argus-review crates/pandora-runtime/src/lib.rs
 pandora /debt
 pandora /measure
 pandora /guide
+pandora /research
+pandora /evidence-inventory
+pandora /evidence-search "approval digest"
+pandora /source-read README.md
+pandora /source-compare README.md CHANGELOG.md
+pandora /citation-inventory
+pandora /research-guide
 pandora tool list
 pandora tool inspect <id>
 pandora skill list
@@ -375,6 +390,9 @@ pandora completions fish
 are `/read`, `/search`, `/patch`, `/verify`, `/review`, `/audit`,
 `/argus-review`, `/debt`, `/measure`, and `/guide`. Canonical commands remain
 available as `/harness:<encoded-id>` and `/gene:<encoded-harness-id>:<encoded-gene-id>`.
+`/research` inspects the built-in `research-domain` Harness. Its short Gene
+aliases are `/evidence-inventory`, `/evidence-search`, `/source-read`,
+`/source-compare`, `/citation-inventory`, and `/research-guide`.
 An admitted custom Domain Harness uses exact-version commands such as
 `/harness:owner%2Fdomain@1.0.0` and
 `/gene:owner%2Fdomain@1.0.0:workspace.read`. Custom packages cannot claim the
