@@ -1,8 +1,11 @@
+use crate::sessions::{MAX_MEMORY_RECALL_RECORDS, SessionError, SessionStore};
 use pandora_types::{
     ContextClassification, MemoryApproval, MemoryAuditAction, MemoryAuditEntry,
-    MemoryContractError, MemoryId, MemoryKind, MemoryRecord, MemoryScope, MemoryTier, Timestamp,
+    MemoryContractError, MemoryId, MemoryKind, MemoryRecord, MemoryScope, MemoryTier, PrincipalId,
+    Timestamp,
 };
 use std::collections::{HashSet, VecDeque};
+use std::path::Path;
 use std::sync::Mutex;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -11,7 +14,12 @@ pub enum MemoryError {
     ApprovalRequired,
     AlreadyPromoted,
     InvalidCapacity,
+    InvalidRecord,
     SecretContent,
+    AlreadyExists,
+    CapacityExceeded,
+    Revoked,
+    ScopeViolation,
     Contract(MemoryContractError),
     StoreUnavailable,
 }
@@ -43,6 +51,12 @@ struct MemoryStore {
 pub struct MemoryEngine {
     max_l0_entries: usize,
     store: Mutex<MemoryStore>,
+    durable: Option<DurableMemoryBackend>,
+}
+
+struct DurableMemoryBackend {
+    store: SessionStore,
+    principal_id: PrincipalId,
 }
 
 impl MemoryEngine {
@@ -56,7 +70,24 @@ impl MemoryEngine {
                 revoked: HashSet::new(),
                 audit: Vec::new(),
             }),
+            durable: None,
         }
+    }
+
+    pub fn open(
+        path: impl AsRef<Path>,
+        max_l0_entries: usize,
+        principal_id: PrincipalId,
+    ) -> Result<Self, MemoryError> {
+        if max_l0_entries == 0 {
+            return Err(MemoryError::InvalidCapacity);
+        }
+        let mut engine = Self::new(max_l0_entries);
+        engine.durable = Some(DurableMemoryBackend {
+            store: SessionStore::open(path).map_err(memory_store_error)?,
+            principal_id,
+        });
+        Ok(engine)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -118,6 +149,13 @@ impl MemoryEngine {
             created_at,
             provenance,
         )?;
+        if let Some(durable) = &self.durable {
+            durable
+                .store
+                .record_memory(&durable.principal_id, &record)
+                .map_err(memory_store_error)?;
+            return Ok(record);
+        }
         let mut store = self
             .store
             .lock()
@@ -141,6 +179,12 @@ impl MemoryEngine {
         promoted_at: Timestamp,
     ) -> Result<MemoryRecord, MemoryError> {
         let approval = approval.ok_or(MemoryError::ApprovalRequired)?;
+        if let Some(durable) = &self.durable {
+            return durable
+                .store
+                .promote_memory(&durable.principal_id, scope, id, approval, promoted_at)
+                .map_err(memory_store_error);
+        }
         let mut store = self
             .store
             .lock()
@@ -181,8 +225,33 @@ impl MemoryEngine {
         tier: MemoryTier,
         now: Timestamp,
     ) -> Vec<MemoryRecord> {
+        self.try_recall(scope, tier, now).unwrap_or_default()
+    }
+
+    pub fn try_recall(
+        &self,
+        scope: &MemoryScope,
+        tier: MemoryTier,
+        now: Timestamp,
+    ) -> Result<Vec<MemoryRecord>, MemoryError> {
+        if tier != MemoryTier::L0
+            && let Some(durable) = &self.durable
+        {
+            return durable
+                .store
+                .recall_memory(
+                    scope.session_id(),
+                    &durable.principal_id,
+                    scope.tenant_id(),
+                    scope.workspace_id(),
+                    scope.provider(),
+                    tier,
+                    MAX_MEMORY_RECALL_RECORDS,
+                )
+                .map_err(memory_store_error);
+        }
         let Ok(mut store) = self.store.lock() else {
-            return Vec::new();
+            return Err(MemoryError::StoreUnavailable);
         };
         if tier == MemoryTier::L0 {
             prune_l0(&mut store.l0, now);
@@ -192,7 +261,7 @@ impl MemoryEngine {
             MemoryTier::L1 => store.l1.iter().collect::<Vec<_>>(),
             MemoryTier::L2 => store.l2.iter().collect::<Vec<_>>(),
         };
-        records
+        Ok(records
             .into_iter()
             .filter(|record| {
                 record.scope() == scope
@@ -200,7 +269,7 @@ impl MemoryEngine {
                     && !record.is_expired(now)
             })
             .cloned()
-            .collect()
+            .collect())
     }
 
     pub fn forget(
@@ -209,10 +278,59 @@ impl MemoryEngine {
         id: &MemoryId,
         at: Timestamp,
     ) -> Result<(), MemoryError> {
+        let (durable_revoked, durable_already_revoked) = if let Some(durable) = &self.durable {
+            match durable
+                .store
+                .revoke_memory(&durable.principal_id, scope, id, at)
+            {
+                Ok(()) => (true, false),
+                Err(SessionError::MemoryNotFound) => (false, false),
+                Err(SessionError::MemoryRevoked) => (false, true),
+                Err(error) => return Err(memory_store_error(error)),
+            }
+        } else {
+            (false, false)
+        };
         let mut store = self
             .store
             .lock()
             .map_err(|_| MemoryError::StoreUnavailable)?;
+        let l0_removed = store
+            .l0
+            .iter()
+            .any(|record| record.scope() == scope && record.id() == id);
+        if l0_removed {
+            store.revoked.insert(MemoryKey {
+                scope: scope.clone(),
+                id: id.clone(),
+            });
+            store.audit.push(MemoryAuditEntry::new(
+                id.clone(),
+                MemoryTier::L0,
+                MemoryAuditAction::Revoked,
+                scope.clone(),
+                at,
+                None,
+            ));
+            store
+                .l0
+                .retain(|record| !(record.scope() == scope && record.id() == id));
+        }
+        if durable_revoked || durable_already_revoked {
+            store.revoked.insert(MemoryKey {
+                scope: scope.clone(),
+                id: id.clone(),
+            });
+        }
+        if durable_revoked || l0_removed {
+            return Ok(());
+        }
+        if durable_already_revoked {
+            return Err(MemoryError::Revoked);
+        }
+        if self.durable.is_some() {
+            return Err(MemoryError::NotFound);
+        }
         let tier = find_tier(&store, scope, id).ok_or(MemoryError::NotFound)?;
         store.revoked.insert(MemoryKey {
             scope: scope.clone(),
@@ -235,15 +353,62 @@ impl MemoryEngine {
     }
 
     pub fn audit(&self, scope: &MemoryScope) -> Vec<MemoryAuditEntry> {
-        let Ok(store) = self.store.lock() else {
-            return Vec::new();
-        };
-        store
+        self.try_audit(scope).unwrap_or_default()
+    }
+
+    pub fn try_audit(&self, scope: &MemoryScope) -> Result<Vec<MemoryAuditEntry>, MemoryError> {
+        let store = self
+            .store
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        let mut audit = store
             .audit
             .iter()
             .filter(|entry| entry.scope() == scope)
             .cloned()
-            .collect()
+            .collect::<Vec<_>>();
+        drop(store);
+        if let Some(durable) = &self.durable {
+            audit.extend(
+                durable
+                    .store
+                    .memory_audit(&durable.principal_id, scope)
+                    .map_err(memory_store_error)?,
+            );
+            audit.sort_by_key(|entry| entry.at());
+        }
+        Ok(audit)
+    }
+
+    pub fn compact_revoked(
+        &self,
+        scope: &MemoryScope,
+        revoked_before_or_at: Timestamp,
+    ) -> Result<usize, MemoryError> {
+        let Some(durable) = &self.durable else {
+            return Ok(0);
+        };
+        durable
+            .store
+            .compact_revoked_memory(&durable.principal_id, scope, revoked_before_or_at)
+            .map_err(memory_store_error)
+    }
+}
+
+fn memory_store_error(error: SessionError) -> MemoryError {
+    match error {
+        SessionError::MemoryNotFound => MemoryError::NotFound,
+        SessionError::MemoryAlreadyExists => MemoryError::AlreadyExists,
+        SessionError::MemoryAlreadyPromoted => MemoryError::AlreadyPromoted,
+        SessionError::MemoryCapacityExceeded | SessionError::L1EvidenceCapacityExceeded => {
+            MemoryError::CapacityExceeded
+        }
+        SessionError::MemoryRevoked => MemoryError::Revoked,
+        SessionError::ScopeViolation => MemoryError::ScopeViolation,
+        SessionError::InvalidMemory | SessionError::InvalidMemoryLimit => {
+            MemoryError::InvalidRecord
+        }
+        _ => MemoryError::StoreUnavailable,
     }
 }
 
@@ -303,7 +468,7 @@ fn record_added(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pandora_types::{SessionId, TenantId, WorkspaceId};
+    use pandora_types::{PrincipalId, Session, SessionId, TenantId, WorkspaceId};
 
     fn scope(provider: &str) -> MemoryScope {
         MemoryScope::new(
@@ -522,6 +687,214 @@ mod tests {
                 .audit(&scope)
                 .iter()
                 .any(|entry| entry.action() == MemoryAuditAction::Revoked)
+        );
+    }
+
+    #[test]
+    fn durable_l1_and_l2_survive_reopen_with_revocation_and_audit() {
+        let root = crate::test_support::new_temp_dir("pandora-durable-memory-test").unwrap();
+        let path = root.join("sessions.sqlite3");
+        let principal = PrincipalId::new("principal-a").unwrap();
+        let scope = scope("provider-a");
+        let session = Session::new(
+            scope.session_id().clone(),
+            principal.clone(),
+            scope.tenant_id().clone(),
+            scope.workspace_id().clone(),
+            Timestamp::from_unix_seconds(1),
+        );
+        crate::sessions::SessionStore::open(&path)
+            .unwrap()
+            .create(&session)
+            .unwrap();
+
+        {
+            let engine = MemoryEngine::open(&path, 2, principal.clone()).unwrap();
+            let lesson = engine
+                .distill_l1(
+                    scope.clone(),
+                    "lesson-1",
+                    MemoryKind::Lesson,
+                    "prefer verified evidence",
+                    ContextClassification::Internal,
+                    Timestamp::from_unix_seconds(2),
+                    "evaluation:1",
+                )
+                .unwrap();
+            engine
+                .promote_l2(
+                    &scope,
+                    lesson.id(),
+                    Some(MemoryApproval::new("approval-1", "operator-1").unwrap()),
+                    Timestamp::from_unix_seconds(3),
+                )
+                .unwrap();
+        }
+
+        let engine = MemoryEngine::open(&path, 2, principal).unwrap();
+        assert_eq!(
+            engine
+                .try_recall(&scope, MemoryTier::L1, Timestamp::from_unix_seconds(4))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            engine
+                .try_recall(&scope, MemoryTier::L2, Timestamp::from_unix_seconds(4))
+                .unwrap()
+                .len(),
+            1
+        );
+
+        engine
+            .forget(
+                &scope,
+                &MemoryId::new("lesson-1").unwrap(),
+                Timestamp::from_unix_seconds(5),
+            )
+            .unwrap();
+        assert!(
+            engine
+                .try_recall(&scope, MemoryTier::L1, Timestamp::from_unix_seconds(6))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            engine
+                .try_audit(&scope)
+                .unwrap()
+                .iter()
+                .filter(|entry| entry.action() == MemoryAuditAction::Revoked)
+                .count(),
+            2
+        );
+        assert_eq!(
+            engine
+                .compact_revoked(&scope, Timestamp::from_unix_seconds(5))
+                .unwrap(),
+            2
+        );
+        assert_eq!(engine.try_audit(&scope).unwrap().len(), 4);
+    }
+
+    #[test]
+    fn durable_engine_never_reloads_l0_trace_data() {
+        let root = crate::test_support::new_temp_dir("pandora-ephemeral-memory-test").unwrap();
+        let path = root.join("sessions.sqlite3");
+        let principal = PrincipalId::new("principal-a").unwrap();
+        let scope = scope("provider-a");
+        let session = Session::new(
+            scope.session_id().clone(),
+            principal.clone(),
+            scope.tenant_id().clone(),
+            scope.workspace_id().clone(),
+            Timestamp::from_unix_seconds(1),
+        );
+        crate::sessions::SessionStore::open(&path)
+            .unwrap()
+            .create(&session)
+            .unwrap();
+
+        {
+            let engine = MemoryEngine::open(&path, 2, principal.clone()).unwrap();
+            engine
+                .remember_l0(
+                    scope.clone(),
+                    "trace-1",
+                    "ephemeral trace",
+                    ContextClassification::Internal,
+                    Timestamp::from_unix_seconds(2),
+                    Some(Timestamp::from_unix_seconds(10)),
+                    "execution:1",
+                )
+                .unwrap();
+        }
+
+        let reopened = MemoryEngine::open(path, 2, principal).unwrap();
+        assert!(
+            reopened
+                .try_recall(&scope, MemoryTier::L0, Timestamp::from_unix_seconds(3))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn one_forget_revokes_matching_l0_and_durable_memory() {
+        let root = crate::test_support::new_temp_dir("pandora-memory-collision-test").unwrap();
+        let path = root.join("sessions.sqlite3");
+        let principal = PrincipalId::new("principal-a").unwrap();
+        let scope = scope("provider-a");
+        let session = Session::new(
+            scope.session_id().clone(),
+            principal.clone(),
+            scope.tenant_id().clone(),
+            scope.workspace_id().clone(),
+            Timestamp::from_unix_seconds(1),
+        );
+        crate::sessions::SessionStore::open(&path)
+            .unwrap()
+            .create(&session)
+            .unwrap();
+
+        let engine = MemoryEngine::open(&path, 2, principal.clone()).unwrap();
+        engine
+            .distill_l1(
+                scope.clone(),
+                "shared-id",
+                MemoryKind::Lesson,
+                "retain verified evidence",
+                ContextClassification::Internal,
+                Timestamp::from_unix_seconds(2),
+                "evaluation:1",
+            )
+            .unwrap();
+        engine
+            .remember_l0(
+                scope.clone(),
+                "shared-id",
+                "ephemeral trace",
+                ContextClassification::Internal,
+                Timestamp::from_unix_seconds(3),
+                Some(Timestamp::from_unix_seconds(10)),
+                "execution:1",
+            )
+            .unwrap();
+
+        engine
+            .forget(
+                &scope,
+                &MemoryId::new("shared-id").unwrap(),
+                Timestamp::from_unix_seconds(4),
+            )
+            .unwrap();
+        assert!(
+            engine
+                .try_recall(&scope, MemoryTier::L0, Timestamp::from_unix_seconds(5))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            engine
+                .try_recall(&scope, MemoryTier::L1, Timestamp::from_unix_seconds(5))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            engine
+                .compact_revoked(&scope, Timestamp::from_unix_seconds(4))
+                .unwrap(),
+            1
+        );
+        drop(engine);
+
+        let reopened = MemoryEngine::open(path, 2, principal).unwrap();
+        assert!(
+            reopened
+                .try_recall(&scope, MemoryTier::L1, Timestamp::from_unix_seconds(5))
+                .unwrap()
+                .is_empty()
         );
     }
 }

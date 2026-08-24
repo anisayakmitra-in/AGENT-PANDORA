@@ -1,8 +1,9 @@
 use pandora_provider::ChatMessage;
 use pandora_types::{
     ContextClassification, EvaluationKind, EvaluationReceipt, EvaluationResult, EvaluationStatus,
-    ExecutionId, MemoryKind, MemoryRecord, MemoryScope, PrincipalId, RuntimeEvent, Session,
-    SessionId, TenantId, Timestamp, WorkspaceId,
+    ExecutionId, MemoryApproval, MemoryAuditAction, MemoryAuditEntry, MemoryId, MemoryKind,
+    MemoryRecord, MemoryScope, MemoryTier, PrincipalId, RuntimeEvent, Session, SessionId, TenantId,
+    Timestamp, WorkspaceId,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::fmt;
@@ -10,13 +11,16 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
-const CURRENT_SCHEMA_VERSION: i64 = 5;
+const CURRENT_SCHEMA_VERSION: i64 = 6;
 const MAX_EVENT_BYTES: usize = 1_048_576;
 const MAX_AGENT_MESSAGE_BYTES: usize = 1_048_576;
 const MAX_AGENT_TRANSCRIPT_BYTES: usize = 8 * 1_048_576;
 const MAX_AGENT_MESSAGES: usize = 256;
 pub const MAX_L1_EVIDENCE_PER_SCOPE: usize = 64;
 pub const MAX_L1_EVIDENCE_CONTEXT_RECORDS: usize = 8;
+pub const MAX_MEMORY_RECORDS_PER_SCOPE_AND_TIER: usize = 256;
+pub const MAX_MEMORY_RECALL_RECORDS: u16 = 256;
+const MAX_MEMORY_IDENTITIES_PER_SCOPE: usize = 4_096;
 
 #[derive(Debug)]
 pub enum SessionError {
@@ -34,6 +38,13 @@ pub enum SessionError {
     L1EvidenceAlreadyExists,
     L1EvidenceCapacityExceeded,
     InvalidL1Evidence,
+    MemoryAlreadyExists,
+    MemoryAlreadyPromoted,
+    MemoryCapacityExceeded,
+    MemoryNotFound,
+    MemoryRevoked,
+    InvalidMemory,
+    InvalidMemoryLimit,
     InvalidEvaluation,
     InvalidEventPage,
     UnsupportedSchemaVersion(i64),
@@ -64,6 +75,15 @@ impl fmt::Display for SessionError {
                 formatter.write_str("L1 evidence capacity is exhausted")
             }
             Self::InvalidL1Evidence => formatter.write_str("L1 evidence record is invalid"),
+            Self::MemoryAlreadyExists => formatter.write_str("memory record already exists"),
+            Self::MemoryAlreadyPromoted => formatter.write_str("memory record is already promoted"),
+            Self::MemoryCapacityExceeded => {
+                formatter.write_str("memory scope capacity is exhausted")
+            }
+            Self::MemoryNotFound => formatter.write_str("memory record was not found"),
+            Self::MemoryRevoked => formatter.write_str("memory record is revoked"),
+            Self::InvalidMemory => formatter.write_str("memory record is invalid"),
+            Self::InvalidMemoryLimit => formatter.write_str("memory recall limit is invalid"),
             Self::InvalidEvaluation => formatter.write_str("execution evaluation is invalid"),
             Self::InvalidEventPage => formatter.write_str("session event page is invalid"),
             Self::UnsupportedSchemaVersion(version) => {
@@ -313,7 +333,14 @@ impl SessionStore {
             });
         }
         let l1_evidence_count = connection.query_row(
-            "SELECT COUNT(*) FROM session_l1_evidence WHERE session_id = ?1",
+            "SELECT COUNT(*) FROM memory_records
+             WHERE session_id = ?1 AND tier = 'l1' AND kind = 'execution_evidence'
+               AND NOT EXISTS (
+                   SELECT 1 FROM memory_revocations
+                   WHERE memory_revocations.session_id = memory_records.session_id
+                     AND memory_revocations.provider = memory_records.provider
+                     AND memory_revocations.memory_id = memory_records.memory_id
+               )",
             params![session_id.as_str()],
             |row| row.get::<_, i64>(0),
         )?;
@@ -547,13 +574,218 @@ impl SessionStore {
         principal_id: &PrincipalId,
         record: &MemoryRecord,
     ) -> Result<(), SessionError> {
-        if record.tier() != pandora_types::MemoryTier::L1
+        if record.tier() != MemoryTier::L1
             || record.kind() != MemoryKind::ExecutionEvidence
             || record.classification() != ContextClassification::Internal
             || !is_canonical_l1_execution_evidence(record)
         {
             return Err(SessionError::InvalidL1Evidence);
         }
+        self.record_memory_with_limit(
+            principal_id,
+            record,
+            MAX_L1_EVIDENCE_PER_SCOPE,
+            Some(MemoryKind::ExecutionEvidence),
+        )
+    }
+
+    pub fn record_memory(
+        &self,
+        principal_id: &PrincipalId,
+        record: &MemoryRecord,
+    ) -> Result<(), SessionError> {
+        if record.tier() != MemoryTier::L1
+            || record.classification() == ContextClassification::Secret
+        {
+            return Err(SessionError::InvalidMemory);
+        }
+        self.record_memory_with_limit(
+            principal_id,
+            record,
+            MAX_MEMORY_RECORDS_PER_SCOPE_AND_TIER,
+            None,
+        )
+    }
+
+    pub fn promote_memory(
+        &self,
+        principal_id: &PrincipalId,
+        scope: &MemoryScope,
+        memory_id: &MemoryId,
+        approval: MemoryApproval,
+        promoted_at: Timestamp,
+    ) -> Result<MemoryRecord, SessionError> {
+        let mut connection = self.lock()?;
+        let session =
+            load_session(&connection, scope.session_id())?.ok_or(SessionError::SessionNotFound)?;
+        ensure_scope(
+            &session,
+            principal_id,
+            scope.tenant_id(),
+            scope.workspace_id(),
+        )?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if is_memory_revoked(&transaction, scope, memory_id)? {
+            return Err(SessionError::MemoryRevoked);
+        }
+        let candidate = load_memory_record(&transaction, scope, memory_id, MemoryTier::L1)?
+            .ok_or(SessionError::MemoryNotFound)?;
+        if load_memory_record(&transaction, scope, memory_id, MemoryTier::L2)?.is_some() {
+            return Err(SessionError::MemoryAlreadyPromoted);
+        }
+        let promoted = MemoryRecord::promote_l2(candidate, approval, promoted_at)
+            .map_err(|_| SessionError::InvalidMemory)?;
+        insert_memory_record(&transaction, &promoted)?;
+        insert_memory_audit(
+            &transaction,
+            &promoted,
+            MemoryAuditAction::Promoted,
+            promoted_at,
+            promoted.approval().map(|value| value.approval_id()),
+        )?;
+        transaction.commit()?;
+        Ok(promoted)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn recall_memory(
+        &self,
+        session_id: &SessionId,
+        principal_id: &PrincipalId,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        provider: impl Into<String>,
+        tier: MemoryTier,
+        limit: u16,
+    ) -> Result<Vec<MemoryRecord>, SessionError> {
+        if limit == 0 || limit > MAX_MEMORY_RECALL_RECORDS {
+            return Err(SessionError::InvalidMemoryLimit);
+        }
+        if tier == MemoryTier::L0 {
+            return Err(SessionError::InvalidMemory);
+        }
+        let scope = MemoryScope::new(
+            tenant_id.clone(),
+            workspace_id.clone(),
+            session_id.clone(),
+            provider,
+        )
+        .map_err(|_| SessionError::InvalidMemory)?;
+        let connection = self.lock()?;
+        let session =
+            load_session(&connection, session_id)?.ok_or(SessionError::SessionNotFound)?;
+        ensure_scope(&session, principal_id, tenant_id, workspace_id)?;
+        load_memory_records(&connection, &scope, tier, limit)
+    }
+
+    pub fn revoke_memory(
+        &self,
+        principal_id: &PrincipalId,
+        scope: &MemoryScope,
+        memory_id: &MemoryId,
+        revoked_at: Timestamp,
+    ) -> Result<(), SessionError> {
+        let mut connection = self.lock()?;
+        let session =
+            load_session(&connection, scope.session_id())?.ok_or(SessionError::SessionNotFound)?;
+        ensure_scope(
+            &session,
+            principal_id,
+            scope.tenant_id(),
+            scope.workspace_id(),
+        )?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if is_memory_revoked(&transaction, scope, memory_id)? {
+            return Err(SessionError::MemoryRevoked);
+        }
+        let records = load_memory_records_by_id(&transaction, scope, memory_id)?;
+        if records.is_empty() {
+            return Err(SessionError::MemoryNotFound);
+        }
+        transaction.execute(
+            "INSERT INTO memory_revocations
+             (session_id, provider, memory_id, revoked_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                scope.session_id().as_str(),
+                scope.provider(),
+                memory_id.as_str(),
+                timestamp_i64(revoked_at)?,
+            ],
+        )?;
+        for record in records {
+            insert_memory_audit(
+                &transaction,
+                &record,
+                MemoryAuditAction::Revoked,
+                revoked_at,
+                None,
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn memory_audit(
+        &self,
+        principal_id: &PrincipalId,
+        scope: &MemoryScope,
+    ) -> Result<Vec<MemoryAuditEntry>, SessionError> {
+        let connection = self.lock()?;
+        let session =
+            load_session(&connection, scope.session_id())?.ok_or(SessionError::SessionNotFound)?;
+        ensure_scope(
+            &session,
+            principal_id,
+            scope.tenant_id(),
+            scope.workspace_id(),
+        )?;
+        load_memory_audit(&connection, scope)
+    }
+
+    pub fn compact_revoked_memory(
+        &self,
+        principal_id: &PrincipalId,
+        scope: &MemoryScope,
+        revoked_before_or_at: Timestamp,
+    ) -> Result<usize, SessionError> {
+        let mut connection = self.lock()?;
+        let session =
+            load_session(&connection, scope.session_id())?.ok_or(SessionError::SessionNotFound)?;
+        ensure_scope(
+            &session,
+            principal_id,
+            scope.tenant_id(),
+            scope.workspace_id(),
+        )?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let deleted = transaction.execute(
+            "DELETE FROM memory_records
+             WHERE session_id = ?1 AND provider = ?2
+               AND EXISTS (
+                   SELECT 1 FROM memory_revocations
+                   WHERE memory_revocations.session_id = memory_records.session_id
+                     AND memory_revocations.provider = memory_records.provider
+                     AND memory_revocations.memory_id = memory_records.memory_id
+                     AND memory_revocations.revoked_at <= ?3
+               )",
+            params![
+                scope.session_id().as_str(),
+                scope.provider(),
+                timestamp_i64(revoked_before_or_at)?,
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(deleted)
+    }
+
+    fn record_memory_with_limit(
+        &self,
+        principal_id: &PrincipalId,
+        record: &MemoryRecord,
+        limit: usize,
+        capacity_kind: Option<MemoryKind>,
+    ) -> Result<(), SessionError> {
         let scope = record.scope();
         let mut connection = self.lock()?;
         let session =
@@ -565,39 +797,77 @@ impl SessionStore {
             scope.workspace_id(),
         )?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let count = transaction.query_row(
-            "SELECT COUNT(*) FROM session_l1_evidence
-             WHERE session_id = ?1 AND provider = ?2",
-            params![scope.session_id().as_str(), scope.provider()],
-            |row| row.get::<_, i64>(0),
-        )?;
-        let count = usize::try_from(count).map_err(|_| SessionError::CorruptRecord)?;
-        if count >= MAX_L1_EVIDENCE_PER_SCOPE {
-            return Err(SessionError::L1EvidenceCapacityExceeded);
+        if is_memory_revoked(&transaction, scope, record.id())? {
+            return Err(SessionError::MemoryRevoked);
         }
-        let result = transaction.execute(
-            "INSERT INTO session_l1_evidence
-             (session_id, provider, memory_id, summary, created_at, provenance)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        let identity_exists = transaction.query_row(
+            "SELECT EXISTS (
+                 SELECT 1 FROM memory_records
+                 WHERE session_id = ?1 AND provider = ?2 AND memory_id = ?3
+             )",
             params![
                 scope.session_id().as_str(),
                 scope.provider(),
                 record.id().as_str(),
-                record.summary(),
-                i64::try_from(record.created_at().as_unix_seconds())
-                    .map_err(|_| SessionError::CorruptRecord)?,
-                record.provenance(),
             ],
-        );
-        match result {
-            Ok(_) => transaction.commit().map_err(SessionError::Database),
-            Err(rusqlite::Error::SqliteFailure(error, _))
-                if error.code == rusqlite::ErrorCode::ConstraintViolation =>
-            {
-                Err(SessionError::L1EvidenceAlreadyExists)
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !identity_exists {
+            let identity_count = transaction.query_row(
+                "SELECT COUNT(*) FROM (
+                     SELECT memory_id FROM memory_records
+                     WHERE session_id = ?1 AND provider = ?2
+                     UNION
+                     SELECT memory_id FROM memory_revocations
+                     WHERE session_id = ?1 AND provider = ?2
+                 )",
+                params![scope.session_id().as_str(), scope.provider()],
+                |row| row.get::<_, i64>(0),
+            )?;
+            let identity_count =
+                usize::try_from(identity_count).map_err(|_| SessionError::CorruptRecord)?;
+            if identity_count >= MAX_MEMORY_IDENTITIES_PER_SCOPE {
+                return Err(SessionError::MemoryCapacityExceeded);
             }
-            Err(error) => Err(SessionError::Database(error)),
         }
+        let total_count = transaction.query_row(
+            "SELECT COUNT(*) FROM memory_records
+             WHERE session_id = ?1 AND provider = ?2 AND tier = 'l1'",
+            params![scope.session_id().as_str(), scope.provider()],
+            |row| row.get::<_, i64>(0),
+        )?;
+        let total_count = usize::try_from(total_count).map_err(|_| SessionError::CorruptRecord)?;
+        if total_count >= MAX_MEMORY_RECORDS_PER_SCOPE_AND_TIER {
+            return Err(SessionError::MemoryCapacityExceeded);
+        }
+        if let Some(kind) = capacity_kind {
+            let count = transaction.query_row(
+                "SELECT COUNT(*) FROM memory_records
+                 WHERE session_id = ?1 AND provider = ?2 AND tier = 'l1' AND kind = ?3",
+                params![scope.session_id().as_str(), scope.provider(), kind.as_str()],
+                |row| row.get::<_, i64>(0),
+            )?;
+            let count = usize::try_from(count).map_err(|_| SessionError::CorruptRecord)?;
+            if count >= limit {
+                return Err(SessionError::L1EvidenceCapacityExceeded);
+            }
+        }
+        match insert_memory_record(&transaction, record) {
+            Ok(()) => {}
+            Err(SessionError::MemoryAlreadyExists) if capacity_kind.is_some() => {
+                return Err(SessionError::L1EvidenceAlreadyExists);
+            }
+            Err(error) => return Err(error),
+        }
+        insert_memory_audit(
+            &transaction,
+            record,
+            MemoryAuditAction::Added,
+            record.created_at(),
+            None,
+        )?;
+        transaction.commit()?;
+        Ok(())
     }
 
     pub fn l1_evidence_context(
@@ -621,8 +891,16 @@ impl SessionStore {
         ensure_scope(&session, principal_id, tenant_id, workspace_id)?;
         let mut statement = connection.prepare(
             "SELECT memory_id, summary, created_at, provenance
-             FROM session_l1_evidence
+             FROM memory_records
              WHERE session_id = ?1 AND provider = ?2
+               AND tier = 'l1' AND kind = 'execution_evidence'
+               AND classification = 'internal'
+               AND NOT EXISTS (
+                   SELECT 1 FROM memory_revocations
+                   WHERE memory_revocations.session_id = memory_records.session_id
+                     AND memory_revocations.provider = memory_records.provider
+                     AND memory_revocations.memory_id = memory_records.memory_id
+               )
              ORDER BY created_at DESC, memory_id DESC
              LIMIT ?3",
         )?;
@@ -840,9 +1118,412 @@ fn migrate(connection: &mut Connection) -> Result<(), SessionError> {
                  );
              INSERT INTO schema_migrations (version, applied_at) VALUES (5, strftime('%s', 'now'));",
         )?;
+        version = 5;
+    }
+    if version == 5 {
+        transaction.execute_batch(
+            "CREATE TABLE memory_records (
+                 session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                 provider TEXT NOT NULL,
+                 memory_id TEXT NOT NULL,
+                 tier TEXT NOT NULL CHECK (tier IN ('l1', 'l2')),
+                 kind TEXT NOT NULL CHECK (kind IN (
+                     'execution_evidence', 'decision', 'failure', 'benchmark',
+                     'lesson', 'lineage', 'policy_decision', 'replacement'
+                 )),
+                 classification TEXT NOT NULL CHECK (
+                     classification IN ('public', 'internal', 'sensitive')
+                 ),
+                 summary TEXT NOT NULL,
+                 created_at INTEGER NOT NULL CHECK (created_at >= 0),
+                 provenance TEXT NOT NULL,
+                 approval_id TEXT,
+                 approver TEXT,
+                 PRIMARY KEY (session_id, provider, memory_id, tier),
+                 CHECK (
+                     (tier = 'l1' AND approval_id IS NULL AND approver IS NULL)
+                     OR (tier = 'l2' AND approval_id IS NOT NULL AND approver IS NOT NULL)
+                 )
+             );
+             CREATE INDEX memory_records_scope_idx
+                 ON memory_records(session_id, provider, tier, created_at, memory_id);
+             CREATE TABLE memory_revocations (
+                 session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                 provider TEXT NOT NULL,
+                 memory_id TEXT NOT NULL,
+                 revoked_at INTEGER NOT NULL CHECK (revoked_at >= 0),
+                 PRIMARY KEY (session_id, provider, memory_id)
+             );
+             CREATE TABLE memory_audit (
+                 sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                 session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                 provider TEXT NOT NULL,
+                 memory_id TEXT NOT NULL,
+                 tier TEXT NOT NULL CHECK (tier IN ('l1', 'l2')),
+                 action TEXT NOT NULL CHECK (action IN ('added', 'promoted', 'revoked')),
+                 recorded_at INTEGER NOT NULL CHECK (recorded_at >= 0),
+                 approval_id TEXT
+             );
+             CREATE INDEX memory_audit_scope_idx
+                 ON memory_audit(session_id, provider, sequence);
+             INSERT INTO memory_records (
+                 session_id, provider, memory_id, tier, kind, classification,
+                 summary, created_at, provenance, approval_id, approver
+             )
+             SELECT session_id, provider, memory_id, 'l1', 'execution_evidence',
+                    'internal', summary, created_at, provenance, NULL, NULL
+             FROM session_l1_evidence;
+             INSERT INTO memory_audit (
+                 session_id, provider, memory_id, tier, action, recorded_at, approval_id
+             )
+              SELECT session_id, provider, memory_id, 'l1', 'added', created_at, NULL
+              FROM session_l1_evidence;
+              DROP TABLE session_l1_evidence;
+              INSERT INTO schema_migrations (version, applied_at) VALUES (6, strftime('%s', 'now'));",
+        )?;
     }
     transaction.commit()?;
     Ok(())
+}
+
+type RawMemoryRecord = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    i64,
+    String,
+    Option<String>,
+    Option<String>,
+);
+
+fn insert_memory_record(
+    connection: &Connection,
+    record: &MemoryRecord,
+) -> Result<(), SessionError> {
+    let approval_id = record.approval().map(MemoryApproval::approval_id);
+    let approver = record.approval().map(MemoryApproval::approver);
+    let result = connection.execute(
+        "INSERT INTO memory_records (
+             session_id, provider, memory_id, tier, kind, classification,
+             summary, created_at, provenance, approval_id, approver
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params![
+            record.scope().session_id().as_str(),
+            record.scope().provider(),
+            record.id().as_str(),
+            record.tier().as_str(),
+            record.kind().as_str(),
+            record.classification().as_str(),
+            record.summary(),
+            timestamp_i64(record.created_at())?,
+            record.provenance(),
+            approval_id,
+            approver,
+        ],
+    );
+    match result {
+        Ok(_) => Ok(()),
+        Err(rusqlite::Error::SqliteFailure(error, _))
+            if error.code == rusqlite::ErrorCode::ConstraintViolation =>
+        {
+            Err(SessionError::MemoryAlreadyExists)
+        }
+        Err(error) => Err(SessionError::Database(error)),
+    }
+}
+
+fn insert_memory_audit(
+    connection: &Connection,
+    record: &MemoryRecord,
+    action: MemoryAuditAction,
+    recorded_at: Timestamp,
+    approval_id: Option<&str>,
+) -> Result<(), SessionError> {
+    connection.execute(
+        "INSERT INTO memory_audit (
+             session_id, provider, memory_id, tier, action, recorded_at, approval_id
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            record.scope().session_id().as_str(),
+            record.scope().provider(),
+            record.id().as_str(),
+            record.tier().as_str(),
+            memory_audit_action_name(action),
+            timestamp_i64(recorded_at)?,
+            approval_id,
+        ],
+    )?;
+    Ok(())
+}
+
+fn is_memory_revoked(
+    connection: &Connection,
+    scope: &MemoryScope,
+    memory_id: &MemoryId,
+) -> Result<bool, SessionError> {
+    connection
+        .query_row(
+            "SELECT 1 FROM memory_revocations
+             WHERE session_id = ?1 AND provider = ?2 AND memory_id = ?3",
+            params![
+                scope.session_id().as_str(),
+                scope.provider(),
+                memory_id.as_str(),
+            ],
+            |_| Ok(()),
+        )
+        .optional()
+        .map(|value| value.is_some())
+        .map_err(SessionError::Database)
+}
+
+fn load_memory_record(
+    connection: &Connection,
+    scope: &MemoryScope,
+    memory_id: &MemoryId,
+    tier: MemoryTier,
+) -> Result<Option<MemoryRecord>, SessionError> {
+    let raw = connection
+        .query_row(
+            "SELECT tier, kind, classification, summary, provenance, created_at,
+                    memory_id, approval_id, approver
+             FROM memory_records
+             WHERE session_id = ?1 AND provider = ?2 AND memory_id = ?3 AND tier = ?4",
+            params![
+                scope.session_id().as_str(),
+                scope.provider(),
+                memory_id.as_str(),
+                tier.as_str(),
+            ],
+            decode_memory_row,
+        )
+        .optional()?;
+    raw.map(|raw| decode_memory_record(scope.clone(), raw))
+        .transpose()
+}
+
+fn load_memory_records(
+    connection: &Connection,
+    scope: &MemoryScope,
+    tier: MemoryTier,
+    limit: u16,
+) -> Result<Vec<MemoryRecord>, SessionError> {
+    let mut statement = connection.prepare(
+        "SELECT tier, kind, classification, summary, provenance, created_at,
+                memory_id, approval_id, approver
+         FROM memory_records
+         WHERE session_id = ?1 AND provider = ?2 AND tier = ?3
+           AND NOT EXISTS (
+               SELECT 1 FROM memory_revocations
+               WHERE memory_revocations.session_id = memory_records.session_id
+                 AND memory_revocations.provider = memory_records.provider
+                 AND memory_revocations.memory_id = memory_records.memory_id
+           )
+         ORDER BY created_at DESC, memory_id DESC
+         LIMIT ?4",
+    )?;
+    let rows = statement.query_map(
+        params![
+            scope.session_id().as_str(),
+            scope.provider(),
+            tier.as_str(),
+            i64::from(limit),
+        ],
+        decode_memory_row,
+    )?;
+    rows.map(|row| {
+        row.map_err(SessionError::Database)
+            .and_then(|raw| decode_memory_record(scope.clone(), raw))
+    })
+    .collect()
+}
+
+fn load_memory_records_by_id(
+    connection: &Connection,
+    scope: &MemoryScope,
+    memory_id: &MemoryId,
+) -> Result<Vec<MemoryRecord>, SessionError> {
+    let mut statement = connection.prepare(
+        "SELECT tier, kind, classification, summary, provenance, created_at,
+                memory_id, approval_id, approver
+         FROM memory_records
+         WHERE session_id = ?1 AND provider = ?2 AND memory_id = ?3
+         ORDER BY tier ASC",
+    )?;
+    let rows = statement.query_map(
+        params![
+            scope.session_id().as_str(),
+            scope.provider(),
+            memory_id.as_str(),
+        ],
+        decode_memory_row,
+    )?;
+    rows.map(|row| {
+        row.map_err(SessionError::Database)
+            .and_then(|raw| decode_memory_record(scope.clone(), raw))
+    })
+    .collect()
+}
+
+fn decode_memory_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawMemoryRecord> {
+    Ok((
+        row.get(0)?,
+        row.get(1)?,
+        row.get(2)?,
+        row.get(3)?,
+        row.get(4)?,
+        row.get(5)?,
+        row.get(6)?,
+        row.get(7)?,
+        row.get(8)?,
+    ))
+}
+
+fn decode_memory_record(
+    scope: MemoryScope,
+    raw: RawMemoryRecord,
+) -> Result<MemoryRecord, SessionError> {
+    let (
+        tier,
+        kind,
+        classification,
+        summary,
+        provenance,
+        created_at,
+        memory_id,
+        approval_id,
+        approver,
+    ) = raw;
+    let tier = parse_memory_tier(&tier)?;
+    let kind = parse_memory_kind(&kind)?;
+    let classification = parse_context_classification(&classification)?;
+    let created_at = u64::try_from(created_at)
+        .map(Timestamp::from_unix_seconds)
+        .map_err(|_| SessionError::CorruptRecord)?;
+    let candidate = MemoryRecord::new_l1(
+        memory_id,
+        kind,
+        scope,
+        summary,
+        classification,
+        created_at,
+        provenance,
+    )
+    .map_err(|_| SessionError::CorruptRecord)?;
+    match tier {
+        MemoryTier::L1 => {
+            if approval_id.is_some() || approver.is_some() {
+                return Err(SessionError::CorruptRecord);
+            }
+            Ok(candidate)
+        }
+        MemoryTier::L2 => {
+            let approval = MemoryApproval::new(
+                approval_id.ok_or(SessionError::CorruptRecord)?,
+                approver.ok_or(SessionError::CorruptRecord)?,
+            )
+            .map_err(|_| SessionError::CorruptRecord)?;
+            MemoryRecord::promote_l2(candidate, approval, created_at)
+                .map_err(|_| SessionError::CorruptRecord)
+        }
+        MemoryTier::L0 => Err(SessionError::CorruptRecord),
+    }
+}
+
+fn load_memory_audit(
+    connection: &Connection,
+    scope: &MemoryScope,
+) -> Result<Vec<MemoryAuditEntry>, SessionError> {
+    let mut statement = connection.prepare(
+        "SELECT memory_id, tier, action, recorded_at, approval_id
+         FROM memory_audit
+         WHERE session_id = ?1 AND provider = ?2
+         ORDER BY sequence ASC",
+    )?;
+    let rows = statement.query_map(
+        params![scope.session_id().as_str(), scope.provider()],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, Option<String>>(4)?,
+            ))
+        },
+    )?;
+    rows.map(|row| {
+        let (memory_id, tier, action, recorded_at, approval_id) = row?;
+        let memory_id = MemoryId::new(memory_id).map_err(|_| SessionError::CorruptRecord)?;
+        let tier = parse_memory_tier(&tier)?;
+        let action = parse_memory_audit_action(&action)?;
+        let recorded_at = u64::try_from(recorded_at)
+            .map(Timestamp::from_unix_seconds)
+            .map_err(|_| SessionError::CorruptRecord)?;
+        Ok(MemoryAuditEntry::new(
+            memory_id,
+            tier,
+            action,
+            scope.clone(),
+            recorded_at,
+            approval_id,
+        ))
+    })
+    .collect()
+}
+
+fn parse_memory_tier(value: &str) -> Result<MemoryTier, SessionError> {
+    match value {
+        "l1" => Ok(MemoryTier::L1),
+        "l2" => Ok(MemoryTier::L2),
+        _ => Err(SessionError::CorruptRecord),
+    }
+}
+
+fn parse_memory_kind(value: &str) -> Result<MemoryKind, SessionError> {
+    match value {
+        "execution_evidence" => Ok(MemoryKind::ExecutionEvidence),
+        "decision" => Ok(MemoryKind::Decision),
+        "failure" => Ok(MemoryKind::Failure),
+        "benchmark" => Ok(MemoryKind::Benchmark),
+        "lesson" => Ok(MemoryKind::Lesson),
+        "lineage" => Ok(MemoryKind::Lineage),
+        "policy_decision" => Ok(MemoryKind::PolicyDecision),
+        "replacement" => Ok(MemoryKind::Replacement),
+        _ => Err(SessionError::CorruptRecord),
+    }
+}
+
+fn parse_context_classification(value: &str) -> Result<ContextClassification, SessionError> {
+    match value {
+        "public" => Ok(ContextClassification::Public),
+        "internal" => Ok(ContextClassification::Internal),
+        "sensitive" => Ok(ContextClassification::Sensitive),
+        _ => Err(SessionError::CorruptRecord),
+    }
+}
+
+fn memory_audit_action_name(action: MemoryAuditAction) -> &'static str {
+    match action {
+        MemoryAuditAction::Added => "added",
+        MemoryAuditAction::Promoted => "promoted",
+        MemoryAuditAction::Revoked => "revoked",
+    }
+}
+
+fn parse_memory_audit_action(value: &str) -> Result<MemoryAuditAction, SessionError> {
+    match value {
+        "added" => Ok(MemoryAuditAction::Added),
+        "promoted" => Ok(MemoryAuditAction::Promoted),
+        "revoked" => Ok(MemoryAuditAction::Revoked),
+        _ => Err(SessionError::CorruptRecord),
+    }
+}
+
+fn timestamp_i64(value: Timestamp) -> Result<i64, SessionError> {
+    i64::try_from(value.as_unix_seconds()).map_err(|_| SessionError::CorruptRecord)
 }
 
 fn load_evaluations(
@@ -1033,6 +1714,323 @@ mod tests {
         EvaluationKind, EvaluationReceipt, EvaluationResult, EvaluationStatus, EventContext,
         EventId, EventPayload, EventType, ExecutionId,
     };
+
+    fn memory_fixture(name: &str) -> (std::path::PathBuf, SessionStore, Session, MemoryScope) {
+        let root = crate::test_support::new_temp_dir(name).unwrap();
+        let store = SessionStore::open(root.join("sessions.sqlite3")).unwrap();
+        let session = Session::new(
+            SessionId::new("session-1").unwrap(),
+            PrincipalId::new("principal-1").unwrap(),
+            TenantId::new("tenant-1").unwrap(),
+            WorkspaceId::new("workspace-1").unwrap(),
+            Timestamp::from_unix_seconds(1),
+        );
+        let scope = MemoryScope::new(
+            session.tenant_id().clone(),
+            session.workspace_id().clone(),
+            session.id().clone(),
+            "provider-1",
+        )
+        .unwrap();
+        store.create(&session).unwrap();
+        (root, store, session, scope)
+    }
+
+    #[test]
+    fn schema_five_l1_evidence_migrates_into_durable_memory() {
+        let root = crate::test_support::new_temp_dir("pandora-memory-migration-test").unwrap();
+        let path = root.join("sessions.sqlite3");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "PRAGMA foreign_keys = ON;
+                 CREATE TABLE schema_migrations (
+                     version INTEGER PRIMARY KEY,
+                     applied_at INTEGER NOT NULL
+                 );
+                 INSERT INTO schema_migrations (version, applied_at) VALUES (5, 1);
+                 CREATE TABLE sessions (
+                     id TEXT PRIMARY KEY NOT NULL,
+                     principal_id TEXT NOT NULL,
+                     tenant_id TEXT NOT NULL,
+                     workspace_id TEXT NOT NULL,
+                     created_at INTEGER NOT NULL CHECK (created_at >= 0)
+                 );
+                 CREATE TABLE session_l1_evidence (
+                     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                     provider TEXT NOT NULL,
+                     memory_id TEXT NOT NULL,
+                     summary TEXT NOT NULL,
+                     created_at INTEGER NOT NULL CHECK (created_at >= 0),
+                     provenance TEXT NOT NULL,
+                     PRIMARY KEY (session_id, provider, memory_id)
+                 );
+                 INSERT INTO sessions (
+                     id, principal_id, tenant_id, workspace_id, created_at
+                 ) VALUES ('session-1', 'principal-1', 'tenant-1', 'workspace-1', 1);
+                 INSERT INTO session_l1_evidence (
+                     session_id, provider, memory_id, summary, created_at, provenance
+                 ) VALUES (
+                     'session-1', 'provider-1', 'execution-1',
+                     'completed execution through coding/file-read', 2,
+                     'execution:execution-1'
+                 );",
+            )
+            .unwrap();
+        drop(connection);
+
+        let store = SessionStore::open(&path).unwrap();
+        let records = store
+            .recall_memory(
+                &SessionId::new("session-1").unwrap(),
+                &PrincipalId::new("principal-1").unwrap(),
+                &TenantId::new("tenant-1").unwrap(),
+                &WorkspaceId::new("workspace-1").unwrap(),
+                "provider-1",
+                MemoryTier::L1,
+                10,
+            )
+            .unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id().as_str(), "execution-1");
+        assert_eq!(records[0].kind(), MemoryKind::ExecutionEvidence);
+        let scope = records[0].scope().clone();
+        assert_eq!(
+            store
+                .memory_audit(&PrincipalId::new("principal-1").unwrap(), &scope)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .lock()
+                .unwrap()
+                .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| row
+                    .get::<_, i64>(
+                    0
+                ),)
+                .unwrap(),
+            CURRENT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            store
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE type = 'table' AND name = 'session_l1_evidence'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn durable_memory_rejects_cross_principal_recall() {
+        let (root, store, session, scope) = memory_fixture("pandora-memory-scope-test");
+        let record = MemoryRecord::new_l1(
+            "decision-1",
+            MemoryKind::Decision,
+            scope,
+            "use the verified plan",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(2),
+            "execution:1",
+        )
+        .unwrap();
+        store
+            .record_memory(session.principal_id(), &record)
+            .unwrap();
+
+        assert!(matches!(
+            store.recall_memory(
+                session.id(),
+                &PrincipalId::new("principal-2").unwrap(),
+                session.tenant_id(),
+                session.workspace_id(),
+                "provider-1",
+                MemoryTier::L1,
+                10,
+            ),
+            Err(SessionError::ScopeViolation)
+        ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn durable_memory_rejects_corrupt_rows() {
+        let (root, store, session, scope) = memory_fixture("pandora-memory-corrupt-test");
+        store
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO memory_records (
+                     session_id, provider, memory_id, tier, kind, classification,
+                     summary, created_at, provenance, approval_id, approver
+                 ) VALUES (?1, ?2, 'decision-1', 'l1', 'decision', 'internal', '', 2,
+                           'execution:1', NULL, NULL)",
+                params![session.id().as_str(), scope.provider()],
+            )
+            .unwrap();
+
+        assert!(matches!(
+            store.recall_memory(
+                session.id(),
+                session.principal_id(),
+                session.tenant_id(),
+                session.workspace_id(),
+                scope.provider(),
+                MemoryTier::L1,
+                10,
+            ),
+            Err(SessionError::CorruptRecord)
+        ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn durable_memory_rejects_invalid_recall_limits() {
+        let (root, store, session, scope) = memory_fixture("pandora-memory-limit-test");
+        for limit in [0, MAX_MEMORY_RECALL_RECORDS + 1] {
+            assert!(matches!(
+                store.recall_memory(
+                    session.id(),
+                    session.principal_id(),
+                    session.tenant_id(),
+                    session.workspace_id(),
+                    scope.provider(),
+                    MemoryTier::L1,
+                    limit,
+                ),
+                Err(SessionError::InvalidMemoryLimit)
+            ));
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn compacted_memory_keeps_its_revocation_tombstone() {
+        let (root, store, session, scope) = memory_fixture("pandora-memory-tombstone-test");
+        let record = MemoryRecord::new_l1(
+            "lesson-1",
+            MemoryKind::Lesson,
+            scope.clone(),
+            "retain the verified fallback",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(2),
+            "evaluation:1",
+        )
+        .unwrap();
+        store
+            .record_memory(session.principal_id(), &record)
+            .unwrap();
+        store
+            .revoke_memory(
+                session.principal_id(),
+                &scope,
+                record.id(),
+                Timestamp::from_unix_seconds(3),
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .compact_revoked_memory(
+                    session.principal_id(),
+                    &scope,
+                    Timestamp::from_unix_seconds(3),
+                )
+                .unwrap(),
+            1
+        );
+        assert!(matches!(
+            store.record_memory(session.principal_id(), &record),
+            Err(SessionError::MemoryRevoked)
+        ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn durable_memory_caps_lifetime_identities_per_scope() {
+        let (root, store, session, scope) = memory_fixture("pandora-memory-identity-cap-test");
+        store
+            .lock()
+            .unwrap()
+            .execute_batch(&format!(
+                "WITH RECURSIVE ids(value) AS (
+                     VALUES(0)
+                     UNION ALL
+                     SELECT value + 1 FROM ids WHERE value < {}
+                 )
+                 INSERT INTO memory_revocations (
+                     session_id, provider, memory_id, revoked_at
+                 )
+                 SELECT 'session-1', 'provider-1', printf('old-%04d', value), 2
+                 FROM ids;",
+                MAX_MEMORY_IDENTITIES_PER_SCOPE - 1
+            ))
+            .unwrap();
+        let record = MemoryRecord::new_l1(
+            "new-decision",
+            MemoryKind::Decision,
+            scope,
+            "use the verified plan",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(3),
+            "execution:1",
+        )
+        .unwrap();
+
+        assert!(matches!(
+            store.record_memory(session.principal_id(), &record),
+            Err(SessionError::MemoryCapacityExceeded)
+        ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn execution_evidence_respects_the_total_l1_capacity() {
+        let (root, store, session, scope) = memory_fixture("pandora-memory-total-cap-test");
+        store
+            .lock()
+            .unwrap()
+            .execute_batch(&format!(
+                "WITH RECURSIVE ids(value) AS (
+                     VALUES(0)
+                     UNION ALL
+                     SELECT value + 1 FROM ids WHERE value < {}
+                 )
+                 INSERT INTO memory_records (
+                     session_id, provider, memory_id, tier, kind, classification,
+                     summary, created_at, provenance, approval_id, approver
+                 )
+                 SELECT 'session-1', 'provider-1', printf('lesson-%03d', value),
+                        'l1', 'lesson', 'internal', 'bounded lesson', 2,
+                        printf('evaluation:%03d', value), NULL, NULL
+                 FROM ids;",
+                MAX_MEMORY_RECORDS_PER_SCOPE_AND_TIER - 1
+            ))
+            .unwrap();
+        let record = MemoryRecord::new_l1(
+            "execution-1",
+            MemoryKind::ExecutionEvidence,
+            scope,
+            "completed execution through coding-domain/workspace.read",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(3),
+            "execution:execution-1",
+        )
+        .unwrap();
+
+        assert!(matches!(
+            store.record_l1_evidence(session.principal_id(), &record),
+            Err(SessionError::MemoryCapacityExceeded)
+        ));
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     #[test]
     fn execution_events_and_evaluation_commit_atomically() {

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- L1 and approved L2 memory now persist in the scoped session database while
+  L0 traces remain an expiring RAM-only ring buffer. Existing canonical L1
+  execution evidence migrates into the durable schema.
+- Durable memory recall is bounded, scope-checked, revocation-aware, and
+  fail-closed on corrupt records. Revocation tombstones survive record
+  compaction and retain append-only audit evidence.
 - Added the built-in `design-domain` Harness with bounded workspace inventory,
   token-marker evidence, source inspection, source comparison, accessibility
   evidence, and static guidance Genes. Every effect is workspace-scoped and
