@@ -178,8 +178,9 @@ execution model.
   approved pending actions.
 - Atomic private configuration writes that preserve the previous valid file on
   replacement failure.
-- A public `pandora-agent` npm/Bun launcher that safely replaces stale cached
-  binaries on Windows and forwards to verified native artifacts.
+- A `pandora-agent` Node/Bun launcher tarball attached to the GitHub release;
+  it safely replaces stale cached binaries on Windows and forwards to verified
+  native artifacts.
 - GitHub Actions workflows refreshed to current action runtimes for the
   Windows, macOS, and Linux release checks.
 

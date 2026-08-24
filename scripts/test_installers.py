@@ -175,7 +175,7 @@ class InstallerContractTests(unittest.TestCase):
             readme,
         )
 
-    def test_npm_launcher_uses_the_current_public_package_identity(self) -> None:
+    def test_npm_launcher_uses_the_current_package_identity(self) -> None:
         package = json.loads(
             (ROOT / "npm" / "pandora-cli" / "package.json").read_text(
                 encoding="utf-8"
@@ -185,6 +185,13 @@ class InstallerContractTests(unittest.TestCase):
         self.assertEqual(package["name"], "pandora-agent")
         self.assertEqual(package["bin"]["pandora"], "bin/pandora.js")
         self.assertNotIn("o-pandora", package["name"])
+
+    def test_platform_docs_mark_npm_registry_distribution_unavailable(self) -> None:
+        platforms = (ROOT / "docs" / "PLATFORMS.md").read_text(encoding="utf-8")
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+
+        self.assertIn("not published to the public npm registry", platforms)
+        self.assertNotIn("A public `pandora-agent` npm/Bun launcher", changelog)
 
     def test_launcher_rejects_tampered_offline_cache(self) -> None:
         launcher = ROOT / "npm" / "pandora-cli" / "bin" / "pandora.js"
