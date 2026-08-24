@@ -1,7 +1,9 @@
 use super::StrategyProfile;
 use pandora_types::{
-    ArtifactId, CandidatePopulation, FailureCorpus, MutationBatch, POPULATION_PROTOCOL_VERSION,
-    PopulationPolicy, RequestDigest,
+    ArtifactId, CandidatePopulation, EvaluationKind, EvaluationReceipt, EvaluationStatus,
+    FailureCorpus, MutationBatch, MutationPrecheckReceipt, POPULATION_PROTOCOL_VERSION,
+    PopulationContractError, PopulationMutationRequest, PopulationPolicy, PrecheckFailure,
+    RequestDigest,
 };
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -15,6 +17,7 @@ pub enum PopulationStrategyError {
     CandidateGenerationAhead(ArtifactId),
     ParentLimitExceeded(ArtifactId),
     NoViableCandidates,
+    Contract(PopulationContractError),
 }
 
 impl fmt::Display for PopulationStrategyError {
@@ -41,11 +44,18 @@ impl fmt::Display for PopulationStrategyError {
                 artifact_id.as_str()
             ),
             Self::NoViableCandidates => formatter.write_str("population has no viable candidates"),
+            Self::Contract(error) => error.fmt(formatter),
         }
     }
 }
 
 impl std::error::Error for PopulationStrategyError {}
+
+impl From<PopulationContractError> for PopulationStrategyError {
+    fn from(error: PopulationContractError) -> Self {
+        Self::Contract(error)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PopulationStrategy {
@@ -141,6 +151,56 @@ impl PopulationStrategy {
             planned_candidates,
             plan_digest,
         })
+    }
+
+    pub fn precheck(
+        &self,
+        request: &PopulationMutationRequest,
+        evaluation: &EvaluationReceipt,
+    ) -> Result<MutationPrecheckReceipt, PopulationStrategyError> {
+        if self.profile == StrategyProfile::Production {
+            return Err(PopulationStrategyError::DisabledInProduction);
+        }
+
+        let mut failures = evaluation
+            .results()
+            .iter()
+            .filter_map(|result| match result.status() {
+                EvaluationStatus::Passed => None,
+                EvaluationStatus::Failed => Some(PrecheckFailure::Failed(result.kind())),
+                EvaluationStatus::HumanReviewRequired => {
+                    Some(PrecheckFailure::HumanReviewRequired(result.kind()))
+                }
+            })
+            .collect::<Vec<_>>();
+        for required in [EvaluationKind::Policy, EvaluationKind::Regression] {
+            let Some(result) = evaluation
+                .results()
+                .iter()
+                .find(|result| result.kind() == required)
+            else {
+                failures.push(PrecheckFailure::Missing(required));
+                continue;
+            };
+            if !result.passed() {
+                continue;
+            }
+            if result.advisory() {
+                failures.push(PrecheckFailure::Advisory(required));
+            } else if result.score() < self.policy.min_precheck_score() {
+                failures.push(PrecheckFailure::BelowMinimum(required));
+            }
+        }
+
+        Ok(MutationPrecheckReceipt::new(
+            request.request_digest().clone(),
+            evaluation.session_id().clone(),
+            evaluation.execution_id().clone(),
+            digest_evaluation(evaluation),
+            self.policy.min_precheck_score(),
+            failures,
+            evaluation.evaluated_at(),
+        )?)
     }
 
     fn validate_population(
@@ -294,6 +354,23 @@ fn digest_plan(
         hasher.update(parent.novelty_score().to_be_bytes());
         hash_text(&mut hasher, parent.mutation_batch().digest().as_str());
         hasher.update((parent.planned_mutations() as u64).to_be_bytes());
+    }
+    sha256_digest(hasher)
+}
+
+fn digest_evaluation(evaluation: &EvaluationReceipt) -> RequestDigest {
+    let mut results = evaluation.results().iter().collect::<Vec<_>>();
+    results.sort_by_key(|result| result.kind());
+    let mut hasher = Sha256::new();
+    hasher.update(POPULATION_PROTOCOL_VERSION.to_be_bytes());
+    hash_text(&mut hasher, evaluation.session_id().as_str());
+    hash_text(&mut hasher, evaluation.execution_id().as_str());
+    hasher.update(evaluation.evaluated_at().as_unix_seconds().to_be_bytes());
+    hasher.update((results.len() as u64).to_be_bytes());
+    for result in results {
+        hash_text(&mut hasher, result.kind().as_str());
+        hash_text(&mut hasher, result.status().as_str());
+        hasher.update([result.score(), u8::from(result.advisory())]);
     }
     sha256_digest(hasher)
 }

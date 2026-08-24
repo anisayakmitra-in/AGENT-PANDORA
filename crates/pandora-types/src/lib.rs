@@ -91,8 +91,9 @@ pub use package::{
 };
 pub use population::{
     CandidatePopulation, FailureCorpus, FailureEvidence, FailurePartition, LineageLimits,
-    MutationBatch, MutationLimits, POPULATION_PROTOCOL_VERSION, PopulationCandidate,
-    PopulationContractError, PopulationPolicy, PopulationScope,
+    MutationBatch, MutationLimits, MutationPrecheckReceipt, POPULATION_PROTOCOL_VERSION,
+    PopulationCandidate, PopulationContractError, PopulationMutationRequest, PopulationPolicy,
+    PopulationScope, PrecheckDisposition, PrecheckFailure,
 };
 pub use rollout::{
     MAX_ROLLOUT_RECORDS, ROLLOUT_PROJECTION_VERSION, Rollout, RolloutContractError, RolloutDigest,

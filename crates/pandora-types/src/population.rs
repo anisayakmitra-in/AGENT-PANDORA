@@ -1,6 +1,6 @@
 use crate::{
-    ArtifactId, FailureId, IdError, PopulationId, RequestDigest, SessionId, TenantId, Timestamp,
-    Usage, WorkspaceId,
+    ArtifactId, EvaluationKind, ExecutionId, FailureId, IdError, PopulationId, RequestDigest,
+    SessionId, TenantId, Timestamp, Usage, WorkspaceId,
 };
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -16,6 +16,52 @@ const MAX_PARENTS: usize = 16;
 pub enum FailurePartition {
     Training,
     Holdout,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum PrecheckDisposition {
+    Passed,
+    Rejected,
+}
+
+impl PrecheckDisposition {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Passed => "passed",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum PrecheckFailure {
+    Missing(EvaluationKind),
+    Advisory(EvaluationKind),
+    Failed(EvaluationKind),
+    HumanReviewRequired(EvaluationKind),
+    BelowMinimum(EvaluationKind),
+}
+
+impl PrecheckFailure {
+    pub const fn kind(self) -> EvaluationKind {
+        match self {
+            Self::Missing(kind)
+            | Self::Advisory(kind)
+            | Self::Failed(kind)
+            | Self::HumanReviewRequired(kind)
+            | Self::BelowMinimum(kind) => kind,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Missing(_) => "missing",
+            Self::Advisory(_) => "advisory",
+            Self::Failed(_) => "failed",
+            Self::HumanReviewRequired(_) => "human_review_required",
+            Self::BelowMinimum(_) => "below_minimum",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -66,6 +112,179 @@ impl std::error::Error for PopulationContractError {}
 impl From<IdError> for PopulationContractError {
     fn from(error: IdError) -> Self {
         Self::InvalidId(error)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PopulationMutationRequest {
+    population_id: PopulationId,
+    generation: u32,
+    parent_artifact: ArtifactId,
+    candidate_artifact: ArtifactId,
+    plan_digest: RequestDigest,
+    mutation_batch_digest: RequestDigest,
+    request_digest: RequestDigest,
+}
+
+impl PopulationMutationRequest {
+    pub fn new(
+        population_id: PopulationId,
+        generation: u32,
+        parent_artifact: ArtifactId,
+        candidate_artifact: ArtifactId,
+        plan_digest: RequestDigest,
+        mutation_batch_digest: RequestDigest,
+    ) -> Result<Self, PopulationContractError> {
+        if parent_artifact == candidate_artifact {
+            return Err(PopulationContractError::ParentMatchesCandidate);
+        }
+        let request_digest = digest_mutation_request(
+            &population_id,
+            generation,
+            &parent_artifact,
+            &candidate_artifact,
+            &plan_digest,
+            &mutation_batch_digest,
+        );
+        Ok(Self {
+            population_id,
+            generation,
+            parent_artifact,
+            candidate_artifact,
+            plan_digest,
+            mutation_batch_digest,
+            request_digest,
+        })
+    }
+
+    pub fn population_id(&self) -> &PopulationId {
+        &self.population_id
+    }
+
+    pub const fn generation(&self) -> u32 {
+        self.generation
+    }
+
+    pub fn parent_artifact(&self) -> &ArtifactId {
+        &self.parent_artifact
+    }
+
+    pub fn candidate_artifact(&self) -> &ArtifactId {
+        &self.candidate_artifact
+    }
+
+    pub fn plan_digest(&self) -> &RequestDigest {
+        &self.plan_digest
+    }
+
+    pub fn mutation_batch_digest(&self) -> &RequestDigest {
+        &self.mutation_batch_digest
+    }
+
+    pub fn request_digest(&self) -> &RequestDigest {
+        &self.request_digest
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MutationPrecheckReceipt {
+    request_digest: RequestDigest,
+    evaluation_session_id: SessionId,
+    evaluation_execution_id: ExecutionId,
+    evaluation_digest: RequestDigest,
+    minimum_score: u8,
+    disposition: PrecheckDisposition,
+    failures: Vec<PrecheckFailure>,
+    evaluated_at: Timestamp,
+    digest: RequestDigest,
+}
+
+impl MutationPrecheckReceipt {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        request_digest: RequestDigest,
+        evaluation_session_id: SessionId,
+        evaluation_execution_id: ExecutionId,
+        evaluation_digest: RequestDigest,
+        minimum_score: u8,
+        mut failures: Vec<PrecheckFailure>,
+        evaluated_at: Timestamp,
+    ) -> Result<Self, PopulationContractError> {
+        if minimum_score > 100 {
+            return Err(PopulationContractError::InvalidScore);
+        }
+        failures.sort();
+        failures.dedup();
+        let disposition = if failures.is_empty() {
+            PrecheckDisposition::Passed
+        } else {
+            PrecheckDisposition::Rejected
+        };
+        let digest = digest_precheck(
+            &request_digest,
+            &evaluation_session_id,
+            &evaluation_execution_id,
+            &evaluation_digest,
+            minimum_score,
+            disposition,
+            &failures,
+            evaluated_at,
+        );
+        Ok(Self {
+            request_digest,
+            evaluation_session_id,
+            evaluation_execution_id,
+            evaluation_digest,
+            minimum_score,
+            disposition,
+            failures,
+            evaluated_at,
+            digest,
+        })
+    }
+
+    pub fn request_digest(&self) -> &RequestDigest {
+        &self.request_digest
+    }
+
+    pub fn evaluation_session_id(&self) -> &SessionId {
+        &self.evaluation_session_id
+    }
+
+    pub fn evaluation_execution_id(&self) -> &ExecutionId {
+        &self.evaluation_execution_id
+    }
+
+    pub fn evaluation_digest(&self) -> &RequestDigest {
+        &self.evaluation_digest
+    }
+
+    pub const fn minimum_score(&self) -> u8 {
+        self.minimum_score
+    }
+
+    pub const fn disposition(&self) -> PrecheckDisposition {
+        self.disposition
+    }
+
+    pub fn failures(&self) -> &[PrecheckFailure] {
+        &self.failures
+    }
+
+    pub const fn evaluated_at(&self) -> Timestamp {
+        self.evaluated_at
+    }
+
+    pub fn digest(&self) -> &RequestDigest {
+        &self.digest
+    }
+
+    pub const fn passed(&self) -> bool {
+        matches!(self.disposition, PrecheckDisposition::Passed)
+    }
+
+    pub const fn can_authorize_permit(&self) -> bool {
+        false
     }
 }
 
@@ -632,6 +851,63 @@ fn digest_failures(
         "sha256:{:x}",
         hasher.finalize()
     ))?)
+}
+
+fn digest_mutation_request(
+    population_id: &PopulationId,
+    generation: u32,
+    parent_artifact: &ArtifactId,
+    candidate_artifact: &ArtifactId,
+    plan_digest: &RequestDigest,
+    mutation_batch_digest: &RequestDigest,
+) -> RequestDigest {
+    let mut hasher = Sha256::new();
+    hasher.update(POPULATION_PROTOCOL_VERSION.to_be_bytes());
+    update_text(&mut hasher, population_id.as_str());
+    hasher.update(generation.to_be_bytes());
+    update_text(&mut hasher, parent_artifact.as_str());
+    update_text(&mut hasher, candidate_artifact.as_str());
+    update_text(&mut hasher, plan_digest.as_str());
+    update_text(&mut hasher, mutation_batch_digest.as_str());
+    sha256_request_digest(hasher)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn digest_precheck(
+    request_digest: &RequestDigest,
+    session_id: &SessionId,
+    execution_id: &ExecutionId,
+    evaluation_digest: &RequestDigest,
+    minimum_score: u8,
+    disposition: PrecheckDisposition,
+    failures: &[PrecheckFailure],
+    evaluated_at: Timestamp,
+) -> RequestDigest {
+    let mut hasher = Sha256::new();
+    hasher.update(POPULATION_PROTOCOL_VERSION.to_be_bytes());
+    update_text(&mut hasher, request_digest.as_str());
+    update_text(&mut hasher, session_id.as_str());
+    update_text(&mut hasher, execution_id.as_str());
+    update_text(&mut hasher, evaluation_digest.as_str());
+    hasher.update([minimum_score]);
+    update_text(&mut hasher, disposition.as_str());
+    hasher.update((failures.len() as u64).to_be_bytes());
+    for failure in failures {
+        update_text(&mut hasher, failure.as_str());
+        update_text(&mut hasher, failure.kind().as_str());
+    }
+    hasher.update(evaluated_at.as_unix_seconds().to_be_bytes());
+    sha256_request_digest(hasher)
+}
+
+fn update_text(hasher: &mut Sha256, value: &str) {
+    hasher.update((value.len() as u64).to_be_bytes());
+    hasher.update(value.as_bytes());
+}
+
+fn sha256_request_digest(hasher: Sha256) -> RequestDigest {
+    RequestDigest::new(format!("sha256:{:x}", hasher.finalize()))
+        .expect("SHA-256 request digest is valid")
 }
 
 fn validate_text(

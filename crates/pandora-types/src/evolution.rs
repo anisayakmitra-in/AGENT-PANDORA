@@ -24,6 +24,7 @@ impl EvolutionMode {
 pub enum EvolutionSource {
     Reflexion,
     Gepa,
+    Population,
 }
 
 impl EvolutionSource {
@@ -31,6 +32,7 @@ impl EvolutionSource {
         match self {
             Self::Reflexion => "reflexion",
             Self::Gepa => "gepa",
+            Self::Population => "population",
         }
     }
 }

@@ -1,6 +1,6 @@
 use pandora_types::{
-    EvolutionContractError, EvolutionMode, EvolutionPolicy, EvolutionSource, MutationProposal,
-    ReflexionArtifact,
+    EvolutionContractError, EvolutionMode, EvolutionPolicy, EvolutionSource,
+    MutationPrecheckReceipt, MutationProposal, PopulationMutationRequest, ReflexionArtifact,
 };
 use std::fmt;
 
@@ -8,6 +8,11 @@ use std::fmt;
 pub enum MutationError {
     DisabledInProduction,
     WrongProposalSource,
+    PrecheckMismatch,
+    PrecheckRejected,
+    BaseArtifactMismatch,
+    CandidateArtifactMismatch,
+    EvidenceMismatch,
     Contract(EvolutionContractError),
 }
 
@@ -17,7 +22,21 @@ impl fmt::Display for MutationError {
             Self::DisabledInProduction => {
                 formatter.write_str("mutation proposals are disabled in production")
             }
-            Self::WrongProposalSource => formatter.write_str("proposal is not a GEPA proposal"),
+            Self::WrongProposalSource => {
+                formatter.write_str("proposal source does not match the mutation path")
+            }
+            Self::PrecheckMismatch => {
+                formatter.write_str("precheck does not match the mutation request")
+            }
+            Self::PrecheckRejected => formatter.write_str("mutation precheck was rejected"),
+            Self::BaseArtifactMismatch => {
+                formatter.write_str("proposal base artifact does not match the mutation request")
+            }
+            Self::CandidateArtifactMismatch => formatter
+                .write_str("proposal candidate artifact does not match the mutation request"),
+            Self::EvidenceMismatch => {
+                formatter.write_str("proposal evidence does not match the mutation precheck")
+            }
             Self::Contract(error) => error.fmt(formatter),
         }
     }
@@ -61,6 +80,36 @@ impl MutationEngine {
         }
         if proposal.source() != EvolutionSource::Gepa {
             return Err(MutationError::WrongProposalSource);
+        }
+        Ok(proposal)
+    }
+
+    pub fn propose_population(
+        &self,
+        request: &PopulationMutationRequest,
+        precheck: &MutationPrecheckReceipt,
+        proposal: MutationProposal,
+    ) -> Result<MutationProposal, MutationError> {
+        if self.policy.mode() != EvolutionMode::Research {
+            return Err(MutationError::DisabledInProduction);
+        }
+        if proposal.source() != EvolutionSource::Population {
+            return Err(MutationError::WrongProposalSource);
+        }
+        if precheck.request_digest() != request.request_digest() {
+            return Err(MutationError::PrecheckMismatch);
+        }
+        if !precheck.passed() {
+            return Err(MutationError::PrecheckRejected);
+        }
+        if proposal.base_artifact() != request.parent_artifact() {
+            return Err(MutationError::BaseArtifactMismatch);
+        }
+        if proposal.candidate_artifact() != request.candidate_artifact() {
+            return Err(MutationError::CandidateArtifactMismatch);
+        }
+        if proposal.evidence_digest() != precheck.digest() {
+            return Err(MutationError::EvidenceMismatch);
         }
         Ok(proposal)
     }
