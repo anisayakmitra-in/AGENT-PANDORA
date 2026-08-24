@@ -3272,6 +3272,29 @@ fn direct_run_rejects_unclassified_tasks_without_a_phantom_harness() {
 }
 
 #[test]
+fn direct_run_accepts_the_design_harness_alias() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    let output = fixture
+        .command(&[
+            "run",
+            "--harness",
+            "design",
+            "--gene",
+            "design.guide",
+            "design-guide",
+            "--json",
+        ])
+        .output()
+        .expect("direct design run should start");
+    assert_success_with_context(&output, "direct design run");
+    let response = parse_json(&output);
+    assert_eq!(response["harness_id"], "design-domain");
+    assert_eq!(response["gene_id"], "design.guide");
+}
+
+#[test]
 fn slash_commands_cover_the_built_in_domains_and_execute_workflow_genes() {
     let fixture = Fixture::new();
     fixture.setup();
