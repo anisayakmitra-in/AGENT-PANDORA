@@ -16,9 +16,10 @@ use crate::shadow_council::{RoutingError, ShadowCouncil};
 use crate::wasm::{WasmError, WasmExecutor, WasmGeneRequest};
 use crate::{ApprovalError, ApprovalStore, ConsumedPermit, PermitError, ToolContext, ToolEngine};
 use pandora_harnesses::{
-    CodingRequest, DesignRequest, HarnessCatalog, PlanningContext, ResearchRequest,
-    canonical_harness_binding_digest, coding_static_output, design_static_output, is_design_gene,
-    is_research_gene, research_static_output,
+    CodingRequest, DesignRequest, HarnessCatalog, OperationsRequest, PlanningContext,
+    ResearchRequest, canonical_harness_binding_digest, coding_static_output, design_static_output,
+    is_design_gene, is_operations_gene, is_research_gene, operations_static_output,
+    research_static_output,
 };
 use pandora_provider::{ModelRequest, Provider, ProviderError, ProviderManifest};
 use pandora_types::{
@@ -937,6 +938,14 @@ impl ExecutionController {
                 &execution_id,
                 execution_profile,
             )?
+        } else if is_operations_gene(&gene_id) {
+            operations_input(
+                &intent,
+                &gene_id,
+                &session,
+                &execution_id,
+                execution_profile,
+            )?
         } else {
             coding_input(
                 &intent,
@@ -950,6 +959,7 @@ impl ExecutionController {
         let static_output = coding_static_output(&gene_id)
             .or_else(|| research_static_output(&gene_id))
             .or_else(|| design_static_output(&gene_id))
+            .or_else(|| operations_static_output(&gene_id))
             .map(|value| value.as_bytes().to_vec());
         let mut summary = RunSummary {
             execution_id: execution_id.clone(),
@@ -1210,7 +1220,10 @@ impl ExecutionController {
                 let gene_id = permit.request().gene_id().as_str();
                 let (receipt, result) = if matches!(
                     gene_id,
-                    "daedalus.audit" | "evidence.inventory" | "design.inventory"
+                    "daedalus.audit"
+                        | "evidence.inventory"
+                        | "design.inventory"
+                        | "operations.inventory"
                 ) {
                     let target = self
                         .workspace
@@ -1230,6 +1243,8 @@ impl ExecutionController {
                         | "citation.inventory"
                         | "design.tokens"
                         | "accessibility.evidence"
+                        | "operations.search"
+                        | "deployment.evidence"
                 ) {
                     let target = self.workspace.path(".").map_err(RuntimeError::Filesystem)?;
                     let response = self.filesystem.search(permit, &target, path, now);
@@ -1272,6 +1287,8 @@ impl ExecutionController {
                         | "design.tokens"
                         | "design.compare"
                         | "accessibility.evidence"
+                        | "config.compare"
+                        | "deployment.evidence"
                 ) {
                     append_labeled_output(output, path, &bytes);
                 } else {
@@ -1634,6 +1651,16 @@ fn default_gene_id(intent: &TaskIntent) -> GeneId {
             GeneId::new("accessibility.evidence").expect("built-in Gene ID is valid")
         }
         "design-guide" => GeneId::new("design.guide").expect("built-in Gene ID is valid"),
+        "operations-inventory" => {
+            GeneId::new("operations.inventory").expect("built-in Gene ID is valid")
+        }
+        "operations-search" => GeneId::new("operations.search").expect("built-in Gene ID is valid"),
+        "config-inspect" => GeneId::new("config.inspect").expect("built-in Gene ID is valid"),
+        "config-compare" => GeneId::new("config.compare").expect("built-in Gene ID is valid"),
+        "deployment-evidence" => {
+            GeneId::new("deployment.evidence").expect("built-in Gene ID is valid")
+        }
+        "operations-guide" => GeneId::new("operations.guide").expect("built-in Gene ID is valid"),
         _ => GeneId::new("unknown.gene").expect("built-in fallback Gene ID is valid"),
     }
 }
@@ -1789,6 +1816,57 @@ fn design_input(
         }
         "design.guide" if action == "design-guide" && remainder.is_empty() => {
             DesignRequest::guide(context)
+        }
+        _ => {
+            return Err(RuntimeError::InvalidIntent(
+                "intent does not match the selected Gene",
+            ));
+        }
+    };
+    let input = request.into_gene_input().map_err(RuntimeError::Planning)?;
+    Ok((input, None))
+}
+
+fn operations_input(
+    intent: &TaskIntent,
+    gene_id: &GeneId,
+    session: &Session,
+    execution_id: &ExecutionId,
+    execution_profile: ExecutionProfile,
+) -> Result<(GeneInput, Option<Vec<u8>>), RuntimeError> {
+    let context = PlanningContext::new(
+        execution_id.clone(),
+        session.id().clone(),
+        session.principal_id().clone(),
+        session.workspace_id().clone(),
+        execution_profile,
+    );
+    let summary = intent.summary();
+    let (action, remainder) = summary.split_once(':').unwrap_or((summary, ""));
+    let action = action.to_ascii_lowercase();
+    let request = match gene_id.as_str() {
+        "operations.inventory" if action == "operations-inventory" && remainder.is_empty() => {
+            OperationsRequest::inventory(context)
+        }
+        "operations.search" if action == "operations-search" => {
+            OperationsRequest::search(context, remainder)
+        }
+        "config.inspect" if action == "config-inspect" => {
+            OperationsRequest::inspect_config(context, remainder)
+        }
+        "config.compare" if action == "config-compare" => {
+            let (left, right) = remainder
+                .split_once('|')
+                .ok_or(RuntimeError::InvalidIntent(
+                    "configuration comparison requires two paths",
+                ))?;
+            OperationsRequest::compare_config(context, left, right)
+        }
+        "deployment.evidence" if action == "deployment-evidence" && remainder.is_empty() => {
+            OperationsRequest::deployment_evidence(context)
+        }
+        "operations.guide" if action == "operations-guide" && remainder.is_empty() => {
+            OperationsRequest::guide(context)
         }
         _ => {
             return Err(RuntimeError::InvalidIntent(

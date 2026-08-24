@@ -53,8 +53,8 @@ may coordinate and its handoff ceiling. It owns no Genes. The orchestration
 engine checks those limits before registering a plan, so a plan cannot introduce
 an undeclared Domain Harness through a Meta Harness.
 
-Its built-in composition contains `coding-domain`, `research-domain`, and
-`design-domain`.
+Its built-in composition contains `coding-domain`, `research-domain`,
+`design-domain`, and `operations-domain`.
 
 `pandora harness inspect coordination-meta --json` exposes that composition
 boundary as `meta_composition.allowed_domains` and
@@ -179,6 +179,22 @@ executor, receipts, and runtime events as every other built-in Gene. This
 release does not give the Design Domain browser control, image generation,
 network access, rendering, or automated standards certification.
 
+## Operations Domain Harness
+
+The built-in `operations-domain` Harness owns six Genes:
+
+- `operations.inventory` lists bounded workspace files;
+- `operations.search` searches bounded local evidence;
+- `config.inspect` reads one scoped configuration source;
+- `config.compare` reads two distinct scoped sources and labels both results;
+- `deployment.evidence` searches fixed container, Compose, Kubernetes, and
+  workflow markers without claiming deployability;
+- `operations.guide` returns static usage guidance and requests no effect.
+
+The effectful Operations Genes request only `filesystem.read`. They cannot run
+commands, connect to infrastructure, read credentials outside the workspace, or
+change a deployment. Those effects require separate capabilities and approvals.
+
 `CodingFeedbackLoop` composes the existing evaluation, Reflexion, adaptation,
 and run-loop contracts around coding evidence. A verified iteration completes
 without adaptation. A failed retryable iteration records trajectory, outcome,
@@ -204,6 +220,10 @@ and `/research-guide`.
 The Design short aliases are `/design`, `/design-inventory`, `/design-tokens`,
 `/design-inspect`, `/design-compare`, `/accessibility-evidence`, and
 `/design-guide`.
+
+The Operations short aliases are `/operations`, `/operations-inventory`,
+`/operations-search`, `/config-inspect`, `/config-compare`,
+`/deployment-evidence`, and `/operations-guide`.
 
 Admitted custom Domain and Meta profiles receive exact-version Harness commands.
 Custom Domain profiles receive Gene commands for dependencies that resolve to
@@ -255,15 +275,16 @@ of the same custom ID are rejected during admission.
 
 Built-in Harness IDs are reserved. A package can add a new Domain or Meta
 profile but cannot shadow `core-source`, `coordination-meta`, `coding-domain`,
-`research-domain`, `design-domain`, or another built-in identity.
+`research-domain`, `design-domain`, `operations-domain`, or another built-in
+identity.
 
-The built-in Coding, Research, and Design Genes and installed WebAssembly Genes
-are the executable Gene implementations available to declarative Domain
-profiles. An admitted custom Domain profile can be selected with its exact
-version when every required dependency resolves exactly. The profile still uses
-the existing execution controller and effect policy. The profile artifact is
-never loaded as code, and the profile cannot issue permits or grant runtime
-authority.
+The built-in Coding, Research, Design, and Operations Genes and installed
+WebAssembly Genes are the executable Gene implementations available to
+declarative Domain profiles. An admitted custom Domain profile can be selected
+with its exact version when every required dependency resolves exactly. The
+profile still uses the existing execution controller and effect policy. The
+profile artifact is never loaded as code, and the profile cannot issue permits
+or grant runtime authority.
 
 ## Ownership
 

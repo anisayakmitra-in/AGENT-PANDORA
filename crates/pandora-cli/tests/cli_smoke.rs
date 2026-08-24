@@ -3084,6 +3084,11 @@ fn harness_discovery_exposes_the_built_in_domains_without_runtime_internals() {
             .iter()
             .any(|harness| harness["id"] == "design-domain")
     );
+    assert!(
+        harnesses
+            .iter()
+            .any(|harness| harness["id"] == "operations-domain")
+    );
     let meta = harnesses
         .iter()
         .find(|harness| harness["id"] == "coordination-meta")
@@ -3109,6 +3114,11 @@ fn harness_discovery_exposes_the_built_in_domains_without_runtime_internals() {
         allowed_domains
             .iter()
             .any(|domain| domain == "design-domain")
+    );
+    assert!(
+        allowed_domains
+            .iter()
+            .any(|domain| domain == "operations-domain")
     );
 
     let output = fixture
@@ -3160,6 +3170,16 @@ fn harness_discovery_exposes_the_built_in_domains_without_runtime_internals() {
     assert_eq!(response["harness"]["execution"]["runnable"], true);
     assert_eq!(response["harness"]["execution"]["mode"], "domain_execution");
     assert!(response["harness"]["genes"].as_array().unwrap().len() >= 5);
+
+    let output = fixture
+        .command(&["harness", "inspect", "operations", "--json"])
+        .output()
+        .expect("operations harness inspect should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["harness"]["id"], "operations-domain");
+    assert_eq!(response["harness"]["kind"], "domain");
+    assert_eq!(response["harness"]["execution"]["runnable"], true);
 
     let output = fixture
         .command(&["harness", "inspect", "coding-domain", "--json"])
@@ -3295,6 +3315,71 @@ fn direct_run_accepts_the_design_harness_alias() {
 }
 
 #[test]
+fn direct_run_accepts_the_operations_harness_alias() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    let output = fixture
+        .command(&[
+            "run",
+            "--harness",
+            "operations",
+            "--gene",
+            "operations.guide",
+            "operations-guide",
+            "--json",
+        ])
+        .output()
+        .expect("direct operations run should start");
+    assert_success_with_context(&output, "direct operations run");
+    let response = parse_json(&output);
+    assert_eq!(response["harness_id"], "operations-domain");
+    assert_eq!(response["gene_id"], "operations.guide");
+}
+
+#[test]
+fn operations_harness_executes_bounded_workspace_reads() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    let output = fixture
+        .command(&[
+            "run",
+            "--harness",
+            "operations",
+            "--gene",
+            "config.inspect",
+            "config-inspect:README.md",
+            "--json",
+        ])
+        .output()
+        .expect("configuration inspection should start");
+    assert_success_with_context(&output, "configuration inspection");
+    let response = parse_json(&output);
+    assert_eq!(response["output"], "fixture\n");
+
+    let output = fixture
+        .command(&[
+            "run",
+            "--harness",
+            "operations",
+            "--gene",
+            "deployment.evidence",
+            "deployment-evidence",
+            "--json",
+        ])
+        .output()
+        .expect("deployment evidence should start");
+    assert_success_with_context(&output, "deployment evidence");
+    let response = parse_json(&output);
+    let evidence = response["output"].as_str().unwrap();
+    assert!(evidence.contains("FROM :"));
+    assert!(evidence.contains("services::"));
+    assert!(evidence.contains("apiVersion::"));
+    assert!(evidence.contains("workflow_dispatch::"));
+}
+
+#[test]
 fn slash_commands_cover_the_built_in_domains_and_execute_workflow_genes() {
     let fixture = Fixture::new();
     fixture.setup();
@@ -3337,6 +3422,13 @@ fn slash_commands_cover_the_built_in_domains_and_execute_workflow_genes() {
         "/design-compare",
         "/accessibility-evidence",
         "/design-guide",
+        "/operations",
+        "/operations-inventory",
+        "/operations-search",
+        "/config-inspect",
+        "/config-compare",
+        "/deployment-evidence",
+        "/operations-guide",
     ] {
         assert!(commands.contains(&expected), "missing {expected}");
     }
@@ -3388,6 +3480,21 @@ fn slash_commands_cover_the_built_in_domains_and_execute_workflow_genes() {
             .as_str()
             .unwrap()
             .contains("Design inventory")
+    );
+
+    let output = fixture
+        .command(&["/operations-guide", "--json"])
+        .output()
+        .expect("operations guide slash command should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["harness_id"], "operations-domain");
+    assert_eq!(response["gene_id"], "operations.guide");
+    assert!(
+        response["output"]
+            .as_str()
+            .unwrap()
+            .contains("Operations inventory")
     );
 }
 

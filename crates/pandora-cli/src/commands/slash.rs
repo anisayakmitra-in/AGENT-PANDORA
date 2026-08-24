@@ -267,6 +267,19 @@ fn task_for(gene_id: &str, values: &[String]) -> Result<String, CliError> {
         }
         "accessibility.evidence" => no_argument("accessibility-evidence", values),
         "design.guide" => no_argument("design-guide", values),
+        "operations.inventory" => no_argument("operations-inventory", values),
+        "operations.search" => joined_argument("operations-search", values),
+        "config.inspect" => one_argument("config-inspect", values),
+        "config.compare" => {
+            if values.len() != 2 {
+                return Err(CliError::usage(
+                    "/config-compare requires exactly two paths",
+                ));
+            }
+            Ok(format!("config-compare:{}|{}", values[0], values[1]))
+        }
+        "deployment.evidence" => no_argument("deployment-evidence", values),
+        "operations.guide" => no_argument("operations-guide", values),
         _ if values.len() == 1 => Ok(values[0].clone()),
         _ => Err(CliError::usage(format!(
             "Gene '{gene_id}' requires exactly one JSON argument"

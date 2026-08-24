@@ -6,7 +6,8 @@ use super::{
 };
 use crate::output::{CliError, CommandResult, success};
 use pandora_harnesses::{
-    CODING_HARNESS_ID, DESIGN_HARNESS_ID, HarnessCatalog, RESEARCH_HARNESS_ID,
+    CODING_HARNESS_ID, DESIGN_HARNESS_ID, HarnessCatalog, OPERATIONS_HARNESS_ID,
+    RESEARCH_HARNESS_ID,
 };
 use pandora_provider::{
     ChatMessage, FallbackPolicy, ModelRequest, TraceMetadata, parse_and_validate,
@@ -473,6 +474,7 @@ fn canonical_harness_id(value: &str) -> &str {
         "coding" => CODING_HARNESS_ID,
         "research" => RESEARCH_HARNESS_ID,
         "design" => DESIGN_HARNESS_ID,
+        "operations" => OPERATIONS_HARNESS_ID,
         value => value,
     }
 }

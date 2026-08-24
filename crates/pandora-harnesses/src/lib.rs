@@ -5,6 +5,7 @@ pub mod design;
 pub mod genes;
 pub mod harness;
 pub mod manifest;
+pub mod operations;
 pub mod profile;
 pub mod research;
 pub mod slash;
@@ -335,12 +336,18 @@ pub use genes::{
     CodingAction, CodingGene, CodingGeneRole, CodingRequest, PlanningContext, coding_static_output,
 };
 pub use harness::{
-    CodingHarness, CoordinationMetaHarness, CoreSourceHarness, DesignHarness, ResearchHarness,
+    CodingHarness, CoordinationMetaHarness, CoreSourceHarness, DesignHarness, OperationsHarness,
+    ResearchHarness,
 };
 pub use manifest::{
     CODING_HARNESS_ID, CODING_HARNESS_VERSION, COORDINATION_META_HARNESS_ID,
     COORDINATION_META_HARNESS_VERSION, CORE_SOURCE_HARNESS_ID, CORE_SOURCE_HARNESS_VERSION,
-    DESIGN_HARNESS_ID, DESIGN_HARNESS_VERSION, RESEARCH_HARNESS_ID, RESEARCH_HARNESS_VERSION,
+    DESIGN_HARNESS_ID, DESIGN_HARNESS_VERSION, OPERATIONS_HARNESS_ID, OPERATIONS_HARNESS_VERSION,
+    RESEARCH_HARNESS_ID, RESEARCH_HARNESS_VERSION,
+};
+pub use operations::{
+    OperationsAction, OperationsGene, OperationsGeneRole, OperationsRequest, is_operations_gene,
+    operations_static_output,
 };
 pub use profile::{
     DeclarativeDomainHarness, DeclarativeMetaHarness, DomainProfileError, MetaProfileError,
@@ -359,6 +366,7 @@ pub fn builtin_genes() -> Vec<Box<dyn pandora_types::Gene>> {
     let mut genes = CodingGene::all();
     genes.extend(ResearchGene::all());
     genes.extend(DesignGene::all());
+    genes.extend(OperationsGene::all());
     genes
 }
 
@@ -420,6 +428,12 @@ mod tests {
                 .allowed_domains()
                 .iter()
                 .any(|id| id.as_str() == "design-domain")
+        );
+        assert!(
+            composition
+                .allowed_domains()
+                .iter()
+                .any(|id| id.as_str() == "operations-domain")
         );
     }
 
@@ -512,6 +526,36 @@ mod tests {
     }
 
     #[test]
+    fn operations_domain_exposes_only_bounded_read_workflows() {
+        let operations = builtin_harnesses()
+            .into_iter()
+            .find(|harness| harness.manifest().id().as_str() == "operations-domain")
+            .expect("the built-in catalog should include the Operations Domain Harness");
+        let genes = operations
+            .genes()
+            .iter()
+            .map(|gene| gene.manifest())
+            .collect::<Vec<_>>();
+
+        assert_eq!(operations.manifest().kind(), HarnessKind::Domain);
+        assert_eq!(genes.len(), 6);
+        for id in [
+            "operations.inventory",
+            "operations.search",
+            "config.inspect",
+            "config.compare",
+            "deployment.evidence",
+            "operations.guide",
+        ] {
+            assert!(genes.iter().any(|gene| gene.id().as_str() == id));
+        }
+        assert!(genes.iter().all(|gene| {
+            gene.capabilities().is_empty()
+                || gene.capabilities() == [pandora_types::Capability::FilesystemRead]
+        }));
+    }
+
+    #[test]
     fn slash_catalog_covers_the_coding_harness_and_every_gene() {
         let harnesses = HarnessCatalog::builtins();
         let commands = SlashCommandCatalog::from_harnesses(harnesses.iter()).unwrap();
@@ -589,6 +633,33 @@ mod tests {
             .genes()
         {
             let command = canonical_gene_command("design-domain", gene.manifest().id().as_str());
+            assert!(commands.resolve(&command).is_some(), "missing {command}");
+        }
+    }
+
+    #[test]
+    fn slash_catalog_covers_the_operations_harness_and_every_gene() {
+        let harnesses = HarnessCatalog::builtins();
+        let commands = SlashCommandCatalog::from_harnesses(harnesses.iter()).unwrap();
+
+        for command in [
+            "/operations",
+            "/operations-inventory",
+            "/operations-search",
+            "/config-inspect",
+            "/config-compare",
+            "/deployment-evidence",
+            "/operations-guide",
+        ] {
+            assert!(commands.resolve(command).is_some(), "missing {command}");
+        }
+        for gene in harnesses
+            .find(&pandora_types::HarnessId::new("operations-domain").unwrap())
+            .unwrap()
+            .genes()
+        {
+            let command =
+                canonical_gene_command("operations-domain", gene.manifest().id().as_str());
             assert!(commands.resolve(&command).is_some(), "missing {command}");
         }
     }
