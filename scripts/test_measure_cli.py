@@ -83,7 +83,7 @@ class MeasureCliTests(unittest.TestCase):
         self.assertIn("--binary target/release/pandora.exe ", workflow)
         self.assertIn("--iterations 5 --timeout-seconds 10", workflow)
         self.assertIn(
-            "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
             workflow,
         )
         self.assertIn("name: cli-baseline-${{ runner.os }}-${{ runner.arch }}", workflow)
