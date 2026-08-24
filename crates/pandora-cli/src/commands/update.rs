@@ -436,6 +436,13 @@ fn install_verified(bytes: &[u8], target: &Path) -> Result<(), UpdateError> {
             .open(&temporary)
             .map_err(|_| UpdateError::Io)?;
         file.write_all(bytes).map_err(|_| UpdateError::Io)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            file.set_permissions(fs::Permissions::from_mode(0o755))
+                .map_err(|_| UpdateError::Io)?;
+        }
         file.sync_all().map_err(|_| UpdateError::Io)?;
         fs::rename(&temporary, target).map_err(|_| UpdateError::Io)
     })();
