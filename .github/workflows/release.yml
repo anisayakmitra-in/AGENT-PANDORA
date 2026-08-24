@@ -245,41 +245,167 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
+            binary: pandora
+            artifact: pandora-x86_64-unknown-linux-gnu
           - os: macos-15-intel
+            binary: pandora
+            artifact: pandora-x86_64-apple-darwin
           - os: macos-14
+            binary: pandora
+            artifact: pandora-aarch64-apple-darwin
           - os: windows-latest
+            binary: pandora.exe
+            artifact: pandora-x86_64-pc-windows-msvc.exe
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
     env:
       PANDORA_VERSION: ${{ github.ref_name }}
     steps:
-      - name: Install and verify published CLI (Unix)
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.11"
+
+      - name: Exercise published CLI lifecycle (Unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail
+          predecessor="$(python scripts/release_predecessor.py "$GITHUB_REF_NAME")"
           export PANDORA_INSTALL_DIR="$RUNNER_TEMP/pandora-bin"
+          export PANDORA_CONFIG="$RUNNER_TEMP/pandora-home/config.toml"
+          export PANDORA_DATA_DIR="$RUNNER_TEMP/pandora-data"
+          export PANDORA_WORKSPACE="$RUNNER_TEMP/pandora-workspace"
           installer="$RUNNER_TEMP/install.sh"
+          checksums="$RUNNER_TEMP/checksums.txt"
+          cli="$PANDORA_INSTALL_DIR/${{ matrix.binary }}"
+          update_target="$RUNNER_TEMP/pandora-update/${{ matrix.binary }}"
           curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
             --output "$installer" \
             "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download/${GITHUB_REF_NAME}/install.sh"
-          sh "$installer"
-          expected="pandora ${GITHUB_REF_NAME#v}"
-          actual="$("$PANDORA_INSTALL_DIR/pandora" --version)"
-          test "$actual" = "$expected"
+          curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
+            --output "$checksums" \
+            "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download/${GITHUB_REF_NAME}/checksums.txt"
 
-      - name: Install and verify published CLI (Windows)
+          assert_version() {
+            path="$1"
+            tag="$2"
+            expected="pandora ${tag#v}"
+            actual="$("$path" --version)"
+            test "$actual" = "$expected"
+          }
+
+          PANDORA_VERSION="$predecessor" sh "$installer"
+          assert_version "$cli" "$predecessor"
+          mkdir -p "$(dirname "$update_target")"
+          cp "$cli" "$update_target"
+
+          PANDORA_VERSION="$GITHUB_REF_NAME" sh "$installer"
+          assert_version "$cli" "$GITHUB_REF_NAME"
+          PANDORA_VERSION="$predecessor" sh "$installer"
+          assert_version "$cli" "$predecessor"
+          PANDORA_VERSION="$GITHUB_REF_NAME" sh "$installer"
+          assert_version "$cli" "$GITHUB_REF_NAME"
+
+          checksum="$(awk -v name="${{ matrix.artifact }}" '
+            $2 == name || $2 == "*" name || $2 == "dist/" name || $2 == "*dist/" name {
+              value = $1
+              count++
+            }
+            END {
+              if (count != 1) exit 1
+              print value
+            }
+          ' "$checksums")"
+          printf '%s' "$checksum" | grep -Eq '^[0-9A-Fa-f]{64}$'
+          "$cli" update --artifact "$cli" --sha256 "sha256:$checksum" --target "$update_target" --json
+          assert_version "$update_target" "$GITHUB_REF_NAME"
+          "$cli" update --rollback --target "$update_target" --json
+          assert_version "$update_target" "$predecessor"
+
+          "$cli" setup --json
+          printf '%s\n' preserved > "$PANDORA_WORKSPACE/sentinel.txt"
+          "$cli" doctor --json
+          "$cli" uninstall --dry-run --json
+          test -f "$PANDORA_CONFIG"
+          test -d "$PANDORA_DATA_DIR"
+          test -f "$PANDORA_WORKSPACE/sentinel.txt"
+          "$cli" uninstall --yes --json
+          test ! -e "$PANDORA_CONFIG"
+          test ! -e "$PANDORA_DATA_DIR"
+          test "$(cat "$PANDORA_WORKSPACE/sentinel.txt")" = preserved
+
+      - name: Exercise published CLI lifecycle (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $predecessor = (& python scripts/release_predecessor.py $env:GITHUB_REF_NAME).Trim()
           $env:PANDORA_INSTALL_DIR = Join-Path $env:RUNNER_TEMP "pandora-bin"
+          $env:PANDORA_CONFIG = Join-Path $env:RUNNER_TEMP "pandora-home/config.toml"
+          $env:PANDORA_DATA_DIR = Join-Path $env:RUNNER_TEMP "pandora-data"
+          $env:PANDORA_WORKSPACE = Join-Path $env:RUNNER_TEMP "pandora-workspace"
           $installer = Join-Path $env:RUNNER_TEMP "install.ps1"
+          $checksums = Join-Path $env:RUNNER_TEMP "checksums.txt"
+          $cli = Join-Path $env:PANDORA_INSTALL_DIR "${{ matrix.binary }}"
+          $updateDirectory = Join-Path $env:RUNNER_TEMP "pandora-update"
+          $updateTarget = Join-Path $updateDirectory "${{ matrix.binary }}"
           Invoke-WebRequest `
             -Uri "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download/$env:GITHUB_REF_NAME/install.ps1" `
             -OutFile $installer
+          Invoke-WebRequest `
+            -Uri "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download/$env:GITHUB_REF_NAME/checksums.txt" `
+            -OutFile $checksums
+
+          function Assert-Version([string]$Path, [string]$Tag) {
+            $expected = "pandora " + $Tag.Substring(1)
+            $actual = (& $Path --version).Trim()
+            if ($actual -ne $expected) { throw "expected '$expected' but received '$actual'" }
+          }
+
+          $env:PANDORA_VERSION = $predecessor
           & $installer
-          $expected = "pandora " + $env:GITHUB_REF_NAME.Substring(1)
-          $actual = (& (Join-Path $env:PANDORA_INSTALL_DIR "pandora.exe") --version).Trim()
-          if ($LASTEXITCODE -ne 0) { throw "installed Pandora CLI smoke test failed" }
-          if ($actual -ne $expected) { throw "expected '$expected' but received '$actual'" }
+          Assert-Version $cli $predecessor
+          New-Item -ItemType Directory -Force -Path $updateDirectory | Out-Null
+          Copy-Item -LiteralPath $cli -Destination $updateTarget
+
+          $env:PANDORA_VERSION = $env:GITHUB_REF_NAME
+          & $installer
+          Assert-Version $cli $env:GITHUB_REF_NAME
+          $env:PANDORA_VERSION = $predecessor
+          & $installer
+          Assert-Version $cli $predecessor
+          $env:PANDORA_VERSION = $env:GITHUB_REF_NAME
+          & $installer
+          Assert-Version $cli $env:GITHUB_REF_NAME
+
+          $checksumLines = @(Get-Content -LiteralPath $checksums | Where-Object {
+            $parts = $_ -split '\s+', 2
+            $parts.Count -eq 2 -and $parts[1].TrimStart('*') -eq "${{ matrix.artifact }}"
+          })
+          if ($checksumLines.Count -ne 1) { throw "release artifact checksum must be unique" }
+          $checksum = ($checksumLines[0] -split '\s+')[0]
+          if ($checksum -notmatch '^[0-9A-Fa-f]{64}$') { throw "release checksum is malformed" }
+          & $cli update --artifact $cli --sha256 "sha256:$checksum" --target $updateTarget --json
+          Assert-Version $updateTarget $env:GITHUB_REF_NAME
+          & $cli update --rollback --target $updateTarget --json
+          Assert-Version $updateTarget $predecessor
+
+          & $cli setup --json
+          Set-Content -LiteralPath (Join-Path $env:PANDORA_WORKSPACE "sentinel.txt") -Value "preserved"
+          & $cli doctor --json
+          & $cli uninstall --dry-run --json
+          if (-not (Test-Path -LiteralPath $env:PANDORA_CONFIG -PathType Leaf)) { throw "dry-run removed config" }
+          if (-not (Test-Path -LiteralPath $env:PANDORA_DATA_DIR -PathType Container)) { throw "dry-run removed data" }
+          if (-not (Test-Path -LiteralPath (Join-Path $env:PANDORA_WORKSPACE "sentinel.txt") -PathType Leaf)) { throw "dry-run removed workspace" }
+          & $cli uninstall --yes --json
+          if (Test-Path -LiteralPath $env:PANDORA_CONFIG) { throw "uninstall preserved config" }
+          if (Test-Path -LiteralPath $env:PANDORA_DATA_DIR) { throw "uninstall preserved data" }
+          $sentinel = (Get-Content -LiteralPath (Join-Path $env:PANDORA_WORKSPACE "sentinel.txt")).Trim()
+          if ($sentinel -ne "preserved") { throw "uninstall changed workspace" }

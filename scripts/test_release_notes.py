@@ -98,3 +98,39 @@ Older notes.
         self.assertIn(
             '$expected = "pandora " + $env:GITHUB_REF_NAME.Substring(1)', workflow
         )
+
+    def test_release_workflow_exercises_full_lifecycle(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            'predecessor="$(python scripts/release_predecessor.py "$GITHUB_REF_NAME")"',
+            workflow,
+        )
+        self.assertIn(
+            "$predecessor = (& python scripts/release_predecessor.py "
+            "$env:GITHUB_REF_NAME).Trim()",
+            workflow,
+        )
+        for command in (
+            "PANDORA_VERSION=\"$predecessor\" sh \"$installer\"",
+            "PANDORA_VERSION=\"$GITHUB_REF_NAME\" sh \"$installer\"",
+            '"$cli" update --artifact "$cli"',
+            '"$cli" update --rollback',
+            '"$cli" setup --json',
+            '"$cli" doctor --json',
+            '"$cli" uninstall --dry-run --json',
+            '"$cli" uninstall --yes --json',
+            "$env:PANDORA_VERSION = $predecessor",
+            "$env:PANDORA_VERSION = $env:GITHUB_REF_NAME",
+            "update --artifact $cli",
+            "update --rollback",
+            "setup --json",
+            "doctor --json",
+            "uninstall --dry-run --json",
+            "uninstall --yes --json",
+        ):
+            self.assertIn(command, workflow)
+        self.assertIn("checksums.txt", workflow)
+        self.assertIn("sentinel.txt", workflow)
