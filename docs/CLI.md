@@ -4,7 +4,9 @@ Status: Partial in the current `2.0.0-alpha.6` development line.
 
 The CLI is the primary Pandora surface. Commands return versioned JSON with
 `--json` and stable non-zero exit codes for usage, configuration, policy,
-approval, execution, update, and internal failures.
+approval, execution, update, and internal failures. See the
+[CLI JSON contract](CLI_JSON.md) for the `0.1` envelope, command fields, and
+exit-code mapping.
 
 ## Setup and diagnostics
 
