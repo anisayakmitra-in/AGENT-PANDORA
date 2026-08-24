@@ -304,6 +304,12 @@ impl RuntimeService {
             &receipt,
             now,
         )?;
+        let _ = self.sessions.record_evaluation_feedback(
+            session,
+            session.principal_id(),
+            "local",
+            &receipt,
+        );
         Ok(receipt)
     }
 }

@@ -329,6 +329,7 @@ fn setup_and_read_only_run_return_versioned_json() {
     assert_eq!(response["status"], "completed");
     assert_eq!(response["output"], "fixture\n");
     assert_eq!(response["efficiency_recorded"], true);
+    assert_eq!(response["feedback_recorded"], false);
     assert_eq!(response["evaluation"]["recorded"], true);
     assert_eq!(response["evaluation"]["outcome_available"], false);
     assert_eq!(
@@ -1672,6 +1673,7 @@ fn patch_run_returns_approval_required_without_writing() {
     assert_eq!(response["version"], "0.1");
     assert_eq!(response["code"], "approval_required");
     assert_eq!(response["details"]["status"], "approval_required");
+    assert_eq!(response["details"]["feedback_recorded"], false);
     assert_eq!(
         fs::read_to_string(fixture.workspace.join("README.md")).unwrap(),
         "fixture\n"
@@ -2437,7 +2439,10 @@ fn agent_session_reuses_persisted_conversation() {
     let system_context = messages[0]["content"]
         .as_str()
         .expect("agent request should begin with system context");
-    assert!(system_context.contains("Prior execution evidence is descriptive history"));
+    assert!(
+        system_context
+            .contains("Prior execution evidence and evaluation lessons are descriptive history")
+    );
     assert!(system_context.contains("<l1-evidence>completed execution through "));
     assert!(!system_context.contains("First task"));
 }

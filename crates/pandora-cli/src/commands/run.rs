@@ -260,20 +260,25 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             .run_at(intent, session.clone(), timestamp())
             .map_err(runtime_error)?,
     };
-    let evaluation = evaluate_and_append_execution(&store, &session, &summary)?;
+    let (evaluation, feedback_recorded) =
+        evaluate_and_append_execution(&store, &session, "local", &summary)?;
     let evaluation_value = evaluation_json(&evaluation);
     let memory_evidence_recorded = record_execution_evidence(&store, &session, "local", &summary);
     let efficiency_recorded =
         record_execution_efficiency(&config, task_class, &summary, elapsed_millis(started));
-    let details = add_optimization(
-        run_details(
-            &summary,
-            session.id(),
-            planning_model.as_deref(),
-            evaluation_value.clone(),
+    let details = add_detail(
+        add_optimization(
+            run_details(
+                &summary,
+                session.id(),
+                planning_model.as_deref(),
+                evaluation_value.clone(),
+            ),
+            optimization,
+            optimized_provider.as_deref(),
         ),
-        optimization,
-        optimized_provider.as_deref(),
+        "feedback_recorded",
+        feedback_recorded,
     );
     match summary.status() {
         RunStatus::Completed => {
@@ -287,6 +292,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                     "output": summary.output().map(output_text),
                     "efficiency_recorded": efficiency_recorded,
                     "memory_evidence_recorded": memory_evidence_recorded,
+                    "feedback_recorded": feedback_recorded,
                     "evaluation": evaluation_value,
                 }),
                 planning_model.as_deref(),
@@ -549,11 +555,12 @@ pub(super) fn execute_agent_core(
     };
     match result {
         Ok(summary) => {
-            let evaluations = summary
-                .runs()
-                .iter()
-                .map(|run| evaluate_and_append_execution(store, session, run))
-                .collect::<Result<Vec<_>, _>>()?;
+            let (evaluations, feedback_recorded) = evaluate_and_append_runs(
+                store,
+                session,
+                provider.manifest().id().as_str(),
+                summary.runs(),
+            )?;
             let efficiency_recorded = record_agent_efficiency(
                 config,
                 session,
@@ -606,6 +613,7 @@ pub(super) fn execute_agent_core(
                     "runs": run_count,
                     "efficiency_recorded": efficiency_recorded,
                     "memory_evidence_recorded": memory_evidence_recorded,
+                    "feedback_recorded": feedback_recorded,
                     "evaluations": evaluations_json(&evaluations),
                     "optimization": optimization_value(
                         options.optimization,
@@ -616,11 +624,12 @@ pub(super) fn execute_agent_core(
             ))
         }
         Err(AgentLoopError::ApprovalRequired { reason, summary }) => {
-            let evaluations = summary
-                .runs()
-                .iter()
-                .map(|run| evaluate_and_append_execution(store, session, run))
-                .collect::<Result<Vec<_>, _>>()?;
+            let (evaluations, feedback_recorded) = evaluate_and_append_runs(
+                store,
+                session,
+                provider.manifest().id().as_str(),
+                summary.runs(),
+            )?;
             let _ = record_agent_efficiency(
                 config,
                 session,
@@ -668,6 +677,7 @@ pub(super) fn execute_agent_core(
                     "turn_budget": options.max_turns,
                     "tool_budget": options.max_tool_calls,
                     "approval_id": approval.id(),
+                    "feedback_recorded": feedback_recorded,
                     "evaluations": evaluations_json(&evaluations),
                     "context": {
                         "included": summary.context_receipt().included_ids(),
@@ -687,11 +697,12 @@ pub(super) fn execute_agent_core(
             ))
         }
         Err(AgentLoopError::ControlledStop { reason, summary }) => {
-            let evaluations = summary
-                .runs()
-                .iter()
-                .map(|run| evaluate_and_append_execution(store, session, run))
-                .collect::<Result<Vec<_>, _>>()?;
+            let (evaluations, feedback_recorded) = evaluate_and_append_runs(
+                store,
+                session,
+                provider.manifest().id().as_str(),
+                summary.runs(),
+            )?;
             let efficiency_recorded = record_agent_efficiency(
                 config,
                 session,
@@ -744,6 +755,7 @@ pub(super) fn execute_agent_core(
                     "runs": summary.runs().len(),
                     "efficiency_recorded": efficiency_recorded,
                     "memory_evidence_recorded": memory_evidence_recorded,
+                    "feedback_recorded": feedback_recorded,
                     "evaluations": evaluations_json(&evaluations),
                     "optimization": optimization_value(
                         options.optimization,
@@ -865,8 +877,9 @@ fn parse_agent_budget(
 fn evaluate_and_append_execution(
     store: &SessionStore,
     session: &Session,
+    provider: &str,
     summary: &pandora_runtime::RunSummary,
-) -> Result<EvaluationReceipt, CliError> {
+) -> Result<(EvaluationReceipt, bool), CliError> {
     let status = match summary.status() {
         RunStatus::Completed => "completed",
         RunStatus::Denied { .. } => "denied",
@@ -918,7 +931,26 @@ fn evaluate_and_append_execution(
             evaluated_at,
         )
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
-    Ok(receipt)
+    let feedback_recorded = store
+        .record_evaluation_feedback(session, session.principal_id(), provider, &receipt)
+        .unwrap_or(false);
+    Ok((receipt, feedback_recorded))
+}
+
+fn evaluate_and_append_runs(
+    store: &SessionStore,
+    session: &Session,
+    provider: &str,
+    runs: &[pandora_runtime::RunSummary],
+) -> Result<(Vec<EvaluationReceipt>, usize), CliError> {
+    let mut receipts = Vec::with_capacity(runs.len());
+    let mut feedback_recorded = 0;
+    for run in runs {
+        let (receipt, recorded) = evaluate_and_append_execution(store, session, provider, run)?;
+        receipts.push(receipt);
+        feedback_recorded += usize::from(recorded);
+    }
+    Ok((receipts, feedback_recorded))
 }
 
 fn evaluation_json(receipt: &EvaluationReceipt) -> Value {

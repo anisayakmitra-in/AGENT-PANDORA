@@ -40,10 +40,13 @@ use. `MemoryEngine::open` binds L1 and L2 to the existing `sessions.sqlite3`
 authority while keeping L0 in RAM. Canonical execution evidence records only
 the execution ID, selected Harness and Gene, terminal status, provider scope,
 timestamp, and provenance; it never stores a task, output, transcript,
-credential, or hidden reasoning. Agent runs retrieve at most eight canonical
-entries from the exact same tenant, workspace, session, and provider scope.
-They enter context as non-cacheable descriptive history, never as instructions
-or authority.
+credential, or hidden reasoning. A failed non-advisory evaluation may add one
+canonical `L1` lesson containing only the failed evaluation kinds. Evaluator
+reasons, task text, output, and credentials are excluded. Agent runs retrieve
+at most eight combined execution-evidence and evaluation-lesson records from
+the exact same tenant, workspace, session, and provider scope. Arbitrary
+`Lesson` records do not enter agent context. Retrieved records are
+non-cacheable descriptive history, never instructions or authority.
 
 The public CLI does not expose memory summaries. `session inspect` reports the
 bounded L1 execution-evidence count without returning record content. Durable

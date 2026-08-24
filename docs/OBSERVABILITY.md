@@ -56,3 +56,10 @@ reasoning. Outcome evaluation remains unavailable unless a caller supplies an
 explicit expected result; Pandora does not treat a completed process as proof
 that the task outcome was correct. Evaluation results are evidence only and
 cannot authorize an effect.
+
+After the receipt is stored, CLI and service runs reduce failed non-advisory
+evaluation kinds into a scoped `L1` lesson. The lesson omits evaluator reasons
+and execution content. The next agent run may receive it as non-cacheable,
+descriptive context under the existing tenant, workspace, session, and provider
+scope. CLI results report whether the lesson was recorded. A failed feedback
+write does not alter the canonical evaluation receipt or grant authority.
