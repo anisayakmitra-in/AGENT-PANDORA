@@ -105,6 +105,9 @@ pub use skill_engine::{
     RemovalReceipt, SkillEngine, SkillError, SkillInspection, SkillProvenance, SkillRecord,
     SkillState,
 };
+pub use strategies::population::{
+    PopulationParentPlan, PopulationPlan, PopulationStrategy, PopulationStrategyError,
+};
 pub use strategies::{StrategyBudget, StrategyError, StrategyProfile};
 pub use subagent::{
     SubagentCleanupContext, SubagentCoordinator, SubagentCoordinatorError, SubagentSpawnContext,
