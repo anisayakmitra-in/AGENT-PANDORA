@@ -1651,7 +1651,11 @@ fn strategy_profiles_are_discoverable_without_runtime_setup() {
     let response = parse_json(&output);
     assert_eq!(response["command"], "strategies list");
     assert_eq!(response["default"], "react");
+    assert_eq!(response["available"].as_array().unwrap().len(), 4);
+    assert_eq!(response["available"][2]["id"], "lats");
     assert_eq!(response["available"][2]["profile"], "research");
+    assert_eq!(response["available"][3]["id"], "population");
+    assert_eq!(response["available"][3]["profile"], "research");
 }
 
 #[test]

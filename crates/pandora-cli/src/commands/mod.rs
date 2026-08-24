@@ -352,10 +352,11 @@ fn strategies(args: &[String]) -> Result<CommandResult, CliError> {
             "available": [
                 {"id": "react", "profile": "production"},
                 {"id": "reflexion", "profile": "production"},
-                {"id": "lats", "profile": "research"}
+                {"id": "lats", "profile": "research"},
+                {"id": "population", "profile": "research"}
             ]
         }),
-        "react, reflexion, lats (research)",
+        "react, reflexion, lats (research), population (research)",
     ))
 }
 
