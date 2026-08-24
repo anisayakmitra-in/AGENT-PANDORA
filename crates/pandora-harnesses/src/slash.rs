@@ -288,6 +288,7 @@ fn built_in_harness_alias(id: &str) -> Option<&'static str> {
         "core-source" => Some("/core"),
         "coding-domain" => Some("/coding"),
         "research-domain" => Some("/research"),
+        "design-domain" => Some("/design"),
         "coordination-meta" => Some("/coordination"),
         _ => None,
     }
@@ -311,6 +312,12 @@ fn built_in_gene_alias(id: &str) -> Option<&'static str> {
         "source.compare" => Some("/source-compare"),
         "citation.inventory" => Some("/citation-inventory"),
         "research.guide" => Some("/research-guide"),
+        "design.inventory" => Some("/design-inventory"),
+        "design.tokens" => Some("/design-tokens"),
+        "design.inspect" => Some("/design-inspect"),
+        "design.compare" => Some("/design-compare"),
+        "accessibility.evidence" => Some("/accessibility-evidence"),
+        "design.guide" => Some("/design-guide"),
         _ => None,
     }
 }

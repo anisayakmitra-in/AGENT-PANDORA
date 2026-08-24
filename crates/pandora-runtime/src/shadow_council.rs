@@ -1,4 +1,4 @@
-use pandora_harnesses::{CODING_HARNESS_ID, RESEARCH_HARNESS_ID};
+use pandora_harnesses::{CODING_HARNESS_ID, DESIGN_HARNESS_ID, RESEARCH_HARNESS_ID};
 use pandora_types::{GeneId, HarnessId, TaskIntent};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -11,6 +11,7 @@ pub enum RoutingReason {
     RequestedHarness,
     CodingTask,
     ResearchTask,
+    DesignTask,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -51,6 +52,17 @@ impl ShadowCouncil {
         }
 
         let summary = task.summary().to_ascii_lowercase();
+        let is_design_task = ["design", "accessibility"]
+            .iter()
+            .any(|term| summary.contains(term));
+        if is_design_task {
+            return Ok(Selection {
+                harness_id: HarnessId::new(DESIGN_HARNESS_ID)
+                    .expect("built-in harness ID is valid"),
+                gene_id: task.requested_gene().cloned(),
+                reason: RoutingReason::DesignTask,
+            });
+        }
         let is_research_task = [
             "research",
             "evidence",
@@ -130,6 +142,17 @@ mod tests {
         let selection = council.select(&task).unwrap();
 
         assert_eq!(selection.harness_id().as_str(), "research-domain");
+    }
+
+    #[test]
+    fn design_task_selects_the_design_domain() {
+        let council = ShadowCouncil::new();
+        let task =
+            TaskIntent::new("Inventory the design tokens and accessibility evidence").unwrap();
+
+        let selection = council.select(&task).unwrap();
+
+        assert_eq!(selection.harness_id().as_str(), "design-domain");
     }
 
     #[test]

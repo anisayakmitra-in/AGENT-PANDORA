@@ -389,6 +389,65 @@ impl ToolEngine {
                 .register(definition.expect("built-in research tool schema is valid"))
                 .expect("built-in research tool ID is unique");
         }
+        for definition in [
+            ToolDefinition::new(
+                "design.inventory",
+                "0.1.0",
+                "Inventory files available for bounded design analysis",
+                json!({"type": "object", "properties": {}, "additionalProperties": false}),
+                Capability::FilesystemRead,
+                Operation::Read,
+            ),
+            ToolDefinition::new(
+                "design.tokens",
+                "0.1.0",
+                "Find explicit design-token markers in workspace sources",
+                json!({"type": "object", "properties": {}, "additionalProperties": false}),
+                Capability::FilesystemRead,
+                Operation::Read,
+            ),
+            ToolDefinition::new(
+                "design.inspect",
+                "0.1.0",
+                "Read one bounded design source",
+                json!({
+                    "type": "object",
+                    "required": ["path"],
+                    "properties": {"path": {"type": "string"}},
+                    "additionalProperties": false
+                }),
+                Capability::FilesystemRead,
+                Operation::Read,
+            ),
+            ToolDefinition::new(
+                "design.compare",
+                "0.1.0",
+                "Read two bounded design sources for comparison",
+                json!({
+                    "type": "object",
+                    "required": ["left", "right"],
+                    "properties": {
+                        "left": {"type": "string"},
+                        "right": {"type": "string"}
+                    },
+                    "additionalProperties": false
+                }),
+                Capability::FilesystemRead,
+                Operation::Read,
+            ),
+            ToolDefinition::new(
+                "accessibility.evidence",
+                "0.1.0",
+                "Inventory common accessibility markers without claiming conformance",
+                json!({"type": "object", "properties": {}, "additionalProperties": false}),
+                Capability::FilesystemRead,
+                Operation::Read,
+            ),
+        ] {
+            engine
+                .register(definition.expect("built-in design tool schema is valid"))
+                .expect("built-in design tool ID is unique");
+        }
         engine
     }
 
@@ -469,6 +528,8 @@ impl ToolEngine {
     ) -> Result<ToolInvocation, ToolError> {
         let harness_id = if is_research_tool(tool_id) {
             pandora_harnesses::RESEARCH_HARNESS_ID
+        } else if is_design_tool(tool_id) {
+            pandora_harnesses::DESIGN_HARNESS_ID
         } else {
             pandora_harnesses::CODING_HARNESS_ID
         };
@@ -513,6 +574,19 @@ impl ToolEngine {
                     .map_err(|error| ToolError::InvalidArguments(error.to_string()))?
             }
             "citation.inventory" => TaskIntent::new("citation-inventory")
+                .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
+            "design.inventory" => TaskIntent::new("design-inventory")
+                .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
+            "design.tokens" => TaskIntent::new("design-tokens")
+                .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
+            "design.inspect" => task_from_argument(arguments, "design-inspect", "path")?,
+            "design.compare" => {
+                let left = required_text_argument(arguments, "left")?;
+                let right = required_text_argument(arguments, "right")?;
+                TaskIntent::new(format!("design-compare:{left}|{right}"))
+                    .map_err(|error| ToolError::InvalidArguments(error.to_string()))?
+            }
+            "accessibility.evidence" => TaskIntent::new("accessibility-evidence")
                 .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
             _ => {
                 return Err(ToolError::UnsupportedTool(
@@ -639,6 +713,11 @@ fn gene_id_for_tool(tool_id: &str) -> Result<GeneId, ToolError> {
         "source.read" => "source.read",
         "source.compare" => "source.compare",
         "citation.inventory" => "citation.inventory",
+        "design.inventory" => "design.inventory",
+        "design.tokens" => "design.tokens",
+        "design.inspect" => "design.inspect",
+        "design.compare" => "design.compare",
+        "accessibility.evidence" => "accessibility.evidence",
         unknown => return Err(ToolError::UnsupportedTool(unknown.to_owned())),
     };
     Ok(GeneId::new(gene_id).expect("built-in Gene ID is valid"))
@@ -652,6 +731,17 @@ fn is_research_tool(tool_id: &str) -> bool {
             | "source.read"
             | "source.compare"
             | "citation.inventory"
+    )
+}
+
+fn is_design_tool(tool_id: &str) -> bool {
+    matches!(
+        tool_id,
+        "design.inventory"
+            | "design.tokens"
+            | "design.inspect"
+            | "design.compare"
+            | "accessibility.evidence"
     )
 }
 
@@ -1083,6 +1173,23 @@ mod tests {
                 "source-compare:first.md|second.md",
             ),
             ("citation.inventory", json!({}), "citation-inventory"),
+            ("design.inventory", json!({}), "design-inventory"),
+            ("design.tokens", json!({}), "design-tokens"),
+            (
+                "design.inspect",
+                json!({"path": "ui/theme.css"}),
+                "design-inspect:ui/theme.css",
+            ),
+            (
+                "design.compare",
+                json!({"left": "first.css", "right": "second.css"}),
+                "design-compare:first.css|second.css",
+            ),
+            (
+                "accessibility.evidence",
+                json!({}),
+                "accessibility-evidence",
+            ),
         ] {
             assert_eq!(
                 engine
@@ -1093,6 +1200,16 @@ mod tests {
                 expected
             );
         }
+        assert_eq!(
+            engine
+                .prepare_invocation("design.inventory", &json!({}))
+                .unwrap()
+                .task()
+                .requested_harness()
+                .unwrap()
+                .as_str(),
+            "design-domain"
+        );
         for (tool, arguments, expected_gene) in [
             (
                 "workspace.read",

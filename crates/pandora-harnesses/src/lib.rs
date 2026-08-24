@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod catalog;
+pub mod design;
 pub mod genes;
 pub mod harness;
 pub mod manifest;
@@ -327,14 +328,19 @@ mod catalog_tests {
     }
 }
 
+pub use design::{
+    DesignAction, DesignGene, DesignGeneRole, DesignRequest, design_static_output, is_design_gene,
+};
 pub use genes::{
     CodingAction, CodingGene, CodingGeneRole, CodingRequest, PlanningContext, coding_static_output,
 };
-pub use harness::{CodingHarness, CoordinationMetaHarness, CoreSourceHarness, ResearchHarness};
+pub use harness::{
+    CodingHarness, CoordinationMetaHarness, CoreSourceHarness, DesignHarness, ResearchHarness,
+};
 pub use manifest::{
     CODING_HARNESS_ID, CODING_HARNESS_VERSION, COORDINATION_META_HARNESS_ID,
     COORDINATION_META_HARNESS_VERSION, CORE_SOURCE_HARNESS_ID, CORE_SOURCE_HARNESS_VERSION,
-    RESEARCH_HARNESS_ID, RESEARCH_HARNESS_VERSION,
+    DESIGN_HARNESS_ID, DESIGN_HARNESS_VERSION, RESEARCH_HARNESS_ID, RESEARCH_HARNESS_VERSION,
 };
 pub use profile::{
     DeclarativeDomainHarness, DeclarativeMetaHarness, DomainProfileError, MetaProfileError,
@@ -352,6 +358,7 @@ pub use research::{
 pub fn builtin_genes() -> Vec<Box<dyn pandora_types::Gene>> {
     let mut genes = CodingGene::all();
     genes.extend(ResearchGene::all());
+    genes.extend(DesignGene::all());
     genes
 }
 
@@ -407,6 +414,12 @@ mod tests {
                 .allowed_domains()
                 .iter()
                 .any(|id| id.as_str() == "research-domain")
+        );
+        assert!(
+            composition
+                .allowed_domains()
+                .iter()
+                .any(|id| id.as_str() == "design-domain")
         );
     }
 
@@ -469,6 +482,36 @@ mod tests {
     }
 
     #[test]
+    fn design_domain_exposes_only_bounded_read_workflows() {
+        let design = builtin_harnesses()
+            .into_iter()
+            .find(|harness| harness.manifest().id().as_str() == "design-domain")
+            .expect("the built-in catalog should include the Design Domain Harness");
+        let genes = design
+            .genes()
+            .iter()
+            .map(|gene| gene.manifest())
+            .collect::<Vec<_>>();
+
+        assert_eq!(design.manifest().kind(), HarnessKind::Domain);
+        assert_eq!(genes.len(), 6);
+        for id in [
+            "design.inventory",
+            "design.tokens",
+            "design.inspect",
+            "design.compare",
+            "accessibility.evidence",
+            "design.guide",
+        ] {
+            assert!(genes.iter().any(|gene| gene.id().as_str() == id));
+        }
+        assert!(genes.iter().all(|gene| {
+            gene.capabilities().is_empty()
+                || gene.capabilities() == [pandora_types::Capability::FilesystemRead]
+        }));
+    }
+
+    #[test]
     fn slash_catalog_covers_the_coding_harness_and_every_gene() {
         let harnesses = HarnessCatalog::builtins();
         let commands = SlashCommandCatalog::from_harnesses(harnesses.iter()).unwrap();
@@ -520,6 +563,32 @@ mod tests {
             .genes()
         {
             let command = canonical_gene_command("research-domain", gene.manifest().id().as_str());
+            assert!(commands.resolve(&command).is_some(), "missing {command}");
+        }
+    }
+
+    #[test]
+    fn slash_catalog_covers_the_design_harness_and_every_gene() {
+        let harnesses = HarnessCatalog::builtins();
+        let commands = SlashCommandCatalog::from_harnesses(harnesses.iter()).unwrap();
+
+        for command in [
+            "/design",
+            "/design-inventory",
+            "/design-tokens",
+            "/design-inspect",
+            "/design-compare",
+            "/accessibility-evidence",
+            "/design-guide",
+        ] {
+            assert!(commands.resolve(command).is_some(), "missing {command}");
+        }
+        for gene in harnesses
+            .find(&pandora_types::HarnessId::new("design-domain").unwrap())
+            .unwrap()
+            .genes()
+        {
+            let command = canonical_gene_command("design-domain", gene.manifest().id().as_str());
             assert!(commands.resolve(&command).is_some(), "missing {command}");
         }
     }

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added the built-in `design-domain` Harness with bounded workspace inventory,
+  token-marker evidence, source inspection, source comparison, accessibility
+  evidence, and static guidance Genes. Every effect is workspace-scoped and
+  read-only.
+- `coordination-meta` can now compose Coding, Research, and Design Domains.
+  Design Genes use the existing ToolEngine, slash-command catalog, Parliament,
+  Reference Monitor, executors, receipts, and runtime events.
 - Added the built-in `research-domain` Harness with bounded evidence inventory,
   search, source reading, source comparison, citation-marker inventory, and
   static guidance Genes. Every effect is workspace-scoped and read-only.

@@ -91,10 +91,15 @@ fn ordinary_run_advertises_the_complete_default_tool_catalog() {
     assert_eq!(
         provider.advertised_tools(),
         vec![vec![
+            "accessibility.evidence".to_owned(),
             "argus.review".to_owned(),
             "ariadne.debt".to_owned(),
             "citation.inventory".to_owned(),
             "daedalus.audit".to_owned(),
+            "design.compare".to_owned(),
+            "design.inspect".to_owned(),
+            "design.inventory".to_owned(),
+            "design.tokens".to_owned(),
             "evidence.inventory".to_owned(),
             "evidence.search".to_owned(),
             "hephaestus.measure".to_owned(),

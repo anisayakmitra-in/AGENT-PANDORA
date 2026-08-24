@@ -16,9 +16,9 @@ use crate::shadow_council::{RoutingError, ShadowCouncil};
 use crate::wasm::{WasmError, WasmExecutor, WasmGeneRequest};
 use crate::{ApprovalError, ApprovalStore, ConsumedPermit, PermitError, ToolContext, ToolEngine};
 use pandora_harnesses::{
-    CodingRequest, HarnessCatalog, PlanningContext, ResearchRequest,
-    canonical_harness_binding_digest, coding_static_output, is_research_gene,
-    research_static_output,
+    CodingRequest, DesignRequest, HarnessCatalog, PlanningContext, ResearchRequest,
+    canonical_harness_binding_digest, coding_static_output, design_static_output, is_design_gene,
+    is_research_gene, research_static_output,
 };
 use pandora_provider::{ModelRequest, Provider, ProviderError, ProviderManifest};
 use pandora_types::{
@@ -929,6 +929,14 @@ impl ExecutionController {
                 &execution_id,
                 execution_profile,
             )?
+        } else if is_design_gene(&gene_id) {
+            design_input(
+                &intent,
+                &gene_id,
+                &session,
+                &execution_id,
+                execution_profile,
+            )?
         } else {
             coding_input(
                 &intent,
@@ -941,6 +949,7 @@ impl ExecutionController {
         let requests = gene.plan(&input).map_err(RuntimeError::Planning)?;
         let static_output = coding_static_output(&gene_id)
             .or_else(|| research_static_output(&gene_id))
+            .or_else(|| design_static_output(&gene_id))
             .map(|value| value.as_bytes().to_vec());
         let mut summary = RunSummary {
             execution_id: execution_id.clone(),
@@ -1199,42 +1208,46 @@ impl ExecutionController {
                     }
                 };
                 let gene_id = permit.request().gene_id().as_str();
-                let (receipt, result) =
-                    if matches!(gene_id, "daedalus.audit" | "evidence.inventory") {
-                        let target = self
-                            .workspace
-                            .path(path)
-                            .map_err(RuntimeError::Filesystem)?;
-                        let response = self.filesystem.inventory(permit, &target, now);
-                        let receipt = response.receipt().clone();
-                        let result = response
-                            .into_result()
-                            .map(|files| files.join("\n").into_bytes());
-                        (receipt, result)
-                    } else if matches!(
-                        gene_id,
-                        "workspace.search"
-                            | "ariadne.debt"
-                            | "evidence.search"
-                            | "citation.inventory"
-                    ) {
-                        let target = self.workspace.path(".").map_err(RuntimeError::Filesystem)?;
-                        let response = self.filesystem.search(permit, &target, path, now);
-                        let receipt = response.receipt().clone();
-                        let result = response
-                            .into_result()
-                            .map(|matches| matches.join("\n").into_bytes());
-                        (receipt, result)
-                    } else {
-                        let target = self
-                            .workspace
-                            .path(path)
-                            .map_err(RuntimeError::Filesystem)?;
-                        let response = self.filesystem.read(permit, &target, now);
-                        let receipt = response.receipt().clone();
-                        let result = response.into_result();
-                        (receipt, result)
-                    };
+                let (receipt, result) = if matches!(
+                    gene_id,
+                    "daedalus.audit" | "evidence.inventory" | "design.inventory"
+                ) {
+                    let target = self
+                        .workspace
+                        .path(path)
+                        .map_err(RuntimeError::Filesystem)?;
+                    let response = self.filesystem.inventory(permit, &target, now);
+                    let receipt = response.receipt().clone();
+                    let result = response
+                        .into_result()
+                        .map(|files| files.join("\n").into_bytes());
+                    (receipt, result)
+                } else if matches!(
+                    gene_id,
+                    "workspace.search"
+                        | "ariadne.debt"
+                        | "evidence.search"
+                        | "citation.inventory"
+                        | "design.tokens"
+                        | "accessibility.evidence"
+                ) {
+                    let target = self.workspace.path(".").map_err(RuntimeError::Filesystem)?;
+                    let response = self.filesystem.search(permit, &target, path, now);
+                    let receipt = response.receipt().clone();
+                    let result = response
+                        .into_result()
+                        .map(|matches| matches.join("\n").into_bytes());
+                    (receipt, result)
+                } else {
+                    let target = self
+                        .workspace
+                        .path(path)
+                        .map_err(RuntimeError::Filesystem)?;
+                    let response = self.filesystem.read(permit, &target, now);
+                    let receipt = response.receipt().clone();
+                    let result = response.into_result();
+                    (receipt, result)
+                };
                 output.receipts.push(receipt.clone());
                 output.events.push(self.event(
                     EventType::EffectCompleted,
@@ -1253,7 +1266,12 @@ impl ExecutionController {
                 let bytes = result.map_err(RuntimeError::Filesystem)?;
                 if matches!(
                     gene_id,
-                    "ariadne.debt" | "source.compare" | "citation.inventory"
+                    "ariadne.debt"
+                        | "source.compare"
+                        | "citation.inventory"
+                        | "design.tokens"
+                        | "design.compare"
+                        | "accessibility.evidence"
                 ) {
                     append_labeled_output(output, path, &bytes);
                 } else {
@@ -1608,6 +1626,14 @@ fn default_gene_id(intent: &TaskIntent) -> GeneId {
             GeneId::new("citation.inventory").expect("built-in Gene ID is valid")
         }
         "research-guide" => GeneId::new("research.guide").expect("built-in Gene ID is valid"),
+        "design-inventory" => GeneId::new("design.inventory").expect("built-in Gene ID is valid"),
+        "design-tokens" => GeneId::new("design.tokens").expect("built-in Gene ID is valid"),
+        "design-inspect" => GeneId::new("design.inspect").expect("built-in Gene ID is valid"),
+        "design-compare" => GeneId::new("design.compare").expect("built-in Gene ID is valid"),
+        "accessibility-evidence" => {
+            GeneId::new("accessibility.evidence").expect("built-in Gene ID is valid")
+        }
+        "design-guide" => GeneId::new("design.guide").expect("built-in Gene ID is valid"),
         _ => GeneId::new("unknown.gene").expect("built-in fallback Gene ID is valid"),
     }
 }
@@ -1712,6 +1738,57 @@ fn research_input(
         }
         "research.guide" if action == "research-guide" && remainder.is_empty() => {
             ResearchRequest::guide(context)
+        }
+        _ => {
+            return Err(RuntimeError::InvalidIntent(
+                "intent does not match the selected Gene",
+            ));
+        }
+    };
+    let input = request.into_gene_input().map_err(RuntimeError::Planning)?;
+    Ok((input, None))
+}
+
+fn design_input(
+    intent: &TaskIntent,
+    gene_id: &GeneId,
+    session: &Session,
+    execution_id: &ExecutionId,
+    execution_profile: ExecutionProfile,
+) -> Result<(GeneInput, Option<Vec<u8>>), RuntimeError> {
+    let context = PlanningContext::new(
+        execution_id.clone(),
+        session.id().clone(),
+        session.principal_id().clone(),
+        session.workspace_id().clone(),
+        execution_profile,
+    );
+    let summary = intent.summary();
+    let (action, remainder) = summary.split_once(':').unwrap_or((summary, ""));
+    let action = action.to_ascii_lowercase();
+    let request = match gene_id.as_str() {
+        "design.inventory" if action == "design-inventory" && remainder.is_empty() => {
+            DesignRequest::inventory(context)
+        }
+        "design.tokens" if action == "design-tokens" && remainder.is_empty() => {
+            DesignRequest::tokens(context)
+        }
+        "design.inspect" if action == "design-inspect" => {
+            DesignRequest::inspect(context, remainder)
+        }
+        "design.compare" if action == "design-compare" => {
+            let (left, right) = remainder
+                .split_once('|')
+                .ok_or(RuntimeError::InvalidIntent(
+                    "design comparison requires two paths",
+                ))?;
+            DesignRequest::compare(context, left, right)
+        }
+        "accessibility.evidence" if action == "accessibility-evidence" && remainder.is_empty() => {
+            DesignRequest::accessibility_evidence(context)
+        }
+        "design.guide" if action == "design-guide" && remainder.is_empty() => {
+            DesignRequest::guide(context)
         }
         _ => {
             return Err(RuntimeError::InvalidIntent(
@@ -2013,6 +2090,33 @@ mod tests {
         let output = std::str::from_utf8(summary.output().unwrap()).unwrap();
         assert!(output.contains("https://:\nsources.md"));
         assert!(output.contains("doi::\nsources.md"));
+    }
+
+    #[test]
+    fn design_token_evidence_uses_fixed_read_only_markers() {
+        let fixture = Fixture::new();
+        std::fs::write(
+            fixture.path.join("theme.css"),
+            b":root { --color-brand: #123456; }\n.button { color: var(--color-brand); }\n",
+        )
+        .unwrap();
+        let controller = ExecutionController::new(fixture.root.clone());
+        let intent = TaskIntent::new("design-tokens")
+            .unwrap()
+            .with_harness(HarnessId::new("design-domain").unwrap())
+            .with_gene(GeneId::new("design.tokens").unwrap());
+
+        let summary = controller
+            .run_at(intent, fixture.session(), Timestamp::from_unix_seconds(10))
+            .unwrap();
+
+        assert_eq!(summary.status(), &RunStatus::Completed);
+        assert_eq!(summary.selected_harness().as_str(), "design-domain");
+        assert_eq!(summary.receipts().len(), 4);
+        let output = std::str::from_utf8(summary.output().unwrap()).unwrap();
+        assert!(output.contains(":root:\ntheme.css"));
+        assert!(output.contains("var(:\ntheme.css"));
+        assert!(output.contains("--color:\ntheme.css"));
     }
 
     #[test]
@@ -2403,7 +2507,7 @@ mod tests {
     fn unsupported_harness_is_rejected_before_gene_planning() {
         let fixture = Fixture::new();
         let controller = ExecutionController::new(fixture.root.clone());
-        let harness_id = HarnessId::new("design-domain").unwrap();
+        let harness_id = HarnessId::new("unavailable-domain").unwrap();
         let intent = TaskIntent::new("read:README.md")
             .unwrap()
             .with_harness(harness_id.clone());

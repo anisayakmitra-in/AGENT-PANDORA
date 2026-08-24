@@ -3038,6 +3038,11 @@ fn harness_discovery_exposes_the_built_in_domains_without_runtime_internals() {
             .iter()
             .any(|harness| harness["id"] == "research-domain")
     );
+    assert!(
+        harnesses
+            .iter()
+            .any(|harness| harness["id"] == "design-domain")
+    );
     let meta = harnesses
         .iter()
         .find(|harness| harness["id"] == "coordination-meta")
@@ -3058,6 +3063,11 @@ fn harness_discovery_exposes_the_built_in_domains_without_runtime_internals() {
         allowed_domains
             .iter()
             .any(|domain| domain == "research-domain")
+    );
+    assert!(
+        allowed_domains
+            .iter()
+            .any(|domain| domain == "design-domain")
     );
 
     let output = fixture
@@ -3095,6 +3105,16 @@ fn harness_discovery_exposes_the_built_in_domains_without_runtime_internals() {
         .expect("harness inspect should start");
     assert_success(&output);
     let response = parse_json(&output);
+    assert_eq!(response["harness"]["kind"], "domain");
+    assert_eq!(response["harness"]["execution"]["runnable"], true);
+
+    let output = fixture
+        .command(&["harness", "inspect", "design", "--json"])
+        .output()
+        .expect("design harness inspect should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["harness"]["id"], "design-domain");
     assert_eq!(response["harness"]["kind"], "domain");
     assert_eq!(response["harness"]["execution"]["runnable"], true);
     assert_eq!(response["harness"]["execution"]["mode"], "domain_execution");
@@ -3246,6 +3266,13 @@ fn slash_commands_cover_the_built_in_domains_and_execute_workflow_genes() {
         "/source-compare",
         "/citation-inventory",
         "/research-guide",
+        "/design",
+        "/design-inventory",
+        "/design-tokens",
+        "/design-inspect",
+        "/design-compare",
+        "/accessibility-evidence",
+        "/design-guide",
     ] {
         assert!(commands.contains(&expected), "missing {expected}");
     }
@@ -3282,6 +3309,21 @@ fn slash_commands_cover_the_built_in_domains_and_execute_workflow_genes() {
             .as_str()
             .unwrap()
             .contains("Evidence inventory")
+    );
+
+    let output = fixture
+        .command(&["/design-guide", "--json"])
+        .output()
+        .expect("design guide slash command should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["harness_id"], "design-domain");
+    assert_eq!(response["gene_id"], "design.guide");
+    assert!(
+        response["output"]
+            .as_str()
+            .unwrap()
+            .contains("Design inventory")
     );
 }
 

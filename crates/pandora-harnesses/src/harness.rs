@@ -1,6 +1,8 @@
+use crate::design::DesignGene;
 use crate::genes::CodingGene;
 use crate::manifest::{
-    coding_manifest, coordination_meta_manifest, core_source_manifest, research_manifest,
+    coding_manifest, coordination_meta_manifest, core_source_manifest, design_manifest,
+    research_manifest,
 };
 use crate::research::ResearchGene;
 use pandora_types::{Gene, Harness, HarnessManifest};
@@ -87,6 +89,36 @@ impl Default for ResearchHarness {
 }
 
 impl Harness for ResearchHarness {
+    fn manifest(&self) -> &HarnessManifest {
+        &self.manifest
+    }
+
+    fn genes(&self) -> &[Box<dyn Gene>] {
+        &self.genes
+    }
+}
+
+pub struct DesignHarness {
+    manifest: HarnessManifest,
+    genes: Vec<Box<dyn Gene>>,
+}
+
+impl DesignHarness {
+    pub fn new() -> Self {
+        Self {
+            manifest: design_manifest().expect("built-in Design Harness manifest is valid"),
+            genes: DesignGene::all(),
+        }
+    }
+}
+
+impl Default for DesignHarness {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Harness for DesignHarness {
     fn manifest(&self) -> &HarnessManifest {
         &self.manifest
     }
