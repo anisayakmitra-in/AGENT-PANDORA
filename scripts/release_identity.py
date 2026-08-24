@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import tomllib
 from pathlib import Path
 
@@ -27,6 +28,22 @@ def main() -> int:
                 f"npm package version {npm_version!r} does not match workspace {version!r}"
             )
         expected_tag = f"v{version}"
+        shell_installer = (root / "scripts" / "install.sh").read_text(encoding="utf-8")
+        shell_defaults = re.findall(
+            r'^version="\$\{PANDORA_VERSION:-(v[^"}]+)\}"$',
+            shell_installer,
+            re.MULTILINE,
+        )
+        if shell_defaults != [expected_tag]:
+            raise ValueError(f"shell installer does not default to {expected_tag!r}")
+        powershell_installer = (root / "scripts" / "install.ps1").read_text(
+            encoding="utf-8"
+        )
+        powershell_defaults = re.findall(
+            r'^\$defaultVersion = "(v[^"]+)"$', powershell_installer, re.MULTILINE
+        )
+        if powershell_defaults != [expected_tag]:
+            raise ValueError(f"PowerShell installer does not default to {expected_tag!r}")
         if arguments.tag is not None and arguments.tag != expected_tag:
             raise ValueError(
                 f"release tag {arguments.tag!r} does not match {expected_tag!r}"
