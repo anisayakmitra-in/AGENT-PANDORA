@@ -105,6 +105,8 @@ define_id!(PlanId);
 define_id!(RoleId);
 define_id!(RunLoopId);
 define_id!(ProposalId);
+define_id!(FailureId);
+define_id!(PopulationId);
 define_id!(JobId);
 define_id!(JobWorkerId);
 define_id!(SubagentId, validated_deserialize);

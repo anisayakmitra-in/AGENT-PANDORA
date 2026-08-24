@@ -19,6 +19,7 @@ pub mod memory;
 pub mod observability;
 pub mod orchestration;
 pub mod package;
+pub mod population;
 pub mod rollout;
 pub mod service;
 pub mod session;
@@ -66,9 +67,9 @@ pub use gene::{Gene, GeneError, GeneInput, GeneKind, GeneManifest};
 pub use governance::{ParliamentDecision, PolicyContext};
 pub use harness::{Harness, HarnessKind, HarnessManifest, MetaComposition};
 pub use ids::{
-    ArtifactId, EventId, ExecutionId, GeneId, HarnessId, IdError, JobId, JobWorkerId, MemoryId,
-    PackageId, PermitId, PlanId, PrincipalId, ProposalId, ReceiptId, RequestDigest, RoleId,
-    RunLoopId, SessionId, SubagentId, TenantId, WorkspaceId,
+    ArtifactId, EventId, ExecutionId, FailureId, GeneId, HarnessId, IdError, JobId, JobWorkerId,
+    MemoryId, PackageId, PermitId, PlanId, PopulationId, PrincipalId, ProposalId, ReceiptId,
+    RequestDigest, RoleId, RunLoopId, SessionId, SubagentId, TenantId, WorkspaceId,
 };
 pub use jobs::{JobCommand, JobContractError, JobRequest, JobStatus, MAX_JOB_ARGUMENT_BYTES};
 pub use memory::{
@@ -87,6 +88,11 @@ pub use package::{
     PACKAGE_LOCK_FORMAT_VERSION, PackageCompatibility, PackageDependency, PackageKind, PackageLock,
     PackageLockError, PackageManifest, PackageManifestError, TrustEvidence, TrustLevel,
     hash_artifact,
+};
+pub use population::{
+    CandidatePopulation, FailureCorpus, FailureEvidence, FailurePartition, LineageLimits,
+    MutationBatch, MutationLimits, POPULATION_PROTOCOL_VERSION, PopulationCandidate,
+    PopulationContractError, PopulationPolicy, PopulationScope,
 };
 pub use rollout::{
     MAX_ROLLOUT_RECORDS, ROLLOUT_PROJECTION_VERSION, Rollout, RolloutContractError, RolloutDigest,
