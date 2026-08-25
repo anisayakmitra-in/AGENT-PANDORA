@@ -56,6 +56,9 @@ jobs:
       - name: Test npm launcher
         run: node scripts/test_npm_launcher.js
 
+      - name: Test TypeScript client
+        run: node scripts/test_typescript_client.js
+
       - name: Run Python tests
         run: python -m unittest discover -s scripts -p "test_*.py" -v
 

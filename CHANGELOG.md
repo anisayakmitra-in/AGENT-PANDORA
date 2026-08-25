@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added a typed TypeScript client for invoking the existing JSON CLI contract
+  without shell interpolation or a second runtime authority.
 - Added governed `pandora mcp catalog` and `pandora mcp call` commands for
   one-shot local stdio discovery and invocation. Both require explicit
   operator consent, persist their bounded runtime-event batches atomically,

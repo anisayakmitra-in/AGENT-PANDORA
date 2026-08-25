@@ -24,6 +24,10 @@ are historical references only. See [RELEASES.md](RELEASES.md),
 [CHANGELOG.md](CHANGELOG.md), and [platform support](docs/PLATFORMS.md) for the
 shipped scope and release gates.
 
+The npm package also exports a typed TypeScript client for the stable JSON CLI
+contract. It forwards an argv array to the verified native binary and does not
+create a second runtime or permission path. See [TypeScript client](docs/TYPESCRIPT.md).
+
 ## Install a tagged CLI release
 
 The bootstrap installers use the current published prerelease by default. They

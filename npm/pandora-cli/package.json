@@ -4,6 +4,18 @@
   "description": "Verified native launcher for the Pandora Agent CLI",
   "license": "Apache-2.0",
   "repository": "github:anisayakmitra-in/PANDORA-AGENT",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "require": "./lib/index.js"
+    },
+    "./release": {
+      "types": "./lib/release.d.ts",
+      "require": "./lib/release.js"
+    }
+  },
   "scripts": {
     "build": "tsc --project tsconfig.json"
   },
