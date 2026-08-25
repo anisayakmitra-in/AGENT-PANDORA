@@ -37,6 +37,26 @@
   Genes are available to declarative Domain profiles, the ToolEngine, canonical
   slash commands, and the existing governed execution path.
 
+## v2.0.0-beta.2
+
+This beta advances the CLI release line with durable context assembly caching,
+bounded graph intelligence, deterministic golden-set evaluation, and the local
+Fleet control plane. It exposes these capabilities through stable JSON commands
+while preserving Pandora's existing governance and effect-authority boundary.
+
+### Shipped
+
+- Context assembly can use a bounded, atomic, scope- and provenance-bound cache.
+- Code, Knowledge, Review, and Architecture graph projections are available
+  through the `pandora graph` CLI command.
+- Golden-set evaluation is available through `pandora evaluation golden`, with
+  bounded inputs, redacted outcome comparison, and stable report digests.
+- Local Fleet identities, leases, capability dispatch, budgets, quarantine,
+  revocation, and kill controls are available through `pandora fleet`.
+- Fleet leases and graph/evaluation projections remain descriptive or
+  scheduling evidence; none can issue effect permits or replace the
+  ReferenceMonitor.
+
 ## v2.0.0-beta.1
 
 This beta consolidates Pandora's governed CLI, local service, extensibility,

@@ -1,6 +1,6 @@
 {
   "name": "pandora-agent",
-  "version": "2.0.0-beta.1",
+  "version": "2.0.0-beta.2",
   "description": "Verified native launcher for the Pandora Agent CLI",
   "license": "Apache-2.0",
   "repository": "github:anisayakmitra-in/PANDORA-AGENT",

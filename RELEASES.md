@@ -12,7 +12,16 @@ history and reproducibility, but they are not the active release line or
 recommended install targets.
 
 The canonical prerelease tags for this line are `v2.0.0-alpha.1` through
-`v2.0.0-alpha.6`, followed by `v2.0.0-beta.1`.
+`v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` and `v2.0.0-beta.2`.
+
+## v2.0.0-beta.2
+
+This beta advances the CLI release line with durable context assembly caching,
+bounded graph intelligence, deterministic golden-set evaluation, and the local
+Fleet control plane. It also exposes those capabilities through stable JSON
+commands for graph projections, evaluation, and Fleet operations. Runtime
+authority remains unchanged: these projections and leases cannot issue effect
+permits or bypass the ReferenceMonitor.
 
 ## v2.0.0-beta.1
 

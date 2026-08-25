@@ -1139,7 +1139,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-cli"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "crossterm 0.28.1",
  "ed25519-dalek",
@@ -1159,7 +1159,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-harnesses"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "pandora-types",
  "serde",
@@ -1168,7 +1168,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-provider"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "pandora-types",
  "reqwest",
@@ -1178,7 +1178,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-runtime"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "atomic-write-file",
  "base64",
@@ -1201,7 +1201,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-service"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "axum",
  "pandora-runtime",
@@ -1214,7 +1214,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-types"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "semver",
  "serde",
