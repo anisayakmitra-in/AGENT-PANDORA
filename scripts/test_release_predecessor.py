@@ -1,10 +1,19 @@
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 import unittest
+import shutil
+import uuid
 
 from scripts.release_predecessor import ReleasePredecessorError, find_predecessor
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def make_temp_root() -> Path:
+    root = ROOT / "scripts" / f"release-predecessor-{uuid.uuid4().hex}"
+    root.mkdir()
+    return root
 
 
 class ReleasePredecessorTests(unittest.TestCase):
@@ -145,42 +154,44 @@ Current.
 
 Previous.
 """
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "CHANGELOG.md"
-            path.write_text(changelog, encoding="utf-8")
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(Path(__file__).with_name("release_predecessor.py")),
-                    "v2.0.0-beta.1",
-                    "--changelog",
-                    str(path),
-                ],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
+        directory = make_temp_root()
+        self.addCleanup(shutil.rmtree, directory, True)
+        path = directory / "CHANGELOG.md"
+        path.write_text(changelog, encoding="utf-8")
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).with_name("release_predecessor.py")),
+                "v2.0.0-beta.1",
+                "--changelog",
+                str(path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "v2.0.0-alpha.6\n")
         self.assertEqual(result.stderr, "")
 
     def test_cli_reports_a_bounded_error_without_a_traceback(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "CHANGELOG.md"
-            path.write_text("# Changelog\n", encoding="utf-8")
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(Path(__file__).with_name("release_predecessor.py")),
-                    "v2.0.0-beta.1",
-                    "--changelog",
-                    str(path),
-                ],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
+        directory = make_temp_root()
+        self.addCleanup(shutil.rmtree, directory, True)
+        path = directory / "CHANGELOG.md"
+        path.write_text("# Changelog\n", encoding="utf-8")
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).with_name("release_predecessor.py")),
+                "v2.0.0-beta.1",
+                "--changelog",
+                str(path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
 
         self.assertEqual(result.returncode, 1)
         self.assertEqual(result.stdout, "")

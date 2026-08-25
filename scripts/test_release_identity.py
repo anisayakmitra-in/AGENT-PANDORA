@@ -1,13 +1,26 @@
 import json
+import re
+import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
+import uuid
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR = ROOT / "scripts" / "release_identity.py"
+
+
+def make_temp_root() -> Path:
+    match = re.search(
+        r'(?m)^version = "([^"]+)"$', (ROOT / "Cargo.toml").read_text(encoding="utf-8")
+    )
+    if not match:
+        raise AssertionError("unable to read workspace version from Cargo.toml")
+    root = ROOT / "scripts" / f"release-identity-{match.group(1)}-{uuid.uuid4().hex}"
+    root.mkdir()
+    return root
 
 
 class ReleaseIdentityTests(unittest.TestCase):
@@ -19,9 +32,8 @@ class ReleaseIdentityTests(unittest.TestCase):
         shell_version: str | None = None,
         powershell_version: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        root = Path(directory.name)
+        root = make_temp_root()
+        self.addCleanup(shutil.rmtree, root, True)
         (root / "Cargo.toml").write_text(
             f'[workspace.package]\nversion = "{cargo_version}"\n',
             encoding="utf-8",
@@ -51,14 +63,14 @@ class ReleaseIdentityTests(unittest.TestCase):
 
     def test_matching_workspace_package_and_tag_pass(self) -> None:
         result = self.run_validator(
-            "2.0.0-alpha.7", "2.0.0-alpha.7", "v2.0.0-alpha.7"
+            "2.0.0-beta.1", "2.0.0-beta.1", "v2.0.0-beta.1"
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_rejects_npm_version_drift(self) -> None:
         result = self.run_validator(
-            "2.0.0-alpha.7", "2.0.0-alpha.6", "v2.0.0-alpha.7"
+            "2.0.0-beta.1", "2.0.0-beta.0", "v2.0.0-beta.1"
         )
 
         self.assertEqual(result.returncode, 1)
@@ -66,7 +78,7 @@ class ReleaseIdentityTests(unittest.TestCase):
 
     def test_rejects_tag_drift(self) -> None:
         result = self.run_validator(
-            "2.0.0-alpha.7", "2.0.0-alpha.7", "v2.0.0-alpha.6"
+            "2.0.0-beta.1", "2.0.0-beta.1", "v2.0.0-beta.0"
         )
 
         self.assertEqual(result.returncode, 1)
@@ -74,14 +86,14 @@ class ReleaseIdentityTests(unittest.TestCase):
 
     def test_rejects_installer_version_drift(self) -> None:
         for installer, versions in {
-            "shell installer": ("2.0.0-alpha.6", "2.0.0-alpha.7"),
-            "PowerShell installer": ("2.0.0-alpha.7", "2.0.0-alpha.6"),
+            "shell installer": ("2.0.0-beta.0", "2.0.0-beta.1"),
+            "PowerShell installer": ("2.0.0-beta.1", "2.0.0-beta.0"),
         }.items():
             with self.subTest(installer=installer):
                 result = self.run_validator(
-                    "2.0.0-alpha.7",
-                    "2.0.0-alpha.7",
-                    "v2.0.0-alpha.7",
+                    "2.0.0-beta.1",
+                    "2.0.0-beta.1",
+                    "v2.0.0-beta.1",
                     *versions,
                 )
 
