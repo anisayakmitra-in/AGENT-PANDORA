@@ -13,6 +13,10 @@
 - Added a capped deterministic golden-set evaluator. It compares only redacted
   outcomes, returns per-case evaluation evidence and a stable report digest, and
   never includes expected output in the report.
+- Added the durable local Fleet control plane with deterministic capability
+  dispatch, worker identities, bounded leases and budgets, quarantine, revoke,
+  kill, and expiry transitions. Fleet leases do not issue effect permits or
+  replace the ReferenceMonitor.
 - L1 and approved L2 memory now persist in the scoped session database while
   L0 traces remain an expiring RAM-only ring buffer. Existing canonical L1
   execution evidence migrates into the durable schema.

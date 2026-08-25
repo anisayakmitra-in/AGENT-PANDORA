@@ -15,6 +15,7 @@ pub mod evolution;
 pub mod execution_controller;
 mod execution_profile;
 pub mod executors;
+pub mod fleet;
 pub mod graph_intelligence;
 pub mod harness_registry;
 pub mod hooks;
@@ -77,6 +78,10 @@ pub use execution_controller::{
 pub use execution_profile::ExecutionProfileAssemblyError;
 pub use executors::{
     GitWorktreeExecutor, WorktreeChange, WorktreeCommand, WorktreeError, WorktreeResult,
+};
+pub use fleet::{
+    FLEET_SCHEMA_VERSION, FleetBudget, FleetEngine, FleetError, FleetLease, FleetLeaseState,
+    FleetNode, FleetNodeState, MAX_FLEET_CAPABILITIES, MAX_FLEET_LEASES, MAX_FLEET_NODES,
 };
 pub use graph_intelligence::{
     GraphEdge, GraphError, GraphInput, GraphIntelligenceEngine, GraphKind, GraphNode,
