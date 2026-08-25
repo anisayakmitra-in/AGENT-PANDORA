@@ -9,7 +9,7 @@ Four projections are available:
 
 - `code` records files, import/module references, and source provenance.
 - `knowledge` records document headings and explicit Markdown links.
-- `review` records bounded `TODO`, `FIXME`, `HACK`, and `XXX` findings.
+- `review` records bounded maintenance markers and findings.
 - `architecture` groups files by their top-level path layer and records
   dependency evidence.
 

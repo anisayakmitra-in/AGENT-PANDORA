@@ -1,10 +1,108 @@
 use pandora_types::{
     EffectOutcome, EvaluationKind, EvaluationRequest, EvaluationResult, EvaluationStatus,
 };
+use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
+
+pub const MAX_GOLDEN_CASES: usize = 256;
+pub const MAX_GOLDEN_CASE_ID_BYTES: usize = 256;
+pub const MAX_GOLDEN_EXPECTED_OUTPUT_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EvaluationError {
     InvalidMarker,
+    EmptyGoldenCaseId,
+    GoldenCaseIdTooLong,
+    GoldenExpectedOutputTooLong,
+    TooManyGoldenCases,
+    DuplicateGoldenCase,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GoldenCase {
+    id: String,
+    evaluation: EvaluationRequest,
+    expected_output: String,
+}
+
+impl GoldenCase {
+    pub fn new(
+        id: impl Into<String>,
+        evaluation: EvaluationRequest,
+        expected_output: impl Into<String>,
+    ) -> Result<Self, EvaluationError> {
+        let id = id.into();
+        if id.trim().is_empty() {
+            return Err(EvaluationError::EmptyGoldenCaseId);
+        }
+        if id.len() > MAX_GOLDEN_CASE_ID_BYTES {
+            return Err(EvaluationError::GoldenCaseIdTooLong);
+        }
+        let expected_output = expected_output.into();
+        if expected_output.len() > MAX_GOLDEN_EXPECTED_OUTPUT_BYTES {
+            return Err(EvaluationError::GoldenExpectedOutputTooLong);
+        }
+        Ok(Self {
+            id,
+            evaluation,
+            expected_output,
+        })
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn evaluation(&self) -> &EvaluationRequest {
+        &self.evaluation
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GoldenCaseResult {
+    id: String,
+    result: EvaluationResult,
+}
+
+impl GoldenCaseResult {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn result(&self) -> &EvaluationResult {
+        &self.result
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GoldenSetReport {
+    total: usize,
+    passed: usize,
+    failed: usize,
+    digest: String,
+    cases: Vec<GoldenCaseResult>,
+}
+
+impl GoldenSetReport {
+    pub const fn total(&self) -> usize {
+        self.total
+    }
+
+    pub const fn passed(&self) -> usize {
+        self.passed
+    }
+
+    pub const fn failed(&self) -> usize {
+        self.failed
+    }
+
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+
+    pub fn cases(&self) -> &[GoldenCaseResult] {
+        &self.cases
+    }
 }
 
 pub struct EvaluationEngine;
@@ -158,6 +256,42 @@ impl EvaluationEngine {
         ))
     }
 
+    pub fn evaluate_golden_set<I>(&self, cases: I) -> Result<GoldenSetReport, EvaluationError>
+    where
+        I: IntoIterator<Item = GoldenCase>,
+    {
+        let mut cases = cases.into_iter().collect::<Vec<_>>();
+        if cases.len() > MAX_GOLDEN_CASES {
+            return Err(EvaluationError::TooManyGoldenCases);
+        }
+        cases.sort_by(|left, right| left.id.cmp(&right.id));
+        let mut ids = BTreeSet::new();
+        for case in &cases {
+            if !ids.insert(case.id.clone()) {
+                return Err(EvaluationError::DuplicateGoldenCase);
+            }
+        }
+
+        let results = cases
+            .iter()
+            .map(|case| GoldenCaseResult {
+                id: case.id.clone(),
+                result: self.evaluate_outcome(&case.evaluation, &case.expected_output),
+            })
+            .collect::<Vec<_>>();
+        let passed = results.iter().filter(|case| case.result.passed()).count();
+        let failed = results.len().saturating_sub(passed);
+        let digest = golden_set_digest(&results);
+
+        Ok(GoldenSetReport {
+            total: results.len(),
+            passed,
+            failed,
+            digest,
+            cases: results,
+        })
+    }
+
     pub fn advisory_judgement(
         &self,
         _input: &EvaluationRequest,
@@ -194,6 +328,23 @@ fn result(
 ) -> EvaluationResult {
     EvaluationResult::new(kind, status, score, reason, advisory)
         .expect("built-in evaluation result is valid")
+}
+
+fn golden_set_digest(cases: &[GoldenCaseResult]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"pandora.golden-set.v1");
+    for case in cases {
+        digest_text(&mut hasher, &case.id);
+        digest_text(&mut hasher, case.result.kind().as_str());
+        digest_text(&mut hasher, case.result.status().as_str());
+        hasher.update([case.result.score(), u8::from(case.result.advisory())]);
+    }
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn digest_text(hasher: &mut Sha256, value: &str) {
+    hasher.update((value.len() as u64).to_be_bytes());
+    hasher.update(value.as_bytes());
 }
 
 #[cfg(test)]
@@ -289,5 +440,48 @@ mod tests {
         assert!(result.advisory());
         assert!(result.passed());
         assert!(!result.can_authorize_permit());
+    }
+
+    #[test]
+    fn golden_set_is_bounded_deterministic_and_does_not_expose_expected_output() {
+        let engine = EvaluationEngine::new();
+        let first = engine
+            .evaluate_golden_set([
+                GoldenCase::new("case-b", input("done"), "done").unwrap(),
+                GoldenCase::new("case-a", input("wrong"), "done").unwrap(),
+            ])
+            .unwrap();
+        let second = engine
+            .evaluate_golden_set([
+                GoldenCase::new("case-a", input("wrong"), "done").unwrap(),
+                GoldenCase::new("case-b", input("done"), "done").unwrap(),
+            ])
+            .unwrap();
+
+        assert_eq!(first.digest(), second.digest());
+        assert_eq!(first.total(), 2);
+        assert_eq!(first.passed(), 1);
+        assert_eq!(first.failed(), 1);
+        assert!(first.cases().iter().all(|case| case.id() != "done"));
+    }
+
+    #[test]
+    fn golden_set_rejects_duplicate_ids_and_oversized_collections() {
+        let engine = EvaluationEngine::new();
+        assert_eq!(
+            engine.evaluate_golden_set([
+                GoldenCase::new("same", input("done"), "done").unwrap(),
+                GoldenCase::new("same", input("done"), "done").unwrap(),
+            ]),
+            Err(EvaluationError::DuplicateGoldenCase)
+        );
+
+        let cases = (0..=MAX_GOLDEN_CASES)
+            .map(|index| GoldenCase::new(format!("case-{index}"), input("done"), "done").unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            engine.evaluate_golden_set(cases),
+            Err(EvaluationError::TooManyGoldenCases)
+        );
     }
 }

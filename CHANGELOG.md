@@ -10,6 +10,9 @@
   Review, and Architecture evidence projections. Graph snapshots are scoped,
   provenance-digested, and descriptive only; the engine has no direct effect
   authority.
+- Added a capped deterministic golden-set evaluator. It compares only redacted
+  outcomes, returns per-case evaluation evidence and a stable report digest, and
+  never includes expected output in the report.
 - L1 and approved L2 memory now persist in the scoped session database while
   L0 traces remain an expiring RAM-only ring buffer. Existing canonical L1
   execution evidence migrates into the durable schema.
