@@ -63,7 +63,7 @@ fn powershell() -> &'static str {
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'efficiency') {
         'rank'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'evaluation') {
-        'golden'
+        'golden','inspect'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'graph') {
         'code','knowledge','review','architecture'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'fleet') {
@@ -112,7 +112,7 @@ fn bash() -> &'static str {
     elif [[ "$previous" == "efficiency" ]]; then
         COMPREPLY=( $(compgen -W 'rank' -- "$current") )
     elif [[ "$previous" == "evaluation" ]]; then
-        COMPREPLY=( $(compgen -W 'golden' -- "$current") )
+        COMPREPLY=( $(compgen -W 'golden inspect' -- "$current") )
     elif [[ "$previous" == "graph" ]]; then
         COMPREPLY=( $(compgen -W 'code knowledge review architecture' -- "$current") )
     elif [[ "$previous" == "fleet" ]]; then
@@ -157,7 +157,7 @@ elif [[ ${words[2]} == strategies ]]; then
 elif [[ ${words[2]} == efficiency ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies evaluation efficiency fleet completions migrate update uninstall doctor)' '2:efficiency command:(rank)'
 elif [[ ${words[2]} == evaluation ]]; then
-    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies evaluation efficiency fleet graph completions migrate update uninstall doctor)' '2:evaluation command:(golden)'
+    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies evaluation efficiency fleet graph completions migrate update uninstall doctor)' '2:evaluation command:(golden inspect)'
 elif [[ ${words[2]} == graph ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies evaluation efficiency fleet graph completions migrate update uninstall doctor)' '2:graph command:(code knowledge review architecture)'
 elif [[ ${words[2]} == fleet ]]; then
@@ -184,7 +184,7 @@ complete -c pandora -f -n '__fish_seen_subcommand_from tool' -a 'list inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from orchestration' -a 'roles'
 complete -c pandora -f -n '__fish_seen_subcommand_from strategies' -a 'list'
 complete -c pandora -f -n '__fish_seen_subcommand_from efficiency' -a 'rank'
-complete -c pandora -f -n '__fish_seen_subcommand_from evaluation' -a 'golden'
+complete -c pandora -f -n '__fish_seen_subcommand_from evaluation' -a 'golden inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from graph' -a 'code knowledge review architecture'
 complete -c pandora -f -n '__fish_seen_subcommand_from fleet' -a 'list register dispatch lease release expire quarantine revoke kill'"#
 }
@@ -217,6 +217,7 @@ mod tests {
             "'list','inspect','resolve'",
             "'list','set','use','test'",
             "'list','inspect','set','remove'",
+            "'golden','inspect'",
             "'submit','work','list','inspect','cancel','mark-interrupted'",
             "'spawn','work','list','inspect','cancel','mark-interrupted','cleanup'",
         ] {
@@ -234,6 +235,7 @@ mod tests {
                 "list inspect resolve",
                 "list set use test",
                 "list inspect set remove",
+                "golden inspect",
                 "submit work list inspect cancel mark-interrupted",
                 "spawn work list inspect cancel mark-interrupted cleanup",
                 "list register dispatch lease release expire quarantine revoke kill",

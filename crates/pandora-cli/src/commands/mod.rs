@@ -330,6 +330,7 @@ commands:
   orchestration roles
   strategies list
   evaluation golden --input <path> [--fail-on-failure]
+  evaluation inspect --session <id> [--execution <id>]
   efficiency rank [--task-class <name>] [--objective <cost|latency|tokens|certainty>]
   fleet list|register|dispatch|lease|release|expire|quarantine|revoke|kill
   graph code|knowledge|review|architecture --input <path> [--tenant <id>] [--workspace <id>]
@@ -416,6 +417,7 @@ mod tests {
         assert!(usage.contains("job submit|work|list|inspect|cancel|mark-interrupted"));
         assert!(usage.contains("work accepts --max-jobs <1-64>"));
         assert!(usage.contains("evaluation golden --input <path> [--fail-on-failure]"));
+        assert!(usage.contains("evaluation inspect --session <id> [--execution <id>]"));
         assert!(usage.contains("graph code|knowledge|review|architecture --input <path>"));
     }
 }

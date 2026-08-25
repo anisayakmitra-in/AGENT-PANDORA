@@ -2009,6 +2009,42 @@ fn session_inspect_returns_metadata_without_event_payloads() {
 }
 
 #[test]
+fn evaluation_inspect_returns_persisted_receipts_and_supports_execution_filter() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let run = fixture
+        .command(&["run", "read:README.md", "--json"])
+        .output()
+        .expect("run should start");
+    assert_success(&run);
+    let run = parse_json(&run);
+    let session_id = run["session_id"].as_str().unwrap();
+    let execution_id = run["execution_id"].as_str().unwrap();
+
+    let output = fixture
+        .command(&[
+            "evaluation",
+            "inspect",
+            "--session",
+            session_id,
+            "--execution",
+            execution_id,
+            "--json",
+        ])
+        .output()
+        .expect("evaluation inspect should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["command"], "evaluation inspect");
+    assert_eq!(response["session_id"], session_id);
+    assert_eq!(response["execution_id"], execution_id);
+    assert_eq!(response["count"], 1);
+    assert_eq!(response["result_counts"]["passed"], 2);
+    assert_eq!(response["result_counts"]["failed"], 0);
+    assert_eq!(response["receipts"].as_array().unwrap().len(), 1);
+}
+
+#[test]
 fn session_inspect_missing_session_preserves_resume_error() {
     let fixture = Fixture::new();
     fixture.setup();

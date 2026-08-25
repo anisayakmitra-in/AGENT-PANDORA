@@ -1,7 +1,10 @@
-use super::parse_options;
+use super::{load_config, parse_options, require_config_file, session_scope, session_store};
+use crate::commands::run::evaluation_receipt_json;
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{EvaluationEngine, GoldenCase, GoldenSetReport, MAX_GOLDEN_CASES};
-use pandora_types::{EvaluationRequest, ExecutionId};
+use pandora_types::{
+    EvaluationReceipt, EvaluationRequest, EvaluationStatus, ExecutionId, SessionId,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::fs;
@@ -29,13 +32,95 @@ struct GoldenCaseInput {
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args
         .first()
-        .ok_or_else(|| CliError::usage("evaluation requires 'golden'"))?;
-    if subcommand != "golden" {
-        return Err(CliError::usage(format!(
+        .ok_or_else(|| CliError::usage("evaluation requires 'golden' or 'inspect'"))?;
+    match subcommand.as_str() {
+        "golden" => golden(&args[1..]),
+        "inspect" => inspect(&args[1..]),
+        _ => Err(CliError::usage(format!(
             "unknown evaluation command '{subcommand}'"
-        )));
+        ))),
     }
-    golden(&args[1..])
+}
+
+fn inspect(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "session", "execution"],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evaluation inspect does not accept positional arguments",
+        ));
+    }
+    let session_id = parsed
+        .value("session")
+        .ok_or_else(|| CliError::usage("evaluation inspect requires '--session <id>'"))
+        .and_then(|value| {
+            SessionId::new(value.to_owned()).map_err(|_| CliError::usage("session ID is invalid"))
+        })?;
+    let execution_id = parsed
+        .value("execution")
+        .map(|value| {
+            ExecutionId::new(value.to_owned())
+                .map_err(|_| CliError::usage("execution ID is invalid"))
+        })
+        .transpose()?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+    let (principal, tenant, workspace) = session_scope();
+    let snapshot = store
+        .resume(&session_id, &principal, &tenant, &workspace)
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let receipts = snapshot
+        .evaluations()
+        .iter()
+        .filter(|receipt| {
+            execution_id
+                .as_ref()
+                .is_none_or(|id| receipt.execution_id() == id)
+        })
+        .collect::<Vec<_>>();
+    if execution_id.is_some() && receipts.is_empty() {
+        return Err(CliError::execution(
+            "evaluation execution was not found in the session",
+            json!({"session_id": session_id, "execution_id": execution_id}),
+        ));
+    }
+    let (passed, failed, review_required) = status_counts(&receipts);
+    let count = receipts.len();
+    Ok(success(
+        "evaluation inspect",
+        json!({
+            "session_id": session_id,
+            "execution_id": execution_id,
+            "count": count,
+            "result_counts": {
+                "passed": passed,
+                "failed": failed,
+                "human_review_required": review_required,
+            },
+            "receipts": receipts
+                .iter()
+                .map(|receipt| evaluation_receipt_json(receipt))
+                .collect::<Vec<_>>(),
+            "durability": "session-store",
+        }),
+        format!("Inspected {count} evaluation receipt(s) for {}", session_id),
+    ))
+}
+
+fn status_counts(receipts: &[&EvaluationReceipt]) -> (usize, usize, usize) {
+    receipts.iter().fold((0, 0, 0), |mut counts, receipt| {
+        for result in receipt.results() {
+            match result.status() {
+                EvaluationStatus::Passed => counts.0 += 1,
+                EvaluationStatus::Failed => counts.1 += 1,
+                EvaluationStatus::HumanReviewRequired => counts.2 += 1,
+            }
+        }
+        counts
+    })
 }
 
 fn golden(args: &[String]) -> Result<CommandResult, CliError> {
@@ -158,7 +243,11 @@ fn report_value(report: &GoldenSetReport) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_cases;
+    use super::{parse_cases, status_counts};
+    use pandora_types::{
+        EvaluationKind, EvaluationReceipt, EvaluationResult, EvaluationStatus, ExecutionId,
+        SessionId, Timestamp,
+    };
 
     #[test]
     fn parses_bounded_golden_case_shape() {
@@ -183,5 +272,43 @@ mod tests {
         )
         .unwrap();
         assert!(cases[0].evaluation().terminal_failure().is_some());
+    }
+
+    #[test]
+    fn counts_all_persisted_evaluation_result_statuses() {
+        let receipt = EvaluationReceipt::new(
+            SessionId::new("session-a").unwrap(),
+            ExecutionId::new("execution-a").unwrap(),
+            Timestamp::from_unix_seconds(1),
+            vec![
+                EvaluationResult::new(
+                    EvaluationKind::Trajectory,
+                    EvaluationStatus::Passed,
+                    100,
+                    "ok",
+                    false,
+                )
+                .unwrap(),
+                EvaluationResult::new(
+                    EvaluationKind::Outcome,
+                    EvaluationStatus::Failed,
+                    0,
+                    "failed",
+                    false,
+                )
+                .unwrap(),
+                EvaluationResult::new(
+                    EvaluationKind::Policy,
+                    EvaluationStatus::HumanReviewRequired,
+                    50,
+                    "review",
+                    false,
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(status_counts(&[&receipt]), (1, 1, 1));
     }
 }

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added read-only `pandora evaluation inspect`, exposing durable evaluation
+  receipts and aggregate result counts by session or execution without replay
+  or authority changes.
 - Agent context assembly can now use a bounded, atomic `context-cache.json`
   in the configured data directory. Cache records remain scope- and
   provenance-bound; corrupt, stale, oversized, or sensitive records are
