@@ -15,6 +15,7 @@ mod chat;
 mod completions;
 mod doctor;
 mod efficiency;
+mod evaluation;
 mod fleet;
 mod harness;
 mod job;
@@ -93,6 +94,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "update" => update::execute(&args[1..]),
         "orchestration" => orchestration(&args[1..]),
         "doctor" => doctor::execute(&args[1..]),
+        "evaluation" => evaluation::execute(&args[1..]),
         "efficiency" => efficiency::execute(&args[1..]),
         "fleet" => fleet::execute(&args[1..]),
         "--help" | "help" => {
@@ -182,7 +184,15 @@ pub(crate) fn parse_options(args: &[String], allowed: &[&str]) -> Result<ParsedA
 fn is_flag(name: &str) -> bool {
     matches!(
         name,
-        "agent" | "allow" | "deny" | "dry-run" | "interactive" | "plan" | "rollback" | "yes"
+        "agent"
+            | "allow"
+            | "deny"
+            | "dry-run"
+            | "fail-on-failure"
+            | "interactive"
+            | "plan"
+            | "rollback"
+            | "yes"
     )
 }
 
@@ -291,7 +301,7 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|service|chat|tui|harness|slash|session|job|subagent|skill|package|approval|provider|mcp|tool|orchestration|strategies|efficiency|fleet|completions|migrate|update|uninstall|doctor> [options]
+    r#"usage: pandora <help|setup|run|service|chat|tui|harness|slash|session|job|subagent|skill|package|approval|provider|mcp|tool|orchestration|strategies|evaluation|efficiency|fleet|completions|migrate|update|uninstall|doctor> [options]
 
 commands:
   help (or --help)
@@ -314,6 +324,7 @@ commands:
   mcp list|inspect|set|remove
   orchestration roles
   strategies list
+  evaluation golden --input <path> [--fail-on-failure]
   efficiency rank [--task-class <name>] [--objective <cost|latency|tokens|certainty>]
   fleet list|register|dispatch|lease|release|expire|quarantine|revoke|kill
   completions <powershell|bash|zsh|fish>
@@ -398,5 +409,6 @@ mod tests {
 
         assert!(usage.contains("job submit|work|list|inspect|cancel|mark-interrupted"));
         assert!(usage.contains("work accepts --max-jobs <1-64>"));
+        assert!(usage.contains("evaluation golden --input <path> [--fail-on-failure]"));
     }
 }

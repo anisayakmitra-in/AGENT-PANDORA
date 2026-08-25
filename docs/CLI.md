@@ -330,6 +330,35 @@ pricing. The option cannot be combined with `--provider`, `--model`, or
 `--approval`; it does not change configuration, policy, permissions, or
 credentials.
 
+## Golden-set evaluation
+
+`evaluation golden` runs the deterministic runtime evaluator against a bounded
+JSON file. The input contains redacted outputs only; it does not execute tools,
+call providers, or grant permissions.
+
+```json
+{
+  "cases": [
+    {
+      "id": "coding-smoke",
+      "execution_id": "exec-coding-smoke",
+      "output": "tests passed",
+      "expected_output": "tests passed",
+      "policy_violations": []
+    }
+  ]
+}
+```
+
+```text
+pandora evaluation golden --input golden.json --json
+pandora evaluation golden --input golden.json --fail-on-failure
+```
+
+The command accepts at most 256 cases and a 4 MiB input file. It emits a
+stable report digest and per-case outcome results. `--fail-on-failure` returns
+a non-zero command result for CI when any case fails.
+
 ## Local Fleet controls
 
 The CLI exposes the local durable Fleet control plane. It stores state under
@@ -432,6 +461,7 @@ pandora mcp inspect <id>
 pandora mcp remove <id> --yes
 pandora orchestration roles
 pandora strategies list
+pandora evaluation golden --input <path> [--fail-on-failure]
 pandora completions powershell
 pandora completions bash
 pandora completions zsh
