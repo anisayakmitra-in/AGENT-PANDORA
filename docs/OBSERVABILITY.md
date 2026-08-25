@@ -30,7 +30,7 @@ Operation-request protocol v2 includes the profile digest in its canonical reque
 
 Rollout records keep typed event kinds, bounded identifiers and failure codes, request digests, receipt and permit IDs, policy versions, provider IDs, MCP era evidence, timestamps, and effect outcomes. Policy and denial reasons are represented only by SHA-256 digests. Credentials, prompts, assembled context, model output, Tool output, environment values, arbitrary error text, and hidden reasoning are excluded.
 
-The reducer is evaluation evidence only. It cannot issue a permit, approve an operation, promote memory, modify canonical events, or replace the session store. Callers may inspect the projection version, record count, and final digest from the in-memory result; Pandora does not claim durable rollout storage until the existing session authority explicitly persists that projection.
+The reducer is evaluation evidence only. It cannot issue a permit, approve an operation, promote memory, modify canonical events, or replace the session store. CLI runs persist a redacted rollout summary in the existing session store: projection version, record count, context-manifest digest, final digest, and recording time. `pandora rollout inspect` reads that summary after restart; it does not expose the projection's sensitive inputs or create a second event store.
 
 ## Containment evidence
 

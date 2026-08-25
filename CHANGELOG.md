@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- CLI executions now persist a redacted rollout summary in the existing
+  session store, and `pandora rollout inspect` exposes its verified scope
+  digests without replaying or authorizing effects.
 - Added read-only `pandora evaluation inspect`, exposing durable evaluation
   receipts and aggregate result counts by session or execution without replay
   or authority changes.

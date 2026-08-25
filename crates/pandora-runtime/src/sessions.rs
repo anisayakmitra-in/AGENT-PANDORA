@@ -2,8 +2,8 @@ use pandora_provider::ChatMessage;
 use pandora_types::{
     ContextClassification, EvaluationKind, EvaluationReceipt, EvaluationResult, EvaluationStatus,
     ExecutionId, MemoryApproval, MemoryAuditAction, MemoryAuditEntry, MemoryId, MemoryKind,
-    MemoryRecord, MemoryScope, MemoryTier, PrincipalId, RuntimeEvent, Session, SessionId, TenantId,
-    Timestamp, WorkspaceId,
+    MemoryRecord, MemoryScope, MemoryTier, PrincipalId, Rollout, RuntimeEvent, Session, SessionId,
+    TenantId, Timestamp, WorkspaceId,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
-const CURRENT_SCHEMA_VERSION: i64 = 6;
+const CURRENT_SCHEMA_VERSION: i64 = 7;
 const MAX_EVENT_BYTES: usize = 1_048_576;
 const MAX_AGENT_MESSAGE_BYTES: usize = 1_048_576;
 const MAX_AGENT_TRANSCRIPT_BYTES: usize = 8 * 1_048_576;
@@ -135,6 +135,7 @@ pub struct SessionSnapshot {
     event_metadata: Vec<EventMetadata>,
     l1_evidence_count: usize,
     evaluations: Vec<EvaluationReceipt>,
+    rollouts: Vec<RolloutSummary>,
     agent_messages: Vec<ChatMessage>,
 }
 
@@ -168,8 +169,58 @@ impl SessionSnapshot {
         &self.evaluations
     }
 
+    pub fn rollouts(&self) -> &[RolloutSummary] {
+        &self.rollouts
+    }
+
     pub fn agent_messages(&self) -> &[ChatMessage] {
         &self.agent_messages
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RolloutSummary {
+    session_id: SessionId,
+    execution_id: ExecutionId,
+    attempt: u32,
+    projection_version: u16,
+    record_count: u32,
+    context_manifest_digest: String,
+    final_digest: String,
+    recorded_at: Timestamp,
+}
+
+impl RolloutSummary {
+    pub fn session_id(&self) -> &SessionId {
+        &self.session_id
+    }
+
+    pub fn execution_id(&self) -> &ExecutionId {
+        &self.execution_id
+    }
+
+    pub const fn attempt(&self) -> u32 {
+        self.attempt
+    }
+
+    pub const fn projection_version(&self) -> u16 {
+        self.projection_version
+    }
+
+    pub const fn record_count(&self) -> u32 {
+        self.record_count
+    }
+
+    pub fn context_manifest_digest(&self) -> &str {
+        &self.context_manifest_digest
+    }
+
+    pub fn final_digest(&self) -> &str {
+        &self.final_digest
+    }
+
+    pub const fn recorded_at(&self) -> Timestamp {
+        self.recorded_at
     }
 }
 
@@ -350,6 +401,7 @@ impl SessionStore {
         let l1_evidence_count =
             usize::try_from(l1_evidence_count).map_err(|_| SessionError::CorruptRecord)?;
         let evaluations = load_evaluations(&connection, session_id)?;
+        let rollouts = load_rollouts(&connection, session_id)?;
         let mut statement = connection.prepare(
             "SELECT message_json FROM agent_messages
              WHERE session_id = ?1 ORDER BY sequence ASC",
@@ -368,6 +420,7 @@ impl SessionStore {
             event_metadata,
             l1_evidence_count,
             evaluations,
+            rollouts,
             agent_messages,
         })
     }
@@ -433,6 +486,30 @@ impl SessionStore {
         evaluation: &EvaluationReceipt,
         recorded_at: Timestamp,
     ) -> Result<(), SessionError> {
+        self.append_execution_with_rollout(
+            session_id,
+            principal_id,
+            tenant_id,
+            workspace_id,
+            events,
+            evaluation,
+            None,
+            recorded_at,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn append_execution_with_rollout(
+        &self,
+        session_id: &SessionId,
+        principal_id: &PrincipalId,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        events: &[RuntimeEvent],
+        evaluation: &EvaluationReceipt,
+        rollout: Option<&Rollout>,
+        recorded_at: Timestamp,
+    ) -> Result<(), SessionError> {
         if events.is_empty()
             || evaluation.session_id() != session_id
             || events.iter().any(|event| {
@@ -444,6 +521,19 @@ impl SessionStore {
             })
         {
             return Err(SessionError::InvalidEvaluation);
+        }
+        if let Some(rollout) = rollout {
+            rollout
+                .verify()
+                .map_err(|_| SessionError::InvalidEvaluation)?;
+            let scope = rollout.scope();
+            if scope.session_id() != session_id
+                || scope.tenant_id() != tenant_id
+                || scope.workspace_id() != workspace_id
+                || scope.execution_id() != evaluation.execution_id()
+            {
+                return Err(SessionError::InvalidEvaluation);
+            }
         }
         let events = events
             .iter()
@@ -495,6 +585,33 @@ impl SessionStore {
                     result.reason(),
                     result.advisory(),
                     evaluated_at,
+                ],
+            )?;
+        }
+        if let Some(rollout) = rollout {
+            transaction.execute(
+                "INSERT INTO session_rollouts
+                 (session_id, execution_id, attempt, projection_version, record_count,
+                  context_manifest_digest, final_digest, recorded_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    session_id.as_str(),
+                    evaluation.execution_id().as_str(),
+                    attempt,
+                    i64::from(rollout.projection_version()),
+                    i64::try_from(rollout.records().len())
+                        .map_err(|_| SessionError::CorruptRecord)?,
+                    rollout
+                        .records()
+                        .first()
+                        .and_then(|record| match record.evidence() {
+                            pandora_types::RolloutEvidence::ContextManifest { manifest_digest } =>
+                                Some(manifest_digest.as_str()),
+                            _ => None,
+                        })
+                        .ok_or(SessionError::InvalidEvaluation)?,
+                    rollout.final_digest().as_str(),
+                    recorded_at,
                 ],
             )?;
         }
@@ -1234,6 +1351,25 @@ fn migrate(connection: &mut Connection) -> Result<(), SessionError> {
               DROP TABLE session_l1_evidence;
               INSERT INTO schema_migrations (version, applied_at) VALUES (6, strftime('%s', 'now'));",
         )?;
+        version = 6;
+    }
+    if version == 6 {
+        transaction.execute_batch(
+             "CREATE TABLE session_rollouts (
+                 session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                 execution_id TEXT NOT NULL,
+                 attempt INTEGER NOT NULL CHECK (attempt >= 0),
+                 projection_version INTEGER NOT NULL CHECK (projection_version > 0),
+                 record_count INTEGER NOT NULL CHECK (record_count > 0),
+                 context_manifest_digest TEXT NOT NULL,
+                 final_digest TEXT NOT NULL,
+                 recorded_at INTEGER NOT NULL CHECK (recorded_at >= 0),
+                 PRIMARY KEY (session_id, execution_id, attempt)
+             );
+             CREATE INDEX session_rollouts_session_idx
+                 ON session_rollouts(session_id, recorded_at, execution_id);
+             INSERT INTO schema_migrations (version, applied_at) VALUES (7, strftime('%s', 'now'));",
+        )?;
     }
     transaction.commit()?;
     Ok(())
@@ -1658,6 +1794,57 @@ fn load_evaluations(
         );
     }
     Ok(evaluations)
+}
+
+fn load_rollouts(
+    connection: &Connection,
+    session_id: &SessionId,
+) -> Result<Vec<RolloutSummary>, SessionError> {
+    let mut statement = connection.prepare(
+        "SELECT execution_id, attempt, projection_version, record_count,
+                context_manifest_digest, final_digest, recorded_at
+         FROM session_rollouts
+         WHERE session_id = ?1
+         ORDER BY recorded_at ASC, execution_id ASC",
+    )?;
+    let rows = statement.query_map(params![session_id.as_str()], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, i64>(3)?,
+            row.get::<_, String>(4)?,
+            row.get::<_, String>(5)?,
+            row.get::<_, i64>(6)?,
+        ))
+    })?;
+    let mut rollouts = Vec::new();
+    for row in rows {
+        let (
+            execution_id,
+            attempt,
+            projection_version,
+            record_count,
+            context_manifest_digest,
+            final_digest,
+            recorded_at,
+        ) = row?;
+        rollouts.push(RolloutSummary {
+            session_id: session_id.clone(),
+            execution_id: ExecutionId::new(execution_id)
+                .map_err(|_| SessionError::CorruptRecord)?,
+            attempt: u32::try_from(attempt).map_err(|_| SessionError::CorruptRecord)?,
+            projection_version: u16::try_from(projection_version)
+                .map_err(|_| SessionError::CorruptRecord)?,
+            record_count: u32::try_from(record_count).map_err(|_| SessionError::CorruptRecord)?,
+            context_manifest_digest,
+            final_digest,
+            recorded_at: u64::try_from(recorded_at)
+                .map(Timestamp::from_unix_seconds)
+                .map_err(|_| SessionError::CorruptRecord)?,
+        });
+    }
+    Ok(rollouts)
 }
 
 fn parse_evaluation_kind(value: &str) -> Result<EvaluationKind, SessionError> {
@@ -2351,6 +2538,81 @@ mod tests {
             .unwrap();
         assert_eq!(snapshot.events().len(), 2);
         assert_eq!(snapshot.evaluations(), &[evaluation.clone(), evaluation]);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rollout_summary_round_trips_with_execution_scope() {
+        let root = crate::test_support::new_temp_dir("pandora-session-rollout-test").unwrap();
+        let store = SessionStore::open(root.join("sessions.sqlite3")).unwrap();
+        let session = Session::new(
+            SessionId::new("session-1").unwrap(),
+            PrincipalId::new("principal-1").unwrap(),
+            TenantId::new("tenant-1").unwrap(),
+            WorkspaceId::new("workspace-1").unwrap(),
+            Timestamp::from_unix_seconds(1),
+        );
+        let execution_id = ExecutionId::new("execution-1").unwrap();
+        let event = RuntimeEvent::new(
+            EventId::new("event-1").unwrap(),
+            EventType::SessionStarted,
+            EventContext::new(session.tenant_id().clone(), session.workspace_id().clone())
+                .with_session(session.id().clone())
+                .with_execution(execution_id.clone()),
+            EventPayload::Empty,
+        );
+        let evaluation = EvaluationReceipt::new(
+            session.id().clone(),
+            execution_id,
+            Timestamp::from_unix_seconds(2),
+            vec![
+                EvaluationResult::new(
+                    EvaluationKind::Trajectory,
+                    EvaluationStatus::Passed,
+                    100,
+                    "trajectory passed",
+                    false,
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap();
+        let context_manifest = pandora_types::ContextManifest::from_fragments(&[]);
+        let rollout = crate::RolloutReducer::new()
+            .reduce(context_manifest.digest(), std::slice::from_ref(&event), &[])
+            .unwrap();
+        store.create(&session).unwrap();
+        store
+            .append_execution_with_rollout(
+                session.id(),
+                session.principal_id(),
+                session.tenant_id(),
+                session.workspace_id(),
+                std::slice::from_ref(&event),
+                &evaluation,
+                Some(&rollout),
+                Timestamp::from_unix_seconds(2),
+            )
+            .unwrap();
+
+        let snapshot = store
+            .resume(
+                session.id(),
+                session.principal_id(),
+                session.tenant_id(),
+                session.workspace_id(),
+            )
+            .unwrap();
+        assert_eq!(snapshot.rollouts().len(), 1);
+        assert_eq!(
+            snapshot.rollouts()[0].execution_id(),
+            evaluation.execution_id()
+        );
+        assert_eq!(snapshot.rollouts()[0].record_count(), 2);
+        assert_eq!(
+            snapshot.rollouts()[0].final_digest(),
+            rollout.final_digest().as_str()
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

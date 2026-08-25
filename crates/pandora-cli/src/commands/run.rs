@@ -22,13 +22,13 @@ use pandora_runtime::{
 };
 use pandora_runtime::{
     DEFAULT_MAX_SAMPLES_PER_TARGET, EfficiencyEngine, EfficiencyStore, ExecutionController,
-    PackageState, PackageStore, SkillEngine, SkillError, WasmExecutor, WasmGene,
+    PackageState, PackageStore, RolloutReducer, SkillEngine, SkillError, WasmExecutor, WasmGene,
 };
 use pandora_types::{
-    Capability, ContextClassification, EfficiencyObjective, EfficiencySample, EvaluationReceipt,
-    EvaluationRequest, EvaluationResult, EventPayload, EventType, ExecutionId, Gene, HarnessId,
-    MemoryKind, MemoryRecord, MemoryScope, Operation, PackageId, PackageKind, PackageManifest,
-    PolicyContext, Session, SessionId, TaskIntent, WorkspaceId,
+    Capability, ContextClassification, ContextManifest, EfficiencyObjective, EfficiencySample,
+    EvaluationReceipt, EvaluationRequest, EvaluationResult, EventPayload, EventType, ExecutionId,
+    Gene, HarnessId, MemoryKind, MemoryRecord, MemoryScope, Operation, PackageId, PackageKind,
+    PackageManifest, PolicyContext, Session, SessionId, TaskIntent, WorkspaceId,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -926,14 +926,28 @@ fn evaluate_and_append_execution(
         results,
     )
     .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let context_manifest = ContextManifest::from_fragments(&[]);
+    let rollout = RolloutReducer::new()
+        .reduce(
+            context_manifest.digest(),
+            summary.events(),
+            summary.receipts(),
+        )
+        .map_err(|error| {
+            CliError::internal(
+                "could not reduce execution rollout",
+                json!({"error": error.to_string()}),
+            )
+        })?;
     store
-        .append_execution(
+        .append_execution_with_rollout(
             session.id(),
             session.principal_id(),
             session.tenant_id(),
             session.workspace_id(),
             summary.events(),
             &receipt,
+            Some(&rollout),
             evaluated_at,
         )
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;

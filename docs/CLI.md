@@ -369,6 +369,16 @@ pandora evaluation inspect --session <id> --json
 pandora evaluation inspect --session <id> --execution <id> --json
 ```
 
+`rollout inspect` reads the redacted rollout summary persisted with a CLI
+execution. It reports the projection version, record count, context-manifest
+digest, final digest, and recording time. It does not replay effects, expose
+prompts or outputs, or grant authority.
+
+```text
+pandora rollout inspect --session <id> --json
+pandora rollout inspect --session <id> --execution <id> --json
+```
+
 ## Graph evidence
 
 `graph` consumes a caller-provided evidence document. The CLI does not walk a
@@ -505,6 +515,7 @@ pandora orchestration roles
 pandora strategies list
 pandora evaluation golden --input <path> [--fail-on-failure]
 pandora evaluation inspect --session <id> [--execution <id>]
+pandora rollout inspect --session <id> [--execution <id>]
 pandora graph code|knowledge|review|architecture --input <path> [--tenant <id>] [--workspace <id>]
 pandora completions powershell
 pandora completions bash

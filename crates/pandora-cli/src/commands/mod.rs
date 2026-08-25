@@ -25,6 +25,7 @@ mod memory;
 mod migration;
 mod package;
 mod provider;
+mod rollout;
 mod run;
 mod service;
 mod session;
@@ -98,6 +99,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "orchestration" => orchestration(&args[1..]),
         "doctor" => doctor::execute(&args[1..]),
         "evaluation" => evaluation::execute(&args[1..]),
+        "rollout" => rollout::execute(&args[1..]),
         "efficiency" => efficiency::execute(&args[1..]),
         "fleet" => fleet::execute(&args[1..]),
         "graph" => graph::execute(&args[1..]),
@@ -305,7 +307,7 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|service|chat|tui|harness|slash|session|job|subagent|skill|package|memory|approval|provider|mcp|tool|orchestration|strategies|evaluation|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor> [options]
+    r#"usage: pandora <help|setup|run|service|chat|tui|harness|slash|session|job|subagent|skill|package|memory|approval|provider|mcp|tool|orchestration|strategies|evaluation|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor> [options]
 
 commands:
   help (or --help)
@@ -331,6 +333,7 @@ commands:
   strategies list
   evaluation golden --input <path> [--fail-on-failure]
   evaluation inspect --session <id> [--execution <id>]
+  rollout inspect --session <id> [--execution <id>]
   efficiency rank [--task-class <name>] [--objective <cost|latency|tokens|certainty>]
   fleet list|register|dispatch|lease|release|expire|quarantine|revoke|kill
   graph code|knowledge|review|architecture --input <path> [--tenant <id>] [--workspace <id>]

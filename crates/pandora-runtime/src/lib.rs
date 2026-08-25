@@ -116,6 +116,7 @@ pub use rollout_reducer::{RolloutReducer, RolloutReducerError};
 pub use run_loop::{RunLoop, RunLoopError};
 pub use service::{RuntimeService, RuntimeServiceError, RuntimeServiceScope};
 pub use service_token::{ServiceToken, ServiceTokenError, ServiceTokenStore};
+pub use sessions::{RolloutSummary, SessionEventPage, SessionSnapshot, SessionStore};
 pub use skill_engine::{
     RemovalReceipt, SkillEngine, SkillError, SkillInspection, SkillProvenance, SkillRecord,
     SkillState,

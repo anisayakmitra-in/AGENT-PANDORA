@@ -2045,6 +2045,50 @@ fn evaluation_inspect_returns_persisted_receipts_and_supports_execution_filter()
 }
 
 #[test]
+fn rollout_inspect_returns_a_durable_summary_for_an_execution() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let run = fixture
+        .command(&["run", "read:README.md", "--json"])
+        .output()
+        .expect("run should start");
+    assert_success(&run);
+    let run = parse_json(&run);
+    let session_id = run["session_id"].as_str().unwrap();
+    let execution_id = run["execution_id"].as_str().unwrap();
+
+    let output = fixture
+        .command(&[
+            "rollout",
+            "inspect",
+            "--session",
+            session_id,
+            "--execution",
+            execution_id,
+            "--json",
+        ])
+        .output()
+        .expect("rollout inspect should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["command"], "rollout inspect");
+    assert_eq!(response["session_id"], session_id);
+    assert_eq!(response["execution_id"], execution_id);
+    assert_eq!(response["count"], 1);
+    assert_eq!(response["durability"], "session-store");
+    assert!(
+        response["rollouts"][0]["record_count"]
+            .as_u64()
+            .is_some_and(|count| count > 0)
+    );
+    assert!(
+        response["rollouts"][0]["final_digest"]
+            .as_str()
+            .is_some_and(|digest| digest.starts_with("sha256:"))
+    );
+}
+
+#[test]
 fn session_inspect_missing_session_preserves_resume_error() {
     let fixture = Fixture::new();
     fixture.setup();
