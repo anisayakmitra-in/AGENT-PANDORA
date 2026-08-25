@@ -58,7 +58,9 @@ Its approval object is an explicit memory contract; it does not replace Parliame
 
 ## Context assembly cache
 
-`ContextEngine` keeps up to 64 assemblies in the current process. Each entry
+`ContextEngine` keeps up to 64 assemblies in the current process. Agent runs
+also use the bounded atomic `context-cache.json` file in the configured data
+directory, so eligible assemblies can survive a process restart. Each entry
 must fit a 64 KiB retained-size budget. Only public or internal constitutional
 and active-plan fragments are eligible. An entry matches only when its tenant,
 workspace, session, provider, model, policy, projection version, token budget,
@@ -73,6 +75,8 @@ without complete origin evidence is assembled normally but cannot enter the
 cache.
 
 Sensitive, secret, retrieved, conversation, and L1 fragments bypass the cache.
-The cache does not store model responses, Tool output, Skill guidance, or L1
-evidence. It saves local context assembly work; it is not provider prompt
-caching, semantic caching, or evidence of reduced token billing.
+The persistent cache ignores corrupt, oversized, stale, or scope-mismatched
+records and never becomes an execution authority. It does not store model
+responses, Tool output, Skill guidance, or L1 evidence. It saves local context
+assembly work; it is not provider prompt caching, semantic caching, or evidence
+of reduced token billing.

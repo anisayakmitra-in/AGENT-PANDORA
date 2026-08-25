@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Agent context assembly can now use a bounded, atomic `context-cache.json`
+  in the configured data directory. Cache records remain scope- and
+  provenance-bound; corrupt, stale, oversized, or sensitive records are
+  ignored and the cache cannot authorize execution.
 - L1 and approved L2 memory now persist in the scoped session database while
   L0 traces remain an expiring RAM-only ring buffer. Existing canonical L1
   execution evidence migrates into the durable schema.

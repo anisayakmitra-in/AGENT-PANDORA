@@ -1,11 +1,12 @@
 use crate::effect::Timestamp;
 use crate::ids::{SessionId, TenantId, WorkspaceId};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
 
 pub const CONTEXT_PROJECTION_VERSION: u32 = 1;
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub enum ContextClassification {
     Public,
     Internal,
@@ -28,7 +29,7 @@ impl ContextClassification {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub enum ContextSource {
     Constitutional,
     ActivePlan,
@@ -49,7 +50,7 @@ impl ContextSource {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub enum ContextTrust {
     Constitutional,
     Verified,
@@ -68,7 +69,7 @@ impl ContextTrust {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ContextOrigin {
     producer: Option<String>,
     reference: Option<String>,
@@ -220,7 +221,7 @@ impl ContextRequest {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ContextFragment {
     id: String,
     source: ContextSource,
@@ -339,7 +340,7 @@ impl ContextFragment {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ContextFragmentManifest {
     id: String,
     source: ContextSource,
@@ -382,7 +383,7 @@ impl From<&ContextFragment> for ContextFragmentManifest {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ContextManifest {
     fragments: Vec<ContextFragmentManifest>,
     digest: String,
@@ -419,7 +420,7 @@ impl ContextManifest {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ContextCacheKey {
     tenant_id: TenantId,
     workspace_id: WorkspaceId,
@@ -470,7 +471,7 @@ impl ContextCacheKey {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ContextEntry {
     id: String,
     source: ContextSource,
@@ -531,7 +532,7 @@ impl ContextEntry {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ContextCacheDisposition {
     Hit,
     Miss,
@@ -548,7 +549,7 @@ impl ContextCacheDisposition {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ContextReceipt {
     included_ids: Vec<String>,
     dropped_ids: Vec<String>,
@@ -637,7 +638,7 @@ impl ContextReceipt {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ContextAssembly {
     entries: Vec<ContextEntry>,
     text: String,

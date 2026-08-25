@@ -14,6 +14,7 @@ use pandora_types::{
     Timestamp,
 };
 use std::fmt;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -323,6 +324,12 @@ impl AgentLoop {
             tools: ToolEngine::with_builtins(),
             context: ContextEngine::new(),
         })
+    }
+
+    pub fn with_context_cache(mut self, path: impl AsRef<Path>) -> Result<Self, AgentLoopError> {
+        self.context = ContextEngine::open(path)
+            .map_err(|error| AgentLoopError::Context(error.to_string()))?;
+        Ok(self)
     }
 
     pub fn run(

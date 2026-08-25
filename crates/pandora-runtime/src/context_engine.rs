@@ -1,26 +1,35 @@
 use crate::context_recovery::ContextRecovery;
+use atomic_write_file::AtomicWriteFile;
 use pandora_types::{
     ContextAssembly, ContextCacheDisposition, ContextCacheKey, ContextClassification, ContextEntry,
     ContextFragment, ContextManifest, ContextReceipt, ContextRequest, ContextSource, ContextTrust,
     Timestamp,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
 use std::fmt;
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 const COMPRESSION_CHARS_PER_TOKEN: usize = 4;
 const MAX_CONTEXT_CACHE_ENTRIES: usize = 64;
 const MAX_CONTEXT_CACHE_ENTRY_BYTES: usize = 64 * 1024;
+const MAX_CONTEXT_CACHE_FILE_BYTES: usize = 4 * 1024 * 1024;
+const CONTEXT_CACHE_FILE_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ContextError {
     TokenBudgetOverflow,
+    CacheUnavailable,
 }
 
 impl fmt::Display for ContextError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::TokenBudgetOverflow => formatter.write_str("context token budget overflowed"),
+            Self::CacheUnavailable => formatter.write_str("context cache is unavailable"),
         }
     }
 }
@@ -48,12 +57,115 @@ impl ContextCacheStats {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct ContextCacheEntry {
     key: ContextCacheKey,
     manifest_digest: String,
     assembled_at: Timestamp,
     valid_until: Option<Timestamp>,
     assembly: ContextAssembly,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct PersistentContextCacheFile {
+    version: u32,
+    entries: Vec<ContextCacheEntry>,
+}
+
+struct PersistentContextCache {
+    path: PathBuf,
+}
+
+impl PersistentContextCache {
+    fn open(path: impl AsRef<Path>) -> Result<Self, ContextError> {
+        let path = path.as_ref();
+        if path.is_dir() {
+            return Err(ContextError::CacheUnavailable);
+        }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent).map_err(|_| ContextError::CacheUnavailable)?;
+        }
+        Ok(Self {
+            path: path.to_path_buf(),
+        })
+    }
+
+    fn load(&self) -> Option<PersistentContextCacheFile> {
+        let bytes = fs::read(&self.path).ok()?;
+        if bytes.len() > MAX_CONTEXT_CACHE_FILE_BYTES {
+            return None;
+        }
+        let file = serde_json::from_slice::<PersistentContextCacheFile>(&bytes).ok()?;
+        if file.version != CONTEXT_CACHE_FILE_VERSION
+            || file.entries.len() > MAX_CONTEXT_CACHE_ENTRIES
+        {
+            return None;
+        }
+        Some(file)
+    }
+
+    fn get(
+        &self,
+        key: &ContextCacheKey,
+        manifest_digest: &str,
+        now: Timestamp,
+    ) -> Option<ContextAssembly> {
+        let file = self.load()?;
+        let entry = file.entries.into_iter().find(|entry| {
+            entry.key == *key
+                && entry.manifest_digest == manifest_digest
+                && entry.assembled_at.as_unix_seconds() <= now.as_unix_seconds()
+                && entry
+                    .valid_until
+                    .is_none_or(|expires_at| now.as_unix_seconds() < expires_at.as_unix_seconds())
+        })?;
+        if entry.assembly.cache_key() != key || !cache_safe(&entry.assembly) {
+            return None;
+        }
+        let receipt = entry
+            .assembly
+            .receipt()
+            .clone()
+            .with_cache_disposition(ContextCacheDisposition::Hit);
+        Some(ContextAssembly::new(
+            entry.assembly.entries().to_vec(),
+            entry.assembly.text().to_owned(),
+            receipt,
+            key.clone(),
+        ))
+    }
+
+    fn put(&self, entry: ContextCacheEntry) {
+        if !cache_safe(&entry.assembly)
+            || cached_assembly_bytes(&entry.assembly) > MAX_CONTEXT_CACHE_ENTRY_BYTES
+        {
+            return;
+        }
+        let mut file = self.load().unwrap_or(PersistentContextCacheFile {
+            version: CONTEXT_CACHE_FILE_VERSION,
+            entries: Vec::new(),
+        });
+        file.version = CONTEXT_CACHE_FILE_VERSION;
+        file.entries.retain(|candidate| candidate.key != entry.key);
+        file.entries.push(entry);
+        if file.entries.len() > MAX_CONTEXT_CACHE_ENTRIES {
+            file.entries.remove(0);
+        }
+        let Ok(bytes) = serde_json::to_vec(&file) else {
+            return;
+        };
+        if bytes.len() > MAX_CONTEXT_CACHE_FILE_BYTES {
+            return;
+        }
+        let Ok(mut destination) = AtomicWriteFile::open(&self.path) else {
+            return;
+        };
+        if destination.write_all(&bytes).is_ok() {
+            let _ = destination.commit();
+        }
+    }
 }
 
 struct ContextCache {
@@ -75,6 +187,7 @@ impl ContextCache {
 pub struct ContextEngine {
     recovery: ContextRecovery,
     cache: Mutex<ContextCache>,
+    persistent: Option<PersistentContextCache>,
 }
 
 impl ContextEngine {
@@ -82,7 +195,14 @@ impl ContextEngine {
         Self {
             recovery: ContextRecovery::new(),
             cache: Mutex::new(ContextCache::new()),
+            persistent: None,
         }
+    }
+
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, ContextError> {
+        let mut engine = Self::new();
+        engine.persistent = Some(PersistentContextCache::open(path)?);
+        Ok(engine)
     }
 
     pub fn assemble(
@@ -111,10 +231,12 @@ impl ContextEngine {
                     ContextSource::Constitutional | ContextSource::ActivePlan
                 )
         }) && manifest.provenance_complete();
-        if cache_candidate && let Ok(mut cache) = self.cache.lock() {
-            if let Some(index) = cache.entries.iter().position(|entry| {
-                entry.key == cache_key && entry.manifest_digest == manifest.digest()
-            }) {
+        if cache_candidate {
+            if let Ok(mut cache) = self.cache.lock()
+                && let Some(index) = cache.entries.iter().position(|entry| {
+                    entry.key == cache_key && entry.manifest_digest == manifest.digest()
+                })
+            {
                 let entry = &cache.entries[index];
                 let request_time = request.now().as_unix_seconds();
                 let valid = request_time >= entry.assembled_at.as_unix_seconds()
@@ -131,14 +253,34 @@ impl ContextEngine {
                         cached.entries().to_vec(),
                         cached.text().to_owned(),
                         receipt,
-                        cache_key,
+                        cache_key.clone(),
                     );
                     cache.hits = cache.hits.saturating_add(1);
                     return Ok(assembly);
                 }
                 cache.entries.remove(index);
             }
-            cache.misses = cache.misses.saturating_add(1);
+            if let Some(persistent) = &self.persistent
+                && let Some(assembly) = persistent.get(&cache_key, manifest.digest(), request.now())
+            {
+                if let Ok(mut cache) = self.cache.lock() {
+                    cache.hits = cache.hits.saturating_add(1);
+                    cache.entries.push_back(ContextCacheEntry {
+                        key: cache_key.clone(),
+                        manifest_digest: manifest.digest().to_owned(),
+                        assembled_at: request.now(),
+                        valid_until,
+                        assembly: assembly.clone(),
+                    });
+                    if cache.entries.len() > MAX_CONTEXT_CACHE_ENTRIES {
+                        cache.entries.pop_front();
+                    }
+                }
+                return Ok(assembly);
+            }
+            if let Ok(mut cache) = self.cache.lock() {
+                cache.misses = cache.misses.saturating_add(1);
+            }
         }
 
         let mut seen = HashSet::new();
@@ -215,20 +357,25 @@ impl ContextEngine {
         );
         let assembly = ContextAssembly::new(entries, text, receipt, cache_key.clone());
         if cache_candidate
-            && assembly.receipt().cacheable()
+            && cache_safe(&assembly)
             && cached_assembly_bytes(&assembly) <= MAX_CONTEXT_CACHE_ENTRY_BYTES
-            && let Ok(mut cache) = self.cache.lock()
         {
-            if cache.entries.len() >= MAX_CONTEXT_CACHE_ENTRIES {
-                cache.entries.pop_front();
-            }
-            cache.entries.push_back(ContextCacheEntry {
+            let entry = ContextCacheEntry {
                 key: cache_key,
                 manifest_digest: manifest.digest().to_owned(),
                 assembled_at: request.now(),
                 valid_until,
                 assembly: assembly.clone(),
-            });
+            };
+            if let Some(persistent) = &self.persistent {
+                persistent.put(entry.clone());
+            }
+            if let Ok(mut cache) = self.cache.lock() {
+                if cache.entries.len() >= MAX_CONTEXT_CACHE_ENTRIES {
+                    cache.entries.pop_front();
+                }
+                cache.entries.push_back(entry);
+            }
         }
         Ok(assembly)
     }
@@ -290,6 +437,18 @@ fn cached_assembly_bytes(assembly: &ContextAssembly) -> usize {
     bytes.saturating_add(key_bytes.saturating_mul(2))
 }
 
+fn cache_safe(assembly: &ContextAssembly) -> bool {
+    assembly.receipt().cacheable()
+        && assembly.receipt().provenance_complete()
+        && assembly.entries().iter().all(|entry| {
+            entry.classification().cacheable()
+                && matches!(
+                    entry.source(),
+                    ContextSource::Constitutional | ContextSource::ActivePlan
+                )
+        })
+}
+
 fn source_rank(source: ContextSource) -> u8 {
     match source {
         ContextSource::Constitutional => 0,
@@ -333,6 +492,7 @@ mod tests {
         ContextCacheDisposition, ContextClassification, ContextFragment, ContextOrigin,
         ContextRequest, ContextSource, ContextTrust, SessionId, TenantId, Timestamp, WorkspaceId,
     };
+    use std::fs;
 
     fn request(budget: u32) -> ContextRequest {
         request_at(budget, 100)
@@ -801,6 +961,77 @@ mod tests {
         assert_eq!(stats.hits(), 1);
         assert_eq!(stats.misses(), 1);
         assert_eq!(stats.entries(), 1);
+    }
+
+    #[test]
+    fn persistent_cache_survives_engine_restart() {
+        let directory = crate::test_support::new_temp_dir("pandora-context-cache").unwrap();
+        let path = directory.join("context-cache.json");
+        let fragments = vec![fragment(
+            "constitution",
+            ContextSource::Constitutional,
+            ContextTrust::Constitutional,
+            ContextClassification::Internal,
+            100,
+            "constitutional rules",
+            4,
+            None,
+        )];
+
+        let first = ContextEngine::open(&path)
+            .unwrap()
+            .assemble(&request(20), fragments.clone())
+            .unwrap();
+        assert_eq!(
+            first.receipt().cache_disposition(),
+            ContextCacheDisposition::Miss
+        );
+        drop(first);
+
+        let restarted = ContextEngine::open(&path).unwrap();
+        let second = restarted.assemble(&request(20), fragments).unwrap();
+
+        assert_eq!(second.text(), "constitutional rules");
+        assert_eq!(
+            second.receipt().cache_disposition(),
+            ContextCacheDisposition::Hit
+        );
+        assert_eq!(restarted.cache_stats().hits(), 1);
+        assert_eq!(restarted.cache_stats().misses(), 0);
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn persistent_cache_ignores_corrupt_content() {
+        let directory = crate::test_support::new_temp_dir("pandora-context-cache-corrupt").unwrap();
+        let path = directory.join("context-cache.json");
+        fs::write(&path, b"not a context cache").unwrap();
+
+        let assembly = ContextEngine::open(&path)
+            .unwrap()
+            .assemble(
+                &request(20),
+                vec![fragment(
+                    "constitution",
+                    ContextSource::Constitutional,
+                    ContextTrust::Constitutional,
+                    ContextClassification::Internal,
+                    100,
+                    "constitutional rules",
+                    4,
+                    None,
+                )],
+            )
+            .unwrap();
+
+        assert_eq!(
+            assembly.receipt().cache_disposition(),
+            ContextCacheDisposition::Miss
+        );
+        assert_eq!(assembly.text(), "constitutional rules");
+
+        let _ = fs::remove_dir_all(directory);
     }
 
     #[test]

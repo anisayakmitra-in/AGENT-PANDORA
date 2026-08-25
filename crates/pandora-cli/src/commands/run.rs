@@ -532,6 +532,7 @@ pub(super) fn execute_agent_core(
         )
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
     let loop_engine = AgentLoop::new(options.max_turns, options.max_tool_calls)
+        .and_then(|engine| engine.with_context_cache(config.data_dir().join("context-cache.json")))
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
     let started = Instant::now();
     let result = match options.approval_id {
