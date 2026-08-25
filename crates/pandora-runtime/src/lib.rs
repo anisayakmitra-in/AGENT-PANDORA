@@ -15,6 +15,7 @@ pub mod evolution;
 pub mod execution_controller;
 mod execution_profile;
 pub mod executors;
+pub mod graph_intelligence;
 pub mod harness_registry;
 pub mod hooks;
 pub mod human_review;
@@ -73,6 +74,11 @@ pub use execution_controller::{
 pub use execution_profile::ExecutionProfileAssemblyError;
 pub use executors::{
     GitWorktreeExecutor, WorktreeChange, WorktreeCommand, WorktreeError, WorktreeResult,
+};
+pub use graph_intelligence::{
+    GraphEdge, GraphError, GraphInput, GraphIntelligenceEngine, GraphKind, GraphNode,
+    GraphNodeKind, GraphScope, GraphSnapshot, MAX_GRAPH_EDGES, MAX_GRAPH_INPUT_BYTES,
+    MAX_GRAPH_INPUTS, MAX_GRAPH_NODES,
 };
 pub use harness_registry::{HarnessRegistry, HarnessRegistryError, PackageRecord, PackageState};
 pub use hooks::{HookPoint, HookSelector, LifecycleHook, LifecycleHooks};

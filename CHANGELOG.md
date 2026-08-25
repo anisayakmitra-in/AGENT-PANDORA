@@ -6,6 +6,10 @@
   in the configured data directory. Cache records remain scope- and
   provenance-bound; corrupt, stale, oversized, or sensitive records are
   ignored and the cache cannot authorize execution.
+- Added a bounded `GraphIntelligenceEngine` with deterministic Code, Knowledge,
+  Review, and Architecture evidence projections. Graph snapshots are scoped,
+  provenance-digested, and descriptive only; the engine has no direct effect
+  authority.
 - L1 and approved L2 memory now persist in the scoped session database while
   L0 traces remain an expiring RAM-only ring buffer. Existing canonical L1
   execution evidence migrates into the durable schema.
