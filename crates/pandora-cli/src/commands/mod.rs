@@ -15,6 +15,7 @@ mod chat;
 mod completions;
 mod doctor;
 mod efficiency;
+mod fleet;
 mod harness;
 mod job;
 mod mcp;
@@ -93,6 +94,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "orchestration" => orchestration(&args[1..]),
         "doctor" => doctor::execute(&args[1..]),
         "efficiency" => efficiency::execute(&args[1..]),
+        "fleet" => fleet::execute(&args[1..]),
         "--help" | "help" => {
             if args.len() != 1 {
                 return Err(CliError::usage("help does not accept additional arguments"));
@@ -289,7 +291,7 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|service|chat|tui|harness|slash|session|job|subagent|skill|package|approval|provider|mcp|tool|orchestration|strategies|efficiency|completions|migrate|update|uninstall|doctor> [options]
+    r#"usage: pandora <help|setup|run|service|chat|tui|harness|slash|session|job|subagent|skill|package|approval|provider|mcp|tool|orchestration|strategies|efficiency|fleet|completions|migrate|update|uninstall|doctor> [options]
 
 commands:
   help (or --help)
@@ -313,6 +315,7 @@ commands:
   orchestration roles
   strategies list
   efficiency rank [--task-class <name>] [--objective <cost|latency|tokens|certainty>]
+  fleet list|register|dispatch|lease|release|expire|quarantine|revoke|kill
   completions <powershell|bash|zsh|fish>
   migrate config
   update [--artifact <path> --sha256 <digest> | --rollback]

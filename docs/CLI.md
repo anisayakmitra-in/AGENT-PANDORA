@@ -330,6 +330,29 @@ pricing. The option cannot be combined with `--provider`, `--model`, or
 `--approval`; it does not change configuration, policy, permissions, or
 credentials.
 
+## Local Fleet controls
+
+The CLI exposes the local durable Fleet control plane. It stores state under
+`fleet.sqlite3` in the configured data directory. These commands register and
+allocate workers; they do not connect to remote nodes or execute work.
+
+```text
+pandora fleet register node-a --version 2.0.0-beta.1 --worker-class local --capabilities-json '["coding","review"]'
+pandora fleet list --json
+pandora fleet dispatch coding --json
+pandora fleet lease lease-a --node node-a --execution execution-a --max-tokens 10000 --max-tools 20 --max-duration 900 --max-cost 500000 --duration 600
+pandora fleet release lease-a
+pandora fleet expire
+pandora fleet quarantine node-a --yes
+pandora fleet revoke node-a --yes
+pandora fleet kill node-a --yes
+```
+
+Leases are scheduling records, not effect permits. Every actual operation still
+uses Parliament, the ReferenceMonitor, one-shot permit consumption, and the
+EffectExecutor. Quarantine, revoke, and kill require `--yes` and transition
+active leases in the same local database transaction.
+
 Enabled Skills contribute bounded guidance to the rebuilt system instruction.
 Only Skills explicitly in the `enabled` state are included. Their text is
 reference material; it cannot grant permissions, change policy, satisfy an
