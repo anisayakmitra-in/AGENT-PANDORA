@@ -359,6 +359,33 @@ The command accepts at most 256 cases and a 4 MiB input file. It emits a
 stable report digest and per-case outcome results. `--fail-on-failure` returns
 a non-zero command result for CI when any case fails.
 
+## Graph evidence
+
+`graph` consumes a caller-provided evidence document. The CLI does not walk a
+workspace or follow paths on the graph command's behalf; an upstream governed
+read supplies each relative path, content, and provenance label.
+
+```json
+{
+  "inputs": [
+    {
+      "path": "src/main.rs",
+      "content": "use crate::runtime;\nfn main() {}\n",
+      "provenance": "session:exec"
+    }
+  ]
+}
+```
+
+```text
+pandora graph code --input graph.json --json
+pandora graph architecture --input graph.json --tenant tenant-a --workspace workspace-a
+```
+
+The four projections are `code`, `knowledge`, `review`, and `architecture`.
+Each response is bounded, scope-labelled, provenance-digested, and descriptive;
+graph output cannot authorize effects or activate packages.
+
 ## Local Fleet controls
 
 The CLI exposes the local durable Fleet control plane. It stores state under
