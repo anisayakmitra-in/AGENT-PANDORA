@@ -29,6 +29,7 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora fleet dispatch <capability> --json` | `fleet dispatch` | `capability`, `node` |
 | `pandora fleet lease <id> ... --json` | `fleet lease` | `lease` |
 | `pandora evaluation golden --input <path> --json` | `evaluation golden` | `total`, `passed`, `failed`, `digest`, `cases` |
+| `pandora graph <kind> --input <path> --json` | `graph build` | `kind`, `scope`, `source_count`, `nodes`, `edges`, `digest` |
 | `pandora update --artifact ... --json` | `update` | `verified`, `artifact`, `target`, `signature_verified`, `dry_run` |
 | `pandora update --release ... --json` | `update` | `verified`, `release`, `artifact`, `signature_verified`, `dry_run`; non-dry-run responses also contain `target` |
 | `pandora update --rollback --json` | `update rollback` | `target`, `dry_run`; a dry run contains `previous`, while a completed rollback contains `restored` |

@@ -17,6 +17,7 @@ mod doctor;
 mod efficiency;
 mod evaluation;
 mod fleet;
+mod graph;
 mod harness;
 mod job;
 mod mcp;
@@ -97,6 +98,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "evaluation" => evaluation::execute(&args[1..]),
         "efficiency" => efficiency::execute(&args[1..]),
         "fleet" => fleet::execute(&args[1..]),
+        "graph" => graph::execute(&args[1..]),
         "--help" | "help" => {
             if args.len() != 1 {
                 return Err(CliError::usage("help does not accept additional arguments"));
@@ -301,7 +303,7 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|service|chat|tui|harness|slash|session|job|subagent|skill|package|approval|provider|mcp|tool|orchestration|strategies|evaluation|efficiency|fleet|completions|migrate|update|uninstall|doctor> [options]
+    r#"usage: pandora <help|setup|run|service|chat|tui|harness|slash|session|job|subagent|skill|package|approval|provider|mcp|tool|orchestration|strategies|evaluation|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor> [options]
 
 commands:
   help (or --help)
@@ -327,6 +329,7 @@ commands:
   evaluation golden --input <path> [--fail-on-failure]
   efficiency rank [--task-class <name>] [--objective <cost|latency|tokens|certainty>]
   fleet list|register|dispatch|lease|release|expire|quarantine|revoke|kill
+  graph code|knowledge|review|architecture --input <path> [--tenant <id>] [--workspace <id>]
   completions <powershell|bash|zsh|fish>
   migrate config
   update [--artifact <path> --sha256 <digest> | --rollback]
@@ -410,5 +413,6 @@ mod tests {
         assert!(usage.contains("job submit|work|list|inspect|cancel|mark-interrupted"));
         assert!(usage.contains("work accepts --max-jobs <1-64>"));
         assert!(usage.contains("evaluation golden --input <path> [--fail-on-failure]"));
+        assert!(usage.contains("graph code|knowledge|review|architecture --input <path>"));
     }
 }

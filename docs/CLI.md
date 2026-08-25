@@ -462,6 +462,7 @@ pandora mcp remove <id> --yes
 pandora orchestration roles
 pandora strategies list
 pandora evaluation golden --input <path> [--fail-on-failure]
+pandora graph code|knowledge|review|architecture --input <path> [--tenant <id>] [--workspace <id>]
 pandora completions powershell
 pandora completions bash
 pandora completions zsh
