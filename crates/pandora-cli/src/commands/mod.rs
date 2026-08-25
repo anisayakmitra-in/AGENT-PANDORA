@@ -319,7 +319,7 @@ commands:
   subagent spawn --session <id> --execution <id> [--commit <sha>] [--provider <name>] [--harness <id> --harness-version <version>] [--max-turns <n>] [--max-tools <n>] [--max-tokens <n>] [--max-duration <seconds>] [--max-depth <n>] [--max-result-bytes <n>] <task>
   subagent list|inspect|cancel|mark-interrupted|cleanup <id> | work [--max-agents <1-8>]
   skill list|inspect|install|enable|disable|suspend|remove|restore <id-or-path>
-  package admit --manifest <path> --artifact <path> | install <id> [version] --registry <url> [--token-env <name>] | list | inspect <id> <version> | lock [--output <path>] | verify-lock [--lock <path>] | remove <id> <version> [--dry-run|--yes]
+  package admit --manifest <path> --artifact <path> | validate --manifest <path> --artifact <path> | install <id> [version] --registry <url> [--token-env <name>] | list | inspect <id> <version> | lock [--output <path>] | verify-lock [--lock <path>] | remove <id> <version> [--dry-run|--yes]
   tool list|inspect <id>
   approval list|inspect|resolve
   provider list|set|use|test

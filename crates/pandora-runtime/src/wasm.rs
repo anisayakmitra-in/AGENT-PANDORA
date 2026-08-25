@@ -223,6 +223,20 @@ impl WasmExecutor {
         }
     }
 
+    pub fn validate_artifact(
+        &self,
+        manifest: &PackageManifest,
+        artifact: &[u8],
+    ) -> Result<(), WasmError> {
+        if manifest.kind() != PackageKind::Gene {
+            return Err(WasmError::InvalidPackageKind);
+        }
+        if hash_artifact(artifact) != manifest.content_hash() {
+            return Err(WasmError::ArtifactHashMismatch);
+        }
+        compile_module(&self.engine, artifact).map(|_| ())
+    }
+
     pub fn register(
         &mut self,
         manifest: &PackageManifest,
@@ -241,11 +255,7 @@ impl WasmExecutor {
         if self.modules.contains_key(&key) {
             return Err(WasmError::DuplicatePackage);
         }
-        let module = Module::new(&self.engine, artifact).map_err(|_| WasmError::InvalidModule)?;
-        if module.imports().next().is_some() {
-            return Err(WasmError::ImportsForbidden);
-        }
-        validate_abi(&module)?;
+        let module = compile_module(&self.engine, artifact)?;
         self.modules.insert(
             key,
             RegisteredModule {
@@ -324,6 +334,15 @@ impl WasmExecutor {
 
         run_module(&self.engine, &registered.module, input)
     }
+}
+
+fn compile_module(engine: &Engine, artifact: &[u8]) -> Result<Module, WasmError> {
+    let module = Module::new(engine, artifact).map_err(|_| WasmError::InvalidModule)?;
+    if module.imports().next().is_some() {
+        return Err(WasmError::ImportsForbidden);
+    }
+    validate_abi(&module)?;
+    Ok(module)
 }
 
 impl Default for WasmExecutor {
@@ -482,6 +501,26 @@ mod tests {
             TrustEvidence::unsigned(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn validate_artifact_checks_hash_and_wasm_abi() {
+        let executor = WasmExecutor::new();
+        let artifact = echo_module();
+        let manifest = package(&artifact);
+
+        assert!(executor.validate_artifact(&manifest, &artifact).is_ok());
+        assert_eq!(
+            executor.validate_artifact(&manifest, b"not wasm"),
+            Err(WasmError::ArtifactHashMismatch)
+        );
+
+        let invalid_artifact = b"not wasm";
+        let invalid_manifest = package(invalid_artifact);
+        assert_eq!(
+            executor.validate_artifact(&invalid_manifest, invalid_artifact),
+            Err(WasmError::InvalidModule)
+        );
     }
 
     fn profile(artifact: &[u8]) -> ExecutionProfile {

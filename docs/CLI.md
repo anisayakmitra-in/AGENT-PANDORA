@@ -474,6 +474,7 @@ pandora skill remove <id> --dry-run
 pandora skill remove <id> --yes
 pandora skill restore <id>
 pandora package admit --manifest <manifest.json> --artifact <artifact>
+pandora package validate --manifest <manifest.json> --artifact <artifact>
 pandora package install <id> [version] --registry <url>
 pandora package install <id> [version] --registry <url> --token-env <name>
 pandora package list
@@ -546,6 +547,12 @@ through the governed ToolEngine path.
 Package records are addressed by exact ID and strict SemVer version. `package admit`
 reads at most the local artifact limit plus one byte before it rejects an oversized
 artifact.
+
+`package validate` performs the same bounded manifest and artifact identity checks
+without writing to the package store. Gene artifacts must also be valid import-free
+Pandora WASM modules with the required ABI; Domain and Meta Harness artifacts are
+reported as metadata-only because their package records do not execute artifact
+bytes directly.
 
 `package install` reads current or exact-version metadata from an M-Place-compatible
 registry, then downloads that release from the registry's exact-version endpoint.

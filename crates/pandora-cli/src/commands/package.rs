@@ -2,9 +2,9 @@ use super::{load_config, parse_options};
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{
     MAX_STORED_ARTIFACT_BYTES, PackageRecord, PackageRegistryClient, PackageRegistryError,
-    PackageStore, PackageStoreError,
+    PackageStore, PackageStoreError, WasmExecutor,
 };
-use pandora_types::{PackageId, PackageManifest};
+use pandora_types::{PackageId, PackageKind, PackageManifest, hash_artifact};
 use serde_json::json;
 use std::fs;
 use std::io::{self, Read};
@@ -15,11 +15,12 @@ const DEFAULT_REGISTRY_TOKEN_ENV: &str = "PANDORA_REGISTRY_TOKEN";
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "package requires 'admit', 'install', 'list', 'inspect', 'lock', 'verify-lock', or 'remove'",
+            "package requires 'admit', 'validate', 'install', 'list', 'inspect', 'lock', 'verify-lock', or 'remove'",
         )
     })?;
     match subcommand.as_str() {
         "admit" => admit(&args[1..]),
+        "validate" => validate(&args[1..]),
         "install" => install(&args[1..]),
         "list" => list(&args[1..]),
         "inspect" => inspect(&args[1..]),
@@ -84,6 +85,73 @@ fn install(args: &[String]) -> Result<CommandResult, CliError> {
             "Package {}@{} installed from the registry",
             record.manifest().id().as_str(),
             record.manifest().version()
+        ),
+    ))
+}
+
+fn validate(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["manifest", "artifact"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "package validate does not accept positional arguments",
+        ));
+    }
+    let manifest_path = required_path(&parsed, "manifest")?;
+    let artifact_path = required_path(&parsed, "artifact")?;
+    let manifest = read_manifest(&manifest_path)?;
+    let artifact = read_artifact(&artifact_path)?;
+    manifest
+        .validate()
+        .map_err(|error| CliError::usage(format!("package manifest is invalid: {error}")))?;
+    if !matches!(
+        manifest.kind(),
+        PackageKind::Gene | PackageKind::DomainHarness | PackageKind::MetaHarness
+    ) {
+        return Err(CliError::execution(
+            "package kind is not installable by the local runtime",
+            json!({"kind": manifest.kind().as_str()}),
+        ));
+    }
+    let actual_hash = hash_artifact(&artifact);
+    if actual_hash != manifest.content_hash() {
+        return Err(CliError::execution(
+            "package artifact hash does not match its manifest",
+            json!({
+                "expected": manifest.content_hash(),
+                "actual": actual_hash,
+            }),
+        ));
+    }
+    let execution_boundary = if manifest.kind() == PackageKind::Gene {
+        WasmExecutor::new()
+            .validate_artifact(&manifest, &artifact)
+            .map_err(|error| {
+                CliError::execution(
+                    "Gene artifact is not a valid import-free Pandora WASM module",
+                    json!({"error": error.to_string()}),
+                )
+            })?;
+        "wasm"
+    } else {
+        "metadata-only"
+    };
+    Ok(success(
+        "package validate",
+        json!({
+            "valid": true,
+            "package": {
+                "id": manifest.id(),
+                "version": manifest.version(),
+                "kind": manifest.kind().as_str(),
+                "content_hash": manifest.content_hash(),
+            },
+            "execution_boundary": execution_boundary,
+            "persisted": false,
+        }),
+        format!(
+            "Validated {}@{} without persisting it",
+            manifest.id(),
+            manifest.version()
         ),
     ))
 }
@@ -157,14 +225,7 @@ fn admit(args: &[String]) -> Result<CommandResult, CliError> {
     }
     let manifest_path = required_path(&parsed, "manifest")?;
     let artifact_path = required_path(&parsed, "artifact")?;
-    let manifest_bytes = fs::read(&manifest_path).map_err(|error| {
-        CliError::configuration(
-            "could not read package manifest",
-            json!({"path": manifest_path, "error": error.to_string()}),
-        )
-    })?;
-    let manifest: PackageManifest = serde_json::from_slice(&manifest_bytes)
-        .map_err(|error| CliError::usage(format!("package manifest is invalid: {error}")))?;
+    let manifest = read_manifest(&manifest_path)?;
     let artifact = read_artifact(&artifact_path)?;
     let store = store(&parsed)?;
     let record = store
@@ -176,6 +237,17 @@ fn admit(args: &[String]) -> Result<CommandResult, CliError> {
         json!({"package": package_value(&record)}),
         format!("Package {id}@{} admitted", record.manifest().version()),
     ))
+}
+
+fn read_manifest(path: &Path) -> Result<PackageManifest, CliError> {
+    let manifest_bytes = fs::read(path).map_err(|error| {
+        CliError::configuration(
+            "could not read package manifest",
+            json!({"path": path, "error": error.to_string()}),
+        )
+    })?;
+    serde_json::from_slice(&manifest_bytes)
+        .map_err(|error| CliError::usage(format!("package manifest is invalid: {error}")))
 }
 
 fn list(args: &[String]) -> Result<CommandResult, CliError> {

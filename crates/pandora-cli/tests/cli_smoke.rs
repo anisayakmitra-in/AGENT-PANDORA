@@ -4094,6 +4094,78 @@ fn admitted_domain_profile_runs_with_an_explicit_version() {
 }
 
 #[test]
+fn package_validate_reports_wasm_boundary_without_persisting() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let wasm = wat::parse_str(
+        r#"(module
+            (memory (export "memory") 1)
+            (func (export "pandora_alloc") (param i32) (result i32) i32.const 0)
+            (func (export "pandora_run") (param i32 i32) (result i64)
+                local.get 0
+                i64.extend_i32_u
+                i64.const 32
+                i64.shl
+                local.get 1
+                i64.extend_i32_u
+                i64.or))"#,
+    )
+    .unwrap();
+    let manifest = PackageManifest::new(
+        "example/validate",
+        "1.0.0",
+        PackageKind::Gene,
+        "local-publisher",
+        hash_artifact(&wasm),
+        Vec::new(),
+        PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+        "Apache-2.0",
+        TrustEvidence::unsigned(),
+    )
+    .unwrap();
+    let manifest_path = fixture.root.join("validate.json");
+    let artifact_path = fixture.root.join("validate.wasm");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+    fs::write(&artifact_path, &wasm).unwrap();
+
+    let output = fixture
+        .command(&[
+            "package",
+            "validate",
+            "--manifest",
+            manifest_path.to_str().unwrap(),
+            "--artifact",
+            artifact_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("package validation should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["command"], "package validate");
+    assert_eq!(response["valid"], true);
+    assert_eq!(response["execution_boundary"], "wasm");
+    assert_eq!(response["persisted"], false);
+    assert_eq!(response["package"]["id"], "example/validate");
+
+    let output = fixture
+        .command(&["package", "list", "--json"])
+        .output()
+        .expect("package listing should start");
+    assert_success(&output);
+    assert!(
+        parse_json(&output)["packages"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn admitted_wasm_gene_is_versioned_approved_and_receipted() {
     let fixture = Fixture::new();
     fixture.setup();

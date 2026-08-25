@@ -56,6 +56,8 @@ while preserving Pandora's existing governance and effect-authority boundary.
 - Fleet leases and graph/evaluation projections remain descriptive or
   scheduling evidence; none can issue effect permits or replace the
   ReferenceMonitor.
+- Added `pandora package validate` for non-persisting manifest, hash, and
+  import-free WASM Gene validation before local admission.
 
 ## v2.0.0-beta.1
 
