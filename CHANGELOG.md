@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added a typed TypeScript release-target boundary for the Node/Bun launcher;
+  it shares platform and SemVer selection with the verified native download
+  path without moving runtime execution out of Rust.
 - CLI executions now persist a redacted rollout summary in the existing
   session store, and `pandora rollout inspect` exposes its verified scope
   digests without replaying or authorizing effects.

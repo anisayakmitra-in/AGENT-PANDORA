@@ -7,6 +7,10 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { replaceFile } = require("../lib/launcher-files.js");
+const {
+  resolveArtifactName,
+  resolveReleaseVersion,
+} = require("../lib/release.js");
 
 const repository = "anisayakmitra-in/PANDORA-AGENT";
 const packageVersion = require("../package.json").version;
@@ -18,21 +22,19 @@ function fail(message) {
 }
 
 function artifactName() {
-  const platform = process.platform;
-  const architecture = process.arch;
-  if (platform === "linux" && architecture === "x64") return "pandora-x86_64-unknown-linux-gnu";
-  if (platform === "darwin" && architecture === "x64") return "pandora-x86_64-apple-darwin";
-  if (platform === "darwin" && architecture === "arm64") return "pandora-aarch64-apple-darwin";
-  if (platform === "win32" && architecture === "x64") return "pandora-x86_64-pc-windows-msvc.exe";
-  fail(`unsupported platform or architecture: ${platform} ${architecture}`);
+  try {
+    return resolveArtifactName();
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
 }
 
 function releaseVersion() {
-  const version = process.env.PANDORA_VERSION || `v${packageVersion}`;
-  if (!/^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
-    fail("PANDORA_VERSION must be a SemVer tag such as v2.0.0-beta.1");
+  try {
+    return resolveReleaseVersion(packageVersion);
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
   }
-  return version;
 }
 
 function releaseBase() {

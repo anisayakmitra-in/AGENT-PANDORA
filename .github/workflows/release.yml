@@ -53,6 +53,10 @@ jobs:
       - name: Run Rust tests
         run: cargo test --workspace --lib --tests --locked
 
+      - name: Build TypeScript launcher boundary
+        working-directory: npm/pandora-cli
+        run: npm ci --ignore-scripts && npm run build
+
       - name: Test npm launcher
         run: node scripts/test_npm_launcher.js
 

@@ -23,6 +23,9 @@ identity.
 Each tagged GitHub release includes a `pandora-agent-<version>.tgz` Node/Bun
 launcher. It downloads the matching native binary, verifies its checksum,
 caches it, and then forwards command-line arguments to the `pandora` executable.
+Its small release-target resolver is authored in TypeScript and compiled during
+release verification; it remains a downloader and argument forwarder, not a
+second runtime or authority boundary.
 The launcher is not published to the public npm registry, so `npm install -g
 pandora-agent` and equivalent Bun registry installation are not supported. The
 immutable first preview retains its original `o-pandora-cli` asset filename;
