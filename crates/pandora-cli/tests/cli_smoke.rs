@@ -1,9 +1,10 @@
-use pandora_runtime::{SubagentPreparation, SubagentScope, SubagentStore};
+use pandora_runtime::{MemoryEngine, SubagentPreparation, SubagentScope, SubagentStore};
 use pandora_types::{
-    EffectOutcome, EffectReceipt, ExecutionId, HarnessId, JobId, JobWorkerId, MetaComposition,
-    PackageCompatibility, PackageDependency, PackageKind, PackageManifest, PermitId, PrincipalId,
-    ReceiptId, RequestDigest, SessionId, SubagentBudgets, SubagentId, SubagentRequest, TenantId,
-    Timestamp, TrustEvidence, WorkspaceId, hash_artifact,
+    ContextClassification, EffectOutcome, EffectReceipt, ExecutionId, HarnessId, JobId,
+    JobWorkerId, MemoryKind, MemoryScope, MetaComposition, PackageCompatibility, PackageDependency,
+    PackageKind, PackageManifest, PermitId, PrincipalId, ReceiptId, RequestDigest, SessionId,
+    SubagentBudgets, SubagentId, SubagentRequest, TenantId, Timestamp, TrustEvidence, WorkspaceId,
+    hash_artifact,
 };
 use serde_json::Value;
 use std::fs;
@@ -1722,6 +1723,242 @@ fn session_resume_returns_persisted_events() {
     assert_eq!(response["agent_message_count"], 0);
     assert_eq!(response["l1_evidence_count"], 1);
     assert_eq!(response["evaluation_count"], 1);
+}
+
+#[test]
+fn memory_cli_recalls_a_scoped_record_and_requires_confirmation_to_revoke() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let run = fixture
+        .command(&["run", "read:README.md", "--json"])
+        .output()
+        .expect("run should start");
+    assert_success(&run);
+    let session_id = parse_json(&run)["session_id"]
+        .as_str()
+        .expect("run should return a session")
+        .to_owned();
+    let engine = MemoryEngine::open(
+        fixture.data.join("sessions.sqlite3"),
+        64,
+        PrincipalId::new("local-user").unwrap(),
+    )
+    .unwrap();
+    let scope = MemoryScope::new(
+        TenantId::new("local-tenant").unwrap(),
+        WorkspaceId::new("local-workspace").unwrap(),
+        SessionId::new(&session_id).unwrap(),
+        "openai-compatible",
+    )
+    .unwrap();
+    engine
+        .distill_l1(
+            scope,
+            "manual-memory",
+            MemoryKind::Lesson,
+            "bounded lesson",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(1),
+            "test",
+        )
+        .unwrap();
+
+    let recalled = fixture
+        .command(&[
+            "memory",
+            "recall",
+            "--session",
+            &session_id,
+            "--provider",
+            "openai-compatible",
+            "--tier",
+            "l1",
+            "--json",
+        ])
+        .output()
+        .expect("memory recall should start");
+    assert_success(&recalled);
+    let recalled = parse_json(&recalled);
+    assert_eq!(recalled["command"], "memory recall");
+    assert_eq!(recalled["durability"], "session-store");
+    let memory_id = recalled["records"][0]["id"]
+        .as_str()
+        .expect("recall should return a memory ID")
+        .to_owned();
+
+    let audit = fixture
+        .command(&[
+            "memory",
+            "audit",
+            "--session",
+            &session_id,
+            "--provider",
+            "openai-compatible",
+            "--json",
+        ])
+        .output()
+        .expect("memory audit should start");
+    assert_success(&audit);
+    assert!(parse_json(&audit)["count"].as_u64().unwrap() >= 1);
+
+    let dry_run = fixture
+        .command(&[
+            "memory",
+            "forget",
+            "--session",
+            &session_id,
+            "--provider",
+            "openai-compatible",
+            &memory_id,
+            "--json",
+        ])
+        .output()
+        .expect("memory forget dry run should start");
+    assert_success(&dry_run);
+    assert_eq!(parse_json(&dry_run)["dry_run"], true);
+
+    let forgotten = fixture
+        .command(&[
+            "memory",
+            "forget",
+            "--session",
+            &session_id,
+            "--provider",
+            "openai-compatible",
+            &memory_id,
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("memory forget should start");
+    assert_success(&forgotten);
+    assert_eq!(parse_json(&forgotten)["revoked"], true);
+
+    let missing = fixture
+        .command(&[
+            "memory",
+            "recall",
+            "--session",
+            &session_id,
+            "--provider",
+            "openai-compatible",
+            "--tier",
+            "l1",
+            "--id",
+            &memory_id,
+            "--json",
+        ])
+        .output()
+        .expect("revoked memory recall should start");
+    assert_eq!(missing.status.code(), Some(50));
+}
+
+#[test]
+fn memory_cli_promotes_only_after_an_exact_approval() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let run = fixture
+        .command(&["run", "read:README.md", "--json"])
+        .output()
+        .expect("run should start");
+    assert_success(&run);
+    let session_id = parse_json(&run)["session_id"]
+        .as_str()
+        .expect("run should return a session")
+        .to_owned();
+    let engine = MemoryEngine::open(
+        fixture.data.join("sessions.sqlite3"),
+        64,
+        PrincipalId::new("local-user").unwrap(),
+    )
+    .unwrap();
+    let scope = MemoryScope::new(
+        TenantId::new("local-tenant").unwrap(),
+        WorkspaceId::new("local-workspace").unwrap(),
+        SessionId::new(&session_id).unwrap(),
+        "openai-compatible",
+    )
+    .unwrap();
+    engine
+        .distill_l1(
+            scope,
+            "manual-lesson",
+            MemoryKind::Lesson,
+            "bounded lesson",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(1),
+            "test",
+        )
+        .unwrap();
+
+    let pending = fixture
+        .command(&[
+            "memory",
+            "promote",
+            "--session",
+            &session_id,
+            "--provider",
+            "openai-compatible",
+            "manual-lesson",
+            "--json",
+        ])
+        .output()
+        .expect("memory promotion should create approval");
+    assert_eq!(pending.status.code(), Some(40));
+    let pending_json = parse_json(&pending);
+    let approval_id = pending_json["details"]["approval_id"]
+        .as_str()
+        .expect("promotion should return approval ID")
+        .to_owned();
+
+    let resolved = fixture
+        .command(&["approval", "resolve", &approval_id, "--allow", "--json"])
+        .output()
+        .expect("memory approval should resolve");
+    assert_success(&resolved);
+
+    let promoted = fixture
+        .command(&[
+            "memory",
+            "promote",
+            "--session",
+            &session_id,
+            "--provider",
+            "openai-compatible",
+            "manual-lesson",
+            "--approval",
+            &approval_id,
+            "--json",
+        ])
+        .output()
+        .expect("approved memory promotion should start");
+    assert_success(&promoted);
+    let promoted = parse_json(&promoted);
+    assert_eq!(promoted["command"], "memory promote");
+    assert_eq!(promoted["approval_consumed"], true);
+    assert_eq!(promoted["promoted"]["tier"], "l2");
+
+    let recalled = fixture
+        .command(&[
+            "memory",
+            "recall",
+            "--session",
+            &session_id,
+            "--provider",
+            "openai-compatible",
+            "--tier",
+            "l2",
+            "--id",
+            "manual-lesson",
+            "--json",
+        ])
+        .output()
+        .expect("promoted memory recall should start");
+    assert_success(&recalled);
+    assert_eq!(
+        parse_json(&recalled)["records"][0]["approval"]["approval_id"],
+        approval_id
+    );
 }
 
 #[test]

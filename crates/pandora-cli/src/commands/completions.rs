@@ -45,7 +45,9 @@ fn powershell() -> &'static str {
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'skill') {
         'list','inspect','install','enable','disable','suspend','remove','restore'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'package') {
-        'admit','install','list','inspect','lock','verify-lock','remove'
+        'admit','validate','install','list','inspect','lock','verify-lock','remove'
+    } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'memory') {
+        'recall','audit','forget','promote'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'approval') {
         'list','inspect','resolve'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'provider') {
@@ -67,7 +69,7 @@ fn powershell() -> &'static str {
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'fleet') {
         'list','register','dispatch','lease','release','expire','quarantine','revoke','kill'
     } else {
-        'help','setup','run','chat','tui','harness','slash','session','job','subagent','skill','package','approval','provider','mcp','tool','orchestration','strategies','evaluation','efficiency','fleet','graph','completions','migrate','update','uninstall','doctor'
+        'help','setup','run','chat','tui','harness','slash','session','job','subagent','skill','package','memory','approval','provider','mcp','tool','orchestration','strategies','evaluation','efficiency','fleet','graph','completions','migrate','update','uninstall','doctor'
     }
     $commands |
         Where-Object { $_ -like "$wordToComplete*" } |
@@ -93,6 +95,8 @@ fn bash() -> &'static str {
         COMPREPLY=( $(compgen -W 'list inspect install enable disable suspend remove restore' -- "$current") )
     elif [[ "$previous" == "package" ]]; then
         COMPREPLY=( $(compgen -W 'admit validate install list inspect lock verify-lock remove' -- "$current") )
+    elif [[ "$previous" == "memory" ]]; then
+        COMPREPLY=( $(compgen -W 'recall audit forget promote' -- "$current") )
     elif [[ "$previous" == "approval" ]]; then
         COMPREPLY=( $(compgen -W 'list inspect resolve' -- "$current") )
     elif [[ "$previous" == "provider" ]]; then
@@ -114,7 +118,7 @@ fn bash() -> &'static str {
     elif [[ "$previous" == "fleet" ]]; then
         COMPREPLY=( $(compgen -W 'list register dispatch lease release expire quarantine revoke kill' -- "$current") )
     else
-        COMPREPLY=( $(compgen -W 'help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies evaluation efficiency fleet graph completions migrate update uninstall doctor' -- "$current") )
+        COMPREPLY=( $(compgen -W 'help setup run chat tui harness slash session job subagent skill package memory approval provider mcp tool orchestration strategies evaluation efficiency fleet graph completions migrate update uninstall doctor' -- "$current") )
     fi
 }
 complete -F _pandora_complete pandora"#
@@ -136,6 +140,8 @@ elif [[ ${words[2]} == skill ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:skill command:(list inspect install enable disable suspend remove restore)'
 elif [[ ${words[2]} == package ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:package command:(admit validate install list inspect lock verify-lock remove)'
+elif [[ ${words[2]} == memory ]]; then
+    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package memory approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:memory command:(recall audit forget promote)'
 elif [[ ${words[2]} == approval ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:approval command:(list inspect resolve)'
 elif [[ ${words[2]} == provider ]]; then
@@ -157,12 +163,12 @@ elif [[ ${words[2]} == graph ]]; then
 elif [[ ${words[2]} == fleet ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies evaluation efficiency fleet completions migrate update uninstall doctor)' '2:fleet command:(list register dispatch lease release expire quarantine revoke kill)'
 else
-    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies evaluation efficiency fleet graph completions migrate update uninstall doctor)'
+    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package memory approval provider mcp tool orchestration strategies evaluation efficiency fleet graph completions migrate update uninstall doctor)'
 fi"#
 }
 
 fn fish() -> &'static str {
-    r#"complete -c pandora -f -n '__fish_use_subcommand' -a 'help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies evaluation efficiency fleet graph completions migrate update uninstall doctor'
+    r#"complete -c pandora -f -n '__fish_use_subcommand' -a 'help setup run chat tui harness slash session job subagent skill package memory approval provider mcp tool orchestration strategies evaluation efficiency fleet graph completions migrate update uninstall doctor'
 complete -c pandora -f -n '__fish_seen_subcommand_from harness' -a 'list inspect run'
 complete -c pandora -f -n '__fish_seen_subcommand_from slash' -a 'list resolve'
 complete -c pandora -f -n '__fish_seen_subcommand_from session' -a 'list resume inspect'
@@ -170,6 +176,7 @@ complete -c pandora -f -n '__fish_seen_subcommand_from job' -a 'submit work list
 complete -c pandora -f -n '__fish_seen_subcommand_from subagent' -a 'spawn work list inspect cancel mark-interrupted cleanup'
 complete -c pandora -f -n '__fish_seen_subcommand_from skill' -a 'list inspect install enable disable suspend remove restore'
 complete -c pandora -f -n '__fish_seen_subcommand_from package' -a 'admit validate install list inspect lock verify-lock remove'
+complete -c pandora -f -n '__fish_seen_subcommand_from memory' -a 'recall audit forget promote'
 complete -c pandora -f -n '__fish_seen_subcommand_from approval' -a 'list inspect resolve'
 complete -c pandora -f -n '__fish_seen_subcommand_from provider' -a 'list set use test'
 complete -c pandora -f -n '__fish_seen_subcommand_from mcp' -a 'list inspect set remove'
@@ -192,7 +199,7 @@ mod tests {
         let bash = bash();
         let zsh = zsh();
         let fish = fish();
-        let root_commands = "help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies evaluation efficiency fleet graph completions migrate update uninstall doctor";
+        let root_commands = "help setup run chat tui harness slash session job subagent skill package memory approval provider mcp tool orchestration strategies evaluation efficiency fleet graph completions migrate update uninstall doctor";
 
         assert!(powershell.contains(&root_commands.replace(' ', "','")));
         for script in [bash, zsh, fish] {
@@ -205,7 +212,8 @@ mod tests {
         for expected in [
             "'list','inspect','run'",
             "'list','resolve'",
-            "'admit','install','list','inspect','lock','verify-lock','remove'",
+            "'admit','validate','install','list','inspect','lock','verify-lock','remove'",
+            "'recall','audit','forget','promote'",
             "'list','inspect','resolve'",
             "'list','set','use','test'",
             "'list','inspect','set','remove'",
@@ -222,6 +230,7 @@ mod tests {
                 "list inspect run",
                 "list resolve",
                 "admit validate install list inspect lock verify-lock remove",
+                "recall audit forget promote",
                 "list inspect resolve",
                 "list set use test",
                 "list inspect set remove",

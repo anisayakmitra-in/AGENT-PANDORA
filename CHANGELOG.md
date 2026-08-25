@@ -36,6 +36,8 @@
 - `coordination-meta` can now compose the Coding and Research Domains. Research
   Genes are available to declarative Domain profiles, the ToolEngine, canonical
   slash commands, and the existing governed execution path.
+- Added scoped `pandora memory` commands for durable recall, audit, revocation,
+  and approval-bound L1-to-L2 promotion. L0 remains process-local.
 
 ## v2.0.0-beta.2
 

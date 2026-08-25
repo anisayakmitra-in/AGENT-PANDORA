@@ -21,6 +21,7 @@ mod graph;
 mod harness;
 mod job;
 mod mcp;
+mod memory;
 mod migration;
 mod package;
 mod provider;
@@ -78,6 +79,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "job" => job::execute(&args[1..]),
         "migrate" => migration::execute(&args[1..]),
         "mcp" => mcp::execute(&args[1..]),
+        "memory" => memory::execute(&args[1..]),
         "package" => package::execute(&args[1..]),
         "setup" => setup::execute(&args[1..]),
         "run" => run::execute(&args[1..]),
@@ -303,7 +305,7 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|service|chat|tui|harness|slash|session|job|subagent|skill|package|approval|provider|mcp|tool|orchestration|strategies|evaluation|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor> [options]
+    r#"usage: pandora <help|setup|run|service|chat|tui|harness|slash|session|job|subagent|skill|package|memory|approval|provider|mcp|tool|orchestration|strategies|evaluation|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor> [options]
 
 commands:
   help (or --help)
@@ -320,6 +322,7 @@ commands:
   subagent list|inspect|cancel|mark-interrupted|cleanup <id> | work [--max-agents <1-8>]
   skill list|inspect|install|enable|disable|suspend|remove|restore <id-or-path>
   package admit --manifest <path> --artifact <path> | validate --manifest <path> --artifact <path> | install <id> [version] --registry <url> [--token-env <name>] | list | inspect <id> <version> | lock [--output <path>] | verify-lock [--lock <path>] | remove <id> <version> [--dry-run|--yes]
+  memory recall --session <id> --provider <name> --tier <l1|l2> [--id <memory-id>] [--limit <1-256>] | audit --session <id> --provider <name> | forget --session <id> --provider <name> <memory-id> [--yes] | promote --session <id> --provider <name> <memory-id> [--approval <id>]
   tool list|inspect <id>
   approval list|inspect|resolve
   provider list|set|use|test

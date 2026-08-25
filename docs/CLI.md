@@ -483,6 +483,10 @@ pandora package lock
 pandora package verify-lock
 pandora package remove <id> <version> --dry-run
 pandora package remove <id> <version> --yes
+pandora memory recall --session <id> --provider <name> --tier <l1|l2> [--id <memory-id>] [--limit <1-256>]
+pandora memory audit --session <id> --provider <name>
+pandora memory forget --session <id> --provider <name> <memory-id> [--yes]
+pandora memory promote --session <id> --provider <name> <memory-id> [--approval <id>]
 pandora mcp set <id> --program <absolute-path> --arguments-json <json-array> --mode <auto|modern-only|legacy-only>
 pandora mcp list
 pandora mcp inspect <id>
@@ -562,6 +566,16 @@ loopback HTTP is allowed for local development. Set `PANDORA_REGISTRY_URL` inste
 of `--registry` if preferred. Public reads need no token. For a protected registry,
 put the token in `PANDORA_REGISTRY_TOKEN` or name another environment variable with
 `--token-env`; tokens are not accepted as command-line values.
+
+`memory recall` exposes only the selected, redacted L1 or L2 records from the exact
+tenant, workspace, session, and provider scope. L0 remains process-local and is not
+available after the process exits. `memory audit` lists durable additions, promotions,
+and revocations without exposing credentials or hidden reasoning. `memory forget`
+creates a durable revocation tombstone and requires `--yes` to apply it. `memory
+promote` creates an inspectable, exact-scope approval request when no approval ID is
+provided; resolve it with `approval resolve`, then rerun the command with that ID.
+Promotion consumes the approval after the durable L2 record is written, and neither
+memory inspection nor promotion grants effect authority.
 
 Remote admission currently accepts Gene records with no unresolved capability
 requirements and one valid Pandora runtime requirement. Other package kinds fail

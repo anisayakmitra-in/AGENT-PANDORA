@@ -29,6 +29,10 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora fleet dispatch <capability> --json` | `fleet dispatch` | `capability`, `node` |
 | `pandora fleet lease <id> ... --json` | `fleet lease` | `lease` |
 | `pandora package validate --manifest <path> --artifact <path> --json` | `package validate` | `valid`, `package`, `execution_boundary`, `persisted` |
+| `pandora memory recall ... --json` | `memory recall` | `scope`, `tier`, `records`, `count`, `limit`, `durability` |
+| `pandora memory audit ... --json` | `memory audit` | `scope`, `entries`, `count`, `durability` |
+| `pandora memory forget ... --json` | `memory forget` | `dry_run`, `memory_id`, `scope`, `revoked` or `would_revoke` |
+| `pandora memory promote ... --json` | `memory promote` | `promoted`, `approval_id`, `approval_consumed` |
 | `pandora evaluation golden --input <path> --json` | `evaluation golden` | `total`, `passed`, `failed`, `digest`, `cases` |
 | `pandora graph <kind> --input <path> --json` | `graph build` | `kind`, `scope`, `source_count`, `nodes`, `edges`, `digest` |
 | `pandora update --artifact ... --json` | `update` | `verified`, `artifact`, `target`, `signature_verified`, `dry_run` |

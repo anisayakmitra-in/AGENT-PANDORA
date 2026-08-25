@@ -48,11 +48,12 @@ the exact same tenant, workspace, session, and provider scope. Arbitrary
 `Lesson` records do not enter agent context. Retrieved records are
 non-cacheable descriptive history, never instructions or authority.
 
-The public CLI does not expose memory summaries. `session inspect` reports the
-bounded L1 execution-evidence count without returning record content. Durable
-promotion, revocation, and compaction remain runtime APIs; production surfaces
-must bind those state changes to Pandora's approval, permit, receipt, and event
-authority.
+The public CLI exposes scoped L1/L2 summaries through `memory recall` and
+`memory audit`. `memory forget` requires explicit confirmation before durable
+revocation, and `memory promote` requires an exact approval resolved through the
+existing approval store. L0 remains process-local and is not exposed as a
+durable record. These commands do not create a second memory store or bypass
+Pandora's approval, permit, receipt, and event authority.
 
 Its approval object is an explicit memory contract; it does not replace Parliament approval or provide execution authority. Memory records do not grant permissions, activate packages, or execute tools.
 
