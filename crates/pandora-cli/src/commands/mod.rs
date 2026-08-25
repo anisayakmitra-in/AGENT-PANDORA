@@ -328,7 +328,7 @@ commands:
   tool list|inspect <id>
   approval list|inspect|resolve
   provider list|set|use|test
-  mcp list|inspect|set|remove
+  mcp list|inspect|set|remove|catalog <server> --allow|call <server> <tool> --arguments-json <object> --idempotency-key <key> --allow
   orchestration roles
   strategies list
   evaluation golden --input <path> [--fail-on-failure]

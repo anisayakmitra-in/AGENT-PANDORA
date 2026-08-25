@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added governed `pandora mcp catalog` and `pandora mcp call` commands for
+  one-shot local stdio discovery and invocation. Both require explicit
+  operator consent, persist their bounded runtime-event batches atomically,
+  and keep the existing Rust runtime as the authority.
 - Added a typed TypeScript release-target boundary for the Node/Bun launcher;
   it shares platform and SemVer selection with the verified native download
   path without moving runtime execution out of Rust.

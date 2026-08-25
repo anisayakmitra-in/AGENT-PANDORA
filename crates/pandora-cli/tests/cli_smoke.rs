@@ -2294,6 +2294,71 @@ fn mcp_profile_commands_never_launch_the_configured_program() {
 }
 
 #[test]
+fn mcp_execution_requires_explicit_consent_before_starting_a_server() {
+    let fixture = Fixture::new();
+    let program = PathBuf::from(env!("CARGO_BIN_EXE_pandora"))
+        .canonicalize()
+        .expect("Pandora binary path should be absolute");
+    let program = program
+        .to_str()
+        .expect("Pandora binary path should be UTF-8");
+    let marker = fixture.root.join("should-not-exist.json");
+    let marker_config = marker.display().to_string();
+    let marker_data = fixture.root.join("nested-data").display().to_string();
+    let marker_workspace = fixture.root.join("nested-workspace").display().to_string();
+    let arguments = serde_json::to_string(&[
+        "setup",
+        "--config",
+        marker_config.as_str(),
+        "--data-dir",
+        marker_data.as_str(),
+        "--workspace",
+        marker_workspace.as_str(),
+        "--json",
+    ])
+    .unwrap();
+    let configured = fixture
+        .command(&[
+            "mcp",
+            "set",
+            "consent",
+            "--program",
+            program,
+            "--arguments-json",
+            &arguments,
+            "--json",
+        ])
+        .output()
+        .expect("MCP profile configuration should start");
+    assert_success(&configured);
+
+    for command in [
+        vec!["mcp", "catalog", "consent", "--json"],
+        vec![
+            "mcp",
+            "call",
+            "consent",
+            "tool",
+            "--arguments-json",
+            "{}",
+            "--idempotency-key",
+            "consent-check",
+            "--json",
+        ],
+    ] {
+        let output = fixture
+            .command(&command)
+            .output()
+            .expect("command should start");
+        assert_eq!(output.status.code(), Some(2));
+        let response = parse_json(&output);
+        assert_eq!(response["code"], "usage_error");
+        assert!(String::from_utf8_lossy(&output.stdout).contains("--allow"));
+    }
+    assert!(!marker.exists());
+}
+
+#[test]
 fn provider_set_and_list_use_the_public_configuration_api() {
     let fixture = Fixture::new();
     let output = fixture

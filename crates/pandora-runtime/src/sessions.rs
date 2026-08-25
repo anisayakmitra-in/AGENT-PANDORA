@@ -646,14 +646,54 @@ impl SessionStore {
         event: &RuntimeEvent,
         recorded_at: Timestamp,
     ) -> Result<(), SessionError> {
-        self.append_event_recorded_at(
+        self.append_events_at(
             session_id,
             principal_id,
             tenant_id,
             workspace_id,
-            event,
-            Some(recorded_at),
+            std::slice::from_ref(event),
+            recorded_at,
         )
+    }
+
+    pub fn append_events_at(
+        &self,
+        session_id: &SessionId,
+        principal_id: &PrincipalId,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        events: &[RuntimeEvent],
+        recorded_at: Timestamp,
+    ) -> Result<(), SessionError> {
+        if events.is_empty() {
+            return Ok(());
+        }
+        let events = events
+            .iter()
+            .map(|event| {
+                let serialized = serde_json::to_vec(event)?;
+                if serialized.len() > MAX_EVENT_BYTES {
+                    return Err(SessionError::EventTooLarge);
+                }
+                String::from_utf8(serialized).map_err(|_| SessionError::CorruptRecord)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let recorded_at = i64::try_from(recorded_at.as_unix_seconds())
+            .map_err(|_| SessionError::CorruptRecord)?;
+        let mut connection = self.lock()?;
+        let session =
+            load_session(&connection, session_id)?.ok_or(SessionError::SessionNotFound)?;
+        ensure_scope(&session, principal_id, tenant_id, workspace_id)?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        for event in events {
+            transaction.execute(
+                "INSERT INTO session_events (session_id, event_json, recorded_at)
+                 VALUES (?1, ?2, ?3)",
+                params![session_id.as_str(), event, recorded_at],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
     }
 
     fn append_event_recorded_at(

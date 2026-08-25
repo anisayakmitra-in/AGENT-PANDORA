@@ -8,18 +8,26 @@ protocol mode. Configuration does not start the program.
 pandora mcp set local --program /absolute/path/to/server --arguments-json '["--flag","value"]' --mode auto
 pandora mcp list
 pandora mcp inspect local
+pandora mcp catalog local --allow
+pandora mcp call local tool-name --arguments-json '{"path":"README.md"}' --idempotency-key request-1 --allow
 pandora mcp remove local --yes
 ```
 
 `--mode` accepts `auto`, `modern-only`, or `legacy-only`. Arguments must be a
-JSON array of strings. Removing a profile requires `--yes`. These commands do
-not execute the configured server; the governed connection runtime remains a
-bounded preview. CLI output reports only the number of configured arguments;
-it never echoes their values. Do not put credentials in MCP arguments.
+JSON array of strings. Removing a profile requires `--yes`. `catalog` imports a
+server's current tool catalog for one bounded connection, and `call` invokes
+one imported local tool. Both require `--allow` as explicit local operator
+consent and create a session event trail. `call` requires a JSON object and an
+idempotency key; arguments are never echoed in CLI output. Configuration-only
+commands do not execute the configured server. Do not put credentials in MCP
+arguments.
 
 When invoked by Pandora's runtime, the program starts directly without a shell,
 inherits no environment, and uses bounded protocol frames, stderr, and request
-time.
+time. `catalog` and `call` terminate the child when the command completes.
+Their bounded runtime-event batches are appended atomically to the selected
+session store; event contexts retain receipt IDs, while receipt details are
+returned in the command result.
 
 The protocol mode is explicit:
 
@@ -61,4 +69,6 @@ configured program as trusted code. Process identity and catalog revision
 evidence do not provide host containment. This preview does not support HTTP/SSE,
 OAuth, package or marketplace discovery, hooks supplied by MCP servers,
 subagents, progress/tasks, sessions, or server-originated requests and
-notifications.
+notifications. `--allow` is command-level consent, not a persisted human
+approval record; deployments requiring persisted approvals must use the
+existing approval workflow before invoking the runtime.

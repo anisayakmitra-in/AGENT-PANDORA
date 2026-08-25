@@ -53,7 +53,7 @@ fn powershell() -> &'static str {
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'provider') {
         'list','set','use','test'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'mcp') {
-        'list','inspect','set','remove'
+        'list','inspect','set','remove','catalog','call'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'tool') {
         'list','inspect'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'orchestration') {
@@ -102,7 +102,7 @@ fn bash() -> &'static str {
     elif [[ "$previous" == "provider" ]]; then
         COMPREPLY=( $(compgen -W 'list set use test' -- "$current") )
     elif [[ "$previous" == "mcp" ]]; then
-        COMPREPLY=( $(compgen -W 'list inspect set remove' -- "$current") )
+        COMPREPLY=( $(compgen -W 'list inspect set remove catalog call' -- "$current") )
     elif [[ "$previous" == "tool" ]]; then
         COMPREPLY=( $(compgen -W 'list inspect' -- "$current") )
     elif [[ "$previous" == "orchestration" ]]; then
@@ -147,7 +147,7 @@ elif [[ ${words[2]} == approval ]]; then
 elif [[ ${words[2]} == provider ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:provider command:(list set use test)'
 elif [[ ${words[2]} == mcp ]]; then
-    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:mcp command:(list inspect set remove)'
+    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:mcp command:(list inspect set remove catalog call)'
 elif [[ ${words[2]} == tool ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:tool command:(list inspect)'
 elif [[ ${words[2]} == orchestration ]]; then
@@ -179,7 +179,7 @@ complete -c pandora -f -n '__fish_seen_subcommand_from package' -a 'admit valida
 complete -c pandora -f -n '__fish_seen_subcommand_from memory' -a 'recall audit forget promote'
 complete -c pandora -f -n '__fish_seen_subcommand_from approval' -a 'list inspect resolve'
 complete -c pandora -f -n '__fish_seen_subcommand_from provider' -a 'list set use test'
-complete -c pandora -f -n '__fish_seen_subcommand_from mcp' -a 'list inspect set remove'
+complete -c pandora -f -n '__fish_seen_subcommand_from mcp' -a 'list inspect set remove catalog call'
 complete -c pandora -f -n '__fish_seen_subcommand_from tool' -a 'list inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from orchestration' -a 'roles'
 complete -c pandora -f -n '__fish_seen_subcommand_from strategies' -a 'list'
@@ -216,7 +216,7 @@ mod tests {
             "'recall','audit','forget','promote'",
             "'list','inspect','resolve'",
             "'list','set','use','test'",
-            "'list','inspect','set','remove'",
+            "'list','inspect','set','remove','catalog','call'",
             "'golden','inspect'",
             "'submit','work','list','inspect','cancel','mark-interrupted'",
             "'spawn','work','list','inspect','cancel','mark-interrupted','cleanup'",
