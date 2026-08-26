@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+No unreleased changes.
+
+## v2.0.0-beta.4
+
 - Expanded the read-only `security-domain` Harness with bounded scan,
   threat-model, triage, validation, and hardening evidence Genes. These
   workflow names mirror the security assessment lifecycle without claiming

@@ -13,7 +13,13 @@ recommended install targets.
 
 The canonical prerelease tags for this line are `v2.0.0-alpha.1` through
 `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1`, `v2.0.0-beta.2`, and
-`v2.0.0-beta.3`.
+`v2.0.0-beta.3`, and `v2.0.0-beta.4`.
+
+## v2.0.0-beta.4
+
+This beta consolidates the read-only Security and Debugging Domain Harnesses.
+It is a CLI-only prerelease with bounded evidence workflows, cross-platform
+release verification, and no desktop or remote-execution support claim.
 
 ## v2.0.0-beta.3
 
