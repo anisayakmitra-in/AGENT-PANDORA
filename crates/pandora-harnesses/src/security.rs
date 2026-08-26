@@ -14,20 +14,75 @@ const AUDIT_MARKERS: [&str; 6] = [
     "serde_json::from_str",
     "secret",
 ];
+const SCAN_MARKERS: [&str; 8] = [
+    "SECURITY.md",
+    "unsafe",
+    "Command::new",
+    "reqwest::",
+    "serde_json::from_str",
+    "authentication",
+    "authorization",
+    "credential",
+];
 const DEPENDENCY_MARKERS: [&str; 4] = [
     "[dependencies]",
     "[dev-dependencies]",
     "dependencies:",
     "\"dependencies\"",
 ];
+const THREAT_MODEL_MARKERS: [&str; 8] = [
+    "trust boundary",
+    "trust_boundary",
+    "attacker",
+    "threat model",
+    "sandbox",
+    "isolation",
+    "capability",
+    "least privilege",
+];
+const TRIAGE_MARKERS: [&str; 8] = [
+    "finding",
+    "vulnerability",
+    "CVE-",
+    "GHSA-",
+    "severity",
+    "exploit",
+    "reachability",
+    "proof gap",
+];
+const VALIDATION_MARKERS: [&str; 8] = [
+    "cargo test",
+    "cargo audit",
+    "security scan",
+    "regression",
+    "assert!",
+    "deny",
+    "validation",
+    "holdout",
+];
+const HARDENING_MARKERS: [&str; 8] = [
+    "allowlist",
+    "denylist",
+    "rate limit",
+    "redact",
+    "fail closed",
+    "permission",
+    "approval",
+    "rollback",
+];
 const POLICY_MARKERS: [&str; 4] = ["SECURITY", "permission", "approval", "credential"];
-const SECURITY_GUIDE: &str = "Security Audit searches fixed high-signal boundary markers and returns evidence paths.\nSecurity Dependencies searches dependency declarations without claiming vulnerability coverage.\nSecurity Policy searches local policy and authorization terminology without certifying compliance.\nAll filesystem effects require Pandora permits and receipts; process, network, package, and remediation actions require separate governed capabilities.";
+const SECURITY_GUIDE: &str = "Security Scan inventories fixed high-signal security markers without claiming complete scanner coverage.\nSecurity Audit searches boundary-sensitive source markers and returns evidence paths.\nSecurity Dependencies searches dependency declarations without claiming advisory or vulnerability coverage.\nSecurity Threat Model searches local trust-boundary and isolation evidence.\nSecurity Triage searches existing finding and proof terminology without assigning a verdict.\nSecurity Validation searches tests and validation evidence without running a scanner.\nSecurity Hardening searches local defensive-control evidence and does not change code.\nSecurity Policy searches local authorization terminology without certifying compliance.\nAll filesystem effects require Pandora permits and receipts; process, network, package, and remediation actions require separately governed capabilities.";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SecurityAction {
     Audit,
+    Scan,
     Dependencies,
+    ThreatModel,
+    Triage,
+    Validation,
+    Hardening,
     Policy,
     Guide,
 }
@@ -44,8 +99,28 @@ impl SecurityRequest {
         Self::new(SecurityAction::Audit, context)
     }
 
+    pub fn scan(context: PlanningContext) -> Self {
+        Self::new(SecurityAction::Scan, context)
+    }
+
     pub fn dependencies(context: PlanningContext) -> Self {
         Self::new(SecurityAction::Dependencies, context)
+    }
+
+    pub fn threat_model(context: PlanningContext) -> Self {
+        Self::new(SecurityAction::ThreatModel, context)
+    }
+
+    pub fn triage(context: PlanningContext) -> Self {
+        Self::new(SecurityAction::Triage, context)
+    }
+
+    pub fn validation(context: PlanningContext) -> Self {
+        Self::new(SecurityAction::Validation, context)
+    }
+
+    pub fn hardening(context: PlanningContext) -> Self {
+        Self::new(SecurityAction::Hardening, context)
     }
 
     pub fn policy(context: PlanningContext) -> Self {
@@ -75,7 +150,12 @@ impl SecurityRequest {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SecurityGeneRole {
     Audit,
+    Scan,
     Dependencies,
+    ThreatModel,
+    Triage,
+    Validation,
+    Hardening,
     Policy,
     Guide,
 }
@@ -84,7 +164,12 @@ impl SecurityGeneRole {
     const fn action(self) -> SecurityAction {
         match self {
             Self::Audit => SecurityAction::Audit,
+            Self::Scan => SecurityAction::Scan,
             Self::Dependencies => SecurityAction::Dependencies,
+            Self::ThreatModel => SecurityAction::ThreatModel,
+            Self::Triage => SecurityAction::Triage,
+            Self::Validation => SecurityAction::Validation,
+            Self::Hardening => SecurityAction::Hardening,
             Self::Policy => SecurityAction::Policy,
             Self::Guide => SecurityAction::Guide,
         }
@@ -93,7 +178,12 @@ impl SecurityGeneRole {
     const fn id(self) -> &'static str {
         match self {
             Self::Audit => "security.audit",
+            Self::Scan => "security.scan",
             Self::Dependencies => "security.dependencies",
+            Self::ThreatModel => "security.threat-model",
+            Self::Triage => "security.triage",
+            Self::Validation => "security.validation",
+            Self::Hardening => "security.hardening",
             Self::Policy => "security.policy",
             Self::Guide => "security.guide",
         }
@@ -102,7 +192,7 @@ impl SecurityGeneRole {
     const fn capability(self) -> Option<Capability> {
         match self {
             Self::Guide => None,
-            Self::Audit | Self::Dependencies | Self::Policy => Some(Capability::FilesystemRead),
+            _ => Some(Capability::FilesystemRead),
         }
     }
 }
@@ -126,7 +216,12 @@ impl SecurityGene {
     pub fn all() -> Vec<Box<dyn Gene>> {
         [
             SecurityGeneRole::Audit,
+            SecurityGeneRole::Scan,
             SecurityGeneRole::Dependencies,
+            SecurityGeneRole::ThreatModel,
+            SecurityGeneRole::Triage,
+            SecurityGeneRole::Validation,
+            SecurityGeneRole::Hardening,
             SecurityGeneRole::Policy,
             SecurityGeneRole::Guide,
         ]
@@ -171,7 +266,12 @@ impl Gene for SecurityGene {
         }
         let markers: &[&str] = match self.role {
             SecurityGeneRole::Audit => &AUDIT_MARKERS,
+            SecurityGeneRole::Scan => &SCAN_MARKERS,
             SecurityGeneRole::Dependencies => &DEPENDENCY_MARKERS,
+            SecurityGeneRole::ThreatModel => &THREAT_MODEL_MARKERS,
+            SecurityGeneRole::Triage => &TRIAGE_MARKERS,
+            SecurityGeneRole::Validation => &VALIDATION_MARKERS,
+            SecurityGeneRole::Hardening => &HARDENING_MARKERS,
             SecurityGeneRole::Policy => &POLICY_MARKERS,
             SecurityGeneRole::Guide => return Ok(Vec::new()),
         };
@@ -185,7 +285,15 @@ impl Gene for SecurityGene {
 pub fn is_security_gene(gene_id: &GeneId) -> bool {
     matches!(
         gene_id.as_str(),
-        "security.audit" | "security.dependencies" | "security.policy" | "security.guide"
+        "security.audit"
+            | "security.scan"
+            | "security.dependencies"
+            | "security.threat-model"
+            | "security.triage"
+            | "security.validation"
+            | "security.hardening"
+            | "security.policy"
+            | "security.guide"
     )
 }
 
@@ -257,5 +365,33 @@ mod tests {
         assert!(requests.is_empty());
         assert!(gene.manifest().capabilities().is_empty());
         assert!(security_static_output(gene.manifest().id()).is_some());
+    }
+
+    #[test]
+    fn assessment_roles_are_read_only_and_have_distinct_ids() {
+        let roles = [
+            (SecurityGeneRole::Scan, &SCAN_MARKERS[..]),
+            (SecurityGeneRole::ThreatModel, &THREAT_MODEL_MARKERS[..]),
+            (SecurityGeneRole::Triage, &TRIAGE_MARKERS[..]),
+            (SecurityGeneRole::Validation, &VALIDATION_MARKERS[..]),
+            (SecurityGeneRole::Hardening, &HARDENING_MARKERS[..]),
+        ];
+
+        for (role, markers) in roles {
+            let gene = SecurityGene::new(role).unwrap();
+            let requests = gene
+                .plan(
+                    &SecurityRequest::new(role.action(), context())
+                        .into_gene_input()
+                        .unwrap(),
+                )
+                .unwrap();
+            assert_eq!(requests.len(), markers.len());
+            assert!(requests.iter().all(|request| {
+                request.capability() == Capability::FilesystemRead
+                    && request.operation() == Operation::Read
+            }));
+            assert!(is_security_gene(gene.manifest().id()));
+        }
     }
 }

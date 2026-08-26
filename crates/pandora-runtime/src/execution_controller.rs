@@ -1255,7 +1255,12 @@ impl ExecutionController {
                         | "operations.search"
                         | "deployment.evidence"
                         | "security.audit"
+                        | "security.scan"
                         | "security.dependencies"
+                        | "security.threat-model"
+                        | "security.triage"
+                        | "security.validation"
+                        | "security.hardening"
                         | "security.policy"
                 ) {
                     let target = self.workspace.path(".").map_err(RuntimeError::Filesystem)?;
@@ -1302,7 +1307,12 @@ impl ExecutionController {
                         | "config.compare"
                         | "deployment.evidence"
                         | "security.audit"
+                        | "security.scan"
                         | "security.dependencies"
+                        | "security.threat-model"
+                        | "security.triage"
+                        | "security.validation"
+                        | "security.hardening"
                         | "security.policy"
                 ) {
                     append_labeled_output(output, path, &bytes);
@@ -1677,8 +1687,19 @@ fn default_gene_id(intent: &TaskIntent) -> GeneId {
         }
         "operations-guide" => GeneId::new("operations.guide").expect("built-in Gene ID is valid"),
         "security-audit" => GeneId::new("security.audit").expect("built-in Gene ID is valid"),
+        "security-scan" => GeneId::new("security.scan").expect("built-in Gene ID is valid"),
         "security-dependencies" => {
             GeneId::new("security.dependencies").expect("built-in Gene ID is valid")
+        }
+        "security-threat-model" => {
+            GeneId::new("security.threat-model").expect("built-in Gene ID is valid")
+        }
+        "security-triage" => GeneId::new("security.triage").expect("built-in Gene ID is valid"),
+        "security-validation" => {
+            GeneId::new("security.validation").expect("built-in Gene ID is valid")
+        }
+        "security-hardening" => {
+            GeneId::new("security.hardening").expect("built-in Gene ID is valid")
         }
         "security-policy" => GeneId::new("security.policy").expect("built-in Gene ID is valid"),
         "security-guide" => GeneId::new("security.guide").expect("built-in Gene ID is valid"),
@@ -1921,8 +1942,19 @@ fn security_input(
         .to_ascii_lowercase();
     let request = match gene_id.as_str() {
         "security.audit" if action == "security-audit" => SecurityRequest::audit(context),
+        "security.scan" if action == "security-scan" => SecurityRequest::scan(context),
         "security.dependencies" if action == "security-dependencies" => {
             SecurityRequest::dependencies(context)
+        }
+        "security.threat-model" if action == "security-threat-model" => {
+            SecurityRequest::threat_model(context)
+        }
+        "security.triage" if action == "security-triage" => SecurityRequest::triage(context),
+        "security.validation" if action == "security-validation" => {
+            SecurityRequest::validation(context)
+        }
+        "security.hardening" if action == "security-hardening" => {
+            SecurityRequest::hardening(context)
         }
         "security.policy" if action == "security-policy" => SecurityRequest::policy(context),
         "security.guide" if action == "security-guide" => SecurityRequest::guide(context),
@@ -2704,6 +2736,32 @@ mod tests {
         let output = String::from_utf8(summary.output().unwrap().to_vec()).unwrap();
         assert!(output.contains("unsafe:\nsrc/security.rs"));
         assert!(!output.contains("Command::new:\nsrc/security.rs"));
+    }
+
+    #[test]
+    fn security_threat_model_searches_fixed_evidence_through_governed_reads() {
+        let fixture = Fixture::new();
+        std::fs::create_dir(fixture.path.join("docs")).unwrap();
+        std::fs::write(
+            fixture.path.join("docs/security.md"),
+            b"The threat model documents the sandbox trust boundary.\n",
+        )
+        .unwrap();
+        let controller = ExecutionController::new(fixture.root.clone());
+        let intent = TaskIntent::new("security-threat-model")
+            .unwrap()
+            .with_harness(HarnessId::new("security-domain").unwrap())
+            .with_gene(GeneId::new("security.threat-model").unwrap());
+
+        let summary = controller
+            .run_at(intent, fixture.session(), Timestamp::from_unix_seconds(10))
+            .unwrap();
+
+        assert_eq!(summary.status(), &RunStatus::Completed);
+        assert_eq!(summary.receipts().len(), 8);
+        let output = String::from_utf8(summary.output().unwrap().to_vec()).unwrap();
+        assert!(output.contains("trust boundary:\ndocs/security.md"));
+        assert!(output.contains("sandbox:\ndocs/security.md"));
     }
 
     #[test]

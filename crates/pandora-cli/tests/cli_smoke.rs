@@ -3766,6 +3766,24 @@ fn security_harness_runs_read_only_audit_and_guide_genes() {
     assert_eq!(response["gene_id"], "security.audit");
     assert_eq!(response["status"], "completed");
     assert!(response["output"].is_string());
+
+    let output = fixture
+        .command(&[
+            "run",
+            "--harness",
+            "security",
+            "--gene",
+            "security.threat-model",
+            "security-threat-model",
+            "--json",
+        ])
+        .output()
+        .expect("security threat model should start");
+    assert_success_with_context(&output, "security threat model");
+    let response = parse_json(&output);
+    assert_eq!(response["harness_id"], "security-domain");
+    assert_eq!(response["gene_id"], "security.threat-model");
+    assert_eq!(response["status"], "completed");
 }
 
 #[test]
@@ -3862,7 +3880,12 @@ fn slash_commands_cover_the_built_in_domains_and_execute_workflow_genes() {
         "/operations-guide",
         "/security",
         "/security-audit",
+        "/security-scan",
         "/security-dependencies",
+        "/security-threat-model",
+        "/security-triage",
+        "/security-validation",
+        "/security-hardening",
         "/security-policy",
         "/security-guide",
     ] {

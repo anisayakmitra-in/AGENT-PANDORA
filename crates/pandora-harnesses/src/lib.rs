@@ -574,10 +574,15 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(security.manifest().kind(), HarnessKind::Domain);
-        assert_eq!(genes.len(), 4);
+        assert_eq!(genes.len(), 9);
         for id in [
             "security.audit",
+            "security.scan",
             "security.dependencies",
+            "security.threat-model",
+            "security.triage",
+            "security.validation",
+            "security.hardening",
             "security.policy",
             "security.guide",
         ] {
@@ -706,7 +711,12 @@ mod tests {
         for command in [
             "/security",
             "/security-audit",
+            "/security-scan",
             "/security-dependencies",
+            "/security-threat-model",
+            "/security-triage",
+            "/security-validation",
+            "/security-hardening",
             "/security-policy",
             "/security-guide",
         ] {

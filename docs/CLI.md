@@ -214,8 +214,11 @@ It also recognizes the Research actions `evidence-inventory`,
 `design-guide`. Operations actions are `operations-inventory`,
 `operations-search:`, `config-inspect:`, `config-compare:`,
 `deployment-evidence`, and `operations-guide`. Security actions are
-`security-audit`, `security-dependencies`, `security-policy`, and
-`security-guide`. Other natural-language tasks
+`security-scan`, `security-audit`, `security-dependencies`,
+`security-threat-model`, `security-triage`, `security-validation`,
+`security-hardening`, `security-policy`, and `security-guide`. These actions
+provide bounded local evidence; they do not run scanners, assign vulnerability
+verdicts, or apply remediation. Other natural-language tasks
 require `run --agent`; Pandora does not silently route them to an unregistered
 default Harness.
 `harness run` accepts the same canonical catalog IDs and only runs a Domain
@@ -542,8 +545,9 @@ are `/design-inventory`, `/design-tokens`, `/design-inspect`, `/design-compare`,
 aliases are `/operations-inventory`, `/operations-search`, `/config-inspect`,
 `/config-compare`, `/deployment-evidence`, and `/operations-guide`.
 `/security` inspects the built-in `security-domain` Harness. Its short Gene
-aliases are `/security-audit`, `/security-dependencies`, `/security-policy`,
-and `/security-guide`.
+aliases are `/security-scan`, `/security-audit`, `/security-dependencies`,
+`/security-threat-model`, `/security-triage`, `/security-validation`,
+`/security-hardening`, `/security-policy`, and `/security-guide`.
 An admitted custom Domain Harness uses exact-version commands such as
 `/harness:owner%2Fdomain@1.0.0` and
 `/gene:owner%2Fdomain@1.0.0:workspace.read`. Custom packages cannot claim the

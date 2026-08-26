@@ -197,20 +197,32 @@ change a deployment. Those effects require separate capabilities and approvals.
 
 ## Security Domain Harness
 
-The built-in `security-domain` Harness owns four read-only evidence Genes:
+The built-in `security-domain` Harness owns nine read-only evidence Genes:
 
+- `security.scan` inventories fixed security-boundary markers;
 - `security.audit` searches fixed high-signal source markers such as `unsafe`,
   process spawning, network clients, deserialization, and secret terminology;
 - `security.dependencies` searches fixed dependency declaration markers;
+- `security.threat-model` searches trust-boundary, attacker, sandbox, and
+  isolation terminology;
+- `security.triage` searches existing finding, vulnerability, advisory, and
+  proof terminology without assigning a verdict;
+- `security.validation` searches test and validation evidence without running
+  a scanner;
+- `security.hardening` searches local defensive-control evidence without
+  changing code;
 - `security.policy` searches fixed authorization, credential, and security-policy
   markers;
 - `security.guide` returns static guidance without requesting an effect.
 
-The Security Domain is a bounded evidence surface, not a complete vulnerability
-scanner and not a compliance certification. It does not execute scanners, run
-commands, contact networks, modify files, inspect credentials, or remediate
-findings. Effectful Genes use the existing workspace-scoped `filesystem.read`
-permit, receipt, and runtime-event path.
+The Security Domain is a bounded assessment surface, not a complete
+vulnerability scanner, finding database, or compliance certification. It does
+not execute scanners, run commands, contact networks, assign triage verdicts,
+modify files, inspect credential values, or remediate findings. Effectful Genes
+use the existing workspace-scoped `filesystem.read` permit, receipt, and
+runtime-event path. The phase names mirror a governed security workflow while
+the current implementation remains evidence-only; process-backed validation
+and remediation require separate capabilities and approvals.
 
 `CodingFeedbackLoop` composes the existing evaluation, Reflexion, adaptation,
 and run-loop contracts around coding evidence. A verified iteration completes
