@@ -122,7 +122,7 @@ constitutional service, execute effects, install packages, or grant permits.
 
 ## Coding Domain Harness
 
-The built-in `coding-domain` Harness owns eleven Genes. Six are narrow execution
+The built-in `coding-domain` Harness owns twelve Genes. Seven are narrow execution
 primitives:
 
 - `workspace.read` reads one scoped file;
@@ -130,6 +130,7 @@ primitives:
 - `patch.apply` writes one scoped file after approval;
 - `verification.run` runs the fixed verifier after approval;
 - `tests.run` runs the fixed test command after approval;
+- `format.check` runs the fixed formatter check after approval;
 - `change.review` reads one file for review.
 
 Five are bounded coding workflows:
@@ -300,7 +301,7 @@ responsible for retry and termination budgets; the caller must send any chosen
 recovery through the normal governed execution path.
 
 Every built-in Harness and Gene has a canonical slash command. The Coding short
-aliases are `/coding`, `/read`, `/search`, `/patch`, `/verify`, `/test`, `/review`,
+aliases are `/coding`, `/read`, `/search`, `/patch`, `/verify`, `/test`, `/format`, `/review`,
 `/audit`, `/argus-review`, `/debt`, `/measure`, and `/guide`. Canonical commands
 encode their identities, for example `/harness:coding-domain` and
 `/gene:coding-domain:daedalus.audit`.

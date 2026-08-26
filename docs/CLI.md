@@ -204,8 +204,8 @@ profiles require the exact
 `--harness-version <version>` value. The runtime rejects an unknown,
 unsupported, or unavailable profile before Gene planning.
 Direct `run` recognizes the Coding actions `read:`, `search:`, `patch:`,
-`verify`, `test`, `review:`, `deep-review:`, `audit`, `debt`, `measure`, and
-`guide`.
+`verify`, `test`, `format`, `review:`, `deep-review:`, `audit`, `debt`, `measure`,
+and `guide`.
 It also recognizes the Research actions `evidence-inventory`,
 `evidence-search:`, `source-read:`, `source-compare:`, `citation-inventory`, and
 `research-guide`. Design actions are `design-inventory`, `design-tokens`,
@@ -597,7 +597,7 @@ pandora completions fish
 ```
 
 `/coding` inspects the built-in `coding-domain` Harness. Its short Gene aliases
-are `/read`, `/search`, `/patch`, `/verify`, `/test`, `/review`, `/audit`,
+are `/read`, `/search`, `/patch`, `/verify`, `/test`, `/format`, `/review`, `/audit`,
 `/argus-review`, `/debt`, `/measure`, and `/guide`. Canonical commands remain
 available as `/harness:<encoded-id>` and `/gene:<encoded-harness-id>:<encoded-gene-id>`.
 `/research` inspects the built-in `research-domain` Harness. Its short Gene

@@ -293,7 +293,7 @@ fn print_help() {
     println!("/exit       close the chat");
     println!("/quit       close the chat");
     println!("/coding     inspect the Coding Domain Harness");
-    println!("/read, /search, /patch, /verify, /test, /review run its core Genes");
+    println!("/read, /search, /patch, /verify, /test, /format, /review run its core Genes");
     println!("/audit, /argus-review, /debt, /measure, /guide run its workflow Genes");
     println!("Any other line is sent as a bounded agent task.");
 }

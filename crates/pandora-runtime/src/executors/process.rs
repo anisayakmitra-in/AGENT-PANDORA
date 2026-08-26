@@ -57,6 +57,7 @@ pub struct VerificationCommand {
 enum VerificationKind {
     Check,
     Test,
+    Format,
 }
 
 impl VerificationCommand {
@@ -71,6 +72,13 @@ impl VerificationCommand {
         Self {
             workspace,
             kind: VerificationKind::Test,
+        }
+    }
+
+    pub fn cargo_fmt_check(workspace: WorkspaceRoot) -> Self {
+        Self {
+            workspace,
+            kind: VerificationKind::Format,
         }
     }
 
@@ -89,6 +97,14 @@ impl VerificationCommand {
             [command, locked] if command == "test" && locked == "--locked" => {
                 VerificationKind::Test
             }
+            [command, all, separator, check]
+                if command == "fmt"
+                    && all == "--all"
+                    && separator == "--"
+                    && check == "--check" =>
+            {
+                VerificationKind::Format
+            }
             _ => return Err(ProcessError::UnsupportedArguments),
         };
         Ok(Self { workspace, kind })
@@ -98,6 +114,7 @@ impl VerificationCommand {
         match spec {
             "cargo check --locked" => Ok(Self::cargo_check_locked(workspace)),
             "cargo test --locked" => Ok(Self::cargo_test_locked(workspace)),
+            "cargo fmt --all -- --check" => Ok(Self::cargo_fmt_check(workspace)),
             _ => Err(ProcessError::UnsupportedArguments),
         }
     }
@@ -106,13 +123,15 @@ impl VerificationCommand {
         match self.kind {
             VerificationKind::Check => "cargo check --locked",
             VerificationKind::Test => "cargo test --locked",
+            VerificationKind::Format => "cargo fmt --all -- --check",
         }
     }
 
-    fn arguments(&self) -> [&'static str; 2] {
+    fn arguments(&self) -> &'static [&'static str] {
         match self.kind {
-            VerificationKind::Check => ["check", "--locked"],
-            VerificationKind::Test => ["test", "--locked"],
+            VerificationKind::Check => &["check", "--locked"],
+            VerificationKind::Test => &["test", "--locked"],
+            VerificationKind::Format => &["fmt", "--all", "--", "--check"],
         }
     }
 
@@ -472,6 +491,21 @@ mod tests {
             .expect("the fixed test command should be accepted");
 
         assert_eq!(command.spec(), "cargo test --locked");
+    }
+
+    #[test]
+    fn accepts_only_locked_cargo_format_check() {
+        let workspace = Workspace::new();
+        let arguments = vec![
+            "fmt".to_owned(),
+            "--all".to_owned(),
+            "--".to_owned(),
+            "--check".to_owned(),
+        ];
+        let command = VerificationCommand::from_argv("cargo", &arguments, workspace.root.clone())
+            .expect("the fixed format command should be accepted");
+
+        assert_eq!(command.spec(), "cargo fmt --all -- --check");
     }
 
     #[test]

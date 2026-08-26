@@ -242,7 +242,7 @@ impl App {
                     "/approve    approve and resume the pending task",
                     "/deny       deny the pending task",
                     "/coding     inspect the Coding Domain Harness",
-                    "/read, /search, /patch, /verify, /review run core Coding Genes",
+                    "/read, /search, /patch, /verify, /test, /format, /review run core Coding Genes",
                     "/audit, /argus-review, /debt, /measure, /guide run workflow Genes",
                     "/exit       close the TUI",
                 ] {

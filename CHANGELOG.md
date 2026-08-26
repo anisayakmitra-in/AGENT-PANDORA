@@ -10,6 +10,10 @@
   command. It runs only `cargo test --locked` through the existing approval,
   permit, timeout, cancellation, and receipt path.
 
+- Added the fixed `format.check` Coding Gene, `workspace.format` tool, and
+  `/format` command. It runs only `cargo fmt --all -- --check` through the same
+  governed process path.
+
 ## v2.0.0-beta.7
 
 - Added `SelfHealingEngine` and connected recovery candidates to

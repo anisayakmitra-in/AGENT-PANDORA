@@ -685,6 +685,7 @@ mod tests {
             "/patch",
             "/verify",
             "/test",
+            "/format",
             "/review",
             "/audit",
             "/argus-review",
