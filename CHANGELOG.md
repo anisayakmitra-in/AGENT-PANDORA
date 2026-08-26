@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- No unreleased changes.
+
+## v2.0.0-beta.5
+
 - Added the read-only `data-domain` Harness with bounded inventory, schema,
   quality, lineage, analysis, and guidance Genes. It records local evidence
   without database connections, query execution, data mutation, or statistical

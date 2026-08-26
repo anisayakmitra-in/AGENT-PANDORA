@@ -1,6 +1,6 @@
 # Pandora CLI
 
-Status: Beta in the current `2.0.0-beta.4` CLI release line.
+Status: Beta in the current `2.0.0-beta.5` CLI release line.
 
 The CLI is the primary Pandora surface. Commands return versioned JSON with
 `--json` and stable non-zero exit codes for usage, configuration, policy,
@@ -426,7 +426,7 @@ The CLI exposes the local durable Fleet control plane. It stores state under
 allocate workers; they do not connect to remote nodes or execute work.
 
 ```text
-pandora fleet register node-a --version 2.0.0-beta.4 --worker-class local --capabilities-json '["coding","review"]'
+pandora fleet register node-a --version 2.0.0-beta.5 --worker-class local --capabilities-json '["coding","review"]'
 pandora fleet list --json
 pandora fleet dispatch coding --json
 pandora fleet lease lease-a --node node-a --execution execution-a --max-tokens 10000 --max-tools 20 --max-duration 900 --max-cost 500000 --duration 600

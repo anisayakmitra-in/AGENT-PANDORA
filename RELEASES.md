@@ -13,7 +13,15 @@ recommended install targets.
 
 The canonical prerelease tags for this line are `v2.0.0-alpha.1` through
 `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1`, `v2.0.0-beta.2`, and
-`v2.0.0-beta.3`, and `v2.0.0-beta.4`.
+`v2.0.0-beta.3`, `v2.0.0-beta.4`, and `v2.0.0-beta.5`.
+
+## v2.0.0-beta.5
+
+This beta adds the read-only Data Domain Harness and completes the bounded
+Security Domain workflow surface with a standard assessment entry point,
+deep-scan evidence, and changed-code evidence. It remains a CLI-only
+prerelease; these workflows do not execute scanners, modify code, or claim
+security certification.
 
 ## v2.0.0-beta.4
 

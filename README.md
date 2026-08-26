@@ -17,7 +17,7 @@ observation surface.
 
 ## Status
 
-The active prerelease is `2.0.0-beta.4` and is CLI-only. Existing legacy
+The active prerelease is `2.0.0-beta.5` and is CLI-only. Existing legacy
 preview tags remain immutable for compatibility. Release tags use plain
 SemVer; prereleases use `alpha`, `beta`, and `rc` suffixes. Older codename tags
 are historical references only. See [RELEASES.md](RELEASES.md),
@@ -46,14 +46,14 @@ irm https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/script
 To pin the current release explicitly:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.sh | PANDORA_VERSION=v2.0.0-beta.4 sh
+curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.sh | PANDORA_VERSION=v2.0.0-beta.5 sh
 ```
 
 After installation, update to a specific published tag with the same checksum
 verification:
 
 ```text
-pandora update --release v2.0.0-beta.4
+pandora update --release v2.0.0-beta.5
 ```
 
 ## Build
