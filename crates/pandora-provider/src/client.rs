@@ -679,10 +679,17 @@ impl HttpProvider {
         Self::new(manifest, api_key)
     }
 
-    fn endpoint(&self) -> String {
+    fn endpoint(&self, model: &ModelId) -> String {
         let path = match self.manifest.protocol() {
             ProviderProtocol::OpenAiCompatible => "chat/completions",
             ProviderProtocol::AnthropicMessages => "messages",
+            ProviderProtocol::GeminiGenerateContent => {
+                return format!(
+                    "{}/models/{}:generateContent",
+                    self.manifest.base_url().trim_end_matches('/'),
+                    model.as_str()
+                );
+            }
         };
         format!("{}/{path}", self.manifest.base_url().trim_end_matches('/'))
     }
@@ -703,18 +710,25 @@ impl Provider for HttpProvider {
         let response = match self.manifest.protocol() {
             ProviderProtocol::OpenAiCompatible => self
                 .client
-                .post(self.endpoint())
+                .post(self.endpoint(request.model_id()))
                 .timeout(request.timeout())
                 .bearer_auth(self.api_key.expose())
                 .json(&OpenAiRequest::from_request(&request))
                 .send(),
             ProviderProtocol::AnthropicMessages => self
                 .client
-                .post(self.endpoint())
+                .post(self.endpoint(request.model_id()))
                 .timeout(request.timeout())
                 .header("x-api-key", self.api_key.expose())
                 .header("anthropic-version", "2023-06-01")
                 .json(&AnthropicRequest::from_request(&request)?)
+                .send(),
+            ProviderProtocol::GeminiGenerateContent => self
+                .client
+                .post(self.endpoint(request.model_id()))
+                .timeout(request.timeout())
+                .header("x-goog-api-key", self.api_key.expose())
+                .json(&GeminiRequest::from_request(&request)?)
                 .send(),
         }
         .map_err(|_| ProviderError::Transport)?;
@@ -726,6 +740,7 @@ impl Provider for HttpProvider {
         match self.manifest.protocol() {
             ProviderProtocol::OpenAiCompatible => parse_response(&bytes),
             ProviderProtocol::AnthropicMessages => parse_anthropic_response(&bytes),
+            ProviderProtocol::GeminiGenerateContent => parse_gemini_response(&bytes),
         }
     }
 }
@@ -1098,6 +1113,284 @@ struct AnthropicUsage {
     output_tokens: u32,
 }
 
+#[derive(Serialize)]
+struct GeminiRequest {
+    #[serde(rename = "systemInstruction", skip_serializing_if = "Option::is_none")]
+    system_instruction: Option<GeminiContent>,
+    contents: Vec<GeminiContent>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<GeminiTool>,
+    #[serde(rename = "generationConfig")]
+    generation_config: GeminiGenerationConfig,
+}
+
+impl GeminiRequest {
+    fn from_request(request: &ModelRequest) -> Result<Self, ProviderError> {
+        let system = request
+            .messages()
+            .iter()
+            .filter(|message| message.role() == MessageRole::System)
+            .map(ChatMessage::content)
+            .collect::<Vec<_>>();
+        let mut contents = Vec::new();
+        for message in request
+            .messages()
+            .iter()
+            .filter(|message| message.role() != MessageRole::System)
+        {
+            let content = match message.role() {
+                MessageRole::System => unreachable!("system messages are filtered above"),
+                MessageRole::User => GeminiContent {
+                    role: Some(GeminiRole::User),
+                    parts: vec![GeminiPart::Text {
+                        text: message.content().to_owned(),
+                    }],
+                },
+                MessageRole::Assistant => {
+                    let calls = message.tool_calls()?;
+                    let mut parts = Vec::with_capacity(calls.len() + 1);
+                    if !message.content().is_empty() {
+                        parts.push(GeminiPart::Text {
+                            text: message.content().to_owned(),
+                        });
+                    }
+                    parts.extend(calls.into_iter().map(|call| GeminiPart::FunctionCall {
+                        function_call: GeminiFunctionCall {
+                            name: call.name().to_owned(),
+                            args: call.arguments().clone(),
+                        },
+                    }));
+                    if parts.is_empty() {
+                        return Err(ProviderError::InvalidRequest(
+                            "assistant messages must contain text or a tool call".to_owned(),
+                        ));
+                    }
+                    GeminiContent {
+                        role: Some(GeminiRole::Model),
+                        parts,
+                    }
+                }
+                MessageRole::Tool => {
+                    let tool_call_id = message.tool_call_id().ok_or_else(|| {
+                        ProviderError::InvalidRequest(
+                            "Gemini tool results require a tool call ID".to_owned(),
+                        )
+                    })?;
+                    let name = request
+                        .messages()
+                        .iter()
+                        .rev()
+                        .find_map(|candidate| {
+                            candidate
+                                .tool_calls
+                                .iter()
+                                .find(|call| call.id == tool_call_id)
+                                .map(|call| call.name.clone())
+                        })
+                        .ok_or_else(|| {
+                            ProviderError::InvalidRequest(
+                                "Gemini tool result has no matching tool call".to_owned(),
+                            )
+                        })?;
+                    GeminiContent {
+                        role: Some(GeminiRole::User),
+                        parts: vec![GeminiPart::FunctionResponse {
+                            function_response: GeminiFunctionResponse {
+                                name,
+                                response: serde_json::json!({
+                                    "content": message.content()
+                                }),
+                            },
+                        }],
+                    }
+                }
+            };
+            contents.push(content);
+        }
+        if contents.is_empty() {
+            return Err(ProviderError::InvalidRequest(
+                "Gemini requests require at least one conversation message".to_owned(),
+            ));
+        }
+        let system_instruction = (!system.is_empty()).then(|| GeminiContent {
+            role: None,
+            parts: vec![GeminiPart::Text {
+                text: system.join("\n\n"),
+            }],
+        });
+        Ok(Self {
+            system_instruction,
+            contents,
+            tools: if request.tools().is_empty() {
+                Vec::new()
+            } else {
+                vec![GeminiTool {
+                    function_declarations: request
+                        .tools()
+                        .iter()
+                        .map(GeminiFunctionDeclaration::from_schema)
+                        .collect(),
+                }]
+            },
+            generation_config: GeminiGenerationConfig {
+                max_output_tokens: request.max_output_tokens(),
+            },
+        })
+    }
+}
+
+#[derive(Serialize)]
+struct GeminiContent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    role: Option<GeminiRole>,
+    parts: Vec<GeminiPart>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "lowercase")]
+enum GeminiRole {
+    User,
+    Model,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum GeminiPart {
+    Text {
+        text: String,
+    },
+    FunctionCall {
+        #[serde(rename = "functionCall")]
+        function_call: GeminiFunctionCall,
+    },
+    FunctionResponse {
+        #[serde(rename = "functionResponse")]
+        function_response: GeminiFunctionResponse,
+    },
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+struct GeminiFunctionCall {
+    name: String,
+    args: Value,
+}
+
+#[derive(Serialize)]
+struct GeminiFunctionResponse {
+    name: String,
+    response: Value,
+}
+
+#[derive(Serialize)]
+struct GeminiTool {
+    #[serde(rename = "functionDeclarations")]
+    function_declarations: Vec<GeminiFunctionDeclaration>,
+}
+
+#[derive(Serialize)]
+struct GeminiFunctionDeclaration {
+    name: String,
+    description: String,
+    parameters: Value,
+}
+
+impl GeminiFunctionDeclaration {
+    fn from_schema(schema: &ToolSchema) -> Self {
+        Self {
+            name: schema.name().to_owned(),
+            description: schema.description().to_owned(),
+            parameters: schema.input_schema().clone(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct GeminiGenerationConfig {
+    #[serde(rename = "maxOutputTokens")]
+    max_output_tokens: u32,
+}
+
+#[derive(Deserialize)]
+struct GeminiResponse {
+    candidates: Vec<GeminiCandidate>,
+    #[serde(rename = "usageMetadata")]
+    usage: Option<GeminiUsage>,
+}
+
+#[derive(Deserialize)]
+struct GeminiCandidate {
+    content: Option<GeminiResponseContent>,
+}
+
+#[derive(Deserialize)]
+struct GeminiResponseContent {
+    parts: Vec<GeminiResponsePart>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum GeminiResponsePart {
+    Text {
+        text: String,
+    },
+    FunctionCall {
+        #[serde(rename = "functionCall")]
+        function_call: GeminiFunctionCall,
+    },
+}
+
+#[derive(Deserialize)]
+struct GeminiUsage {
+    #[serde(rename = "promptTokenCount")]
+    prompt_tokens: u32,
+    #[serde(rename = "candidatesTokenCount")]
+    completion_tokens: u32,
+}
+
+fn parse_gemini_response(bytes: &[u8]) -> Result<ModelResponse, ProviderError> {
+    if bytes.len() > MAX_RESPONSE_BYTES as usize {
+        return Err(ProviderError::ResponseTooLarge);
+    }
+    let response: GeminiResponse =
+        serde_json::from_slice(bytes).map_err(|_| ProviderError::InvalidResponse)?;
+    let content = response
+        .candidates
+        .into_iter()
+        .next()
+        .and_then(|candidate| candidate.content)
+        .ok_or(ProviderError::InvalidResponse)?;
+    let mut text = String::new();
+    let mut tool_calls = Vec::new();
+    for (index, part) in content.parts.into_iter().enumerate() {
+        match part {
+            GeminiResponsePart::Text { text: block } => {
+                if text.len().saturating_add(block.len()) > MAX_RESPONSE_TEXT_BYTES {
+                    return Err(ProviderError::ResponseTooLarge);
+                }
+                text.push_str(&block);
+            }
+            GeminiResponsePart::FunctionCall { function_call } => {
+                let id = format!("gemini-call-{index}");
+                let call =
+                    ToolCall::new(id, function_call.name, function_call.args).map_err(|error| {
+                        match error {
+                            ProviderError::InvalidToolArguments { call_id } => {
+                                ProviderError::InvalidToolArguments { call_id }
+                            }
+                            _ => ProviderError::InvalidResponse,
+                        }
+                    })?;
+                tool_calls.push(call);
+            }
+        }
+    }
+    let usage = response
+        .usage
+        .map(|usage| TokenUsage::new(usage.prompt_tokens, usage.completion_tokens))
+        .unwrap_or_default();
+    Ok(ModelResponse::new(text, tool_calls, usage))
+}
+
 fn parse_anthropic_response(bytes: &[u8]) -> Result<ModelResponse, ProviderError> {
     if bytes.len() > MAX_RESPONSE_BYTES as usize {
         return Err(ProviderError::ResponseTooLarge);
@@ -1452,6 +1745,104 @@ mod tests {
     }
 
     #[test]
+    fn gemini_request_translates_system_tools_and_tool_results() {
+        let manifest = ProviderManifest::new_with_protocol(
+            "gemini",
+            "Gemini",
+            ProviderProtocol::GeminiGenerateContent,
+            "https://generativelanguage.googleapis.com/v1beta",
+            "gemini-2.5-pro",
+            "PANDORA_GEMINI_API_KEY",
+        )
+        .unwrap();
+        let call = ToolCall::new("call-1", "workspace.read", json!({"path": "README.md"})).unwrap();
+        let request = ModelRequest::new(
+            manifest.id().clone(),
+            manifest.default_model().clone(),
+            vec![
+                ChatMessage::system("Follow policy.").unwrap(),
+                ChatMessage::user("Read README.").unwrap(),
+                ChatMessage::assistant_tool_calls(&[call]).unwrap(),
+                ChatMessage::tool_result("call-1", "fixture").unwrap(),
+            ],
+        )
+        .unwrap()
+        .with_tools(vec![
+            ToolSchema::new(
+                "workspace.read",
+                "Read a workspace file",
+                json!({
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"]
+                }),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+
+        let body = serde_json::to_value(GeminiRequest::from_request(&request).unwrap()).unwrap();
+
+        assert_eq!(
+            body["systemInstruction"],
+            json!({"parts":[{"text":"Follow policy."}]})
+        );
+        assert_eq!(
+            body["contents"][0],
+            json!({
+                "role":"user",
+                "parts":[{"text":"Read README."}]
+            })
+        );
+        assert_eq!(
+            body["contents"][1],
+            json!({
+                "role":"model",
+                "parts":[{"functionCall":{
+                    "name":"workspace.read",
+                    "args":{"path":"README.md"}
+                }}]
+            })
+        );
+        assert_eq!(
+            body["contents"][2],
+            json!({
+                "role":"user",
+                "parts":[{"functionResponse":{
+                    "name":"workspace.read",
+                    "response":{"content":"fixture"}
+                }}]
+            })
+        );
+        assert_eq!(
+            body["tools"][0]["functionDeclarations"][0]["name"],
+            "workspace.read"
+        );
+        assert_eq!(body["generationConfig"]["maxOutputTokens"], 1024);
+    }
+
+    #[test]
+    fn gemini_response_normalizes_text_tools_and_usage() {
+        let response = parse_gemini_response(
+            br#"{
+                "candidates":[{"content":{"parts":[
+                    {"text":"Checking."},
+                    {"functionCall":{"name":"workspace.read","args":{"path":"README.md"}}}
+                ]}}],
+                "usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":3}
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(response.text(), "Checking.");
+        assert_eq!(response.tool_calls().len(), 1);
+        assert_eq!(response.tool_calls()[0].id(), "gemini-call-1");
+        assert_eq!(response.tool_calls()[0].name(), "workspace.read");
+        assert_eq!(response.usage().prompt_tokens(), 7);
+        assert_eq!(response.usage().completion_tokens(), 3);
+    }
+
+    #[test]
     fn empty_tool_results_use_a_bounded_placeholder() {
         let message = ChatMessage::tool_result("call-1", "").unwrap();
 
@@ -1579,6 +1970,78 @@ mod tests {
         )
         .unwrap();
         let provider = HttpProvider::new(manifest, "anthropic-secret").unwrap();
+
+        let response = provider.complete(request).unwrap();
+
+        server.join().unwrap();
+        assert_eq!(response.text(), "ready");
+        assert_eq!(response.usage().total_tokens(), 3);
+    }
+
+    #[test]
+    fn gemini_provider_uses_native_endpoint_headers_and_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let header_end = loop {
+                let mut chunk = [0_u8; 1_024];
+                let bytes_read = stream.read(&mut chunk).unwrap();
+                request.extend_from_slice(&chunk[..bytes_read]);
+                if let Some(position) = request.windows(4).position(|window| window == b"\r\n\r\n")
+                {
+                    break position + 4;
+                }
+            };
+            let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+            let content_length = headers
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .and_then(|value| value.trim().parse::<usize>().ok())
+                .unwrap();
+            while request.len() < header_end + content_length {
+                let mut chunk = [0_u8; 1_024];
+                let bytes_read = stream.read(&mut chunk).unwrap();
+                request.extend_from_slice(&chunk[..bytes_read]);
+            }
+            let request_line = headers.lines().next().unwrap();
+            let body = String::from_utf8_lossy(&request[header_end..header_end + content_length]);
+            assert!(
+                request_line
+                    .contains("post /v1beta/models/gemini-2.5-pro:generatecontent http/1.1")
+            );
+            assert!(headers.contains("x-goog-api-key: gemini-secret"));
+            assert!(!headers.contains("authorization: bearer"));
+            assert!(body.contains("\"maxOutputTokens\":1024"));
+            let response = br#"{
+                "candidates":[{"content":{"parts":[{"text":"ready"}]}}],
+                "usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":1}
+            }"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                response.len()
+            )
+            .unwrap();
+            stream.write_all(response).unwrap();
+        });
+        let manifest = ProviderManifest::new_with_protocol(
+            "gemini",
+            "Gemini",
+            ProviderProtocol::GeminiGenerateContent,
+            format!("http://{address}/v1beta"),
+            "gemini-2.5-pro",
+            "PANDORA_GEMINI_API_KEY",
+        )
+        .unwrap();
+        let request = ModelRequest::new(
+            manifest.id().clone(),
+            manifest.default_model().clone(),
+            vec![ChatMessage::user("hello").unwrap()],
+        )
+        .unwrap();
+        let provider = HttpProvider::new(manifest, "gemini-secret").unwrap();
 
         let response = provider.complete(request).unwrap();
 

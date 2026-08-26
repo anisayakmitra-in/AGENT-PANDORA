@@ -2,7 +2,10 @@
 
 ## Unreleased
 
-- No unreleased changes.
+- Added a native Gemini `generateContent` provider adapter with bounded
+  text/tool normalization, continuation mapping, and `x-goog-api-key`
+  credential isolation. The existing provider permit and receipt boundary is
+  unchanged.
 
 ## v2.0.0-beta.5
 

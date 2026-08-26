@@ -63,6 +63,7 @@ pub enum ProviderProtocol {
     #[default]
     OpenAiCompatible,
     AnthropicMessages,
+    GeminiGenerateContent,
 }
 
 impl ProviderProtocol {
@@ -70,6 +71,7 @@ impl ProviderProtocol {
         match self {
             Self::OpenAiCompatible => "open_ai_compatible",
             Self::AnthropicMessages => "anthropic_messages",
+            Self::GeminiGenerateContent => "gemini_generate_content",
         }
     }
 }
@@ -87,6 +89,7 @@ impl FromStr for ProviderProtocol {
         match value {
             "open_ai_compatible" => Ok(Self::OpenAiCompatible),
             "anthropic_messages" => Ok(Self::AnthropicMessages),
+            "gemini_generate_content" => Ok(Self::GeminiGenerateContent),
             _ => Err(ManifestError::InvalidProtocol),
         }
     }
@@ -266,6 +269,25 @@ mod tests {
         assert_eq!(
             serde_json::to_value(anthropic).unwrap()["protocol"],
             "anthropic_messages"
+        );
+    }
+
+    #[test]
+    fn manifest_supports_gemini_generate_content() {
+        let manifest = ProviderManifest::new_with_protocol(
+            "gemini",
+            "Gemini",
+            ProviderProtocol::GeminiGenerateContent,
+            "https://generativelanguage.googleapis.com/v1beta",
+            "gemini-2.5-pro",
+            "PANDORA_GEMINI_API_KEY",
+        )
+        .unwrap();
+
+        assert_eq!(manifest.protocol(), ProviderProtocol::GeminiGenerateContent);
+        assert_eq!(
+            serde_json::to_value(manifest).unwrap()["protocol"],
+            "gemini_generate_content"
         );
     }
 }
