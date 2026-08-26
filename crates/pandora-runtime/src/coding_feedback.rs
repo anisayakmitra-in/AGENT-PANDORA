@@ -1,6 +1,7 @@
 use crate::adaptive_engine::{AdaptationResult, AdaptiveEngine, AdaptiveError};
 use crate::evaluation_engine::EvaluationEngine;
 use crate::run_loop::{RunLoop, RunLoopError};
+use crate::self_healing::{SelfHealingEngine, SelfHealingError};
 use crate::strategies::StrategyError;
 use crate::strategies::reflexion::ReflexionStrategy;
 use pandora_types::{
@@ -16,6 +17,7 @@ pub enum CodingFeedbackError {
     RunLoop(RunLoopError),
     Strategy(StrategyError),
     Adaptation(AdaptiveError),
+    SelfHealing(SelfHealingError),
     Evaluation(EvaluationContractError),
 }
 
@@ -28,6 +30,7 @@ impl fmt::Display for CodingFeedbackError {
             Self::RunLoop(error) => error.fmt(formatter),
             Self::Strategy(error) => error.fmt(formatter),
             Self::Adaptation(error) => error.fmt(formatter),
+            Self::SelfHealing(error) => error.fmt(formatter),
             Self::Evaluation(error) => error.fmt(formatter),
         }
     }
@@ -50,6 +53,12 @@ impl From<StrategyError> for CodingFeedbackError {
 impl From<AdaptiveError> for CodingFeedbackError {
     fn from(error: AdaptiveError) -> Self {
         Self::Adaptation(error)
+    }
+}
+
+impl From<SelfHealingError> for CodingFeedbackError {
+    fn from(error: SelfHealingError) -> Self {
+        Self::SelfHealing(error)
     }
 }
 
@@ -129,6 +138,7 @@ pub struct CodingFeedbackLoop {
     evaluation: EvaluationEngine,
     reflexion: ReflexionStrategy,
     adaptive: AdaptiveEngine,
+    healing: SelfHealingEngine,
 }
 
 impl CodingFeedbackLoop {
@@ -141,7 +151,8 @@ impl CodingFeedbackLoop {
             run_loop,
             evaluation: EvaluationEngine::new(),
             reflexion: ReflexionStrategy::new(max_failure_signals)?,
-            adaptive: AdaptiveEngine::new(adaptation_policy),
+            adaptive: AdaptiveEngine::new(adaptation_policy.clone()),
+            healing: SelfHealingEngine::new(adaptation_policy),
         })
     }
 
@@ -193,7 +204,11 @@ impl CodingFeedbackLoop {
             !passed && policy_passed && input.retryable,
         ))?;
         let adaptation = if decision == LoopDecision::Retry {
-            Some(self.adaptive.select(&input.adaptation, now)?)
+            if self.healing.can_handle(&input.adaptation) {
+                Some(self.healing.recover(&input.adaptation, now)?)
+            } else {
+                Some(self.adaptive.select(&input.adaptation, now)?)
+            }
         } else {
             None
         };

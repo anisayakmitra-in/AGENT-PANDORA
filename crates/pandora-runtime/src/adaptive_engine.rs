@@ -1,7 +1,7 @@
 use crate::efficiency_engine::{EfficiencyEngine, EfficiencyError};
 use pandora_types::{
-    AdaptationDecision, AdaptationPolicy, AdaptationReceipt, AdaptationRequest,
-    EfficiencyObjective, EfficiencySummary, Timestamp,
+    AdaptationCandidate, AdaptationDecision, AdaptationPolicy, AdaptationReceipt,
+    AdaptationRequest, AdaptationTarget, EfficiencyObjective, EfficiencySummary, Timestamp,
 };
 use std::cmp::Ordering;
 use std::fmt;
@@ -63,7 +63,15 @@ impl AdaptiveEngine {
         request: &AdaptationRequest,
         now: Timestamp,
     ) -> Result<AdaptationResult, AdaptiveError> {
-        self.select_internal(request, now, None)
+        self.select_internal(request, now, None, accept_all)
+    }
+
+    pub fn select_recovery(
+        &self,
+        request: &AdaptationRequest,
+        now: Timestamp,
+    ) -> Result<AdaptationResult, AdaptiveError> {
+        self.select_internal(request, now, None, is_recovery_candidate)
     }
 
     pub fn select_with_efficiency(
@@ -75,7 +83,7 @@ impl AdaptiveEngine {
         objective: EfficiencyObjective,
     ) -> Result<AdaptationResult, AdaptiveError> {
         let ranking = efficiency.rank(task_class, objective)?;
-        self.select_internal(request, now, Some(&ranking))
+        self.select_internal(request, now, Some(&ranking), accept_all)
     }
 
     fn select_internal(
@@ -83,10 +91,12 @@ impl AdaptiveEngine {
         request: &AdaptationRequest,
         now: Timestamp,
         efficiency_ranking: Option<&[EfficiencySummary]>,
+        candidate_filter: fn(&AdaptationCandidate) -> bool,
     ) -> Result<AdaptationResult, AdaptiveError> {
         let mut eligible = request
             .candidates()
             .iter()
+            .filter(|candidate| candidate_filter(candidate))
             .take(self.policy.max_candidates())
             .filter(|candidate| candidate.approved())
             .filter(|candidate| candidate.cost_micros() <= self.policy.max_cost_micros())
@@ -113,6 +123,7 @@ impl AdaptiveEngine {
             let had_approved = request
                 .candidates()
                 .iter()
+                .filter(|candidate| candidate_filter(candidate))
                 .take(self.policy.max_candidates())
                 .any(|candidate| candidate.approved());
             let reason = if had_approved {
@@ -128,6 +139,17 @@ impl AdaptiveEngine {
         let receipt = AdaptationReceipt::new(request, self.policy.policy_version(), &decision, now);
         Ok(AdaptationResult { decision, receipt })
     }
+}
+
+fn accept_all(_: &AdaptationCandidate) -> bool {
+    true
+}
+
+fn is_recovery_candidate(candidate: &AdaptationCandidate) -> bool {
+    matches!(
+        candidate.target(),
+        AdaptationTarget::Recovery(_) | AdaptationTarget::CapabilityReduction(_)
+    )
 }
 
 fn compare_evidence(

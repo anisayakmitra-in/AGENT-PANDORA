@@ -291,6 +291,13 @@ mint a permit, mutate code, or change policy. The current CLI does not start
 this loop automatically. A caller must supply the expected outcome, usage,
 retry classification, and approved adaptation candidates.
 
+`SelfHealingEngine` is the bounded recovery selector used when a feedback loop
+offers recovery or capability-reduction candidates. It reuses the existing
+adaptation policy and receipt, ignores ordinary workflow/provider candidates,
+and never executes a recovery action or expands authority. The run loop remains
+responsible for retry and termination budgets; the caller must send any chosen
+recovery through the normal governed execution path.
+
 Every built-in Harness and Gene has a canonical slash command. The Coding short
 aliases are `/coding`, `/read`, `/search`, `/patch`, `/verify`, `/review`,
 `/audit`, `/argus-review`, `/debt`, `/measure`, and `/guide`. Canonical commands

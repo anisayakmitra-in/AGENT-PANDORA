@@ -72,6 +72,19 @@ fn candidate(id: &str, workflow: &str, approved: bool) -> AdaptationCandidate {
     .unwrap()
 }
 
+fn recovery_candidate(id: &str, action: &str, approved: bool) -> AdaptationCandidate {
+    AdaptationCandidate::new(
+        id,
+        AdaptationTarget::recovery(action).unwrap(),
+        10,
+        approved,
+        false,
+        100,
+        10,
+    )
+    .unwrap()
+}
+
 fn input(
     execution_id: &str,
     output: &str,
@@ -307,6 +320,44 @@ fn failed_no_progress_iteration_uses_failure_policy_instead_of_completing() {
     assert_eq!(result.decision(), LoopDecision::Retry);
     assert!(result.adaptation().is_some());
     assert_eq!(result.snapshot().state(), RunLoopState::Running);
+}
+
+#[test]
+fn retry_uses_self_healing_for_recovery_candidates() {
+    let mut feedback = feedback_loop(1);
+    let request = evaluation("execution-1", "worker unavailable")
+        .with_terminal_failure("worker_unavailable")
+        .unwrap();
+    let input = CodingFeedbackInput::new(
+        request,
+        "tests passed",
+        adaptation(
+            "execution-1",
+            vec![
+                candidate("replan", "replan", true),
+                recovery_candidate("restart", "restart-worker", true),
+            ],
+        ),
+        Usage::new(100, 2, 5, 50),
+        true,
+    )
+    .unwrap();
+
+    let result = feedback
+        .record_iteration(input, Timestamp::from_unix_seconds(10))
+        .unwrap();
+
+    assert_eq!(result.decision(), LoopDecision::Retry);
+    assert_eq!(
+        result
+            .adaptation()
+            .unwrap()
+            .decision()
+            .selected()
+            .unwrap()
+            .label(),
+        "restart-worker"
+    );
 }
 
 #[test]

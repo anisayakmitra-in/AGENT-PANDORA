@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added `SelfHealingEngine` and connected recovery candidates to
+  `CodingFeedbackLoop`. Recovery selection remains policy-bounded and emits
+  the existing adaptation receipt; it does not execute actions or expand
+  authority.
+
 - Added a bounded runtime composition ledger. Execution profiles now bind
   deterministic component provenance and identity digests for the runtime,
   selected executor, and containment evidence without creating a second

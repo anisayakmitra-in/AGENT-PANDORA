@@ -18,6 +18,11 @@ SHA-256 digest. Inputs are relative paths only, have bounded size and count,
 and require a provenance label. Nodes and edges are sorted before the digest is
 calculated, so equivalent input order produces the same evidence.
 
+This boundary follows the useful part of Graphify's approach: local code and
+document structure can be turned into explainable, queryable evidence with
+explicit provenance and deterministic output. Pandora keeps that behavior
+inside its own graph contracts and does not vendor or execute Graphify.
+
 Graph output is descriptive evidence. It cannot authorize an effect, override
 Parliament, issue a permit, promote memory, or activate a package. Callers must
 rebuild a snapshot when source content or provenance changes; the digest is not
