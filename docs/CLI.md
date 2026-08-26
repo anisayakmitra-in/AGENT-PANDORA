@@ -199,9 +199,10 @@ or expose provider, MCP, package, or remote-execution methods.
 Read-only work can complete without approval. Writes and process effects stop at
 the approval boundary and expose an inspectable, redacted request subject.
 `--harness` selects a built-in Harness or an admitted package profile by ID;
-`coding`, `research`, `design`, and `operations` are aliases for the built-in
-`coding-domain`, `research-domain`, `design-domain`, and `operations-domain`
-Harnesses. Package-backed Domain profiles require the exact
+`coding`, `research`, `design`, `operations`, and `security` are aliases for
+the built-in `coding-domain`, `research-domain`, `design-domain`,
+`operations-domain`, and `security-domain` Harnesses. Package-backed Domain
+profiles require the exact
 `--harness-version <version>` value. The runtime rejects an unknown,
 unsupported, or unavailable profile before Gene planning.
 Direct `run` recognizes the Coding actions `read:`, `search:`, `patch:`,
@@ -212,7 +213,9 @@ It also recognizes the Research actions `evidence-inventory`,
 `design-inspect:`, `design-compare:`, `accessibility-evidence`, and
 `design-guide`. Operations actions are `operations-inventory`,
 `operations-search:`, `config-inspect:`, `config-compare:`,
-`deployment-evidence`, and `operations-guide`. Other natural-language tasks
+`deployment-evidence`, and `operations-guide`. Security actions are
+`security-audit`, `security-dependencies`, `security-policy`, and
+`security-guide`. Other natural-language tasks
 require `run --agent`; Pandora does not silently route them to an unregistered
 default Harness.
 `harness run` accepts the same canonical catalog IDs and only runs a Domain
@@ -447,6 +450,8 @@ pandora harness inspect design
 pandora harness inspect design-domain
 pandora harness inspect operations
 pandora harness inspect operations-domain
+pandora harness inspect security
+pandora harness inspect security-domain
 pandora harness run coding --gene workspace.read --task "read:README.md"
 pandora harness run research --gene source.compare --task "source-compare:README.md|CHANGELOG.md"
 pandora harness run design --gene design.inspect --task "design-inspect:styles.css"
@@ -536,6 +541,9 @@ are `/design-inventory`, `/design-tokens`, `/design-inspect`, `/design-compare`,
 `/operations` inspects the built-in `operations-domain` Harness. Its short Gene
 aliases are `/operations-inventory`, `/operations-search`, `/config-inspect`,
 `/config-compare`, `/deployment-evidence`, and `/operations-guide`.
+`/security` inspects the built-in `security-domain` Harness. Its short Gene
+aliases are `/security-audit`, `/security-dependencies`, `/security-policy`,
+and `/security-guide`.
 An admitted custom Domain Harness uses exact-version commands such as
 `/harness:owner%2Fdomain@1.0.0` and
 `/gene:owner%2Fdomain@1.0.0:workspace.read`. Custom packages cannot claim the

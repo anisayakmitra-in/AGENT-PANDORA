@@ -11,6 +11,8 @@ pub const DESIGN_HARNESS_ID: &str = "design-domain";
 pub const DESIGN_HARNESS_VERSION: &str = "0.1.0";
 pub const OPERATIONS_HARNESS_ID: &str = "operations-domain";
 pub const OPERATIONS_HARNESS_VERSION: &str = "0.1.0";
+pub const SECURITY_HARNESS_ID: &str = "security-domain";
+pub const SECURITY_HARNESS_VERSION: &str = "0.1.0";
 pub const COORDINATION_META_HARNESS_ID: &str = "coordination-meta";
 pub const COORDINATION_META_HARNESS_VERSION: &str = "0.4.0";
 
@@ -117,6 +119,26 @@ pub fn operations_manifest() -> Result<HarnessManifest, ManifestError> {
     )
 }
 
+pub fn security_manifest() -> Result<HarnessManifest, ManifestError> {
+    let genes = [
+        "security.audit",
+        "security.dependencies",
+        "security.policy",
+        "security.guide",
+    ]
+    .into_iter()
+    .map(|id| GeneId::new(id).expect("built-in Gene ID is valid"))
+    .collect();
+    HarnessManifest::new(
+        SECURITY_HARNESS_ID,
+        SECURITY_HARNESS_VERSION,
+        "Security Domain",
+        HarnessKind::Domain,
+        None,
+        genes,
+    )
+}
+
 pub fn coordination_meta_manifest() -> Result<HarnessManifest, ManifestError> {
     let composition = MetaComposition::new(
         vec![
@@ -124,6 +146,7 @@ pub fn coordination_meta_manifest() -> Result<HarnessManifest, ManifestError> {
             HarnessId::new(RESEARCH_HARNESS_ID)?,
             HarnessId::new(DESIGN_HARNESS_ID)?,
             HarnessId::new(OPERATIONS_HARNESS_ID)?,
+            HarnessId::new(SECURITY_HARNESS_ID)?,
         ],
         8,
     )?;

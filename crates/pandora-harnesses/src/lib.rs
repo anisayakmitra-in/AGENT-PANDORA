@@ -8,6 +8,7 @@ pub mod manifest;
 pub mod operations;
 pub mod profile;
 pub mod research;
+pub mod security;
 pub mod slash;
 
 pub use catalog::HarnessCatalog;
@@ -337,13 +338,13 @@ pub use genes::{
 };
 pub use harness::{
     CodingHarness, CoordinationMetaHarness, CoreSourceHarness, DesignHarness, OperationsHarness,
-    ResearchHarness,
+    ResearchHarness, SecurityHarness,
 };
 pub use manifest::{
     CODING_HARNESS_ID, CODING_HARNESS_VERSION, COORDINATION_META_HARNESS_ID,
     COORDINATION_META_HARNESS_VERSION, CORE_SOURCE_HARNESS_ID, CORE_SOURCE_HARNESS_VERSION,
     DESIGN_HARNESS_ID, DESIGN_HARNESS_VERSION, OPERATIONS_HARNESS_ID, OPERATIONS_HARNESS_VERSION,
-    RESEARCH_HARNESS_ID, RESEARCH_HARNESS_VERSION,
+    RESEARCH_HARNESS_ID, RESEARCH_HARNESS_VERSION, SECURITY_HARNESS_ID, SECURITY_HARNESS_VERSION,
 };
 pub use operations::{
     OperationsAction, OperationsGene, OperationsGeneRole, OperationsRequest, is_operations_gene,
@@ -361,12 +362,17 @@ pub use research::{
     ResearchAction, ResearchGene, ResearchGeneRole, ResearchRequest, is_research_gene,
     research_static_output,
 };
+pub use security::{
+    SecurityAction, SecurityGene, SecurityGeneRole, SecurityRequest, is_security_gene,
+    security_static_output,
+};
 
 pub fn builtin_genes() -> Vec<Box<dyn pandora_types::Gene>> {
     let mut genes = CodingGene::all();
     genes.extend(ResearchGene::all());
     genes.extend(DesignGene::all());
     genes.extend(OperationsGene::all());
+    genes.extend(SecurityGene::all());
     genes
 }
 
@@ -556,6 +562,34 @@ mod tests {
     }
 
     #[test]
+    fn security_domain_exposes_only_bounded_read_workflows() {
+        let security = builtin_harnesses()
+            .into_iter()
+            .find(|harness| harness.manifest().id().as_str() == "security-domain")
+            .expect("the built-in catalog should include the Security Domain Harness");
+        let genes = security
+            .genes()
+            .iter()
+            .map(|gene| gene.manifest())
+            .collect::<Vec<_>>();
+
+        assert_eq!(security.manifest().kind(), HarnessKind::Domain);
+        assert_eq!(genes.len(), 4);
+        for id in [
+            "security.audit",
+            "security.dependencies",
+            "security.policy",
+            "security.guide",
+        ] {
+            assert!(genes.iter().any(|gene| gene.id().as_str() == id));
+        }
+        assert!(genes.iter().all(|gene| {
+            gene.capabilities().is_empty()
+                || gene.capabilities() == [pandora_types::Capability::FilesystemRead]
+        }));
+    }
+
+    #[test]
     fn slash_catalog_covers_the_coding_harness_and_every_gene() {
         let harnesses = HarnessCatalog::builtins();
         let commands = SlashCommandCatalog::from_harnesses(harnesses.iter()).unwrap();
@@ -660,6 +694,30 @@ mod tests {
         {
             let command =
                 canonical_gene_command("operations-domain", gene.manifest().id().as_str());
+            assert!(commands.resolve(&command).is_some(), "missing {command}");
+        }
+    }
+
+    #[test]
+    fn slash_catalog_covers_the_security_harness_and_every_gene() {
+        let harnesses = HarnessCatalog::builtins();
+        let commands = SlashCommandCatalog::from_harnesses(harnesses.iter()).unwrap();
+
+        for command in [
+            "/security",
+            "/security-audit",
+            "/security-dependencies",
+            "/security-policy",
+            "/security-guide",
+        ] {
+            assert!(commands.resolve(command).is_some(), "missing {command}");
+        }
+        for gene in harnesses
+            .find(&pandora_types::HarnessId::new("security-domain").unwrap())
+            .unwrap()
+            .genes()
+        {
+            let command = canonical_gene_command("security-domain", gene.manifest().id().as_str());
             assert!(commands.resolve(&command).is_some(), "missing {command}");
         }
     }

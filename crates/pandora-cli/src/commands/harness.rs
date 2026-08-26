@@ -2,7 +2,7 @@ use super::{parse_options, run};
 use crate::output::{CliError, CommandResult, success};
 use pandora_harnesses::{
     CODING_HARNESS_ID, DESIGN_HARNESS_ID, HarnessCatalog, OPERATIONS_HARNESS_ID,
-    RESEARCH_HARNESS_ID,
+    RESEARCH_HARNESS_ID, SECURITY_HARNESS_ID,
 };
 use pandora_runtime::{PackageRecord, PackageState};
 use pandora_types::{HarnessKind, PackageKind};
@@ -72,6 +72,7 @@ fn inspect(args: &[String]) -> Result<CommandResult, CliError> {
         "research" => RESEARCH_HARNESS_ID,
         "design" => DESIGN_HARNESS_ID,
         "operations" => OPERATIONS_HARNESS_ID,
+        "security" => SECURITY_HARNESS_ID,
         requested_id => requested_id,
     };
     let harness_id = pandora_types::HarnessId::new(requested_id.to_owned())
@@ -137,6 +138,7 @@ fn run_harness(args: &[String]) -> Result<CommandResult, CliError> {
         "research" => RESEARCH_HARNESS_ID,
         "design" => DESIGN_HARNESS_ID,
         "operations" => OPERATIONS_HARNESS_ID,
+        "security" => SECURITY_HARNESS_ID,
         requested_id => requested_id,
     };
     let harnesses = HarnessCatalog::builtins();

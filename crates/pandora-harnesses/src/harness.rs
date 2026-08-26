@@ -2,10 +2,11 @@ use crate::design::DesignGene;
 use crate::genes::CodingGene;
 use crate::manifest::{
     coding_manifest, coordination_meta_manifest, core_source_manifest, design_manifest,
-    operations_manifest, research_manifest,
+    operations_manifest, research_manifest, security_manifest,
 };
 use crate::operations::OperationsGene;
 use crate::research::ResearchGene;
+use crate::security::SecurityGene;
 use pandora_types::{Gene, Harness, HarnessManifest};
 
 pub struct CoreSourceHarness {
@@ -150,6 +151,36 @@ impl Default for OperationsHarness {
 }
 
 impl Harness for OperationsHarness {
+    fn manifest(&self) -> &HarnessManifest {
+        &self.manifest
+    }
+
+    fn genes(&self) -> &[Box<dyn Gene>] {
+        &self.genes
+    }
+}
+
+pub struct SecurityHarness {
+    manifest: HarnessManifest,
+    genes: Vec<Box<dyn Gene>>,
+}
+
+impl SecurityHarness {
+    pub fn new() -> Self {
+        Self {
+            manifest: security_manifest().expect("built-in Security Harness manifest is valid"),
+            genes: SecurityGene::all(),
+        }
+    }
+}
+
+impl Default for SecurityHarness {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Harness for SecurityHarness {
     fn manifest(&self) -> &HarnessManifest {
         &self.manifest
     }

@@ -54,7 +54,7 @@ engine checks those limits before registering a plan, so a plan cannot introduce
 an undeclared Domain Harness through a Meta Harness.
 
 Its built-in composition contains `coding-domain`, `research-domain`,
-`design-domain`, and `operations-domain`.
+`design-domain`, `operations-domain`, and `security-domain`.
 
 `pandora harness inspect coordination-meta --json` exposes that composition
 boundary as `meta_composition.allowed_domains` and
@@ -195,6 +195,23 @@ The effectful Operations Genes request only `filesystem.read`. They cannot run
 commands, connect to infrastructure, read credentials outside the workspace, or
 change a deployment. Those effects require separate capabilities and approvals.
 
+## Security Domain Harness
+
+The built-in `security-domain` Harness owns four read-only evidence Genes:
+
+- `security.audit` searches fixed high-signal source markers such as `unsafe`,
+  process spawning, network clients, deserialization, and secret terminology;
+- `security.dependencies` searches fixed dependency declaration markers;
+- `security.policy` searches fixed authorization, credential, and security-policy
+  markers;
+- `security.guide` returns static guidance without requesting an effect.
+
+The Security Domain is a bounded evidence surface, not a complete vulnerability
+scanner and not a compliance certification. It does not execute scanners, run
+commands, contact networks, modify files, inspect credentials, or remediate
+findings. Effectful Genes use the existing workspace-scoped `filesystem.read`
+permit, receipt, and runtime-event path.
+
 `CodingFeedbackLoop` composes the existing evaluation, Reflexion, adaptation,
 and run-loop contracts around coding evidence. A verified iteration completes
 without adaptation. A failed retryable iteration records trajectory, outcome,
@@ -224,6 +241,9 @@ The Design short aliases are `/design`, `/design-inventory`, `/design-tokens`,
 The Operations short aliases are `/operations`, `/operations-inventory`,
 `/operations-search`, `/config-inspect`, `/config-compare`,
 `/deployment-evidence`, and `/operations-guide`.
+
+The Security short aliases are `/security`, `/security-audit`,
+`/security-dependencies`, `/security-policy`, and `/security-guide`.
 
 Admitted custom Domain and Meta profiles receive exact-version Harness commands.
 Custom Domain profiles receive Gene commands for dependencies that resolve to
@@ -276,10 +296,10 @@ of the same custom ID are rejected during admission.
 Built-in Harness IDs are reserved. A package can add a new Domain or Meta
 profile but cannot shadow `core-source`, `coordination-meta`, `coding-domain`,
 `research-domain`, `design-domain`, `operations-domain`, or another built-in
-identity.
+`security-domain`, or another built-in identity.
 
-The built-in Coding, Research, Design, and Operations Genes and installed
-WebAssembly Genes are the executable Gene implementations available to
+The built-in Coding, Research, Design, Operations, and Security Genes and
+installed WebAssembly Genes are the executable Gene implementations available to
 declarative Domain profiles. An admitted custom Domain profile can be selected
 with its exact version when every required dependency resolves exactly. The
 profile still uses the existing execution controller and effect policy. The

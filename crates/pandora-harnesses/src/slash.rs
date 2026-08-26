@@ -290,6 +290,7 @@ fn built_in_harness_alias(id: &str) -> Option<&'static str> {
         "research-domain" => Some("/research"),
         "design-domain" => Some("/design"),
         "operations-domain" => Some("/operations"),
+        "security-domain" => Some("/security"),
         "coordination-meta" => Some("/coordination"),
         _ => None,
     }
@@ -325,6 +326,10 @@ fn built_in_gene_alias(id: &str) -> Option<&'static str> {
         "config.compare" => Some("/config-compare"),
         "deployment.evidence" => Some("/deployment-evidence"),
         "operations.guide" => Some("/operations-guide"),
+        "security.audit" => Some("/security-audit"),
+        "security.dependencies" => Some("/security-dependencies"),
+        "security.policy" => Some("/security-policy"),
+        "security.guide" => Some("/security-guide"),
         _ => None,
     }
 }

@@ -3471,6 +3471,11 @@ fn harness_discovery_exposes_the_built_in_domains_without_runtime_internals() {
             .iter()
             .any(|harness| harness["id"] == "operations-domain")
     );
+    assert!(
+        harnesses
+            .iter()
+            .any(|harness| harness["id"] == "security-domain")
+    );
     let meta = harnesses
         .iter()
         .find(|harness| harness["id"] == "coordination-meta")
@@ -3720,6 +3725,50 @@ fn direct_run_accepts_the_operations_harness_alias() {
 }
 
 #[test]
+fn security_harness_runs_read_only_audit_and_guide_genes() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    let output = fixture
+        .command(&[
+            "run",
+            "--harness",
+            "security",
+            "--gene",
+            "security.guide",
+            "security-guide",
+            "--json",
+        ])
+        .output()
+        .expect("security guide should start");
+    assert_success_with_context(&output, "security guide");
+    let response = parse_json(&output);
+    assert_eq!(response["harness_id"], "security-domain");
+    assert_eq!(response["gene_id"], "security.guide");
+    assert_eq!(response["status"], "completed");
+
+    let output = fixture
+        .command(&[
+            "harness",
+            "run",
+            "security",
+            "--gene",
+            "security.audit",
+            "--task",
+            "security-audit",
+            "--json",
+        ])
+        .output()
+        .expect("security audit should start");
+    assert_success_with_context(&output, "security audit");
+    let response = parse_json(&output);
+    assert_eq!(response["harness_id"], "security-domain");
+    assert_eq!(response["gene_id"], "security.audit");
+    assert_eq!(response["status"], "completed");
+    assert!(response["output"].is_string());
+}
+
+#[test]
 fn operations_harness_executes_bounded_workspace_reads() {
     let fixture = Fixture::new();
     fixture.setup();
@@ -3811,6 +3860,11 @@ fn slash_commands_cover_the_built_in_domains_and_execute_workflow_genes() {
         "/config-compare",
         "/deployment-evidence",
         "/operations-guide",
+        "/security",
+        "/security-audit",
+        "/security-dependencies",
+        "/security-policy",
+        "/security-guide",
     ] {
         assert!(commands.contains(&expected), "missing {expected}");
     }

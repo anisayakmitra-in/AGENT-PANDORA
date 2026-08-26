@@ -1,4 +1,6 @@
-use pandora_harnesses::{CODING_HARNESS_ID, DESIGN_HARNESS_ID, RESEARCH_HARNESS_ID};
+use pandora_harnesses::{
+    CODING_HARNESS_ID, DESIGN_HARNESS_ID, RESEARCH_HARNESS_ID, SECURITY_HARNESS_ID,
+};
 use pandora_types::{GeneId, HarnessId, TaskIntent};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -12,6 +14,7 @@ pub enum RoutingReason {
     CodingTask,
     ResearchTask,
     DesignTask,
+    SecurityTask,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -78,6 +81,17 @@ impl ShadowCouncil {
                     .expect("built-in harness ID is valid"),
                 gene_id: task.requested_gene().cloned(),
                 reason: RoutingReason::ResearchTask,
+            });
+        }
+        let is_security_task = ["security", "vulnerability", "threat", "cve"]
+            .iter()
+            .any(|term| summary.contains(term));
+        if is_security_task {
+            return Ok(Selection {
+                harness_id: HarnessId::new(SECURITY_HARNESS_ID)
+                    .expect("built-in harness ID is valid"),
+                gene_id: task.requested_gene().cloned(),
+                reason: RoutingReason::SecurityTask,
             });
         }
         let is_coding_task = [
@@ -153,6 +167,16 @@ mod tests {
         let selection = council.select(&task).unwrap();
 
         assert_eq!(selection.harness_id().as_str(), "design-domain");
+    }
+
+    #[test]
+    fn security_task_selects_the_security_domain() {
+        let council = ShadowCouncil::new();
+        let task = TaskIntent::new("security-audit").unwrap();
+
+        let selection = council.select(&task).unwrap();
+
+        assert_eq!(selection.harness_id().as_str(), "security-domain");
     }
 
     #[test]

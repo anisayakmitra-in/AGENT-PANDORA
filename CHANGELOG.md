@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added the read-only `security-domain` Harness with bounded audit,
+  dependency-marker, policy-marker, and static-guidance Genes. Its evidence
+  workflows use only the existing workspace-scoped filesystem read path and
+  do not claim complete vulnerability scanning or automated remediation.
 - Added a typed TypeScript client for invoking the existing JSON CLI contract
   without shell interpolation or a second runtime authority.
 - Added governed `pandora mcp catalog` and `pandora mcp call` commands for
@@ -42,7 +46,8 @@
   token-marker evidence, source inspection, source comparison, accessibility
   evidence, and static guidance Genes. Every effect is workspace-scoped and
   read-only.
-- `coordination-meta` can now compose Coding, Research, and Design Domains.
+- `coordination-meta` can now compose Coding, Research, Design, Operations, and
+  Security Domains.
   Design Genes use the existing ToolEngine, slash-command catalog, Parliament,
   Reference Monitor, executors, receipts, and runtime events.
 - Added the built-in `research-domain` Harness with bounded evidence inventory,
