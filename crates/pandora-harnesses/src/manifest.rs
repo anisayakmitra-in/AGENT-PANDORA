@@ -127,6 +127,8 @@ pub fn security_manifest() -> Result<HarnessManifest, ManifestError> {
     let genes = [
         "security.audit",
         "security.scan",
+        "security.deep-scan",
+        "security.diff-scan",
         "security.dependencies",
         "security.threat-model",
         "security.discovery",

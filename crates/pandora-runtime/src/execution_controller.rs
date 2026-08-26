@@ -1277,6 +1277,8 @@ impl ExecutionController {
                         | "deployment.evidence"
                         | "security.audit"
                         | "security.scan"
+                        | "security.deep-scan"
+                        | "security.diff-scan"
                         | "security.dependencies"
                         | "security.threat-model"
                         | "security.discovery"
@@ -1343,6 +1345,8 @@ impl ExecutionController {
                         | "deployment.evidence"
                         | "security.audit"
                         | "security.scan"
+                        | "security.deep-scan"
+                        | "security.diff-scan"
                         | "security.dependencies"
                         | "security.threat-model"
                         | "security.discovery"
@@ -1737,6 +1741,12 @@ fn default_gene_id(intent: &TaskIntent) -> GeneId {
         "operations-guide" => GeneId::new("operations.guide").expect("built-in Gene ID is valid"),
         "security-audit" => GeneId::new("security.audit").expect("built-in Gene ID is valid"),
         "security-scan" => GeneId::new("security.scan").expect("built-in Gene ID is valid"),
+        "security-deep-scan" => {
+            GeneId::new("security.deep-scan").expect("built-in Gene ID is valid")
+        }
+        "security-diff-scan" => {
+            GeneId::new("security.diff-scan").expect("built-in Gene ID is valid")
+        }
         "security-dependencies" => {
             GeneId::new("security.dependencies").expect("built-in Gene ID is valid")
         }
@@ -2024,6 +2034,12 @@ fn security_input(
     let request = match gene_id.as_str() {
         "security.audit" if action == "security-audit" => SecurityRequest::audit(context),
         "security.scan" if action == "security-scan" => SecurityRequest::scan(context),
+        "security.deep-scan" if action == "security-deep-scan" => {
+            SecurityRequest::deep_scan(context)
+        }
+        "security.diff-scan" if action == "security-diff-scan" => {
+            SecurityRequest::diff_scan(context)
+        }
         "security.dependencies" if action == "security-dependencies" => {
             SecurityRequest::dependencies(context)
         }

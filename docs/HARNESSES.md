@@ -198,9 +198,13 @@ change a deployment. Those effects require separate capabilities and approvals.
 
 ## Security Domain Harness
 
-The built-in `security-domain` Harness owns fifteen read-only evidence Genes:
+The built-in `security-domain` Harness owns seventeen read-only evidence Genes:
 
 - `security.scan` inventories fixed security-boundary markers;
+- `security.deep-scan` searches a broader fixed marker set without claiming
+  complete scanner coverage;
+- `security.diff-scan` searches changed-code and regression terminology without
+  reviewing a specific revision;
 - `security.audit` searches fixed high-signal source markers such as `unsafe`,
   process spawning, network clients, deserialization, and secret terminology;
 - `security.dependencies` searches fixed dependency declaration markers;
@@ -299,7 +303,8 @@ The Operations short aliases are `/operations`, `/operations-inventory`,
 `/deployment-evidence`, and `/operations-guide`.
 
 The Security short aliases are `/security`, `/security-audit`,
-`/security-scan`, `/security-dependencies`, `/security-threat-model`,
+`/security-scan`, `/security-deep-scan`, `/security-diff-scan`,
+`/security-dependencies`, `/security-threat-model`,
 `/security-discovery`, `/security-triage`, `/security-attack-path`,
 `/security-validation`, `/security-fix`, `/security-verify-fix`,
 `/security-writeup`, `/security-track`, `/security-hardening`,

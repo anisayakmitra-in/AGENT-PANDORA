@@ -6,6 +6,10 @@
   quality, lineage, analysis, and guidance Genes. It records local evidence
   without database connections, query execution, data mutation, or statistical
   correctness claims.
+- Added explicit `security.deep-scan` and `security.diff-scan` Genes to the
+  read-only Security Domain. They mirror Codex Security workflow boundaries
+  for broader evidence collection and changed-code review while remaining
+  non-scanning, non-remediating, and governed by workspace read permits.
 - Extended the read-only `security-domain` Harness with explicit discovery,
   attack-path, fix-planning, fix-verification, vulnerability-writeup, and
   finding-tracking workflow Genes modeled on the Codex Security lifecycle.

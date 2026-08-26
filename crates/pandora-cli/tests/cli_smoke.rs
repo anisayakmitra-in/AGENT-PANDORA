@@ -3767,6 +3767,29 @@ fn security_harness_runs_read_only_audit_and_guide_genes() {
     assert_eq!(response["status"], "completed");
     assert!(response["output"].is_string());
 
+    for (gene, action) in [
+        ("security.deep-scan", "security-deep-scan"),
+        ("security.diff-scan", "security-diff-scan"),
+    ] {
+        let output = fixture
+            .command(&[
+                "run",
+                "--harness",
+                "security",
+                "--gene",
+                gene,
+                action,
+                "--json",
+            ])
+            .output()
+            .expect("security evidence workflow should start");
+        assert_success_with_context(&output, "security evidence workflow");
+        let response = parse_json(&output);
+        assert_eq!(response["harness_id"], "security-domain");
+        assert_eq!(response["gene_id"], gene);
+        assert_eq!(response["status"], "completed");
+    }
+
     let output = fixture
         .command(&[
             "run",
@@ -3985,6 +4008,8 @@ fn slash_commands_cover_the_built_in_domains_and_execute_workflow_genes() {
         "/security",
         "/security-audit",
         "/security-scan",
+        "/security-deep-scan",
+        "/security-diff-scan",
         "/security-dependencies",
         "/security-threat-model",
         "/security-discovery",

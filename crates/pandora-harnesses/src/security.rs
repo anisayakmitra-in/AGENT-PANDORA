@@ -24,6 +24,32 @@ const SCAN_MARKERS: [&str; 8] = [
     "authorization",
     "credential",
 ];
+const DEEP_SCAN_MARKERS: [&str; 12] = [
+    "SECURITY.md",
+    "authentication",
+    "authorization",
+    "credential",
+    "unsafe",
+    "serde_json",
+    "deserialize",
+    "Command::new",
+    "reqwest::",
+    "trust boundary",
+    "sandbox",
+    "rate limit",
+];
+const DIFF_SCAN_MARKERS: [&str; 10] = [
+    "git diff",
+    "changed",
+    "regression",
+    "security",
+    "authorization",
+    "validation",
+    "permission",
+    "source",
+    "sink",
+    "test",
+];
 const DEPENDENCY_MARKERS: [&str; 4] = [
     "[dependencies]",
     "[dev-dependencies]",
@@ -127,13 +153,15 @@ const TRACK_MARKERS: [&str; 8] = [
     "closed",
     "fingerprint",
 ];
-const SECURITY_GUIDE: &str = "Security Scan inventories fixed high-signal security markers without claiming complete scanner coverage.\nSecurity Audit searches boundary-sensitive source markers and returns evidence paths.\nSecurity Dependencies searches dependency declarations without claiming advisory or vulnerability coverage.\nSecurity Threat Model searches local trust-boundary and isolation evidence.\nSecurity Discovery records candidate source, control, sink, and reachability terminology without asserting a finding.\nSecurity Triage searches existing finding and proof terminology without assigning a verdict.\nSecurity Attack Path searches source, control, sink, impact, and privilege evidence without proving exploitability.\nSecurity Validation searches tests and validation evidence without running a scanner.\nSecurity Fix searches remediation planning terminology without changing code.\nSecurity Verify Fix searches regression and negative-control evidence without certifying a fix.\nSecurity Writeup searches disclosure fields without generating a vulnerability report.\nSecurity Track searches finding lifecycle fields without creating or mutating a finding record.\nSecurity Hardening searches local defensive-control evidence and does not change code.\nSecurity Policy searches local authorization terminology without certifying compliance.\nAll filesystem effects require Pandora permits and receipts; process, network, package, and remediation actions require separately governed capabilities.";
+const SECURITY_GUIDE: &str = "Security Scan inventories fixed high-signal security markers without claiming complete scanner coverage.\nSecurity Deep Scan searches a broader fixed marker set without claiming complete scanner coverage.\nSecurity Diff Scan searches changed-code and regression evidence without reviewing a specific revision.\nSecurity Audit searches boundary-sensitive source markers and returns evidence paths.\nSecurity Dependencies searches dependency declarations without claiming advisory or vulnerability coverage.\nSecurity Threat Model searches local trust-boundary and isolation evidence.\nSecurity Discovery records candidate source, control, sink, and reachability terminology without asserting a finding.\nSecurity Triage searches existing finding and proof terminology without assigning a verdict.\nSecurity Attack Path searches source, control, sink, impact, and privilege evidence without proving exploitability.\nSecurity Validation searches tests and validation evidence without running a scanner.\nSecurity Fix searches remediation planning terminology without changing code.\nSecurity Verify Fix searches regression and negative-control evidence without certifying a fix.\nSecurity Writeup searches disclosure fields without generating a vulnerability report.\nSecurity Track searches finding lifecycle fields without creating or mutating a finding record.\nSecurity Hardening searches local defensive-control evidence and does not change code.\nSecurity Policy searches local authorization terminology without certifying compliance.\nAll filesystem effects require Pandora permits and receipts; process, network, package, and remediation actions require separately governed capabilities.";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SecurityAction {
     Audit,
     Scan,
+    DeepScan,
+    DiffScan,
     Dependencies,
     ThreatModel,
     Discovery,
@@ -163,6 +191,14 @@ impl SecurityRequest {
 
     pub fn scan(context: PlanningContext) -> Self {
         Self::new(SecurityAction::Scan, context)
+    }
+
+    pub fn deep_scan(context: PlanningContext) -> Self {
+        Self::new(SecurityAction::DeepScan, context)
+    }
+
+    pub fn diff_scan(context: PlanningContext) -> Self {
+        Self::new(SecurityAction::DiffScan, context)
     }
 
     pub fn dependencies(context: PlanningContext) -> Self {
@@ -237,6 +273,8 @@ impl SecurityRequest {
 pub enum SecurityGeneRole {
     Audit,
     Scan,
+    DeepScan,
+    DiffScan,
     Dependencies,
     ThreatModel,
     Discovery,
@@ -257,6 +295,8 @@ impl SecurityGeneRole {
         match self {
             Self::Audit => SecurityAction::Audit,
             Self::Scan => SecurityAction::Scan,
+            Self::DeepScan => SecurityAction::DeepScan,
+            Self::DiffScan => SecurityAction::DiffScan,
             Self::Dependencies => SecurityAction::Dependencies,
             Self::ThreatModel => SecurityAction::ThreatModel,
             Self::Discovery => SecurityAction::Discovery,
@@ -277,6 +317,8 @@ impl SecurityGeneRole {
         match self {
             Self::Audit => "security.audit",
             Self::Scan => "security.scan",
+            Self::DeepScan => "security.deep-scan",
+            Self::DiffScan => "security.diff-scan",
             Self::Dependencies => "security.dependencies",
             Self::ThreatModel => "security.threat-model",
             Self::Discovery => "security.discovery",
@@ -321,6 +363,8 @@ impl SecurityGene {
         [
             SecurityGeneRole::Audit,
             SecurityGeneRole::Scan,
+            SecurityGeneRole::DeepScan,
+            SecurityGeneRole::DiffScan,
             SecurityGeneRole::Dependencies,
             SecurityGeneRole::ThreatModel,
             SecurityGeneRole::Discovery,
@@ -377,6 +421,8 @@ impl Gene for SecurityGene {
         let markers: &[&str] = match self.role {
             SecurityGeneRole::Audit => &AUDIT_MARKERS,
             SecurityGeneRole::Scan => &SCAN_MARKERS,
+            SecurityGeneRole::DeepScan => &DEEP_SCAN_MARKERS,
+            SecurityGeneRole::DiffScan => &DIFF_SCAN_MARKERS,
             SecurityGeneRole::Dependencies => &DEPENDENCY_MARKERS,
             SecurityGeneRole::ThreatModel => &THREAT_MODEL_MARKERS,
             SecurityGeneRole::Discovery => &DISCOVERY_MARKERS,
@@ -403,6 +449,8 @@ pub fn is_security_gene(gene_id: &GeneId) -> bool {
         gene_id.as_str(),
         "security.audit"
             | "security.scan"
+            | "security.deep-scan"
+            | "security.diff-scan"
             | "security.dependencies"
             | "security.threat-model"
             | "security.discovery"
@@ -493,6 +541,8 @@ mod tests {
     fn assessment_roles_are_read_only_and_have_distinct_ids() {
         let roles = [
             (SecurityGeneRole::Scan, &SCAN_MARKERS[..]),
+            (SecurityGeneRole::DeepScan, &DEEP_SCAN_MARKERS[..]),
+            (SecurityGeneRole::DiffScan, &DIFF_SCAN_MARKERS[..]),
             (SecurityGeneRole::ThreatModel, &THREAT_MODEL_MARKERS[..]),
             (SecurityGeneRole::Discovery, &DISCOVERY_MARKERS[..]),
             (SecurityGeneRole::Triage, &TRIAGE_MARKERS[..]),

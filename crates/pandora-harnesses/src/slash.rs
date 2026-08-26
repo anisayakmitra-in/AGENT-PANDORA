@@ -330,6 +330,8 @@ fn built_in_gene_alias(id: &str) -> Option<&'static str> {
         "operations.guide" => Some("/operations-guide"),
         "security.audit" => Some("/security-audit"),
         "security.scan" => Some("/security-scan"),
+        "security.deep-scan" => Some("/security-deep-scan"),
+        "security.diff-scan" => Some("/security-diff-scan"),
         "security.dependencies" => Some("/security-dependencies"),
         "security.threat-model" => Some("/security-threat-model"),
         "security.discovery" => Some("/security-discovery"),
