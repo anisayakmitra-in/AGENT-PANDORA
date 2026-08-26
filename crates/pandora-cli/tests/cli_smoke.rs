@@ -3591,6 +3591,7 @@ fn harness_discovery_exposes_the_built_in_domains_without_runtime_internals() {
         "lint.check",
         "build.check",
         "workspace.status",
+        "workspace.diff",
         "athena.guide",
     ] {
         assert!(gene_ids.contains(&expected));
@@ -3719,6 +3720,57 @@ fn coding_harness_reports_short_git_status_through_the_governed_runtime() {
     assert_eq!(response["gene_id"], "workspace.status");
     assert_eq!(response["status"], "completed");
     assert_eq!(response["output"], "");
+
+    let diff_fixture = Fixture::new();
+    diff_fixture.setup();
+    diff_fixture.initialize_git_workspace();
+    fs::write(diff_fixture.workspace.join("README.md"), "changed\n")
+        .expect("fixture change should be written");
+    let output = diff_fixture
+        .command(&[
+            "run",
+            "--harness",
+            "coding",
+            "--gene",
+            "workspace.diff",
+            "diff",
+            "--json",
+        ])
+        .output()
+        .expect("workspace diff should start");
+    assert_eq!(output.status.code(), Some(40));
+    let response = parse_json(&output);
+    assert_eq!(response["code"], "approval_required");
+    let approval_id = response["details"]["approval_id"]
+        .as_str()
+        .expect("workspace diff should return an approval")
+        .to_owned();
+
+    let output = diff_fixture
+        .command(&["approval", "resolve", &approval_id, "--allow", "--json"])
+        .output()
+        .expect("workspace diff approval should resolve");
+    assert_success_with_context(&output, "workspace diff approval");
+
+    let output = diff_fixture
+        .command(&[
+            "run",
+            "--approval",
+            &approval_id,
+            "--harness",
+            "coding",
+            "--gene",
+            "workspace.diff",
+            "diff",
+            "--json",
+        ])
+        .output()
+        .expect("approved workspace diff should start");
+    assert_success_with_context(&output, "approved workspace diff");
+    let response = parse_json(&output);
+    assert_eq!(response["gene_id"], "workspace.diff");
+    assert_eq!(response["status"], "completed");
+    assert!(response["output"].as_str().unwrap().contains("README.md"));
 }
 
 #[test]
@@ -4042,6 +4094,7 @@ fn slash_commands_cover_the_built_in_domains_and_execute_workflow_genes() {
         "/lint",
         "/build",
         "/status",
+        "/diff",
         "/review",
         "/audit",
         "/argus-review",

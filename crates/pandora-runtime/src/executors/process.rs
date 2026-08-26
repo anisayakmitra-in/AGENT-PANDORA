@@ -61,6 +61,7 @@ enum VerificationKind {
     Lint,
     Build,
     Status,
+    Diff,
 }
 
 impl VerificationCommand {
@@ -110,6 +111,16 @@ impl VerificationCommand {
                     workspace,
                     kind: VerificationKind::Status,
                 }),
+                [command, no_ext, unified]
+                    if command == "diff"
+                        && no_ext == "--no-ext-diff"
+                        && unified == "--unified=3" =>
+                {
+                    Ok(Self {
+                        workspace,
+                        kind: VerificationKind::Diff,
+                    })
+                }
                 _ => Err(ProcessError::UnsupportedArguments),
             };
         }
@@ -170,6 +181,10 @@ impl VerificationCommand {
                 workspace,
                 kind: VerificationKind::Status,
             }),
+            "git diff --no-ext-diff --unified=3" => Ok(Self {
+                workspace,
+                kind: VerificationKind::Diff,
+            }),
             _ => Err(ProcessError::UnsupportedArguments),
         }
     }
@@ -184,6 +199,7 @@ impl VerificationCommand {
             }
             VerificationKind::Build => "cargo build --locked",
             VerificationKind::Status => "git status --short",
+            VerificationKind::Diff => "git diff --no-ext-diff --unified=3",
         }
     }
 
@@ -203,12 +219,13 @@ impl VerificationCommand {
             ],
             VerificationKind::Build => &["build", "--locked"],
             VerificationKind::Status => &["status", "--short"],
+            VerificationKind::Diff => &["diff", "--no-ext-diff", "--unified=3"],
         }
     }
 
     fn program(&self) -> &'static str {
         match self.kind {
-            VerificationKind::Status => "git",
+            VerificationKind::Status | VerificationKind::Diff => "git",
             _ => "cargo",
         }
     }
@@ -628,9 +645,34 @@ mod tests {
     }
 
     #[test]
+    fn accepts_only_read_only_git_diff() {
+        let workspace = Workspace::new();
+        let arguments = vec![
+            "diff".to_owned(),
+            "--no-ext-diff".to_owned(),
+            "--unified=3".to_owned(),
+        ];
+        let command = VerificationCommand::from_argv("git", &arguments, workspace.root.clone())
+            .expect("the fixed git diff command should be accepted");
+
+        assert_eq!(command.spec(), "git diff --no-ext-diff --unified=3");
+    }
+
+    #[test]
     fn rejects_other_git_commands() {
         let workspace = Workspace::new();
         let arguments = vec!["diff".to_owned()];
+
+        assert_eq!(
+            VerificationCommand::from_argv("git", &arguments, workspace.root.clone()),
+            Err(ProcessError::UnsupportedArguments)
+        );
+    }
+
+    #[test]
+    fn rejects_git_diff_options_outside_the_allowlist() {
+        let workspace = Workspace::new();
+        let arguments = vec!["diff".to_owned(), "--no-ext-diff".to_owned()];
 
         assert_eq!(
             VerificationCommand::from_argv("git", &arguments, workspace.root.clone()),

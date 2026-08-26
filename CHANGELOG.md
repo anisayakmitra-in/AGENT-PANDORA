@@ -26,6 +26,11 @@
   command. It runs only `git status --short` inside the configured workspace
   and returns the bounded output through the existing process receipt path.
 
+- Added the read-only `workspace.diff` Coding Gene, tool, and `/diff` command.
+  It runs only `git diff --no-ext-diff --unified=3` inside the configured
+  workspace and returns the bounded diff through the existing process receipt
+  path.
+
 ## v2.0.0-beta.7
 
 - Added `SelfHealingEngine` and connected recovery candidates to

@@ -1394,8 +1394,10 @@ impl ExecutionController {
                     &VerificationOptions::default(),
                     now,
                 );
-                if output.selected_gene.as_str() == "workspace.status"
-                    && let Ok(process_output) = response.result()
+                if matches!(
+                    output.selected_gene.as_str(),
+                    "workspace.status" | "workspace.diff"
+                ) && let Ok(process_output) = response.result()
                 {
                     output.output = Some(process_output.stdout().to_vec());
                 }
@@ -1727,6 +1729,7 @@ fn default_gene_id(intent: &TaskIntent) -> GeneId {
         "lint" => GeneId::new("lint.check").expect("built-in Gene ID is valid"),
         "build" => GeneId::new("build.check").expect("built-in Gene ID is valid"),
         "status" => GeneId::new("workspace.status").expect("built-in Gene ID is valid"),
+        "diff" => GeneId::new("workspace.diff").expect("built-in Gene ID is valid"),
         "review" => GeneId::new("change.review").expect("built-in Gene ID is valid"),
         "audit" => GeneId::new("daedalus.audit").expect("built-in Gene ID is valid"),
         "deep-review" => GeneId::new("argus.review").expect("built-in Gene ID is valid"),
@@ -1881,6 +1884,9 @@ fn coding_input(
         "build.check" if action == "build" && remainder.is_empty() => CodingRequest::build(context),
         "workspace.status" if action == "status" && remainder.is_empty() => {
             CodingRequest::status(context)
+        }
+        "workspace.diff" if action == "diff" && remainder.is_empty() => {
+            CodingRequest::diff(context)
         }
         _ => {
             return Err(RuntimeError::InvalidIntent(

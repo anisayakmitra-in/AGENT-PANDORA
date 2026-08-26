@@ -106,6 +106,7 @@ fn ordinary_run_advertises_the_complete_default_tool_catalog() {
             "source.compare".to_owned(),
             "source.read".to_owned(),
             "workspace.build".to_owned(),
+            "workspace.diff".to_owned(),
             "workspace.format".to_owned(),
             "workspace.lint".to_owned(),
             "workspace.patch".to_owned(),
