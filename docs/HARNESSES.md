@@ -54,7 +54,8 @@ engine checks those limits before registering a plan, so a plan cannot introduce
 an undeclared Domain Harness through a Meta Harness.
 
 Its built-in composition contains `coding-domain`, `research-domain`,
-`design-domain`, `operations-domain`, and `security-domain`.
+`design-domain`, `operations-domain`, `security-domain`, and
+`debugging-domain`.
 
 `pandora harness inspect coordination-meta --json` exposes that composition
 boundary as `meta_composition.allowed_domains` and
@@ -224,6 +225,21 @@ runtime-event path. The phase names mirror a governed security workflow while
 the current implementation remains evidence-only; process-backed validation
 and remediation require separate capabilities and approvals.
 
+## Debugging Domain Harness
+
+The built-in `debugging-domain` Harness owns six read-only evidence Genes:
+
+- `debugging.inventory` lists bounded workspace files;
+- `debugging.failures` searches fixed crash and error markers;
+- `debugging.tests` searches fixed test and assertion markers;
+- `debugging.regressions` searches reproduction and comparison markers;
+- `debugging.diagnostics` searches fixed runtime symptom markers;
+- `debugging.guide` returns static workflow guidance without requesting an effect.
+
+The Debugging Domain records evidence for investigation. It does not run tests,
+execute a debugger, change files, infer a root cause, or claim that a marker is
+a defect. Process execution and code changes remain separate governed actions.
+
 `CodingFeedbackLoop` composes the existing evaluation, Reflexion, adaptation,
 and run-loop contracts around coding evidence. A verified iteration completes
 without adaptation. A failed retryable iteration records trajectory, outcome,
@@ -256,6 +272,10 @@ The Operations short aliases are `/operations`, `/operations-inventory`,
 
 The Security short aliases are `/security`, `/security-audit`,
 `/security-dependencies`, `/security-policy`, and `/security-guide`.
+
+The Debugging short aliases are `/debugging`, `/debugging-inventory`,
+`/debugging-failures`, `/debugging-tests`, `/debugging-regressions`,
+`/debugging-diagnostics`, and `/debugging-guide`.
 
 Admitted custom Domain and Meta profiles receive exact-version Harness commands.
 Custom Domain profiles receive Gene commands for dependencies that resolve to

@@ -16,9 +16,10 @@ use crate::shadow_council::{RoutingError, ShadowCouncil};
 use crate::wasm::{WasmError, WasmExecutor, WasmGeneRequest};
 use crate::{ApprovalError, ApprovalStore, ConsumedPermit, PermitError, ToolContext, ToolEngine};
 use pandora_harnesses::{
-    CodingRequest, DesignRequest, HarnessCatalog, OperationsRequest, PlanningContext,
-    ResearchRequest, SecurityRequest, canonical_harness_binding_digest, coding_static_output,
-    design_static_output, is_design_gene, is_operations_gene, is_research_gene, is_security_gene,
+    CodingRequest, DebuggingRequest, DesignRequest, HarnessCatalog, OperationsRequest,
+    PlanningContext, ResearchRequest, SecurityRequest, canonical_harness_binding_digest,
+    coding_static_output, debugging_static_output, design_static_output, is_debugging_gene,
+    is_design_gene, is_operations_gene, is_research_gene, is_security_gene,
     operations_static_output, research_static_output, security_static_output,
 };
 use pandora_provider::{ModelRequest, Provider, ProviderError, ProviderManifest};
@@ -954,6 +955,14 @@ impl ExecutionController {
                 &execution_id,
                 execution_profile,
             )?
+        } else if is_debugging_gene(&gene_id) {
+            debugging_input(
+                &intent,
+                &gene_id,
+                &session,
+                &execution_id,
+                execution_profile,
+            )?
         } else {
             coding_input(
                 &intent,
@@ -969,6 +978,7 @@ impl ExecutionController {
             .or_else(|| design_static_output(&gene_id))
             .or_else(|| operations_static_output(&gene_id))
             .or_else(|| security_static_output(&gene_id))
+            .or_else(|| debugging_static_output(&gene_id))
             .map(|value| value.as_bytes().to_vec());
         let mut summary = RunSummary {
             execution_id: execution_id.clone(),
@@ -1233,6 +1243,7 @@ impl ExecutionController {
                         | "evidence.inventory"
                         | "design.inventory"
                         | "operations.inventory"
+                        | "debugging.inventory"
                 ) {
                     let target = self
                         .workspace
@@ -1262,6 +1273,10 @@ impl ExecutionController {
                         | "security.validation"
                         | "security.hardening"
                         | "security.policy"
+                        | "debugging.failures"
+                        | "debugging.tests"
+                        | "debugging.regressions"
+                        | "debugging.diagnostics"
                 ) {
                     let target = self.workspace.path(".").map_err(RuntimeError::Filesystem)?;
                     let response = self.filesystem.search(permit, &target, path, now);
@@ -1314,6 +1329,10 @@ impl ExecutionController {
                         | "security.validation"
                         | "security.hardening"
                         | "security.policy"
+                        | "debugging.failures"
+                        | "debugging.tests"
+                        | "debugging.regressions"
+                        | "debugging.diagnostics"
                 ) {
                     append_labeled_output(output, path, &bytes);
                 } else {
@@ -1703,6 +1722,20 @@ fn default_gene_id(intent: &TaskIntent) -> GeneId {
         }
         "security-policy" => GeneId::new("security.policy").expect("built-in Gene ID is valid"),
         "security-guide" => GeneId::new("security.guide").expect("built-in Gene ID is valid"),
+        "debugging-inventory" => {
+            GeneId::new("debugging.inventory").expect("built-in Gene ID is valid")
+        }
+        "debugging-failures" => {
+            GeneId::new("debugging.failures").expect("built-in Gene ID is valid")
+        }
+        "debugging-tests" => GeneId::new("debugging.tests").expect("built-in Gene ID is valid"),
+        "debugging-regressions" => {
+            GeneId::new("debugging.regressions").expect("built-in Gene ID is valid")
+        }
+        "debugging-diagnostics" => {
+            GeneId::new("debugging.diagnostics").expect("built-in Gene ID is valid")
+        }
+        "debugging-guide" => GeneId::new("debugging.guide").expect("built-in Gene ID is valid"),
         _ => GeneId::new("unknown.gene").expect("built-in fallback Gene ID is valid"),
     }
 }
@@ -1958,6 +1991,51 @@ fn security_input(
         }
         "security.policy" if action == "security-policy" => SecurityRequest::policy(context),
         "security.guide" if action == "security-guide" => SecurityRequest::guide(context),
+        _ => {
+            return Err(RuntimeError::InvalidIntent(
+                "intent does not match the selected Gene",
+            ));
+        }
+    };
+    let input = request.into_gene_input().map_err(RuntimeError::Planning)?;
+    Ok((input, None))
+}
+
+fn debugging_input(
+    intent: &TaskIntent,
+    gene_id: &GeneId,
+    session: &Session,
+    execution_id: &ExecutionId,
+    execution_profile: ExecutionProfile,
+) -> Result<(GeneInput, Option<Vec<u8>>), RuntimeError> {
+    let context = PlanningContext::new(
+        execution_id.clone(),
+        session.id().clone(),
+        session.principal_id().clone(),
+        session.workspace_id().clone(),
+        execution_profile,
+    );
+    let action = intent
+        .summary()
+        .split_once(':')
+        .map(|(action, _)| action)
+        .unwrap_or(intent.summary())
+        .to_ascii_lowercase();
+    let request = match gene_id.as_str() {
+        "debugging.inventory" if action == "debugging-inventory" => {
+            DebuggingRequest::inventory(context)
+        }
+        "debugging.failures" if action == "debugging-failures" => {
+            DebuggingRequest::failures(context)
+        }
+        "debugging.tests" if action == "debugging-tests" => DebuggingRequest::tests(context),
+        "debugging.regressions" if action == "debugging-regressions" => {
+            DebuggingRequest::regressions(context)
+        }
+        "debugging.diagnostics" if action == "debugging-diagnostics" => {
+            DebuggingRequest::diagnostics(context)
+        }
+        "debugging.guide" if action == "debugging-guide" => DebuggingRequest::guide(context),
         _ => {
             return Err(RuntimeError::InvalidIntent(
                 "intent does not match the selected Gene",
@@ -2780,6 +2858,31 @@ mod tests {
         assert_eq!(summary.status(), &RunStatus::Completed);
         assert!(summary.receipts().is_empty());
         assert!(String::from_utf8_lossy(summary.output().unwrap()).contains("Security Audit"));
+    }
+
+    #[test]
+    fn debugging_failure_evidence_searches_fixed_markers_through_governed_reads() {
+        let fixture = Fixture::new();
+        std::fs::create_dir(fixture.path.join("src")).unwrap();
+        std::fs::write(
+            fixture.path.join("src/failure.rs"),
+            b"fn run() { panic!(\"failure\"); }\n",
+        )
+        .unwrap();
+        let controller = ExecutionController::new(fixture.root.clone());
+        let intent = TaskIntent::new("debugging-failures")
+            .unwrap()
+            .with_harness(HarnessId::new("debugging-domain").unwrap())
+            .with_gene(GeneId::new("debugging.failures").unwrap());
+
+        let summary = controller
+            .run_at(intent, fixture.session(), Timestamp::from_unix_seconds(10))
+            .unwrap();
+
+        assert_eq!(summary.status(), &RunStatus::Completed);
+        assert_eq!(summary.receipts().len(), 8);
+        let output = String::from_utf8(summary.output().unwrap().to_vec()).unwrap();
+        assert!(output.contains("panic!:\nsrc/failure.rs"));
     }
 
     #[test]

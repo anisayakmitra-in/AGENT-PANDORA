@@ -6,6 +6,10 @@
   threat-model, triage, validation, and hardening evidence Genes. These
   workflow names mirror the security assessment lifecycle without claiming
   scanner execution, verdict assignment, or remediation.
+- Added the read-only `debugging-domain` Harness with bounded failure, test,
+  regression, diagnostic, inventory, and guidance Genes. It reports fixed
+  local evidence without running tests, changing files, or assigning root
+  causes.
 
 ## v2.0.0-beta.3
 

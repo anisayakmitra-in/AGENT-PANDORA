@@ -199,9 +199,9 @@ or expose provider, MCP, package, or remote-execution methods.
 Read-only work can complete without approval. Writes and process effects stop at
 the approval boundary and expose an inspectable, redacted request subject.
 `--harness` selects a built-in Harness or an admitted package profile by ID;
-`coding`, `research`, `design`, `operations`, and `security` are aliases for
+`coding`, `research`, `design`, `operations`, `security`, and `debugging` are aliases for
 the built-in `coding-domain`, `research-domain`, `design-domain`,
-`operations-domain`, and `security-domain` Harnesses. Package-backed Domain
+`operations-domain`, `security-domain`, and `debugging-domain` Harnesses. Package-backed Domain
 profiles require the exact
 `--harness-version <version>` value. The runtime rejects an unknown,
 unsupported, or unavailable profile before Gene planning.
@@ -216,7 +216,9 @@ It also recognizes the Research actions `evidence-inventory`,
 `deployment-evidence`, and `operations-guide`. Security actions are
 `security-scan`, `security-audit`, `security-dependencies`,
 `security-threat-model`, `security-triage`, `security-validation`,
-`security-hardening`, `security-policy`, and `security-guide`. These actions
+`security-hardening`, `security-policy`, and `security-guide`. Debugging actions
+are `debugging-inventory`, `debugging-failures`, `debugging-tests`,
+`debugging-regressions`, `debugging-diagnostics`, and `debugging-guide`. These actions
 provide bounded local evidence; they do not run scanners, assign vulnerability
 verdicts, or apply remediation. Other natural-language tasks
 require `run --agent`; Pandora does not silently route them to an unregistered
@@ -548,6 +550,9 @@ aliases are `/operations-inventory`, `/operations-search`, `/config-inspect`,
 aliases are `/security-scan`, `/security-audit`, `/security-dependencies`,
 `/security-threat-model`, `/security-triage`, `/security-validation`,
 `/security-hardening`, `/security-policy`, and `/security-guide`.
+`/debugging` inspects the built-in `debugging-domain` Harness. Its short Gene
+aliases are `/debugging-inventory`, `/debugging-failures`, `/debugging-tests`,
+`/debugging-regressions`, `/debugging-diagnostics`, and `/debugging-guide`.
 An admitted custom Domain Harness uses exact-version commands such as
 `/harness:owner%2Fdomain@1.0.0` and
 `/gene:owner%2Fdomain@1.0.0:workspace.read`. Custom packages cannot claim the

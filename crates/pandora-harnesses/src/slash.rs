@@ -291,6 +291,7 @@ fn built_in_harness_alias(id: &str) -> Option<&'static str> {
         "design-domain" => Some("/design"),
         "operations-domain" => Some("/operations"),
         "security-domain" => Some("/security"),
+        "debugging-domain" => Some("/debugging"),
         "coordination-meta" => Some("/coordination"),
         _ => None,
     }
@@ -335,6 +336,12 @@ fn built_in_gene_alias(id: &str) -> Option<&'static str> {
         "security.hardening" => Some("/security-hardening"),
         "security.policy" => Some("/security-policy"),
         "security.guide" => Some("/security-guide"),
+        "debugging.inventory" => Some("/debugging-inventory"),
+        "debugging.failures" => Some("/debugging-failures"),
+        "debugging.tests" => Some("/debugging-tests"),
+        "debugging.regressions" => Some("/debugging-regressions"),
+        "debugging.diagnostics" => Some("/debugging-diagnostics"),
+        "debugging.guide" => Some("/debugging-guide"),
         _ => None,
     }
 }

@@ -1,8 +1,8 @@
 use crate::design::DesignGene;
 use crate::genes::CodingGene;
 use crate::manifest::{
-    coding_manifest, coordination_meta_manifest, core_source_manifest, design_manifest,
-    operations_manifest, research_manifest, security_manifest,
+    coding_manifest, coordination_meta_manifest, core_source_manifest, debugging_manifest,
+    design_manifest, operations_manifest, research_manifest, security_manifest,
 };
 use crate::operations::OperationsGene;
 use crate::research::ResearchGene;
@@ -163,6 +163,36 @@ impl Harness for OperationsHarness {
 pub struct SecurityHarness {
     manifest: HarnessManifest,
     genes: Vec<Box<dyn Gene>>,
+}
+
+pub struct DebuggingHarness {
+    manifest: HarnessManifest,
+    genes: Vec<Box<dyn Gene>>,
+}
+
+impl DebuggingHarness {
+    pub fn new() -> Self {
+        Self {
+            manifest: debugging_manifest().expect("built-in Debugging Harness manifest is valid"),
+            genes: crate::debugging::DebuggingGene::all(),
+        }
+    }
+}
+
+impl Default for DebuggingHarness {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Harness for DebuggingHarness {
+    fn manifest(&self) -> &HarnessManifest {
+        &self.manifest
+    }
+
+    fn genes(&self) -> &[Box<dyn Gene>] {
+        &self.genes
+    }
 }
 
 impl SecurityHarness {

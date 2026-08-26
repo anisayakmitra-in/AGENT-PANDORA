@@ -3787,6 +3787,49 @@ fn security_harness_runs_read_only_audit_and_guide_genes() {
 }
 
 #[test]
+fn debugging_harness_runs_read_only_failure_and_guide_genes() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    let output = fixture
+        .command(&[
+            "run",
+            "--harness",
+            "debugging",
+            "--gene",
+            "debugging.guide",
+            "debugging-guide",
+            "--json",
+        ])
+        .output()
+        .expect("debugging guide should start");
+    assert_success_with_context(&output, "debugging guide");
+    let response = parse_json(&output);
+    assert_eq!(response["harness_id"], "debugging-domain");
+    assert_eq!(response["gene_id"], "debugging.guide");
+    assert_eq!(response["status"], "completed");
+
+    let output = fixture
+        .command(&[
+            "harness",
+            "run",
+            "debugging",
+            "--gene",
+            "debugging.failures",
+            "--task",
+            "debugging-failures",
+            "--json",
+        ])
+        .output()
+        .expect("debugging failure evidence should start");
+    assert_success_with_context(&output, "debugging failure evidence");
+    let response = parse_json(&output);
+    assert_eq!(response["harness_id"], "debugging-domain");
+    assert_eq!(response["gene_id"], "debugging.failures");
+    assert_eq!(response["status"], "completed");
+}
+
+#[test]
 fn operations_harness_executes_bounded_workspace_reads() {
     let fixture = Fixture::new();
     fixture.setup();
