@@ -375,6 +375,66 @@ fn setup_and_read_only_run_return_versioned_json() {
 }
 
 #[test]
+fn direct_run_can_record_coding_feedback() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let output = fixture
+        .command(&[
+            "run",
+            "read:README.md",
+            "--expected-output",
+            "fixture",
+            "--json",
+        ])
+        .output()
+        .expect("feedback run should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["status"], "completed");
+    assert_eq!(response["coding_feedback"]["decision"], "completed");
+    assert_eq!(
+        response["coding_feedback"]["evaluations"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    assert_eq!(
+        response["coding_feedback"]["evaluations"][1]["kind"],
+        "outcome"
+    );
+    assert_eq!(
+        response["coding_feedback"]["evaluations"][1]["status"],
+        "passed"
+    );
+}
+
+#[test]
+fn direct_run_feedback_can_recommend_bounded_retry() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let output = fixture
+        .command(&[
+            "run",
+            "read:README.md",
+            "--expected-output",
+            "different",
+            "--retryable",
+            "--json",
+        ])
+        .output()
+        .expect("feedback run should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["status"], "completed");
+    assert_eq!(response["coding_feedback"]["decision"], "retry");
+    assert_eq!(
+        response["coding_feedback"]["adaptation"]["decision"]["selected"]["label"],
+        "coding.safe_retry"
+    );
+}
+
+#[test]
 fn service_start_reports_a_loopback_endpoint_and_token_path() {
     let fixture = Fixture::new();
     fixture.setup();

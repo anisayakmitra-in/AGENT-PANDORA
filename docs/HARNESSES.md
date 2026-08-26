@@ -295,9 +295,11 @@ approved candidate that remains within the adaptation policy. Non-retryable or
 budget-exhausted work stops without selecting another strategy.
 
 The feedback loop evaluates evidence; it does not call a model, run a Gene,
-mint a permit, mutate code, or change policy. The current CLI does not start
-this loop automatically. A caller must supply the expected outcome, usage,
-retry classification, and approved adaptation candidates.
+mint a permit, mutate code, or change policy. The CLI starts it only when a
+direct `pandora run` supplies `--expected-output`; agent-mode runs keep their
+existing path. The observed output must be bounded UTF-8 text, and one trailing
+line ending is ignored. A retry remains a recommendation for the normal
+governed run path, not an automatic second execution.
 
 `SelfHealingEngine` is the bounded recovery selector used when a feedback loop
 offers recovery or capability-reduction candidates. It reuses the existing
@@ -319,6 +321,16 @@ The command returns trajectory, outcome, and policy evaluations, a bounded
 Reflexion artifact on failure, and the fixed `coding.safe_retry` recovery
 candidate when `--retryable` is supplied. Its report is intentionally
 `report-only`; use the normal governed run path for any subsequent retry.
+
+Direct runs can opt into the same feedback loop after execution:
+
+```text
+pandora run "read:README.md" --expected-output "fixture" --retryable --json
+```
+
+The direct-run result includes `coding_feedback` and records its evaluation
+through the existing session and rollout store. `--retryable` requires
+`--expected-output`; these options are not available with `--agent`.
 
 Every built-in Harness and Gene has a canonical slash command. The Coding short
 aliases are `/coding`, `/read`, `/search`, `/patch`, `/verify`, `/test`, `/format`, `/lint`, `/build`, `/status`, `/diff`, `/log`, `/refs`, `/review`,

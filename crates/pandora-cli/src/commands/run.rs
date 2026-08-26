@@ -1,4 +1,5 @@
 use super::efficiency::parse_objective;
+use super::feedback::{MAX_FEEDBACK_TEXT_BYTES, bounded_text, feedback_value, new_feedback_loop};
 use super::provider::configured_provider_for;
 use super::{
     LOCAL_WORKSPACE, create_session, load_config, parse_options, require_config_file,
@@ -17,18 +18,19 @@ use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::sessions::SessionStore;
 use pandora_runtime::{
     AgentApprovalContext, AgentControlStop, AgentLoop, AgentLoopError, AgentRunRequest,
-    ApprovalRequest, ApprovalStore, EvaluationEngine, MAX_AGENT_TOOL_CALLS, MAX_AGENT_TURNS,
-    RunStatus, RuntimeError,
+    ApprovalRequest, ApprovalStore, CodingFeedbackInput, EvaluationEngine, MAX_AGENT_TOOL_CALLS,
+    MAX_AGENT_TURNS, RunStatus, RuntimeError,
 };
 use pandora_runtime::{
     DEFAULT_MAX_SAMPLES_PER_TARGET, EfficiencyEngine, EfficiencyStore, ExecutionController,
     PackageState, PackageStore, RolloutReducer, SkillEngine, SkillError, WasmExecutor, WasmGene,
 };
 use pandora_types::{
-    Capability, ContextClassification, ContextManifest, EfficiencyObjective, EfficiencySample,
-    EvaluationReceipt, EvaluationRequest, EvaluationResult, EventPayload, EventType, ExecutionId,
-    Gene, HarnessId, MemoryKind, MemoryRecord, MemoryScope, Operation, PackageId, PackageKind,
-    PackageManifest, PolicyContext, Session, SessionId, TaskIntent, WorkspaceId,
+    AdaptationCandidate, AdaptationRequest, AdaptationTarget, Capability, ContextClassification,
+    ContextManifest, EfficiencyObjective, EfficiencySample, EvaluationReceipt, EvaluationRequest,
+    EvaluationResult, EventPayload, EventType, ExecutionId, Gene, HarnessId, MemoryKind,
+    MemoryRecord, MemoryScope, Operation, PackageId, PackageKind, PackageManifest, PolicyContext,
+    RequestDigest, Session, SessionId, TaskIntent, Usage, WorkspaceId,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -61,6 +63,8 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "max-turns",
             "max-tools",
             "optimize",
+            "expected-output",
+            "retryable",
         ],
     )?;
     if parsed.positionals.len() != 1 {
@@ -77,11 +81,16 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         && (parsed.value("plan").is_some()
             || parsed.value("harness").is_some()
             || parsed.value("gene").is_some()
-            || parsed.value("harness-version").is_some())
+            || parsed.value("harness-version").is_some()
+            || parsed.value("expected-output").is_some()
+            || parsed.value("retryable").is_some())
     {
         return Err(CliError::usage(
-            "--agent cannot be combined with --plan, --harness, or --gene",
+            "--agent cannot be combined with --plan, --harness, --gene, or feedback options",
         ));
+    }
+    if parsed.value("retryable").is_some() && parsed.value("expected-output").is_none() {
+        return Err(CliError::usage("--retryable requires --expected-output"));
     }
     if parsed.value("agent").is_none()
         && (parsed.value("max-turns").is_some() || parsed.value("max-tools").is_some())
@@ -263,8 +272,27 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             .run_at(intent, session.clone(), timestamp())
             .map_err(runtime_error)?,
     };
-    let (evaluation, feedback_recorded) =
-        evaluate_and_append_execution(&store, &session, "local", &summary)?;
+    let coding_feedback = parsed
+        .value("expected-output")
+        .map(|expected_output| {
+            record_coding_feedback(
+                &store,
+                &session,
+                &summary,
+                expected_output,
+                parsed.value("retryable").is_some(),
+            )
+        })
+        .transpose()?;
+    let (evaluation, feedback_recorded, coding_feedback_value) =
+        if let Some((result, recorded)) = coding_feedback {
+            let value = feedback_value(&result);
+            (result.evaluation_receipt().clone(), recorded, Some(value))
+        } else {
+            let (evaluation, recorded) =
+                evaluate_and_append_execution(&store, &session, "local", &summary)?;
+            (evaluation, recorded, None)
+        };
     let evaluation_value = evaluation_json(&evaluation);
     let memory_evidence_recorded = record_execution_evidence(&store, &session, "local", &summary);
     let efficiency_recorded =
@@ -283,6 +311,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "feedback_recorded",
         feedback_recorded,
     );
+    let details = coding_feedback_value
+        .clone()
+        .map(|value| add_detail(details.clone(), "coding_feedback", value))
+        .unwrap_or(details);
     match summary.status() {
         RunStatus::Completed => {
             let data = add_planning(
@@ -300,6 +332,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                 }),
                 planning_model.as_deref(),
             );
+            let data = coding_feedback_value
+                .clone()
+                .map(|value| add_detail(data.clone(), "coding_feedback", value))
+                .unwrap_or(data);
             Ok(success(
                 "run",
                 add_optimization(data, optimization, optimized_provider.as_deref()),
@@ -881,6 +917,139 @@ fn parse_agent_budget(
         )));
     }
     Ok(budget)
+}
+
+fn record_coding_feedback(
+    store: &SessionStore,
+    session: &Session,
+    summary: &pandora_runtime::RunSummary,
+    expected_output: &str,
+    retryable: bool,
+) -> Result<(pandora_runtime::CodingFeedbackResult, bool), CliError> {
+    if summary.events().is_empty() {
+        return Err(CliError::execution(
+            "coding feedback requires a recorded execution event",
+            json!({"execution_id": summary.execution_id()}),
+        ));
+    }
+    let output = summary.output().ok_or_else(|| {
+        CliError::execution(
+            "coding feedback requires execution output",
+            json!({"execution_id": summary.execution_id()}),
+        )
+    })?;
+    let output = std::str::from_utf8(output).map_err(|_| {
+        CliError::execution(
+            "coding feedback requires UTF-8 execution output",
+            json!({"execution_id": summary.execution_id()}),
+        )
+    })?;
+    let output = output
+        .strip_suffix("\r\n")
+        .or_else(|| output.strip_suffix('\n'))
+        .unwrap_or(output);
+    let output = bounded_text(output, MAX_FEEDBACK_TEXT_BYTES, "execution output")?;
+    let expected_output =
+        bounded_text(expected_output, MAX_FEEDBACK_TEXT_BYTES, "expected output")?;
+    let policy_violations = summary
+        .events()
+        .iter()
+        .filter(|event| event.event_type() == EventType::PolicyDenied)
+        .map(|_| "policy_denied".to_owned())
+        .collect();
+    let mut evaluation = EvaluationRequest::new(
+        summary.execution_id().clone(),
+        summary.receipts().to_vec(),
+        output,
+        policy_violations,
+    )
+    .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+    if let RunStatus::Failed { code } = summary.status() {
+        evaluation = evaluation
+            .with_terminal_failure(code)
+            .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+    }
+    let request_digest = summary
+        .receipts()
+        .first()
+        .map(|receipt| receipt.request_digest().clone())
+        .map_or_else(
+            || RequestDigest::new(format!("pandora-feedback-v1:{}", summary.execution_id())),
+            Ok,
+        )
+        .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+    let candidates = if retryable {
+        vec![
+            AdaptationCandidate::new(
+                "coding.safe_retry",
+                AdaptationTarget::recovery("coding.safe_retry")
+                    .map_err(|error| CliError::execution(error.to_string(), json!({})))?,
+                100,
+                true,
+                false,
+                0,
+                0,
+            )
+            .map_err(|error| CliError::execution(error.to_string(), json!({})))?,
+        ]
+    } else {
+        Vec::new()
+    };
+    let adaptation = AdaptationRequest::new(
+        summary.execution_id().clone(),
+        session.id().clone(),
+        request_digest,
+        Some(AdaptationTarget::Gene(summary.selected_gene().clone())),
+        candidates,
+    )
+    .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+    let mut feedback = new_feedback_loop()?;
+    let result = feedback
+        .record_iteration(
+            CodingFeedbackInput::new(
+                evaluation,
+                expected_output,
+                adaptation,
+                Usage::new(0, 0, 0, 0),
+                retryable,
+            )
+            .map_err(|error| CliError::execution(error.to_string(), json!({})))?,
+            timestamp(),
+        )
+        .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+    let rollout = RolloutReducer::new()
+        .reduce(
+            ContextManifest::from_fragments(&[]).digest(),
+            summary.events(),
+            summary.receipts(),
+        )
+        .map_err(|error| {
+            CliError::internal(
+                "could not reduce coding feedback rollout",
+                json!({"error": error.to_string()}),
+            )
+        })?;
+    store
+        .append_execution_with_rollout(
+            session.id(),
+            session.principal_id(),
+            session.tenant_id(),
+            session.workspace_id(),
+            summary.events(),
+            result.evaluation_receipt(),
+            Some(&rollout),
+            timestamp(),
+        )
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let feedback_recorded = store
+        .record_evaluation_feedback(
+            session,
+            session.principal_id(),
+            "local",
+            result.evaluation_receipt(),
+        )
+        .unwrap_or(false);
+    Ok((result, feedback_recorded))
 }
 
 fn evaluate_and_append_execution(

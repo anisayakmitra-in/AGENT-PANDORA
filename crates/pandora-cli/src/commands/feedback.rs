@@ -8,7 +8,7 @@ use pandora_types::{
 };
 use serde_json::{Value, json};
 
-const MAX_FEEDBACK_TEXT_BYTES: usize = 65_536;
+pub(super) const MAX_FEEDBACK_TEXT_BYTES: usize = 65_536;
 const MAX_FEEDBACK_FAILURE_BYTES: usize = 4_096;
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
@@ -91,29 +91,7 @@ fn coding(args: &[String]) -> Result<CommandResult, CliError> {
         candidates,
     )
     .map_err(|error| CliError::usage(format!("invalid adaptation request: {error}")))?;
-    let policy = AdaptationPolicy::new(1, 4, 1_000_000, 300_000)
-        .map_err(|error| CliError::usage(error.to_string()))?;
-    let config = RunLoopConfig::new(
-        3,
-        100_000,
-        64,
-        300,
-        10_000_000,
-        2,
-        LoopTermination::GoalReached,
-    )
-    .map_err(|error| CliError::usage(error.to_string()))?;
-    let mut run_loop = RunLoop::new(
-        RunLoopId::new("coding-feedback").expect("built-in run-loop ID is valid"),
-        PlanId::new("coding-feedback").expect("built-in plan ID is valid"),
-        config,
-    )
-    .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
-    run_loop
-        .start()
-        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
-    let mut feedback = CodingFeedbackLoop::new(run_loop, policy, 3)
-        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let mut feedback = new_feedback_loop()?;
     let result = feedback
         .record_iteration(
             CodingFeedbackInput::new(
@@ -147,6 +125,32 @@ fn coding(args: &[String]) -> Result<CommandResult, CliError> {
     ))
 }
 
+pub(super) fn new_feedback_loop() -> Result<CodingFeedbackLoop, CliError> {
+    let policy = AdaptationPolicy::new(1, 4, 1_000_000, 300_000)
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let config = RunLoopConfig::new(
+        3,
+        100_000,
+        64,
+        300,
+        10_000_000,
+        2,
+        LoopTermination::GoalReached,
+    )
+    .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let mut run_loop = RunLoop::new(
+        RunLoopId::new("coding-feedback").expect("built-in run-loop ID is valid"),
+        PlanId::new("coding-feedback").expect("built-in plan ID is valid"),
+        config,
+    )
+    .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    run_loop
+        .start()
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    CodingFeedbackLoop::new(run_loop, policy, 3)
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))
+}
+
 fn required_id<T, F>(
     parsed: &super::ParsedArgs,
     option: &str,
@@ -176,11 +180,21 @@ fn required_text(
         .and_then(|value| bounded_text(value, limit, option))
 }
 
-fn bounded_text(value: &str, limit: usize, label: &str) -> Result<String, CliError> {
+pub(super) fn bounded_text(value: &str, limit: usize, label: &str) -> Result<String, CliError> {
     if value.len() > limit || value.chars().any(char::is_control) {
         return Err(CliError::usage(format!("{label} is invalid or too long")));
     }
     Ok(value.to_owned())
+}
+
+pub(super) fn feedback_value(result: &pandora_runtime::CodingFeedbackResult) -> Value {
+    json!({
+        "decision": decision_name(result.decision()),
+        "evaluations": result.evaluations().iter().map(evaluation_value).collect::<Vec<_>>(),
+        "reflexion": result.reflexion().map(reflexion_value),
+        "adaptation": result.adaptation().map(adaptation_value),
+        "loop": snapshot_value(result.snapshot()),
+    })
 }
 
 fn decision_name(decision: LoopDecision) -> &'static str {

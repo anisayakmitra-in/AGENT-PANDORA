@@ -109,6 +109,7 @@ pandora run --harness coding --gene workspace.status "status"
 pandora run --harness coding --gene workspace.diff "diff"
 pandora run --harness coding --gene workspace.log "log"
 pandora run --harness coding --gene workspace.refs "refs"
+pandora run "read:README.md" --expected-output "fixture" --retryable --json
 pandora run --plan "inspect the README and report what it contains"
 pandora run --approval <approval-id> "patch:README.md:approved content"
 pandora chat
