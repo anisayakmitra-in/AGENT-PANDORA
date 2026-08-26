@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+No unreleased changes.
+
+## v2.0.0-beta.7
+
 - Added `SelfHealingEngine` and connected recovery candidates to
   `CodingFeedbackLoop`. Recovery selection remains policy-bounded and emits
   the existing adaptation receipt; it does not execute actions or expand

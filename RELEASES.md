@@ -12,8 +12,17 @@ history and reproducibility, but they are not the active release line or
 recommended install targets.
 
 The canonical prerelease tags for this line are `v2.0.0-alpha.1` through
-`v2.0.0-alpha.6`, followed by `v2.0.0-beta.1`, `v2.0.0-beta.2`, and
-`v2.0.0-beta.3`, `v2.0.0-beta.4`, `v2.0.0-beta.5`, and `v2.0.0-beta.6`.
+`v2.0.0-alpha.6`, followed by `v2.0.0-beta.1`, `v2.0.0-beta.2`,
+`v2.0.0-beta.3`, `v2.0.0-beta.4`, `v2.0.0-beta.5`, `v2.0.0-beta.6`, and
+`v2.0.0-beta.7`.
+
+## v2.0.0-beta.7
+
+This beta groups bounded self-healing feedback, composition provenance,
+verified memory synthesis, persisted graph snapshots, holdout evaluation, and
+evidence-only evolution proposal intake. It remains a CLI-only prerelease.
+These additions do not grant effect authority or claim desktop,
+remote-execution, or marketplace support.
 
 ## v2.0.0-beta.6
 
