@@ -497,7 +497,7 @@ mod tests {
             hash_artifact(artifact),
             Vec::new(),
             PackageCompatibility::new("pandora>=2.0.0").unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::unsigned(),
         )
         .unwrap()

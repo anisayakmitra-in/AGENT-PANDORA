@@ -641,7 +641,7 @@ mod tests {
             hash_artifact(b"coding"),
             Vec::new(),
             PackageCompatibility::new("pandora>=2.0.0").unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::unsigned(),
         )
         .unwrap();
@@ -662,7 +662,7 @@ mod tests {
             hash_artifact(b"meta profile"),
             Vec::new(),
             PackageCompatibility::new("pandora>=2.0.0").unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::unsigned(),
             composition.clone(),
         )
@@ -686,7 +686,7 @@ mod tests {
                 hash_artifact(b"meta profile"),
                 Vec::new(),
                 PackageCompatibility::new("pandora>=2.0.0").unwrap(),
-                "Apache-2.0",
+                "MIT",
                 TrustEvidence::unsigned(),
             ),
             Err(PackageManifestError::MissingMetaComposition)
@@ -710,7 +710,7 @@ mod tests {
                 hash_artifact(artifact),
                 vec![],
                 PackageCompatibility::new("pandora>=2.0.0").unwrap(),
-                "Apache-2.0",
+                "MIT",
                 TrustEvidence::unsigned(),
             ),
             Err(PackageManifestError::InvalidVersion)
@@ -750,7 +750,7 @@ mod tests {
             hash_artifact(artifact),
             vec![PackageDependency::new("publisher/base", "2.0.0-rc.2+build.9", false).unwrap()],
             PackageCompatibility::new("pandora>=2.0.0").unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::unsigned(),
         )
         .unwrap();
@@ -770,7 +770,7 @@ mod tests {
             hash_artifact(artifact),
             Vec::new(),
             PackageCompatibility::new("pandora>=2.0.0").unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::unsigned(),
         )
         .unwrap();
@@ -820,7 +820,7 @@ mod tests {
             hash_artifact(alpha_artifact),
             Vec::new(),
             PackageCompatibility::new("pandora>=2.0.0").unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::unsigned(),
         )
         .unwrap();
@@ -862,7 +862,7 @@ mod tests {
             hash_artifact(artifact),
             Vec::new(),
             PackageCompatibility::new("pandora>=2.0.0").unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::unsigned(),
         )
         .unwrap();

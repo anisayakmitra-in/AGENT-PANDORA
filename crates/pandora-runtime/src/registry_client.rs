@@ -508,7 +508,7 @@ mod tests {
             "id": "owner/package",
             "version": "1.0.0",
             "kind": "gene",
-            "license": "Apache-2.0",
+            "license": "MIT",
             "trust": {
                 "level": "community",
                 "signature": null,
@@ -540,7 +540,7 @@ mod tests {
             "id": "owner/package",
             "version": "1.0.0",
             "kind": "gene",
-            "license": "Apache-2.0",
+            "license": "MIT",
             "trust": {
                 "level": "community",
                 "signature": null,

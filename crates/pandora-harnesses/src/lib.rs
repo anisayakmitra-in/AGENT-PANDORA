@@ -235,7 +235,7 @@ mod catalog_tests {
             hash_artifact(artifact),
             vec![PackageDependency::new("workspace.read", "0.1.0", false).unwrap()],
             PackageCompatibility::new("pandora>=2.0.0").unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::unsigned(),
         )
         .unwrap();
@@ -266,7 +266,7 @@ mod catalog_tests {
             hash_artifact(artifact),
             vec![PackageDependency::new("owner/transform", "1.2.3", false).unwrap()],
             PackageCompatibility::new("pandora>=2.0.0").unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::unsigned(),
         )
         .unwrap();
@@ -305,7 +305,7 @@ mod catalog_tests {
             hash_artifact(artifact),
             Vec::new(),
             PackageCompatibility::new("pandora>=2.0.0").unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::unsigned(),
             MetaComposition::new(vec![HarnessId::new("coding-domain").unwrap()], 4).unwrap(),
         )
@@ -880,7 +880,7 @@ mod tests {
             pandora_types::hash_artifact(artifact),
             vec![pandora_types::PackageDependency::new("evidence.search", "0.1.0", false).unwrap()],
             pandora_types::PackageCompatibility::new("pandora>=2.0.0").unwrap(),
-            "Apache-2.0",
+            "MIT",
             pandora_types::TrustEvidence::unsigned(),
         )
         .unwrap();
@@ -913,7 +913,7 @@ mod tests {
                 pandora_types::PackageDependency::new("unavailable.gene", "1.0.0", true).unwrap(),
             ],
             pandora_types::PackageCompatibility::new("pandora>=2.0.0").unwrap(),
-            "Apache-2.0",
+            "MIT",
             pandora_types::TrustEvidence::unsigned(),
         )
         .unwrap();

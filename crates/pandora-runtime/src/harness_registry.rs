@@ -413,7 +413,7 @@ mod tests {
             hash_artifact(artifact),
             dependencies,
             PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::unsigned(),
         )
         .unwrap()
@@ -427,7 +427,7 @@ mod tests {
             hash_artifact(artifact),
             Vec::new(),
             PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::unsigned(),
             MetaComposition::new(
                 domains
@@ -460,7 +460,7 @@ mod tests {
             content_hash,
             Vec::new(),
             PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::new(
                 TrustLevel::Verified,
                 Some(hex(&signature.to_bytes())),
@@ -494,7 +494,7 @@ mod tests {
             content_hash,
             Vec::new(),
             PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::new(
                 TrustLevel::Verified,
                 Some(encoded_signature.clone()),
@@ -599,18 +599,6 @@ mod tests {
                 hash_artifact(artifact),
                 vec![PackageDependency::new("workspace.read", "0.1.0", false).unwrap()],
                 PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
-                "Apache-2.0",
-                TrustEvidence::unsigned(),
-            )
-            .unwrap(),
-            PackageManifest::new(
-                "publisher/gene",
-                "1.0.0",
-                PackageKind::Gene,
-                "publisher",
-                hash_artifact(artifact),
-                Vec::new(),
-                PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
                 "MIT",
                 TrustEvidence::unsigned(),
             )
@@ -623,7 +611,19 @@ mod tests {
                 hash_artifact(artifact),
                 Vec::new(),
                 PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
-                "Apache-2.0",
+                "BSD-3-Clause",
+                TrustEvidence::unsigned(),
+            )
+            .unwrap(),
+            PackageManifest::new(
+                "publisher/gene",
+                "1.0.0",
+                PackageKind::Gene,
+                "publisher",
+                hash_artifact(artifact),
+                Vec::new(),
+                PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
+                "MIT",
                 TrustEvidence::new(
                     TrustLevel::Verified,
                     Some("signature".to_owned()),
@@ -655,7 +655,7 @@ mod tests {
             hash_artifact(artifact),
             Vec::new(),
             PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::new(
                 TrustLevel::Verified,
                 Some("signature".to_owned()),
@@ -684,7 +684,7 @@ mod tests {
             hash_artifact(artifact),
             Vec::new(),
             PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::new(TrustLevel::Verified, None, None).unwrap(),
         )
         .unwrap();
@@ -709,7 +709,7 @@ mod tests {
             hash_artifact(artifact),
             Vec::new(),
             PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::new(
                 TrustLevel::Verified,
                 Some(hex(&[0_u8; 64])),
@@ -738,7 +738,7 @@ mod tests {
             hash_artifact(artifact),
             Vec::new(),
             PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::new(TrustLevel::Official, None, None).unwrap(),
         )
         .unwrap();
@@ -780,7 +780,7 @@ mod tests {
             hash_artifact(artifact),
             Vec::new(),
             PackageCompatibility::new("pandora>=3.0.0").unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::unsigned(),
         )
         .unwrap();

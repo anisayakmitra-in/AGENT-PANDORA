@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Changed the project license to MIT. Third-party dependency licenses remain
+  governed by their respective packages.
 - Added a native Gemini `generateContent` provider adapter with bounded
   text/tool normalization, continuation mapping, and `x-goog-api-key`
   credential isolation. The existing provider permit and receipt boundary is

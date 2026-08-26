@@ -411,7 +411,7 @@ mod tests {
             hash_artifact(artifact),
             Vec::new(),
             PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::unsigned(),
             MetaComposition::new(
                 domains
@@ -434,7 +434,7 @@ mod tests {
             hash_artifact(artifact),
             Vec::new(),
             PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::unsigned(),
         )
         .unwrap()
@@ -453,7 +453,7 @@ mod tests {
             hash_artifact(artifact),
             dependencies,
             PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::unsigned(),
         )
         .unwrap()
@@ -516,7 +516,7 @@ mod tests {
             hash_artifact(gene_artifact),
             Vec::new(),
             PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::unsigned(),
         )
         .unwrap();
@@ -529,7 +529,7 @@ mod tests {
             hash_artifact(profile_artifact),
             vec![PackageDependency::new("example/gene", "1.0.0", false).unwrap()],
             PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::unsigned(),
         )
         .unwrap();
@@ -658,7 +658,7 @@ mod tests {
             hash_artifact(artifact),
             Vec::new(),
             PackageCompatibility::new("pandora>=3.0.0").unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::unsigned(),
         )
         .unwrap();
@@ -686,7 +686,7 @@ mod tests {
             hash_artifact(artifact),
             Vec::new(),
             PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::new(
                 TrustLevel::Official,
                 Some("signature".to_owned()),

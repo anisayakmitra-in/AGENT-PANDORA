@@ -2,7 +2,7 @@
   "name": "pandora-agent",
   "version": "2.0.0-beta.5",
   "description": "Verified native launcher for the Pandora Agent CLI",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "repository": "github:anisayakmitra-in/PANDORA-AGENT",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",

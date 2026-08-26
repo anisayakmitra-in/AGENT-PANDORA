@@ -284,7 +284,7 @@ fn admit_domain_harness(fixture: &Fixture, artifact: &[u8], gene_ids: &[&str]) {
             .map(|gene_id| PackageDependency::new(*gene_id, "0.1.0", false).unwrap())
             .collect(),
         PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
-        "Apache-2.0",
+        "MIT",
         TrustEvidence::unsigned(),
     )
     .unwrap();
@@ -4105,7 +4105,7 @@ fn package_meta_admission_survives_cli_restart_without_runtime_authority() {
         hash_artifact(artifact),
         Vec::new(),
         PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
-        "Apache-2.0",
+        "MIT",
         TrustEvidence::unsigned(),
         MetaComposition::new(vec![HarnessId::new("coding-domain").unwrap()], 4).unwrap(),
     )
@@ -4301,7 +4301,7 @@ fn package_install_fetches_and_admits_one_exact_registry_release() {
                     "kind": "gene",
                     "description": "Registry fixture",
                     "author": "owner",
-                    "license": "Apache-2.0",
+                    "license": "MIT",
                     "trust": {
                         "level": "community",
                         "signature": null,
@@ -4418,7 +4418,7 @@ fn package_admission_rejects_invalid_signed_trust_evidence() {
         hash_artifact(artifact),
         Vec::new(),
         PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
-        "Apache-2.0",
+        "MIT",
         TrustEvidence::new(
             pandora_types::TrustLevel::Verified,
             Some("signature".to_owned()),
@@ -4482,7 +4482,7 @@ fn package_lock_is_written_and_verified_against_the_local_store() {
         hash_artifact(artifact),
         Vec::new(),
         PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
-        "Apache-2.0",
+        "MIT",
         TrustEvidence::unsigned(),
     )
     .unwrap();
@@ -4569,7 +4569,7 @@ fn admitted_domain_profile_runs_with_an_explicit_version() {
         hash_artifact(artifact),
         vec![PackageDependency::new("workspace.read", "0.1.0", false).unwrap()],
         PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
-        "Apache-2.0",
+        "MIT",
         TrustEvidence::unsigned(),
     )
     .unwrap();
@@ -4714,7 +4714,7 @@ fn package_validate_reports_wasm_boundary_without_persisting() {
         hash_artifact(&wasm),
         Vec::new(),
         PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
-        "Apache-2.0",
+        "MIT",
         TrustEvidence::unsigned(),
     )
     .unwrap();
@@ -4786,7 +4786,7 @@ fn admitted_wasm_gene_is_versioned_approved_and_receipted() {
         hash_artifact(&wasm),
         Vec::new(),
         PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
-        "Apache-2.0",
+        "MIT",
         TrustEvidence::unsigned(),
     )
     .unwrap();
@@ -4799,7 +4799,7 @@ fn admitted_wasm_gene_is_versioned_approved_and_receipted() {
         hash_artifact(domain_artifact),
         vec![PackageDependency::new("example/echo", "1.0.0", false).unwrap()],
         PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
-        "Apache-2.0",
+        "MIT",
         TrustEvidence::unsigned(),
     )
     .unwrap();

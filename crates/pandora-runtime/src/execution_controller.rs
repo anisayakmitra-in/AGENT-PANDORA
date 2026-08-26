@@ -2248,7 +2248,7 @@ mod tests {
             hash_artifact(artifact),
             vec![PackageDependency::new("workspace.read", "0.1.0", false).unwrap()],
             PackageCompatibility::new("pandora>=2.0.0").unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::unsigned(),
         )
         .unwrap();
@@ -2300,7 +2300,7 @@ mod tests {
             hash_artifact(&artifact),
             Vec::new(),
             PackageCompatibility::new("pandora>=2.0.0").unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::unsigned(),
         )
         .unwrap();
@@ -2312,7 +2312,7 @@ mod tests {
             hash_artifact(b"domain profile"),
             vec![PackageDependency::new("example/echo", "1.0.0", false).unwrap()],
             PackageCompatibility::new("pandora>=2.0.0").unwrap(),
-            "Apache-2.0",
+            "MIT",
             TrustEvidence::unsigned(),
         )
         .unwrap();

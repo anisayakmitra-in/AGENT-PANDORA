@@ -38,7 +38,7 @@ fn trusted_harness_binding_controls_tool_execution_intent() {
         hash_artifact(b"example domain"),
         vec![PackageDependency::new("workspace.read", "0.1.0", false).unwrap()],
         PackageCompatibility::new("pandora>=2.0.0").unwrap(),
-        "Apache-2.0",
+        "MIT",
         TrustEvidence::unsigned(),
     )
     .unwrap();

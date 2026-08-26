@@ -321,7 +321,7 @@ impl CliSubagentFixture {
                 hash_artifact(artifact),
                 vec![PackageDependency::new("workspace.read", "0.1.0", false).unwrap()],
                 PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
-                "Apache-2.0",
+                "MIT",
                 TrustEvidence::unsigned(),
             )
             .unwrap();
