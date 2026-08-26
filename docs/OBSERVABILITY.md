@@ -42,7 +42,7 @@ The status values are deliberately narrow:
 - `unavailable` means Pandora provides no containment for that boundary and names the limitation.
 - `enforced` is reserved for a boundary the executor fully blocks; the current snapshot makes no such claim.
 
-This snapshot is inspection evidence, not authority. It cannot mint a permit or weaken Parliament, ReferenceMonitor, or EffectExecutor checks. The process, Git worktree, and local MCP executors run trusted native child programs without an operating-system sandbox or network isolation. Provider execution occurs outside Pandora's local boundary.
+This snapshot is inspection evidence, not authority. It cannot mint a permit or weaken Parliament, ReferenceMonitor, or EffectExecutor checks. Process verification places its cargo child in a dedicated process group and terminates that group on cancellation or timeout; this limits orphaned work but is not an operating-system sandbox. The process, Git worktree, and local MCP executors still run trusted native child programs without filesystem or network isolation. Provider execution occurs outside Pandora's local boundary.
 
 ## Evaluation
 

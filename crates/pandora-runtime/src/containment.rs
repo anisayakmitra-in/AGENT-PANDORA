@@ -56,6 +56,7 @@ fn process_evidence() -> Result<ContainmentEvidence, ContainmentContractError> {
                     ContainmentControl::ClearedEnvironment,
                     ContainmentControl::BoundedIo,
                     ContainmentControl::TimeoutAndCancellation,
+                    ContainmentControl::ProcessTreeTermination,
                 ],
                 ContainmentLimitation::HostProcessNotSandboxed,
             )?,
@@ -236,6 +237,15 @@ mod tests {
             ContainmentBoundaryKind::Network,
             ContainmentLevel::Unavailable,
             ContainmentLimitation::NetworkNotRestricted,
+        );
+        assert!(
+            process
+                .boundaries()
+                .iter()
+                .find(|boundary| boundary.kind() == ContainmentBoundaryKind::Process)
+                .unwrap()
+                .controls()
+                .contains(&ContainmentControl::ProcessTreeTermination)
         );
         assert_boundary(
             mcp,

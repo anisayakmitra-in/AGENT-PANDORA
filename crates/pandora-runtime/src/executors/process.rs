@@ -239,7 +239,9 @@ fn run_child(
     command: &VerificationCommand,
     options: &VerificationOptions,
 ) -> Result<ProcessOutput, ProcessError> {
-    let mut child = Command::new("cargo")
+    let mut process = Command::new("cargo");
+    configure_process_group(&mut process);
+    let mut child = process
         .args(["check", "--locked"])
         .current_dir(command.workspace().root())
         .env_clear()
@@ -330,9 +332,52 @@ fn receive_output(
 }
 
 fn stop_child(child: &mut Child) {
+    terminate_process_tree(child);
     let _ = child.kill();
     let _ = child.wait();
 }
+
+#[cfg(unix)]
+fn configure_process_group(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+
+    command.process_group(0);
+}
+
+#[cfg(windows)]
+fn configure_process_group(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+
+    command.creation_flags(0x0000_0200);
+}
+
+#[cfg(not(any(unix, windows)))]
+fn configure_process_group(_: &mut Command) {}
+
+#[cfg(unix)]
+fn terminate_process_tree(child: &Child) {
+    let process_group = format!("-{}", child.id());
+    let _ = Command::new("/bin/kill")
+        .args(["-KILL", "--", &process_group])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+#[cfg(windows)]
+fn terminate_process_tree(child: &Child) {
+    let process_id = child.id().to_string();
+    let _ = Command::new("taskkill")
+        .args(["/PID", &process_id, "/T", "/F"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+#[cfg(not(any(unix, windows)))]
+fn terminate_process_tree(_: &Child) {}
 
 fn read_bounded_output(reader: &mut impl Read, limit: usize) -> Result<Vec<u8>, ProcessError> {
     let limit = limit.checked_add(1).ok_or(ProcessError::InvalidOptions)?;
