@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+No unreleased changes.
+
+## v2.0.0-beta.3
+
 - Added the read-only `security-domain` Harness with bounded audit,
   dependency-marker, policy-marker, and static-guidance Genes. Its evidence
   workflows use only the existing workspace-scoped filesystem read path and

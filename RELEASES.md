@@ -12,7 +12,15 @@ history and reproducibility, but they are not the active release line or
 recommended install targets.
 
 The canonical prerelease tags for this line are `v2.0.0-alpha.1` through
-`v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` and `v2.0.0-beta.2`.
+`v2.0.0-alpha.6`, followed by `v2.0.0-beta.1`, `v2.0.0-beta.2`, and
+`v2.0.0-beta.3`.
+
+## v2.0.0-beta.3
+
+This beta packages the governed Security Domain Harness, typed TypeScript CLI
+client, and the current local MCP and runtime authority improvements. It is a
+CLI-only prerelease; the built-in security workflows provide bounded evidence
+and do not claim complete vulnerability scanning or automated remediation.
 
 ## v2.0.0-beta.2
 
