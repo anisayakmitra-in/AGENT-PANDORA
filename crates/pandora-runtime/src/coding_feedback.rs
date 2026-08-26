@@ -222,3 +222,91 @@ impl CodingFeedbackLoop {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pandora_types::{
+        AdaptationCandidate, AdaptationTarget, EvaluationRequest, ExecutionId, LoopTermination,
+        PlanId, RequestDigest, RunLoopConfig, RunLoopId, SessionId,
+    };
+
+    fn feedback() -> CodingFeedbackLoop {
+        let mut run_loop = RunLoop::new(
+            RunLoopId::new("coding-feedback-test").unwrap(),
+            PlanId::new("coding-feedback-test").unwrap(),
+            RunLoopConfig::new(3, 1_000, 4, 30, 1_000, 1, LoopTermination::GoalReached).unwrap(),
+        )
+        .unwrap();
+        run_loop.start().unwrap();
+        CodingFeedbackLoop::new(run_loop, AdaptationPolicy::new(1, 4, 500, 100).unwrap(), 2)
+            .unwrap()
+    }
+
+    fn input(output: &str, expected: &str, retryable: bool) -> CodingFeedbackInput {
+        let execution_id = ExecutionId::new("execution-feedback-test").unwrap();
+        let evaluation =
+            EvaluationRequest::new(execution_id.clone(), Vec::new(), output, Vec::new()).unwrap();
+        let candidates = if retryable {
+            vec![
+                AdaptationCandidate::new(
+                    "safe-retry",
+                    AdaptationTarget::recovery("safe-retry").unwrap(),
+                    100,
+                    true,
+                    false,
+                    0,
+                    0,
+                )
+                .unwrap(),
+            ]
+        } else {
+            Vec::new()
+        };
+        let adaptation = AdaptationRequest::new(
+            execution_id,
+            SessionId::new("session-feedback-test").unwrap(),
+            RequestDigest::new("request-feedback-test").unwrap(),
+            None,
+            candidates,
+        )
+        .unwrap();
+        CodingFeedbackInput::new(
+            evaluation,
+            expected,
+            adaptation,
+            Usage::new(0, 0, 0, 0),
+            retryable,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn successful_iteration_completes_without_reflexion_or_adaptation() {
+        let mut feedback = feedback();
+        let result = feedback
+            .record_iteration(input("ok", "ok", false), Timestamp::from_unix_seconds(10))
+            .unwrap();
+        assert_eq!(result.decision, LoopDecision::Completed);
+        assert!(result.reflexion.is_none());
+        assert!(result.adaptation.is_none());
+    }
+
+    #[test]
+    fn retryable_failure_creates_reflexion_and_recovery_selection() {
+        let mut feedback = feedback();
+        let result = feedback
+            .record_iteration(input("bad", "ok", true), Timestamp::from_unix_seconds(10))
+            .unwrap();
+        assert_eq!(result.decision, LoopDecision::Retry);
+        assert!(result.reflexion.is_some());
+        assert_eq!(
+            result
+                .adaptation
+                .as_ref()
+                .and_then(|value| value.decision().selected())
+                .map(AdaptationTarget::label),
+            Some("safe-retry")
+        );
+    }
+}

@@ -17,6 +17,7 @@ mod doctor;
 mod efficiency;
 mod evaluation;
 mod evolution;
+mod feedback;
 mod fleet;
 mod graph;
 mod harness;
@@ -101,6 +102,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "doctor" => doctor::execute(&args[1..]),
         "evaluation" => evaluation::execute(&args[1..]),
         "evolution" => evolution::execute(&args[1..]),
+        "feedback" => feedback::execute(&args[1..]),
         "rollout" => rollout::execute(&args[1..]),
         "efficiency" => efficiency::execute(&args[1..]),
         "fleet" => fleet::execute(&args[1..]),
@@ -201,6 +203,7 @@ fn is_flag(name: &str) -> bool {
             | "plan"
             | "rollback"
             | "yes"
+            | "retryable"
     )
 }
 
@@ -309,7 +312,7 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|service|chat|tui|harness|slash|session|job|subagent|skill|package|memory|approval|provider|mcp|tool|orchestration|strategies|evaluation|evolution|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor> [options]
+    r#"usage: pandora <help|setup|run|service|chat|tui|harness|slash|session|job|subagent|skill|package|memory|approval|provider|mcp|tool|orchestration|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor> [options]
 
 commands:
   help (or --help)
@@ -336,6 +339,7 @@ commands:
   evaluation golden --input <path> [--fail-on-failure]
   evaluation inspect --session <id> [--execution <id>]
   evolution list [--limit <1-256>] | inspect --id <proposal-id> | submit --input <path> | evaluate --id <proposal-id> --input <path> [--fail-on-failure]
+  feedback coding --session <id> --execution <id> --request-digest <digest> --expected-output <text> --output <text> [--terminal-failure <text>] [--retryable]
   evolution inspect --id <proposal-id>
   rollout inspect --session <id> [--execution <id>]
   efficiency rank [--task-class <name>] [--objective <cost|latency|tokens|certainty>]

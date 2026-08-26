@@ -306,6 +306,20 @@ and never executes a recovery action or expands authority. The run loop remains
 responsible for retry and termination budgets; the caller must send any chosen
 recovery through the normal governed execution path.
 
+Use `pandora feedback coding` to evaluate one already-redacted coding iteration
+without executing it or changing durable state:
+
+```text
+pandora feedback coding --session <id> --execution <id> \
+  --request-digest <digest> --expected-output "tests passed" \
+  --output "tests passed" --retryable --json
+```
+
+The command returns trajectory, outcome, and policy evaluations, a bounded
+Reflexion artifact on failure, and the fixed `coding.safe_retry` recovery
+candidate when `--retryable` is supplied. Its report is intentionally
+`report-only`; use the normal governed run path for any subsequent retry.
+
 Every built-in Harness and Gene has a canonical slash command. The Coding short
 aliases are `/coding`, `/read`, `/search`, `/patch`, `/verify`, `/test`, `/format`, `/lint`, `/build`, `/status`, `/diff`, `/log`, `/refs`, `/review`,
 `/audit`, `/argus-review`, `/debt`, `/measure`, and `/guide`. Canonical commands
