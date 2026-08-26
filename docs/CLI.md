@@ -8,7 +8,7 @@ approval, execution, update, and internal failures. See the
 [CLI JSON contract](CLI_JSON.md) for the `0.1` envelope, command fields, and
 exit-code mapping.
 
-## Setup and diagnostics
+## Setup
 
 ```text
 pandora --help
@@ -22,11 +22,9 @@ the help text needs to be consumed by an installer or another tool.
 `pandora --version` remains a single human-readable line; with `--json`, it
 uses the normal output envelope and includes `pandora_version`.
 
-In a real interactive terminal, a bare `pandora` invocation runs the existing
-setup wizard when its configuration file is missing, then opens the same
-Ratatui client as `pandora tui`. A malformed configuration fails rather than
-being replaced. A bare noninteractive invocation, including `pandora --json`,
-returns the normal usage error rather than entering a UI.
+In an interactive terminal, `pandora` runs setup when its configuration is
+missing, then opens the Ratatui client. A malformed configuration fails rather
+than being replaced. Noninteractive invocations return the normal usage error.
 
 ```text
 pandora setup --provider-url https://provider.example/v1 --model gpt-5 --api-key-env PANDORA_PROVIDER_API_KEY
@@ -38,10 +36,8 @@ pandora provider test --json
 
 `setup --interactive` asks for a provider URL, model, and API-key environment
 variable name. Leaving the URL empty creates a local-only configuration. It
-never asks for or stores the API-key value; press Enter to accept the displayed
-default. The flag-based form creates or updates the same active
-`openai-compatible` profile, so scripts and CI can select a non-default
-credential environment without storing a credential value.
+never asks for or stores the API-key value. The flag-based form updates the
+same active profile for scripts and CI.
 
 `doctor` reports the platform, CLI version, configuration path, storage path and
 writeability, workspace path, policy mode, provider configuration state, executor containment evidence, and remediation. If

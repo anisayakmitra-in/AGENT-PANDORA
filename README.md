@@ -28,20 +28,25 @@ The npm package also exports a typed TypeScript client for the stable JSON CLI
 contract. It forwards an argv array to the verified native binary and does not
 create a second runtime or permission path. See [TypeScript client](docs/TYPESCRIPT.md).
 
-## Install a tagged CLI release
+## Install and start
 
 The bootstrap installers use the current published prerelease by default. They
 verify the downloaded native binary against the release checksum manifest
-before installation. Set `PANDORA_VERSION` when you need to pin a different
-published tag.
+before installation. Set `PANDORA_VERSION` to pin another published tag.
+
+Install and open Pandora in one command:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.sh | sh && "$HOME/.local/bin/pandora"
 ```
 
 ```powershell
-irm https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.ps1 | iex; & "$env:LOCALAPPDATA\Pandora\bin\pandora.exe"
 ```
+
+The first interactive launch creates the local configuration and opens the
+Ratatui client. It asks only for provider metadata; API keys stay in the
+environment. For scripted setup, use `pandora setup` instead.
 
 To pin the current release explicitly:
 
@@ -65,14 +70,10 @@ cargo test --workspace --lib --tests
 cargo run -p pandora-cli -- --version
 ```
 
-For first-time local setup, use `pandora setup --interactive`. It records only
-provider endpoint metadata and the name of the environment variable that holds
-the credential; the credential itself stays outside Pandora configuration.
-
-In an interactive terminal, running `pandora` with no arguments starts the
-setup wizard when configuration is missing, then opens the Ratatui client. Use
-`pandora chat` for the line-oriented client and explicit subcommands for
-scripts and automation.
+For scripted setup, use `pandora setup --interactive` or pass provider options
+to `pandora setup`. In an interactive terminal, `pandora` starts the wizard
+when configuration is missing, then opens the Ratatui client. Use `pandora chat`
+for the line-oriented client and explicit subcommands for automation.
 
 Headless workers can queue the same governed `run` command without a second
 execution path:
