@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-No unreleased changes.
+- Hardened local Skill admission with exclusive staging and atomic destination
+  commit. Existing Skills are never overwritten by a collision, concurrent
+  installs fail closed, and newly admitted Skills remain disabled.
 
 ## v2.0.0-beta.7
 
