@@ -55,7 +55,7 @@ an undeclared Domain Harness through a Meta Harness.
 
 Its built-in composition contains `coding-domain`, `research-domain`,
 `design-domain`, `operations-domain`, `security-domain`, and
-`debugging-domain`.
+`debugging-domain`, and `data-domain`.
 
 `pandora harness inspect coordination-meta --json` exposes that composition
 boundary as `meta_composition.allowed_domains` and
@@ -252,6 +252,22 @@ The Debugging Domain records evidence for investigation. It does not run tests,
 execute a debugger, change files, infer a root cause, or claim that a marker is
 a defect. Process execution and code changes remain separate governed actions.
 
+## Data Domain Harness
+
+The built-in `data-domain` Harness owns six bounded evidence Genes:
+
+- `data.inventory` lists bounded workspace files;
+- `data.schema` searches fixed schema and data-model markers;
+- `data.quality` searches fixed validation and integrity markers;
+- `data.lineage` searches source, transformation, pipeline, and provenance markers;
+- `data.analysis` searches fixed statistical and aggregation markers;
+- `data.guide` returns static workflow guidance without requesting an effect.
+
+The Data Domain records local evidence without connecting to databases, executing
+queries, contacting networks, changing data, or claiming statistical correctness.
+Database, network, process, and mutation actions remain separate governed
+capabilities.
+
 `CodingFeedbackLoop` composes the existing evaluation, Reflexion, adaptation,
 and run-loop contracts around coding evidence. A verified iteration completes
 without adaptation. A failed retryable iteration records trajectory, outcome,
@@ -343,11 +359,11 @@ of the same custom ID are rejected during admission.
 
 Built-in Harness IDs are reserved. A package can add a new Domain or Meta
 profile but cannot shadow `core-source`, `coordination-meta`, `coding-domain`,
-`research-domain`, `design-domain`, `operations-domain`, or another built-in
-`security-domain`, or another built-in identity.
+`research-domain`, `design-domain`, `operations-domain`, `security-domain`,
+`debugging-domain`, `data-domain`, or another built-in identity.
 
-The built-in Coding, Research, Design, Operations, and Security Genes and
-installed WebAssembly Genes are the executable Gene implementations available to
+The built-in Coding, Research, Design, Operations, Security, Debugging, and Data
+Genes and installed WebAssembly Genes are the executable Gene implementations available to
 declarative Domain profiles. An admitted custom Domain profile can be selected
 with its exact version when every required dependency resolves exactly. The
 profile still uses the existing execution controller and effect policy. The

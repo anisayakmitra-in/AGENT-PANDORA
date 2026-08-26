@@ -16,11 +16,11 @@ use crate::shadow_council::{RoutingError, ShadowCouncil};
 use crate::wasm::{WasmError, WasmExecutor, WasmGeneRequest};
 use crate::{ApprovalError, ApprovalStore, ConsumedPermit, PermitError, ToolContext, ToolEngine};
 use pandora_harnesses::{
-    CodingRequest, DebuggingRequest, DesignRequest, HarnessCatalog, OperationsRequest,
+    CodingRequest, DataRequest, DebuggingRequest, DesignRequest, HarnessCatalog, OperationsRequest,
     PlanningContext, ResearchRequest, SecurityRequest, canonical_harness_binding_digest,
-    coding_static_output, debugging_static_output, design_static_output, is_debugging_gene,
-    is_design_gene, is_operations_gene, is_research_gene, is_security_gene,
-    operations_static_output, research_static_output, security_static_output,
+    coding_static_output, data_static_output, debugging_static_output, design_static_output,
+    is_data_gene, is_debugging_gene, is_design_gene, is_operations_gene, is_research_gene,
+    is_security_gene, operations_static_output, research_static_output, security_static_output,
 };
 use pandora_provider::{ModelRequest, Provider, ProviderError, ProviderManifest};
 use pandora_types::{
@@ -963,6 +963,14 @@ impl ExecutionController {
                 &execution_id,
                 execution_profile,
             )?
+        } else if is_data_gene(&gene_id) {
+            data_input(
+                &intent,
+                &gene_id,
+                &session,
+                &execution_id,
+                execution_profile,
+            )?
         } else {
             coding_input(
                 &intent,
@@ -979,6 +987,7 @@ impl ExecutionController {
             .or_else(|| operations_static_output(&gene_id))
             .or_else(|| security_static_output(&gene_id))
             .or_else(|| debugging_static_output(&gene_id))
+            .or_else(|| data_static_output(&gene_id))
             .map(|value| value.as_bytes().to_vec());
         let mut summary = RunSummary {
             execution_id: execution_id.clone(),
@@ -1244,6 +1253,7 @@ impl ExecutionController {
                         | "design.inventory"
                         | "operations.inventory"
                         | "debugging.inventory"
+                        | "data.inventory"
                 ) {
                     let target = self
                         .workspace
@@ -1283,6 +1293,10 @@ impl ExecutionController {
                         | "debugging.tests"
                         | "debugging.regressions"
                         | "debugging.diagnostics"
+                        | "data.schema"
+                        | "data.quality"
+                        | "data.lineage"
+                        | "data.analysis"
                 ) {
                     let target = self.workspace.path(".").map_err(RuntimeError::Filesystem)?;
                     let response = self.filesystem.search(permit, &target, path, now);
@@ -1345,6 +1359,10 @@ impl ExecutionController {
                         | "debugging.tests"
                         | "debugging.regressions"
                         | "debugging.diagnostics"
+                        | "data.schema"
+                        | "data.quality"
+                        | "data.lineage"
+                        | "data.analysis"
                 ) {
                     append_labeled_output(output, path, &bytes);
                 } else {
@@ -1760,6 +1778,12 @@ fn default_gene_id(intent: &TaskIntent) -> GeneId {
             GeneId::new("debugging.diagnostics").expect("built-in Gene ID is valid")
         }
         "debugging-guide" => GeneId::new("debugging.guide").expect("built-in Gene ID is valid"),
+        "data-inventory" => GeneId::new("data.inventory").expect("built-in Gene ID is valid"),
+        "data-schema" => GeneId::new("data.schema").expect("built-in Gene ID is valid"),
+        "data-quality" => GeneId::new("data.quality").expect("built-in Gene ID is valid"),
+        "data-lineage" => GeneId::new("data.lineage").expect("built-in Gene ID is valid"),
+        "data-analysis" => GeneId::new("data.analysis").expect("built-in Gene ID is valid"),
+        "data-guide" => GeneId::new("data.guide").expect("built-in Gene ID is valid"),
         _ => GeneId::new("unknown.gene").expect("built-in fallback Gene ID is valid"),
     }
 }
@@ -2027,6 +2051,43 @@ fn security_input(
         }
         "security.policy" if action == "security-policy" => SecurityRequest::policy(context),
         "security.guide" if action == "security-guide" => SecurityRequest::guide(context),
+        _ => {
+            return Err(RuntimeError::InvalidIntent(
+                "intent does not match the selected Gene",
+            ));
+        }
+    };
+    let input = request.into_gene_input().map_err(RuntimeError::Planning)?;
+    Ok((input, None))
+}
+
+fn data_input(
+    intent: &TaskIntent,
+    gene_id: &GeneId,
+    session: &Session,
+    execution_id: &ExecutionId,
+    execution_profile: ExecutionProfile,
+) -> Result<(GeneInput, Option<Vec<u8>>), RuntimeError> {
+    let context = PlanningContext::new(
+        execution_id.clone(),
+        session.id().clone(),
+        session.principal_id().clone(),
+        session.workspace_id().clone(),
+        execution_profile,
+    );
+    let action = intent
+        .summary()
+        .split_once(':')
+        .map(|(action, _)| action)
+        .unwrap_or(intent.summary())
+        .to_ascii_lowercase();
+    let request = match gene_id.as_str() {
+        "data.inventory" if action == "data-inventory" => DataRequest::inventory(context),
+        "data.schema" if action == "data-schema" => DataRequest::schema(context),
+        "data.quality" if action == "data-quality" => DataRequest::quality(context),
+        "data.lineage" if action == "data-lineage" => DataRequest::lineage(context),
+        "data.analysis" if action == "data-analysis" => DataRequest::analysis(context),
+        "data.guide" if action == "data-guide" => DataRequest::guide(context),
         _ => {
             return Err(RuntimeError::InvalidIntent(
                 "intent does not match the selected Gene",

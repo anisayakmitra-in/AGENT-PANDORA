@@ -1,6 +1,6 @@
 use pandora_harnesses::{
-    CODING_HARNESS_ID, DEBUGGING_HARNESS_ID, DESIGN_HARNESS_ID, RESEARCH_HARNESS_ID,
-    SECURITY_HARNESS_ID,
+    CODING_HARNESS_ID, DATA_HARNESS_ID, DEBUGGING_HARNESS_ID, DESIGN_HARNESS_ID,
+    RESEARCH_HARNESS_ID, SECURITY_HARNESS_ID,
 };
 use pandora_types::{GeneId, HarnessId, TaskIntent};
 
@@ -17,6 +17,7 @@ pub enum RoutingReason {
     DesignTask,
     SecurityTask,
     DebuggingTask,
+    DataTask,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -113,6 +114,24 @@ impl ShadowCouncil {
                 reason: RoutingReason::DebuggingTask,
             });
         }
+        let is_data_task = [
+            "data",
+            "dataset",
+            "schema",
+            "lineage",
+            "data quality",
+            "analytics",
+            "etl",
+        ]
+        .iter()
+        .any(|term| summary.contains(term));
+        if is_data_task {
+            return Ok(Selection {
+                harness_id: HarnessId::new(DATA_HARNESS_ID).expect("built-in harness ID is valid"),
+                gene_id: task.requested_gene().cloned(),
+                reason: RoutingReason::DataTask,
+            });
+        }
         let is_coding_task = [
             "code",
             "rust",
@@ -206,6 +225,16 @@ mod tests {
         let selection = council.select(&task).unwrap();
 
         assert_eq!(selection.harness_id().as_str(), "debugging-domain");
+    }
+
+    #[test]
+    fn data_task_selects_the_data_domain() {
+        let council = ShadowCouncil::new();
+        let task = TaskIntent::new("inspect dataset schema and data lineage").unwrap();
+
+        let selection = council.select(&task).unwrap();
+
+        assert_eq!(selection.harness_id().as_str(), "data-domain");
     }
 
     #[test]

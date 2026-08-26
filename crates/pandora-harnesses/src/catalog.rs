@@ -1,6 +1,6 @@
 use crate::harness::{
-    CodingHarness, CoordinationMetaHarness, CoreSourceHarness, DebuggingHarness, DesignHarness,
-    OperationsHarness, ResearchHarness, SecurityHarness,
+    CodingHarness, CoordinationMetaHarness, CoreSourceHarness, DataHarness, DebuggingHarness,
+    DesignHarness, OperationsHarness, ResearchHarness, SecurityHarness,
 };
 use crate::profile::{
     DeclarativeDomainHarness, DeclarativeMetaHarness, DomainProfileError, MetaProfileError,
@@ -22,6 +22,7 @@ impl HarnessCatalog {
                 Box::new(OperationsHarness::new()),
                 Box::new(SecurityHarness::new()),
                 Box::new(DebuggingHarness::new()),
+                Box::new(DataHarness::new()),
                 Box::new(CoordinationMetaHarness::new()),
             ],
         }

@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod catalog;
+pub mod data;
 pub mod debugging;
 pub mod design;
 pub mod genes;
@@ -344,9 +345,9 @@ pub use harness::{
 pub use manifest::{
     CODING_HARNESS_ID, CODING_HARNESS_VERSION, COORDINATION_META_HARNESS_ID,
     COORDINATION_META_HARNESS_VERSION, CORE_SOURCE_HARNESS_ID, CORE_SOURCE_HARNESS_VERSION,
-    DEBUGGING_HARNESS_ID, DEBUGGING_HARNESS_VERSION, DESIGN_HARNESS_ID, DESIGN_HARNESS_VERSION,
-    OPERATIONS_HARNESS_ID, OPERATIONS_HARNESS_VERSION, RESEARCH_HARNESS_ID,
-    RESEARCH_HARNESS_VERSION, SECURITY_HARNESS_ID, SECURITY_HARNESS_VERSION,
+    DATA_HARNESS_ID, DATA_HARNESS_VERSION, DEBUGGING_HARNESS_ID, DEBUGGING_HARNESS_VERSION,
+    DESIGN_HARNESS_ID, DESIGN_HARNESS_VERSION, OPERATIONS_HARNESS_ID, OPERATIONS_HARNESS_VERSION,
+    RESEARCH_HARNESS_ID, RESEARCH_HARNESS_VERSION, SECURITY_HARNESS_ID, SECURITY_HARNESS_VERSION,
 };
 pub use operations::{
     OperationsAction, OperationsGene, OperationsGeneRole, OperationsRequest, is_operations_gene,
@@ -360,6 +361,7 @@ pub use slash::{
     canonical_harness_command, canonical_profile_gene_command, canonical_profile_harness_command,
 };
 
+pub use data::{DataAction, DataGene, DataGeneRole, DataRequest, data_static_output, is_data_gene};
 pub use debugging::{
     DebuggingAction, DebuggingGene, DebuggingGeneRole, DebuggingRequest, debugging_static_output,
     is_debugging_gene,
@@ -380,6 +382,7 @@ pub fn builtin_genes() -> Vec<Box<dyn pandora_types::Gene>> {
     genes.extend(OperationsGene::all());
     genes.extend(SecurityGene::all());
     genes.extend(DebuggingGene::all());
+    genes.extend(DataGene::all());
     genes
 }
 
@@ -638,6 +641,36 @@ mod tests {
     }
 
     #[test]
+    fn data_domain_exposes_only_bounded_read_workflows() {
+        let data = builtin_harnesses()
+            .into_iter()
+            .find(|harness| harness.manifest().id().as_str() == "data-domain")
+            .expect("the built-in catalog should include the Data Domain Harness");
+        let genes = data
+            .genes()
+            .iter()
+            .map(|gene| gene.manifest())
+            .collect::<Vec<_>>();
+
+        assert_eq!(data.manifest().kind(), HarnessKind::Domain);
+        assert_eq!(genes.len(), 6);
+        for id in [
+            "data.inventory",
+            "data.schema",
+            "data.quality",
+            "data.lineage",
+            "data.analysis",
+            "data.guide",
+        ] {
+            assert!(genes.iter().any(|gene| gene.id().as_str() == id));
+        }
+        assert!(genes.iter().all(|gene| {
+            gene.capabilities().is_empty()
+                || gene.capabilities() == [pandora_types::Capability::FilesystemRead]
+        }));
+    }
+
+    #[test]
     fn slash_catalog_covers_the_coding_harness_and_every_gene() {
         let harnesses = HarnessCatalog::builtins();
         let commands = SlashCommandCatalog::from_harnesses(harnesses.iter()).unwrap();
@@ -803,6 +836,32 @@ mod tests {
             .genes()
         {
             let command = canonical_gene_command("debugging-domain", gene.manifest().id().as_str());
+            assert!(commands.resolve(&command).is_some(), "missing {command}");
+        }
+    }
+
+    #[test]
+    fn slash_catalog_covers_the_data_harness_and_every_gene() {
+        let harnesses = HarnessCatalog::builtins();
+        let commands = SlashCommandCatalog::from_harnesses(harnesses.iter()).unwrap();
+
+        for command in [
+            "/data",
+            "/data-inventory",
+            "/data-schema",
+            "/data-quality",
+            "/data-lineage",
+            "/data-analysis",
+            "/data-guide",
+        ] {
+            assert!(commands.resolve(command).is_some(), "missing {command}");
+        }
+        for gene in harnesses
+            .find(&pandora_types::HarnessId::new("data-domain").unwrap())
+            .unwrap()
+            .genes()
+        {
+            let command = canonical_gene_command("data-domain", gene.manifest().id().as_str());
             assert!(commands.resolve(&command).is_some(), "missing {command}");
         }
     }

@@ -3848,6 +3848,49 @@ fn debugging_harness_runs_read_only_failure_and_guide_genes() {
 }
 
 #[test]
+fn data_harness_runs_read_only_schema_and_guide_genes() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    let output = fixture
+        .command(&[
+            "run",
+            "--harness",
+            "data",
+            "--gene",
+            "data.guide",
+            "data-guide",
+            "--json",
+        ])
+        .output()
+        .expect("data guide should start");
+    assert_success_with_context(&output, "data guide");
+    let response = parse_json(&output);
+    assert_eq!(response["harness_id"], "data-domain");
+    assert_eq!(response["gene_id"], "data.guide");
+    assert_eq!(response["status"], "completed");
+
+    let output = fixture
+        .command(&[
+            "harness",
+            "run",
+            "data",
+            "--gene",
+            "data.schema",
+            "--task",
+            "data-schema",
+            "--json",
+        ])
+        .output()
+        .expect("data schema evidence should start");
+    assert_success_with_context(&output, "data schema evidence");
+    let response = parse_json(&output);
+    assert_eq!(response["harness_id"], "data-domain");
+    assert_eq!(response["gene_id"], "data.schema");
+    assert_eq!(response["status"], "completed");
+}
+
+#[test]
 fn operations_harness_executes_bounded_workspace_reads() {
     let fixture = Fixture::new();
     fixture.setup();

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added the read-only `data-domain` Harness with bounded inventory, schema,
+  quality, lineage, analysis, and guidance Genes. It records local evidence
+  without database connections, query execution, data mutation, or statistical
+  correctness claims.
 - Extended the read-only `security-domain` Harness with explicit discovery,
   attack-path, fix-planning, fix-verification, vulnerability-writeup, and
   finding-tracking workflow Genes modeled on the Codex Security lifecycle.
