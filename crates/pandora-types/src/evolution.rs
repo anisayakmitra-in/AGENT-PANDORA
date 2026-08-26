@@ -1,5 +1,6 @@
 use crate::effect::Timestamp;
 use crate::ids::{ArtifactId, ExecutionId, IdError, PrincipalId, ProposalId, RequestDigest};
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 const MAX_TEXT_BYTES: usize = 4096;
@@ -20,7 +21,7 @@ impl EvolutionMode {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum EvolutionSource {
     Reflexion,
     Gepa,
@@ -175,7 +176,7 @@ impl ReflexionArtifact {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct MutationProposal {
     proposal_id: ProposalId,
     source: EvolutionSource,
@@ -243,7 +244,7 @@ impl MutationProposal {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct HoldoutEvaluation {
     proposal_id: ProposalId,
     trajectory_score: u8,
@@ -311,7 +312,7 @@ impl HoldoutEvaluation {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ArtifactSignature {
     artifact_id: ArtifactId,
     signer: PrincipalId,
@@ -344,7 +345,7 @@ impl ArtifactSignature {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ParliamentApproval {
     proposal_id: ProposalId,
     approver: PrincipalId,
@@ -384,7 +385,7 @@ impl ParliamentApproval {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CanaryResult {
     proposal_id: ProposalId,
     passed: bool,
@@ -431,7 +432,7 @@ impl CanaryResult {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum EvolutionState {
     Proposed,
     Evaluated,

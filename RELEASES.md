@@ -19,7 +19,8 @@ The canonical prerelease tags for this line are `v2.0.0-alpha.1` through
 
 This beta adopts MIT licensing for Pandora-owned material, adds the native
 Gemini provider adapter, hardens process-tree cleanup for verification and
-MCP operations, and documents the governed Security Domain workflow. It is a
+MCP operations, adds durable evolution records and read-only evolution
+inspection, and documents the governed Security Domain workflow. It is a
 CLI-only prerelease; no desktop, remote-execution, or marketplace support is
 claimed.
 

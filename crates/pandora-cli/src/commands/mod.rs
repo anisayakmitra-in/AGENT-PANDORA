@@ -16,6 +16,7 @@ mod completions;
 mod doctor;
 mod efficiency;
 mod evaluation;
+mod evolution;
 mod fleet;
 mod graph;
 mod harness;
@@ -99,6 +100,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "orchestration" => orchestration(&args[1..]),
         "doctor" => doctor::execute(&args[1..]),
         "evaluation" => evaluation::execute(&args[1..]),
+        "evolution" => evolution::execute(&args[1..]),
         "rollout" => rollout::execute(&args[1..]),
         "efficiency" => efficiency::execute(&args[1..]),
         "fleet" => fleet::execute(&args[1..]),
@@ -307,7 +309,7 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|service|chat|tui|harness|slash|session|job|subagent|skill|package|memory|approval|provider|mcp|tool|orchestration|strategies|evaluation|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor> [options]
+    r#"usage: pandora <help|setup|run|service|chat|tui|harness|slash|session|job|subagent|skill|package|memory|approval|provider|mcp|tool|orchestration|strategies|evaluation|evolution|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor> [options]
 
 commands:
   help (or --help)
@@ -333,6 +335,8 @@ commands:
   strategies list
   evaluation golden --input <path> [--fail-on-failure]
   evaluation inspect --session <id> [--execution <id>]
+  evolution list [--limit <1-256>]
+  evolution inspect --id <proposal-id>
   rollout inspect --session <id> [--execution <id>]
   efficiency rank [--task-class <name>] [--objective <cost|latency|tokens|certainty>]
   fleet list|register|dispatch|lease|release|expire|quarantine|revoke|kill
@@ -421,6 +425,8 @@ mod tests {
         assert!(usage.contains("work accepts --max-jobs <1-64>"));
         assert!(usage.contains("evaluation golden --input <path> [--fail-on-failure]"));
         assert!(usage.contains("evaluation inspect --session <id> [--execution <id>]"));
+        assert!(usage.contains("evolution list [--limit <1-256>]"));
+        assert!(usage.contains("evolution inspect --id <proposal-id>"));
         assert!(usage.contains("graph code|knowledge|review|architecture --input <path>"));
     }
 }

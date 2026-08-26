@@ -532,6 +532,8 @@ pandora orchestration roles
 pandora strategies list
 pandora evaluation golden --input <path> [--fail-on-failure]
 pandora evaluation inspect --session <id> [--execution <id>]
+pandora evolution list [--limit <1-256>]
+pandora evolution inspect --id <proposal-id>
 pandora rollout inspect --session <id> [--execution <id>]
 pandora graph code|knowledge|review|architecture --input <path> [--tenant <id>] [--workspace <id>]
 pandora completions powershell

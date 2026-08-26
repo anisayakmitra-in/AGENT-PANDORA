@@ -71,7 +71,7 @@ pub use evaluation_engine::{
     EvaluationEngine, EvaluationError, GoldenCase, GoldenCaseResult, GoldenSetReport,
     MAX_GOLDEN_CASE_ID_BYTES, MAX_GOLDEN_CASES, MAX_GOLDEN_EXPECTED_OUTPUT_BYTES,
 };
-pub use evolution::{EvolutionEngine, EvolutionError};
+pub use evolution::{EvolutionEngine, EvolutionError, EvolutionRecord};
 pub use execution_controller::{
     ExecutionController, RunStatus, RunSummary, RuntimeError, WorktreeExecutionContext,
 };

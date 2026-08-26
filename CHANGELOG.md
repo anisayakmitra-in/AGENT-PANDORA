@@ -15,6 +15,9 @@
   unchanged.
 - Hardened verification and local MCP process cleanup so descendants are
   terminated and reaped with the owning operation.
+- Added durable SQLite evolution records with restart recovery and read-only
+  `pandora evolution list` and `pandora evolution inspect` commands. Stored
+  records remain evidence and workflow state; they cannot authorize effects.
 - Documented the Security Domain as a governed, evidence-first assessment
   workflow with explicit boundaries and no unsupported scanner or remediation
   claims.
