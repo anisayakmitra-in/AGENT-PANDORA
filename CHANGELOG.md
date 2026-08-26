@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-No unreleased changes.
+- Extended the read-only `security-domain` Harness with explicit discovery,
+  attack-path, fix-planning, fix-verification, vulnerability-writeup, and
+  finding-tracking workflow Genes modeled on the Codex Security lifecycle.
+  These Genes collect local evidence only; they do not execute scanners,
+  assign findings, modify code, or mutate a finding database.
 
 ## v2.0.0-beta.4
 

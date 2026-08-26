@@ -71,7 +71,63 @@ const HARDENING_MARKERS: [&str; 8] = [
     "rollback",
 ];
 const POLICY_MARKERS: [&str; 4] = ["SECURITY", "permission", "approval", "credential"];
-const SECURITY_GUIDE: &str = "Security Scan inventories fixed high-signal security markers without claiming complete scanner coverage.\nSecurity Audit searches boundary-sensitive source markers and returns evidence paths.\nSecurity Dependencies searches dependency declarations without claiming advisory or vulnerability coverage.\nSecurity Threat Model searches local trust-boundary and isolation evidence.\nSecurity Triage searches existing finding and proof terminology without assigning a verdict.\nSecurity Validation searches tests and validation evidence without running a scanner.\nSecurity Hardening searches local defensive-control evidence and does not change code.\nSecurity Policy searches local authorization terminology without certifying compliance.\nAll filesystem effects require Pandora permits and receipts; process, network, package, and remediation actions require separately governed capabilities.";
+const DISCOVERY_MARKERS: [&str; 8] = [
+    "candidate",
+    "source",
+    "sink",
+    "broken control",
+    "untrusted",
+    "authorization",
+    "validation",
+    "security test",
+];
+const ATTACK_PATH_MARKERS: [&str; 8] = [
+    "source",
+    "control",
+    "sink",
+    "reachability",
+    "trust boundary",
+    "privilege",
+    "impact",
+    "attack path",
+];
+const FIX_MARKERS: [&str; 6] = [
+    "fix",
+    "patch",
+    "remediation",
+    "mitigation",
+    "regression test",
+    "rollback",
+];
+const VERIFY_FIX_MARKERS: [&str; 7] = [
+    "fixed",
+    "regression",
+    "negative control",
+    "reproduction",
+    "verification",
+    "before/after",
+    "holdout",
+];
+const WRITEUP_MARKERS: [&str; 7] = [
+    "impact",
+    "reproduction",
+    "affected versions",
+    "fix",
+    "references",
+    "PoC",
+    "proof",
+];
+const TRACK_MARKERS: [&str; 8] = [
+    "status",
+    "owner",
+    "severity",
+    "finding",
+    "accepted",
+    "deferred",
+    "closed",
+    "fingerprint",
+];
+const SECURITY_GUIDE: &str = "Security Scan inventories fixed high-signal security markers without claiming complete scanner coverage.\nSecurity Audit searches boundary-sensitive source markers and returns evidence paths.\nSecurity Dependencies searches dependency declarations without claiming advisory or vulnerability coverage.\nSecurity Threat Model searches local trust-boundary and isolation evidence.\nSecurity Discovery records candidate source, control, sink, and reachability terminology without asserting a finding.\nSecurity Triage searches existing finding and proof terminology without assigning a verdict.\nSecurity Attack Path searches source, control, sink, impact, and privilege evidence without proving exploitability.\nSecurity Validation searches tests and validation evidence without running a scanner.\nSecurity Fix searches remediation planning terminology without changing code.\nSecurity Verify Fix searches regression and negative-control evidence without certifying a fix.\nSecurity Writeup searches disclosure fields without generating a vulnerability report.\nSecurity Track searches finding lifecycle fields without creating or mutating a finding record.\nSecurity Hardening searches local defensive-control evidence and does not change code.\nSecurity Policy searches local authorization terminology without certifying compliance.\nAll filesystem effects require Pandora permits and receipts; process, network, package, and remediation actions require separately governed capabilities.";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -80,8 +136,14 @@ pub enum SecurityAction {
     Scan,
     Dependencies,
     ThreatModel,
+    Discovery,
     Triage,
+    AttackPath,
     Validation,
+    Fix,
+    VerifyFix,
+    Writeup,
+    Track,
     Hardening,
     Policy,
     Guide,
@@ -115,8 +177,32 @@ impl SecurityRequest {
         Self::new(SecurityAction::Triage, context)
     }
 
+    pub fn discovery(context: PlanningContext) -> Self {
+        Self::new(SecurityAction::Discovery, context)
+    }
+
+    pub fn attack_path(context: PlanningContext) -> Self {
+        Self::new(SecurityAction::AttackPath, context)
+    }
+
     pub fn validation(context: PlanningContext) -> Self {
         Self::new(SecurityAction::Validation, context)
+    }
+
+    pub fn fix(context: PlanningContext) -> Self {
+        Self::new(SecurityAction::Fix, context)
+    }
+
+    pub fn verify_fix(context: PlanningContext) -> Self {
+        Self::new(SecurityAction::VerifyFix, context)
+    }
+
+    pub fn writeup(context: PlanningContext) -> Self {
+        Self::new(SecurityAction::Writeup, context)
+    }
+
+    pub fn track(context: PlanningContext) -> Self {
+        Self::new(SecurityAction::Track, context)
     }
 
     pub fn hardening(context: PlanningContext) -> Self {
@@ -153,8 +239,14 @@ pub enum SecurityGeneRole {
     Scan,
     Dependencies,
     ThreatModel,
+    Discovery,
     Triage,
+    AttackPath,
     Validation,
+    Fix,
+    VerifyFix,
+    Writeup,
+    Track,
     Hardening,
     Policy,
     Guide,
@@ -167,8 +259,14 @@ impl SecurityGeneRole {
             Self::Scan => SecurityAction::Scan,
             Self::Dependencies => SecurityAction::Dependencies,
             Self::ThreatModel => SecurityAction::ThreatModel,
+            Self::Discovery => SecurityAction::Discovery,
             Self::Triage => SecurityAction::Triage,
+            Self::AttackPath => SecurityAction::AttackPath,
             Self::Validation => SecurityAction::Validation,
+            Self::Fix => SecurityAction::Fix,
+            Self::VerifyFix => SecurityAction::VerifyFix,
+            Self::Writeup => SecurityAction::Writeup,
+            Self::Track => SecurityAction::Track,
             Self::Hardening => SecurityAction::Hardening,
             Self::Policy => SecurityAction::Policy,
             Self::Guide => SecurityAction::Guide,
@@ -181,8 +279,14 @@ impl SecurityGeneRole {
             Self::Scan => "security.scan",
             Self::Dependencies => "security.dependencies",
             Self::ThreatModel => "security.threat-model",
+            Self::Discovery => "security.discovery",
             Self::Triage => "security.triage",
+            Self::AttackPath => "security.attack-path",
             Self::Validation => "security.validation",
+            Self::Fix => "security.fix",
+            Self::VerifyFix => "security.verify-fix",
+            Self::Writeup => "security.writeup",
+            Self::Track => "security.track",
             Self::Hardening => "security.hardening",
             Self::Policy => "security.policy",
             Self::Guide => "security.guide",
@@ -219,8 +323,14 @@ impl SecurityGene {
             SecurityGeneRole::Scan,
             SecurityGeneRole::Dependencies,
             SecurityGeneRole::ThreatModel,
+            SecurityGeneRole::Discovery,
             SecurityGeneRole::Triage,
+            SecurityGeneRole::AttackPath,
             SecurityGeneRole::Validation,
+            SecurityGeneRole::Fix,
+            SecurityGeneRole::VerifyFix,
+            SecurityGeneRole::Writeup,
+            SecurityGeneRole::Track,
             SecurityGeneRole::Hardening,
             SecurityGeneRole::Policy,
             SecurityGeneRole::Guide,
@@ -269,8 +379,14 @@ impl Gene for SecurityGene {
             SecurityGeneRole::Scan => &SCAN_MARKERS,
             SecurityGeneRole::Dependencies => &DEPENDENCY_MARKERS,
             SecurityGeneRole::ThreatModel => &THREAT_MODEL_MARKERS,
+            SecurityGeneRole::Discovery => &DISCOVERY_MARKERS,
             SecurityGeneRole::Triage => &TRIAGE_MARKERS,
+            SecurityGeneRole::AttackPath => &ATTACK_PATH_MARKERS,
             SecurityGeneRole::Validation => &VALIDATION_MARKERS,
+            SecurityGeneRole::Fix => &FIX_MARKERS,
+            SecurityGeneRole::VerifyFix => &VERIFY_FIX_MARKERS,
+            SecurityGeneRole::Writeup => &WRITEUP_MARKERS,
+            SecurityGeneRole::Track => &TRACK_MARKERS,
             SecurityGeneRole::Hardening => &HARDENING_MARKERS,
             SecurityGeneRole::Policy => &POLICY_MARKERS,
             SecurityGeneRole::Guide => return Ok(Vec::new()),
@@ -289,8 +405,14 @@ pub fn is_security_gene(gene_id: &GeneId) -> bool {
             | "security.scan"
             | "security.dependencies"
             | "security.threat-model"
+            | "security.discovery"
             | "security.triage"
+            | "security.attack-path"
             | "security.validation"
+            | "security.fix"
+            | "security.verify-fix"
+            | "security.writeup"
+            | "security.track"
             | "security.hardening"
             | "security.policy"
             | "security.guide"
@@ -372,8 +494,14 @@ mod tests {
         let roles = [
             (SecurityGeneRole::Scan, &SCAN_MARKERS[..]),
             (SecurityGeneRole::ThreatModel, &THREAT_MODEL_MARKERS[..]),
+            (SecurityGeneRole::Discovery, &DISCOVERY_MARKERS[..]),
             (SecurityGeneRole::Triage, &TRIAGE_MARKERS[..]),
+            (SecurityGeneRole::AttackPath, &ATTACK_PATH_MARKERS[..]),
             (SecurityGeneRole::Validation, &VALIDATION_MARKERS[..]),
+            (SecurityGeneRole::Fix, &FIX_MARKERS[..]),
+            (SecurityGeneRole::VerifyFix, &VERIFY_FIX_MARKERS[..]),
+            (SecurityGeneRole::Writeup, &WRITEUP_MARKERS[..]),
+            (SecurityGeneRole::Track, &TRACK_MARKERS[..]),
             (SecurityGeneRole::Hardening, &HARDENING_MARKERS[..]),
         ];
 

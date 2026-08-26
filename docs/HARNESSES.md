@@ -198,7 +198,7 @@ change a deployment. Those effects require separate capabilities and approvals.
 
 ## Security Domain Harness
 
-The built-in `security-domain` Harness owns nine read-only evidence Genes:
+The built-in `security-domain` Harness owns fifteen read-only evidence Genes:
 
 - `security.scan` inventories fixed security-boundary markers;
 - `security.audit` searches fixed high-signal source markers such as `unsafe`,
@@ -206,10 +206,22 @@ The built-in `security-domain` Harness owns nine read-only evidence Genes:
 - `security.dependencies` searches fixed dependency declaration markers;
 - `security.threat-model` searches trust-boundary, attacker, sandbox, and
   isolation terminology;
+- `security.discovery` records candidate source, control, sink, and reachability
+  terminology without asserting a finding;
 - `security.triage` searches existing finding, vulnerability, advisory, and
   proof terminology without assigning a verdict;
+- `security.attack-path` searches source, control, sink, impact, and privilege
+  evidence without proving exploitability;
 - `security.validation` searches test and validation evidence without running
   a scanner;
+- `security.fix` searches remediation planning terminology without changing
+  code;
+- `security.verify-fix` searches regression and negative-control evidence
+  without certifying a fix;
+- `security.writeup` searches disclosure fields without generating a
+  vulnerability report;
+- `security.track` searches finding lifecycle fields without creating or
+  mutating a finding record;
 - `security.hardening` searches local defensive-control evidence without
   changing code;
 - `security.policy` searches fixed authorization, credential, and security-policy
@@ -271,7 +283,11 @@ The Operations short aliases are `/operations`, `/operations-inventory`,
 `/deployment-evidence`, and `/operations-guide`.
 
 The Security short aliases are `/security`, `/security-audit`,
-`/security-dependencies`, `/security-policy`, and `/security-guide`.
+`/security-scan`, `/security-dependencies`, `/security-threat-model`,
+`/security-discovery`, `/security-triage`, `/security-attack-path`,
+`/security-validation`, `/security-fix`, `/security-verify-fix`,
+`/security-writeup`, `/security-track`, `/security-hardening`,
+`/security-policy`, and `/security-guide`.
 
 The Debugging short aliases are `/debugging`, `/debugging-inventory`,
 `/debugging-failures`, `/debugging-tests`, `/debugging-regressions`,

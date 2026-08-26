@@ -216,7 +216,9 @@ It also recognizes the Research actions `evidence-inventory`,
 `deployment-evidence`, and `operations-guide`. Security actions are
 `security-scan`, `security-audit`, `security-dependencies`,
 `security-threat-model`, `security-triage`, `security-validation`,
-`security-hardening`, `security-policy`, and `security-guide`. Debugging actions
+`security-discovery`, `security-attack-path`, `security-fix`,
+`security-verify-fix`, `security-writeup`, `security-track`, `security-hardening`,
+`security-policy`, and `security-guide`. Debugging actions
 are `debugging-inventory`, `debugging-failures`, `debugging-tests`,
 `debugging-regressions`, `debugging-diagnostics`, and `debugging-guide`. These actions
 provide bounded local evidence; they do not run scanners, assign vulnerability
@@ -548,7 +550,9 @@ aliases are `/operations-inventory`, `/operations-search`, `/config-inspect`,
 `/config-compare`, `/deployment-evidence`, and `/operations-guide`.
 `/security` inspects the built-in `security-domain` Harness. Its short Gene
 aliases are `/security-scan`, `/security-audit`, `/security-dependencies`,
-`/security-threat-model`, `/security-triage`, `/security-validation`,
+`/security-threat-model`, `/security-discovery`, `/security-triage`,
+`/security-attack-path`, `/security-validation`, `/security-fix`,
+`/security-verify-fix`, `/security-writeup`, `/security-track`,
 `/security-hardening`, `/security-policy`, and `/security-guide`.
 `/debugging` inspects the built-in `debugging-domain` Harness. Its short Gene
 aliases are `/debugging-inventory`, `/debugging-failures`, `/debugging-tests`,

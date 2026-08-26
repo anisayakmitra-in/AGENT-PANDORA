@@ -1269,8 +1269,14 @@ impl ExecutionController {
                         | "security.scan"
                         | "security.dependencies"
                         | "security.threat-model"
+                        | "security.discovery"
                         | "security.triage"
+                        | "security.attack-path"
                         | "security.validation"
+                        | "security.fix"
+                        | "security.verify-fix"
+                        | "security.writeup"
+                        | "security.track"
                         | "security.hardening"
                         | "security.policy"
                         | "debugging.failures"
@@ -1325,8 +1331,14 @@ impl ExecutionController {
                         | "security.scan"
                         | "security.dependencies"
                         | "security.threat-model"
+                        | "security.discovery"
                         | "security.triage"
+                        | "security.attack-path"
                         | "security.validation"
+                        | "security.fix"
+                        | "security.verify-fix"
+                        | "security.writeup"
+                        | "security.track"
                         | "security.hardening"
                         | "security.policy"
                         | "debugging.failures"
@@ -1713,10 +1725,22 @@ fn default_gene_id(intent: &TaskIntent) -> GeneId {
         "security-threat-model" => {
             GeneId::new("security.threat-model").expect("built-in Gene ID is valid")
         }
+        "security-discovery" => {
+            GeneId::new("security.discovery").expect("built-in Gene ID is valid")
+        }
         "security-triage" => GeneId::new("security.triage").expect("built-in Gene ID is valid"),
+        "security-attack-path" => {
+            GeneId::new("security.attack-path").expect("built-in Gene ID is valid")
+        }
         "security-validation" => {
             GeneId::new("security.validation").expect("built-in Gene ID is valid")
         }
+        "security-fix" => GeneId::new("security.fix").expect("built-in Gene ID is valid"),
+        "security-verify-fix" => {
+            GeneId::new("security.verify-fix").expect("built-in Gene ID is valid")
+        }
+        "security-writeup" => GeneId::new("security.writeup").expect("built-in Gene ID is valid"),
+        "security-track" => GeneId::new("security.track").expect("built-in Gene ID is valid"),
         "security-hardening" => {
             GeneId::new("security.hardening").expect("built-in Gene ID is valid")
         }
@@ -1982,10 +2006,22 @@ fn security_input(
         "security.threat-model" if action == "security-threat-model" => {
             SecurityRequest::threat_model(context)
         }
+        "security.discovery" if action == "security-discovery" => {
+            SecurityRequest::discovery(context)
+        }
         "security.triage" if action == "security-triage" => SecurityRequest::triage(context),
+        "security.attack-path" if action == "security-attack-path" => {
+            SecurityRequest::attack_path(context)
+        }
         "security.validation" if action == "security-validation" => {
             SecurityRequest::validation(context)
         }
+        "security.fix" if action == "security-fix" => SecurityRequest::fix(context),
+        "security.verify-fix" if action == "security-verify-fix" => {
+            SecurityRequest::verify_fix(context)
+        }
+        "security.writeup" if action == "security-writeup" => SecurityRequest::writeup(context),
+        "security.track" if action == "security-track" => SecurityRequest::track(context),
         "security.hardening" if action == "security-hardening" => {
             SecurityRequest::hardening(context)
         }
