@@ -2,12 +2,22 @@
 
 ## Unreleased
 
-- Changed the project license to MIT. Third-party dependency licenses remain
-  governed by their respective packages.
-- Added a native Gemini `generateContent` provider adapter with bounded
-  text/tool normalization, continuation mapping, and `x-goog-api-key`
+- No unreleased changes.
+
+## v2.0.0-beta.6
+
+- Adopted the MIT license for Pandora-owned source, packages, fixtures, and
+  documentation. Third-party dependency licenses remain governed by their
+  respective packages.
+- Added a native Gemini `generateContent` provider adapter with bounded text
+  and tool normalization, continuation mapping, and `x-goog-api-key`
   credential isolation. The existing provider permit and receipt boundary is
   unchanged.
+- Hardened verification and local MCP process cleanup so descendants are
+  terminated and reaped with the owning operation.
+- Documented the Security Domain as a governed, evidence-first assessment
+  workflow with explicit boundaries and no unsupported scanner or remediation
+  claims.
 
 ## v2.0.0-beta.5
 

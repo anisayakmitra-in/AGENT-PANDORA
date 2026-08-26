@@ -13,7 +13,15 @@ recommended install targets.
 
 The canonical prerelease tags for this line are `v2.0.0-alpha.1` through
 `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1`, `v2.0.0-beta.2`, and
-`v2.0.0-beta.3`, `v2.0.0-beta.4`, and `v2.0.0-beta.5`.
+`v2.0.0-beta.3`, `v2.0.0-beta.4`, `v2.0.0-beta.5`, and `v2.0.0-beta.6`.
+
+## v2.0.0-beta.6
+
+This beta adopts MIT licensing for Pandora-owned material, adds the native
+Gemini provider adapter, hardens process-tree cleanup for verification and
+MCP operations, and documents the governed Security Domain workflow. It is a
+CLI-only prerelease; no desktop, remote-execution, or marketplace support is
+claimed.
 
 ## v2.0.0-beta.5
 
