@@ -25,9 +25,10 @@ front matter, and paths that leave the skill root.
 ## Admission and state
 
 `skill install <local-skill-directory>` validates one local package, copies it
-through a temporary directory, and admits it under the configured Skills root.
-The operation preserves the source, rejects an existing destination, and does
-not enable the Skill. `SkillEngine::discover` validates package metadata,
+into exclusive staging, and atomically admits the completed tree under the
+configured Skills root. An existing destination or concurrent install is
+rejected without replacing the existing Skill. The operation preserves the
+source and does not enable the Skill. `SkillEngine::discover` validates metadata,
 records the source path, and inventories script files without enabling the
 Skill. New Skills start `disabled`; the supported state model is `disabled`,
 `enabled`, `suspended`, and `removed`. The supported state changes are

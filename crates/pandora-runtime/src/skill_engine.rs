@@ -3,6 +3,7 @@ use pandora_types::{SkillId, SkillManifest};
 use std::collections::HashSet;
 use std::fmt;
 use std::fs;
+use std::fs::OpenOptions;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -177,6 +178,14 @@ pub struct SkillEngine {
     removed_root: PathBuf,
 }
 
+struct InstallLock(PathBuf);
+
+impl Drop for InstallLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
 impl SkillEngine {
     pub fn discover(root: impl AsRef<Path>) -> Result<Self, SkillError> {
         let display_root = if root.as_ref().is_absolute() {
@@ -223,27 +232,35 @@ impl SkillEngine {
         collect_scripts(&source, &source.join("scripts"), &mut scripts)?;
 
         let destination = self.root.join(manifest.id().as_str());
+        let _lock = self.acquire_install_lock(manifest.id())?;
+        match fs::symlink_metadata(&destination) {
+            Ok(_) => return Err(SkillError::Collision),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
         let staging = self.create_staging_path(manifest.id())?;
         if let Err(error) = copy_tree(&source, &staging) {
             let _ = fs::remove_dir_all(&staging);
             return Err(error);
         }
-        if let Err(error) = fs::create_dir(&destination) {
+        match fs::symlink_metadata(&destination) {
+            Ok(_) => {
+                let _ = fs::remove_dir_all(&staging);
+                return Err(SkillError::Collision);
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                let _ = fs::remove_dir_all(&staging);
+                return Err(error.into());
+            }
+        }
+        if let Err(error) = fs::rename(&staging, &destination) {
             let _ = fs::remove_dir_all(&staging);
             return if error.kind() == io::ErrorKind::AlreadyExists {
                 Err(SkillError::Collision)
             } else {
                 Err(error.into())
             };
-        }
-        if let Err(error) = copy_tree(&staging, &destination) {
-            let _ = fs::remove_dir_all(&staging);
-            let _ = fs::remove_dir_all(&destination);
-            return Err(error);
-        }
-        if let Err(error) = fs::remove_dir_all(&staging) {
-            let _ = fs::remove_dir_all(&destination);
-            return Err(error.into());
         }
         if let Err(error) = self.write_state(manifest.id(), SkillState::Disabled) {
             let _ = fs::remove_dir_all(&destination);
@@ -553,6 +570,19 @@ impl SkillEngine {
         }
         Err(SkillError::Collision)
     }
+
+    fn acquire_install_lock(&self, id: &SkillId) -> Result<InstallLock, SkillError> {
+        let path = self
+            .root
+            .join(format!(".pandora-install-{}.lock", id.as_str()));
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(_) => Ok(InstallLock(path)),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                Err(SkillError::Collision)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
 }
 
 fn copy_tree(source: &Path, destination: &Path) -> Result<(), SkillError> {
@@ -853,6 +883,51 @@ mod tests {
         assert!(fixture.root.join("beta/SKILL.md").is_file());
         assert!(source.join("SKILL.md").is_file());
         assert_eq!(engine.list().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn collision_preserves_existing_skill_and_cleans_install_artifacts() {
+        let fixture = Fixture::new();
+        let source = fixture.root.join("incoming/beta");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("SKILL.md"), skill_text_for("beta")).unwrap();
+
+        let existing = fixture.root.join("beta");
+        fs::create_dir_all(&existing).unwrap();
+        let existing_document = skill_text_for("beta");
+        fs::write(existing.join("SKILL.md"), &existing_document).unwrap();
+
+        let engine = SkillEngine::discover(&fixture.root).unwrap();
+        assert_eq!(engine.install_from(&source), Err(SkillError::Collision));
+        assert_eq!(
+            fs::read_to_string(existing.join("SKILL.md")).unwrap(),
+            existing_document
+        );
+        assert!(!fixture.root.join(".pandora-install-beta.lock").exists());
+        assert!(
+            !fs::read_dir(&fixture.root)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .any(|path| path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(".pandora-install-beta-")))
+        );
+    }
+
+    #[test]
+    fn concurrent_install_reservation_is_exclusive() {
+        let fixture = Fixture::new();
+        let source = fixture.root.join("incoming/beta");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("SKILL.md"), skill_text_for("beta")).unwrap();
+
+        let engine = SkillEngine::discover(&fixture.root).unwrap();
+        let id = SkillId::new("beta").unwrap();
+        let _lock = engine.acquire_install_lock(&id).unwrap();
+
+        assert_eq!(engine.install_from(&source), Err(SkillError::Collision));
+        assert!(!fixture.root.join("beta").exists());
     }
 
     #[test]
