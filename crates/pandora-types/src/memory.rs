@@ -10,6 +10,23 @@ pub enum MemoryTier {
     L2,
 }
 
+pub const MAX_MEMORY_SYNTHESIS_EVIDENCE: usize = 16;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MemoryOrigin {
+    Explicit,
+    Synthesized,
+}
+
+impl MemoryOrigin {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Explicit => "explicit",
+            Self::Synthesized => "synthesized",
+        }
+    }
+}
+
 impl MemoryTier {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -67,6 +84,9 @@ pub enum MemoryContractError {
     FieldTooLong(&'static str),
     ControlCharacter(&'static str),
     SecretContent,
+    MissingEvidence,
+    TooManyEvidenceItems,
+    DuplicateEvidence,
     InvalidTier { kind: MemoryKind, tier: MemoryTier },
 }
 
@@ -80,6 +100,15 @@ impl fmt::Display for MemoryContractError {
                 write!(formatter, "{field} contains a control character")
             }
             Self::SecretContent => formatter.write_str("secret content cannot be persisted"),
+            Self::MissingEvidence => formatter.write_str("synthesized memory requires evidence"),
+            Self::TooManyEvidenceItems => write!(
+                formatter,
+                "synthesized memory exceeds the {} evidence-item limit",
+                MAX_MEMORY_SYNTHESIS_EVIDENCE
+            ),
+            Self::DuplicateEvidence => {
+                formatter.write_str("synthesized memory contains duplicate evidence")
+            }
             Self::InvalidTier { kind, tier } => {
                 write!(
                     formatter,
@@ -178,6 +207,8 @@ pub struct MemoryRecord {
     expires_at: Option<Timestamp>,
     provenance: String,
     approval: Option<MemoryApproval>,
+    origin: MemoryOrigin,
+    evidence_ids: Vec<MemoryId>,
 }
 
 impl MemoryRecord {
@@ -229,6 +260,61 @@ impl MemoryRecord {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_synthesized_l1(
+        id: impl Into<String>,
+        kind: MemoryKind,
+        scope: MemoryScope,
+        summary: impl Into<String>,
+        classification: ContextClassification,
+        created_at: Timestamp,
+        provenance: impl Into<String>,
+        evidence_ids: Vec<MemoryId>,
+    ) -> Result<Self, MemoryContractError> {
+        Self::new_with_origin(
+            id,
+            MemoryTier::L1,
+            kind,
+            scope,
+            summary,
+            classification,
+            created_at,
+            None,
+            provenance,
+            None,
+            MemoryOrigin::Synthesized,
+            evidence_ids,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_l1_with_origin(
+        id: impl Into<String>,
+        kind: MemoryKind,
+        scope: MemoryScope,
+        summary: impl Into<String>,
+        classification: ContextClassification,
+        created_at: Timestamp,
+        provenance: impl Into<String>,
+        origin: MemoryOrigin,
+        evidence_ids: Vec<MemoryId>,
+    ) -> Result<Self, MemoryContractError> {
+        Self::new_with_origin(
+            id,
+            MemoryTier::L1,
+            kind,
+            scope,
+            summary,
+            classification,
+            created_at,
+            None,
+            provenance,
+            None,
+            origin,
+            evidence_ids,
+        )
+    }
+
     pub fn promote_l2(
         candidate: Self,
         approval: MemoryApproval,
@@ -251,6 +337,8 @@ impl MemoryRecord {
             expires_at: None,
             provenance: candidate.provenance,
             approval: Some(approval),
+            origin: candidate.origin,
+            evidence_ids: candidate.evidence_ids,
         })
     }
 
@@ -267,6 +355,37 @@ impl MemoryRecord {
         provenance: impl Into<String>,
         approval: Option<MemoryApproval>,
     ) -> Result<Self, MemoryContractError> {
+        Self::new_with_origin(
+            id,
+            tier,
+            kind,
+            scope,
+            summary,
+            classification,
+            created_at,
+            expires_at,
+            provenance,
+            approval,
+            MemoryOrigin::Explicit,
+            Vec::new(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_origin(
+        id: impl Into<String>,
+        tier: MemoryTier,
+        kind: MemoryKind,
+        scope: MemoryScope,
+        summary: impl Into<String>,
+        classification: ContextClassification,
+        created_at: Timestamp,
+        expires_at: Option<Timestamp>,
+        provenance: impl Into<String>,
+        approval: Option<MemoryApproval>,
+        origin: MemoryOrigin,
+        evidence_ids: Vec<MemoryId>,
+    ) -> Result<Self, MemoryContractError> {
         let id = MemoryId::new(id.into())?;
         let summary = validate_summary(summary.into(), classification)?;
         let provenance = validate_text("provenance", provenance.into())?;
@@ -274,6 +393,21 @@ impl MemoryRecord {
             || tier == MemoryTier::L1 && !kind.can_be_l1()
             || tier == MemoryTier::L2 && !kind.can_be_l2()
         {
+            return Err(MemoryContractError::InvalidTier { kind, tier });
+        }
+        if evidence_ids.len() > MAX_MEMORY_SYNTHESIS_EVIDENCE {
+            return Err(MemoryContractError::TooManyEvidenceItems);
+        }
+        let mut unique_evidence = evidence_ids.clone();
+        unique_evidence.sort();
+        unique_evidence.dedup();
+        if unique_evidence.len() != evidence_ids.len() {
+            return Err(MemoryContractError::DuplicateEvidence);
+        }
+        if origin == MemoryOrigin::Synthesized && evidence_ids.is_empty() {
+            return Err(MemoryContractError::MissingEvidence);
+        }
+        if origin == MemoryOrigin::Explicit && !evidence_ids.is_empty() {
             return Err(MemoryContractError::InvalidTier { kind, tier });
         }
         Ok(Self {
@@ -287,6 +421,8 @@ impl MemoryRecord {
             expires_at,
             provenance,
             approval,
+            origin,
+            evidence_ids,
         })
     }
 
@@ -328,6 +464,14 @@ impl MemoryRecord {
 
     pub fn approval(&self) -> Option<&MemoryApproval> {
         self.approval.as_ref()
+    }
+
+    pub const fn origin(&self) -> MemoryOrigin {
+        self.origin
+    }
+
+    pub fn evidence_ids(&self) -> &[MemoryId] {
+        &self.evidence_ids
     }
 
     pub const fn is_expired(&self, now: Timestamp) -> bool {

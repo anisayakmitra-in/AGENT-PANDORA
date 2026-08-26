@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added a bounded, stale-safe memory synthesis contract. Synthesized L1
+  candidates retain explicit origin and evidence IDs, exclude sensitive inputs,
+  and never bypass approval for L2 promotion or effect authority.
+
 - Added an explicit graph snapshot store. `pandora graph` remains stateless by
   default and can persist a validated, scope-isolated snapshot with `--store`.
 

@@ -458,6 +458,8 @@ fn record_value(record: &MemoryRecord) -> serde_json::Value {
         "created_at": record.created_at().as_unix_seconds(),
         "expires_at": record.expires_at().map(|value| value.as_unix_seconds()),
         "provenance": record.provenance(),
+        "origin": record.origin().as_str(),
+        "evidence_ids": record.evidence_ids(),
         "approval": record.approval().map(|approval| json!({
             "approval_id": approval.approval_id(),
             "approver": approval.approver(),
@@ -495,6 +497,12 @@ fn memory_error(error: MemoryError) -> CliError {
         }
         MemoryError::Revoked => CliError::policy("memory record is revoked", json!({})),
         MemoryError::ScopeViolation => CliError::policy("memory scope does not match", json!({})),
+        MemoryError::SynthesisNoEvidence => {
+            CliError::execution("memory synthesis has no eligible evidence", json!({}))
+        }
+        MemoryError::SynthesisStale => {
+            CliError::policy("memory synthesis evidence changed before commit", json!({}))
+        }
         MemoryError::InvalidCapacity
         | MemoryError::InvalidRecord
         | MemoryError::SecretContent

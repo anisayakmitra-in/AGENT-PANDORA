@@ -2,8 +2,8 @@ use pandora_provider::ChatMessage;
 use pandora_types::{
     ContextClassification, EvaluationKind, EvaluationReceipt, EvaluationResult, EvaluationStatus,
     ExecutionId, MemoryApproval, MemoryAuditAction, MemoryAuditEntry, MemoryId, MemoryKind,
-    MemoryRecord, MemoryScope, MemoryTier, PrincipalId, Rollout, RuntimeEvent, Session, SessionId,
-    TenantId, Timestamp, WorkspaceId,
+    MemoryOrigin, MemoryRecord, MemoryScope, MemoryTier, PrincipalId, Rollout, RuntimeEvent,
+    Session, SessionId, TenantId, Timestamp, WorkspaceId,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
-const CURRENT_SCHEMA_VERSION: i64 = 7;
+const CURRENT_SCHEMA_VERSION: i64 = 8;
 const MAX_EVENT_BYTES: usize = 1_048_576;
 const MAX_AGENT_MESSAGE_BYTES: usize = 1_048_576;
 const MAX_AGENT_TRANSCRIPT_BYTES: usize = 8 * 1_048_576;
@@ -1096,7 +1096,7 @@ impl SessionStore {
             load_session(&connection, session_id)?.ok_or(SessionError::SessionNotFound)?;
         ensure_scope(&session, principal_id, tenant_id, workspace_id)?;
         let mut statement = connection.prepare(
-            "SELECT memory_id, kind, summary, created_at, provenance
+            "SELECT memory_id, kind, summary, created_at, provenance, origin, evidence_ids
              FROM memory_records
              WHERE session_id = ?1 AND provider = ?2
                AND tier = 'l1' AND kind IN ('execution_evidence', 'lesson')
@@ -1124,17 +1124,22 @@ impl SessionStore {
                     row.get::<_, String>(2)?,
                     row.get::<_, i64>(3)?,
                     row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
                 ))
             },
         )?;
         let mut records = Vec::new();
         for row in rows {
-            let (id, kind, summary, created_at, provenance) = row?;
+            let (id, kind, summary, created_at, provenance, origin, evidence_ids) = row?;
             let kind = parse_memory_kind(&kind)?;
+            let origin = parse_memory_origin(&origin)?;
+            let evidence_ids =
+                serde_json::from_str(&evidence_ids).map_err(|_| SessionError::CorruptRecord)?;
             let created_at = u64::try_from(created_at)
                 .map(Timestamp::from_unix_seconds)
                 .map_err(|_| SessionError::CorruptRecord)?;
-            let record = MemoryRecord::new_l1(
+            let record = MemoryRecord::new_l1_with_origin(
                 id,
                 kind,
                 scope.clone(),
@@ -1142,6 +1147,8 @@ impl SessionStore {
                 ContextClassification::Internal,
                 created_at,
                 provenance,
+                origin,
+                evidence_ids,
             )
             .map_err(|_| SessionError::CorruptRecord)?;
             if kind == MemoryKind::ExecutionEvidence && !is_canonical_l1_execution_evidence(&record)
@@ -1410,6 +1417,14 @@ fn migrate(connection: &mut Connection) -> Result<(), SessionError> {
                  ON session_rollouts(session_id, recorded_at, execution_id);
              INSERT INTO schema_migrations (version, applied_at) VALUES (7, strftime('%s', 'now'));",
         )?;
+        version = 7;
+    }
+    if version == 7 {
+        transaction.execute_batch(
+            "ALTER TABLE memory_records ADD COLUMN origin TEXT NOT NULL DEFAULT 'explicit';
+             ALTER TABLE memory_records ADD COLUMN evidence_ids TEXT NOT NULL DEFAULT '[]';
+             INSERT INTO schema_migrations (version, applied_at) VALUES (8, strftime('%s', 'now'));",
+        )?;
     }
     transaction.commit()?;
     Ok(())
@@ -1425,6 +1440,8 @@ type RawMemoryRecord = (
     String,
     Option<String>,
     Option<String>,
+    String,
+    String,
 );
 
 fn insert_memory_record(
@@ -1436,8 +1453,8 @@ fn insert_memory_record(
     let result = connection.execute(
         "INSERT INTO memory_records (
              session_id, provider, memory_id, tier, kind, classification,
-             summary, created_at, provenance, approval_id, approver
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+             summary, created_at, provenance, approval_id, approver, origin, evidence_ids
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             record.scope().session_id().as_str(),
             record.scope().provider(),
@@ -1450,6 +1467,8 @@ fn insert_memory_record(
             record.provenance(),
             approval_id,
             approver,
+            record.origin().as_str(),
+            serde_json::to_string(record.evidence_ids()).map_err(SessionError::Serialization)?,
         ],
     );
     match result {
@@ -1517,7 +1536,7 @@ fn load_memory_record(
     let raw = connection
         .query_row(
             "SELECT tier, kind, classification, summary, provenance, created_at,
-                    memory_id, approval_id, approver
+                    memory_id, approval_id, approver, origin, evidence_ids
              FROM memory_records
              WHERE session_id = ?1 AND provider = ?2 AND memory_id = ?3 AND tier = ?4",
             params![
@@ -1541,7 +1560,7 @@ fn load_memory_records(
 ) -> Result<Vec<MemoryRecord>, SessionError> {
     let mut statement = connection.prepare(
         "SELECT tier, kind, classification, summary, provenance, created_at,
-                memory_id, approval_id, approver
+                memory_id, approval_id, approver, origin, evidence_ids
          FROM memory_records
          WHERE session_id = ?1 AND provider = ?2 AND tier = ?3
            AND NOT EXISTS (
@@ -1576,7 +1595,7 @@ fn load_memory_records_by_id(
 ) -> Result<Vec<MemoryRecord>, SessionError> {
     let mut statement = connection.prepare(
         "SELECT tier, kind, classification, summary, provenance, created_at,
-                memory_id, approval_id, approver
+                memory_id, approval_id, approver, origin, evidence_ids
          FROM memory_records
          WHERE session_id = ?1 AND provider = ?2 AND memory_id = ?3
          ORDER BY tier ASC",
@@ -1607,6 +1626,8 @@ fn decode_memory_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawMemoryRecor
         row.get(6)?,
         row.get(7)?,
         row.get(8)?,
+        row.get(9)?,
+        row.get(10)?,
     ))
 }
 
@@ -1624,6 +1645,8 @@ fn decode_memory_record(
         memory_id,
         approval_id,
         approver,
+        origin,
+        evidence_ids,
     ) = raw;
     let tier = parse_memory_tier(&tier)?;
     let kind = parse_memory_kind(&kind)?;
@@ -1631,7 +1654,10 @@ fn decode_memory_record(
     let created_at = u64::try_from(created_at)
         .map(Timestamp::from_unix_seconds)
         .map_err(|_| SessionError::CorruptRecord)?;
-    let candidate = MemoryRecord::new_l1(
+    let origin = parse_memory_origin(&origin)?;
+    let evidence_ids =
+        serde_json::from_str(&evidence_ids).map_err(|_| SessionError::CorruptRecord)?;
+    let candidate = MemoryRecord::new_l1_with_origin(
         memory_id,
         kind,
         scope,
@@ -1639,6 +1665,8 @@ fn decode_memory_record(
         classification,
         created_at,
         provenance,
+        origin,
+        evidence_ids,
     )
     .map_err(|_| SessionError::CorruptRecord)?;
     match tier {
@@ -1707,6 +1735,14 @@ fn parse_memory_tier(value: &str) -> Result<MemoryTier, SessionError> {
     match value {
         "l1" => Ok(MemoryTier::L1),
         "l2" => Ok(MemoryTier::L2),
+        _ => Err(SessionError::CorruptRecord),
+    }
+}
+
+fn parse_memory_origin(value: &str) -> Result<MemoryOrigin, SessionError> {
+    match value {
+        "explicit" => Ok(MemoryOrigin::Explicit),
+        "synthesized" => Ok(MemoryOrigin::Synthesized),
         _ => Err(SessionError::CorruptRecord),
     }
 }

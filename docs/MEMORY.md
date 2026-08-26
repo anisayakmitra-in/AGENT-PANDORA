@@ -33,6 +33,22 @@ durable memory tables. Migration preserves IDs, provider scope, timestamps,
 summaries, and provenance. Invalid rows, invalid limits, and scope mismatches
 fail closed.
 
+## Verified synthesis
+
+`MemoryEngine::synthesis_snapshot` creates a deterministic, scope-bound view of
+up to 16 eligible L1 records. Sensitive records are excluded, evidence is
+sorted by stable identity, and the snapshot exposes a digest without exposing
+raw content through the digest itself. `propose_synthesis` accepts a bounded,
+caller-supplied redacted summary and cites every source record by ID.
+
+`verify_synthesis` re-reads the same scope before a candidate is committed.
+`commit_synthesis` performs that check while holding the engine's mutation gate,
+then stores the candidate as a synthesized L1 record with its evidence IDs and
+snapshot provenance. Any changed, revoked, expired, or missing source returns
+`SynthesisStale`; an empty source set cannot produce a candidate. Synthesis does
+not write L2, approve memory, alter policy, or grant effect authority. L2
+promotion still requires the existing explicit approval path.
+
 ## Boundary
 
 `MemoryEngine::new` remains an in-process implementation for isolated runtime

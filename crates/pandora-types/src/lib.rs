@@ -73,8 +73,8 @@ pub use ids::{
 };
 pub use jobs::{JobCommand, JobContractError, JobRequest, JobStatus, MAX_JOB_ARGUMENT_BYTES};
 pub use memory::{
-    MemoryApproval, MemoryAuditAction, MemoryAuditEntry, MemoryContractError, MemoryKind,
-    MemoryRecord, MemoryScope, MemoryTier,
+    MAX_MEMORY_SYNTHESIS_EVIDENCE, MemoryApproval, MemoryAuditAction, MemoryAuditEntry,
+    MemoryContractError, MemoryKind, MemoryOrigin, MemoryRecord, MemoryScope, MemoryTier,
 };
 pub use observability::{
     ObservabilityContractError, ObservabilitySample, ObservabilitySnapshot, SpanView, TraceView,

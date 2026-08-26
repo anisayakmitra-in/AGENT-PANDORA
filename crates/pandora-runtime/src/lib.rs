@@ -102,7 +102,10 @@ pub use mcp::{
     McpProtocolMode, McpServer, McpStart, McpStdioConfig, McpToolResult, McpWireEra,
 };
 pub use mcp_catalog::{McpCatalogRevision, McpCatalogTool};
-pub use memory_engine::{MemoryEngine, MemoryError};
+pub use memory_engine::{
+    MAX_SYNTHESIS_SOURCE_RECORDS, MemoryEngine, MemoryError, MemorySynthesisProposal,
+    MemorySynthesisSnapshot,
+};
 pub use mutation::{MutationEngine, MutationError};
 pub use observability::{ObservabilityEngine, ObservabilityError};
 pub use orchestration_engine::{

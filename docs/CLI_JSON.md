@@ -48,6 +48,11 @@ Paths use the operating system's native string representation. `doctor`
 reports evidence only; its containment object does not grant permissions or
 claim that an executor is sandboxed.
 
+Memory records returned by `memory recall` include `origin` (`explicit` or
+`synthesized`) and `evidence_ids`. Synthesized records are L1 candidates only;
+their evidence is descriptive provenance and does not authorize tools, policy,
+package activation, or promotion.
+
 ## Error envelope
 
 Every JSON error contains:
