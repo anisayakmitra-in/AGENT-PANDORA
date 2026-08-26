@@ -24,7 +24,8 @@ arguments.
 
 When invoked by Pandora's runtime, the program starts directly without a shell,
 inherits no environment, and uses bounded protocol frames, stderr, and request
-time. `catalog` and `call` terminate the child when the command completes.
+time. `catalog` and `call` terminate the child process group when the command
+completes.
 Their bounded runtime-event batches are appended atomically to the selected
 session store; event contexts retain receipt IDs, while receipt details are
 returned in the command result.
@@ -65,8 +66,8 @@ for an earlier child or catalog fails before Pandora writes an RPC request.
 
 This governance boundary authorizes and audits server spawn and tool calls; it
 does not OS-sandbox a malicious local MCP executable. Operators must treat the
-configured program as trusted code. Process identity and catalog revision
-evidence do not provide host containment. This preview does not support HTTP/SSE,
+configured program as trusted code. Process-group termination limits orphaned
+work but does not provide host containment. This preview does not support HTTP/SSE,
 OAuth, package or marketplace discovery, hooks supplied by MCP servers,
 subagents, progress/tasks, sessions, or server-originated requests and
 notifications. `--allow` is command-level consent, not a persisted human

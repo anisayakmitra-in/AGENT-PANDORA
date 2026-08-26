@@ -338,24 +338,24 @@ fn stop_child(child: &mut Child) {
 }
 
 #[cfg(unix)]
-fn configure_process_group(command: &mut Command) {
+pub(crate) fn configure_process_group(command: &mut Command) {
     use std::os::unix::process::CommandExt;
 
     command.process_group(0);
 }
 
 #[cfg(windows)]
-fn configure_process_group(command: &mut Command) {
+pub(crate) fn configure_process_group(command: &mut Command) {
     use std::os::windows::process::CommandExt;
 
     command.creation_flags(0x0000_0200);
 }
 
 #[cfg(not(any(unix, windows)))]
-fn configure_process_group(_: &mut Command) {}
+pub(crate) fn configure_process_group(_: &mut Command) {}
 
 #[cfg(unix)]
-fn terminate_process_tree(child: &Child) {
+pub(crate) fn terminate_process_tree(child: &Child) {
     let process_group = format!("-{}", child.id());
     let _ = Command::new("/bin/kill")
         .args(["-KILL", "--", &process_group])
@@ -366,7 +366,7 @@ fn terminate_process_tree(child: &Child) {
 }
 
 #[cfg(windows)]
-fn terminate_process_tree(child: &Child) {
+pub(crate) fn terminate_process_tree(child: &Child) {
     let process_id = child.id().to_string();
     let _ = Command::new("taskkill")
         .args(["/PID", &process_id, "/T", "/F"])
@@ -377,7 +377,7 @@ fn terminate_process_tree(child: &Child) {
 }
 
 #[cfg(not(any(unix, windows)))]
-fn terminate_process_tree(_: &Child) {}
+pub(crate) fn terminate_process_tree(_: &Child) {}
 
 fn read_bounded_output(reader: &mut impl Read, limit: usize) -> Result<Vec<u8>, ProcessError> {
     let limit = limit.checked_add(1).ok_or(ProcessError::InvalidOptions)?;

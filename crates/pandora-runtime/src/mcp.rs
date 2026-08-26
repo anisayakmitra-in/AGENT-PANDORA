@@ -722,6 +722,7 @@ struct McpProcess {
 impl McpProcess {
     fn spawn(config: &McpStdioConfig) -> Result<Self, McpError> {
         let mut command = Command::new(&config.program);
+        crate::executors::process::configure_process_group(&mut command);
         command
             .args(&config.arguments)
             .env_clear()
@@ -824,6 +825,7 @@ impl McpProcess {
 
     fn terminate(&mut self) {
         self.stdin.take();
+        crate::executors::process::terminate_process_tree(&self.child);
         let _ = self.child.kill();
         let _ = self.child.wait();
     }

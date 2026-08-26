@@ -114,6 +114,7 @@ fn mcp_evidence() -> Result<ContainmentEvidence, ContainmentContractError> {
                     ContainmentControl::ClearedEnvironment,
                     ContainmentControl::BoundedIo,
                     ContainmentControl::TimeoutAndTermination,
+                    ContainmentControl::ProcessTreeTermination,
                     ContainmentControl::DirectStdio,
                     ContainmentControl::ProtocolFrameLimits,
                     ContainmentControl::FreshFallbackProcess,
@@ -258,6 +259,14 @@ mod tests {
             ContainmentBoundaryKind::Process,
             ContainmentLevel::Partial,
             ContainmentLimitation::NativeServerNotSandboxed,
+        );
+        assert!(
+            mcp.boundaries()
+                .iter()
+                .find(|boundary| boundary.kind() == ContainmentBoundaryKind::Process)
+                .unwrap()
+                .controls()
+                .contains(&ContainmentControl::ProcessTreeTermination)
         );
         assert_boundary(
             mcp,
