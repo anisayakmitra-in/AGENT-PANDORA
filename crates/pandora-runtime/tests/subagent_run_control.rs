@@ -108,6 +108,7 @@ fn ordinary_run_advertises_the_complete_default_tool_catalog() {
             "workspace.patch".to_owned(),
             "workspace.read".to_owned(),
             "workspace.search".to_owned(),
+            "workspace.test".to_owned(),
             "workspace.verify".to_owned(),
         ]]
     );

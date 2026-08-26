@@ -3586,6 +3586,7 @@ fn harness_discovery_exposes_the_built_in_domains_without_runtime_internals() {
         "argus.review",
         "ariadne.debt",
         "hephaestus.measure",
+        "tests.run",
         "athena.guide",
     ] {
         assert!(gene_ids.contains(&expected));
@@ -3979,6 +3980,7 @@ fn slash_commands_cover_the_built_in_domains_and_execute_workflow_genes() {
         "/search",
         "/patch",
         "/verify",
+        "/test",
         "/review",
         "/audit",
         "/argus-review",

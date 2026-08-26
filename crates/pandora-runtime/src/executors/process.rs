@@ -50,11 +50,28 @@ impl ProcessError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerificationCommand {
     workspace: WorkspaceRoot,
+    kind: VerificationKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum VerificationKind {
+    Check,
+    Test,
 }
 
 impl VerificationCommand {
     pub fn cargo_check_locked(workspace: WorkspaceRoot) -> Self {
-        Self { workspace }
+        Self {
+            workspace,
+            kind: VerificationKind::Check,
+        }
+    }
+
+    pub fn cargo_test_locked(workspace: WorkspaceRoot) -> Self {
+        Self {
+            workspace,
+            kind: VerificationKind::Test,
+        }
     }
 
     pub fn from_argv(
@@ -65,14 +82,38 @@ impl VerificationCommand {
         if program != "cargo" {
             return Err(ProcessError::UnsupportedProgram);
         }
-        if arguments != ["check", "--locked"] {
-            return Err(ProcessError::UnsupportedArguments);
+        let kind = match arguments {
+            [command, locked] if command == "check" && locked == "--locked" => {
+                VerificationKind::Check
+            }
+            [command, locked] if command == "test" && locked == "--locked" => {
+                VerificationKind::Test
+            }
+            _ => return Err(ProcessError::UnsupportedArguments),
+        };
+        Ok(Self { workspace, kind })
+    }
+
+    pub(crate) fn from_spec(spec: &str, workspace: WorkspaceRoot) -> Result<Self, ProcessError> {
+        match spec {
+            "cargo check --locked" => Ok(Self::cargo_check_locked(workspace)),
+            "cargo test --locked" => Ok(Self::cargo_test_locked(workspace)),
+            _ => Err(ProcessError::UnsupportedArguments),
         }
-        Ok(Self { workspace })
     }
 
     pub fn spec(&self) -> &'static str {
-        "cargo check --locked"
+        match self.kind {
+            VerificationKind::Check => "cargo check --locked",
+            VerificationKind::Test => "cargo test --locked",
+        }
+    }
+
+    fn arguments(&self) -> [&'static str; 2] {
+        match self.kind {
+            VerificationKind::Check => ["check", "--locked"],
+            VerificationKind::Test => ["test", "--locked"],
+        }
     }
 
     fn workspace(&self) -> &WorkspaceRoot {
@@ -242,7 +283,7 @@ fn run_child(
     let mut process = Command::new("cargo");
     configure_process_group(&mut process);
     let mut child = process
-        .args(["check", "--locked"])
+        .args(command.arguments())
         .current_dir(command.workspace().root())
         .env_clear()
         .env("CARGO_TERM_COLOR", "never")
@@ -421,6 +462,31 @@ mod tests {
         let command = VerificationCommand::cargo_check_locked(workspace.root.clone());
 
         assert_eq!(command.spec(), "cargo check --locked");
+    }
+
+    #[test]
+    fn accepts_only_locked_cargo_test() {
+        let workspace = Workspace::new();
+        let arguments = vec!["test".to_owned(), "--locked".to_owned()];
+        let command = VerificationCommand::from_argv("cargo", &arguments, workspace.root.clone())
+            .expect("the fixed test command should be accepted");
+
+        assert_eq!(command.spec(), "cargo test --locked");
+    }
+
+    #[test]
+    fn rejects_extra_test_arguments() {
+        let workspace = Workspace::new();
+        let arguments = vec![
+            "test".to_owned(),
+            "--locked".to_owned(),
+            "--nocapture".to_owned(),
+        ];
+
+        assert_eq!(
+            VerificationCommand::from_argv("cargo", &arguments, workspace.root.clone()),
+            Err(ProcessError::UnsupportedArguments)
+        );
     }
 
     #[test]

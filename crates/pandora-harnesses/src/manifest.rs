@@ -37,6 +37,7 @@ pub fn coding_manifest() -> Result<HarnessManifest, ManifestError> {
         "workspace.search",
         "patch.apply",
         "verification.run",
+        "tests.run",
         "change.review",
         "daedalus.audit",
         "argus.review",

@@ -1377,7 +1377,17 @@ impl ExecutionController {
                 Ok(())
             }
             Capability::ProcessExecute => {
-                let command = VerificationCommand::cargo_check_locked(self.workspace.clone());
+                let command = match permit.request().target() {
+                    EffectTarget::Process { program } => {
+                        VerificationCommand::from_spec(program, self.workspace.clone())
+                            .map_err(RuntimeError::Process)?
+                    }
+                    _ => {
+                        return Err(RuntimeError::UnsupportedOperation(
+                            Capability::ProcessExecute,
+                        ));
+                    }
+                };
                 let response = self.process.run_verification(
                     permit,
                     &command,
@@ -1707,6 +1717,7 @@ fn default_gene_id(intent: &TaskIntent) -> GeneId {
         "search" => GeneId::new("workspace.search").expect("built-in Gene ID is valid"),
         "patch" => GeneId::new("patch.apply").expect("built-in Gene ID is valid"),
         "verify" => GeneId::new("verification.run").expect("built-in Gene ID is valid"),
+        "test" => GeneId::new("tests.run").expect("built-in Gene ID is valid"),
         "review" => GeneId::new("change.review").expect("built-in Gene ID is valid"),
         "audit" => GeneId::new("daedalus.audit").expect("built-in Gene ID is valid"),
         "deep-review" => GeneId::new("argus.review").expect("built-in Gene ID is valid"),
@@ -1853,6 +1864,7 @@ fn coding_input(
         "verification.run" if action == "verify" && remainder.is_empty() => {
             CodingRequest::verify(context)
         }
+        "tests.run" if action == "test" && remainder.is_empty() => CodingRequest::test(context),
         _ => {
             return Err(RuntimeError::InvalidIntent(
                 "intent does not match the selected Gene",

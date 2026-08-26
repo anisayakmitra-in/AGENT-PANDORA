@@ -282,6 +282,23 @@ impl ToolEngine {
                 .expect("built-in verification tool schema is valid"),
             )
             .expect("built-in verification tool ID is unique");
+        engine
+            .register(
+                ToolDefinition::new(
+                    "workspace.test",
+                    "1.0.0",
+                    "Run the fixed workspace test command",
+                    json!({
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": false
+                    }),
+                    Capability::ProcessExecute,
+                    Operation::Execute,
+                )
+                .expect("built-in test tool schema is valid"),
+            )
+            .expect("built-in test tool ID is unique");
         for definition in [
             ToolDefinition::new(
                 "daedalus.audit",
@@ -556,6 +573,8 @@ impl ToolEngine {
             }
             "workspace.verify" => TaskIntent::new("verify")
                 .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
+            "workspace.test" => TaskIntent::new("test")
+                .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
             "daedalus.audit" => TaskIntent::new("audit")
                 .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
             "argus.review" => task_from_argument(arguments, "deep-review", "path")?,
@@ -704,6 +723,7 @@ fn gene_id_for_tool(tool_id: &str) -> Result<GeneId, ToolError> {
         "workspace.search" => "workspace.search",
         "workspace.patch" => "patch.apply",
         "workspace.verify" => "verification.run",
+        "workspace.test" => "tests.run",
         "daedalus.audit" => "daedalus.audit",
         "argus.review" => "argus.review",
         "ariadne.debt" => "ariadne.debt",
@@ -1147,6 +1167,14 @@ mod tests {
                 .summary(),
             "verify"
         );
+        assert_eq!(
+            engine
+                .prepare_invocation("workspace.test", &json!({}))
+                .unwrap()
+                .task()
+                .summary(),
+            "test"
+        );
         for (tool, arguments, expected) in [
             ("daedalus.audit", json!({}), "audit"),
             (
@@ -1227,6 +1255,7 @@ mod tests {
                 "patch.apply",
             ),
             ("workspace.verify", json!({}), "verification.run"),
+            ("workspace.test", json!({}), "tests.run"),
             ("daedalus.audit", json!({}), "daedalus.audit"),
             (
                 "argus.review",

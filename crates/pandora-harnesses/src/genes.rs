@@ -9,6 +9,7 @@ use std::path::{Component, Path};
 const MAX_PATH_BYTES: usize = 4_096;
 const MAX_PATCH_BYTES: usize = 1_048_576;
 const VERIFICATION_SPEC: &str = "cargo check --locked";
+const TEST_SPEC: &str = "cargo test --locked";
 const DEBT_MARKERS: [&str; 4] = ["TODO", "FIXME", "HACK", "XXX"];
 const CODING_GUIDE: &str = "Daedalus inventories the workspace for evidence-led audits.\nArgus reviews one scoped change.\nAriadne finds explicit debt markers.\nHephaestus measures the repository with the fixed verifier.\nAthena explains the governed coding workflow.\nAll filesystem and process effects require Pandora permits and receipts.";
 
@@ -20,6 +21,7 @@ pub enum CodingAction {
     Search,
     Patch,
     Verify,
+    Test,
     Review,
     DeepReview,
     Debt,
@@ -158,6 +160,16 @@ impl CodingRequest {
         }
     }
 
+    pub fn test(context: PlanningContext) -> Self {
+        Self {
+            action: CodingAction::Test,
+            context,
+            path: None,
+            content: None,
+            command: Some(TEST_SPEC.to_owned()),
+        }
+    }
+
     pub fn with_command(mut self, command: impl Into<String>) -> Self {
         self.command = Some(command.into());
         self
@@ -202,6 +214,7 @@ pub enum CodingGeneRole {
     Search,
     Patch,
     Verify,
+    Test,
     Review,
     DaedalusAudit,
     ArgusReview,
@@ -217,6 +230,7 @@ impl CodingGeneRole {
             Self::Search => CodingAction::Search,
             Self::Patch => CodingAction::Patch,
             Self::Verify => CodingAction::Verify,
+            Self::Test => CodingAction::Test,
             Self::Review => CodingAction::Review,
             Self::DaedalusAudit => CodingAction::Audit,
             Self::ArgusReview => CodingAction::DeepReview,
@@ -232,6 +246,7 @@ impl CodingGeneRole {
             Self::Search => "workspace.search",
             Self::Patch => "patch.apply",
             Self::Verify => "verification.run",
+            Self::Test => "tests.run",
             Self::Review => "change.review",
             Self::DaedalusAudit => "daedalus.audit",
             Self::ArgusReview => "argus.review",
@@ -244,7 +259,7 @@ impl CodingGeneRole {
     const fn capability(self) -> Option<Capability> {
         match self {
             Self::Patch => Some(Capability::FilesystemWrite),
-            Self::Verify | Self::HephaestusMeasure => Some(Capability::ProcessExecute),
+            Self::Verify | Self::Test | Self::HephaestusMeasure => Some(Capability::ProcessExecute),
             Self::Read
             | Self::Search
             | Self::Review
@@ -258,7 +273,7 @@ impl CodingGeneRole {
     const fn operation(self) -> Option<Operation> {
         match self {
             Self::Patch => Some(Operation::Write),
-            Self::Verify | Self::HephaestusMeasure => Some(Operation::Execute),
+            Self::Verify | Self::Test | Self::HephaestusMeasure => Some(Operation::Execute),
             Self::Read
             | Self::Search
             | Self::Review
@@ -303,6 +318,7 @@ impl CodingGene {
             CodingGeneRole::Search,
             CodingGeneRole::Patch,
             CodingGeneRole::Verify,
+            CodingGeneRole::Test,
             CodingGeneRole::Review,
             CodingGeneRole::DaedalusAudit,
             CodingGeneRole::ArgusReview,
@@ -344,6 +360,7 @@ impl Gene for CodingGene {
             CodingGeneRole::Verify | CodingGeneRole::HephaestusMeasure => {
                 EffectTarget::process(VERIFICATION_SPEC)
             }
+            CodingGeneRole::Test => EffectTarget::process(TEST_SPEC),
             CodingGeneRole::DaedalusAudit => EffectTarget::path("."),
             CodingGeneRole::Read
             | CodingGeneRole::Search
@@ -450,8 +467,13 @@ fn validate_request(request: &CodingRequest) -> Result<(), GeneError> {
                 ));
             }
         }
-        CodingAction::Verify | CodingAction::Measure => {
-            if request.command.as_deref() != Some(VERIFICATION_SPEC) {
+        CodingAction::Verify | CodingAction::Test | CodingAction::Measure => {
+            let expected_command = match request.action {
+                CodingAction::Test => TEST_SPEC,
+                CodingAction::Verify | CodingAction::Measure => VERIFICATION_SPEC,
+                _ => unreachable!(),
+            };
+            if request.command.as_deref() != Some(expected_command) {
                 return Err(GeneError::InvalidInput("unsupported verification command"));
             }
             if request.path.is_some() || request.content.is_some() {
@@ -592,6 +614,16 @@ mod tests {
             request.target(),
             &EffectTarget::process("cargo check --locked")
         );
+    }
+
+    #[test]
+    fn test_gene_plans_the_fixed_test_command() {
+        let gene = CodingGene::new(CodingGeneRole::Test).unwrap();
+        let input = CodingRequest::test(context()).into_gene_input().unwrap();
+        let request = &gene.plan(&input).unwrap()[0];
+
+        assert_eq!(request.capability(), Capability::ProcessExecute);
+        assert_eq!(request.target(), &EffectTarget::process(TEST_SPEC));
     }
 
     #[test]

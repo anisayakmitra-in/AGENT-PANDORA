@@ -6,6 +6,10 @@
   commit. Existing Skills are never overwritten by a collision, concurrent
   installs fail closed, and newly admitted Skills remain disabled.
 
+- Added the fixed `tests.run` Coding Gene, `workspace.test` tool, and `/test`
+  command. It runs only `cargo test --locked` through the existing approval,
+  permit, timeout, cancellation, and receipt path.
+
 ## v2.0.0-beta.7
 
 - Added `SelfHealingEngine` and connected recovery candidates to
