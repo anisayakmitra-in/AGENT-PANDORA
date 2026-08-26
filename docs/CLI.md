@@ -552,7 +552,7 @@ are `/design-inventory`, `/design-tokens`, `/design-inspect`, `/design-compare`,
 aliases are `/operations-inventory`, `/operations-search`, `/config-inspect`,
 `/config-compare`, `/deployment-evidence`, and `/operations-guide`.
 `/security` inspects the built-in `security-domain` Harness. Its short Gene
-aliases are `/security-scan`, `/security-deep-scan`, `/security-diff-scan`,
+aliases are `/security-assess`, `/security-scan`, `/security-deep-scan`, `/security-diff-scan`,
 `/security-audit`, `/security-dependencies`,
 `/security-threat-model`, `/security-discovery`, `/security-triage`,
 `/security-attack-path`, `/security-validation`, `/security-fix`,

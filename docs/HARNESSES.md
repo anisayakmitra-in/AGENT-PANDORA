@@ -198,8 +198,10 @@ change a deployment. Those effects require separate capabilities and approvals.
 
 ## Security Domain Harness
 
-The built-in `security-domain` Harness owns seventeen read-only evidence Genes:
+The built-in `security-domain` Harness owns eighteen read-only evidence Genes:
 
+- `security.assess` performs one bounded fixed-marker evidence pass without
+  claiming complete scanner coverage;
 - `security.scan` inventories fixed security-boundary markers;
 - `security.deep-scan` searches a broader fixed marker set without claiming
   complete scanner coverage;

@@ -328,6 +328,7 @@ fn built_in_gene_alias(id: &str) -> Option<&'static str> {
         "config.compare" => Some("/config-compare"),
         "deployment.evidence" => Some("/deployment-evidence"),
         "operations.guide" => Some("/operations-guide"),
+        "security.assess" => Some("/security-assess"),
         "security.audit" => Some("/security-audit"),
         "security.scan" => Some("/security-scan"),
         "security.deep-scan" => Some("/security-deep-scan"),

@@ -3768,6 +3768,7 @@ fn security_harness_runs_read_only_audit_and_guide_genes() {
     assert!(response["output"].is_string());
 
     for (gene, action) in [
+        ("security.assess", "security-assess"),
         ("security.deep-scan", "security-deep-scan"),
         ("security.diff-scan", "security-diff-scan"),
     ] {

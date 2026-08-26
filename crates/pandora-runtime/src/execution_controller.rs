@@ -1275,6 +1275,7 @@ impl ExecutionController {
                         | "accessibility.evidence"
                         | "operations.search"
                         | "deployment.evidence"
+                        | "security.assess"
                         | "security.audit"
                         | "security.scan"
                         | "security.deep-scan"
@@ -1343,6 +1344,7 @@ impl ExecutionController {
                         | "accessibility.evidence"
                         | "config.compare"
                         | "deployment.evidence"
+                        | "security.assess"
                         | "security.audit"
                         | "security.scan"
                         | "security.deep-scan"
@@ -1739,6 +1741,7 @@ fn default_gene_id(intent: &TaskIntent) -> GeneId {
             GeneId::new("deployment.evidence").expect("built-in Gene ID is valid")
         }
         "operations-guide" => GeneId::new("operations.guide").expect("built-in Gene ID is valid"),
+        "security-assess" => GeneId::new("security.assess").expect("built-in Gene ID is valid"),
         "security-audit" => GeneId::new("security.audit").expect("built-in Gene ID is valid"),
         "security-scan" => GeneId::new("security.scan").expect("built-in Gene ID is valid"),
         "security-deep-scan" => {
@@ -2032,6 +2035,7 @@ fn security_input(
         .unwrap_or(intent.summary())
         .to_ascii_lowercase();
     let request = match gene_id.as_str() {
+        "security.assess" if action == "security-assess" => SecurityRequest::assessment(context),
         "security.audit" if action == "security-audit" => SecurityRequest::audit(context),
         "security.scan" if action == "security-scan" => SecurityRequest::scan(context),
         "security.deep-scan" if action == "security-deep-scan" => {

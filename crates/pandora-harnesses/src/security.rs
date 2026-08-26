@@ -97,6 +97,32 @@ const HARDENING_MARKERS: [&str; 8] = [
     "rollback",
 ];
 const POLICY_MARKERS: [&str; 4] = ["SECURITY", "permission", "approval", "credential"];
+const ASSESSMENT_MARKERS: [&str; 24] = [
+    "SECURITY.md",
+    "Cargo.toml",
+    "package.json",
+    "unsafe",
+    "Command::new",
+    "std::process::Command",
+    "reqwest::",
+    "serde_json::from_str",
+    "authentication",
+    "authorization",
+    "credential",
+    "secret",
+    "trust boundary",
+    "sandbox",
+    "isolation",
+    "least privilege",
+    "permission",
+    "approval",
+    "allowlist",
+    "rate limit",
+    "redact",
+    "fail closed",
+    "rollback",
+    "CVE-",
+];
 const DISCOVERY_MARKERS: [&str; 8] = [
     "candidate",
     "source",
@@ -153,11 +179,12 @@ const TRACK_MARKERS: [&str; 8] = [
     "closed",
     "fingerprint",
 ];
-const SECURITY_GUIDE: &str = "Security Scan inventories fixed high-signal security markers without claiming complete scanner coverage.\nSecurity Deep Scan searches a broader fixed marker set without claiming complete scanner coverage.\nSecurity Diff Scan searches changed-code and regression evidence without reviewing a specific revision.\nSecurity Audit searches boundary-sensitive source markers and returns evidence paths.\nSecurity Dependencies searches dependency declarations without claiming advisory or vulnerability coverage.\nSecurity Threat Model searches local trust-boundary and isolation evidence.\nSecurity Discovery records candidate source, control, sink, and reachability terminology without asserting a finding.\nSecurity Triage searches existing finding and proof terminology without assigning a verdict.\nSecurity Attack Path searches source, control, sink, impact, and privilege evidence without proving exploitability.\nSecurity Validation searches tests and validation evidence without running a scanner.\nSecurity Fix searches remediation planning terminology without changing code.\nSecurity Verify Fix searches regression and negative-control evidence without certifying a fix.\nSecurity Writeup searches disclosure fields without generating a vulnerability report.\nSecurity Track searches finding lifecycle fields without creating or mutating a finding record.\nSecurity Hardening searches local defensive-control evidence and does not change code.\nSecurity Policy searches local authorization terminology without certifying compliance.\nAll filesystem effects require Pandora permits and receipts; process, network, package, and remediation actions require separately governed capabilities.";
+const SECURITY_GUIDE: &str = "Security Assessment performs one bounded fixed-marker evidence pass without claiming complete scanner coverage.\nSecurity Scan inventories fixed high-signal security markers without claiming complete scanner coverage.\nSecurity Deep Scan searches a broader fixed marker set without claiming complete scanner coverage.\nSecurity Diff Scan searches changed-code and regression terminology without reviewing a specific revision.\nSecurity Audit searches boundary-sensitive source markers and returns evidence paths.\nSecurity Dependencies searches dependency declarations without claiming advisory or vulnerability coverage.\nSecurity Threat Model searches local trust-boundary and isolation evidence.\nSecurity Discovery records candidate source, control, sink, and reachability terminology without asserting a finding.\nSecurity Triage searches existing finding and proof terminology without assigning a verdict.\nSecurity Attack Path searches source, control, sink, impact, and privilege evidence without proving exploitability.\nSecurity Validation searches tests and validation evidence without running a scanner.\nSecurity Fix searches remediation planning terminology without changing code.\nSecurity Verify Fix searches regression and negative-control evidence without certifying a fix.\nSecurity Writeup searches disclosure fields without generating a vulnerability report.\nSecurity Track searches finding lifecycle fields without creating or mutating a finding record.\nSecurity Hardening searches local defensive-control evidence and does not change code.\nSecurity Policy searches local authorization terminology without certifying compliance.\nAll filesystem effects require Pandora permits and receipts; process, network, package, and remediation actions require separately governed capabilities.";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SecurityAction {
+    Assessment,
     Audit,
     Scan,
     DeepScan,
@@ -185,6 +212,10 @@ pub struct SecurityRequest {
 }
 
 impl SecurityRequest {
+    pub fn assessment(context: PlanningContext) -> Self {
+        Self::new(SecurityAction::Assessment, context)
+    }
+
     pub fn audit(context: PlanningContext) -> Self {
         Self::new(SecurityAction::Audit, context)
     }
@@ -271,6 +302,7 @@ impl SecurityRequest {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SecurityGeneRole {
+    Assessment,
     Audit,
     Scan,
     DeepScan,
@@ -293,6 +325,7 @@ pub enum SecurityGeneRole {
 impl SecurityGeneRole {
     const fn action(self) -> SecurityAction {
         match self {
+            Self::Assessment => SecurityAction::Assessment,
             Self::Audit => SecurityAction::Audit,
             Self::Scan => SecurityAction::Scan,
             Self::DeepScan => SecurityAction::DeepScan,
@@ -315,6 +348,7 @@ impl SecurityGeneRole {
 
     const fn id(self) -> &'static str {
         match self {
+            Self::Assessment => "security.assess",
             Self::Audit => "security.audit",
             Self::Scan => "security.scan",
             Self::DeepScan => "security.deep-scan",
@@ -361,6 +395,7 @@ impl SecurityGene {
 
     pub fn all() -> Vec<Box<dyn Gene>> {
         [
+            SecurityGeneRole::Assessment,
             SecurityGeneRole::Audit,
             SecurityGeneRole::Scan,
             SecurityGeneRole::DeepScan,
@@ -419,6 +454,7 @@ impl Gene for SecurityGene {
             ));
         }
         let markers: &[&str] = match self.role {
+            SecurityGeneRole::Assessment => &ASSESSMENT_MARKERS,
             SecurityGeneRole::Audit => &AUDIT_MARKERS,
             SecurityGeneRole::Scan => &SCAN_MARKERS,
             SecurityGeneRole::DeepScan => &DEEP_SCAN_MARKERS,
@@ -447,7 +483,8 @@ impl Gene for SecurityGene {
 pub fn is_security_gene(gene_id: &GeneId) -> bool {
     matches!(
         gene_id.as_str(),
-        "security.audit"
+        "security.assess"
+            | "security.audit"
             | "security.scan"
             | "security.deep-scan"
             | "security.diff-scan"
