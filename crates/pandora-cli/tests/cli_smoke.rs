@@ -3588,6 +3588,7 @@ fn harness_discovery_exposes_the_built_in_domains_without_runtime_internals() {
         "hephaestus.measure",
         "tests.run",
         "format.check",
+        "lint.check",
         "athena.guide",
     ] {
         assert!(gene_ids.contains(&expected));
@@ -3983,6 +3984,7 @@ fn slash_commands_cover_the_built_in_domains_and_execute_workflow_genes() {
         "/verify",
         "/test",
         "/format",
+        "/lint",
         "/review",
         "/audit",
         "/argus-review",

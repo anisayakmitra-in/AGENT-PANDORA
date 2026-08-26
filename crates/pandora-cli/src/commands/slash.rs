@@ -237,6 +237,7 @@ fn task_for(gene_id: &str, values: &[String]) -> Result<String, CliError> {
         "verification.run" => no_argument("verify", values),
         "tests.run" => no_argument("test", values),
         "format.check" => no_argument("format", values),
+        "lint.check" => no_argument("lint", values),
         "change.review" => one_argument("review", values),
         "daedalus.audit" => no_argument("audit", values),
         "argus.review" => one_argument("deep-review", values),

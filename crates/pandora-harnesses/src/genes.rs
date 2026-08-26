@@ -11,6 +11,7 @@ const MAX_PATCH_BYTES: usize = 1_048_576;
 const VERIFICATION_SPEC: &str = "cargo check --locked";
 const TEST_SPEC: &str = "cargo test --locked";
 const FORMAT_SPEC: &str = "cargo fmt --all -- --check";
+const LINT_SPEC: &str = "cargo clippy --workspace --all-targets --locked -- -D warnings";
 const DEBT_MARKERS: [&str; 4] = ["TODO", "FIXME", "HACK", "XXX"];
 const CODING_GUIDE: &str = "Daedalus inventories the workspace for evidence-led audits.\nArgus reviews one scoped change.\nAriadne finds explicit debt markers.\nHephaestus measures the repository with the fixed verifier.\nAthena explains the governed coding workflow.\nAll filesystem and process effects require Pandora permits and receipts.";
 
@@ -24,6 +25,7 @@ pub enum CodingAction {
     Verify,
     Test,
     Format,
+    Lint,
     Review,
     DeepReview,
     Debt,
@@ -182,6 +184,16 @@ impl CodingRequest {
         }
     }
 
+    pub fn lint(context: PlanningContext) -> Self {
+        Self {
+            action: CodingAction::Lint,
+            context,
+            path: None,
+            content: None,
+            command: Some(LINT_SPEC.to_owned()),
+        }
+    }
+
     pub fn with_command(mut self, command: impl Into<String>) -> Self {
         self.command = Some(command.into());
         self
@@ -228,6 +240,7 @@ pub enum CodingGeneRole {
     Verify,
     Test,
     Format,
+    Lint,
     Review,
     DaedalusAudit,
     ArgusReview,
@@ -245,6 +258,7 @@ impl CodingGeneRole {
             Self::Verify => CodingAction::Verify,
             Self::Test => CodingAction::Test,
             Self::Format => CodingAction::Format,
+            Self::Lint => CodingAction::Lint,
             Self::Review => CodingAction::Review,
             Self::DaedalusAudit => CodingAction::Audit,
             Self::ArgusReview => CodingAction::DeepReview,
@@ -262,6 +276,7 @@ impl CodingGeneRole {
             Self::Verify => "verification.run",
             Self::Test => "tests.run",
             Self::Format => "format.check",
+            Self::Lint => "lint.check",
             Self::Review => "change.review",
             Self::DaedalusAudit => "daedalus.audit",
             Self::ArgusReview => "argus.review",
@@ -274,7 +289,7 @@ impl CodingGeneRole {
     const fn capability(self) -> Option<Capability> {
         match self {
             Self::Patch => Some(Capability::FilesystemWrite),
-            Self::Verify | Self::Test | Self::Format | Self::HephaestusMeasure => {
+            Self::Verify | Self::Test | Self::Format | Self::Lint | Self::HephaestusMeasure => {
                 Some(Capability::ProcessExecute)
             }
             Self::Read
@@ -290,7 +305,7 @@ impl CodingGeneRole {
     const fn operation(self) -> Option<Operation> {
         match self {
             Self::Patch => Some(Operation::Write),
-            Self::Verify | Self::Test | Self::Format | Self::HephaestusMeasure => {
+            Self::Verify | Self::Test | Self::Format | Self::Lint | Self::HephaestusMeasure => {
                 Some(Operation::Execute)
             }
             Self::Read
@@ -339,6 +354,7 @@ impl CodingGene {
             CodingGeneRole::Verify,
             CodingGeneRole::Test,
             CodingGeneRole::Format,
+            CodingGeneRole::Lint,
             CodingGeneRole::Review,
             CodingGeneRole::DaedalusAudit,
             CodingGeneRole::ArgusReview,
@@ -382,6 +398,7 @@ impl Gene for CodingGene {
             }
             CodingGeneRole::Test => EffectTarget::process(TEST_SPEC),
             CodingGeneRole::Format => EffectTarget::process(FORMAT_SPEC),
+            CodingGeneRole::Lint => EffectTarget::process(LINT_SPEC),
             CodingGeneRole::DaedalusAudit => EffectTarget::path("."),
             CodingGeneRole::Read
             | CodingGeneRole::Search
@@ -491,10 +508,12 @@ fn validate_request(request: &CodingRequest) -> Result<(), GeneError> {
         CodingAction::Verify
         | CodingAction::Test
         | CodingAction::Format
+        | CodingAction::Lint
         | CodingAction::Measure => {
             let expected_command = match request.action {
                 CodingAction::Test => TEST_SPEC,
                 CodingAction::Format => FORMAT_SPEC,
+                CodingAction::Lint => LINT_SPEC,
                 CodingAction::Verify | CodingAction::Measure => VERIFICATION_SPEC,
                 _ => unreachable!(),
             };
@@ -659,6 +678,16 @@ mod tests {
 
         assert_eq!(request.capability(), Capability::ProcessExecute);
         assert_eq!(request.target(), &EffectTarget::process(FORMAT_SPEC));
+    }
+
+    #[test]
+    fn lint_gene_plans_the_fixed_lint_check() {
+        let gene = CodingGene::new(CodingGeneRole::Lint).unwrap();
+        let input = CodingRequest::lint(context()).into_gene_input().unwrap();
+        let request = &gene.plan(&input).unwrap()[0];
+
+        assert_eq!(request.capability(), Capability::ProcessExecute);
+        assert_eq!(request.target(), &EffectTarget::process(LINT_SPEC));
     }
 
     #[test]

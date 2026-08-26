@@ -295,7 +295,8 @@ variable named by that profile for planning.
 `run --agent` enables the bounded multi-turn loop. Each model request passes
 through the same provider permit boundary. The model can call
 `workspace.read`, `workspace.search`, `workspace.patch`, `workspace.verify`,
-`daedalus.audit`, `argus.review`, `ariadne.debt`, `hephaestus.measure`,
+`workspace.test`, `workspace.format`, `workspace.lint`, `daedalus.audit`,
+`argus.review`, `ariadne.debt`, `hephaestus.measure`,
 `evidence.inventory`, `evidence.search`, `source.read`, `source.compare`, and
 `citation.inventory`.
 Each call is validated by the ToolEngine, routed through the same governed
@@ -597,7 +598,7 @@ pandora completions fish
 ```
 
 `/coding` inspects the built-in `coding-domain` Harness. Its short Gene aliases
-are `/read`, `/search`, `/patch`, `/verify`, `/test`, `/format`, `/review`, `/audit`,
+are `/read`, `/search`, `/patch`, `/verify`, `/test`, `/format`, `/lint`, `/review`, `/audit`,
 `/argus-review`, `/debt`, `/measure`, and `/guide`. Canonical commands remain
 available as `/harness:<encoded-id>` and `/gene:<encoded-harness-id>:<encoded-gene-id>`.
 `/research` inspects the built-in `research-domain` Harness. Its short Gene

@@ -58,6 +58,7 @@ enum VerificationKind {
     Check,
     Test,
     Format,
+    Lint,
 }
 
 impl VerificationCommand {
@@ -79,6 +80,13 @@ impl VerificationCommand {
         Self {
             workspace,
             kind: VerificationKind::Format,
+        }
+    }
+
+    pub fn cargo_clippy_check(workspace: WorkspaceRoot) -> Self {
+        Self {
+            workspace,
+            kind: VerificationKind::Lint,
         }
     }
 
@@ -105,6 +113,24 @@ impl VerificationCommand {
             {
                 VerificationKind::Format
             }
+            [
+                command,
+                workspace,
+                all_targets,
+                locked,
+                separator,
+                flag,
+                level,
+            ] if command == "clippy"
+                && workspace == "--workspace"
+                && all_targets == "--all-targets"
+                && locked == "--locked"
+                && separator == "--"
+                && flag == "-D"
+                && level == "warnings" =>
+            {
+                VerificationKind::Lint
+            }
             _ => return Err(ProcessError::UnsupportedArguments),
         };
         Ok(Self { workspace, kind })
@@ -115,6 +141,9 @@ impl VerificationCommand {
             "cargo check --locked" => Ok(Self::cargo_check_locked(workspace)),
             "cargo test --locked" => Ok(Self::cargo_test_locked(workspace)),
             "cargo fmt --all -- --check" => Ok(Self::cargo_fmt_check(workspace)),
+            "cargo clippy --workspace --all-targets --locked -- -D warnings" => {
+                Ok(Self::cargo_clippy_check(workspace))
+            }
             _ => Err(ProcessError::UnsupportedArguments),
         }
     }
@@ -124,6 +153,9 @@ impl VerificationCommand {
             VerificationKind::Check => "cargo check --locked",
             VerificationKind::Test => "cargo test --locked",
             VerificationKind::Format => "cargo fmt --all -- --check",
+            VerificationKind::Lint => {
+                "cargo clippy --workspace --all-targets --locked -- -D warnings"
+            }
         }
     }
 
@@ -132,6 +164,15 @@ impl VerificationCommand {
             VerificationKind::Check => &["check", "--locked"],
             VerificationKind::Test => &["test", "--locked"],
             VerificationKind::Format => &["fmt", "--all", "--", "--check"],
+            VerificationKind::Lint => &[
+                "clippy",
+                "--workspace",
+                "--all-targets",
+                "--locked",
+                "--",
+                "-D",
+                "warnings",
+            ],
         }
     }
 
@@ -506,6 +547,27 @@ mod tests {
             .expect("the fixed format command should be accepted");
 
         assert_eq!(command.spec(), "cargo fmt --all -- --check");
+    }
+
+    #[test]
+    fn accepts_only_locked_cargo_clippy_check() {
+        let workspace = Workspace::new();
+        let arguments = vec![
+            "clippy".to_owned(),
+            "--workspace".to_owned(),
+            "--all-targets".to_owned(),
+            "--locked".to_owned(),
+            "--".to_owned(),
+            "-D".to_owned(),
+            "warnings".to_owned(),
+        ];
+        let command = VerificationCommand::from_argv("cargo", &arguments, workspace.root.clone())
+            .expect("the fixed lint command should be accepted");
+
+        assert_eq!(
+            command.spec(),
+            "cargo clippy --workspace --all-targets --locked -- -D warnings"
+        );
     }
 
     #[test]

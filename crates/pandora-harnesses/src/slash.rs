@@ -306,6 +306,7 @@ fn built_in_gene_alias(id: &str) -> Option<&'static str> {
         "verification.run" => Some("/verify"),
         "tests.run" => Some("/test"),
         "format.check" => Some("/format"),
+        "lint.check" => Some("/lint"),
         "change.review" => Some("/review"),
         "daedalus.audit" => Some("/audit"),
         "argus.review" => Some("/argus-review"),

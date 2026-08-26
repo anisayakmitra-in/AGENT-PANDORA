@@ -122,7 +122,7 @@ constitutional service, execute effects, install packages, or grant permits.
 
 ## Coding Domain Harness
 
-The built-in `coding-domain` Harness owns twelve Genes. Seven are narrow execution
+The built-in `coding-domain` Harness owns thirteen Genes. Eight are narrow execution
 primitives:
 
 - `workspace.read` reads one scoped file;
@@ -131,6 +131,7 @@ primitives:
 - `verification.run` runs the fixed verifier after approval;
 - `tests.run` runs the fixed test command after approval;
 - `format.check` runs the fixed formatter check after approval;
+- `lint.check` runs the fixed workspace lint check after approval;
 - `change.review` reads one file for review.
 
 Five are bounded coding workflows:

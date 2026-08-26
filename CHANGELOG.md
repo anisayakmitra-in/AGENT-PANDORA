@@ -14,6 +14,10 @@
   `/format` command. It runs only `cargo fmt --all -- --check` through the same
   governed process path.
 
+- Added the fixed `lint.check` Coding Gene, `workspace.lint` tool, and `/lint`
+  command. It runs only the locked workspace Clippy check through the same
+  governed process path.
+
 ## v2.0.0-beta.7
 
 - Added `SelfHealingEngine` and connected recovery candidates to
