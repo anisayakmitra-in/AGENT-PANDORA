@@ -13,6 +13,8 @@ Pandora records improvement evidence without allowing the improvement system to 
 - Redacted lineage attempts are tied to committed generation receipts. They enter L1 memory under the exact tenant, workspace, session, and provider scope. L2 promotion still requires the existing `MemoryEngine` approval path. Ancestor and neighborhood queries have depth, record, and byte limits.
 - `EvolutionEngine` tracks proposal, evaluation, approval, and staging state.
 - The evolution record store persists those bounded records in SQLite and restores them after restart. `pandora evolution list` and `pandora evolution inspect` expose read-only operator views without exposing signature material.
+- `pandora evolution evaluate` runs a bounded holdout set against an existing proposal and records trajectory, outcome, policy, and regression evidence. The report digest excludes raw outputs, expected outputs, and baselines.
+- `pandora evolution submit` records a bounded proposal in the durable store. Submission is evidence intake only; it cannot approve, activate, or execute a candidate.
 - Approval requires policy, regression, and holdout evidence, Parliament approval, and candidate-artifact signature evidence.
 - `ReplacementEngine` requires a passed canary and an idle execution boundary before activation.
 - Activation produces a receipt. Rollback restores the proposal's base artifact and produces a receipt.

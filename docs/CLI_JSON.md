@@ -34,6 +34,8 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora memory forget ... --json` | `memory forget` | `dry_run`, `memory_id`, `scope`, `revoked` or `would_revoke` |
 | `pandora memory promote ... --json` | `memory promote` | `promoted`, `approval_id`, `approval_consumed` |
 | `pandora evaluation golden --input <path> --json` | `evaluation golden` | `total`, `passed`, `failed`, `digest`, `cases` |
+| `pandora evolution evaluate --id <proposal-id> --input <path> --json` | `evolution evaluate` | `proposal_id`, `total`, `passed`, `failed`, `trajectory_score`, `outcome_score`, `holdout_passed`, `policy_passed`, `regression_passed`, `digest`, `cases`, `durability` |
+| `pandora evolution submit --input <path> --json` | `evolution submit` | `proposal_id`, `state`, `durability` |
 | `pandora evaluation inspect --session <id> --json` | `evaluation inspect` | `session_id`, `execution_id`, `count`, `result_counts`, `receipts`, `durability` |
 | `pandora graph <kind> --input <path> --json` | `graph build` | `kind`, `scope`, `source_count`, `nodes`, `edges`, `digest` |
 | `pandora update --artifact ... --json` | `update` | `verified`, `artifact`, `target`, `signature_verified`, `dry_run` |

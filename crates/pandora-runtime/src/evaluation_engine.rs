@@ -7,6 +7,9 @@ use std::collections::BTreeSet;
 pub const MAX_GOLDEN_CASES: usize = 256;
 pub const MAX_GOLDEN_CASE_ID_BYTES: usize = 256;
 pub const MAX_GOLDEN_EXPECTED_OUTPUT_BYTES: usize = 64 * 1024;
+pub const MAX_HOLDOUT_CASES: usize = 256;
+pub const MAX_HOLDOUT_CASE_ID_BYTES: usize = 256;
+pub const MAX_HOLDOUT_OUTPUT_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EvaluationError {
@@ -16,6 +19,11 @@ pub enum EvaluationError {
     GoldenExpectedOutputTooLong,
     TooManyGoldenCases,
     DuplicateGoldenCase,
+    EmptyHoldoutSet,
+    HoldoutCaseIdTooLong,
+    HoldoutOutputTooLong,
+    TooManyHoldoutCases,
+    DuplicateHoldoutCase,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -46,6 +54,55 @@ impl GoldenCase {
             id,
             evaluation,
             expected_output,
+        })
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn evaluation(&self) -> &EvaluationRequest {
+        &self.evaluation
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HoldoutCase {
+    id: String,
+    evaluation: EvaluationRequest,
+    expected_output: String,
+    baseline_output: String,
+}
+
+impl HoldoutCase {
+    pub fn new(
+        id: impl Into<String>,
+        evaluation: EvaluationRequest,
+        expected_output: impl Into<String>,
+        baseline_output: impl Into<String>,
+    ) -> Result<Self, EvaluationError> {
+        let id = id.into();
+        if id.trim().is_empty() {
+            return Err(EvaluationError::EmptyGoldenCaseId);
+        }
+        if id.len() > MAX_HOLDOUT_CASE_ID_BYTES {
+            return Err(EvaluationError::HoldoutCaseIdTooLong);
+        }
+        let expected_output = expected_output.into();
+        let baseline_output = baseline_output.into();
+        if expected_output.len() > MAX_HOLDOUT_OUTPUT_BYTES
+            || baseline_output.len() > MAX_HOLDOUT_OUTPUT_BYTES
+        {
+            return Err(EvaluationError::HoldoutOutputTooLong);
+        }
+        if expected_output.trim().is_empty() || baseline_output.trim().is_empty() {
+            return Err(EvaluationError::HoldoutOutputTooLong);
+        }
+        Ok(Self {
+            id,
+            evaluation,
+            expected_output,
+            baseline_output,
         })
     }
 
@@ -101,6 +158,99 @@ impl GoldenSetReport {
     }
 
     pub fn cases(&self) -> &[GoldenCaseResult] {
+        &self.cases
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HoldoutCaseResult {
+    id: String,
+    trajectory: EvaluationResult,
+    outcome: EvaluationResult,
+    policy: EvaluationResult,
+    regression: EvaluationResult,
+}
+
+impl HoldoutCaseResult {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn trajectory(&self) -> &EvaluationResult {
+        &self.trajectory
+    }
+
+    pub fn outcome(&self) -> &EvaluationResult {
+        &self.outcome
+    }
+
+    pub fn policy(&self) -> &EvaluationResult {
+        &self.policy
+    }
+
+    pub fn regression(&self) -> &EvaluationResult {
+        &self.regression
+    }
+
+    pub const fn passed(&self) -> bool {
+        self.trajectory.passed()
+            && self.outcome.passed()
+            && self.policy.passed()
+            && self.regression.passed()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HoldoutSetReport {
+    total: usize,
+    passed: usize,
+    trajectory_score: u8,
+    outcome_score: u8,
+    holdout_passed: bool,
+    policy_passed: bool,
+    regression_passed: bool,
+    digest: String,
+    cases: Vec<HoldoutCaseResult>,
+}
+
+impl HoldoutSetReport {
+    pub const fn total(&self) -> usize {
+        self.total
+    }
+
+    pub const fn passed(&self) -> usize {
+        self.passed
+    }
+
+    pub const fn failed(&self) -> usize {
+        self.total.saturating_sub(self.passed)
+    }
+
+    pub const fn trajectory_score(&self) -> u8 {
+        self.trajectory_score
+    }
+
+    pub const fn outcome_score(&self) -> u8 {
+        self.outcome_score
+    }
+
+    pub const fn holdout_passed(&self) -> bool {
+        self.holdout_passed
+    }
+
+    pub const fn policy_passed(&self) -> bool {
+        self.policy_passed
+    }
+
+    pub const fn regression_passed(&self) -> bool {
+        self.regression_passed
+    }
+
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+
+    pub fn cases(&self) -> &[HoldoutCaseResult] {
         &self.cases
     }
 }
@@ -292,6 +442,56 @@ impl EvaluationEngine {
         })
     }
 
+    pub fn evaluate_holdout_set<I>(&self, cases: I) -> Result<HoldoutSetReport, EvaluationError>
+    where
+        I: IntoIterator<Item = HoldoutCase>,
+    {
+        let mut cases = cases.into_iter().collect::<Vec<_>>();
+        if cases.is_empty() {
+            return Err(EvaluationError::EmptyHoldoutSet);
+        }
+        if cases.len() > MAX_HOLDOUT_CASES {
+            return Err(EvaluationError::TooManyHoldoutCases);
+        }
+        cases.sort_by(|left, right| left.id.cmp(&right.id));
+        let mut ids = BTreeSet::new();
+        for case in &cases {
+            if !ids.insert(case.id.clone()) {
+                return Err(EvaluationError::DuplicateHoldoutCase);
+            }
+        }
+
+        let results = cases
+            .iter()
+            .map(|case| HoldoutCaseResult {
+                id: case.id.clone(),
+                trajectory: self.evaluate_trajectory(&case.evaluation, 0),
+                outcome: self.evaluate_outcome(&case.evaluation, &case.expected_output),
+                policy: self.evaluate_policy(&case.evaluation),
+                regression: self.evaluate_regression(&case.evaluation, &case.baseline_output),
+            })
+            .collect::<Vec<_>>();
+        let passed = results.iter().filter(|case| case.passed()).count();
+        let trajectory_score = average_score(&results, |case| case.trajectory.score());
+        let outcome_score = average_score(&results, |case| case.outcome.score());
+        let policy_passed = results.iter().all(|case| case.policy.passed());
+        let regression_passed = results.iter().all(|case| case.regression.passed());
+        let holdout_passed = results.iter().all(HoldoutCaseResult::passed);
+        let digest = holdout_set_digest(&results);
+
+        Ok(HoldoutSetReport {
+            total: results.len(),
+            passed,
+            trajectory_score,
+            outcome_score,
+            holdout_passed,
+            policy_passed,
+            regression_passed,
+            digest,
+            cases: results,
+        })
+    }
+
     pub fn advisory_judgement(
         &self,
         _input: &EvaluationRequest,
@@ -340,6 +540,30 @@ fn golden_set_digest(cases: &[GoldenCaseResult]) -> String {
         hasher.update([case.result.score(), u8::from(case.result.advisory())]);
     }
     format!("sha256:{:x}", hasher.finalize())
+}
+
+fn holdout_set_digest(cases: &[HoldoutCaseResult]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"pandora.holdout-set.v1");
+    for case in cases {
+        digest_text(&mut hasher, &case.id);
+        for result in [
+            &case.trajectory,
+            &case.outcome,
+            &case.policy,
+            &case.regression,
+        ] {
+            digest_text(&mut hasher, result.kind().as_str());
+            digest_text(&mut hasher, result.status().as_str());
+            hasher.update([result.score(), u8::from(result.advisory())]);
+        }
+    }
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn average_score(cases: &[HoldoutCaseResult], score: impl Fn(&HoldoutCaseResult) -> u8) -> u8 {
+    let total = cases.iter().map(|case| u32::from(score(case))).sum::<u32>();
+    u8::try_from(total / cases.len() as u32).unwrap_or(0)
 }
 
 fn digest_text(hasher: &mut Sha256, value: &str) {
@@ -482,6 +706,56 @@ mod tests {
         assert_eq!(
             engine.evaluate_golden_set(cases),
             Err(EvaluationError::TooManyGoldenCases)
+        );
+    }
+
+    #[test]
+    fn holdout_set_combines_trajectory_outcome_policy_and_regression_evidence() {
+        let engine = EvaluationEngine::new();
+        let report = engine
+            .evaluate_holdout_set([
+                HoldoutCase::new("case-b", input("done"), "done", "done").unwrap(),
+                HoldoutCase::new("case-a", input("wrong"), "done", "wrong").unwrap(),
+            ])
+            .unwrap();
+
+        assert_eq!(report.total(), 2);
+        assert_eq!(report.passed(), 1);
+        assert_eq!(report.failed(), 1);
+        assert_eq!(report.trajectory_score(), 100);
+        assert_eq!(report.outcome_score(), 50);
+        assert!(report.policy_passed());
+        assert!(report.regression_passed());
+        assert!(!report.holdout_passed());
+        assert_eq!(report.cases()[0].id(), "case-a");
+    }
+
+    #[test]
+    fn holdout_set_is_order_independent_and_rejects_vacuous_or_duplicate_evidence() {
+        let engine = EvaluationEngine::new();
+        let first = engine
+            .evaluate_holdout_set([
+                HoldoutCase::new("case-b", input("done"), "done", "done").unwrap(),
+                HoldoutCase::new("case-a", input("done"), "done", "done").unwrap(),
+            ])
+            .unwrap();
+        let second = engine
+            .evaluate_holdout_set([
+                HoldoutCase::new("case-a", input("done"), "done", "done").unwrap(),
+                HoldoutCase::new("case-b", input("done"), "done", "done").unwrap(),
+            ])
+            .unwrap();
+        assert_eq!(first.digest(), second.digest());
+        assert_eq!(
+            engine.evaluate_holdout_set(Vec::<HoldoutCase>::new()),
+            Err(EvaluationError::EmptyHoldoutSet)
+        );
+        assert_eq!(
+            engine.evaluate_holdout_set([
+                HoldoutCase::new("same", input("done"), "done", "done").unwrap(),
+                HoldoutCase::new("same", input("done"), "done", "done").unwrap(),
+            ]),
+            Err(EvaluationError::DuplicateHoldoutCase)
         );
     }
 }

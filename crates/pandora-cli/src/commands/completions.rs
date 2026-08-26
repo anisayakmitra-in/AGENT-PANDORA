@@ -60,6 +60,8 @@ fn powershell() -> &'static str {
         'roles'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'strategies') {
         'list'
+    } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'evolution') {
+        'list','inspect','submit','evaluate'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'efficiency') {
         'rank'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'evaluation') {
@@ -69,7 +71,7 @@ fn powershell() -> &'static str {
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'fleet') {
         'list','register','dispatch','lease','release','expire','quarantine','revoke','kill'
     } else {
-        'help','setup','run','chat','tui','harness','slash','session','job','subagent','skill','package','memory','approval','provider','mcp','tool','orchestration','strategies','evaluation','efficiency','fleet','graph','completions','migrate','update','uninstall','doctor'
+        'help','setup','run','chat','tui','harness','slash','session','job','subagent','skill','package','memory','approval','provider','mcp','tool','orchestration','strategies','evaluation','evolution','efficiency','fleet','graph','completions','migrate','update','uninstall','doctor'
     }
     $commands |
         Where-Object { $_ -like "$wordToComplete*" } |
@@ -113,12 +115,14 @@ fn bash() -> &'static str {
         COMPREPLY=( $(compgen -W 'rank' -- "$current") )
     elif [[ "$previous" == "evaluation" ]]; then
         COMPREPLY=( $(compgen -W 'golden inspect' -- "$current") )
+    elif [[ "$previous" == "evolution" ]]; then
+        COMPREPLY=( $(compgen -W 'list inspect submit evaluate' -- "$current") )
     elif [[ "$previous" == "graph" ]]; then
         COMPREPLY=( $(compgen -W 'code knowledge review architecture' -- "$current") )
     elif [[ "$previous" == "fleet" ]]; then
         COMPREPLY=( $(compgen -W 'list register dispatch lease release expire quarantine revoke kill' -- "$current") )
     else
-        COMPREPLY=( $(compgen -W 'help setup run chat tui harness slash session job subagent skill package memory approval provider mcp tool orchestration strategies evaluation efficiency fleet graph completions migrate update uninstall doctor' -- "$current") )
+        COMPREPLY=( $(compgen -W 'help setup run chat tui harness slash session job subagent skill package memory approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet graph completions migrate update uninstall doctor' -- "$current") )
     fi
 }
 complete -F _pandora_complete pandora"#
@@ -155,20 +159,22 @@ elif [[ ${words[2]} == orchestration ]]; then
 elif [[ ${words[2]} == strategies ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:strategies command:(list)'
 elif [[ ${words[2]} == efficiency ]]; then
-    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies evaluation efficiency fleet completions migrate update uninstall doctor)' '2:efficiency command:(rank)'
+    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet completions migrate update uninstall doctor)' '2:efficiency command:(rank)'
 elif [[ ${words[2]} == evaluation ]]; then
-    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies evaluation efficiency fleet graph completions migrate update uninstall doctor)' '2:evaluation command:(golden inspect)'
+    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet graph completions migrate update uninstall doctor)' '2:evaluation command:(golden inspect)'
+elif [[ ${words[2]} == evolution ]]; then
+    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet graph completions migrate update uninstall doctor)' '2:evolution command:(list inspect submit evaluate)'
 elif [[ ${words[2]} == graph ]]; then
-    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies evaluation efficiency fleet graph completions migrate update uninstall doctor)' '2:graph command:(code knowledge review architecture)'
+    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet graph completions migrate update uninstall doctor)' '2:graph command:(code knowledge review architecture)'
 elif [[ ${words[2]} == fleet ]]; then
-    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies evaluation efficiency fleet completions migrate update uninstall doctor)' '2:fleet command:(list register dispatch lease release expire quarantine revoke kill)'
+    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet completions migrate update uninstall doctor)' '2:fleet command:(list register dispatch lease release expire quarantine revoke kill)'
 else
-    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package memory approval provider mcp tool orchestration strategies evaluation efficiency fleet graph completions migrate update uninstall doctor)'
+    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package memory approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet graph completions migrate update uninstall doctor)'
 fi"#
 }
 
 fn fish() -> &'static str {
-    r#"complete -c pandora -f -n '__fish_use_subcommand' -a 'help setup run chat tui harness slash session job subagent skill package memory approval provider mcp tool orchestration strategies evaluation efficiency fleet graph completions migrate update uninstall doctor'
+    r#"complete -c pandora -f -n '__fish_use_subcommand' -a 'help setup run chat tui harness slash session job subagent skill package memory approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet graph completions migrate update uninstall doctor'
 complete -c pandora -f -n '__fish_seen_subcommand_from harness' -a 'list inspect run'
 complete -c pandora -f -n '__fish_seen_subcommand_from slash' -a 'list resolve'
 complete -c pandora -f -n '__fish_seen_subcommand_from session' -a 'list resume inspect'
@@ -185,6 +191,7 @@ complete -c pandora -f -n '__fish_seen_subcommand_from orchestration' -a 'roles'
 complete -c pandora -f -n '__fish_seen_subcommand_from strategies' -a 'list'
 complete -c pandora -f -n '__fish_seen_subcommand_from efficiency' -a 'rank'
 complete -c pandora -f -n '__fish_seen_subcommand_from evaluation' -a 'golden inspect'
+complete -c pandora -f -n '__fish_seen_subcommand_from evolution' -a 'list inspect submit evaluate'
 complete -c pandora -f -n '__fish_seen_subcommand_from graph' -a 'code knowledge review architecture'
 complete -c pandora -f -n '__fish_seen_subcommand_from fleet' -a 'list register dispatch lease release expire quarantine revoke kill'"#
 }
@@ -199,7 +206,7 @@ mod tests {
         let bash = bash();
         let zsh = zsh();
         let fish = fish();
-        let root_commands = "help setup run chat tui harness slash session job subagent skill package memory approval provider mcp tool orchestration strategies evaluation efficiency fleet graph completions migrate update uninstall doctor";
+        let root_commands = "help setup run chat tui harness slash session job subagent skill package memory approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet graph completions migrate update uninstall doctor";
 
         assert!(powershell.contains(&root_commands.replace(' ', "','")));
         for script in [bash, zsh, fish] {
@@ -218,6 +225,7 @@ mod tests {
             "'list','set','use','test'",
             "'list','inspect','set','remove','catalog','call'",
             "'golden','inspect'",
+            "'list','inspect','submit','evaluate'",
             "'submit','work','list','inspect','cancel','mark-interrupted'",
             "'spawn','work','list','inspect','cancel','mark-interrupted','cleanup'",
         ] {
@@ -236,6 +244,7 @@ mod tests {
                 "list set use test",
                 "list inspect set remove",
                 "golden inspect",
+                "list inspect submit evaluate",
                 "submit work list inspect cancel mark-interrupted",
                 "spawn work list inspect cancel mark-interrupted cleanup",
                 "list register dispatch lease release expire quarantine revoke kill",

@@ -68,8 +68,10 @@ pub use context_recovery::{ContextRecovery, RecoveryDecision, RecoveryInput, Rec
 pub use efficiency_engine::{DEFAULT_MAX_SAMPLES_PER_TARGET, EfficiencyEngine, EfficiencyError};
 pub use efficiency_store::{EfficiencyStore, EfficiencyStoreError};
 pub use evaluation_engine::{
-    EvaluationEngine, EvaluationError, GoldenCase, GoldenCaseResult, GoldenSetReport,
-    MAX_GOLDEN_CASE_ID_BYTES, MAX_GOLDEN_CASES, MAX_GOLDEN_EXPECTED_OUTPUT_BYTES,
+    EvaluationEngine, EvaluationError, GoldenCase, GoldenCaseResult, GoldenSetReport, HoldoutCase,
+    HoldoutCaseResult, HoldoutSetReport, MAX_GOLDEN_CASE_ID_BYTES, MAX_GOLDEN_CASES,
+    MAX_GOLDEN_EXPECTED_OUTPUT_BYTES, MAX_HOLDOUT_CASE_ID_BYTES, MAX_HOLDOUT_CASES,
+    MAX_HOLDOUT_OUTPUT_BYTES,
 };
 pub use evolution::{EvolutionEngine, EvolutionError, EvolutionRecord};
 pub use execution_controller::{

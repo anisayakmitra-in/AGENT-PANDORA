@@ -2,7 +2,13 @@
 
 ## Unreleased
 
-- No unreleased changes.
+- Added a bounded `pandora evolution evaluate` holdout runner. It records
+  trajectory, outcome, policy, and regression evidence through the existing
+  durable EvolutionEngine without executing tools, calling providers, or
+  granting authority.
+- Added `pandora evolution submit` for bounded proposal intake through the
+  existing durable EvolutionEngine. Submission remains evidence-only and
+  cannot approve, activate, or execute a candidate.
 
 ## v2.0.0-beta.6
 

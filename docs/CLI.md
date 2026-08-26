@@ -374,6 +374,56 @@ The command accepts at most 256 cases and a 4 MiB input file. It emits a
 stable report digest and per-case outcome results. `--fail-on-failure` returns
 a non-zero command result for CI when any case fails.
 
+`evolution evaluate` runs the same deterministic evaluator against a bounded
+holdout JSON file and records the evidence on one existing evolution proposal.
+Each case supplies a redacted output, expected output, and regression baseline:
+
+```json
+{
+  "cases": [
+    {
+      "id": "coding-holdout",
+      "execution_id": "exec-coding-holdout",
+      "output": "tests passed",
+      "expected_output": "tests passed",
+      "baseline_output": "tests passed",
+      "policy_violations": []
+    }
+  ]
+}
+```
+
+```text
+pandora evolution evaluate --id proposal-1 --input holdout.json --json
+pandora evolution evaluate --id proposal-1 --input holdout.json --fail-on-failure
+```
+
+The command requires an existing proposal, accepts at most 256 cases and a
+4 MiB input file, and records trajectory, outcome, policy, and regression
+evidence through `EvolutionEngine`. Expected outputs, baselines, and raw case
+outputs are omitted from the report. A failed holdout is still recorded so the
+proposal remains auditable and cannot satisfy production approval checks.
+
+`evolution submit` records a bounded proposal for later evaluation. It accepts
+only the three known evolution sources and writes the proposal to the same
+durable store; submission does not approve, stage, activate, or execute a
+candidate.
+
+```json
+{
+  "proposal_id": "proposal-1",
+  "source": "gepa",
+  "base_artifact": "base-1",
+  "candidate_artifact": "candidate-1",
+  "evidence_digest": "evidence-1",
+  "expected_outcome": "improve verification reliability"
+}
+```
+
+```text
+pandora evolution submit --input proposal.json --json
+```
+
 `evaluation inspect` reads the persisted evaluation receipts for one scoped
 session, optionally filtered to one execution. It reports trajectory, outcome,
 policy, human, regression, and adversarial results without replaying the
@@ -534,6 +584,8 @@ pandora evaluation golden --input <path> [--fail-on-failure]
 pandora evaluation inspect --session <id> [--execution <id>]
 pandora evolution list [--limit <1-256>]
 pandora evolution inspect --id <proposal-id>
+pandora evolution submit --input <path>
+pandora evolution evaluate --id <proposal-id> --input <path> [--fail-on-failure]
 pandora rollout inspect --session <id> [--execution <id>]
 pandora graph code|knowledge|review|architecture --input <path> [--tenant <id>] [--workspace <id>]
 pandora completions powershell

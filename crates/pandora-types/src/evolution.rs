@@ -253,6 +253,8 @@ pub struct HoldoutEvaluation {
     policy_passed: bool,
     regression_passed: bool,
     evaluated_at: Timestamp,
+    #[serde(default)]
+    holdout_digest: Option<RequestDigest>,
 }
 
 impl HoldoutEvaluation {
@@ -274,7 +276,16 @@ impl HoldoutEvaluation {
             policy_passed,
             regression_passed,
             evaluated_at,
+            holdout_digest: None,
         }
+    }
+
+    pub fn with_holdout_digest(
+        mut self,
+        digest: impl Into<String>,
+    ) -> Result<Self, EvolutionContractError> {
+        self.holdout_digest = Some(RequestDigest::new(digest.into())?);
+        Ok(self)
     }
 
     pub fn proposal_id(&self) -> &ProposalId {
@@ -309,6 +320,10 @@ impl HoldoutEvaluation {
 
     pub const fn evaluated_at(&self) -> Timestamp {
         self.evaluated_at
+    }
+
+    pub fn holdout_digest(&self) -> Option<&RequestDigest> {
+        self.holdout_digest.as_ref()
     }
 }
 
@@ -600,5 +615,27 @@ mod tests {
         );
 
         assert_eq!(result, Err(EvolutionContractError::SameArtifact));
+    }
+
+    #[test]
+    fn holdout_digest_is_optional_for_legacy_records_and_can_be_bound() {
+        let evaluation = HoldoutEvaluation::new(
+            ProposalId::new("proposal-1").unwrap(),
+            100,
+            100,
+            true,
+            true,
+            true,
+            Timestamp::from_unix_seconds(10),
+        );
+        assert!(evaluation.holdout_digest().is_none());
+
+        let bound = evaluation
+            .with_holdout_digest("sha256:holdout-report")
+            .unwrap();
+        assert_eq!(
+            bound.holdout_digest().unwrap().as_str(),
+            "sha256:holdout-report"
+        );
     }
 }
