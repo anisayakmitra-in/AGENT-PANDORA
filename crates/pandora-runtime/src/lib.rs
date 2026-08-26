@@ -4,6 +4,7 @@ pub mod adaptive_engine;
 pub mod agent_loop;
 pub mod approvals;
 pub mod coding_feedback;
+pub mod composition_ledger;
 pub mod config;
 pub mod containment;
 pub mod context_engine;
@@ -61,6 +62,10 @@ pub use approvals::{
 };
 pub use coding_feedback::{
     CodingFeedbackError, CodingFeedbackInput, CodingFeedbackLoop, CodingFeedbackResult,
+};
+pub use composition_ledger::{
+    COMPOSITION_LEDGER_VERSION, CompositionBinding, CompositionLedger, CompositionLedgerError,
+    CompositionSource, MAX_COMPOSITION_BINDINGS,
 };
 pub use containment::shipped_executor_containment;
 pub use context_engine::{ContextCacheStats, ContextEngine, ContextError};

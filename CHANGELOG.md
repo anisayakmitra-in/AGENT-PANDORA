@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added a bounded runtime composition ledger. Execution profiles now bind
+  deterministic component provenance and identity digests for the runtime,
+  selected executor, and containment evidence without creating a second
+  authority or activation path.
+
 - Added a bounded, stale-safe memory synthesis contract. Synthesized L1
   candidates retain explicit origin and evidence IDs, exclude sensitive inputs,
   and never bypass approval for L2 promotion or effect authority.

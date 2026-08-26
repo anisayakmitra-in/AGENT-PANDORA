@@ -24,6 +24,10 @@ The raw workspace path, credentials, prompts, context, model output, Tool output
 
 Operation-request protocol v2 includes the profile digest in its canonical request digest. The existing one-shot permit and effect receipt already bind that request digest, so substituting a profile invalidates the permit. Profiles remain evidence only: they cannot approve an operation, mint a permit, or weaken executor checks.
 
+Every profile assembled for an effect also carries a `composition-ledger` binding. The ledger is a bounded, deterministic inventory of the runtime, selected executor, and containment evidence. Each entry records an identity digest and one of the closed provenance classes `clean-source`, `generated-source`, `third-party`, `native`, or `artifact-fallback`. The ledger digest is included through the existing profile binding rather than a second authorization model.
+
+The ledger refuses empty identities, invalid digests, duplicate component/version pairs, and oversized inventories. Its required execution entries are the Pandora runtime, the selected executor, and containment evidence. It is provenance evidence only: it does not activate components, select providers, issue permits, or replace Parliament or the Reference Monitor.
+
 ## Rollout evidence
 
 `RolloutReducer` creates a deterministic, versioned projection from one context-manifest digest, ordered runtime events, and linked effect receipts. The projection binds tenant, workspace, session, and execution scope; chains each record to the previous digest; and can be replay-verified without creating another event store.

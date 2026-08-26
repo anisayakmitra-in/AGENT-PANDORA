@@ -1,3 +1,4 @@
+use crate::composition_ledger::{CompositionLedger, CompositionLedgerError};
 use crate::containment::shipped_executor_containment;
 use crate::executors::WorkspaceRoot;
 use pandora_types::{
@@ -9,6 +10,7 @@ use pandora_types::{
 pub enum ExecutionProfileAssemblyError {
     InvalidWorkspace,
     Containment(ContainmentContractError),
+    Composition(CompositionLedgerError),
     UnknownExecutor(String),
     Contract(ExecutionProfileContractError),
 }
@@ -30,12 +32,29 @@ pub(crate) fn assemble_execution_profile(
         .iter()
         .find(|evidence| evidence.identity().id() == executor_id)
         .ok_or_else(|| ExecutionProfileAssemblyError::UnknownExecutor(executor_id.to_owned()))?;
+    let composition = CompositionLedger::for_execution(
+        env!("CARGO_PKG_VERSION"),
+        executor.identity().id(),
+        executor.identity().implementation_version(),
+        executor.digest(),
+        containment.digest(),
+    )
+    .map_err(ExecutionProfileAssemblyError::Composition)?;
     bindings.push(
         ExecutionProfileBinding::new(
             ExecutionProfileBindingKind::Executor,
             executor.identity().id(),
             Some(executor.identity().implementation_version()),
             executor.digest(),
+        )
+        .map_err(ExecutionProfileAssemblyError::Contract)?,
+    );
+    bindings.push(
+        ExecutionProfileBinding::new(
+            ExecutionProfileBindingKind::Configuration,
+            "composition-ledger",
+            Some("1"),
+            composition.digest(),
         )
         .map_err(ExecutionProfileAssemblyError::Contract)?,
     );
@@ -75,7 +94,12 @@ mod tests {
 
         assert_eq!(profile.policy_version(), 7);
         assert_eq!(profile.bindings()[0].id(), "filesystem");
-        assert_eq!(profile.bindings()[1].id(), "workspace.read");
+        assert!(
+            profile
+                .bindings()
+                .iter()
+                .any(|binding| binding.id() == "composition-ledger")
+        );
         assert!(!json.contains(directory.to_str().unwrap()));
 
         let _ = std::fs::remove_dir_all(directory);
