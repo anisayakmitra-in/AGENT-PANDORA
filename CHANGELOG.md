@@ -31,6 +31,11 @@
   workspace and returns the bounded diff through the existing process receipt
   path.
 
+- Added the read-only `workspace.log` Coding Gene, tool, and `/log` command.
+  It runs only `git --no-pager log --oneline --decorate -n 20` inside the
+  configured workspace and returns bounded recent history through the existing
+  process receipt path.
+
 ## v2.0.0-beta.7
 
 - Added `SelfHealingEngine` and connected recovery candidates to

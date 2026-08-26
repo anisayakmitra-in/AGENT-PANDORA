@@ -62,6 +62,7 @@ enum VerificationKind {
     Build,
     Status,
     Diff,
+    Log,
 }
 
 impl VerificationCommand {
@@ -119,6 +120,19 @@ impl VerificationCommand {
                     Ok(Self {
                         workspace,
                         kind: VerificationKind::Diff,
+                    })
+                }
+                [no_pager, command, oneline, decorate, count_flag, count]
+                    if no_pager == "--no-pager"
+                        && command == "log"
+                        && oneline == "--oneline"
+                        && decorate == "--decorate"
+                        && count_flag == "-n"
+                        && count == "20" =>
+                {
+                    Ok(Self {
+                        workspace,
+                        kind: VerificationKind::Log,
                     })
                 }
                 _ => Err(ProcessError::UnsupportedArguments),
@@ -185,6 +199,10 @@ impl VerificationCommand {
                 workspace,
                 kind: VerificationKind::Diff,
             }),
+            "git --no-pager log --oneline --decorate -n 20" => Ok(Self {
+                workspace,
+                kind: VerificationKind::Log,
+            }),
             _ => Err(ProcessError::UnsupportedArguments),
         }
     }
@@ -200,6 +218,7 @@ impl VerificationCommand {
             VerificationKind::Build => "cargo build --locked",
             VerificationKind::Status => "git status --short",
             VerificationKind::Diff => "git diff --no-ext-diff --unified=3",
+            VerificationKind::Log => "git --no-pager log --oneline --decorate -n 20",
         }
     }
 
@@ -220,12 +239,13 @@ impl VerificationCommand {
             VerificationKind::Build => &["build", "--locked"],
             VerificationKind::Status => &["status", "--short"],
             VerificationKind::Diff => &["diff", "--no-ext-diff", "--unified=3"],
+            VerificationKind::Log => &["--no-pager", "log", "--oneline", "--decorate", "-n", "20"],
         }
     }
 
     fn program(&self) -> &'static str {
         match self.kind {
-            VerificationKind::Status | VerificationKind::Diff => "git",
+            VerificationKind::Status | VerificationKind::Diff | VerificationKind::Log => "git",
             _ => "cargo",
         }
     }
@@ -673,6 +693,37 @@ mod tests {
     fn rejects_git_diff_options_outside_the_allowlist() {
         let workspace = Workspace::new();
         let arguments = vec!["diff".to_owned(), "--no-ext-diff".to_owned()];
+
+        assert_eq!(
+            VerificationCommand::from_argv("git", &arguments, workspace.root.clone()),
+            Err(ProcessError::UnsupportedArguments)
+        );
+    }
+
+    #[test]
+    fn accepts_only_read_only_git_log() {
+        let workspace = Workspace::new();
+        let arguments = vec![
+            "--no-pager".to_owned(),
+            "log".to_owned(),
+            "--oneline".to_owned(),
+            "--decorate".to_owned(),
+            "-n".to_owned(),
+            "20".to_owned(),
+        ];
+        let command = VerificationCommand::from_argv("git", &arguments, workspace.root.clone())
+            .expect("the fixed git log command should be accepted");
+
+        assert_eq!(
+            command.spec(),
+            "git --no-pager log --oneline --decorate -n 20"
+        );
+    }
+
+    #[test]
+    fn rejects_git_log_options_outside_the_allowlist() {
+        let workspace = Workspace::new();
+        let arguments = vec!["--no-pager".to_owned(), "log".to_owned()];
 
         assert_eq!(
             VerificationCommand::from_argv("git", &arguments, workspace.root.clone()),

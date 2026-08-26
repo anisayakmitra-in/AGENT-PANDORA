@@ -384,6 +384,23 @@ impl ToolEngine {
                 .expect("built-in diff tool schema is valid"),
             )
             .expect("built-in diff tool ID is unique");
+        engine
+            .register(
+                ToolDefinition::new(
+                    "workspace.log",
+                    "1.0.0",
+                    "Show recent workspace Git history",
+                    json!({
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": false
+                    }),
+                    Capability::ProcessExecute,
+                    Operation::Execute,
+                )
+                .expect("built-in log tool schema is valid"),
+            )
+            .expect("built-in log tool ID is unique");
         for definition in [
             ToolDefinition::new(
                 "daedalus.audit",
@@ -670,6 +687,8 @@ impl ToolEngine {
                 .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
             "workspace.diff" => TaskIntent::new("diff")
                 .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
+            "workspace.log" => TaskIntent::new("log")
+                .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
             "daedalus.audit" => TaskIntent::new("audit")
                 .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
             "argus.review" => task_from_argument(arguments, "deep-review", "path")?,
@@ -824,6 +843,7 @@ fn gene_id_for_tool(tool_id: &str) -> Result<GeneId, ToolError> {
         "workspace.build" => "build.check",
         "workspace.status" => "workspace.status",
         "workspace.diff" => "workspace.diff",
+        "workspace.log" => "workspace.log",
         "daedalus.audit" => "daedalus.audit",
         "argus.review" => "argus.review",
         "ariadne.debt" => "ariadne.debt",
@@ -1315,6 +1335,14 @@ mod tests {
                 .summary(),
             "diff"
         );
+        assert_eq!(
+            engine
+                .prepare_invocation("workspace.log", &json!({}))
+                .unwrap()
+                .task()
+                .summary(),
+            "log"
+        );
         for (tool, arguments, expected) in [
             ("daedalus.audit", json!({}), "audit"),
             (
@@ -1399,6 +1427,7 @@ mod tests {
             ("workspace.format", json!({}), "format.check"),
             ("workspace.status", json!({}), "workspace.status"),
             ("workspace.diff", json!({}), "workspace.diff"),
+            ("workspace.log", json!({}), "workspace.log"),
             ("daedalus.audit", json!({}), "daedalus.audit"),
             (
                 "argus.review",

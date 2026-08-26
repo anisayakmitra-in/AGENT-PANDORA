@@ -310,6 +310,7 @@ fn built_in_gene_alias(id: &str) -> Option<&'static str> {
         "build.check" => Some("/build"),
         "workspace.status" => Some("/status"),
         "workspace.diff" => Some("/diff"),
+        "workspace.log" => Some("/log"),
         "change.review" => Some("/review"),
         "daedalus.audit" => Some("/audit"),
         "argus.review" => Some("/argus-review"),

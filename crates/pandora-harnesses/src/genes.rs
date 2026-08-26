@@ -15,6 +15,7 @@ const LINT_SPEC: &str = "cargo clippy --workspace --all-targets --locked -- -D w
 const BUILD_SPEC: &str = "cargo build --locked";
 const STATUS_SPEC: &str = "git status --short";
 const DIFF_SPEC: &str = "git diff --no-ext-diff --unified=3";
+const LOG_SPEC: &str = "git --no-pager log --oneline --decorate -n 20";
 const DEBT_MARKERS: [&str; 4] = ["TODO", "FIXME", "HACK", "XXX"];
 const CODING_GUIDE: &str = "Daedalus inventories the workspace for evidence-led audits.\nArgus reviews one scoped change.\nAriadne finds explicit debt markers.\nHephaestus measures the repository with the fixed verifier.\nAthena explains the governed coding workflow.\nAll filesystem and process effects require Pandora permits and receipts.";
 
@@ -32,6 +33,7 @@ pub enum CodingAction {
     Build,
     Status,
     Diff,
+    Log,
     Review,
     DeepReview,
     Debt,
@@ -230,6 +232,16 @@ impl CodingRequest {
         }
     }
 
+    pub fn log(context: PlanningContext) -> Self {
+        Self {
+            action: CodingAction::Log,
+            context,
+            path: None,
+            content: None,
+            command: Some(LOG_SPEC.to_owned()),
+        }
+    }
+
     pub fn with_command(mut self, command: impl Into<String>) -> Self {
         self.command = Some(command.into());
         self
@@ -280,6 +292,7 @@ pub enum CodingGeneRole {
     Build,
     Status,
     Diff,
+    Log,
     Review,
     DaedalusAudit,
     ArgusReview,
@@ -301,6 +314,7 @@ impl CodingGeneRole {
             Self::Build => CodingAction::Build,
             Self::Status => CodingAction::Status,
             Self::Diff => CodingAction::Diff,
+            Self::Log => CodingAction::Log,
             Self::Review => CodingAction::Review,
             Self::DaedalusAudit => CodingAction::Audit,
             Self::ArgusReview => CodingAction::DeepReview,
@@ -322,6 +336,7 @@ impl CodingGeneRole {
             Self::Build => "build.check",
             Self::Status => "workspace.status",
             Self::Diff => "workspace.diff",
+            Self::Log => "workspace.log",
             Self::Review => "change.review",
             Self::DaedalusAudit => "daedalus.audit",
             Self::ArgusReview => "argus.review",
@@ -341,6 +356,7 @@ impl CodingGeneRole {
             | Self::Build
             | Self::Status
             | Self::Diff
+            | Self::Log
             | Self::HephaestusMeasure => Some(Capability::ProcessExecute),
             Self::Read
             | Self::Search
@@ -362,6 +378,7 @@ impl CodingGeneRole {
             | Self::Build
             | Self::Status
             | Self::Diff
+            | Self::Log
             | Self::HephaestusMeasure => Some(Operation::Execute),
             Self::Read
             | Self::Search
@@ -413,6 +430,7 @@ impl CodingGene {
             CodingGeneRole::Build,
             CodingGeneRole::Status,
             CodingGeneRole::Diff,
+            CodingGeneRole::Log,
             CodingGeneRole::Review,
             CodingGeneRole::DaedalusAudit,
             CodingGeneRole::ArgusReview,
@@ -460,6 +478,7 @@ impl Gene for CodingGene {
             CodingGeneRole::Build => EffectTarget::process(BUILD_SPEC),
             CodingGeneRole::Status => EffectTarget::process(STATUS_SPEC),
             CodingGeneRole::Diff => EffectTarget::process(DIFF_SPEC),
+            CodingGeneRole::Log => EffectTarget::process(LOG_SPEC),
             CodingGeneRole::DaedalusAudit => EffectTarget::path("."),
             CodingGeneRole::Read
             | CodingGeneRole::Search
@@ -573,6 +592,7 @@ fn validate_request(request: &CodingRequest) -> Result<(), GeneError> {
         | CodingAction::Build
         | CodingAction::Status
         | CodingAction::Diff
+        | CodingAction::Log
         | CodingAction::Measure => {
             let expected_command = match request.action {
                 CodingAction::Test => TEST_SPEC,
@@ -581,6 +601,7 @@ fn validate_request(request: &CodingRequest) -> Result<(), GeneError> {
                 CodingAction::Build => BUILD_SPEC,
                 CodingAction::Status => STATUS_SPEC,
                 CodingAction::Diff => DIFF_SPEC,
+                CodingAction::Log => LOG_SPEC,
                 CodingAction::Verify | CodingAction::Measure => VERIFICATION_SPEC,
                 _ => unreachable!(),
             };
@@ -775,6 +796,16 @@ mod tests {
 
         assert_eq!(request.capability(), Capability::ProcessExecute);
         assert_eq!(request.target(), &EffectTarget::process(DIFF_SPEC));
+    }
+
+    #[test]
+    fn log_gene_plans_the_fixed_git_log() {
+        let gene = CodingGene::new(CodingGeneRole::Log).unwrap();
+        let input = CodingRequest::log(context()).into_gene_input().unwrap();
+        let request = &gene.plan(&input).unwrap()[0];
+
+        assert_eq!(request.capability(), Capability::ProcessExecute);
+        assert_eq!(request.target(), &EffectTarget::process(LOG_SPEC));
     }
 
     #[test]

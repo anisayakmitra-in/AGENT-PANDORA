@@ -3592,6 +3592,7 @@ fn harness_discovery_exposes_the_built_in_domains_without_runtime_internals() {
         "build.check",
         "workspace.status",
         "workspace.diff",
+        "workspace.log",
         "athena.guide",
     ] {
         assert!(gene_ids.contains(&expected));
@@ -3786,6 +3787,59 @@ fn direct_run_rejects_unclassified_tasks_without_a_phantom_harness() {
     let response = parse_json(&output);
     assert_eq!(response["code"], "execution_failed");
     assert_eq!(response["message"], "no default harness is available");
+}
+
+#[test]
+fn coding_harness_reports_recent_git_log_through_the_governed_runtime() {
+    let fixture = Fixture::new();
+    fixture.initialize_git_workspace();
+    fixture.setup();
+
+    let output = fixture
+        .command(&[
+            "run",
+            "--harness",
+            "coding",
+            "--gene",
+            "workspace.log",
+            "log",
+            "--json",
+        ])
+        .output()
+        .expect("workspace log should start");
+    assert_eq!(output.status.code(), Some(40));
+    let response = parse_json(&output);
+    assert_eq!(response["code"], "approval_required");
+    let approval_id = response["details"]["approval_id"]
+        .as_str()
+        .expect("workspace log should return an approval")
+        .to_owned();
+
+    let output = fixture
+        .command(&["approval", "resolve", &approval_id, "--allow", "--json"])
+        .output()
+        .expect("workspace log approval should resolve");
+    assert_success_with_context(&output, "workspace log approval");
+
+    let output = fixture
+        .command(&[
+            "run",
+            "--approval",
+            &approval_id,
+            "--harness",
+            "coding",
+            "--gene",
+            "workspace.log",
+            "log",
+            "--json",
+        ])
+        .output()
+        .expect("approved workspace log should start");
+    assert_success_with_context(&output, "approved workspace log");
+    let response = parse_json(&output);
+    assert_eq!(response["gene_id"], "workspace.log");
+    assert_eq!(response["status"], "completed");
+    assert!(response["output"].as_str().unwrap().contains("fixture"));
 }
 
 #[test]
@@ -4095,6 +4149,7 @@ fn slash_commands_cover_the_built_in_domains_and_execute_workflow_genes() {
         "/build",
         "/status",
         "/diff",
+        "/log",
         "/review",
         "/audit",
         "/argus-review",

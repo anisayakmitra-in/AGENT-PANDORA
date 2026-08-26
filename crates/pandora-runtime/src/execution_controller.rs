@@ -1396,7 +1396,7 @@ impl ExecutionController {
                 );
                 if matches!(
                     output.selected_gene.as_str(),
-                    "workspace.status" | "workspace.diff"
+                    "workspace.status" | "workspace.diff" | "workspace.log"
                 ) && let Ok(process_output) = response.result()
                 {
                     output.output = Some(process_output.stdout().to_vec());
@@ -1730,6 +1730,7 @@ fn default_gene_id(intent: &TaskIntent) -> GeneId {
         "build" => GeneId::new("build.check").expect("built-in Gene ID is valid"),
         "status" => GeneId::new("workspace.status").expect("built-in Gene ID is valid"),
         "diff" => GeneId::new("workspace.diff").expect("built-in Gene ID is valid"),
+        "log" => GeneId::new("workspace.log").expect("built-in Gene ID is valid"),
         "review" => GeneId::new("change.review").expect("built-in Gene ID is valid"),
         "audit" => GeneId::new("daedalus.audit").expect("built-in Gene ID is valid"),
         "deep-review" => GeneId::new("argus.review").expect("built-in Gene ID is valid"),
@@ -1888,6 +1889,7 @@ fn coding_input(
         "workspace.diff" if action == "diff" && remainder.is_empty() => {
             CodingRequest::diff(context)
         }
+        "workspace.log" if action == "log" && remainder.is_empty() => CodingRequest::log(context),
         _ => {
             return Err(RuntimeError::InvalidIntent(
                 "intent does not match the selected Gene",

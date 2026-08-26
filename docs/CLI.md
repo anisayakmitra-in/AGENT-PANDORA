@@ -107,6 +107,7 @@ pandora run --agent "Read the README and summarize it"
 pandora run --harness coding --gene workspace.read "read:README.md"
 pandora run --harness coding --gene workspace.status "status"
 pandora run --harness coding --gene workspace.diff "diff"
+pandora run --harness coding --gene workspace.log "log"
 pandora run --plan "inspect the README and report what it contains"
 pandora run --approval <approval-id> "patch:README.md:approved content"
 pandora chat
@@ -300,6 +301,7 @@ through the same provider permit boundary. The model can call
 `workspace.test`, `workspace.format`, `workspace.lint`, `workspace.build`,
 `workspace.status`,
 `workspace.diff`,
+`workspace.log`,
 `daedalus.audit`,
 `argus.review`, `ariadne.debt`, `hephaestus.measure`,
 `evidence.inventory`, `evidence.search`, `source.read`, `source.compare`, and
@@ -603,7 +605,7 @@ pandora completions fish
 ```
 
 `/coding` inspects the built-in `coding-domain` Harness. Its short Gene aliases
-are `/read`, `/search`, `/patch`, `/verify`, `/test`, `/format`, `/lint`, `/build`, `/status`, `/diff`, `/review`, `/audit`,
+are `/read`, `/search`, `/patch`, `/verify`, `/test`, `/format`, `/lint`, `/build`, `/status`, `/diff`, `/log`, `/review`, `/audit`,
 `/argus-review`, `/debt`, `/measure`, and `/guide`. Canonical commands remain
 available as `/harness:<encoded-id>` and `/gene:<encoded-harness-id>:<encoded-gene-id>`.
 `/research` inspects the built-in `research-domain` Harness. Its short Gene
