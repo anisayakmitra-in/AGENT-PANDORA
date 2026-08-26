@@ -198,7 +198,8 @@ change a deployment. Those effects require separate capabilities and approvals.
 
 ## Security Domain Harness
 
-The built-in `security-domain` Harness owns eighteen read-only evidence Genes:
+The built-in `security-domain` Harness is Pandora's Codex Security-style,
+evidence-first workflow surface. It owns eighteen read-only evidence Genes:
 
 - `security.assess` performs one bounded fixed-marker evidence pass without
   claiming complete scanner coverage;
@@ -234,14 +235,18 @@ The built-in `security-domain` Harness owns eighteen read-only evidence Genes:
   markers;
 - `security.guide` returns static guidance without requesting an effect.
 
-The Security Domain is a bounded assessment surface, not a complete
-vulnerability scanner, finding database, or compliance certification. It does
-not execute scanners, run commands, contact networks, assign triage verdicts,
-modify files, inspect credential values, or remediate findings. Effectful Genes
-use the existing workspace-scoped `filesystem.read` permit, receipt, and
-runtime-event path. The phase names mirror a governed security workflow while
-the current implementation remains evidence-only; process-backed validation
-and remediation require separate capabilities and approvals.
+The Security Domain follows the same broad lifecycle as Codex Security's
+standard, deep, diff, threat-model, discovery, triage, attack-path, validation,
+fix, verification, writeup, tracking, hardening, and policy workflows. It is a
+native Pandora workflow, not a Codex Security workbench client.
+
+It remains a bounded assessment surface, not a complete vulnerability scanner,
+finding database, or compliance certification. It does not execute scanners,
+run commands, contact networks, assign triage verdicts, modify files, inspect
+credential values, or remediate findings. Effectful Genes use the existing
+workspace-scoped `filesystem.read` permit, receipt, and runtime-event path.
+Process-backed validation and remediation require separate capabilities and
+approvals.
 
 ## Debugging Domain Harness
 
