@@ -40,6 +40,7 @@ pub fn coding_manifest() -> Result<HarnessManifest, ManifestError> {
         "tests.run",
         "format.check",
         "lint.check",
+        "build.check",
         "change.review",
         "daedalus.audit",
         "argus.review",

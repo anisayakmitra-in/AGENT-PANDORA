@@ -18,6 +18,10 @@
   command. It runs only the locked workspace Clippy check through the same
   governed process path.
 
+- Added the fixed `build.check` Coding Gene, `workspace.build` tool, and
+  `/build` command. It runs only `cargo build --locked` through the governed
+  process path.
+
 ## v2.0.0-beta.7
 
 - Added `SelfHealingEngine` and connected recovery candidates to

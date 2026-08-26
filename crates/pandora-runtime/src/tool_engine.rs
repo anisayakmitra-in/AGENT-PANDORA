@@ -333,6 +333,23 @@ impl ToolEngine {
                 .expect("built-in lint tool schema is valid"),
             )
             .expect("built-in lint tool ID is unique");
+        engine
+            .register(
+                ToolDefinition::new(
+                    "workspace.build",
+                    "1.0.0",
+                    "Build the workspace with the locked dependency graph",
+                    json!({
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": false
+                    }),
+                    Capability::ProcessExecute,
+                    Operation::Execute,
+                )
+                .expect("built-in build tool schema is valid"),
+            )
+            .expect("built-in build tool ID is unique");
         for definition in [
             ToolDefinition::new(
                 "daedalus.audit",
@@ -613,6 +630,8 @@ impl ToolEngine {
                 .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
             "workspace.lint" => TaskIntent::new("lint")
                 .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
+            "workspace.build" => TaskIntent::new("build")
+                .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
             "daedalus.audit" => TaskIntent::new("audit")
                 .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
             "argus.review" => task_from_argument(arguments, "deep-review", "path")?,
@@ -764,6 +783,7 @@ fn gene_id_for_tool(tool_id: &str) -> Result<GeneId, ToolError> {
         "workspace.test" => "tests.run",
         "workspace.format" => "format.check",
         "workspace.lint" => "lint.check",
+        "workspace.build" => "build.check",
         "daedalus.audit" => "daedalus.audit",
         "argus.review" => "argus.review",
         "ariadne.debt" => "ariadne.debt",
@@ -1230,6 +1250,14 @@ mod tests {
                 .task()
                 .summary(),
             "lint"
+        );
+        assert_eq!(
+            engine
+                .prepare_invocation("workspace.build", &json!({}))
+                .unwrap()
+                .task()
+                .summary(),
+            "build"
         );
         for (tool, arguments, expected) in [
             ("daedalus.audit", json!({}), "audit"),

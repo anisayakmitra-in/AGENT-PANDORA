@@ -1720,6 +1720,7 @@ fn default_gene_id(intent: &TaskIntent) -> GeneId {
         "test" => GeneId::new("tests.run").expect("built-in Gene ID is valid"),
         "format" => GeneId::new("format.check").expect("built-in Gene ID is valid"),
         "lint" => GeneId::new("lint.check").expect("built-in Gene ID is valid"),
+        "build" => GeneId::new("build.check").expect("built-in Gene ID is valid"),
         "review" => GeneId::new("change.review").expect("built-in Gene ID is valid"),
         "audit" => GeneId::new("daedalus.audit").expect("built-in Gene ID is valid"),
         "deep-review" => GeneId::new("argus.review").expect("built-in Gene ID is valid"),
@@ -1871,6 +1872,7 @@ fn coding_input(
             CodingRequest::format(context)
         }
         "lint.check" if action == "lint" && remainder.is_empty() => CodingRequest::lint(context),
+        "build.check" if action == "build" && remainder.is_empty() => CodingRequest::build(context),
         _ => {
             return Err(RuntimeError::InvalidIntent(
                 "intent does not match the selected Gene",

@@ -59,6 +59,7 @@ enum VerificationKind {
     Test,
     Format,
     Lint,
+    Build,
 }
 
 impl VerificationCommand {
@@ -87,6 +88,13 @@ impl VerificationCommand {
         Self {
             workspace,
             kind: VerificationKind::Lint,
+        }
+    }
+
+    pub fn cargo_build_locked(workspace: WorkspaceRoot) -> Self {
+        Self {
+            workspace,
+            kind: VerificationKind::Build,
         }
     }
 
@@ -131,6 +139,9 @@ impl VerificationCommand {
             {
                 VerificationKind::Lint
             }
+            [command, locked] if command == "build" && locked == "--locked" => {
+                VerificationKind::Build
+            }
             _ => return Err(ProcessError::UnsupportedArguments),
         };
         Ok(Self { workspace, kind })
@@ -144,6 +155,7 @@ impl VerificationCommand {
             "cargo clippy --workspace --all-targets --locked -- -D warnings" => {
                 Ok(Self::cargo_clippy_check(workspace))
             }
+            "cargo build --locked" => Ok(Self::cargo_build_locked(workspace)),
             _ => Err(ProcessError::UnsupportedArguments),
         }
     }
@@ -156,6 +168,7 @@ impl VerificationCommand {
             VerificationKind::Lint => {
                 "cargo clippy --workspace --all-targets --locked -- -D warnings"
             }
+            VerificationKind::Build => "cargo build --locked",
         }
     }
 
@@ -173,6 +186,7 @@ impl VerificationCommand {
                 "-D",
                 "warnings",
             ],
+            VerificationKind::Build => &["build", "--locked"],
         }
     }
 
@@ -568,6 +582,16 @@ mod tests {
             command.spec(),
             "cargo clippy --workspace --all-targets --locked -- -D warnings"
         );
+    }
+
+    #[test]
+    fn accepts_only_locked_cargo_build() {
+        let workspace = Workspace::new();
+        let arguments = vec!["build".to_owned(), "--locked".to_owned()];
+        let command = VerificationCommand::from_argv("cargo", &arguments, workspace.root.clone())
+            .expect("the fixed build command should be accepted");
+
+        assert_eq!(command.spec(), "cargo build --locked");
     }
 
     #[test]
