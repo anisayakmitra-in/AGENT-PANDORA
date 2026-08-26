@@ -37,7 +37,7 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora evolution evaluate --id <proposal-id> --input <path> --json` | `evolution evaluate` | `proposal_id`, `total`, `passed`, `failed`, `trajectory_score`, `outcome_score`, `holdout_passed`, `policy_passed`, `regression_passed`, `digest`, `cases`, `durability` |
 | `pandora evolution submit --input <path> --json` | `evolution submit` | `proposal_id`, `state`, `durability` |
 | `pandora evaluation inspect --session <id> --json` | `evaluation inspect` | `session_id`, `execution_id`, `count`, `result_counts`, `receipts`, `durability` |
-| `pandora graph <kind> --input <path> --json` | `graph build` | `kind`, `scope`, `source_count`, `nodes`, `edges`, `digest` |
+| `pandora graph <kind> --input <path> [--store <path>] --json` | `graph build` | `kind`, `scope`, `source_count`, `nodes`, `edges`, `digest`, optional `persisted` |
 | `pandora update --artifact ... --json` | `update` | `verified`, `artifact`, `target`, `signature_verified`, `dry_run` |
 | `pandora update --release ... --json` | `update` | `verified`, `release`, `artifact`, `signature_verified`, `dry_run`; non-dry-run responses also contain `target` |
 | `pandora update --rollback --json` | `update rollback` | `target`, `dry_run`; a dry run contains `previous`, while a completed rollback contains `restored` |

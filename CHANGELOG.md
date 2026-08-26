@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added an explicit graph snapshot store. `pandora graph` remains stateless by
+  default and can persist a validated, scope-isolated snapshot with `--store`.
+
 - Added a bounded `pandora evolution evaluate` holdout runner. It records
   trajectory, outcome, policy, and regression evidence through the existing
   durable EvolutionEngine without executing tools, calling providers, or

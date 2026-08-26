@@ -87,8 +87,8 @@ pub use fleet::{
 };
 pub use graph_intelligence::{
     GraphEdge, GraphError, GraphInput, GraphIntelligenceEngine, GraphKind, GraphNode,
-    GraphNodeKind, GraphScope, GraphSnapshot, MAX_GRAPH_EDGES, MAX_GRAPH_INPUT_BYTES,
-    MAX_GRAPH_INPUTS, MAX_GRAPH_NODES,
+    GraphNodeKind, GraphScope, GraphSnapshot, GraphStore, GraphStoreError, MAX_GRAPH_EDGES,
+    MAX_GRAPH_INPUT_BYTES, MAX_GRAPH_INPUTS, MAX_GRAPH_NODES, MAX_GRAPH_SNAPSHOT_BYTES,
 };
 pub use harness_registry::{HarnessRegistry, HarnessRegistryError, PackageRecord, PackageState};
 pub use hooks::{HookPoint, HookSelector, LifecycleHook, LifecycleHooks};

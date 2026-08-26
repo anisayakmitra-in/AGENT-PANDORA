@@ -1,7 +1,8 @@
 use super::{LOCAL_TENANT, LOCAL_WORKSPACE, parse_options};
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{
-    GraphInput, GraphIntelligenceEngine, GraphKind, GraphScope, MAX_GRAPH_INPUT_BYTES,
+    GraphInput, GraphIntelligenceEngine, GraphKind, GraphScope, GraphStore, GraphStoreError,
+    MAX_GRAPH_INPUT_BYTES,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -34,7 +35,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
 }
 
 fn build(kind: GraphKind, args: &[String]) -> Result<CommandResult, CliError> {
-    let parsed = parse_options(args, &["input", "tenant", "workspace"])?;
+    let parsed = parse_options(args, &["input", "store", "tenant", "workspace"])?;
     if !parsed.positionals.is_empty() {
         return Err(CliError::usage(
             "graph commands do not accept positional arguments after the kind",
@@ -58,18 +59,47 @@ fn build(kind: GraphKind, args: &[String]) -> Result<CommandResult, CliError> {
             json!({"error": error.to_string()}),
         )
     })?;
+    let mut data = data;
+    let persisted = if let Some(store_path) = parsed.value("store") {
+        let store = GraphStore::open(store_path).map_err(graph_store_error)?;
+        store.replace(&snapshot).map_err(graph_store_error)?;
+        data.as_object_mut()
+            .expect("graph snapshots serialize as JSON objects")
+            .insert("persisted".to_owned(), json!(true));
+        true
+    } else {
+        false
+    };
     Ok(success(
         "graph build",
         data,
-        format!(
-            "{} graph: {} source(s), {} node(s), {} edge(s), digest {}",
-            kind.as_str(),
-            snapshot.source_count(),
-            snapshot.nodes().len(),
-            snapshot.edges().len(),
-            snapshot.digest()
-        ),
+        if persisted {
+            format!(
+                "{} graph persisted: {} source(s), {} node(s), {} edge(s), digest {}",
+                kind.as_str(),
+                snapshot.source_count(),
+                snapshot.nodes().len(),
+                snapshot.edges().len(),
+                snapshot.digest()
+            )
+        } else {
+            format!(
+                "{} graph: {} source(s), {} node(s), {} edge(s), digest {}",
+                kind.as_str(),
+                snapshot.source_count(),
+                snapshot.nodes().len(),
+                snapshot.edges().len(),
+                snapshot.digest()
+            )
+        },
     ))
+}
+
+fn graph_store_error(error: GraphStoreError) -> CliError {
+    CliError::execution(
+        "could not persist graph snapshot",
+        json!({"error": error.to_string()}),
+    )
 }
 
 fn parse_kind(value: &str) -> Result<GraphKind, CliError> {
@@ -140,8 +170,10 @@ fn parse_inputs(bytes: &[u8]) -> Result<Vec<GraphInput>, CliError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_inputs, parse_kind};
-    use pandora_runtime::GraphKind;
+    use super::{build, parse_inputs, parse_kind};
+    use pandora_runtime::{GraphKind, GraphScope, GraphStore};
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn accepts_each_graph_projection() {
@@ -159,5 +191,42 @@ mod tests {
         .unwrap();
         assert_eq!(inputs.len(), 1);
         assert_eq!(inputs[0].path(), "src/main.rs");
+    }
+
+    #[test]
+    fn store_option_persists_the_selected_graph_scope() {
+        let root = std::env::temp_dir().join(format!(
+            "pandora-cli-graph-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        let input_path = root.join("graph.json");
+        let store_path = root.join("graphs.sqlite3");
+        fs::write(
+            &input_path,
+            br#"{"inputs":[{"path":"src/main.rs","content":"fn main() {}","provenance":"session:exec"}]}"#,
+        )
+        .unwrap();
+
+        let result = build(
+            GraphKind::Code,
+            &[
+                "--input".to_owned(),
+                input_path.display().to_string(),
+                "--store".to_owned(),
+                store_path.display().to_string(),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(result.data["persisted"], true);
+        let store = GraphStore::open(&store_path).unwrap();
+        let scope = GraphScope::new("local-tenant", "local-workspace").unwrap();
+        assert!(store.load(GraphKind::Code, &scope).unwrap().is_some());
+        let _ = fs::remove_dir_all(root);
     }
 }

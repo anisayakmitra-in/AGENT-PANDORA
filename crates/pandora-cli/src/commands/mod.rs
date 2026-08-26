@@ -340,7 +340,7 @@ commands:
   rollout inspect --session <id> [--execution <id>]
   efficiency rank [--task-class <name>] [--objective <cost|latency|tokens|certainty>]
   fleet list|register|dispatch|lease|release|expire|quarantine|revoke|kill
-  graph code|knowledge|review|architecture --input <path> [--tenant <id>] [--workspace <id>]
+  graph code|knowledge|review|architecture --input <path> [--store <path>] [--tenant <id>] [--workspace <id>]
   completions <powershell|bash|zsh|fish>
   migrate config
   update [--artifact <path> --sha256 <digest> | --rollback]

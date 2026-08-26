@@ -465,11 +465,16 @@ read supplies each relative path, content, and provenance label.
 ```text
 pandora graph code --input graph.json --json
 pandora graph architecture --input graph.json --tenant tenant-a --workspace workspace-a
+pandora graph review --input graph.json --store graphs.sqlite3 --tenant tenant-a --workspace workspace-a
 ```
 
 The four projections are `code`, `knowledge`, `review`, and `architecture`.
 Each response is bounded, scope-labelled, provenance-digested, and descriptive;
-graph output cannot authorize effects or activate packages.
+graph output cannot authorize effects or activate packages. Add `--store` to
+persist one snapshot for the selected tenant, workspace, and graph kind. A
+replacement is transactional, so stale nodes from the previous snapshot are
+removed only after the new snapshot has passed validation. Without `--store`,
+the command remains stateless.
 
 ## Local Fleet controls
 
@@ -587,7 +592,7 @@ pandora evolution inspect --id <proposal-id>
 pandora evolution submit --input <path>
 pandora evolution evaluate --id <proposal-id> --input <path> [--fail-on-failure]
 pandora rollout inspect --session <id> [--execution <id>]
-pandora graph code|knowledge|review|architecture --input <path> [--tenant <id>] [--workspace <id>]
+pandora graph code|knowledge|review|architecture --input <path> [--store <path>] [--tenant <id>] [--workspace <id>]
 pandora completions powershell
 pandora completions bash
 pandora completions zsh

@@ -1,12 +1,17 @@
+use rusqlite::{Connection, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::path::Path;
+use std::sync::Mutex;
+use std::time::Duration;
 
 pub const MAX_GRAPH_INPUTS: usize = 2_048;
 pub const MAX_GRAPH_INPUT_BYTES: usize = 1_048_576;
 pub const MAX_GRAPH_NODES: usize = 8_192;
 pub const MAX_GRAPH_EDGES: usize = 16_384;
+pub const MAX_GRAPH_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -314,6 +319,222 @@ impl GraphIntelligenceEngine {
     ) -> Result<GraphSnapshot, GraphError> {
         self.build(GraphKind::Architecture, scope, inputs)
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GraphStoreError {
+    Database,
+    Io,
+    Serialization,
+    CorruptSnapshot,
+    SnapshotTooLarge,
+    LockPoisoned,
+    Graph(GraphError),
+}
+
+impl fmt::Display for GraphStoreError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Database => formatter.write_str("graph store database is unavailable"),
+            Self::Io => formatter.write_str("graph store filesystem operation failed"),
+            Self::Serialization => formatter.write_str("graph snapshot serialization failed"),
+            Self::CorruptSnapshot => formatter.write_str("graph snapshot is corrupt"),
+            Self::SnapshotTooLarge => formatter.write_str("graph snapshot exceeds the size limit"),
+            Self::LockPoisoned => formatter.write_str("graph store lock is unavailable"),
+            Self::Graph(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for GraphStoreError {}
+
+impl From<rusqlite::Error> for GraphStoreError {
+    fn from(_: rusqlite::Error) -> Self {
+        Self::Database
+    }
+}
+
+impl From<std::io::Error> for GraphStoreError {
+    fn from(_: std::io::Error) -> Self {
+        Self::Io
+    }
+}
+
+impl From<serde_json::Error> for GraphStoreError {
+    fn from(_: serde_json::Error) -> Self {
+        Self::Serialization
+    }
+}
+
+impl From<GraphError> for GraphStoreError {
+    fn from(error: GraphError) -> Self {
+        Self::Graph(error)
+    }
+}
+
+pub struct GraphStore {
+    connection: Mutex<Connection>,
+}
+
+impl GraphStore {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, GraphStoreError> {
+        let path = path.as_ref();
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)?;
+        }
+        let connection = Connection::open(path)?;
+        set_private_permissions(path)?;
+        connection.busy_timeout(Duration::from_secs(5))?;
+        connection.execute_batch(
+            "PRAGMA journal_mode = WAL;
+             CREATE TABLE IF NOT EXISTS graph_snapshots (
+                 tenant TEXT NOT NULL,
+                 workspace TEXT NOT NULL,
+                 kind TEXT NOT NULL,
+                 digest TEXT NOT NULL,
+                 snapshot_json TEXT NOT NULL,
+                 PRIMARY KEY (tenant, workspace, kind)
+             );",
+        )?;
+        Ok(Self {
+            connection: Mutex::new(connection),
+        })
+    }
+
+    pub fn replace(&self, snapshot: &GraphSnapshot) -> Result<(), GraphStoreError> {
+        validate_snapshot(snapshot)?;
+        let snapshot_json = serde_json::to_string(snapshot)?;
+        if snapshot_json.len() > MAX_GRAPH_SNAPSHOT_BYTES {
+            return Err(GraphStoreError::SnapshotTooLarge);
+        }
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| GraphStoreError::LockPoisoned)?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute(
+            "INSERT INTO graph_snapshots (tenant, workspace, kind, digest, snapshot_json)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT (tenant, workspace, kind) DO UPDATE SET
+                 digest = excluded.digest,
+                 snapshot_json = excluded.snapshot_json",
+            params![
+                snapshot.scope.tenant,
+                snapshot.scope.workspace,
+                snapshot.kind.as_str(),
+                snapshot.digest,
+                snapshot_json,
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn refresh(
+        &self,
+        engine: &GraphIntelligenceEngine,
+        kind: GraphKind,
+        scope: GraphScope,
+        inputs: impl IntoIterator<Item = GraphInput>,
+    ) -> Result<GraphSnapshot, GraphStoreError> {
+        let snapshot = engine.build(kind, scope, inputs)?;
+        self.replace(&snapshot)?;
+        Ok(snapshot)
+    }
+
+    pub fn load(
+        &self,
+        kind: GraphKind,
+        scope: &GraphScope,
+    ) -> Result<Option<GraphSnapshot>, GraphStoreError> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| GraphStoreError::LockPoisoned)?;
+        let mut statement = connection.prepare(
+            "SELECT digest, snapshot_json FROM graph_snapshots
+             WHERE tenant = ?1 AND workspace = ?2 AND kind = ?3",
+        )?;
+        let mut rows = statement.query(params![scope.tenant, scope.workspace, kind.as_str()])?;
+        let Some(row) = rows.next()? else {
+            return Ok(None);
+        };
+        let digest: String = row.get(0)?;
+        let snapshot_json: String = row.get(1)?;
+        if snapshot_json.len() > MAX_GRAPH_SNAPSHOT_BYTES {
+            return Err(GraphStoreError::SnapshotTooLarge);
+        }
+        let snapshot: GraphSnapshot = serde_json::from_str(&snapshot_json)?;
+        if snapshot.kind != kind || snapshot.scope != *scope || snapshot.digest != digest {
+            return Err(GraphStoreError::CorruptSnapshot);
+        }
+        validate_snapshot(&snapshot)?;
+        Ok(Some(snapshot))
+    }
+
+    pub fn remove(&self, kind: GraphKind, scope: &GraphScope) -> Result<bool, GraphStoreError> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| GraphStoreError::LockPoisoned)?;
+        let removed = connection.execute(
+            "DELETE FROM graph_snapshots
+             WHERE tenant = ?1 AND workspace = ?2 AND kind = ?3",
+            params![scope.tenant, scope.workspace, kind.as_str()],
+        )?;
+        Ok(removed != 0)
+    }
+}
+
+fn validate_snapshot(snapshot: &GraphSnapshot) -> Result<(), GraphStoreError> {
+    if snapshot.scope.tenant.is_empty()
+        || snapshot.scope.workspace.is_empty()
+        || snapshot.scope.tenant.len() > 256
+        || snapshot.scope.workspace.len() > 256
+        || snapshot.scope.tenant.chars().any(char::is_control)
+        || snapshot.scope.workspace.chars().any(char::is_control)
+        || snapshot.source_count > MAX_GRAPH_INPUTS
+        || snapshot.nodes.len() > MAX_GRAPH_NODES
+        || snapshot.edges.len() > MAX_GRAPH_EDGES
+    {
+        return Err(GraphStoreError::CorruptSnapshot);
+    }
+    let mut node_ids = BTreeSet::new();
+    for node in &snapshot.nodes {
+        if !node_ids.insert(node.id.clone()) {
+            return Err(GraphStoreError::CorruptSnapshot);
+        }
+    }
+    let mut edges = BTreeSet::new();
+    for edge in &snapshot.edges {
+        if !edges.insert((edge.from.clone(), edge.to.clone(), edge.relation.clone())) {
+            return Err(GraphStoreError::CorruptSnapshot);
+        }
+    }
+    if snapshot.digest
+        != snapshot_digest(
+            snapshot.kind,
+            &snapshot.scope,
+            &snapshot.nodes,
+            &snapshot.edges,
+        )
+    {
+        return Err(GraphStoreError::CorruptSnapshot);
+    }
+    Ok(())
+}
+
+fn set_private_permissions(path: &Path) -> Result<(), GraphStoreError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
 }
 
 struct GraphBuilder {
@@ -744,5 +965,89 @@ mod tests {
             .code(scope(), [input("a.rs", "use a;"), input("b.rs", "use b;")])
             .unwrap_err();
         assert_eq!(error, GraphError::TooManyInputs);
+    }
+
+    #[test]
+    fn graph_store_reloads_and_replaces_stale_scope_data() {
+        let root = crate::test_support::new_temp_dir("pandora-graph-store").unwrap();
+        let store = GraphStore::open(root.join("graphs.sqlite3")).unwrap();
+        let engine = GraphIntelligenceEngine::new();
+        let first = engine
+            .code(scope(), [input("src/old.rs", "use crate::old_module;")])
+            .unwrap();
+        store.replace(&first).unwrap();
+
+        assert_eq!(
+            store
+                .load(GraphKind::Code, &scope())
+                .unwrap()
+                .unwrap()
+                .digest(),
+            first.digest()
+        );
+
+        let second = engine
+            .code(scope(), [input("src/new.rs", "fn main() {}")])
+            .unwrap();
+        store.replace(&second).unwrap();
+        let loaded = store.load(GraphKind::Code, &scope()).unwrap().unwrap();
+
+        assert_eq!(loaded, second);
+        assert!(loaded.nodes().iter().all(|node| !node.id().contains("old")));
+        assert!(store.remove(GraphKind::Code, &scope()).unwrap());
+        assert!(store.load(GraphKind::Code, &scope()).unwrap().is_none());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn graph_store_rejects_corrupted_persisted_digest() {
+        let root = crate::test_support::new_temp_dir("pandora-graph-store-corrupt").unwrap();
+        let path = root.join("graphs.sqlite3");
+        let store = GraphStore::open(&path).unwrap();
+        let snapshot = GraphIntelligenceEngine::new()
+            .code(scope(), [input("src/lib.rs", "fn main() {}")])
+            .unwrap();
+        store.replace(&snapshot).unwrap();
+        drop(store);
+
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute("UPDATE graph_snapshots SET digest = 'sha256:corrupted'", [])
+            .unwrap();
+        drop(connection);
+
+        let store = GraphStore::open(&path).unwrap();
+        assert_eq!(
+            store.load(GraphKind::Code, &scope()),
+            Err(GraphStoreError::CorruptSnapshot)
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_graph_refresh_does_not_replace_existing_snapshot() {
+        let root = crate::test_support::new_temp_dir("pandora-graph-store-refresh").unwrap();
+        let store = GraphStore::open(root.join("graphs.sqlite3")).unwrap();
+        let engine = GraphIntelligenceEngine::new();
+        let first = engine
+            .code(scope(), [input("src/lib.rs", "fn main() {}")])
+            .unwrap();
+        store.replace(&first).unwrap();
+
+        let error = store.refresh(
+            &engine,
+            GraphKind::Code,
+            scope(),
+            [input("src/lib.rs", "one"), input("src/lib.rs", "two")],
+        );
+        assert_eq!(
+            error,
+            Err(GraphStoreError::Graph(GraphError::DuplicateInput))
+        );
+        assert_eq!(store.load(GraphKind::Code, &scope()).unwrap(), Some(first));
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }
