@@ -63,6 +63,7 @@ enum VerificationKind {
     Status,
     Diff,
     Log,
+    Refs,
 }
 
 impl VerificationCommand {
@@ -135,6 +136,20 @@ impl VerificationCommand {
                         kind: VerificationKind::Log,
                     })
                 }
+                [command, format, sort, count, heads, remotes, tags]
+                    if command == "for-each-ref"
+                        && format == "--format=%(refname:short)"
+                        && sort == "--sort=-committerdate"
+                        && count == "--count=50"
+                        && heads == "refs/heads"
+                        && remotes == "refs/remotes"
+                        && tags == "refs/tags" =>
+                {
+                    Ok(Self {
+                        workspace,
+                        kind: VerificationKind::Refs,
+                    })
+                }
                 _ => Err(ProcessError::UnsupportedArguments),
             };
         }
@@ -203,6 +218,12 @@ impl VerificationCommand {
                 workspace,
                 kind: VerificationKind::Log,
             }),
+            "git for-each-ref --format=%(refname:short) --sort=-committerdate --count=50 refs/heads refs/remotes refs/tags" => {
+                Ok(Self {
+                    workspace,
+                    kind: VerificationKind::Refs,
+                })
+            }
             _ => Err(ProcessError::UnsupportedArguments),
         }
     }
@@ -219,6 +240,9 @@ impl VerificationCommand {
             VerificationKind::Status => "git status --short",
             VerificationKind::Diff => "git diff --no-ext-diff --unified=3",
             VerificationKind::Log => "git --no-pager log --oneline --decorate -n 20",
+            VerificationKind::Refs => {
+                "git for-each-ref --format=%(refname:short) --sort=-committerdate --count=50 refs/heads refs/remotes refs/tags"
+            }
         }
     }
 
@@ -240,12 +264,24 @@ impl VerificationCommand {
             VerificationKind::Status => &["status", "--short"],
             VerificationKind::Diff => &["diff", "--no-ext-diff", "--unified=3"],
             VerificationKind::Log => &["--no-pager", "log", "--oneline", "--decorate", "-n", "20"],
+            VerificationKind::Refs => &[
+                "for-each-ref",
+                "--format=%(refname:short)",
+                "--sort=-committerdate",
+                "--count=50",
+                "refs/heads",
+                "refs/remotes",
+                "refs/tags",
+            ],
         }
     }
 
     fn program(&self) -> &'static str {
         match self.kind {
-            VerificationKind::Status | VerificationKind::Diff | VerificationKind::Log => "git",
+            VerificationKind::Status
+            | VerificationKind::Diff
+            | VerificationKind::Log
+            | VerificationKind::Refs => "git",
             _ => "cargo",
         }
     }
@@ -724,6 +760,38 @@ mod tests {
     fn rejects_git_log_options_outside_the_allowlist() {
         let workspace = Workspace::new();
         let arguments = vec!["--no-pager".to_owned(), "log".to_owned()];
+
+        assert_eq!(
+            VerificationCommand::from_argv("git", &arguments, workspace.root.clone()),
+            Err(ProcessError::UnsupportedArguments)
+        );
+    }
+
+    #[test]
+    fn accepts_only_read_only_git_refs() {
+        let workspace = Workspace::new();
+        let arguments = vec![
+            "for-each-ref".to_owned(),
+            "--format=%(refname:short)".to_owned(),
+            "--sort=-committerdate".to_owned(),
+            "--count=50".to_owned(),
+            "refs/heads".to_owned(),
+            "refs/remotes".to_owned(),
+            "refs/tags".to_owned(),
+        ];
+        let command = VerificationCommand::from_argv("git", &arguments, workspace.root.clone())
+            .expect("the fixed git refs command should be accepted");
+
+        assert_eq!(
+            command.spec(),
+            "git for-each-ref --format=%(refname:short) --sort=-committerdate --count=50 refs/heads refs/remotes refs/tags"
+        );
+    }
+
+    #[test]
+    fn rejects_git_refs_options_outside_the_allowlist() {
+        let workspace = Workspace::new();
+        let arguments = vec!["for-each-ref".to_owned(), "--format=%(refname)".to_owned()];
 
         assert_eq!(
             VerificationCommand::from_argv("git", &arguments, workspace.root.clone()),

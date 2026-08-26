@@ -242,6 +242,7 @@ fn task_for(gene_id: &str, values: &[String]) -> Result<String, CliError> {
         "workspace.status" => no_argument("status", values),
         "workspace.diff" => no_argument("diff", values),
         "workspace.log" => no_argument("log", values),
+        "workspace.refs" => no_argument("refs", values),
         "change.review" => one_argument("review", values),
         "daedalus.audit" => no_argument("audit", values),
         "argus.review" => one_argument("deep-review", values),

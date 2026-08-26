@@ -3593,6 +3593,7 @@ fn harness_discovery_exposes_the_built_in_domains_without_runtime_internals() {
         "workspace.status",
         "workspace.diff",
         "workspace.log",
+        "workspace.refs",
         "athena.guide",
     ] {
         assert!(gene_ids.contains(&expected));
@@ -3840,6 +3841,72 @@ fn coding_harness_reports_recent_git_log_through_the_governed_runtime() {
     assert_eq!(response["gene_id"], "workspace.log");
     assert_eq!(response["status"], "completed");
     assert!(response["output"].as_str().unwrap().contains("fixture"));
+}
+
+#[test]
+fn coding_harness_reports_git_refs_through_the_governed_runtime() {
+    let fixture = Fixture::new();
+    fixture.initialize_git_workspace();
+    for arguments in [
+        ["branch", "fixture-branch"].as_slice(),
+        ["tag", "fixture-tag"].as_slice(),
+    ] {
+        let output = Command::new("git")
+            .args(arguments)
+            .current_dir(&fixture.workspace)
+            .output()
+            .expect("git reference fixture command should start");
+        assert!(output.status.success());
+    }
+    fixture.setup();
+
+    let output = fixture
+        .command(&[
+            "run",
+            "--harness",
+            "coding",
+            "--gene",
+            "workspace.refs",
+            "refs",
+            "--json",
+        ])
+        .output()
+        .expect("workspace refs should start");
+    assert_eq!(output.status.code(), Some(40));
+    let response = parse_json(&output);
+    assert_eq!(response["code"], "approval_required");
+    let approval_id = response["details"]["approval_id"]
+        .as_str()
+        .expect("workspace refs should return an approval")
+        .to_owned();
+
+    let output = fixture
+        .command(&["approval", "resolve", &approval_id, "--allow", "--json"])
+        .output()
+        .expect("workspace refs approval should resolve");
+    assert_success_with_context(&output, "workspace refs approval");
+
+    let output = fixture
+        .command(&[
+            "run",
+            "--approval",
+            &approval_id,
+            "--harness",
+            "coding",
+            "--gene",
+            "workspace.refs",
+            "refs",
+            "--json",
+        ])
+        .output()
+        .expect("approved workspace refs should start");
+    assert_success_with_context(&output, "approved workspace refs");
+    let response = parse_json(&output);
+    assert_eq!(response["gene_id"], "workspace.refs");
+    assert_eq!(response["status"], "completed");
+    let result = response["output"].as_str().unwrap();
+    assert!(result.lines().any(|line| line == "fixture-branch"));
+    assert!(result.lines().any(|line| line == "fixture-tag"));
 }
 
 #[test]
@@ -4150,6 +4217,7 @@ fn slash_commands_cover_the_built_in_domains_and_execute_workflow_genes() {
         "/status",
         "/diff",
         "/log",
+        "/refs",
         "/review",
         "/audit",
         "/argus-review",

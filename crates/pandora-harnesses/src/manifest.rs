@@ -44,6 +44,7 @@ pub fn coding_manifest() -> Result<HarnessManifest, ManifestError> {
         "workspace.status",
         "workspace.diff",
         "workspace.log",
+        "workspace.refs",
         "change.review",
         "daedalus.audit",
         "argus.review",

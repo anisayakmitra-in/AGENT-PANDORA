@@ -294,7 +294,7 @@ fn print_help() {
     println!("/quit       close the chat");
     println!("/coding     inspect the Coding Domain Harness");
     println!(
-        "/read, /search, /patch, /verify, /test, /format, /lint, /build, /status, /diff, /log, /review run its core Genes"
+        "/read, /search, /patch, /verify, /test, /format, /lint, /build, /status, /diff, /log, /refs, /review run its core Genes"
     );
     println!("/audit, /argus-review, /debt, /measure, /guide run its workflow Genes");
     println!("Any other line is sent as a bounded agent task.");

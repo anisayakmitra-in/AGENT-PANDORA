@@ -36,6 +36,10 @@
   configured workspace and returns bounded recent history through the existing
   process receipt path.
 
+- Added the read-only `workspace.refs` Coding Gene, tool, and `/refs` command.
+  It enumerates the fifty most recent local branches, remotes, and tags with a
+  fixed Git ref query through the existing process receipt path.
+
 ## v2.0.0-beta.7
 
 - Added `SelfHealingEngine` and connected recovery candidates to

@@ -401,6 +401,23 @@ impl ToolEngine {
                 .expect("built-in log tool schema is valid"),
             )
             .expect("built-in log tool ID is unique");
+        engine
+            .register(
+                ToolDefinition::new(
+                    "workspace.refs",
+                    "1.0.0",
+                    "Show recent workspace Git branches, remotes, and tags",
+                    json!({
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": false
+                    }),
+                    Capability::ProcessExecute,
+                    Operation::Execute,
+                )
+                .expect("built-in refs tool schema is valid"),
+            )
+            .expect("built-in refs tool ID is unique");
         for definition in [
             ToolDefinition::new(
                 "daedalus.audit",
@@ -689,6 +706,8 @@ impl ToolEngine {
                 .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
             "workspace.log" => TaskIntent::new("log")
                 .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
+            "workspace.refs" => TaskIntent::new("refs")
+                .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
             "daedalus.audit" => TaskIntent::new("audit")
                 .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
             "argus.review" => task_from_argument(arguments, "deep-review", "path")?,
@@ -844,6 +863,7 @@ fn gene_id_for_tool(tool_id: &str) -> Result<GeneId, ToolError> {
         "workspace.status" => "workspace.status",
         "workspace.diff" => "workspace.diff",
         "workspace.log" => "workspace.log",
+        "workspace.refs" => "workspace.refs",
         "daedalus.audit" => "daedalus.audit",
         "argus.review" => "argus.review",
         "ariadne.debt" => "ariadne.debt",
@@ -1428,6 +1448,7 @@ mod tests {
             ("workspace.status", json!({}), "workspace.status"),
             ("workspace.diff", json!({}), "workspace.diff"),
             ("workspace.log", json!({}), "workspace.log"),
+            ("workspace.refs", json!({}), "workspace.refs"),
             ("daedalus.audit", json!({}), "daedalus.audit"),
             (
                 "argus.review",
