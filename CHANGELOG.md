@@ -22,6 +22,10 @@
   `/build` command. It runs only `cargo build --locked` through the governed
   process path.
 
+- Added the read-only `workspace.status` Coding Gene, tool, and `/status`
+  command. It runs only `git status --short` inside the configured workspace
+  and returns the bounded output through the existing process receipt path.
+
 ## v2.0.0-beta.7
 
 - Added `SelfHealingEngine` and connected recovery candidates to

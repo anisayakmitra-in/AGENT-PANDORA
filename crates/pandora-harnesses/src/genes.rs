@@ -13,6 +13,7 @@ const TEST_SPEC: &str = "cargo test --locked";
 const FORMAT_SPEC: &str = "cargo fmt --all -- --check";
 const LINT_SPEC: &str = "cargo clippy --workspace --all-targets --locked -- -D warnings";
 const BUILD_SPEC: &str = "cargo build --locked";
+const STATUS_SPEC: &str = "git status --short";
 const DEBT_MARKERS: [&str; 4] = ["TODO", "FIXME", "HACK", "XXX"];
 const CODING_GUIDE: &str = "Daedalus inventories the workspace for evidence-led audits.\nArgus reviews one scoped change.\nAriadne finds explicit debt markers.\nHephaestus measures the repository with the fixed verifier.\nAthena explains the governed coding workflow.\nAll filesystem and process effects require Pandora permits and receipts.";
 
@@ -28,6 +29,7 @@ pub enum CodingAction {
     Format,
     Lint,
     Build,
+    Status,
     Review,
     DeepReview,
     Debt,
@@ -206,6 +208,16 @@ impl CodingRequest {
         }
     }
 
+    pub fn status(context: PlanningContext) -> Self {
+        Self {
+            action: CodingAction::Status,
+            context,
+            path: None,
+            content: None,
+            command: Some(STATUS_SPEC.to_owned()),
+        }
+    }
+
     pub fn with_command(mut self, command: impl Into<String>) -> Self {
         self.command = Some(command.into());
         self
@@ -254,6 +266,7 @@ pub enum CodingGeneRole {
     Format,
     Lint,
     Build,
+    Status,
     Review,
     DaedalusAudit,
     ArgusReview,
@@ -273,6 +286,7 @@ impl CodingGeneRole {
             Self::Format => CodingAction::Format,
             Self::Lint => CodingAction::Lint,
             Self::Build => CodingAction::Build,
+            Self::Status => CodingAction::Status,
             Self::Review => CodingAction::Review,
             Self::DaedalusAudit => CodingAction::Audit,
             Self::ArgusReview => CodingAction::DeepReview,
@@ -292,6 +306,7 @@ impl CodingGeneRole {
             Self::Format => "format.check",
             Self::Lint => "lint.check",
             Self::Build => "build.check",
+            Self::Status => "workspace.status",
             Self::Review => "change.review",
             Self::DaedalusAudit => "daedalus.audit",
             Self::ArgusReview => "argus.review",
@@ -309,6 +324,7 @@ impl CodingGeneRole {
             | Self::Format
             | Self::Lint
             | Self::Build
+            | Self::Status
             | Self::HephaestusMeasure => Some(Capability::ProcessExecute),
             Self::Read
             | Self::Search
@@ -328,6 +344,7 @@ impl CodingGeneRole {
             | Self::Format
             | Self::Lint
             | Self::Build
+            | Self::Status
             | Self::HephaestusMeasure => Some(Operation::Execute),
             Self::Read
             | Self::Search
@@ -377,6 +394,7 @@ impl CodingGene {
             CodingGeneRole::Format,
             CodingGeneRole::Lint,
             CodingGeneRole::Build,
+            CodingGeneRole::Status,
             CodingGeneRole::Review,
             CodingGeneRole::DaedalusAudit,
             CodingGeneRole::ArgusReview,
@@ -422,6 +440,7 @@ impl Gene for CodingGene {
             CodingGeneRole::Format => EffectTarget::process(FORMAT_SPEC),
             CodingGeneRole::Lint => EffectTarget::process(LINT_SPEC),
             CodingGeneRole::Build => EffectTarget::process(BUILD_SPEC),
+            CodingGeneRole::Status => EffectTarget::process(STATUS_SPEC),
             CodingGeneRole::DaedalusAudit => EffectTarget::path("."),
             CodingGeneRole::Read
             | CodingGeneRole::Search
@@ -533,12 +552,14 @@ fn validate_request(request: &CodingRequest) -> Result<(), GeneError> {
         | CodingAction::Format
         | CodingAction::Lint
         | CodingAction::Build
+        | CodingAction::Status
         | CodingAction::Measure => {
             let expected_command = match request.action {
                 CodingAction::Test => TEST_SPEC,
                 CodingAction::Format => FORMAT_SPEC,
                 CodingAction::Lint => LINT_SPEC,
                 CodingAction::Build => BUILD_SPEC,
+                CodingAction::Status => STATUS_SPEC,
                 CodingAction::Verify | CodingAction::Measure => VERIFICATION_SPEC,
                 _ => unreachable!(),
             };

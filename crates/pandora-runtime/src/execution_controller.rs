@@ -1394,6 +1394,11 @@ impl ExecutionController {
                     &VerificationOptions::default(),
                     now,
                 );
+                if output.selected_gene.as_str() == "workspace.status"
+                    && let Ok(process_output) = response.result()
+                {
+                    output.output = Some(process_output.stdout().to_vec());
+                }
                 let receipt = response.receipt().clone();
                 output.receipts.push(receipt.clone());
                 output.events.push(self.event(
@@ -1721,6 +1726,7 @@ fn default_gene_id(intent: &TaskIntent) -> GeneId {
         "format" => GeneId::new("format.check").expect("built-in Gene ID is valid"),
         "lint" => GeneId::new("lint.check").expect("built-in Gene ID is valid"),
         "build" => GeneId::new("build.check").expect("built-in Gene ID is valid"),
+        "status" => GeneId::new("workspace.status").expect("built-in Gene ID is valid"),
         "review" => GeneId::new("change.review").expect("built-in Gene ID is valid"),
         "audit" => GeneId::new("daedalus.audit").expect("built-in Gene ID is valid"),
         "deep-review" => GeneId::new("argus.review").expect("built-in Gene ID is valid"),
@@ -1873,6 +1879,9 @@ fn coding_input(
         }
         "lint.check" if action == "lint" && remainder.is_empty() => CodingRequest::lint(context),
         "build.check" if action == "build" && remainder.is_empty() => CodingRequest::build(context),
+        "workspace.status" if action == "status" && remainder.is_empty() => {
+            CodingRequest::status(context)
+        }
         _ => {
             return Err(RuntimeError::InvalidIntent(
                 "intent does not match the selected Gene",

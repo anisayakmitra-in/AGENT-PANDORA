@@ -3590,6 +3590,7 @@ fn harness_discovery_exposes_the_built_in_domains_without_runtime_internals() {
         "format.check",
         "lint.check",
         "build.check",
+        "workspace.status",
         "athena.guide",
     ] {
         assert!(gene_ids.contains(&expected));
@@ -3665,6 +3666,59 @@ fn harness_discovery_exposes_the_built_in_domains_without_runtime_internals() {
     assert_success(&output);
     let response = parse_json(&output);
     assert_eq!(response["harness_id"], "coding-domain");
+}
+
+#[test]
+fn coding_harness_reports_short_git_status_through_the_governed_runtime() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    fixture.initialize_git_workspace();
+
+    let output = fixture
+        .command(&[
+            "run",
+            "--harness",
+            "coding",
+            "--gene",
+            "workspace.status",
+            "status",
+            "--json",
+        ])
+        .output()
+        .expect("workspace status should start");
+    assert_eq!(output.status.code(), Some(40));
+    let response = parse_json(&output);
+    assert_eq!(response["code"], "approval_required");
+    let approval_id = response["details"]["approval_id"]
+        .as_str()
+        .expect("workspace status should return an approval")
+        .to_owned();
+
+    let output = fixture
+        .command(&["approval", "resolve", &approval_id, "--allow", "--json"])
+        .output()
+        .expect("workspace status approval should resolve");
+    assert_success_with_context(&output, "workspace status approval");
+
+    let output = fixture
+        .command(&[
+            "run",
+            "--approval",
+            &approval_id,
+            "--harness",
+            "coding",
+            "--gene",
+            "workspace.status",
+            "status",
+            "--json",
+        ])
+        .output()
+        .expect("approved workspace status should start");
+    assert_success_with_context(&output, "approved workspace status");
+    let response = parse_json(&output);
+    assert_eq!(response["gene_id"], "workspace.status");
+    assert_eq!(response["status"], "completed");
+    assert_eq!(response["output"], "");
 }
 
 #[test]
@@ -3987,6 +4041,7 @@ fn slash_commands_cover_the_built_in_domains_and_execute_workflow_genes() {
         "/format",
         "/lint",
         "/build",
+        "/status",
         "/review",
         "/audit",
         "/argus-review",

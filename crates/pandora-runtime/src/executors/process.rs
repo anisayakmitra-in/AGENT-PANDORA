@@ -60,6 +60,7 @@ enum VerificationKind {
     Format,
     Lint,
     Build,
+    Status,
 }
 
 impl VerificationCommand {
@@ -103,6 +104,15 @@ impl VerificationCommand {
         arguments: &[String],
         workspace: WorkspaceRoot,
     ) -> Result<Self, ProcessError> {
+        if program == "git" {
+            return match arguments {
+                [command, short] if command == "status" && short == "--short" => Ok(Self {
+                    workspace,
+                    kind: VerificationKind::Status,
+                }),
+                _ => Err(ProcessError::UnsupportedArguments),
+            };
+        }
         if program != "cargo" {
             return Err(ProcessError::UnsupportedProgram);
         }
@@ -156,6 +166,10 @@ impl VerificationCommand {
                 Ok(Self::cargo_clippy_check(workspace))
             }
             "cargo build --locked" => Ok(Self::cargo_build_locked(workspace)),
+            "git status --short" => Ok(Self {
+                workspace,
+                kind: VerificationKind::Status,
+            }),
             _ => Err(ProcessError::UnsupportedArguments),
         }
     }
@@ -169,6 +183,7 @@ impl VerificationCommand {
                 "cargo clippy --workspace --all-targets --locked -- -D warnings"
             }
             VerificationKind::Build => "cargo build --locked",
+            VerificationKind::Status => "git status --short",
         }
     }
 
@@ -187,6 +202,14 @@ impl VerificationCommand {
                 "warnings",
             ],
             VerificationKind::Build => &["build", "--locked"],
+            VerificationKind::Status => &["status", "--short"],
+        }
+    }
+
+    fn program(&self) -> &'static str {
+        match self.kind {
+            VerificationKind::Status => "git",
+            _ => "cargo",
         }
     }
 
@@ -354,7 +377,7 @@ fn run_child(
     command: &VerificationCommand,
     options: &VerificationOptions,
 ) -> Result<ProcessOutput, ProcessError> {
-    let mut process = Command::new("cargo");
+    let mut process = Command::new(command.program());
     configure_process_group(&mut process);
     let mut child = process
         .args(command.arguments())
@@ -592,6 +615,27 @@ mod tests {
             .expect("the fixed build command should be accepted");
 
         assert_eq!(command.spec(), "cargo build --locked");
+    }
+
+    #[test]
+    fn accepts_only_read_only_git_status() {
+        let workspace = Workspace::new();
+        let arguments = vec!["status".to_owned(), "--short".to_owned()];
+        let command = VerificationCommand::from_argv("git", &arguments, workspace.root.clone())
+            .expect("the fixed git status command should be accepted");
+
+        assert_eq!(command.spec(), "git status --short");
+    }
+
+    #[test]
+    fn rejects_other_git_commands() {
+        let workspace = Workspace::new();
+        let arguments = vec!["diff".to_owned()];
+
+        assert_eq!(
+            VerificationCommand::from_argv("git", &arguments, workspace.root.clone()),
+            Err(ProcessError::UnsupportedArguments)
+        );
     }
 
     #[test]
