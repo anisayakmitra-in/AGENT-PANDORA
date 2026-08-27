@@ -5,8 +5,9 @@ use pandora_runtime::{
     HoldoutSetReport, MAX_HOLDOUT_CASES,
 };
 use pandora_types::{
-    ArtifactId, EvaluationRequest, EvolutionPolicy, EvolutionSource, ExecutionId,
-    HoldoutEvaluation, MutationProposal, ProposalId, RequestDigest, Timestamp,
+    ArtifactId, ArtifactSignature, EvaluationRequest, EvolutionPolicy, EvolutionSource,
+    ExecutionId, HoldoutEvaluation, MutationProposal, ParliamentApproval, PrincipalId, ProposalId,
+    RequestDigest, Timestamp,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -35,6 +36,17 @@ struct ProposalInput {
 }
 
 #[derive(Debug, Deserialize)]
+struct ApprovalInput {
+    proposal_id: String,
+    approver: String,
+    policy_version: u32,
+    approved_at: Option<u64>,
+    artifact_id: String,
+    signer: String,
+    signature: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct HoldoutCaseInput {
     id: String,
     execution_id: String,
@@ -55,10 +67,42 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "inspect" => inspect(&args[1..]),
         "submit" => submit(&args[1..]),
         "evaluate" => evaluate(&args[1..]),
+        "approve" => approve(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown evolution command '{unknown}', expected 'list', 'inspect', 'submit', or 'evaluate'"
+            "unknown evolution command '{unknown}', expected 'list', 'inspect', 'submit', 'evaluate', or 'approve'"
         ))),
     }
+}
+
+fn approve(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "input"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evolution approve does not accept positional arguments",
+        ));
+    }
+    let input = parsed
+        .value("input")
+        .ok_or_else(|| CliError::usage("evolution approve requires '--input <path>'"))?;
+    let bytes = read_bounded(Path::new(input))?;
+    let (proposal_id, approval, signature) = parse_approval(&bytes)?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let engine = open_engine(&config)?;
+    engine
+        .approve(&proposal_id, approval.clone(), signature.clone())
+        .map_err(evolution_error)?;
+    Ok(success(
+        "evolution approve",
+        json!({
+            "proposal_id": proposal_id,
+            "state": "approved",
+            "approver": approval.approver(),
+            "signer": signature.signer(),
+            "durability": "sqlite",
+        }),
+        format!("Approved evolution proposal {proposal_id}"),
+    ))
 }
 
 fn submit(args: &[String]) -> Result<CommandResult, CliError> {
@@ -324,6 +368,34 @@ fn parse_proposal(bytes: &[u8]) -> Result<MutationProposal, CliError> {
     .map_err(|error| CliError::usage(format!("invalid proposal: {error}")))
 }
 
+fn parse_approval(
+    bytes: &[u8],
+) -> Result<(ProposalId, ParliamentApproval, ArtifactSignature), CliError> {
+    let input = serde_json::from_slice::<ApprovalInput>(bytes)
+        .map_err(|error| CliError::usage(format!("invalid approval JSON: {error}")))?;
+    let proposal_id = ProposalId::new(input.proposal_id)
+        .map_err(|error| CliError::usage(format!("invalid proposal ID: {error}")))?;
+    let approver = PrincipalId::new(input.approver)
+        .map_err(|error| CliError::usage(format!("invalid approver: {error}")))?;
+    let approved_at = input
+        .approved_at
+        .map(Timestamp::from_unix_seconds)
+        .unwrap_or_else(timestamp);
+    let approval = ParliamentApproval::new(
+        proposal_id.clone(),
+        approver,
+        input.policy_version,
+        approved_at,
+    );
+    let artifact_id = ArtifactId::new(input.artifact_id)
+        .map_err(|error| CliError::usage(format!("invalid artifact ID: {error}")))?;
+    let signer = PrincipalId::new(input.signer)
+        .map_err(|error| CliError::usage(format!("invalid signer: {error}")))?;
+    let signature = ArtifactSignature::new(artifact_id, signer, input.signature)
+        .map_err(|error| CliError::usage(format!("invalid artifact signature: {error}")))?;
+    Ok((proposal_id, approval, signature))
+}
+
 fn summary_value(record: &EvolutionRecord) -> Value {
     let proposal = record.proposal();
     json!({
@@ -423,7 +495,7 @@ fn evolution_error(error: EvolutionError) -> CliError {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_holdout_cases, parse_limit, parse_proposal};
+    use super::{parse_approval, parse_holdout_cases, parse_limit, parse_proposal};
 
     #[test]
     fn limits_are_bounded_for_operator_queries() {
@@ -464,5 +536,19 @@ mod tests {
         assert_eq!(proposal.proposal_id().as_str(), "proposal-1");
         assert_eq!(proposal.source().as_str(), "gepa");
         assert!(proposal.created_at().as_unix_seconds() > 0);
+    }
+
+    #[test]
+    fn parses_bounded_approval_and_signature_input() {
+        let (proposal_id, approval, signature) = parse_approval(
+            br#"{"proposal_id":"proposal-1","approver":"parliament-1","policy_version":1,"artifact_id":"candidate-1","signer":"signer-1","signature":"signed-candidate"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(proposal_id.as_str(), "proposal-1");
+        assert_eq!(approval.approver().as_str(), "parliament-1");
+        assert_eq!(approval.policy_version(), 1);
+        assert_eq!(signature.artifact_id().as_str(), "candidate-1");
+        assert_eq!(signature.signer().as_str(), "signer-1");
     }
 }

@@ -15,6 +15,7 @@ Pandora records improvement evidence without allowing the improvement system to 
 - The evolution record store persists those bounded records in SQLite and restores them after restart. `pandora evolution list` and `pandora evolution inspect` expose read-only operator views without exposing signature material.
 - `pandora evolution evaluate` runs a bounded holdout set against an existing proposal and records trajectory, outcome, policy, and regression evidence. The report digest excludes raw outputs, expected outputs, and baselines.
 - `pandora evolution submit` records a bounded proposal in the durable store. Submission is evidence intake only; it cannot approve, activate, or execute a candidate.
+- `pandora evolution approve --input <path>` records Parliament approval and candidate signature evidence after evaluation gates pass. Approval does not activate a candidate.
 - Approval requires policy, regression, and holdout evidence, Parliament approval, and candidate-artifact signature evidence.
 - `ReplacementEngine` requires a passed canary and an idle execution boundary before activation.
 - Activation produces a receipt. Rollback restores the proposal's base artifact and produces a receipt.

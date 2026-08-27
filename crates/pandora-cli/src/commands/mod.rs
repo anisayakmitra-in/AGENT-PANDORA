@@ -338,7 +338,7 @@ commands:
   strategies list
   evaluation golden --input <path> [--fail-on-failure]
   evaluation inspect --session <id> [--execution <id>]
-  evolution list [--limit <1-256>] | inspect --id <proposal-id> | submit --input <path> | evaluate --id <proposal-id> --input <path> [--fail-on-failure]
+  evolution list [--limit <1-256>] | inspect --id <proposal-id> | submit --input <path> | evaluate --id <proposal-id> --input <path> [--fail-on-failure] | approve --input <path>
   feedback coding --session <id> --execution <id> --request-digest <digest> --expected-output <text> --output <text> [--terminal-failure <text>] [--retryable]
   evolution inspect --id <proposal-id>
   rollout inspect --session <id> [--execution <id>]

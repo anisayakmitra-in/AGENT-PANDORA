@@ -435,6 +435,72 @@ fn direct_run_feedback_can_recommend_bounded_retry() {
 }
 
 #[test]
+fn evolution_cli_can_submit_evaluate_and_approve() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    let proposal_path = fixture.root.join("proposal.json");
+    fs::write(
+        &proposal_path,
+        br#"{"proposal_id":"proposal-cli","source":"gepa","base_artifact":"base-cli","candidate_artifact":"candidate-cli","evidence_digest":"evidence-cli","expected_outcome":"improve coding reliability"}"#,
+    )
+    .unwrap();
+    let submitted = fixture
+        .command(&[
+            "evolution",
+            "submit",
+            "--input",
+            proposal_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("evolution submit should start");
+    assert_success_with_context(&submitted, "evolution submit");
+
+    let holdout_path = fixture.root.join("holdout.json");
+    fs::write(
+        &holdout_path,
+        br#"{"cases":[{"id":"case-cli","execution_id":"execution-cli","output":"candidate","expected_output":"candidate","baseline_output":"candidate"}]}"#,
+    )
+    .unwrap();
+    let evaluated = fixture
+        .command(&[
+            "evolution",
+            "evaluate",
+            "--id",
+            "proposal-cli",
+            "--input",
+            holdout_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("evolution evaluate should start");
+    assert_success_with_context(&evaluated, "evolution evaluate");
+
+    let approval_path = fixture.root.join("approval.json");
+    fs::write(
+        &approval_path,
+        br#"{"proposal_id":"proposal-cli","approver":"parliament-cli","policy_version":1,"artifact_id":"candidate-cli","signer":"signer-cli","signature":"signed-candidate"}"#,
+    )
+    .unwrap();
+    let approved = fixture
+        .command(&[
+            "evolution",
+            "approve",
+            "--input",
+            approval_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("evolution approve should start");
+    assert_success_with_context(&approved, "evolution approve");
+    let response = parse_json(&approved);
+    assert_eq!(response["state"], "approved");
+    assert_eq!(response["approver"], "parliament-cli");
+    assert_eq!(response["signer"], "signer-cli");
+}
+
+#[test]
 fn service_start_reports_a_loopback_endpoint_and_token_path() {
     let fixture = Fixture::new();
     fixture.setup();
