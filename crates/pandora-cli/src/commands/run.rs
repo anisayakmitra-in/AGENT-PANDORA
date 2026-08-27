@@ -645,6 +645,7 @@ pub(super) fn execute_agent_core(
                     "tool_budget": options.max_tool_calls,
                     "elapsed_ms": elapsed_millis(started),
                     "provider_calls": summary.provider_receipts().len(),
+                    "provider_metrics": provider_metrics_json(summary.provider_metrics()),
                     "context": {
                         "included": summary.context_receipt().included_ids(),
                         "dropped": summary.context_receipt().dropped_ids(),
@@ -724,6 +725,7 @@ pub(super) fn execute_agent_core(
                     "turn_budget": options.max_turns,
                     "tool_budget": options.max_tool_calls,
                     "approval_id": approval.id(),
+                    "provider_metrics": provider_metrics_json(summary.provider_metrics()),
                     "feedback_recorded": feedback_recorded,
                     "evaluations": evaluations_json(&evaluations),
                     "context": {
@@ -787,6 +789,7 @@ pub(super) fn execute_agent_core(
                     "turn_budget": options.max_turns,
                     "tool_budget": options.max_tool_calls,
                     "provider_calls": summary.provider_receipts().len(),
+                    "provider_metrics": provider_metrics_json(summary.provider_metrics()),
                     "provider_receipts": effect_receipts_json(summary.provider_receipts()),
                     "context": {
                         "included": summary.context_receipt().included_ids(),
@@ -1237,6 +1240,24 @@ fn usage_json(usage: &pandora_provider::TokenUsage) -> Value {
         "completion_tokens": usage.completion_tokens(),
         "total_tokens": usage.total_tokens(),
     })
+}
+
+fn provider_metrics_json(metrics: &[pandora_runtime::executors::ProviderCallMetrics]) -> Value {
+    json!(
+        metrics
+            .iter()
+            .map(|metric| {
+                json!({
+                    "provider_id": metric.provider_id(),
+                    "model_id": metric.model_id(),
+                    "elapsed_ms": metric.elapsed_ms(),
+                    "input_tokens": metric.input_tokens(),
+                    "output_tokens": metric.output_tokens(),
+                    "succeeded": metric.succeeded(),
+                })
+            })
+            .collect::<Vec<_>>()
+    )
 }
 
 fn validate_task_class(value: &str) -> Result<(), CliError> {

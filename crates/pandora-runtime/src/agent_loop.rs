@@ -1,3 +1,4 @@
+use crate::executors::ProviderCallMetrics;
 use crate::sessions::L1EvidenceContext;
 use crate::subagent_store::{SubagentScope, SubagentStore};
 use crate::{
@@ -213,8 +214,14 @@ pub struct AgentRunSummary {
     usage: TokenUsage,
     runs: Arc<[RunSummary]>,
     provider_receipts: Arc<[pandora_types::EffectReceipt]>,
-    context_receipt: Box<ContextReceipt>,
+    evidence: Arc<AgentRunEvidence>,
     messages: Arc<[ChatMessage]>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AgentRunEvidence {
+    provider_metrics: Vec<ProviderCallMetrics>,
+    context_receipt: Box<ContextReceipt>,
 }
 
 impl AgentRunSummary {
@@ -242,8 +249,12 @@ impl AgentRunSummary {
         &self.provider_receipts
     }
 
+    pub fn provider_metrics(&self) -> &[ProviderCallMetrics] {
+        &self.evidence.provider_metrics
+    }
+
     pub fn context_receipt(&self) -> &ContextReceipt {
-        self.context_receipt.as_ref()
+        self.evidence.context_receipt.as_ref()
     }
 
     pub fn messages(&self) -> &[ChatMessage] {
@@ -551,6 +562,7 @@ impl AgentLoop {
         let mut usage = TokenUsage::default();
         let mut runs = Vec::new();
         let mut provider_receipts = Vec::new();
+        let mut provider_metrics = Vec::new();
         let mut turns = 0;
         let mut tool_calls: u32 = 0;
 
@@ -565,6 +577,7 @@ impl AgentLoop {
                     &usage,
                     &runs,
                     &provider_receipts,
+                    &provider_metrics,
                     &context_receipt,
                     &messages,
                 )?;
@@ -587,6 +600,7 @@ impl AgentLoop {
                             &usage,
                             &runs,
                             &provider_receipts,
+                            &provider_metrics,
                             &context_receipt,
                             &messages,
                         )?;
@@ -602,7 +616,10 @@ impl AgentLoop {
                                 usage,
                                 runs: Arc::from(runs.into_boxed_slice()),
                                 provider_receipts: Arc::from(provider_receipts.into_boxed_slice()),
-                                context_receipt: Box::new(context_receipt.clone()),
+                                evidence: Arc::new(AgentRunEvidence {
+                                    provider_metrics,
+                                    context_receipt: Box::new(context_receipt.clone()),
+                                }),
                                 messages: persisted_messages(&messages),
                             },
                         });
@@ -620,6 +637,7 @@ impl AgentLoop {
                 &usage,
                 &runs,
                 &provider_receipts,
+                &provider_metrics,
                 &context_receipt,
                 &messages,
             )?;
@@ -639,6 +657,7 @@ impl AgentLoop {
                 &usage,
                 &runs,
                 &provider_receipts,
+                &provider_metrics,
                 &context_receipt,
                 &messages,
             )?;
@@ -646,6 +665,7 @@ impl AgentLoop {
                 .invoke_provider(provider, request, &session, now)
                 .map_err(AgentLoopError::Execution)?;
             provider_receipts.extend(invocation.receipts().iter().cloned());
+            provider_metrics.push(invocation.metrics().clone());
             let response = match invocation.into_result() {
                 Ok(response) => response,
                 Err(error) => {
@@ -665,6 +685,7 @@ impl AgentLoop {
                 &usage,
                 &runs,
                 &provider_receipts,
+                &provider_metrics,
                 &context_receipt,
                 &messages,
             )?;
@@ -681,7 +702,10 @@ impl AgentLoop {
                     usage,
                     runs: Arc::from(runs.into_boxed_slice()),
                     provider_receipts: Arc::from(provider_receipts.into_boxed_slice()),
-                    context_receipt: Box::new(context_receipt.clone()),
+                    evidence: Arc::new(AgentRunEvidence {
+                        provider_metrics,
+                        context_receipt: Box::new(context_receipt.clone()),
+                    }),
                     messages: persisted_messages(&messages),
                 });
             }
@@ -704,6 +728,7 @@ impl AgentLoop {
                     &usage,
                     &runs,
                     &provider_receipts,
+                    &provider_metrics,
                     &context_receipt,
                     &messages,
                 )?;
@@ -726,6 +751,7 @@ impl AgentLoop {
                             &usage,
                             &runs,
                             &provider_receipts,
+                            &provider_metrics,
                             &context_receipt,
                             &messages,
                         )?;
@@ -741,7 +767,10 @@ impl AgentLoop {
                                 usage,
                                 runs: Arc::from(runs.into_boxed_slice()),
                                 provider_receipts: Arc::from(provider_receipts.into_boxed_slice()),
-                                context_receipt: Box::new(context_receipt.clone()),
+                                evidence: Arc::new(AgentRunEvidence {
+                                    provider_metrics,
+                                    context_receipt: Box::new(context_receipt.clone()),
+                                }),
                                 messages: persisted_messages(&messages),
                             },
                         });
@@ -909,6 +938,7 @@ fn check_control(
     usage: &TokenUsage,
     runs: &[RunSummary],
     provider_receipts: &[pandora_types::EffectReceipt],
+    provider_metrics: &[ProviderCallMetrics],
     context_receipt: &ContextReceipt,
     messages: &[ChatMessage],
 ) -> Result<(), AgentLoopError> {
@@ -926,7 +956,10 @@ fn check_control(
                 usage: usage.clone(),
                 runs: Arc::from(runs.to_vec().into_boxed_slice()),
                 provider_receipts: Arc::from(provider_receipts.to_vec().into_boxed_slice()),
-                context_receipt: Box::new(context_receipt.clone()),
+                evidence: Arc::new(AgentRunEvidence {
+                    provider_metrics: provider_metrics.to_vec(),
+                    context_receipt: Box::new(context_receipt.clone()),
+                }),
                 messages: persisted_messages(messages),
             },
         })

@@ -2848,6 +2848,13 @@ fn agent_run_executes_a_bounded_read_then_returns_the_final_answer() {
     assert_eq!(response["tool_calls"], 1);
     assert_eq!(response["turn_budget"], 2);
     assert_eq!(response["tool_budget"], 1);
+    assert_eq!(response["provider_metrics"].as_array().unwrap().len(), 2);
+    assert_eq!(response["provider_metrics"][0]["input_tokens"], 4);
+    assert_eq!(response["provider_metrics"][0]["output_tokens"], 2);
+    assert_eq!(response["provider_metrics"][0]["succeeded"], true);
+    assert_eq!(response["provider_metrics"][1]["input_tokens"], 5);
+    assert_eq!(response["provider_metrics"][1]["output_tokens"], 3);
+    assert_eq!(response["provider_metrics"][1]["succeeded"], true);
     assert_eq!(
         response["context"]["included"],
         serde_json::json!([
