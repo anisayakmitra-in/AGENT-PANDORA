@@ -692,7 +692,7 @@ function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onAppro
   };
 
   const connected = runtimeStatus === "connected";
-  const profileOptions = connected && harnesses.length ? [{ id: "auto", label: "Auto route" }, ...harnesses.map((harness) => ({ id: harness.id, label: harness.name }))] : runProfiles;
+  const profileOptions = connected && harnesses.length ? [{ id: "auto", label: "Auto route" }, ...harnesses.filter((harness) => harness.runnable).map((harness) => ({ id: harness.id, label: harness.name }))] : runProfiles;
   const coreTitle = runInFlight ? "Pandora is executing" : lastRun ? `Run ${lastRun.status}` : selectedSession ? "Session ready to inspect" : connected ? "Ready for a governed run" : "Awaiting your decision";
   const coreDescription = runInFlight ? "The request is in the governed runtime; wait for its recorded result." : lastRun ? `${lastRun.receipt_count} receipts · ${lastRun.event_count} events recorded.` : selectedSession ? `${selectedSession.event_count} recorded events · ${selectedSession.session.workspace_id}` : connected ? "Connected to the authenticated local Pandora service." : "Connect the local service to submit a real governed run.";
   const steps = authorityStepsForRun(lastRun, events, runProfile);
@@ -783,7 +783,7 @@ function WorkflowsView({ runtimeStatus, workflows, harnesses, onOpenCommand, onC
   const [task, setTask] = useState("");
   const [profile, setProfile] = useState<RunProfile>("auto");
   const connected = runtimeStatus === "connected";
-  const options = harnesses.length ? [{ id: "auto", label: "Auto route" }, ...harnesses.map((harness) => ({ id: harness.id, label: harness.name }))] : runProfiles;
+  const options = harnesses.length ? [{ id: "auto", label: "Auto route" }, ...harnesses.filter((harness) => harness.runnable).map((harness) => ({ id: harness.id, label: harness.name }))] : runProfiles;
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!name.trim() || !task.trim()) return;
