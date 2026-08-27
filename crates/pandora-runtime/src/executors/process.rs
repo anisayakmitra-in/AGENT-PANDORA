@@ -645,6 +645,27 @@ mod tests {
     }
 
     #[test]
+    fn process_error_codes_are_stable_and_non_sensitive() {
+        let cases = [
+            (ProcessError::UnsupportedProgram, "unsupported_program"),
+            (ProcessError::UnsupportedArguments, "unsupported_arguments"),
+            (ProcessError::InvalidOptions, "invalid_options"),
+            (ProcessError::PermissionDenied, "permission_denied"),
+            (ProcessError::CwdOutsideWorkspace, "cwd_outside_workspace"),
+            (ProcessError::SpawnFailed, "spawn_failed"),
+            (ProcessError::Io, "process_io"),
+            (ProcessError::OutputLimitExceeded, "output_limit_exceeded"),
+            (ProcessError::TimedOut, "timed_out"),
+            (ProcessError::Cancelled, "cancelled"),
+        ];
+
+        for (error, expected) in cases {
+            assert_eq!(error.code(), expected);
+            assert!(!error.code().contains([':', '\n', '\r']));
+        }
+    }
+
+    #[test]
     fn accepts_only_locked_cargo_test() {
         let workspace = Workspace::new();
         let arguments = vec!["test".to_owned(), "--locked".to_owned()];
