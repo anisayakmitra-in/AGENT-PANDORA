@@ -199,6 +199,34 @@ fn service_request(request: &JsonRpcRequest) -> Result<Option<ServiceRequest>, (
                 return Err(());
             }
         }
+        "runtime.capabilities" => {
+            if params.is_null() || params == &Value::Object(Default::default()) {
+                ServiceRequest::capabilities()
+            } else {
+                return Err(());
+            }
+        }
+        "runtime.providers" => {
+            if params.is_null() || params == &Value::Object(Default::default()) {
+                ServiceRequest::providers()
+            } else {
+                return Err(());
+            }
+        }
+        "runtime.engines" => {
+            if params.is_null() || params == &Value::Object(Default::default()) {
+                ServiceRequest::engines()
+            } else {
+                return Err(());
+            }
+        }
+        "runtime.tools" => {
+            if params.is_null() || params == &Value::Object(Default::default()) {
+                ServiceRequest::tools()
+            } else {
+                return Err(());
+            }
+        }
         "session.list" => {
             let params: SessionListParams = deserialize_params(params)?;
             ServiceRequest::session_list(params.limit).map_err(|_| ())?
@@ -341,7 +369,7 @@ mod tests {
         ExecutionController, RuntimeService, RuntimeServiceScope, ServiceTokenStore,
     };
     use pandora_runtime::{executors::WorkspaceRoot, sessions::SessionStore};
-    use pandora_types::{PrincipalId, TenantId, WorkspaceId};
+    use pandora_types::{PrincipalId, ServiceProviderSummary, TenantId, WorkspaceId};
     use serde_json::{Value, json};
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -381,6 +409,111 @@ mod tests {
         let body: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(body["result"]["kind"], "run");
         assert_eq!(body["result"]["run"]["status"], "completed");
+    }
+
+    #[tokio::test]
+    async fn rpc_returns_the_runtime_harness_catalog() {
+        let fixture = Fixture::new();
+        let response = post(
+            &fixture,
+            Some(&fixture.token),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "runtime.capabilities"
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["result"]["kind"], "capabilities");
+        assert!(
+            body["result"]["harnesses"]
+                .as_array()
+                .is_some_and(|harnesses| !harnesses.is_empty())
+        );
+    }
+
+    #[tokio::test]
+    async fn rpc_returns_redacted_provider_catalog() {
+        let fixture = Fixture::new();
+        let response = post(
+            &fixture,
+            Some(&fixture.token),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "runtime.providers"
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["result"]["kind"], "providers");
+        assert_eq!(body["result"]["providers"][0]["name"], "fixture-provider");
+        assert!(
+            !body["result"]["providers"][0]
+                .as_object()
+                .unwrap()
+                .contains_key("api_key_env")
+        );
+    }
+
+    #[tokio::test]
+    async fn rpc_returns_the_pandora_engine_inventory() {
+        let fixture = Fixture::new();
+        let response = post(
+            &fixture,
+            Some(&fixture.token),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "runtime.engines"
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["result"]["kind"], "engines");
+        assert_eq!(body["result"]["engines"][0]["id"], "execution-controller");
+        assert_eq!(
+            body["result"]["engines"][1]["authority"],
+            "Sole permit issuer"
+        );
+    }
+
+    #[tokio::test]
+    async fn rpc_returns_the_builtin_tool_catalog_without_credentials() {
+        let fixture = Fixture::new();
+        let response = post(
+            &fixture,
+            Some(&fixture.token),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "runtime.tools"
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["result"]["kind"], "tools");
+        assert_eq!(body["result"]["tools"][0]["id"], "accessibility.evidence");
+        assert_eq!(body["result"]["tools"][0]["capability"], "filesystem.read");
+        assert!(
+            !body["result"]["tools"][0]
+                .as_object()
+                .unwrap()
+                .contains_key("credential")
+        );
     }
 
     #[tokio::test]
@@ -507,7 +640,7 @@ mod tests {
     }
 
     fn runtime(root: &std::path::Path) -> RuntimeService {
-        RuntimeService::new(
+        RuntimeService::new_with_providers(
             ExecutionController::new(WorkspaceRoot::new(root).unwrap()),
             SessionStore::open(root.join("sessions.sqlite3")).unwrap(),
             RuntimeServiceScope::new(
@@ -515,6 +648,14 @@ mod tests {
                 TenantId::new("tenant-a").unwrap(),
                 WorkspaceId::new("workspace-a").unwrap(),
             ),
+            vec![ServiceProviderSummary::new(
+                "fixture-provider",
+                "fixture-model",
+                "open_ai_compatible",
+                true,
+                false,
+                None,
+            )],
         )
     }
 }

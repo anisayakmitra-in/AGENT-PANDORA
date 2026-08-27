@@ -1,0 +1,38 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Pandora",
+  "version": "2.0.0",
+  "identifier": "dev.pandora.agent",
+  "build": {
+    "beforeDevCommand": "npm run dev -- --host 127.0.0.1",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Pandora",
+        "width": 1440,
+        "height": 960,
+        "minWidth": 1080,
+        "minHeight": 720,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

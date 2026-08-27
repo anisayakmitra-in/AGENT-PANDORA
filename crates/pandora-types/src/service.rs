@@ -53,6 +53,213 @@ pub struct ServiceRunRequest {
     requested_gene: Option<GeneId>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServiceHarnessSummary {
+    id: HarnessId,
+    version: String,
+    name: String,
+    kind: String,
+    gene_count: u32,
+    runnable: bool,
+    #[serde(default)]
+    gene_ids: Vec<GeneId>,
+}
+
+impl ServiceHarnessSummary {
+    pub fn new(
+        id: HarnessId,
+        version: impl Into<String>,
+        name: impl Into<String>,
+        kind: impl Into<String>,
+        gene_count: u32,
+        runnable: bool,
+    ) -> Self {
+        Self {
+            id,
+            version: version.into(),
+            name: name.into(),
+            kind: kind.into(),
+            gene_count,
+            runnable,
+            gene_ids: Vec::new(),
+        }
+    }
+
+    pub fn with_gene_ids(mut self, gene_ids: Vec<GeneId>) -> Self {
+        self.gene_ids = gene_ids;
+        self
+    }
+
+    pub fn id(&self) -> &HarnessId {
+        &self.id
+    }
+
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn kind(&self) -> &str {
+        &self.kind
+    }
+
+    pub const fn gene_count(&self) -> u32 {
+        self.gene_count
+    }
+
+    pub const fn runnable(&self) -> bool {
+        self.runnable
+    }
+
+    pub fn gene_ids(&self) -> &[GeneId] {
+        &self.gene_ids
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServiceProviderSummary {
+    name: String,
+    model: String,
+    protocol: String,
+    active: bool,
+    credential_configured: bool,
+    fallback_provider: Option<String>,
+}
+
+impl ServiceProviderSummary {
+    pub fn new(
+        name: impl Into<String>,
+        model: impl Into<String>,
+        protocol: impl Into<String>,
+        active: bool,
+        credential_configured: bool,
+        fallback_provider: Option<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            model: model.into(),
+            protocol: protocol.into(),
+            active,
+            credential_configured,
+            fallback_provider,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    pub fn protocol(&self) -> &str {
+        &self.protocol
+    }
+
+    pub const fn active(&self) -> bool {
+        self.active
+    }
+
+    pub const fn credential_configured(&self) -> bool {
+        self.credential_configured
+    }
+
+    pub fn fallback_provider(&self) -> Option<&str> {
+        self.fallback_provider.as_deref()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServiceEngineSummary {
+    id: String,
+    name: String,
+    role: String,
+    authority: String,
+}
+
+impl ServiceEngineSummary {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        role: impl Into<String>,
+        authority: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            role: role.into(),
+            authority: authority.into(),
+        }
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn role(&self) -> &str {
+        &self.role
+    }
+
+    pub fn authority(&self) -> &str {
+        &self.authority
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServiceToolSummary {
+    id: GeneId,
+    version: String,
+    name: String,
+    capability: String,
+    operation: String,
+}
+
+impl ServiceToolSummary {
+    pub fn new(
+        id: GeneId,
+        version: impl Into<String>,
+        name: impl Into<String>,
+        capability: impl Into<String>,
+        operation: impl Into<String>,
+    ) -> Self {
+        Self {
+            id,
+            version: version.into(),
+            name: name.into(),
+            capability: capability.into(),
+            operation: operation.into(),
+        }
+    }
+
+    pub fn id(&self) -> &GeneId {
+        &self.id
+    }
+
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn capability(&self) -> &str {
+        &self.capability
+    }
+
+    pub fn operation(&self) -> &str {
+        &self.operation
+    }
+}
+
 impl ServiceRunRequest {
     pub fn new(
         task: impl Into<String>,
@@ -139,6 +346,18 @@ pub enum ServiceRequest {
     Health {
         protocol_version: u16,
     },
+    Capabilities {
+        protocol_version: u16,
+    },
+    Providers {
+        protocol_version: u16,
+    },
+    Engines {
+        protocol_version: u16,
+    },
+    Tools {
+        protocol_version: u16,
+    },
     SessionList {
         protocol_version: u16,
         limit: u16,
@@ -160,6 +379,30 @@ pub enum ServiceRequest {
 impl ServiceRequest {
     pub const fn health() -> Self {
         Self::Health {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+        }
+    }
+
+    pub const fn capabilities() -> Self {
+        Self::Capabilities {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+        }
+    }
+
+    pub const fn providers() -> Self {
+        Self::Providers {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+        }
+    }
+
+    pub const fn engines() -> Self {
+        Self::Engines {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+        }
+    }
+
+    pub const fn tools() -> Self {
+        Self::Tools {
             protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
         }
     }
@@ -196,6 +439,10 @@ impl ServiceRequest {
     pub const fn protocol_version(&self) -> u16 {
         match self {
             Self::Health { protocol_version }
+            | Self::Capabilities { protocol_version }
+            | Self::Providers { protocol_version }
+            | Self::Engines { protocol_version }
+            | Self::Tools { protocol_version }
             | Self::SessionList {
                 protocol_version, ..
             }
@@ -217,7 +464,11 @@ impl ServiceRequest {
 
     pub fn validate(&self) -> Result<(), ServiceContractError> {
         match self {
-            Self::Health { .. } => Ok(()),
+            Self::Health { .. }
+            | Self::Capabilities { .. }
+            | Self::Providers { .. }
+            | Self::Engines { .. } => Ok(()),
+            Self::Tools { .. } => Ok(()),
             Self::SessionList { limit, .. } => {
                 validate_page_limit(*limit, MAX_SERVICE_SESSION_PAGE)
             }
@@ -427,6 +678,22 @@ pub enum ServiceResponse {
         protocol_version: u16,
         health: ServiceHealth,
     },
+    Capabilities {
+        protocol_version: u16,
+        harnesses: Vec<ServiceHarnessSummary>,
+    },
+    Providers {
+        protocol_version: u16,
+        providers: Vec<ServiceProviderSummary>,
+    },
+    Engines {
+        protocol_version: u16,
+        engines: Vec<ServiceEngineSummary>,
+    },
+    Tools {
+        protocol_version: u16,
+        tools: Vec<ServiceToolSummary>,
+    },
     SessionList {
         protocol_version: u16,
         sessions: Vec<ServiceSessionSummary>,
@@ -450,6 +717,34 @@ impl ServiceResponse {
         Self::Health {
             protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
             health,
+        }
+    }
+
+    pub fn capabilities(harnesses: Vec<ServiceHarnessSummary>) -> Self {
+        Self::Capabilities {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            harnesses,
+        }
+    }
+
+    pub fn providers(providers: Vec<ServiceProviderSummary>) -> Self {
+        Self::Providers {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            providers,
+        }
+    }
+
+    pub fn engines(engines: Vec<ServiceEngineSummary>) -> Self {
+        Self::Engines {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            engines,
+        }
+    }
+
+    pub fn tools(tools: Vec<ServiceToolSummary>) -> Self {
+        Self::Tools {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            tools,
         }
     }
 
@@ -484,6 +779,18 @@ impl ServiceResponse {
     pub const fn protocol_version(&self) -> u16 {
         match self {
             Self::Health {
+                protocol_version, ..
+            }
+            | Self::Capabilities {
+                protocol_version, ..
+            }
+            | Self::Providers {
+                protocol_version, ..
+            }
+            | Self::Engines {
+                protocol_version, ..
+            }
+            | Self::Tools {
                 protocol_version, ..
             }
             | Self::SessionList {

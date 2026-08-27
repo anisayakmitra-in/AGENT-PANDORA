@@ -1,10 +1,12 @@
 use crate::evaluation_engine::EvaluationEngine;
 use crate::execution_controller::{ExecutionController, RunStatus, RunSummary, RuntimeError};
 use crate::sessions::{SessionError, SessionStore};
+use crate::tool_engine::ToolEngine;
 use pandora_types::{
     EvaluationContractError, EvaluationReceipt, EvaluationRequest, EventType, IdError, PrincipalId,
-    ServiceContractError, ServiceEventPage, ServiceHealth, ServiceRequest, ServiceResponse,
-    ServiceRunRequest, ServiceRunResult, ServiceSessionDetail, ServiceSessionSummary, Session,
+    ServiceContractError, ServiceEngineSummary, ServiceEventPage, ServiceHarnessSummary,
+    ServiceHealth, ServiceProviderSummary, ServiceRequest, ServiceResponse, ServiceRunRequest,
+    ServiceRunResult, ServiceSessionDetail, ServiceSessionSummary, ServiceToolSummary, Session,
     SessionId, TaskIntent, TenantId, Timestamp, WorkspaceId,
 };
 use std::fmt;
@@ -119,6 +121,7 @@ pub struct RuntimeService {
     controller: ExecutionController,
     sessions: SessionStore,
     scope: RuntimeServiceScope,
+    providers: Vec<ServiceProviderSummary>,
     next_session: AtomicU64,
 }
 
@@ -128,10 +131,20 @@ impl RuntimeService {
         sessions: SessionStore,
         scope: RuntimeServiceScope,
     ) -> Self {
+        Self::new_with_providers(controller, sessions, scope, Vec::new())
+    }
+
+    pub fn new_with_providers(
+        controller: ExecutionController,
+        sessions: SessionStore,
+        scope: RuntimeServiceScope,
+        providers: Vec<ServiceProviderSummary>,
+    ) -> Self {
         Self {
             controller,
             sessions,
             scope,
+            providers,
             next_session: AtomicU64::new(1),
         }
     }
@@ -154,11 +167,113 @@ impl RuntimeService {
 
         match request {
             ServiceRequest::Health { .. } => Ok(ServiceResponse::health(ServiceHealth::ready())),
+            ServiceRequest::Capabilities { .. } => self.capabilities(),
+            ServiceRequest::Providers { .. } => {
+                Ok(ServiceResponse::providers(self.providers.clone()))
+            }
+            ServiceRequest::Engines { .. } => self.engines(),
+            ServiceRequest::Tools { .. } => self.tools(),
             ServiceRequest::SessionList { limit, .. } => self.list_sessions(*limit),
             ServiceRequest::SessionInspect { session_id, .. } => self.inspect_session(session_id),
             ServiceRequest::SessionEvents { request, .. } => self.session_events(request),
             ServiceRequest::Run { request, .. } => self.run(request, now),
         }
+    }
+
+    fn capabilities(&self) -> Result<ServiceResponse, RuntimeServiceError> {
+        let harnesses = self
+            .controller
+            .harnesses()
+            .map(|harness| {
+                ServiceHarnessSummary::new(
+                    harness.manifest().id().clone(),
+                    harness.manifest().version(),
+                    harness.manifest().name(),
+                    harness.manifest().kind().as_str(),
+                    u32::try_from(harness.genes().len()).unwrap_or(u32::MAX),
+                    harness.is_runnable(),
+                )
+                .with_gene_ids(
+                    harness
+                        .genes()
+                        .iter()
+                        .map(|gene| gene.manifest().id().clone())
+                        .collect(),
+                )
+            })
+            .collect();
+        Ok(ServiceResponse::capabilities(harnesses))
+    }
+
+    fn engines(&self) -> Result<ServiceResponse, RuntimeServiceError> {
+        Ok(ServiceResponse::engines(vec![
+            ServiceEngineSummary::new(
+                "execution-controller",
+                "ExecutionController",
+                "Fixed runtime pipeline",
+                "Runtime authority",
+            ),
+            ServiceEngineSummary::new(
+                "reference-monitor",
+                "ReferenceMonitor",
+                "Authorization",
+                "Sole permit issuer",
+            ),
+            ServiceEngineSummary::new(
+                "tool-engine",
+                "ToolEngine",
+                "Tool contracts",
+                "Request boundary",
+            ),
+            ServiceEngineSummary::new(
+                "context-engine",
+                "ContextEngine",
+                "Context assembly",
+                "Scoped evidence",
+            ),
+            ServiceEngineSummary::new(
+                "memory-engine",
+                "MemoryEngine",
+                "Evidence lifecycle",
+                "Scoped persistence",
+            ),
+            ServiceEngineSummary::new(
+                "evaluation-engine",
+                "EvaluationEngine",
+                "Evaluation evidence",
+                "Policy and outcome checks",
+            ),
+            ServiceEngineSummary::new(
+                "evolution-engine",
+                "EvolutionEngine",
+                "Governed improvement",
+                "Proposal only",
+            ),
+            ServiceEngineSummary::new(
+                "mcp-adapter",
+                "MCP adapter",
+                "Local tool bridge",
+                "Configured stdio boundary",
+            ),
+        ]))
+    }
+
+    fn tools(&self) -> Result<ServiceResponse, RuntimeServiceError> {
+        Ok(ServiceResponse::tools(
+            ToolEngine::with_builtins()
+                .list()
+                .into_iter()
+                .map(|tool| {
+                    ServiceToolSummary::new(
+                        tool.id().clone(),
+                        tool.version(),
+                        tool.name(),
+                        tool.capability().as_str(),
+                        tool.operation().as_str(),
+                    )
+                })
+                .collect(),
+        ))
     }
 
     fn list_sessions(&self, limit: u16) -> Result<ServiceResponse, RuntimeServiceError> {
