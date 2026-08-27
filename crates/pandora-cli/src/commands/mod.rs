@@ -1,8 +1,10 @@
 use crate::output::{CliError, CommandResult};
 use pandora_runtime::config::{ConfigError, ConfigOverrides, RuntimeConfig};
 use pandora_runtime::sessions::{SessionError, SessionStore};
+use pandora_runtime::{PopulationStrategy, PopulationStrategyError, StrategyProfile};
 use pandora_types::{
-    OrchestrationRole, PrincipalId, Session, SessionId, TenantId, Timestamp, WorkspaceId,
+    LineageLimits, MutationLimits, OrchestrationRole, PopulationId, PopulationPolicy, PrincipalId,
+    Session, SessionId, TenantId, Timestamp, Usage, WorkspaceId,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -335,7 +337,7 @@ commands:
   provider list|set|use|test
   mcp list|inspect|set|remove|catalog <server> --allow|call <server> <tool> --arguments-json <object> --idempotency-key <key> --allow
   orchestration roles
-  strategies list
+  strategies list | population list --state <path> | population inspect --state <path> --id <id>
   evaluation golden --input <path> [--fail-on-failure]
   evaluation inspect --session <id> [--execution <id>]
   evolution list [--limit <1-256>] | inspect --id <proposal-id> | submit --input <path> | evaluate --id <proposal-id> --input <path> [--fail-on-failure] | approve --input <path>
@@ -374,22 +376,116 @@ fn strategies(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args
         .first()
         .ok_or_else(|| CliError::usage("strategies requires 'list'"))?;
-    if subcommand != "list" || args.len() != 1 {
-        return Err(CliError::usage("strategies supports only 'list'"));
+    match subcommand.as_str() {
+        "list" if args.len() == 1 => Ok(crate::output::success(
+            "strategies list",
+            json!({
+                "default": "react",
+                "available": [
+                    {"id": "react", "profile": "production"},
+                    {"id": "reflexion", "profile": "production"},
+                    {"id": "lats", "profile": "research"},
+                    {"id": "population", "profile": "research"}
+                ]
+            }),
+            "react, reflexion, lats (research), population (research)",
+        )),
+        "population" => population_strategy(&args[1..]),
+        _ => Err(CliError::usage(
+            "strategies supports 'list' or 'population list|inspect'",
+        )),
     }
-    Ok(crate::output::success(
-        "strategies list",
-        json!({
-            "default": "react",
-            "available": [
-                {"id": "react", "profile": "production"},
-                {"id": "reflexion", "profile": "production"},
-                {"id": "lats", "profile": "research"},
-                {"id": "population", "profile": "research"}
-            ]
-        }),
-        "react, reflexion, lats (research), population (research)",
-    ))
+}
+
+fn population_strategy(args: &[String]) -> Result<CommandResult, CliError> {
+    let subcommand = args
+        .first()
+        .ok_or_else(|| CliError::usage("strategies population requires 'list' or 'inspect'"))?;
+    let parsed = parse_options(&args[1..], &["state", "id"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "strategies population does not accept positional arguments",
+        ));
+    }
+    let state = parsed
+        .value("state")
+        .ok_or_else(|| CliError::usage("strategies population requires '--state <path>'"))?;
+    let strategy = PopulationStrategy::open(
+        state,
+        StrategyProfile::Research,
+        population_inspection_policy(),
+    )
+    .map_err(population_strategy_error)?;
+    match subcommand.as_str() {
+        "list" => {
+            if parsed.value("id").is_some() {
+                return Err(CliError::usage(
+                    "strategies population list does not accept '--id'",
+                ));
+            }
+            let populations = strategy
+                .population_ids()
+                .map_err(population_strategy_error)?;
+            let count = populations.len();
+            Ok(crate::output::success(
+                "strategies population list",
+                json!({"populations": populations, "count": count}),
+                format!("Listed {count} research population(s)"),
+            ))
+        }
+        "inspect" => {
+            let id = parsed
+                .value("id")
+                .ok_or_else(|| {
+                    CliError::usage("strategies population inspect requires '--id <id>'")
+                })
+                .and_then(|value| {
+                    PopulationId::new(value.to_owned())
+                        .map_err(|_| CliError::usage("population ID is invalid"))
+                })?;
+            let population = strategy
+                .population(&id)
+                .map_err(population_strategy_error)?;
+            Ok(crate::output::success(
+                "strategies population inspect",
+                json!({
+                    "population_id": population.scope().population_id(),
+                    "tenant_id": population.scope().tenant_id(),
+                    "workspace_id": population.scope().workspace_id(),
+                    "session_id": population.scope().session_id(),
+                    "generation": population.generation(),
+                    "candidate_count": population.candidates().len(),
+                    "research_only": true,
+                }),
+                format!("Inspected research population {}", id.as_str()),
+            ))
+        }
+        _ => Err(CliError::usage(
+            "strategies population supports only 'list' or 'inspect'",
+        )),
+    }
+}
+
+fn population_inspection_policy() -> PopulationPolicy {
+    PopulationPolicy::new(
+        256,
+        16,
+        256,
+        256,
+        MutationLimits::new(256, 4 * 1024 * 1024, 256).expect("fixed inspection policy is valid"),
+        LineageLimits::new(64, 256, 4 * 1024 * 1024).expect("fixed inspection policy is valid"),
+        100,
+        1,
+        Usage::new(u64::MAX, u32::MAX, u64::MAX, u64::MAX),
+    )
+    .expect("fixed inspection policy is valid")
+}
+
+fn population_strategy_error(error: PopulationStrategyError) -> CliError {
+    CliError::execution(
+        error.to_string(),
+        json!({"reason": "population_state_unavailable"}),
+    )
 }
 
 #[cfg(test)]
@@ -428,6 +524,7 @@ mod tests {
         assert!(usage.contains("job submit|work|list|inspect|cancel|mark-interrupted"));
         assert!(usage.contains("work accepts --max-jobs <1-64>"));
         assert!(usage.contains("evaluation golden --input <path> [--fail-on-failure]"));
+        assert!(usage.contains("strategies list | population list --state <path>"));
         assert!(usage.contains("evaluation inspect --session <id> [--execution <id>]"));
         assert!(usage.contains("evolution list [--limit <1-256>]"));
         assert!(usage.contains("evolution inspect --id <proposal-id>"));

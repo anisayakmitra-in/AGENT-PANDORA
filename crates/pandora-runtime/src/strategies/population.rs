@@ -405,6 +405,16 @@ impl PopulationStrategy {
             .ok_or_else(|| PopulationStrategyError::PopulationNotRegistered(population_id.clone()))
     }
 
+    pub fn population_ids(&self) -> Result<Vec<PopulationId>, PopulationStrategyError> {
+        Ok(self
+            .populations
+            .lock()
+            .map_err(|_| PopulationStrategyError::StateUnavailable)?
+            .keys()
+            .cloned()
+            .collect())
+    }
+
     pub fn plan(
         &self,
         population: &CandidatePopulation,
