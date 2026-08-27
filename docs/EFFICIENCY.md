@@ -2,12 +2,14 @@
 
 Status: Shipped as a bounded CLI evidence ledger.
 
-`EfficiencyEngine` ranks bounded task-class evidence recorded by CLI runs. Agent runs contribute provider-reported token usage, elapsed latency, explicit operator-supplied cost evidence, and governed completion state. Direct runs contribute elapsed latency and completion state; they do not claim unavailable provider usage or cost. `EfficiencyEngine` keeps a rolling evidence window, and `AdaptiveEngine::select_with_efficiency` may use the resulting ranking when policy permits. `ObservabilityEngine` and `EvaluationEngine` remain separate derived views in this release. Parliament and the reference monitor remain the authority for selection and effects.
+`EfficiencyEngine` ranks bounded task-class evidence recorded by CLI runs. Agent runs contribute one sample per provider attempt, including fallback attempts, with provider-reported token usage, elapsed latency, explicit operator-supplied cost evidence, and governed completion state. An attempt is counted as completed only when the overall task completed and that attempt succeeded. Direct runs contribute elapsed latency and completion state; they do not claim unavailable provider usage or cost. `EfficiencyEngine` keeps a rolling evidence window, and `AdaptiveEngine::select_with_efficiency` may use the resulting ranking when policy permits. `ObservabilityEngine` and `EvaluationEngine` remain separate derived views in this release. Parliament and the reference monitor remain the authority for selection and effects.
 
 The CLI persists the bounded evidence in its private data directory and can
 inspect it with `pandora efficiency rank`. The persisted ledger contains only
 execution IDs, bounded task and target labels, token counts, measured latency,
-explicit cost evidence, completion state, and timestamps.
+explicit cost evidence, completion state, and timestamps. Fallback samples use
+distinct attempt identities so multiple attempts from one execution remain
+independently rankable.
 
 The engine exposes four separate objectives:
 
