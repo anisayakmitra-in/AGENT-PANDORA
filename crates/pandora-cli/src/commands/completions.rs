@@ -32,7 +32,9 @@ fn powershell() -> &'static str {
     r#"Register-ArgumentCompleter -CommandName pandora -ScriptBlock {
     param($wordToComplete, $commandAst, $cursorPosition)
     $elements = @($commandAst.CommandElements | ForEach-Object { $_.Extent.Text })
-    $commands = if ($elements.Count -gt 1 -and $elements[1] -eq 'session') {
+    $commands = if ($elements.Count -gt 1 -and $elements[1] -eq 'service') {
+        'start'
+    } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'session') {
         'list','resume','inspect'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'job') {
         'submit','work','list','inspect','cancel','mark-interrupted'
@@ -91,7 +93,9 @@ fn bash() -> &'static str {
     r#"_pandora_complete() {
     local current="${COMP_WORDS[COMP_CWORD]}"
     local previous="${COMP_WORDS[COMP_CWORD-1]}"
-    if [[ "$previous" == "session" ]]; then
+    if [[ "$previous" == "service" ]]; then
+        COMPREPLY=( $(compgen -W 'start' -- "$current") )
+    elif [[ "$previous" == "session" ]]; then
         COMPREPLY=( $(compgen -W 'list resume inspect' -- "$current") )
     elif [[ "$previous" == "job" ]]; then
         COMPREPLY=( $(compgen -W 'submit work list inspect cancel mark-interrupted' -- "$current") )
@@ -150,7 +154,9 @@ complete -F _pandora_complete pandora"#
 
 fn zsh() -> &'static str {
     r#"#compdef pandora
-if [[ ${words[2]} == session ]]; then
+if [[ ${words[2]} == service ]]; then
+    _arguments '1:command:(help setup service run chat tui harness slash session job subagent skill package memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:service command:(start)'
+elif [[ ${words[2]} == session ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:session command:(list resume inspect)'
 elif [[ ${words[2]} == job ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:job command:(submit work list inspect cancel mark-interrupted)'
@@ -206,6 +212,7 @@ fn fish() -> &'static str {
 complete -c pandora -f -n '__fish_seen_subcommand_from harness' -a 'list inspect run'
 complete -c pandora -f -n '__fish_seen_subcommand_from slash' -a 'list resolve'
 complete -c pandora -f -n '__fish_seen_subcommand_from session' -a 'list resume inspect'
+complete -c pandora -f -n '__fish_seen_subcommand_from service' -a 'start'
 complete -c pandora -f -n '__fish_seen_subcommand_from job' -a 'submit work list inspect cancel mark-interrupted'
 complete -c pandora -f -n '__fish_seen_subcommand_from subagent' -a 'spawn work list inspect cancel mark-interrupted cleanup'
 complete -c pandora -f -n '__fish_seen_subcommand_from skill' -a 'list inspect install enable disable suspend remove restore'
@@ -288,6 +295,10 @@ mod tests {
                 assert!(script.contains(expected), "missing {expected} in {script}");
             }
         }
+        assert!(powershell.contains("'start'"));
+        assert!(bash.contains("compgen -W 'start'"));
+        assert!(zsh.contains("'2:service command:(start)'"));
+        assert!(fish.contains("__fish_seen_subcommand_from service' -a 'start'"));
     }
 
     #[test]
