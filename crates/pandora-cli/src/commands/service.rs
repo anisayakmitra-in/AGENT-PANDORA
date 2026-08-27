@@ -7,7 +7,7 @@ use pandora_runtime::{
     ExecutionController, RuntimeService, RuntimeServiceScope, ServiceTokenStore,
 };
 use pandora_service::{LocalService, LocalServiceConfig};
-use pandora_types::{Capability, Operation, PolicyContext};
+use pandora_types::{Capability, Operation, PolicyContext, ServiceProviderSummary};
 use serde_json::json;
 use std::io::{self, Write};
 use std::net::{Ipv4Addr, SocketAddr};
@@ -87,10 +87,26 @@ fn build_runtime_service(config: &RuntimeConfig) -> Result<RuntimeService, CliEr
     );
     let sessions = session_store(config)?;
     let (principal, tenant, workspace) = session_scope();
-    Ok(RuntimeService::new(
+    let providers = config
+        .provider_names()
+        .into_iter()
+        .filter_map(|name| config.provider_profile(&name))
+        .map(|profile| {
+            ServiceProviderSummary::new(
+                profile.name(),
+                profile.model(),
+                profile.protocol().as_str(),
+                config.active_provider() == Some(profile.name()),
+                std::env::var_os(profile.api_key_env()).is_some_and(|value| !value.is_empty()),
+                profile.fallback_provider().map(str::to_owned),
+            )
+        })
+        .collect();
+    Ok(RuntimeService::new_with_providers(
         controller,
         sessions,
         RuntimeServiceScope::new(principal, tenant, workspace),
+        providers,
     ))
 }
 

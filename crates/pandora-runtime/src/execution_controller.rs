@@ -203,6 +203,10 @@ impl ExecutionController {
         self.policy.policy_version()
     }
 
+    pub fn harnesses(&self) -> impl Iterator<Item = &dyn Harness> {
+        self.harnesses.iter()
+    }
+
     pub fn with_wasm_executor(mut self, wasm: WasmExecutor) -> Self {
         self.wasm = wasm;
         self

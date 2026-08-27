@@ -154,10 +154,89 @@ jobs:
           path: dist/${{ matrix.artifact }}
           if-no-files-found: error
 
+  build-desktop:
+    name: Build desktop ${{ matrix.platform }}
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+            artifact: linux-x64
+          - os: macos-15-intel
+            platform: macos-x64
+            artifact: macos-x64
+          - os: macos-14
+            platform: macos-arm64
+            artifact: macos-arm64
+          - os: windows-latest
+            platform: windows-x64
+            artifact: windows-x64
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: 1.97.1
+
+      - name: Set up Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22"
+
+      - name: Install desktop dependencies
+        working-directory: apps/pandora-desktop
+        run: npm ci --ignore-scripts
+
+      - name: Build desktop bundle
+        working-directory: apps/pandora-desktop
+        run: npm run tauri:build
+
+      - name: Stage desktop artifacts (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          while IFS= read -r -d '' file; do
+            name="$(basename "$file")"
+            cp "$file" "dist/desktop-${{ matrix.artifact }}-${name}"
+          done < <(find target/release/bundle -type f -print0)
+
+      - name: Stage desktop artifacts (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Get-ChildItem -Path target/release/bundle -File -Recurse | ForEach-Object {
+            Copy-Item $_.FullName (Join-Path dist ("desktop-${{ matrix.artifact }}-" + $_.Name))
+          }
+
+      - name: Upload desktop artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-${{ matrix.artifact }}
+          path: dist/*
+          if-no-files-found: error
+
   publish:
     name: Publish release assets
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, build-desktop]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -183,6 +262,13 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: native-*
+          path: dist
+          merge-multiple: true
+
+      - name: Download desktop artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: desktop-*
           path: dist
           merge-multiple: true
 
@@ -235,6 +321,11 @@ jobs:
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: "dist/pandora-*"
+
+      - name: Attest desktop artifacts
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: "dist/desktop-*"
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
