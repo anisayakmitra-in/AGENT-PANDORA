@@ -74,6 +74,7 @@ export type RuntimeRun = {
   output: string;
   receipt_count: number;
   event_count: number;
+  status_detail?: string;
 };
 
 export type RuntimeEvent = {

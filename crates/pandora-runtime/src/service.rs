@@ -393,7 +393,7 @@ impl RuntimeService {
         self.sessions.create(&session)?;
         self.persist_execution(&session, &summary, now)?;
 
-        Ok(ServiceResponse::run(ServiceRunResult::new(
+        let mut result = ServiceRunResult::new(
             session.id().clone(),
             summary.execution_id().clone(),
             Some(summary.selected_harness().clone()),
@@ -402,7 +402,11 @@ impl RuntimeService {
             output_text(summary.output()),
             u64::try_from(summary.receipts().len()).unwrap_or(u64::MAX),
             u64::try_from(summary.events().len()).unwrap_or(u64::MAX),
-        )))
+        );
+        if let RunStatus::ApprovalRequired { reason } = summary.status() {
+            result = result.with_status_detail(reason.clone());
+        }
+        Ok(ServiceResponse::run(result))
     }
 
     fn allocate_session(&self, now: Timestamp) -> Result<Session, RuntimeServiceError> {

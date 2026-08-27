@@ -738,6 +738,8 @@ pub struct ServiceRunResult {
     output: String,
     receipt_count: u64,
     event_count: u64,
+    #[serde(default)]
+    status_detail: Option<String>,
 }
 
 impl ServiceRunResult {
@@ -761,7 +763,17 @@ impl ServiceRunResult {
             output: output.into(),
             receipt_count,
             event_count,
+            status_detail: None,
         }
+    }
+
+    pub fn with_status_detail(mut self, detail: impl Into<String>) -> Self {
+        self.status_detail = Some(detail.into());
+        self
+    }
+
+    pub fn status_detail(&self) -> Option<&str> {
+        self.status_detail.as_deref()
     }
 
     pub fn session_id(&self) -> &SessionId {
