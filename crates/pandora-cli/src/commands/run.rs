@@ -1388,7 +1388,7 @@ fn record_agent_efficiency(
                     u64::from(output_tokens),
                     cost_micros,
                     metrics.elapsed_ms(),
-                    completed,
+                    completed && metrics.succeeded(),
                     timestamp(),
                 ),
                 None => EfficiencySample::new_without_cost(
@@ -1398,7 +1398,7 @@ fn record_agent_efficiency(
                     u64::from(input_tokens),
                     u64::from(output_tokens),
                     metrics.elapsed_ms(),
-                    completed,
+                    completed && metrics.succeeded(),
                     timestamp(),
                 ),
             };
