@@ -364,6 +364,9 @@ mod tests {
             result.result(),
             Err(ProviderError::InvalidRequest(_))
         ));
+        assert_eq!(result.metrics().input_tokens(), 0);
+        assert_eq!(result.metrics().output_tokens(), 0);
+        assert!(!result.metrics().succeeded());
     }
 
     #[test]
