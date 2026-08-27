@@ -324,6 +324,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                 "harness_id": summary.selected_harness(),
                 "gene_id": summary.selected_gene(),
                 "status": "completed",
+                    "elapsed_ms": elapsed_millis(started),
                     "output": summary.output().map(output_text),
                     "efficiency_recorded": efficiency_recorded,
                     "memory_evidence_recorded": memory_evidence_recorded,
@@ -642,6 +643,7 @@ pub(super) fn execute_agent_core(
                     "tool_calls": summary.tool_calls(),
                     "turn_budget": options.max_turns,
                     "tool_budget": options.max_tool_calls,
+                    "elapsed_ms": elapsed_millis(started),
                     "provider_calls": summary.provider_receipts().len(),
                     "context": {
                         "included": summary.context_receipt().included_ids(),

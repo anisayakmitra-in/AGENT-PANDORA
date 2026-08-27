@@ -328,6 +328,7 @@ fn setup_and_read_only_run_return_versioned_json() {
     assert_eq!(response["version"], "0.1");
     assert_eq!(response["command"], "run");
     assert_eq!(response["status"], "completed");
+    assert!(response["elapsed_ms"].as_u64().is_some());
     assert_eq!(response["output"], "fixture\n");
     assert_eq!(response["efficiency_recorded"], true);
     assert_eq!(response["feedback_recorded"], false);
@@ -2842,6 +2843,7 @@ fn agent_run_executes_a_bounded_read_then_returns_the_final_answer() {
     assert_eq!(response["command"], "run");
     assert_eq!(response["agent"], true);
     assert_eq!(response["status"], "completed");
+    assert!(response["elapsed_ms"].as_u64().is_some());
     assert_eq!(response["turns"], 2);
     assert_eq!(response["tool_calls"], 1);
     assert_eq!(response["turn_budget"], 2);
