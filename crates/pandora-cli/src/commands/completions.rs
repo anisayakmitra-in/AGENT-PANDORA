@@ -58,8 +58,14 @@ fn powershell() -> &'static str {
         'list','inspect'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'orchestration') {
         'roles'
+    } elseif ($elements.Count -gt 3 -and $elements[1] -eq 'strategies' -and $elements[2] -eq 'population' -and $elements[3] -eq 'list') {
+        '--state'
+    } elseif ($elements.Count -gt 3 -and $elements[1] -eq 'strategies' -and $elements[2] -eq 'population' -and $elements[3] -eq 'inspect') {
+        '--state','--id'
+    } elseif ($elements.Count -gt 2 -and $elements[1] -eq 'strategies' -and $elements[2] -eq 'population') {
+        'list','inspect'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'strategies') {
-        'list'
+        'list','population'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'evolution') {
         'list','inspect','submit','evaluate'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'efficiency') {
@@ -111,8 +117,18 @@ fn bash() -> &'static str {
         COMPREPLY=( $(compgen -W 'list inspect' -- "$current") )
     elif [[ "$previous" == "orchestration" ]]; then
         COMPREPLY=( $(compgen -W 'roles' -- "$current") )
+    elif [[ "${COMP_WORDS[1]}" == "strategies" && "${COMP_WORDS[2]}" == "population" && "$previous" == "population" ]]; then
+        COMPREPLY=( $(compgen -W 'list inspect' -- "$current") )
+    elif [[ "${COMP_WORDS[1]}" == "strategies" && "${COMP_WORDS[2]}" == "population" && "$previous" == "list" ]]; then
+        COMPREPLY=( $(compgen -W '--state' -- "$current") )
+    elif [[ "${COMP_WORDS[1]}" == "strategies" && "${COMP_WORDS[2]}" == "population" && "$previous" == "inspect" ]]; then
+        COMPREPLY=( $(compgen -W '--state --id' -- "$current") )
+    elif [[ "${COMP_WORDS[1]}" == "strategies" && "${COMP_WORDS[2]}" == "population" && "$previous" == "--state" ]]; then
+        COMPREPLY=( $(compgen -f -- "$current") )
+    elif [[ "${COMP_WORDS[1]}" == "strategies" && "${COMP_WORDS[2]}" == "population" && "$previous" == "--id" ]]; then
+        COMPREPLY=()
     elif [[ "$previous" == "strategies" ]]; then
-        COMPREPLY=( $(compgen -W 'list' -- "$current") )
+        COMPREPLY=( $(compgen -W 'list population' -- "$current") )
     elif [[ "$previous" == "efficiency" ]]; then
         COMPREPLY=( $(compgen -W 'rank' -- "$current") )
     elif [[ "$previous" == "evaluation" ]]; then
@@ -160,8 +176,14 @@ elif [[ ${words[2]} == tool ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:tool command:(list inspect)'
 elif [[ ${words[2]} == orchestration ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:orchestration command:(roles)'
+elif [[ ${words[2]} == strategies && ${words[3]} == population && ${words[4]} == list ]]; then
+    _arguments '--state=[population state path]:path:_files'
+elif [[ ${words[2]} == strategies && ${words[3]} == population && ${words[4]} == inspect ]]; then
+    _arguments '--state=[population state path]:path:_files' '--id=[population ID]:population ID:'
+elif [[ ${words[2]} == strategies && ${words[3]} == population ]]; then
+    _arguments '3:population command:(list inspect)'
 elif [[ ${words[2]} == strategies ]]; then
-    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:strategies command:(list)'
+    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:strategies command:(list population)'
 elif [[ ${words[2]} == efficiency ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet completions migrate update uninstall doctor)' '2:efficiency command:(rank)'
 elif [[ ${words[2]} == evaluation ]]; then
@@ -194,7 +216,11 @@ complete -c pandora -f -n '__fish_seen_subcommand_from provider' -a 'list set us
 complete -c pandora -f -n '__fish_seen_subcommand_from mcp' -a 'list inspect set remove catalog call'
 complete -c pandora -f -n '__fish_seen_subcommand_from tool' -a 'list inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from orchestration' -a 'roles'
-complete -c pandora -f -n '__fish_seen_subcommand_from strategies' -a 'list'
+complete -c pandora -f -n '__fish_seen_subcommand_from strategies; and not __fish_seen_subcommand_from population' -a 'list population'
+complete -c pandora -f -n '__fish_seen_subcommand_from strategies; and __fish_seen_subcommand_from population; and not __fish_seen_subcommand_from list; and not __fish_seen_subcommand_from inspect' -a 'list inspect'
+complete -c pandora -f -n '__fish_seen_subcommand_from strategies; and __fish_seen_subcommand_from population; and __fish_seen_subcommand_from list' -l state -r
+complete -c pandora -f -n '__fish_seen_subcommand_from strategies; and __fish_seen_subcommand_from population; and __fish_seen_subcommand_from inspect' -l state -r
+complete -c pandora -f -n '__fish_seen_subcommand_from strategies; and __fish_seen_subcommand_from population; and __fish_seen_subcommand_from inspect' -l id -r
 complete -c pandora -f -n '__fish_seen_subcommand_from efficiency' -a 'rank'
 complete -c pandora -f -n '__fish_seen_subcommand_from evaluation' -a 'golden inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from evolution' -a 'list inspect submit evaluate'
@@ -262,5 +288,33 @@ mod tests {
                 assert!(script.contains(expected), "missing {expected} in {script}");
             }
         }
+    }
+
+    #[test]
+    fn population_strategy_completion_exposes_read_only_commands() {
+        let powershell = powershell();
+        let bash = bash();
+        let zsh = zsh();
+        let fish = fish();
+
+        assert!(powershell.contains("'list','population'"));
+        assert!(powershell.contains("'list','inspect'"));
+        assert!(powershell.contains("'--state'"));
+        assert!(powershell.contains("'--state','--id'"));
+
+        assert!(bash.contains("'list population'"));
+        assert!(bash.contains("'list inspect'"));
+        assert!(bash.contains("'--state'"));
+        assert!(bash.contains("'--state --id'"));
+
+        assert!(zsh.contains("'2:strategies command:(list population)'"));
+        assert!(zsh.contains("'3:population command:(list inspect)'"));
+        assert!(zsh.contains("'--state=[population state path]:path:_files'"));
+        assert!(zsh.contains("'--id=[population ID]:population ID:'"));
+
+        assert!(fish.contains("-a 'list population'"));
+        assert!(fish.contains("-a 'list inspect'"));
+        assert!(fish.contains("-l state -r"));
+        assert!(fish.contains("-l id -r"));
     }
 }
