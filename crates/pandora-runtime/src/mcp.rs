@@ -723,9 +723,9 @@ impl McpProcess {
     fn spawn(config: &McpStdioConfig) -> Result<Self, McpError> {
         let mut command = Command::new(&config.program);
         crate::executors::process::configure_process_group(&mut command);
+        crate::executors::process::configure_runtime_environment(&mut command);
         command
             .args(&config.arguments)
-            .env_clear()
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

@@ -504,7 +504,7 @@ fn run_child(
     }
 }
 
-fn configure_runtime_environment(process: &mut Command) {
+pub(crate) fn configure_runtime_environment(process: &mut Command) {
     process.env_clear();
     process.env("CARGO_TERM_COLOR", "never");
 
