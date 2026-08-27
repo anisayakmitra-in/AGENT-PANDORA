@@ -128,6 +128,10 @@ const runProfiles: Array<{ id: RunProfile; label: string; harness: string | null
   { id: "security", label: "Security", harness: "security-domain" }
 ];
 
+function harnessForProfile(profile: RunProfile): string | null {
+  return runProfiles.find((candidate) => candidate.id === profile)?.harness ?? null;
+}
+
 const authoritySteps: Array<{
   id: string;
   label: string;
@@ -419,7 +423,7 @@ function App() {
   }, [client, selectedSessionId]);
 
   useEffect(() => {
-    if (runtimeStatus === "connected" && runProfile !== "auto" && !harnesses.some((harness) => harness.id === runProfile)) {
+    if (runtimeStatus === "connected" && runProfile !== "auto" && !harnesses.some((harness) => harness.id === harnessForProfile(runProfile))) {
       setRunProfile("auto");
     }
   }, [harnesses, runProfile, runtimeStatus]);
@@ -511,7 +515,7 @@ function App() {
     setRuntimeStatus("checking");
     setRuntimeError("");
     try {
-      const result = await client.run(task, profile === "auto" ? null : profile);
+      const result = await client.run(task, harnessForProfile(profile));
       setLastRun(result);
       setSessions(await client.sessions());
       const [detail, nextEvents, nextMemory] = await Promise.all([
