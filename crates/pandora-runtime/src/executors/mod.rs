@@ -10,7 +10,7 @@ pub use process::{
     CancellationToken, ProcessError, ProcessExecutor, ProcessOutput, ProcessResult,
     VerificationCommand, VerificationOptions,
 };
-pub use provider::{ProviderExecutor, ProviderResult};
+pub use provider::{ProviderCallMetrics, ProviderExecutor, ProviderResult};
 pub use worktree::{
     GitWorktreeExecutor, WorktreeChange, WorktreeCommand, WorktreeError, WorktreeResult,
 };

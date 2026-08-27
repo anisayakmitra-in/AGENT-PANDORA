@@ -85,7 +85,8 @@ pub use execution_controller::{
 };
 pub use execution_profile::ExecutionProfileAssemblyError;
 pub use executors::{
-    GitWorktreeExecutor, WorktreeChange, WorktreeCommand, WorktreeError, WorktreeResult,
+    GitWorktreeExecutor, ProviderCallMetrics, WorktreeChange, WorktreeCommand, WorktreeError,
+    WorktreeResult,
 };
 pub use fleet::{
     FLEET_SCHEMA_VERSION, FleetBudget, FleetEngine, FleetError, FleetLease, FleetLeaseState,

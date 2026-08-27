@@ -5,12 +5,50 @@ use pandora_types::{
     SecretReference, Timestamp,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 static NEXT_RECEIPT_ID: AtomicU64 = AtomicU64::new(1);
 
 pub struct ProviderResult {
     result: Result<ModelResponse, ProviderError>,
     receipts: Vec<EffectReceipt>,
+    metrics: ProviderCallMetrics,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProviderCallMetrics {
+    provider_id: String,
+    model_id: String,
+    elapsed_ms: u64,
+    input_tokens: u32,
+    output_tokens: u32,
+    succeeded: bool,
+}
+
+impl ProviderCallMetrics {
+    pub fn provider_id(&self) -> &str {
+        &self.provider_id
+    }
+
+    pub fn model_id(&self) -> &str {
+        &self.model_id
+    }
+
+    pub const fn elapsed_ms(&self) -> u64 {
+        self.elapsed_ms
+    }
+
+    pub const fn input_tokens(&self) -> u32 {
+        self.input_tokens
+    }
+
+    pub const fn output_tokens(&self) -> u32 {
+        self.output_tokens
+    }
+
+    pub const fn succeeded(&self) -> bool {
+        self.succeeded
+    }
 }
 
 impl ProviderResult {
@@ -32,6 +70,10 @@ impl ProviderResult {
         &self.receipts
     }
 
+    pub fn metrics(&self) -> &ProviderCallMetrics {
+        &self.metrics
+    }
+
     pub(crate) fn prepend_receipt(&mut self, receipt: EffectReceipt) {
         self.receipts.insert(0, receipt);
     }
@@ -51,6 +93,9 @@ impl ProviderExecutor {
         request: ModelRequest,
         now: Timestamp,
     ) -> ProviderResult {
+        let provider_id = provider.manifest().id().as_str().to_owned();
+        let model_id = request.model_id().as_str().to_owned();
+        let started = Instant::now();
         let result = if request_matches(permit, provider, &request) {
             provider.complete(request)
         } else {
@@ -64,9 +109,27 @@ impl ProviderExecutor {
                 code: error_code(error).to_owned(),
             },
         };
+        let (input_tokens, output_tokens) = result
+            .as_ref()
+            .map(|response| {
+                (
+                    response.usage().prompt_tokens(),
+                    response.usage().completion_tokens(),
+                )
+            })
+            .unwrap_or((0, 0));
+        let succeeded = result.is_ok();
         ProviderResult {
             result,
             receipts: vec![receipt_for(permit, now, outcome)],
+            metrics: ProviderCallMetrics {
+                provider_id,
+                model_id,
+                elapsed_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+                input_tokens,
+                output_tokens,
+                succeeded,
+            },
         }
     }
 }
@@ -238,6 +301,11 @@ mod tests {
         );
 
         assert_eq!(result.result().unwrap().text(), "ready");
+        assert_eq!(result.metrics().provider_id(), "provider-a");
+        assert_eq!(result.metrics().model_id(), "model-a");
+        assert_eq!(result.metrics().input_tokens(), 1);
+        assert_eq!(result.metrics().output_tokens(), 1);
+        assert!(result.metrics().succeeded());
         assert!(matches!(
             result.receipt().outcome(),
             EffectOutcome::Succeeded
