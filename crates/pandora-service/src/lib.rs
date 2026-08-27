@@ -534,6 +534,27 @@ mod tests {
             body["result"]["engines"][1]["authority"],
             "Sole permit issuer"
         );
+        let engine_ids = body["result"]["engines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|engine| engine["id"].as_str())
+            .collect::<Vec<_>>();
+        for expected in [
+            "adaptive-engine",
+            "coding-feedback-loop",
+            "efficiency-engine",
+            "graph-intelligence-engine",
+            "orchestration-engine",
+            "self-healing-engine",
+            "skill-engine",
+            "observability-engine",
+            "fleet-engine",
+            "mutation-engine",
+            "replacement-engine",
+        ] {
+            assert!(engine_ids.contains(&expected), "missing engine {expected}");
+        }
     }
 
     #[tokio::test]
