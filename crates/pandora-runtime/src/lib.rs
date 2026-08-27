@@ -113,7 +113,9 @@ pub use memory_engine::{
     MemorySynthesisSnapshot,
 };
 pub use mutation::{MutationEngine, MutationError};
-pub use observability::{ObservabilityEngine, ObservabilityError};
+pub use observability::{
+    DEFAULT_MAX_OBSERVABILITY_SAMPLES, ObservabilityEngine, ObservabilityError,
+};
 pub use orchestration_engine::{
     DomainProfileRun, OrchestrationEngine, OrchestrationError, OrchestrationRun,
 };

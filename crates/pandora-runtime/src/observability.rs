@@ -2,10 +2,13 @@ use pandora_types::{EventId, ObservabilitySample, ObservabilitySnapshot, SpanVie
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Mutex;
 
+pub const DEFAULT_MAX_OBSERVABILITY_SAMPLES: usize = 16_384;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ObservabilityError {
     DuplicateEvent(EventId),
     OutOfOrder { previous: u64, received: u64 },
+    CapacityExceeded,
 }
 
 struct ObservationStore {
@@ -16,16 +19,22 @@ struct ObservationStore {
 
 pub struct ObservabilityEngine {
     store: Mutex<ObservationStore>,
+    max_samples: usize,
 }
 
 impl ObservabilityEngine {
     pub fn new() -> Self {
+        Self::with_capacity(DEFAULT_MAX_OBSERVABILITY_SAMPLES)
+    }
+
+    pub fn with_capacity(max_samples: usize) -> Self {
         Self {
             store: Mutex::new(ObservationStore {
                 samples: Vec::new(),
                 event_ids: HashSet::new(),
                 last_sequence: None,
             }),
+            max_samples,
         }
     }
 
@@ -34,6 +43,9 @@ impl ObservabilityEngine {
             .store
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if store.samples.len() >= self.max_samples {
+            return Err(ObservabilityError::CapacityExceeded);
+        }
         if store.event_ids.contains(sample.event().event_id()) {
             return Err(ObservabilityError::DuplicateEvent(
                 sample.event().event_id().clone(),
@@ -227,5 +239,21 @@ mod tests {
         engine.record(sample).unwrap();
 
         assert_eq!(engine.snapshot().drift_score(), None);
+    }
+
+    #[test]
+    fn capacity_rejects_new_samples_without_discarding_history() {
+        let engine = ObservabilityEngine::with_capacity(1);
+        engine
+            .record(sample(1, "event-1", "trace-1", "span-1"))
+            .unwrap();
+
+        assert_eq!(
+            engine.record(sample(2, "event-2", "trace-1", "span-2")),
+            Err(ObservabilityError::CapacityExceeded)
+        );
+        let snapshot = engine.snapshot();
+        assert_eq!(snapshot.traces().len(), 1);
+        assert_eq!(snapshot.traces()[0].spans().len(), 1);
     }
 }
