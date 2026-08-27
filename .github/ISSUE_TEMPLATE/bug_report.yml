@@ -1,0 +1,35 @@
+name: Bug report
+description: Report a reproducible problem in Pandora
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials, private prompts, or sensitive workspace data.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v2.0.0-beta.7 or commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - CLI
+        - Runtime service
+        - Tauri desktop source build
+        - TypeScript launcher
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Include the smallest safe command sequence and the actual and expected results.
+    validations:
+      required: true

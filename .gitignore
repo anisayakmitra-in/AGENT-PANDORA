@@ -8,3 +8,8 @@ __pycache__/
 *.db
 .DS_Store
 Thumbs.db
+apps/pandora-desktop/node_modules/
+apps/pandora-desktop/dist/
+apps/pandora-desktop/.npm-cache/
+npm/pandora-cli/node_modules/
+.npm-cache/

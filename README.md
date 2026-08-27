@@ -28,6 +28,10 @@ The npm package also exports a typed TypeScript client for the stable JSON CLI
 contract. It forwards an argv array to the verified native binary and does not
 create a second runtime or permission path. See [TypeScript client](docs/TYPESCRIPT.md).
 
+For project context, contribution rules, and security reporting, see
+[Why Pandora?](docs/WHY_PANDORA.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
+[SECURITY.md](SECURITY.md).
+
 ## Install and start
 
 The bootstrap installers use the current published prerelease by default. They
@@ -122,6 +126,11 @@ file path, then remains in the foreground until Ctrl-C. It never prints the
 token or accepts non-loopback connections. See [CLI reference](docs/CLI.md).
 
 The supported product target is the native CLI on Windows, macOS, and Linux. Desktop, remote execution, mobile, and package marketplace integration remain gated until their release tests and security boundaries exist. The CLI can manage profiles for the runtime's governed local stdio MCP preview and execute import-free WebAssembly package Genes through an admitted Domain Harness. See [MCP.md](docs/MCP.md) and [WebAssembly package Genes](docs/WASM.md).
+
+For a clean-machine installation, release verification, and cross-platform
+notes, see [Installation](docs/INSTALL.md). Published release artifacts are
+the only supported installation source for end users; a local desktop build is
+a development artifact until its release gates complete.
 
 ## License
 

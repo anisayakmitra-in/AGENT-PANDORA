@@ -4,6 +4,7 @@
   "version": "2.0.0-beta.7",
   "description": "Pandora desktop control surface",
   "license": "MIT",
+  "homepage": "https://github.com/anisayakmitra-in/PANDORA-AGENT",
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit && vite build",
