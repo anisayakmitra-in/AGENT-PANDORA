@@ -1716,7 +1716,9 @@ fn runtime_error(error: RuntimeError) -> CliError {
         RuntimeError::Filesystem(_) => {
             CliError::execution("filesystem execution failed", json!({}))
         }
-        RuntimeError::Process(_) => CliError::execution("process execution failed", json!({})),
+        RuntimeError::Process(error) => {
+            CliError::execution("process execution failed", json!({"reason": error.code()}))
+        }
         RuntimeError::Wasm(error) => CliError::execution(error.to_string(), json!({})),
         RuntimeError::ExecutionProfile(_) => {
             CliError::execution("execution profile assembly failed", json!({}))

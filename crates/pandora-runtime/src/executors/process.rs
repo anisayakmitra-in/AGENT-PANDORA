@@ -31,7 +31,7 @@ pub enum ProcessError {
 }
 
 impl ProcessError {
-    fn code(&self) -> &'static str {
+    pub fn code(&self) -> &'static str {
         match self {
             Self::UnsupportedProgram => "unsupported_program",
             Self::UnsupportedArguments => "unsupported_arguments",
