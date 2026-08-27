@@ -24,6 +24,7 @@ so compatible releases can add evidence without renaming existing fields.
 |---|---|---|
 | `pandora --version --json` | `version` | `pandora_version` |
 | `pandora setup --json` | `setup` | `config_path`, `data_dir`, `workspace`, `provider_configured`, `provider_profiles`, `active_provider`, `provider_model`, `api_key_env`, `interactive` |
+| `pandora provider test --json` | `provider test` | `provider`, `model`, `status`, `output`, `usage`, `metrics` |
 | `pandora doctor --json` | `doctor` | `healthy`, `version`, `platform`, `config_path`, `storage_path`, `workspace_path`, `provider`, `policy`, `containment`, `checks` |
 | `pandora fleet list --json` | `fleet list` | `nodes`, `leases` |
 | `pandora fleet dispatch <capability> --json` | `fleet dispatch` | `capability`, `node` |
@@ -52,6 +53,10 @@ Memory records returned by `memory recall` include `origin` (`explicit` or
 `synthesized`) and `evidence_ids`. Synthesized records are L1 candidates only;
 their evidence is descriptive provenance and does not authorize tools, policy,
 package activation, or promotion.
+
+The `provider test` `metrics` object contains `elapsed_ms`, `input_tokens`,
+`output_tokens`, and `succeeded`. These values describe the completed provider
+call and can be recorded alongside the existing response.
 
 ## Error envelope
 

@@ -56,7 +56,9 @@ worktree, or MCP child programs as sandboxed.
 
 `provider test` sends one bounded request using the active profile's credential
 environment variable through the provider permit boundary and reports the
-selected model, response, and token usage.
+selected model, response, token usage, and measured call metrics. JSON output
+includes elapsed milliseconds, input and output token counts, and whether the
+provider call succeeded.
 The permit binds the selected protocol, endpoint, and credential-variable
 reference as well as the canonical provider request. It includes the model,
 messages, tools, token budget, timeout, and trace identifiers. Changing any of
