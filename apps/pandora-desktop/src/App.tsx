@@ -113,13 +113,6 @@ const navigation: Array<{ label: string; items: Array<{ id: ViewId; label: strin
   }
 ];
 
-const recentThreads = [
-  { title: "Review the release boundary", meta: "Just now", active: true },
-  { title: "Map the provider fallback", meta: "Yesterday", active: false },
-  { title: "Prepare a workspace audit", meta: "Aug 24", active: false },
-  { title: "Context recovery notes", meta: "Aug 22", active: false }
-];
-
 const runProfiles: Array<{ id: RunProfile; label: string; harness: string | null }> = [
   { id: "auto", label: "Auto route", harness: null },
   { id: "coding", label: "Coding", harness: "coding-domain" },
@@ -603,7 +596,7 @@ function App() {
 }
 
 function Sidebar({ activeView, onSelect, runtimeStatus, sessions, selectedSessionId, onOpenPalette, onOpenSession }: { activeView: ViewId; onSelect: (view: ViewId) => void; runtimeStatus: RuntimeStatus; sessions: RuntimeSession[]; selectedSessionId: string; onOpenPalette: () => void; onOpenSession: (sessionId: string) => Promise<void> }) {
-  const threads: Array<{ title: string; meta: string; sessionId: string; active: boolean }> = sessions.length ? sessions.map((session) => ({ title: session.session_id, meta: session.workspace_id, sessionId: session.session_id, active: selectedSessionId === session.session_id })) : recentThreads.map((thread) => ({ ...thread, sessionId: "" }));
+  const threads = sessions.map((session) => ({ title: session.session_id, meta: session.workspace_id, sessionId: session.session_id, active: selectedSessionId === session.session_id }));
   return (
     <aside className="sidebar">
       <div className="window-controls" aria-label="Window controls">
@@ -631,11 +624,11 @@ function Sidebar({ activeView, onSelect, runtimeStatus, sessions, selectedSessio
         </div>)}
       </nav>
       <div className="recent-section">
-        <div className="recent-heading"><span className="nav-label">{sessions.length ? "Live sessions" : "Recent threads"}</span><button className="text-icon-button" aria-label="New thread" onClick={onOpenPalette}><Icon name="plus" size={15} /></button></div>
+        <div className="recent-heading"><span className="nav-label">{sessions.length ? "Live sessions" : "Sessions"}</span><button className="text-icon-button" aria-label="New thread" onClick={onOpenPalette}><Icon name="plus" size={15} /></button></div>
         <div className="thread-list">
-          {threads.map((thread) => <button className={`thread-item ${thread.active && activeView === "command" ? "is-current" : ""}`} key={thread.title} onClick={() => thread.sessionId ? void onOpenSession(thread.sessionId) : onSelect("command")}>
+          {threads.length ? threads.map((thread) => <button className={`thread-item ${thread.active && activeView === "command" ? "is-current" : ""}`} key={thread.title} onClick={() => void onOpenSession(thread.sessionId)}>
             <span className="thread-title">{thread.title}</span><span className="thread-meta">{thread.meta}</span>
-          </button>)}
+          </button>) : <span className="thread-meta">No recorded sessions</span>}
         </div>
       </div>
       <div className="sidebar-footer">
