@@ -53,6 +53,18 @@ export type RuntimeSessionDetail = {
   event_count: number;
 };
 
+export type RuntimeMemoryRecord = {
+  memory_id: string;
+  tier: string;
+  kind: string;
+  summary: string;
+  classification: string;
+  created_at_unix_seconds: number;
+  provenance: string;
+  origin: string;
+  evidence_count: number;
+};
+
 export type RuntimeRun = {
   session_id: string;
   execution_id: string;
@@ -124,6 +136,14 @@ type SessionEventsResponse = {
   events: {
     events: RuntimeEvent[];
     next_sequence: number | null;
+  };
+};
+
+type SessionMemoryResponse = {
+  kind: "session_memory";
+  memory: {
+    session_id: string;
+    records: RuntimeMemoryRecord[];
   };
 };
 
@@ -252,6 +272,14 @@ export class RuntimeClient {
       limit,
     });
     return response.events.events;
+  }
+
+  async memory(sessionId: string, limit = 64): Promise<RuntimeMemoryRecord[]> {
+    const response = await this.call<SessionMemoryResponse>("session.memory", {
+      session_id: sessionId,
+      limit,
+    });
+    return response.memory.records;
   }
 
   private async call<T>(method: string, params: unknown): Promise<T> {

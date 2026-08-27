@@ -115,3 +115,11 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 :root[data-theme="light"] .vessel-core { background: radial-gradient(circle at 30% 25%, rgba(255,255,255,.7), rgba(215,181,109,.13) 48%, rgba(255,253,250,.5) 75%); box-shadow: 0 0 45px rgba(145,101,28,.18), inset -13px -13px 25px rgba(24,28,34,.12); }
 :root[data-theme="light"] .approval-panel { background: linear-gradient(145deg, rgba(240,168,75,.12), rgba(255,253,250,.98) 48%); }
 :root[data-theme="light"] .approval-panel.is-preview-complete { background: linear-gradient(145deg, rgba(73,201,135,.12), rgba(255,253,250,.98) 48%); }
+
+.memory-record-list { display: grid; gap: 8px; min-height: 505px; padding: 16px; overflow: auto; background: var(--canvas); }
+.memory-record { padding: 13px; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--surface-2); }
+.memory-record-top, .memory-record-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.memory-record-time { margin-left: auto; color: var(--text-muted); font-size: 9px; }
+.memory-record p { margin: 11px 0; color: var(--text-secondary); font-size: 11px; line-height: 1.5; }
+.memory-record-meta { color: var(--text-muted); font-size: 9px; }
+.memory-record-meta .mono { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }

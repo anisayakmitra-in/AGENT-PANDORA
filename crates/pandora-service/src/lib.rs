@@ -239,6 +239,10 @@ fn service_request(request: &JsonRpcRequest) -> Result<Option<ServiceRequest>, (
             let params: ServiceEventPageRequest = deserialize_params(params)?;
             ServiceRequest::session_events(params)
         }
+        "session.memory" => {
+            let params: SessionMemoryParams = deserialize_params(params)?;
+            ServiceRequest::session_memory(params.session_id, params.limit).map_err(|_| ())?
+        }
         "run.execute" => {
             let params: ServiceRunRequest = deserialize_params(params)?;
             ServiceRequest::run(params)
@@ -290,6 +294,12 @@ struct SessionListParams {
 #[derive(Deserialize)]
 struct SessionInspectParams {
     session_id: String,
+}
+
+#[derive(Deserialize)]
+struct SessionMemoryParams {
+    session_id: String,
+    limit: u16,
 }
 
 #[derive(Serialize)]
@@ -409,6 +419,44 @@ mod tests {
         let body: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(body["result"]["kind"], "run");
         assert_eq!(body["result"]["run"]["status"], "completed");
+    }
+
+    #[tokio::test]
+    async fn rpc_returns_memory_for_a_selected_session() {
+        let fixture = Fixture::new();
+        let run = post(
+            &fixture,
+            Some(&fixture.token),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "run.execute",
+                "params": {"task": "guide"}
+            }),
+        )
+        .await;
+        let body = to_bytes(run.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        let session_id = body["result"]["run"]["session_id"].as_str().unwrap();
+
+        let response = post(
+            &fixture,
+            Some(&fixture.token),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "session.memory",
+                "params": {"session_id": session_id, "limit": 16}
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["result"]["kind"], "session_memory");
+        assert_eq!(body["result"]["memory"]["session_id"], session_id);
+        assert!(body["result"]["memory"]["records"].is_array());
     }
 
     #[tokio::test]

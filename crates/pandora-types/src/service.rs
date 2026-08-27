@@ -3,6 +3,7 @@ use crate::events::RuntimeEvent;
 use crate::ids::{
     ExecutionId, GeneId, HarnessId, IdError, PrincipalId, SessionId, TenantId, WorkspaceId,
 };
+use crate::memory::{MemoryKind, MemoryTier};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -370,6 +371,11 @@ pub enum ServiceRequest {
         protocol_version: u16,
         request: ServiceEventPageRequest,
     },
+    SessionMemory {
+        protocol_version: u16,
+        session_id: SessionId,
+        limit: u16,
+    },
     Run {
         protocol_version: u16,
         request: ServiceRunRequest,
@@ -429,6 +435,18 @@ impl ServiceRequest {
         }
     }
 
+    pub fn session_memory(
+        session_id: impl Into<String>,
+        limit: u16,
+    ) -> Result<Self, ServiceContractError> {
+        validate_page_limit(limit, MAX_SERVICE_SESSION_PAGE)?;
+        Ok(Self::SessionMemory {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            session_id: SessionId::new(session_id.into())?,
+            limit,
+        })
+    }
+
     pub const fn run(request: ServiceRunRequest) -> Self {
         Self::Run {
             protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
@@ -450,6 +468,9 @@ impl ServiceRequest {
                 protocol_version, ..
             }
             | Self::SessionEvents {
+                protocol_version, ..
+            }
+            | Self::SessionMemory {
                 protocol_version, ..
             }
             | Self::Run {
@@ -477,6 +498,12 @@ impl ServiceRequest {
                 Ok(())
             }
             Self::SessionEvents { request, .. } => request.validate(),
+            Self::SessionMemory {
+                session_id, limit, ..
+            } => {
+                SessionId::new(session_id.as_str())?;
+                validate_page_limit(*limit, MAX_SERVICE_SESSION_PAGE)
+            }
             Self::Run { request, .. } => request.validate(),
         }
     }
@@ -574,6 +601,105 @@ pub struct ServiceEventPage {
     session_id: SessionId,
     events: Vec<RuntimeEvent>,
     next_sequence: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServiceMemoryRecord {
+    memory_id: String,
+    tier: String,
+    kind: String,
+    summary: String,
+    classification: String,
+    created_at_unix_seconds: u64,
+    provenance: String,
+    origin: String,
+    evidence_count: u16,
+}
+
+impl ServiceMemoryRecord {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        memory_id: impl Into<String>,
+        tier: MemoryTier,
+        kind: MemoryKind,
+        summary: impl Into<String>,
+        classification: impl Into<String>,
+        created_at_unix_seconds: u64,
+        provenance: impl Into<String>,
+        origin: impl Into<String>,
+        evidence_count: u16,
+    ) -> Self {
+        Self {
+            memory_id: memory_id.into(),
+            tier: tier.as_str().to_owned(),
+            kind: kind.as_str().to_owned(),
+            summary: summary.into(),
+            classification: classification.into(),
+            created_at_unix_seconds,
+            provenance: provenance.into(),
+            origin: origin.into(),
+            evidence_count,
+        }
+    }
+
+    pub fn memory_id(&self) -> &str {
+        &self.memory_id
+    }
+
+    pub fn tier(&self) -> &str {
+        &self.tier
+    }
+
+    pub fn kind(&self) -> &str {
+        &self.kind
+    }
+
+    pub fn summary(&self) -> &str {
+        &self.summary
+    }
+
+    pub fn classification(&self) -> &str {
+        &self.classification
+    }
+
+    pub const fn created_at_unix_seconds(&self) -> u64 {
+        self.created_at_unix_seconds
+    }
+
+    pub fn provenance(&self) -> &str {
+        &self.provenance
+    }
+
+    pub fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    pub const fn evidence_count(&self) -> u16 {
+        self.evidence_count
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServiceMemoryPage {
+    session_id: SessionId,
+    records: Vec<ServiceMemoryRecord>,
+}
+
+impl ServiceMemoryPage {
+    pub fn new(session_id: SessionId, records: Vec<ServiceMemoryRecord>) -> Self {
+        Self {
+            session_id,
+            records,
+        }
+    }
+
+    pub fn session_id(&self) -> &SessionId {
+        &self.session_id
+    }
+
+    pub fn records(&self) -> &[ServiceMemoryRecord] {
+        &self.records
+    }
 }
 
 impl ServiceEventPage {
@@ -706,6 +832,10 @@ pub enum ServiceResponse {
         protocol_version: u16,
         events: ServiceEventPage,
     },
+    SessionMemory {
+        protocol_version: u16,
+        memory: ServiceMemoryPage,
+    },
     Run {
         protocol_version: u16,
         run: ServiceRunResult,
@@ -769,6 +899,13 @@ impl ServiceResponse {
         }
     }
 
+    pub const fn session_memory(memory: ServiceMemoryPage) -> Self {
+        Self::SessionMemory {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            memory,
+        }
+    }
+
     pub const fn run(run: ServiceRunResult) -> Self {
         Self::Run {
             protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
@@ -800,6 +937,9 @@ impl ServiceResponse {
                 protocol_version, ..
             }
             | Self::SessionEvents {
+                protocol_version, ..
+            }
+            | Self::SessionMemory {
                 protocol_version, ..
             }
             | Self::Run {

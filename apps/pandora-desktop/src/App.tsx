@@ -12,6 +12,7 @@ import {
   type RuntimeEngine,
   type RuntimeHarness,
   type RuntimeHealth,
+  type RuntimeMemoryRecord,
   type RuntimeProvider,
   type RuntimeStatus,
   type RuntimeSession,
@@ -279,6 +280,7 @@ function App() {
   const [selectedSessionId, setSelectedSessionId] = useState("");
   const [selectedSession, setSelectedSession] = useState<RuntimeSessionDetail | null>(null);
   const [events, setEvents] = useState<RuntimeEvent[]>([]);
+  const [memoryRecords, setMemoryRecords] = useState<RuntimeMemoryRecord[]>([]);
   const [harnesses, setHarnesses] = useState<RuntimeHarness[]>([]);
   const [engines, setEngines] = useState<RuntimeEngine[]>([]);
   const [tools, setTools] = useState<RuntimeTool[]>([]);
@@ -329,6 +331,7 @@ function App() {
       setSelectedSessionId("");
       setSelectedSession(null);
       setEvents([]);
+      setMemoryRecords([]);
       setHarnesses([]);
       setEngines([]);
       setTools([]);
@@ -368,10 +371,16 @@ function App() {
     let cancelled = false;
     const refresh = async () => {
       try {
-        const [detail, nextEvents, nextSessions] = await Promise.all([client.inspectSession(selectedSessionId), client.events(selectedSessionId), client.sessions()]);
+        const [detail, nextEvents, nextSessions, nextMemory] = await Promise.all([
+          client.inspectSession(selectedSessionId),
+          client.events(selectedSessionId),
+          client.sessions(),
+          client.memory(selectedSessionId),
+        ]);
         if (!cancelled) {
           setSelectedSession(detail);
           setEvents(nextEvents);
+          setMemoryRecords(nextMemory);
           setSessions(nextSessions);
         }
       } catch {
@@ -453,11 +462,16 @@ function App() {
     setRuntimeError("");
     setRunInFlight(true);
     try {
-      const [detail, nextEvents] = await Promise.all([client.inspectSession(sessionId), client.events(sessionId)]);
+      const [detail, nextEvents, nextMemory] = await Promise.all([
+        client.inspectSession(sessionId),
+        client.events(sessionId),
+        client.memory(sessionId),
+      ]);
       setLastRun(null);
       setSelectedSessionId(sessionId);
       setSelectedSession(detail);
       setEvents(nextEvents);
+      setMemoryRecords(nextMemory);
       setRuntimeStatus("connected");
     } catch (error: unknown) {
       setRuntimeStatus("offline");
@@ -475,10 +489,15 @@ function App() {
       const result = await client.run(task, profile === "auto" ? null : profile);
       setLastRun(result);
       setSessions(await client.sessions());
-      const [detail, nextEvents] = await Promise.all([client.inspectSession(result.session_id), client.events(result.session_id)]);
+      const [detail, nextEvents, nextMemory] = await Promise.all([
+        client.inspectSession(result.session_id),
+        client.events(result.session_id),
+        client.memory(result.session_id),
+      ]);
       setSelectedSessionId(result.session_id);
       setSelectedSession(detail);
       setEvents(nextEvents);
+      setMemoryRecords(nextMemory);
       setRuntimeStatus("connected");
     } catch (error: unknown) {
       setRuntimeStatus("offline");
@@ -514,7 +533,7 @@ function App() {
             onRun={runTask}
           />
         ) : activeView === "memory" ? (
-          <MemoryView runtimeStatus={runtimeStatus} />
+          <MemoryView runtimeStatus={runtimeStatus} records={memoryRecords} selectedSession={selectedSession} />
         ) : activeView === "workflows" ? (
           <WorkflowsView runtimeStatus={runtimeStatus} onOpenCommand={() => setActiveView("command")} />
         ) : activeView === "connections" ? (
@@ -696,7 +715,7 @@ function Inspector({ steps, approvalPreview, hasLiveRun, selectedStep, onApprova
   </aside>;
 }
 
-function MemoryView({ runtimeStatus }: { runtimeStatus: RuntimeStatus }) {
+function MemoryView({ runtimeStatus, records, selectedSession }: { runtimeStatus: RuntimeStatus; records: RuntimeMemoryRecord[]; selectedSession: RuntimeSessionDetail | null }) {
   const graphNodes = [
     { className: "graph-node graph-node-gold node-a", label: "active plan" },
     { className: "graph-node graph-node-blue node-b", label: "L1 evidence" },
@@ -705,8 +724,8 @@ function MemoryView({ runtimeStatus }: { runtimeStatus: RuntimeStatus }) {
     { className: "graph-node graph-node-violet node-e", label: "lineage" },
     { className: "graph-node graph-node-muted node-f", label: "provider" }
   ];
-  const serviceMessage = runtimeStatus === "connected" ? "The current local service does not expose memory inspection yet." : "Connect the local service when memory inspection is available.";
-  return <div className="full-view"><PageHeader eyebrow="Scoped knowledge" title="Memory" description="A design preview of bounded evidence, approved lessons, and provenance." actions={<><button className="button button-secondary" disabled><Icon name="archive" size={14} /> Inspect records</button><button className="button button-primary" disabled><Icon name="plus" size={14} /> Add evidence</button></>} /><div className="memory-grid"><Panel className="memory-graph-panel"><div className="panel-toolbar"><div><span className="eyebrow">DESIGN PREVIEW · PROVENANCE GRAPH</span><h3>o-pandora / current session</h3></div><div className="toolbar-pills"><Chip tone="gold">L2 example</Chip><Chip tone="blue">L1 example</Chip><Chip tone="green">L0 example</Chip></div></div><div className="graph-canvas"><div className="graph-lines"><span className="graph-line line-one" /><span className="graph-line line-two" /><span className="graph-line line-three" /><span className="graph-line line-four" /><span className="graph-line line-five" /></div>{graphNodes.map((node) => <div className={node.className} key={node.label}><span /><label>{node.label}</label></div>)}<div className="graph-center-label"><span>Example records</span><small>not loaded from runtime</small></div></div></Panel><div className="memory-side"><Panel><div className="panel-heading"><h3>Memory layers</h3><Chip tone="neutral">Preview</Chip></div><Layer label="L0 · Ephemeral trace" value="Example" detail="expires automatically" tone="green" /><Layer label="L1 · Distilled evidence" value="Example" detail="session scoped" tone="blue" /><Layer label="L2 · Evolutionary" value="Example" detail="promotion gated" tone="gold" /></Panel><Panel><div className="panel-heading"><h3>Availability</h3><Chip tone="neutral" icon="lock">Unavailable</Chip></div><p className="connection-note">{serviceMessage}</p></Panel></div></div></div>;
+  const serviceMessage = runtimeStatus === "connected" ? selectedSession ? "Only redacted records for the selected session are shown." : "Select a session to inspect scoped memory." : "Connect the local service to inspect scoped memory.";
+  return <div className="full-view"><PageHeader eyebrow="Scoped knowledge" title="Memory" description="Inspect bounded, redacted evidence with provenance labels." actions={<Chip tone={records.length ? "green" : "neutral"} icon="archive">{records.length ? `${records.length} records` : "No records"}</Chip>} /><div className="memory-grid"><Panel className="memory-graph-panel"><div className="panel-toolbar"><div><span className="eyebrow">SESSION MEMORY · REDACTED</span><h3>{selectedSession?.session.session_id ?? "No session selected"}</h3></div><div className="toolbar-pills"><Chip tone="gold">L2</Chip><Chip tone="blue">L1</Chip><Chip tone="green">L0 ephemeral</Chip></div></div>{records.length ? <div className="memory-record-list">{records.map((record) => <article className="memory-record" key={`${record.tier}-${record.memory_id}`}><div className="memory-record-top"><Chip tone={record.tier === "l2" ? "gold" : "blue"}>{record.tier}</Chip><span className="eyebrow">{record.kind}</span><span className="memory-record-time">{new Date(record.created_at_unix_seconds * 1000).toLocaleString()}</span></div><p>{record.summary}</p><div className="memory-record-meta"><span>{record.classification}</span><span>{record.origin}</span><span>{record.evidence_count} evidence</span><span className="mono">{record.provenance}</span></div></article>)}</div> : <div className="graph-canvas"><div className="graph-lines"><span className="graph-line line-one" /><span className="graph-line line-two" /><span className="graph-line line-three" /><span className="graph-line line-four" /><span className="graph-line line-five" /></div>{graphNodes.map((node) => <div className={node.className} key={node.label}><span /><label>{node.label}</label></div>)}<div className="graph-center-label"><span>Scoped memory</span><small>{selectedSession ? "no records for session" : "connect and select a session"}</small></div></div>}</Panel><div className="memory-side"><Panel><div className="panel-heading"><h3>Memory layers</h3><Chip tone={records.length ? "green" : "neutral"}>{records.length ? "Live" : "Unavailable"}</Chip></div><Layer label="L0 · Ephemeral trace" value="RAM" detail="expires automatically" tone="green" /><Layer label="L1 · Distilled evidence" value={String(records.filter((record) => record.tier === "l1").length)} detail="session scoped" tone="blue" /><Layer label="L2 · Evolutionary" value={String(records.filter((record) => record.tier === "l2").length)} detail="promotion gated" tone="gold" /></Panel><Panel><div className="panel-heading"><h3>Availability</h3><Chip tone={records.length ? "green" : "neutral"} icon="lock">{records.length ? "Scoped" : "Unavailable"}</Chip></div><p className="connection-note">{serviceMessage}</p></Panel></div></div></div>;
 }
 
 function Layer({ label, value, detail, tone }: { label: string; value: string; detail: string; tone: "green" | "blue" | "gold" }) {
