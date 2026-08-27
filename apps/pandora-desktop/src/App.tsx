@@ -129,7 +129,10 @@ const runProfiles: Array<{ id: RunProfile; label: string; harness: string | null
 ];
 
 function harnessForProfile(profile: RunProfile): string | null {
-  return runProfiles.find((candidate) => candidate.id === profile)?.harness ?? null;
+  if (profile === "auto") {
+    return null;
+  }
+  return runProfiles.find((candidate) => candidate.id === profile)?.harness ?? profile;
 }
 
 const authoritySteps: Array<{
