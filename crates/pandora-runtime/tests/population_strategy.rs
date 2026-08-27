@@ -8,6 +8,7 @@ use pandora_types::{
     PopulationMutationRequest, PopulationPolicy, PopulationScope, RequestDigest, SessionId,
     TenantId, Timestamp, Usage, WorkspaceId,
 };
+use std::fs;
 
 fn policy(max_parents: usize) -> PopulationPolicy {
     PopulationPolicy::new(
@@ -147,6 +148,46 @@ fn registered_strategy(
     let strategy = PopulationStrategy::new(StrategyProfile::Research, policy);
     strategy.register_population(population.clone()).unwrap();
     strategy
+}
+
+#[test]
+fn population_state_survives_strategy_restart() {
+    let path = std::env::temp_dir().join(format!(
+        "pandora-population-state-{}-{}.json",
+        std::process::id(),
+        Timestamp::from_unix_seconds(1).as_unix_seconds()
+    ));
+    let _ = fs::remove_file(&path);
+    let population = CandidatePopulation::new(
+        scope(),
+        0,
+        vec![candidate("candidate-a", 90, 0, &["train-1"])],
+    )
+    .unwrap();
+    let strategy = PopulationStrategy::open(&path, StrategyProfile::Research, policy(2)).unwrap();
+    strategy.register_population(population.clone()).unwrap();
+    drop(strategy);
+
+    let reopened = PopulationStrategy::open(&path, StrategyProfile::Research, policy(2)).unwrap();
+    assert_eq!(
+        reopened
+            .population(population.scope().population_id())
+            .unwrap(),
+        population
+    );
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn population_state_rejects_corrupt_or_oversized_schema() {
+    let path = std::env::temp_dir().join(format!(
+        "pandora-population-corrupt-{}.json",
+        std::process::id()
+    ));
+    fs::write(&path, br#"{"version":99,"populations":[]}"#).unwrap();
+    let result = PopulationStrategy::open(&path, StrategyProfile::Research, policy(2));
+    assert!(matches!(result, Err(PopulationStrategyError::CorruptState)));
+    let _ = fs::remove_file(path);
 }
 
 fn completed_lineage_run() -> (

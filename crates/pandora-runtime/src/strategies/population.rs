@@ -7,14 +7,172 @@ use pandora_types::{
     LineageView, MemoryId, MemoryKind, MemoryRecord, MemoryScope, MemoryTier, MutationBatch,
     MutationPrecheckReceipt, POPULATION_PROTOCOL_VERSION, PopulationCandidate,
     PopulationContractError, PopulationEvaluation, PopulationId, PopulationMutationRequest,
-    PopulationPolicy, PopulationScope, PrecheckFailure, RequestDigest, Timestamp, Usage,
+    PopulationPolicy, PopulationScope, PrecheckFailure, RequestDigest, SessionId, TenantId,
+    Timestamp, Usage, WorkspaceId,
 };
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
+use std::fs;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+const POPULATION_STATE_VERSION: u16 = 1;
+const MAX_POPULATION_STATE_BYTES: usize = 4 * 1024 * 1024;
+
 type PreparedGeneration = (CandidatePopulation, Vec<CandidateOutcome>, GenerationStats);
+
+#[derive(Debug, Deserialize, Serialize)]
+struct PopulationStateFile {
+    version: u16,
+    populations: Vec<PopulationStateEntry>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct PopulationStateEntry {
+    population: PopulationSnapshot,
+    receipts: Vec<RequestDigest>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct PopulationSnapshot {
+    population_id: PopulationId,
+    tenant_id: TenantId,
+    workspace_id: WorkspaceId,
+    session_id: SessionId,
+    generation: u32,
+    candidates: Vec<PopulationCandidateSnapshot>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct PopulationCandidateSnapshot {
+    artifact_id: ArtifactId,
+    parents: Vec<ArtifactId>,
+    generation: u32,
+    score: u8,
+    viable: bool,
+    child_count: u32,
+    evaluation_digest: RequestDigest,
+    training_failures: Vec<pandora_types::FailureId>,
+}
+
+impl PopulationStateFile {
+    fn from_populations(populations: &BTreeMap<PopulationId, PopulationState>) -> Self {
+        Self {
+            version: POPULATION_STATE_VERSION,
+            populations: populations
+                .values()
+                .map(|state| PopulationStateEntry {
+                    population: PopulationSnapshot::from_population(&state.population),
+                    receipts: state.receipts.iter().cloned().collect(),
+                })
+                .collect(),
+        }
+    }
+
+    fn into_populations(
+        self,
+    ) -> Result<BTreeMap<PopulationId, PopulationState>, PopulationStrategyError> {
+        if self.version != POPULATION_STATE_VERSION {
+            return Err(PopulationStrategyError::CorruptState);
+        }
+        let mut populations = BTreeMap::new();
+        for entry in self.populations {
+            let population = entry.population.into_population()?;
+            let id = population.scope().population_id().clone();
+            let mut receipts = BTreeSet::new();
+            for receipt in entry.receipts {
+                if !receipts.insert(receipt) {
+                    return Err(PopulationStrategyError::CorruptState);
+                }
+            }
+            let mut state = PopulationState::new(population);
+            state.receipts = receipts;
+            if populations.insert(id, state).is_some() {
+                return Err(PopulationStrategyError::CorruptState);
+            }
+        }
+        Ok(populations)
+    }
+}
+
+impl PopulationSnapshot {
+    fn from_population(population: &CandidatePopulation) -> Self {
+        Self {
+            population_id: population.scope().population_id().clone(),
+            tenant_id: population.scope().tenant_id().clone(),
+            workspace_id: population.scope().workspace_id().clone(),
+            session_id: population.scope().session_id().clone(),
+            generation: population.generation(),
+            candidates: population
+                .candidates()
+                .iter()
+                .map(|candidate| PopulationCandidateSnapshot {
+                    artifact_id: candidate.artifact_id().clone(),
+                    parents: candidate.parents().to_vec(),
+                    generation: candidate.generation(),
+                    score: candidate.score(),
+                    viable: candidate.viable(),
+                    child_count: candidate.child_count(),
+                    evaluation_digest: candidate.evaluation_digest().clone(),
+                    training_failures: candidate.training_failures().to_vec(),
+                })
+                .collect(),
+        }
+    }
+
+    fn into_population(self) -> Result<CandidatePopulation, PopulationStrategyError> {
+        let scope = pandora_types::PopulationScope::new(
+            self.population_id,
+            self.tenant_id,
+            self.workspace_id,
+            self.session_id,
+        );
+        let candidates = self
+            .candidates
+            .into_iter()
+            .map(|candidate| {
+                PopulationCandidate::new(
+                    candidate.artifact_id,
+                    candidate.parents,
+                    candidate.generation,
+                    candidate.score,
+                    candidate.viable,
+                    candidate.child_count,
+                    candidate.evaluation_digest,
+                    candidate.training_failures,
+                )
+                .map_err(PopulationStrategyError::from)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        CandidatePopulation::new(scope, self.generation, candidates)
+            .map_err(PopulationStrategyError::from)
+    }
+}
+
+fn load_population_state(
+    path: &Path,
+) -> Result<BTreeMap<PopulationId, PopulationState>, PopulationStrategyError> {
+    let file = fs::File::open(path).map_err(|_| PopulationStrategyError::Io)?;
+    let mut data = Vec::new();
+    file.take(MAX_POPULATION_STATE_BYTES as u64 + 1)
+        .read_to_end(&mut data)
+        .map_err(|_| PopulationStrategyError::Io)?;
+    if data.len() > MAX_POPULATION_STATE_BYTES {
+        return Err(PopulationStrategyError::CorruptState);
+    }
+    let state = serde_json::from_slice::<PopulationStateFile>(&data)
+        .map_err(|_| PopulationStrategyError::CorruptState)?;
+    let mut canonical =
+        serde_json::to_vec_pretty(&state).map_err(|_| PopulationStrategyError::Serialization)?;
+    canonical.push(b'\n');
+    if canonical != data {
+        return Err(PopulationStrategyError::CorruptState);
+    }
+    state.into_populations()
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PopulationStrategyError {
@@ -41,6 +199,9 @@ pub enum PopulationStrategyError {
     StateUnavailable,
     Memory(MemoryError),
     Contract(PopulationContractError),
+    Io,
+    Serialization,
+    CorruptState,
 }
 
 impl fmt::Display for PopulationStrategyError {
@@ -115,6 +276,10 @@ impl fmt::Display for PopulationStrategyError {
             Self::StateUnavailable => formatter.write_str("population state is unavailable"),
             Self::Memory(error) => write!(formatter, "lineage memory failed: {error:?}"),
             Self::Contract(error) => error.fmt(formatter),
+            Self::Io => formatter.write_str("population state storage failed"),
+            Self::Serialization | Self::CorruptState => {
+                formatter.write_str("population state is corrupt")
+            }
         }
     }
 }
@@ -165,6 +330,7 @@ pub struct PopulationStrategy {
     profile: StrategyProfile,
     policy: PopulationPolicy,
     populations: Mutex<BTreeMap<PopulationId, PopulationState>>,
+    state_path: Option<PathBuf>,
 }
 
 impl PopulationStrategy {
@@ -173,7 +339,27 @@ impl PopulationStrategy {
             profile,
             policy,
             populations: Mutex::new(BTreeMap::new()),
+            state_path: None,
         }
+    }
+
+    pub fn open(
+        path: impl AsRef<Path>,
+        profile: StrategyProfile,
+        policy: PopulationPolicy,
+    ) -> Result<Self, PopulationStrategyError> {
+        let path = path.as_ref().to_owned();
+        let populations = if path.exists() {
+            load_population_state(&path)?
+        } else {
+            BTreeMap::new()
+        };
+        Ok(Self {
+            profile,
+            policy,
+            populations: Mutex::new(populations),
+            state_path: Some(path),
+        })
     }
 
     pub const fn profile(&self) -> StrategyProfile {
@@ -199,7 +385,11 @@ impl PopulationStrategy {
                 population_id,
             ));
         }
-        populations.insert(population_id, PopulationState::new(population));
+        populations.insert(population_id.clone(), PopulationState::new(population));
+        if let Err(error) = self.persist_locked(&populations) {
+            populations.remove(&population_id);
+            return Err(error);
+        }
         Ok(())
     }
 
@@ -375,40 +565,79 @@ impl PopulationStrategy {
             .populations
             .lock()
             .map_err(|_| PopulationStrategyError::StateUnavailable)?;
-        let state = populations.get_mut(plan.population_id()).ok_or_else(|| {
-            PopulationStrategyError::PopulationNotRegistered(plan.population_id().clone())
-        })?;
-        self.validate_plan_state(&state.population, plan)?;
-        for outcome in receipt.outcomes() {
-            if state.graph.contains_key(outcome.candidate_artifact()) {
-                return Err(PopulationStrategyError::InvalidOutcome(
-                    outcome.candidate_artifact().clone(),
-                    "reuses a historical artifact identity",
-                ));
+        let previous_state;
+        {
+            let state = populations.get_mut(plan.population_id()).ok_or_else(|| {
+                PopulationStrategyError::PopulationNotRegistered(plan.population_id().clone())
+            })?;
+            self.validate_plan_state(&state.population, plan)?;
+            previous_state = state.clone();
+            for outcome in receipt.outcomes() {
+                if state.graph.contains_key(outcome.candidate_artifact()) {
+                    return Err(PopulationStrategyError::InvalidOutcome(
+                        outcome.candidate_artifact().clone(),
+                        "reuses a historical artifact identity",
+                    ));
+                }
             }
-        }
-        for candidate in resulting.candidates() {
-            state.graph.insert(
-                candidate.artifact_id().clone(),
-                candidate.parents().to_vec(),
-            );
-            for parent in candidate.parents() {
-                state.graph.entry(parent.clone()).or_default();
+            for candidate in resulting.candidates() {
+                state.graph.insert(
+                    candidate.artifact_id().clone(),
+                    candidate.parents().to_vec(),
+                );
+                for parent in candidate.parents() {
+                    state.graph.entry(parent.clone()).or_default();
+                }
             }
+            for outcome in receipt.outcomes() {
+                state
+                    .graph
+                    .entry(outcome.candidate_artifact().clone())
+                    .or_insert_with(|| vec![outcome.parent_artifact().clone()]);
+                state
+                    .graph
+                    .entry(outcome.parent_artifact().clone())
+                    .or_default();
+            }
+            state.receipts.insert(receipt.digest().clone());
+            state.population = resulting;
         }
-        for outcome in receipt.outcomes() {
-            state
-                .graph
-                .entry(outcome.candidate_artifact().clone())
-                .or_insert_with(|| vec![outcome.parent_artifact().clone()]);
-            state
-                .graph
-                .entry(outcome.parent_artifact().clone())
-                .or_default();
+        if let Err(error) = self.persist_locked(&populations) {
+            if let Some(state) = populations.get_mut(plan.population_id()) {
+                *state = previous_state;
+            }
+            return Err(error);
         }
-        state.receipts.insert(receipt.digest().clone());
-        state.population = resulting;
         Ok(receipt)
+    }
+
+    fn persist_locked(
+        &self,
+        populations: &BTreeMap<PopulationId, PopulationState>,
+    ) -> Result<(), PopulationStrategyError> {
+        let Some(path) = &self.state_path else {
+            return Ok(());
+        };
+        let file = PopulationStateFile::from_populations(populations);
+        let mut data =
+            serde_json::to_vec_pretty(&file).map_err(|_| PopulationStrategyError::Serialization)?;
+        data.push(b'\n');
+        if data.len() > MAX_POPULATION_STATE_BYTES {
+            return Err(PopulationStrategyError::Serialization);
+        }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent).map_err(|_| PopulationStrategyError::Io)?;
+        }
+        let mut destination = atomic_write_file::AtomicWriteFile::open(path)
+            .map_err(|_| PopulationStrategyError::Io)?;
+        destination
+            .write_all(&data)
+            .map_err(|_| PopulationStrategyError::Io)?;
+        destination
+            .commit()
+            .map_err(|_| PopulationStrategyError::Io)
     }
 
     pub fn record_lineage(
