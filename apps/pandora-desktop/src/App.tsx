@@ -284,6 +284,7 @@ function App() {
   const [tools, setTools] = useState<RuntimeTool[]>([]);
   const [providers, setProviders] = useState<RuntimeProvider[]>([]);
   const [lastRun, setLastRun] = useState<RuntimeRun | null>(null);
+  const [runInFlight, setRunInFlight] = useState(false);
   const [runProfile, setRunProfile] = useState<RunProfile>("auto");
   const [theme, setTheme] = useState<ThemeMode>(loadTheme);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -450,6 +451,7 @@ function App() {
     }
     setRuntimeStatus("checking");
     setRuntimeError("");
+    setRunInFlight(true);
     try {
       const [detail, nextEvents] = await Promise.all([client.inspectSession(sessionId), client.events(sessionId)]);
       setLastRun(null);
@@ -483,6 +485,8 @@ function App() {
       const message = error instanceof Error ? error.message : "Pandora run failed";
       setRuntimeError(message);
       throw error;
+    } finally {
+      setRunInFlight(false);
     }
   };
 
@@ -504,6 +508,7 @@ function App() {
             lastRun={lastRun}
             events={events}
             harnesses={harnesses}
+            runInFlight={runInFlight}
             runProfile={runProfile}
             onRunProfileChange={setRunProfile}
             onRun={runTask}
@@ -595,14 +600,14 @@ function runtimeStatusLabel(status: RuntimeStatus): string {
   }
 }
 
-function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onApprovalClose, onSelectStep, runtimeStatus, selectedSession, lastRun, events, harnesses, runProfile, onRunProfileChange, onRun }: { approvalPreview: boolean; selectedStep: string; onApprovalPreview: () => void; onApprovalClose: () => void; onSelectStep: (id: string) => void; runtimeStatus: RuntimeStatus; selectedSession: RuntimeSessionDetail | null; lastRun: RuntimeRun | null; events: RuntimeEvent[]; harnesses: RuntimeHarness[]; runProfile: RunProfile; onRunProfileChange: (profile: RunProfile) => void; onRun: (task: string, profile: RunProfile) => Promise<void> }) {
+function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onApprovalClose, onSelectStep, runtimeStatus, selectedSession, lastRun, events, harnesses, runInFlight, runProfile, onRunProfileChange, onRun }: { approvalPreview: boolean; selectedStep: string; onApprovalPreview: () => void; onApprovalClose: () => void; onSelectStep: (id: string) => void; runtimeStatus: RuntimeStatus; selectedSession: RuntimeSessionDetail | null; lastRun: RuntimeRun | null; events: RuntimeEvent[]; harnesses: RuntimeHarness[]; runInFlight: boolean; runProfile: RunProfile; onRunProfileChange: (profile: RunProfile) => void; onRun: (task: string, profile: RunProfile) => Promise<void> }) {
   const [task, setTask] = useState("");
   const [runError, setRunError] = useState("");
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     const nextTask = task.trim();
-    if (!nextTask) {
+    if (!nextTask || runInFlight) {
       return;
     }
     setRunError("");
@@ -623,15 +628,15 @@ function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onAppro
 
   const connected = runtimeStatus === "connected";
   const profileOptions = connected && harnesses.length ? [{ id: "auto", label: "Auto route" }, ...harnesses.map((harness) => ({ id: harness.id, label: harness.name }))] : runProfiles;
-  const coreTitle = lastRun ? `Run ${lastRun.status}` : selectedSession ? "Session ready to inspect" : connected ? "Ready for a governed run" : "Awaiting your decision";
-  const coreDescription = lastRun ? `${lastRun.receipt_count} receipts · ${lastRun.event_count} events recorded.` : selectedSession ? `${selectedSession.event_count} recorded events · ${selectedSession.session.workspace_id}` : connected ? "Connected to the authenticated local Pandora service." : "Connect the local service to submit a real governed run.";
+  const coreTitle = runInFlight ? "Pandora is executing" : lastRun ? `Run ${lastRun.status}` : selectedSession ? "Session ready to inspect" : connected ? "Ready for a governed run" : "Awaiting your decision";
+  const coreDescription = runInFlight ? "The request is in the governed runtime; wait for its recorded result." : lastRun ? `${lastRun.receipt_count} receipts · ${lastRun.event_count} events recorded.` : selectedSession ? `${selectedSession.event_count} recorded events · ${selectedSession.session.workspace_id}` : connected ? "Connected to the authenticated local Pandora service." : "Connect the local service to submit a real governed run.";
   const steps = authorityStepsForRun(lastRun, events, runProfile);
   const policyValue = lastRun?.status === "denied" ? "Denied" : lastRun?.status === "approval_required" ? "Approval" : connected ? "Supervised" : "Waiting";
   const policyDetail = lastRun ? "run decision" : "Parliament + monitor";
   const evidenceValue = lastRun ? String(lastRun.receipt_count) : selectedSession ? String(selectedSession.event_count) : "—";
   const evidenceDetail = lastRun ? "receipts" : selectedSession ? "events recorded" : "after execution";
 
-  return <div className="command-layout">
+  return <div className="command-layout" aria-busy={runInFlight}>
     <section className="core-column">
       <div className="stage-toolbar"><div><span className="eyebrow">ACTIVE WORKSPACE</span><strong>Pandora / local</strong></div><div className="stage-controls"><Chip tone={connected ? "green" : runtimeStatus === "offline" ? "amber" : "blue"} icon="activity">{runtimeStatusLabel(runtimeStatus)}</Chip><button className="icon-button" type="button" aria-label="Workspace options" disabled><Icon name="dots" size={17} /></button></div></div>
       <div className="core-stage">
@@ -643,7 +648,7 @@ function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onAppro
         <div className="core-caption"><span className="eyebrow">PANDORA CORE</span><h1>{approvalPreview ? "Approval recorded in preview" : coreTitle}</h1><p>{approvalPreview ? "No permit issued · runtime service is not connected to this preview." : coreDescription}</p></div>
         <div className="core-metrics"><Metric label="Context" value={selectedSession ? "Scoped" : "—"} detail={selectedSession ? selectedSession.session.workspace_id : "not loaded"} /><Metric label="Policy" value={policyValue} detail={policyDetail} /><Metric label="Evidence" value={evidenceValue} detail={evidenceDetail} /></div>
       </div>
-      <form className="composer-wrap" onSubmit={submit}><div className="composer"><button type="button" className="composer-add" aria-label="Context attachments unavailable" title="Context attachments are not available yet" disabled><Icon name="plus" size={17} /></button><textarea value={task} onChange={(event) => setTask(event.target.value)} onKeyDown={handleTaskKeyDown} placeholder="Ask Pandora to inspect, plan, or act…" aria-label="Pandora task" rows={1} /><div className="composer-actions"><label className="composer-profile"><span className="sr-only">Execution Harness</span><select value={runProfile} onChange={(event) => onRunProfileChange(event.target.value)} aria-label="Execution Harness">{profileOptions.map((profile) => <option value={profile.id} key={profile.id}>{profile.label}</option>)}</select></label><span className="composer-mode"><Icon name="spark" size={14} /> Governed run</span><button type="submit" className="send-button" aria-label="Send" disabled={!connected || !task.trim()}><Icon name="arrow" size={16} /></button></div></div><div className="composer-hint"><span>{runError || (connected ? "Ctrl/⌘ + Enter to send" : "Connect the local service in Connections")}</span><span>All effects require an exact permit</span></div></form>
+      <form className="composer-wrap" onSubmit={submit}><div className="composer"><button type="button" className="composer-add" aria-label="Context attachments unavailable" title="Context attachments are not available yet" disabled><Icon name="plus" size={17} /></button><textarea value={task} onChange={(event) => setTask(event.target.value)} onKeyDown={handleTaskKeyDown} placeholder="Ask Pandora to inspect, plan, or act…" aria-label="Pandora task" rows={1} disabled={runInFlight} /><div className="composer-actions"><label className="composer-profile"><span className="sr-only">Execution Harness</span><select value={runProfile} onChange={(event) => onRunProfileChange(event.target.value)} aria-label="Execution Harness" disabled={runInFlight}>{profileOptions.map((profile) => <option value={profile.id} key={profile.id}>{profile.label}</option>)}</select></label><span className="composer-mode"><Icon name="spark" size={14} /> Governed run</span><button type="submit" className="send-button" aria-label={runInFlight ? "Pandora is running" : "Send"} disabled={!connected || !task.trim() || runInFlight}><Icon name="arrow" size={16} /></button></div></div><div className="composer-hint"><span>{runError || (runInFlight ? "Pandora is running the governed request…" : connected ? "Ctrl/⌘ + Enter to send" : "Connect the local service in Connections")}</span><span>All effects require an exact permit</span></div></form>
       {lastRun ? <Panel className="run-result"><div className="panel-heading"><h3>Latest run</h3><Chip tone={lastRun.status === "completed" ? "green" : "amber"}>{lastRun.status}</Chip></div><div className="run-result-meta"><span className="mono">{lastRun.execution_id}</span><span>{lastRun.selected_gene ?? "No gene selected"}</span></div><p>{lastRun.output || "No output returned."}</p>{events.length ? <div className="event-list"><span className="eyebrow">LIVE ACTIVITY</span>{events.map((event) => <div className="event-row" key={event.event_id}><span className="event-dot" /><span>{event.event_type.replaceAll("_", " ")}</span><span className="mono">{event.event_id}</span></div>)}</div> : null}</Panel> : null}
     </section>
     <Inspector steps={steps} approvalPreview={approvalPreview} hasLiveRun={Boolean(lastRun)} selectedStep={selectedStep} onApprovalPreview={onApprovalPreview} onApprovalClose={onApprovalClose} onSelectStep={onSelectStep} />
