@@ -665,7 +665,7 @@ impl AgentLoop {
                 .invoke_provider(provider, request, &session, now)
                 .map_err(AgentLoopError::Execution)?;
             provider_receipts.extend(invocation.receipts().iter().cloned());
-            provider_metrics.push(invocation.metrics().clone());
+            provider_metrics.extend(invocation.metrics_history().iter().cloned());
             let response = match invocation.into_result() {
                 Ok(response) => response,
                 Err(error) => {
@@ -1281,6 +1281,15 @@ mod tests {
 
         assert_eq!(result.final_text(), "done");
         assert_eq!(result.provider_receipts().len(), 2);
+        assert_eq!(result.provider_metrics().len(), 2);
+        assert_eq!(
+            result.provider_metrics()[0].provider_id(),
+            "primary-provider"
+        );
+        assert_eq!(
+            result.provider_metrics()[1].provider_id(),
+            "openai-compatible"
+        );
         assert!(matches!(
             result.provider_receipts()[0].outcome(),
             pandora_types::EffectOutcome::Failed { code } if code == "transport"

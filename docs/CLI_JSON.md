@@ -64,11 +64,10 @@ duration for the run. It is diagnostic evidence and does not include provider
 credentials or model content.
 
 Agent runs also include `provider_metrics`, an ordered array with one entry per
-completed provider invocation. Each entry reports the provider and model IDs,
-elapsed milliseconds, input and output token counts, and whether the invocation
-succeeded. Fallback attempts are represented by the invocation that returned
-the logical provider result; provider receipts remain the authority for the
-full effect history.
+provider attempt. Each entry reports the provider and model IDs, elapsed
+milliseconds, input and output token counts, and whether the attempt succeeded.
+Fallback attempts appear in execution order; provider receipts remain the
+authority for the full effect history.
 
 ## Error envelope
 

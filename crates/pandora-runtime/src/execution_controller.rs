@@ -747,6 +747,7 @@ impl ExecutionController {
             return Ok(primary);
         };
         fallback_result.prepend_receipt(primary.receipt().clone());
+        fallback_result.prepend_metrics(primary.metrics().clone());
         Ok(fallback_result)
     }
 

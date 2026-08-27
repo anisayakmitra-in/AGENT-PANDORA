@@ -12,7 +12,7 @@ static NEXT_RECEIPT_ID: AtomicU64 = AtomicU64::new(1);
 pub struct ProviderResult {
     result: Result<ModelResponse, ProviderError>,
     receipts: Vec<EffectReceipt>,
-    metrics: ProviderCallMetrics,
+    metrics: Vec<ProviderCallMetrics>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -71,11 +71,21 @@ impl ProviderResult {
     }
 
     pub fn metrics(&self) -> &ProviderCallMetrics {
+        self.metrics
+            .last()
+            .expect("provider results always contain metrics")
+    }
+
+    pub fn metrics_history(&self) -> &[ProviderCallMetrics] {
         &self.metrics
     }
 
     pub(crate) fn prepend_receipt(&mut self, receipt: EffectReceipt) {
         self.receipts.insert(0, receipt);
+    }
+
+    pub(crate) fn prepend_metrics(&mut self, metrics: ProviderCallMetrics) {
+        self.metrics.insert(0, metrics);
     }
 }
 
@@ -122,14 +132,14 @@ impl ProviderExecutor {
         ProviderResult {
             result,
             receipts: vec![receipt_for(permit, now, outcome)],
-            metrics: ProviderCallMetrics {
+            metrics: vec![ProviderCallMetrics {
                 provider_id,
                 model_id,
                 elapsed_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
                 input_tokens,
                 output_tokens,
                 succeeded,
-            },
+            }],
         }
     }
 }
