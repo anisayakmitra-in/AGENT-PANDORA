@@ -607,15 +607,8 @@ pub(super) fn execute_agent_core(
                 provider.manifest().id().as_str(),
                 summary.runs(),
             )?;
-            let efficiency_recorded = record_agent_efficiency(
-                config,
-                session,
-                options.task_class,
-                provider.as_ref(),
-                &summary,
-                elapsed_millis(started),
-                true,
-            );
+            let efficiency_recorded =
+                record_agent_efficiency(config, session, options.task_class, &summary, true);
             store
                 .save_agent_transcript(
                     session.id(),
@@ -678,15 +671,7 @@ pub(super) fn execute_agent_core(
                 provider.manifest().id().as_str(),
                 summary.runs(),
             )?;
-            let _ = record_agent_efficiency(
-                config,
-                session,
-                options.task_class,
-                provider.as_ref(),
-                &summary,
-                elapsed_millis(started),
-                false,
-            );
+            let _ = record_agent_efficiency(config, session, options.task_class, &summary, false);
             store
                 .save_agent_transcript(
                     session.id(),
@@ -752,15 +737,8 @@ pub(super) fn execute_agent_core(
                 provider.manifest().id().as_str(),
                 summary.runs(),
             )?;
-            let efficiency_recorded = record_agent_efficiency(
-                config,
-                session,
-                options.task_class,
-                provider.as_ref(),
-                &summary,
-                elapsed_millis(started),
-                false,
-            );
+            let efficiency_recorded =
+                record_agent_efficiency(config, session, options.task_class, &summary, false);
             store
                 .save_agent_transcript(
                     session.id(),
@@ -1364,9 +1342,7 @@ fn record_agent_efficiency(
     config: &RuntimeConfig,
     session: &Session,
     task_class: &str,
-    provider: &dyn pandora_provider::Provider,
     summary: &pandora_runtime::AgentRunSummary,
-    latency_ms: u64,
     completed: bool,
 ) -> bool {
     let execution_id = summary
@@ -1383,44 +1359,55 @@ fn record_agent_efficiency(
     let Some(execution_id) = execution_id else {
         return false;
     };
-    let target = format!(
-        "{}/{}",
-        provider.manifest().id(),
-        provider.manifest().default_model()
-    );
-    let prompt_tokens = summary.usage().prompt_tokens();
-    let completion_tokens = summary.usage().completion_tokens();
-    let sample = match config.provider_cost_micros(
-        provider.manifest().id().as_str(),
-        prompt_tokens,
-        completion_tokens,
-    ) {
-        Some(cost_micros) => EfficiencySample::new(
-            execution_id,
-            task_class,
-            target,
-            u64::from(prompt_tokens),
-            u64::from(completion_tokens),
-            cost_micros,
-            latency_ms,
-            completed,
-            timestamp(),
-        ),
-        None => EfficiencySample::new_without_cost(
-            execution_id,
-            task_class,
-            target,
-            u64::from(prompt_tokens),
-            u64::from(completion_tokens),
-            latency_ms,
-            completed,
-            timestamp(),
-        ),
-    };
-    let Ok(sample) = sample else {
+    if summary.provider_metrics().is_empty() {
         return false;
-    };
-    record_efficiency_sample(config, sample)
+    }
+    let mut recorded = true;
+    for (attempt, metrics) in summary.provider_metrics().iter().enumerate() {
+        let attempt_execution_id = if attempt == 0 {
+            execution_id.clone()
+        } else {
+            match ExecutionId::new(format!("{}-attempt-{attempt}", execution_id)) {
+                Ok(value) => value,
+                Err(_) => {
+                    recorded = false;
+                    continue;
+                }
+            }
+        };
+        let input_tokens = metrics.input_tokens();
+        let output_tokens = metrics.output_tokens();
+        let target = format!("{}/{}", metrics.provider_id(), metrics.model_id());
+        let sample =
+            match config.provider_cost_micros(metrics.provider_id(), input_tokens, output_tokens) {
+                Some(cost_micros) => EfficiencySample::new(
+                    attempt_execution_id,
+                    task_class,
+                    target,
+                    u64::from(input_tokens),
+                    u64::from(output_tokens),
+                    cost_micros,
+                    metrics.elapsed_ms(),
+                    completed,
+                    timestamp(),
+                ),
+                None => EfficiencySample::new_without_cost(
+                    attempt_execution_id,
+                    task_class,
+                    target,
+                    u64::from(input_tokens),
+                    u64::from(output_tokens),
+                    metrics.elapsed_ms(),
+                    completed,
+                    timestamp(),
+                ),
+            };
+        match sample {
+            Ok(sample) => recorded &= record_efficiency_sample(config, sample),
+            Err(_) => recorded = false,
+        }
+    }
+    recorded
 }
 
 fn record_agent_failure(
