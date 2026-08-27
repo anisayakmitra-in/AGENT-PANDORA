@@ -259,6 +259,72 @@ impl RuntimeService {
                 "Local tool bridge",
                 "Configured stdio boundary",
             ),
+            ServiceEngineSummary::new(
+                "adaptive-engine",
+                "AdaptiveEngine",
+                "Bounded selection",
+                "Approved options only",
+            ),
+            ServiceEngineSummary::new(
+                "coding-feedback-loop",
+                "CodingFeedbackLoop",
+                "Coding verification",
+                "Evidence-driven iteration",
+            ),
+            ServiceEngineSummary::new(
+                "efficiency-engine",
+                "EfficiencyEngine",
+                "Cost and latency evidence",
+                "Selection guidance",
+            ),
+            ServiceEngineSummary::new(
+                "graph-intelligence-engine",
+                "GraphIntelligenceEngine",
+                "Code and knowledge graphs",
+                "Provenance-aware evidence",
+            ),
+            ServiceEngineSummary::new(
+                "orchestration-engine",
+                "OrchestrationEngine",
+                "Role composition",
+                "Governed coordination",
+            ),
+            ServiceEngineSummary::new(
+                "self-healing-engine",
+                "SelfHealingEngine",
+                "Safe recovery",
+                "Allowlisted reductions",
+            ),
+            ServiceEngineSummary::new(
+                "skill-engine",
+                "SkillEngine",
+                "Skill admission",
+                "Provenance and activation",
+            ),
+            ServiceEngineSummary::new(
+                "observability-engine",
+                "ObservabilityEngine",
+                "Trace projection",
+                "Canonical runtime events",
+            ),
+            ServiceEngineSummary::new(
+                "fleet-engine",
+                "FleetEngine",
+                "Worker coordination",
+                "Leases and quarantine",
+            ),
+            ServiceEngineSummary::new(
+                "mutation-engine",
+                "MutationEngine",
+                "Improvement proposals",
+                "Research-scoped generation",
+            ),
+            ServiceEngineSummary::new(
+                "replacement-engine",
+                "ReplacementEngine",
+                "Staged replacement",
+                "Canary and rollback",
+            ),
         ]))
     }
 
