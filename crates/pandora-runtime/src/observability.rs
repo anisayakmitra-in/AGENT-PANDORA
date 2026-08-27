@@ -43,9 +43,6 @@ impl ObservabilityEngine {
             .store
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if store.samples.len() >= self.max_samples {
-            return Err(ObservabilityError::CapacityExceeded);
-        }
         if store.event_ids.contains(sample.event().event_id()) {
             return Err(ObservabilityError::DuplicateEvent(
                 sample.event().event_id().clone(),
@@ -58,6 +55,9 @@ impl ObservabilityEngine {
                 previous,
                 received: sample.sequence(),
             });
+        }
+        if store.samples.len() >= self.max_samples {
+            return Err(ObservabilityError::CapacityExceeded);
         }
         store.event_ids.insert(sample.event().event_id().clone());
         store.last_sequence = Some(sample.sequence());
