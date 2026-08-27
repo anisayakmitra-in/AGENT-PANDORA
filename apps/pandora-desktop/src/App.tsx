@@ -36,10 +36,30 @@ type ViewId =
 type RunProfile = string;
 type ThemeMode = "dark" | "light";
 
+type WorkflowRecipe = {
+  id: string;
+  name: string;
+  task: string;
+  profile: RunProfile;
+};
+
 const themeStorageKey = "pandora.desktop.theme";
+const workflowStorageKey = "pandora.desktop.workflows";
 
 function loadTheme(): ThemeMode {
   return typeof window !== "undefined" && window.localStorage.getItem(themeStorageKey) === "light" ? "light" : "dark";
+}
+
+function loadWorkflows(): WorkflowRecipe[] {
+  try {
+    const value: unknown = JSON.parse(window.localStorage.getItem(workflowStorageKey) ?? "[]");
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return value.filter((item): item is WorkflowRecipe => Boolean(item) && typeof item === "object" && typeof (item as WorkflowRecipe).id === "string" && typeof (item as WorkflowRecipe).name === "string" && typeof (item as WorkflowRecipe).task === "string" && typeof (item as WorkflowRecipe).profile === "string").slice(0, 24);
+  } catch {
+    return [];
+  }
 }
 
 type IconName =
@@ -289,6 +309,7 @@ function App() {
   const [runInFlight, setRunInFlight] = useState(false);
   const [runProfile, setRunProfile] = useState<RunProfile>("auto");
   const [theme, setTheme] = useState<ThemeMode>(loadTheme);
+  const [workflows, setWorkflows] = useState<WorkflowRecipe[]>(loadWorkflows);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const autoStartAttempted = useRef(false);
   const native = isNativeRuntime();
@@ -308,6 +329,10 @@ function App() {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem(themeStorageKey, theme);
   }, [theme]);
+
+  useEffect(() => {
+    window.localStorage.setItem(workflowStorageKey, JSON.stringify(workflows));
+  }, [workflows]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -509,6 +534,20 @@ function App() {
     }
   };
 
+  const createWorkflow = (name: string, task: string, profile: RunProfile) => {
+    const recipe = { id: crypto.randomUUID(), name, task, profile };
+    setWorkflows((current) => [recipe, ...current].slice(0, 24));
+  };
+
+  const removeWorkflow = (id: string) => {
+    setWorkflows((current) => current.filter((workflow) => workflow.id !== id));
+  };
+
+  const runWorkflow = async (workflow: WorkflowRecipe) => {
+    setActiveView("command");
+    await runTask(workflow.task, workflow.profile);
+  };
+
   return (
     <div className="app-shell">
       <Sidebar activeView={activeView} onSelect={setActiveView} runtimeStatus={runtimeStatus} sessions={sessions} selectedSessionId={selectedSessionId} onOpenPalette={() => setPaletteOpen(true)} onOpenSession={async (sessionId) => { setActiveView("command"); await openSession(sessionId); }} />
@@ -535,7 +574,7 @@ function App() {
         ) : activeView === "memory" ? (
           <MemoryView runtimeStatus={runtimeStatus} records={memoryRecords} selectedSession={selectedSession} />
         ) : activeView === "workflows" ? (
-          <WorkflowsView runtimeStatus={runtimeStatus} onOpenCommand={() => setActiveView("command")} />
+          <WorkflowsView runtimeStatus={runtimeStatus} workflows={workflows} harnesses={harnesses} onOpenCommand={() => setActiveView("command")} onCreate={createWorkflow} onRemove={removeWorkflow} onRun={runWorkflow} />
         ) : activeView === "connections" ? (
           <ConnectionView endpoint={endpoint} runtimeStatus={runtimeStatus} runtimeError={runtimeError} health={runtimeHealth} providers={providers} sessions={sessions} selectedSessionId={selectedSessionId} selectedSession={selectedSession} native={native} serviceActive={serviceActive} onConnect={connect} onStartService={startService} onStopService={stopService} onSelectSession={openSession} />
         ) : activeView === "audit" ? (
@@ -732,9 +771,20 @@ function Layer({ label, value, detail, tone }: { label: string; value: string; d
   return <div className="layer-row"><span className={`layer-dot dot-${tone}`} /><div><strong>{label}</strong><small>{detail}</small></div><span className="layer-value mono">{value}</span></div>;
 }
 
-function WorkflowsView({ runtimeStatus, onOpenCommand }: { runtimeStatus: RuntimeStatus; onOpenCommand: () => void }) {
-  const description = runtimeStatus === "connected" ? "Workflow storage is not exposed by the current local service." : "Saved governed run recipes will appear when a workflow service is available.";
-  return <div className="full-view"><PageHeader eyebrow="Durable recipes" title="Workflows" description={description} actions={<button className="button button-primary" disabled><Icon name="plus" size={14} /> New workflow</button>} /><div className="workflow-empty"><div className="empty-orbit"><Icon name="stack" size={27} /></div><h2>Workflow service unavailable</h2><p>Use the Command Center for individual governed runs. This surface does not fabricate saved workflows.</p><button className="button button-secondary" type="button" onClick={onOpenCommand}>Open Command Center <Icon name="arrow" size={14} /></button></div></div>;
+function WorkflowsView({ runtimeStatus, workflows, harnesses, onOpenCommand, onCreate, onRemove, onRun }: { runtimeStatus: RuntimeStatus; workflows: WorkflowRecipe[]; harnesses: RuntimeHarness[]; onOpenCommand: () => void; onCreate: (name: string, task: string, profile: RunProfile) => void; onRemove: (id: string) => void; onRun: (workflow: WorkflowRecipe) => Promise<void> }) {
+  const [name, setName] = useState("");
+  const [task, setTask] = useState("");
+  const [profile, setProfile] = useState<RunProfile>("auto");
+  const connected = runtimeStatus === "connected";
+  const options = harnesses.length ? [{ id: "auto", label: "Auto route" }, ...harnesses.map((harness) => ({ id: harness.id, label: harness.name }))] : runProfiles;
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!name.trim() || !task.trim()) return;
+    onCreate(name.trim(), task.trim(), profile);
+    setName("");
+    setTask("");
+  };
+  return <div className="full-view"><PageHeader eyebrow="Client recipes" title="Workflows" description="Save reusable task recipes locally; every run still uses Pandora’s authenticated governed runtime." actions={<Chip tone={workflows.length ? "green" : "neutral"} icon="stack">{workflows.length} saved</Chip>} /><div className="workflow-grid"><Panel className="workflow-editor"><div className="panel-heading"><div><span className="eyebrow">NEW RECIPE</span><h3>Define a governed run</h3></div><Icon name="plus" size={17} /></div><form className="workflow-form" onSubmit={submit}><label><span>Name</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Release review" maxLength={80} /></label><label><span>Task</span><textarea value={task} onChange={(event) => setTask(event.target.value)} placeholder="Describe the work Pandora should perform…" maxLength={4000} rows={5} /></label><label><span>Harness</span><select value={profile} onChange={(event) => setProfile(event.target.value)}>{options.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label><button className="button button-primary" type="submit"><Icon name="plus" size={14} /> Save recipe</button></form><p className="connection-note">Recipes are stored in this desktop profile. Do not save credentials or secrets in task text.</p></Panel><Panel className="workflow-list-panel"><div className="panel-heading"><div><span className="eyebrow">SAVED RECIPES</span><h3>{workflows.length ? "Ready to run" : "No recipes yet"}</h3></div><Chip tone={connected ? "green" : "neutral"}>{connected ? "Runtime ready" : "Connect to run"}</Chip></div>{workflows.length ? <div className="workflow-list">{workflows.map((workflow) => <article className="workflow-card" key={workflow.id}><div><strong>{workflow.name}</strong><small>{workflow.profile === "auto" ? "Auto route" : workflow.profile} · local recipe</small><p>{workflow.task}</p></div><div className="workflow-card-actions"><button className="button button-secondary" type="button" disabled={!connected} onClick={() => void onRun(workflow)}>{connected ? "Run" : "Offline"} <Icon name="arrow" size={13} /></button><button className="icon-button" type="button" aria-label={`Delete ${workflow.name}`} onClick={() => onRemove(workflow.id)}><Icon name="dots" size={16} /></button></div></article>)}</div> : <div className="workflow-empty"><div className="empty-orbit"><Icon name="stack" size={27} /></div><h2>Build your first recipe</h2><p>Recipes remain local to this desktop. Execution always returns to the Command Center and the governed runtime.</p><button className="button button-secondary" type="button" onClick={onOpenCommand}>Open Command Center <Icon name="arrow" size={14} /></button></div>}</Panel></div></div>;
 }
 
 function AuditView({ events, selectedSession, runtimeStatus }: { events: RuntimeEvent[]; selectedSession: RuntimeSessionDetail | null; runtimeStatus: RuntimeStatus }) {
