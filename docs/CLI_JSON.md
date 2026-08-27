@@ -25,6 +25,7 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora --version --json` | `version` | `pandora_version` |
 | `pandora setup --json` | `setup` | `config_path`, `data_dir`, `workspace`, `provider_configured`, `provider_profiles`, `active_provider`, `provider_model`, `api_key_env`, `interactive` |
 | `pandora provider test --json` | `provider test` | `provider`, `model`, `status`, `output`, `usage`, `metrics` |
+| `pandora run <task> --json` | `run` | `session_id`, `execution_id`, `harness_id`, `gene_id`, `status`, `elapsed_ms`, `evaluation` |
 | `pandora doctor --json` | `doctor` | `healthy`, `version`, `platform`, `config_path`, `storage_path`, `workspace_path`, `provider`, `policy`, `containment`, `checks` |
 | `pandora fleet list --json` | `fleet list` | `nodes`, `leases` |
 | `pandora fleet dispatch <capability> --json` | `fleet dispatch` | `capability`, `node` |
@@ -57,6 +58,10 @@ package activation, or promotion.
 The `provider test` `metrics` object contains `elapsed_ms`, `input_tokens`,
 `output_tokens`, and `succeeded`. These values describe the completed provider
 call and can be recorded alongside the existing response.
+
+Successful direct and agent runs include `elapsed_ms`, the measured wall-clock
+duration for the run. It is diagnostic evidence and does not include provider
+credentials or model content.
 
 ## Error envelope
 
