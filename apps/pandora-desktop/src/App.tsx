@@ -619,7 +619,7 @@ function Sidebar({ activeView, onSelect, runtimeStatus, sessions, selectedSessio
         {navigation.map((group) => <div className="nav-group" key={group.label}>
           <span className="nav-label">{group.label}</span>
           {group.items.map((item) => <button className={`nav-item ${activeView === item.id ? "is-active" : ""}`} key={item.id} onClick={() => onSelect(item.id)} aria-current={activeView === item.id ? "page" : undefined}>
-            <Icon name={item.icon} size={17} /><span>{item.label}</span>{item.id === "council" ? <span className="nav-count">1</span> : null}
+            <Icon name={item.icon} size={17} /><span>{item.label}</span>
           </button>)}
         </div>)}
       </nav>
