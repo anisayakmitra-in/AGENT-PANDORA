@@ -452,11 +452,10 @@ fn run_child(
 ) -> Result<ProcessOutput, ProcessError> {
     let mut process = Command::new(command.program());
     configure_process_group(&mut process);
+    configure_runtime_environment(&mut process);
     let mut child = process
         .args(command.arguments())
         .current_dir(command.workspace().root())
-        .env_clear()
-        .env("CARGO_TERM_COLOR", "never")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -502,6 +501,17 @@ fn run_child(
             }
         }
         thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn configure_runtime_environment(process: &mut Command) {
+    process.env_clear();
+    process.env("CARGO_TERM_COLOR", "never");
+
+    #[cfg(windows)]
+    if let Some(system_root) = std::env::var_os("SystemRoot") {
+        process.env("SystemRoot", &system_root);
+        process.env("WINDIR", system_root);
     }
 }
 
@@ -786,6 +796,25 @@ mod tests {
             command.spec(),
             "git for-each-ref --format=%(refname:short) --sort=-committerdate --count=50 refs/heads refs/remotes refs/tags"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn preserves_only_windows_system_runtime_environment() {
+        let mut process = Command::new("git");
+        configure_runtime_environment(&mut process);
+
+        let variables = process
+            .get_envs()
+            .filter_map(|(name, value)| value.map(|value| (name, value)))
+            .collect::<Vec<_>>();
+        let expected_system_root = std::env::var_os("SystemRoot").expect("SystemRoot is set");
+        assert!(variables.iter().any(|(name, value)| {
+            *name == "SystemRoot" && *value == expected_system_root.as_os_str()
+        }));
+        assert!(variables.iter().any(|(name, _)| *name == "WINDIR"));
+        assert!(!variables.iter().any(|(name, _)| *name == "PATH"));
+        assert!(!variables.iter().any(|(name, _)| *name == "USERPROFILE"));
     }
 
     #[test]
