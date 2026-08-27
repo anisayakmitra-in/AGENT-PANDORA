@@ -25,9 +25,11 @@ Samples store a task class and target identifier, not prompts, credentials, or h
 Cost evidence is explicit. A run records known cost only when its provider
 profile declares both input and output rates with
 `--input-micros-per-million-tokens` and `--output-micros-per-million-tokens`.
-Missing pricing and fallback-provider runs remain unknown, never zero-cost, and
-are ranked after known-cost samples for the cost objective. Pricing is
-operator-supplied metadata, not inferred from a provider name or response.
+Missing pricing remains unknown, never zero-cost, and is ranked after
+known-cost samples for the cost objective. Fallback attempts use the pricing
+profile of the provider that handled the attempt when one is configured.
+Pricing is operator-supplied metadata, not inferred from a provider name or
+response.
 
 The default `AdaptiveEngine::select` path remains score-based for compatibility.
 Evidence-ranked selection is opt-in and falls back to the existing score order for
