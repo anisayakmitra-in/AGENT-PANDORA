@@ -1,4 +1,6 @@
-use pandora_runtime::{MemoryEngine, SubagentPreparation, SubagentScope, SubagentStore};
+use pandora_runtime::{
+    EfficiencyStore, MemoryEngine, SubagentPreparation, SubagentScope, SubagentStore,
+};
 use pandora_types::{
     ContextClassification, EffectOutcome, EffectReceipt, ExecutionId, HarnessId, JobId,
     JobWorkerId, MemoryKind, MemoryScope, MetaComposition, PackageCompatibility, PackageDependency,
@@ -2855,6 +2857,31 @@ fn agent_run_executes_a_bounded_read_then_returns_the_final_answer() {
     assert_eq!(response["provider_metrics"][1]["input_tokens"], 5);
     assert_eq!(response["provider_metrics"][1]["output_tokens"], 3);
     assert_eq!(response["provider_metrics"][1]["succeeded"], true);
+    let efficiency = EfficiencyStore::open(fixture.data.join("efficiency.sqlite3"))
+        .expect("agent efficiency store should open");
+    let samples = efficiency
+        .load_task_class("general")
+        .expect("agent efficiency samples should load");
+    assert_eq!(samples.len(), 2);
+    let mut targets = samples
+        .iter()
+        .map(|sample| sample.target())
+        .collect::<Vec<_>>();
+    let mut expected_targets = response["provider_metrics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|metric| {
+            format!(
+                "{}/{}",
+                metric["provider_id"].as_str().unwrap(),
+                metric["model_id"].as_str().unwrap()
+            )
+        })
+        .collect::<Vec<_>>();
+    targets.sort_unstable();
+    expected_targets.sort_unstable();
+    assert_eq!(targets, expected_targets);
     assert_eq!(
         response["context"]["included"],
         serde_json::json!([
