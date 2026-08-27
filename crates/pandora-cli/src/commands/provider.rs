@@ -349,11 +349,13 @@ fn test(args: &[String]) -> Result<CommandResult, CliError> {
         workspace_id,
         timestamp(),
     );
-    let response = controller
+    let invocation = controller
         .invoke_provider(provider.as_ref(), request, &session, timestamp())
-        .map_err(|_| CliError::provider("provider effect was not authorized", json!({})))?
-        .into_result()
+        .map_err(|_| CliError::provider("provider effect was not authorized", json!({})))?;
+    let response = invocation
+        .result()
         .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
+    let metrics = invocation.metrics();
     Ok(success(
         "provider test",
         json!({
@@ -365,6 +367,12 @@ fn test(args: &[String]) -> Result<CommandResult, CliError> {
                 "prompt_tokens": response.usage().prompt_tokens(),
                 "completion_tokens": response.usage().completion_tokens(),
                 "total_tokens": response.usage().total_tokens(),
+            },
+            "metrics": {
+                "elapsed_ms": metrics.elapsed_ms(),
+                "input_tokens": metrics.input_tokens(),
+                "output_tokens": metrics.output_tokens(),
+                "succeeded": metrics.succeeded(),
             },
         }),
         format!("Provider {} is ready", manifest.id()),

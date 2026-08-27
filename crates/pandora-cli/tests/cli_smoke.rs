@@ -2731,6 +2731,9 @@ fn provider_test_completes_a_configured_request_without_echoing_credentials() {
     assert_eq!(response["model"], "fixture-model");
     assert_eq!(response["output"], "ready");
     assert_eq!(response["usage"]["total_tokens"], 3);
+    assert_eq!(response["metrics"]["input_tokens"], 2);
+    assert_eq!(response["metrics"]["output_tokens"], 1);
+    assert_eq!(response["metrics"]["succeeded"], true);
 
     server.join().expect("provider fixture should finish");
 }
