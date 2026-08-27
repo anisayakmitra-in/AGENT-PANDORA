@@ -325,6 +325,12 @@ impl RuntimeService {
                 "Staged replacement",
                 "Canary and rollback",
             ),
+            ServiceEngineSummary::new(
+                "population-strategy",
+                "PopulationStrategy",
+                "Research candidate populations",
+                "Proposal only",
+            ),
         ]))
     }
 
@@ -660,6 +666,37 @@ mod tests {
                 .iter()
                 .all(|item| item.provenance() == "evaluation:execution-1")
         );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn engine_inventory_exposes_research_population_strategy() {
+        let root = crate::test_support::new_temp_dir("pandora-runtime-service-engines").unwrap();
+        let scope = RuntimeServiceScope::new(
+            PrincipalId::new("principal-a").unwrap(),
+            TenantId::new("tenant-a").unwrap(),
+            WorkspaceId::new("workspace-a").unwrap(),
+        );
+        let service = RuntimeService::new(
+            ExecutionController::new(WorkspaceRoot::new(&root).unwrap()),
+            SessionStore::open(root.join("sessions.sqlite3")).unwrap(),
+            scope,
+        );
+
+        let response = service
+            .handle(&ServiceRequest::engines(), Timestamp::from_unix_seconds(1))
+            .unwrap();
+        let ServiceResponse::Engines { engines, .. } = response else {
+            panic!("expected an engine response");
+        };
+
+        let population = engines
+            .iter()
+            .find(|engine| engine.id() == "population-strategy")
+            .expect("population strategy should be discoverable");
+        assert_eq!(population.name(), "PopulationStrategy");
+        assert_eq!(population.authority(), "Proposal only");
 
         let _ = std::fs::remove_dir_all(root);
     }
