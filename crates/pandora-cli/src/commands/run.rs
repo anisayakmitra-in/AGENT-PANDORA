@@ -860,6 +860,10 @@ pub(super) fn execute_agent_core(
                 details: json!({
                     "agent": true,
                     "session_id": session.id(),
+                    "resume": {
+                        "session_id": session.id(),
+                        "next": "rerun pandora run --agent with --session <session_id> to continue this persisted transcript"
+                    },
                     "reason": controlled_stop_reason(reason),
                     "turns": summary.turns(),
                     "tool_calls": summary.tool_calls(),
