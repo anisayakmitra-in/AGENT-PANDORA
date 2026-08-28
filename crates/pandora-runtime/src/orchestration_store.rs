@@ -749,7 +749,7 @@ fn decode_record_inner(
         .map_err(|_| OrchestrationStoreError::InvalidIdentifier)?;
     let role_receipts: Vec<OrchestrationRoleReceipt> =
         serde_json::from_str(&row.get::<_, String>(8)?)?;
-    let interruption_reason = row.get(9)?;
+    let interruption_reason: Option<String> = row.get(9)?;
     let created_at = decode_timestamp(row.get(10)?)?;
     let updated_at = decode_timestamp(row.get(11)?)?;
     validate_record(
