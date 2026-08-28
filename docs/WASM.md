@@ -4,6 +4,14 @@ Pandora can execute an installed `gene` package only when an admitted Domain
 Harness depends on that exact package ID and version. The package artifact must
 be a WebAssembly module. Installation alone grants no runtime authority.
 
+If governed evolution has activated an admitted replacement for that Gene's
+content hash, runtime assembly resolves the bounded `ArtifactCatalog` chain
+once. The replacement bytes execute under the base dependency's logical Gene
+ID and version, with the candidate content hash bound into the immutable
+execution profile, operation request, permit, and executor registration. The
+candidate cannot add capabilities or host imports. Activation affects future
+profiles only; an already assembled run retains its exact module binding.
+
 The runtime uses the `wasmi` interpreter. It does not enable WASI, host
 functions, JIT compilation, or native plugins. Every call follows the existing
 execution path:
@@ -100,3 +108,9 @@ Remote package installation may fetch and verify a `gene` artifact, but it does
 not execute it. Execution still requires the admitted Domain Harness binding,
 the active policy decision, an exact one-shot approval, and the Wasm executor's
 request checks.
+
+For custom Wasm runs, JSON output includes `artifact_resolution` with
+`base_artifact`, `resolved_artifact`, `replacement_active`, the
+`execution_profile` snapshot mode, and `runtime_authority_changed: false`.
+Pending approval summaries also name both package identities and hashes when a
+replacement is active.

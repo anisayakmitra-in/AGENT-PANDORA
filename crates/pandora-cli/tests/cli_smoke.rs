@@ -507,14 +507,39 @@ fn evolution_cli_can_submit_evaluate_and_approve() {
 fn evolution_cli_activates_only_admitted_artifacts_and_rolls_back() {
     let fixture = Fixture::new();
     fixture.setup();
-    let base_artifact = b"base evolution gene\n";
-    let candidate_artifact = b"candidate evolution gene\n";
+    let base_artifact = wat::parse_str(
+        r#"(module
+            (memory (export "memory") 1)
+            (func (export "pandora_alloc") (param i32) (result i32) i32.const 0)
+            (func (export "pandora_run") (param i32 i32) (result i64)
+                local.get 0
+                i64.extend_i32_u
+                i64.const 32
+                i64.shl
+                local.get 1
+                i64.extend_i32_u
+                i64.or))"#,
+    )
+    .unwrap();
+    let candidate_artifact = wat::parse_str(
+        r#"(module
+            (memory (export "memory") 1)
+            (data (i32.const 1024) "{\"generation\":\"candidate\"}")
+            (func (export "pandora_alloc") (param i32) (result i32) i32.const 0)
+            (func (export "pandora_run") (param i32 i32) (result i64)
+                i64.const 1024
+                i64.const 32
+                i64.shl
+                i64.const 26
+                i64.or))"#,
+    )
+    .unwrap();
     let base_manifest = PackageManifest::new(
         "evolution/base-gene",
         "1.0.0",
         PackageKind::Gene,
         "local-publisher",
-        hash_artifact(base_artifact),
+        hash_artifact(&base_artifact),
         Vec::new(),
         PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
         "MIT",
@@ -526,8 +551,21 @@ fn evolution_cli_activates_only_admitted_artifacts_and_rolls_back() {
         "1.0.0",
         PackageKind::Gene,
         "local-publisher",
-        hash_artifact(candidate_artifact),
+        hash_artifact(&candidate_artifact),
         Vec::new(),
+        PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+        "MIT",
+        TrustEvidence::unsigned(),
+    )
+    .unwrap();
+    let domain_artifact = b"evolution domain profile\n";
+    let domain_manifest = PackageManifest::new(
+        "evolution/domain",
+        "1.0.0",
+        PackageKind::DomainHarness,
+        "local-publisher",
+        hash_artifact(domain_artifact),
+        vec![PackageDependency::new("evolution/base-gene", "1.0.0", false).unwrap()],
         PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
         "MIT",
         TrustEvidence::unsigned(),
@@ -541,6 +579,7 @@ fn evolution_cli_activates_only_admitted_artifacts_and_rolls_back() {
             &candidate_manifest,
             candidate_artifact.as_slice(),
         ),
+        ("domain", &domain_manifest, domain_artifact.as_slice()),
     ] {
         let manifest_path = fixture.root.join(format!("{name}-evolution.json"));
         let artifact_path = fixture.root.join(format!("{name}-evolution.artifact"));
@@ -684,6 +723,93 @@ fn evolution_cli_activates_only_admitted_artifacts_and_rolls_back() {
         candidate_manifest.content_hash()
     );
 
+    let run_gene = |task: &str, existing_session: Option<&str>| -> (Value, String) {
+        let mut pending_args = vec![
+            "run",
+            "--harness",
+            "evolution/domain",
+            "--harness-version",
+            "1.0.0",
+            "--gene",
+            "evolution/base-gene",
+            task,
+        ];
+        if let Some(session_id) = existing_session {
+            pending_args.extend(["--session", session_id]);
+        }
+        pending_args.push("--json");
+        let pending = fixture
+            .command(&pending_args)
+            .output()
+            .expect("evolved Wasm Gene should request approval");
+        assert_eq!(
+            pending.status.code(),
+            Some(40),
+            "unexpected evolved Wasm response: stdout={} stderr={}",
+            String::from_utf8_lossy(&pending.stdout),
+            String::from_utf8_lossy(&pending.stderr)
+        );
+        let pending = parse_json(&pending);
+        let approval_id = pending["details"]["approval_id"].as_str().unwrap();
+        let session_id = pending["details"]["session_id"].as_str().unwrap();
+        let inspected = fixture
+            .command(&["approval", "inspect", approval_id, "--json"])
+            .output()
+            .expect("evolved Wasm approval should be inspectable");
+        assert_success_with_context(&inspected, "inspect evolved Wasm approval");
+        let summary = parse_json(&inspected)["approval"]["request_summary"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let resolved = fixture
+            .command(&["approval", "resolve", approval_id, "--allow", "--json"])
+            .output()
+            .expect("evolved Wasm approval should resolve");
+        assert_success_with_context(&resolved, "resolve evolved Wasm approval");
+        let completed = fixture
+            .command(&[
+                "run",
+                "--approval",
+                approval_id,
+                "--session",
+                session_id,
+                "--harness",
+                "evolution/domain",
+                "--harness-version",
+                "1.0.0",
+                "--gene",
+                "evolution/base-gene",
+                task,
+                "--json",
+            ])
+            .output()
+            .expect("approved evolved Wasm Gene should run");
+        assert_success_with_context(&completed, "approved evolved Wasm Gene");
+        (parse_json(&completed), summary)
+    };
+
+    let (candidate_run, candidate_approval) = run_gene(r#"{"generation":"input"}"#, None);
+    assert_eq!(candidate_run["output"], r#"{"generation":"candidate"}"#);
+    assert_eq!(
+        candidate_run["artifact_resolution"]["replacement_active"],
+        true
+    );
+    assert_eq!(
+        candidate_run["artifact_resolution"]["base_artifact"],
+        base_manifest.content_hash()
+    );
+    assert_eq!(
+        candidate_run["artifact_resolution"]["resolved_artifact"],
+        candidate_manifest.content_hash()
+    );
+    assert_eq!(
+        candidate_run["artifact_resolution"]["runtime_authority_changed"],
+        false
+    );
+    assert!(candidate_approval.contains(base_manifest.content_hash()));
+    assert!(candidate_approval.contains(candidate_manifest.content_hash()));
+    assert!(candidate_approval.contains("runtime authority unchanged"));
+
     let rolled_back = fixture
         .command(&[
             "evolution",
@@ -703,6 +829,18 @@ fn evolution_cli_activates_only_admitted_artifacts_and_rolls_back() {
         rolled_back["restored_artifact"],
         base_manifest.content_hash()
     );
+
+    let base_task = r#"{"generation":"base-input"}"#;
+    let candidate_session = candidate_run["session_id"].as_str().unwrap();
+    let (base_run, base_approval) = run_gene(base_task, Some(candidate_session));
+    assert_eq!(base_run["output"], base_task);
+    assert_eq!(base_run["artifact_resolution"]["replacement_active"], false);
+    assert_eq!(
+        base_run["artifact_resolution"]["resolved_artifact"],
+        base_manifest.content_hash()
+    );
+    assert!(base_approval.contains(base_manifest.content_hash()));
+    assert!(!base_approval.contains(candidate_manifest.content_hash()));
 
     let inspected = fixture
         .command(&[

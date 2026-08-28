@@ -22,15 +22,17 @@ use pandora_runtime::{
     MAX_AGENT_TURNS, RunStatus, RuntimeError,
 };
 use pandora_runtime::{
-    DEFAULT_MAX_SAMPLES_PER_TARGET, EfficiencyEngine, EfficiencyStore, ExecutionController,
-    PackageState, PackageStore, RolloutReducer, SkillEngine, SkillError, WasmExecutor, WasmGene,
+    ArtifactCatalog, DEFAULT_MAX_SAMPLES_PER_TARGET, EfficiencyEngine, EfficiencyStore,
+    ExecutionController, PackageState, PackageStore, RolloutReducer, SkillEngine, SkillError,
+    WasmExecutor, WasmGene,
 };
 use pandora_types::{
-    AdaptationCandidate, AdaptationRequest, AdaptationTarget, Capability, ContextClassification,
-    ContextManifest, EfficiencyObjective, EfficiencySample, EvaluationReceipt, EvaluationRequest,
-    EvaluationResult, EventPayload, EventType, ExecutionId, Gene, HarnessId, MemoryKind,
-    MemoryRecord, MemoryScope, Operation, PackageId, PackageKind, PackageManifest, PolicyContext,
-    RequestDigest, Session, SessionId, TaskIntent, Usage, WorkspaceId,
+    AdaptationCandidate, AdaptationRequest, AdaptationTarget, ArtifactId, Capability,
+    ContextClassification, ContextManifest, EfficiencyObjective, EfficiencySample,
+    EvaluationReceipt, EvaluationRequest, EvaluationResult, EventPayload, EventType, ExecutionId,
+    Gene, HarnessId, MemoryKind, MemoryRecord, MemoryScope, Operation, PackageId, PackageKind,
+    PackageManifest, PolicyContext, RequestDigest, Session, SessionId, TaskIntent, Usage,
+    WorkspaceId,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -41,7 +43,13 @@ const MAX_PLANNED_TASK_BYTES: usize = 8 * 1024;
 const DEFAULT_AGENT_MAX_TURNS: u32 = 8;
 const DEFAULT_AGENT_MAX_TOOL_CALLS: u32 = 16;
 
-type PackageWasmGenes = (Vec<Box<dyn Gene>>, BTreeMap<String, String>);
+struct WasmGeneResolution {
+    base_artifact: ArtifactId,
+    resolved_artifact: ArtifactId,
+    approval_subject: String,
+}
+
+type PackageWasmGenes = (Vec<Box<dyn Gene>>, BTreeMap<String, WasmGeneResolution>);
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
@@ -140,7 +148,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let optimization = parsed.value("optimize").map(parse_objective).transpose()?;
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
-    let (harnesses, wasm, wasm_approval_subjects) = configured_runtime(
+    let (harnesses, wasm, wasm_gene_resolutions) = configured_runtime(
         &config,
         parsed.value("harness"),
         parsed.value("harness-version"),
@@ -297,6 +305,9 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let memory_evidence_recorded = record_execution_evidence(&store, &session, "local", &summary);
     let efficiency_recorded =
         record_execution_efficiency(&config, task_class, &summary, elapsed_millis(started));
+    let wasm_resolution = wasm_gene_resolutions
+        .get(summary.selected_gene().as_str())
+        .map(wasm_resolution_json);
     let details = add_detail(
         add_optimization(
             run_details(
@@ -314,6 +325,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let details = coding_feedback_value
         .clone()
         .map(|value| add_detail(details.clone(), "coding_feedback", value))
+        .unwrap_or(details);
+    let details = wasm_resolution
+        .clone()
+        .map(|value| add_detail(details.clone(), "artifact_resolution", value))
         .unwrap_or(details);
     match summary.status() {
         RunStatus::Completed => {
@@ -337,6 +352,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                 .clone()
                 .map(|value| add_detail(data.clone(), "coding_feedback", value))
                 .unwrap_or(data);
+            let data = wasm_resolution
+                .clone()
+                .map(|value| add_detail(data.clone(), "artifact_resolution", value))
+                .unwrap_or(data);
             Ok(success(
                 "run",
                 add_optimization(data, optimization, optimized_provider.as_deref()),
@@ -355,9 +374,9 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                 session.id(),
                 session.principal_id(),
                 &task,
-                wasm_approval_subjects
+                wasm_gene_resolutions
                     .get(summary.selected_gene().as_str())
-                    .map(String::as_str),
+                    .map(|resolution| resolution.approval_subject.as_str()),
             )?;
             let details = add_detail(details, "approval_id", approval.id());
             Err(CliError::approval(reason.clone(), details))
@@ -378,7 +397,14 @@ fn configured_runtime(
     config: &RuntimeConfig,
     requested: Option<&str>,
     version: Option<&str>,
-) -> Result<(HarnessCatalog, WasmExecutor, BTreeMap<String, String>), CliError> {
+) -> Result<
+    (
+        HarnessCatalog,
+        WasmExecutor,
+        BTreeMap<String, WasmGeneResolution>,
+    ),
+    CliError,
+> {
     let harnesses = HarnessCatalog::builtins();
     let Some(requested) = requested else {
         return Ok((harnesses, WasmExecutor::new(), BTreeMap::new()));
@@ -433,10 +459,13 @@ fn configured_runtime(
         ));
     }
     let mut wasm = WasmExecutor::new();
+    let artifact_catalog =
+        ArtifactCatalog::open(config.data_dir().join("artifact-catalog.sqlite3"))
+            .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
     match record.manifest().kind() {
         PackageKind::DomainHarness => {
             let (genes, approval_subjects) =
-                package_wasm_genes(&store, record.manifest(), &mut wasm)?;
+                package_wasm_genes(&store, &artifact_catalog, record.manifest(), &mut wasm)?;
             let harnesses = harnesses
                 .with_declarative_domain_genes(record.manifest(), genes)
                 .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
@@ -452,6 +481,7 @@ fn configured_runtime(
 
 fn package_wasm_genes(
     store: &PackageStore,
+    artifact_catalog: &ArtifactCatalog,
     harness: &PackageManifest,
     wasm: &mut WasmExecutor,
 ) -> Result<PackageWasmGenes, CliError> {
@@ -475,35 +505,100 @@ fn package_wasm_genes(
                 }),
             ));
         }
-        let artifact = store
-            .load_artifact(dependency.id(), dependency.version())
+        let base_artifact = ArtifactId::new(record.manifest().content_hash())
+            .map_err(|_| CliError::execution("Gene artifact identity is invalid", json!({})))?;
+        let resolved_artifact = artifact_catalog
+            .resolve(&base_artifact)
+            .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+        let (resolved_record, artifact) = store
+            .load_artifact_by_id(&resolved_artifact)
             .map_err(|error| CliError::execution(error.to_string(), json!({})))?
-            .ok_or_else(|| CliError::execution("Gene artifact is unavailable", json!({})))?;
-        wasm.register(record.manifest(), &artifact)
+            .ok_or_else(|| {
+                CliError::execution(
+                    "resolved Gene artifact is unavailable",
+                    json!({
+                        "base_artifact": base_artifact,
+                        "resolved_artifact": resolved_artifact,
+                    }),
+                )
+            })?;
+        if resolved_record.state() != PackageState::Installed
+            || resolved_record.manifest().kind() != PackageKind::Gene
+        {
+            return Err(CliError::execution(
+                "resolved artifact is not an installed Gene package",
+                json!({
+                    "base_artifact": base_artifact,
+                    "resolved_artifact": resolved_artifact,
+                    "kind": resolved_record.manifest().kind().as_str(),
+                    "state": resolved_record.state().as_str(),
+                }),
+            ));
+        }
+        wasm.register_resolved(record.manifest(), resolved_record.manifest(), &artifact)
             .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
         approval_subjects.insert(
             record.manifest().id().as_str().to_owned(),
-            wasm_approval_subject(harness, record.manifest()),
+            WasmGeneResolution {
+                base_artifact: base_artifact.clone(),
+                resolved_artifact: resolved_artifact.clone(),
+                approval_subject: wasm_approval_subject(
+                    harness,
+                    record.manifest(),
+                    resolved_record.manifest(),
+                ),
+            },
         );
         genes.push(Box::new(
-            WasmGene::from_package(record.manifest())
+            WasmGene::from_resolved_package(record.manifest(), resolved_record.manifest())
                 .map_err(|error| CliError::execution(error.to_string(), json!({})))?,
         ));
     }
     Ok((genes, approval_subjects))
 }
 
-fn wasm_approval_subject(harness: &PackageManifest, gene: &PackageManifest) -> String {
-    format!(
-        "execute package Gene {}@{} (publisher {}, artifact {}) through Harness {}@{} (publisher {})",
-        gene.id(),
-        gene.version(),
-        gene.publisher(),
-        gene.content_hash(),
-        harness.id(),
-        harness.version(),
-        harness.publisher(),
-    )
+fn wasm_resolution_json(resolution: &WasmGeneResolution) -> Value {
+    json!({
+        "base_artifact": resolution.base_artifact,
+        "resolved_artifact": resolution.resolved_artifact,
+        "replacement_active": resolution.base_artifact != resolution.resolved_artifact,
+        "snapshot": "execution_profile",
+        "runtime_authority_changed": false,
+    })
+}
+
+fn wasm_approval_subject(
+    harness: &PackageManifest,
+    base_gene: &PackageManifest,
+    resolved_gene: &PackageManifest,
+) -> String {
+    if base_gene.content_hash() == resolved_gene.content_hash() {
+        format!(
+            "execute package Gene {}@{} (publisher {}, artifact {}) through Harness {}@{} (publisher {})",
+            base_gene.id(),
+            base_gene.version(),
+            base_gene.publisher(),
+            base_gene.content_hash(),
+            harness.id(),
+            harness.version(),
+            harness.publisher(),
+        )
+    } else {
+        format!(
+            "execute package Gene {}@{} (publisher {}, base artifact {}) using active admitted replacement {}@{} (publisher {}, resolved artifact {}) through Harness {}@{} (publisher {}); runtime authority unchanged",
+            base_gene.id(),
+            base_gene.version(),
+            base_gene.publisher(),
+            base_gene.content_hash(),
+            resolved_gene.id(),
+            resolved_gene.version(),
+            resolved_gene.publisher(),
+            resolved_gene.content_hash(),
+            harness.id(),
+            harness.version(),
+            harness.publisher(),
+        )
+    }
 }
 
 fn canonical_harness_id(value: &str) -> &str {
@@ -1644,8 +1739,21 @@ fn create_approval(
         })
         .ok_or_else(|| CliError::internal("approval request has no effect digest", json!({})))?;
     let expires_at = timestamp().as_unix_seconds().saturating_add(900);
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let approval_identity = format!(
+        "{session_id}:{}:{}:{}:{nonce}",
+        summary.execution_id(),
+        request_digest,
+        std::process::id()
+    );
     let request = ApprovalRequest::new(
-        format!("approval-{}", summary.execution_id()),
+        format!(
+            "approval-{}",
+            pandora_types::hash_artifact(approval_identity.as_bytes())
+        ),
         session_id.clone(),
         summary.execution_id().clone(),
         principal_id.clone(),

@@ -167,7 +167,14 @@ impl WasmGeneRequest {
 
 impl WasmGene {
     pub fn from_package(package: &PackageManifest) -> Result<Self, WasmError> {
-        if package.kind() != PackageKind::Gene {
+        Self::from_resolved_package(package, package)
+    }
+
+    pub fn from_resolved_package(
+        package: &PackageManifest,
+        resolved: &PackageManifest,
+    ) -> Result<Self, WasmError> {
+        if package.kind() != PackageKind::Gene || resolved.kind() != PackageKind::Gene {
             return Err(WasmError::InvalidPackageKind);
         }
         let manifest = GeneManifest::new(
@@ -178,7 +185,7 @@ impl WasmGene {
         )
         .map_err(|_| WasmError::InvalidManifest)?;
         let artifact_id =
-            ArtifactId::new(package.content_hash()).map_err(|_| WasmError::InvalidManifest)?;
+            ArtifactId::new(resolved.content_hash()).map_err(|_| WasmError::InvalidManifest)?;
         Ok(Self {
             manifest,
             artifact_id,
@@ -242,15 +249,24 @@ impl WasmExecutor {
         manifest: &PackageManifest,
         artifact: &[u8],
     ) -> Result<(), WasmError> {
-        if manifest.kind() != PackageKind::Gene {
+        self.register_resolved(manifest, manifest, artifact)
+    }
+
+    pub fn register_resolved(
+        &mut self,
+        identity: &PackageManifest,
+        resolved: &PackageManifest,
+        artifact: &[u8],
+    ) -> Result<(), WasmError> {
+        if identity.kind() != PackageKind::Gene || resolved.kind() != PackageKind::Gene {
             return Err(WasmError::InvalidPackageKind);
         }
-        if hash_artifact(artifact) != manifest.content_hash() {
+        if hash_artifact(artifact) != resolved.content_hash() {
             return Err(WasmError::ArtifactHashMismatch);
         }
         let key = (
-            manifest.id().as_str().to_owned(),
-            manifest.version().to_owned(),
+            identity.id().as_str().to_owned(),
+            identity.version().to_owned(),
         );
         if self.modules.contains_key(&key) {
             return Err(WasmError::DuplicatePackage);
@@ -260,7 +276,7 @@ impl WasmExecutor {
             key,
             RegisteredModule {
                 module,
-                content_hash: manifest.content_hash().to_owned(),
+                content_hash: resolved.content_hash().to_owned(),
             },
         );
         Ok(())
@@ -636,6 +652,63 @@ mod tests {
 
         assert_eq!(result.result(), Ok(&input.to_vec()));
         assert_eq!(result.receipt().outcome(), &EffectOutcome::Succeeded);
+    }
+
+    #[test]
+    fn resolved_module_keeps_base_identity_and_binds_candidate_artifact() {
+        let base_artifact = wat::parse_str(
+            r#"(module
+                (memory (export "memory") 1)
+                (func (export "pandora_alloc") (param i32) (result i32) i32.const 0)
+                (func (export "pandora_run") (param i32 i32) (result i64) i64.const 0))"#,
+        )
+        .unwrap();
+        let candidate_artifact = echo_module();
+        let base = package(&base_artifact);
+        let candidate = PackageManifest::new(
+            "owner/candidate",
+            "2.0.0",
+            PackageKind::Gene,
+            "owner",
+            hash_artifact(&candidate_artifact),
+            Vec::new(),
+            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "MIT",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+        let input = br#"{"value":1}"#;
+        let permit = consumed_permit(&candidate_artifact, input);
+        let mut executor = WasmExecutor::new();
+        executor
+            .register_resolved(&base, &candidate, &candidate_artifact)
+            .unwrap();
+        let gene = WasmGene::from_resolved_package(&base, &candidate).unwrap();
+
+        let request = WasmGeneRequest::new(
+            ExecutionId::new("execution-resolved").unwrap(),
+            SessionId::new("session-resolved").unwrap(),
+            PrincipalId::new("principal-resolved").unwrap(),
+            profile(&candidate_artifact),
+            r#"{"value":1}"#,
+        )
+        .unwrap();
+        let planned = gene.plan(&request.into_gene_input().unwrap()).unwrap();
+        let result = executor.execute(&permit, input, Timestamp::from_unix_seconds(12));
+
+        assert_eq!(
+            executor.content_hash("owner/transform", "1.0.0"),
+            Some(candidate.content_hash())
+        );
+        assert_eq!(
+            planned[0].target(),
+            &EffectTarget::wasm("owner/transform", "1.0.0")
+        );
+        assert_eq!(
+            planned[0].artifact_id().map(ArtifactId::as_str),
+            Some(candidate.content_hash())
+        );
+        assert_eq!(result.result(), Ok(&input.to_vec()));
     }
 
     #[test]

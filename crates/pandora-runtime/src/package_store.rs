@@ -207,6 +207,35 @@ impl PackageStore {
             .any(|record| record.manifest().content_hash() == artifact_id.as_str()))
     }
 
+    pub fn load_artifact_by_id(
+        &self,
+        artifact_id: &ArtifactId,
+    ) -> Result<Option<(PackageRecord, Vec<u8>)>, PackageStoreError> {
+        let connection = self.lock()?;
+        let registry = load_registry(&connection)?;
+        let Some(record) = registry
+            .list()
+            .into_iter()
+            .find(|record| record.manifest().content_hash() == artifact_id.as_str())
+        else {
+            return Ok(None);
+        };
+        let artifact = connection
+            .query_row(
+                "SELECT artifact FROM package_records WHERE id = ?1 AND version = ?2",
+                params![record.manifest().id().as_str(), record.manifest().version()],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional()?
+            .ok_or(PackageStoreError::CorruptRecord)?;
+        if artifact.len() > MAX_STORED_ARTIFACT_BYTES
+            || hash_artifact(&artifact) != artifact_id.as_str()
+        {
+            return Err(PackageStoreError::CorruptRecord);
+        }
+        Ok(Some((record, artifact)))
+    }
+
     pub fn lockfile(&self) -> Result<PackageLock, PackageStoreError> {
         let manifests = self
             .list()?
@@ -585,6 +614,31 @@ mod tests {
             store.load_artifact(manifest.id(), manifest.version()),
             Err(PackageStoreError::CorruptRecord)
         ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn admitted_artifacts_can_be_loaded_by_content_identity() {
+        let artifact = b"content-addressed gene";
+        let manifest = gene_manifest("example/content-addressed", artifact);
+        let artifact_id = ArtifactId::new(manifest.content_hash()).unwrap();
+        let (store, root) = store();
+        store.admit(&manifest, &manifest, artifact).unwrap();
+
+        let (record, loaded) = store
+            .load_artifact_by_id(&artifact_id)
+            .unwrap()
+            .expect("admitted artifact should resolve by content identity");
+
+        assert_eq!(record.manifest(), &manifest);
+        assert_eq!(record.state(), PackageState::Installed);
+        assert_eq!(loaded, artifact);
+        assert!(
+            store
+                .load_artifact_by_id(&ArtifactId::new("missing-artifact").unwrap())
+                .unwrap()
+                .is_none()
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

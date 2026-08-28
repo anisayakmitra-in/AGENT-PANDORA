@@ -8,6 +8,12 @@
   desktop. New CLI stage, canary, activate, and rollback commands preserve
   Parliament, evaluation, package-admission, and no-authority-expansion gates.
 
+- Wired active admitted replacements into custom Wasm Gene runtime assembly.
+  Each run keeps the base Gene identity, snapshots the exact resolved content
+  hash into its execution profile and permit, and exposes that evidence without
+  changing runtime authority. Approval IDs now include the durable session
+  identity so governed runs in separate CLI processes cannot collide.
+
 - Added runtime-owned approval list, inspection, resolution, and exact-digest
   run resumption to the authenticated local service. Pandora Desktop now shows
   the real approval subject and digest, supports deny or allow-once decisions,

@@ -454,11 +454,14 @@ base-to-candidate binding to `artifact-catalog.sqlite3`; it does not grant
 permissions or runtime authority. Rollback is tip-first for replacement chains
 and restores the recorded base binding.
 
-In this preview, built-in Harness and Gene execution does not yet consume the
-artifact catalog, and execution quiescence is not coordinated across separate
-Pandora processes. Stop concurrent runs before activation or rollback. These
-commands manage governed catalog state; they do not silently replace running
-code.
+Admitted custom Wasm Gene dependencies consume the catalog when Pandora builds
+their Domain Harness runtime. Resolution happens once per runtime assembly: the
+execution profile keeps the Harness dependency's base Gene ID and version while
+binding the exact resolved artifact hash. Activation or rollback therefore
+affects later profiles and never substitutes code inside an in-flight run.
+Built-in compiled Harnesses and Genes do not consume catalog bindings yet.
+Cross-process idle counts are not durable, but concurrent custom Wasm assembly
+observes one committed catalog state through SQLite transaction isolation.
 
 `evaluation inspect` reads the persisted evaluation receipts for one scoped
 session, optionally filtered to one execution. It reports trajectory, outcome,

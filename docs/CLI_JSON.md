@@ -68,6 +68,10 @@ Successful direct and agent runs include `elapsed_ms`, the measured wall-clock
 duration for the run. It is diagnostic evidence and does not include provider
 credentials or model content.
 
+Custom Wasm direct runs also include `artifact_resolution`. It reports the
+base and resolved artifact hashes, whether a replacement was active,
+`snapshot: "execution_profile"`, and `runtime_authority_changed: false`.
+
 Agent runs also include `provider_metrics`, an ordered array with one entry per
 provider attempt. Each entry reports the provider and model IDs, elapsed
 milliseconds, input and output token counts, and whether the attempt succeeded.
