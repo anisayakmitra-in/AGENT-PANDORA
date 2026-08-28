@@ -8,6 +8,7 @@ const runtime = vi.hoisted(() => ({
   capabilities: vi.fn(),
   engines: vi.fn(),
   evolution: vi.fn(),
+  evolutionActivations: vi.fn(),
   events: vi.fn(),
   health: vi.fn(),
   inspectSession: vi.fn(),
@@ -33,6 +34,7 @@ vi.mock("./runtimeClient", () => ({
     capabilities = runtime.capabilities;
     engines = runtime.engines;
     evolution = runtime.evolution;
+    evolutionActivations = runtime.evolutionActivations;
     events = runtime.events;
     health = runtime.health;
     inspectSession = runtime.inspectSession;
@@ -62,6 +64,7 @@ beforeEach(() => {
   runtime.capabilities.mockResolvedValue([]);
   runtime.engines.mockResolvedValue([]);
   runtime.evolution.mockResolvedValue([]);
+  runtime.evolutionActivations.mockResolvedValue([]);
   runtime.tools.mockResolvedValue([]);
   runtime.providers.mockResolvedValue([]);
   runtime.inspectSession.mockResolvedValue({ session, event_count: 0 });
@@ -151,6 +154,12 @@ describe("Pandora desktop run state", () => {
       },
       canary: null,
     }]);
+    runtime.evolutionActivations.mockResolvedValue([{
+      proposal_id: "proposal-a",
+      base_artifact: "sha256:base-a",
+      candidate_artifact: "sha256:candidate-a",
+      activated_at_unix_seconds: 13,
+    }]);
 
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: /Evolution/ }));
@@ -158,6 +167,8 @@ describe("Pandora desktop run state", () => {
     expect(await screen.findByText("Improve verification reliability")).toBeInTheDocument();
     expect(screen.getByText("Passed · 95/96")).toBeInTheDocument();
     expect(screen.getByText("parliament-a · policy v1")).toBeInTheDocument();
+    expect(screen.getByText("catalog active")).toBeInTheDocument();
+    expect(screen.getByText("Runtime authority").nextSibling).toHaveTextContent("Unchanged");
     expect(screen.queryByRole("button", { name: /approve|activate|mutate/i })).not.toBeInTheDocument();
   });
 

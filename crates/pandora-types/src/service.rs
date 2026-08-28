@@ -550,6 +550,43 @@ impl ServiceEvolutionSummary {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServiceArtifactActivation {
+    proposal_id: ProposalId,
+    base_artifact: ArtifactId,
+    candidate_artifact: ArtifactId,
+    activated_at_unix_seconds: u64,
+}
+
+impl ServiceArtifactActivation {
+    pub fn new(
+        proposal_id: ProposalId,
+        base_artifact: ArtifactId,
+        candidate_artifact: ArtifactId,
+        activated_at: Timestamp,
+    ) -> Self {
+        Self {
+            proposal_id,
+            base_artifact,
+            candidate_artifact,
+            activated_at_unix_seconds: activated_at.as_unix_seconds(),
+        }
+    }
+
+    pub fn proposal_id(&self) -> &ProposalId {
+        &self.proposal_id
+    }
+    pub fn base_artifact(&self) -> &ArtifactId {
+        &self.base_artifact
+    }
+    pub fn candidate_artifact(&self) -> &ArtifactId {
+        &self.candidate_artifact
+    }
+    pub const fn activated_at_unix_seconds(&self) -> u64 {
+        self.activated_at_unix_seconds
+    }
+}
+
 impl ServiceToolSummary {
     pub fn new(
         id: GeneId,
@@ -724,6 +761,10 @@ pub enum ServiceRequest {
         protocol_version: u16,
         proposal_id: ProposalId,
     },
+    EvolutionActivations {
+        protocol_version: u16,
+        limit: u16,
+    },
     Run {
         protocol_version: u16,
         request: ServiceRunRequest,
@@ -859,6 +900,14 @@ impl ServiceRequest {
         })
     }
 
+    pub fn evolution_activations(limit: u16) -> Result<Self, ServiceContractError> {
+        validate_page_limit(limit, MAX_SERVICE_SESSION_PAGE)?;
+        Ok(Self::EvolutionActivations {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            limit,
+        })
+    }
+
     pub const fn run_resume(request: ServiceRunResumeRequest) -> Self {
         Self::RunResume {
             protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
@@ -914,6 +963,9 @@ impl ServiceRequest {
             | Self::EvolutionInspect {
                 protocol_version, ..
             }
+            | Self::EvolutionActivations {
+                protocol_version, ..
+            }
             | Self::Run {
                 protocol_version, ..
             }
@@ -965,6 +1017,9 @@ impl ServiceRequest {
             Self::EvolutionInspect { proposal_id, .. } => {
                 ProposalId::new(proposal_id.as_str())?;
                 Ok(())
+            }
+            Self::EvolutionActivations { limit, .. } => {
+                validate_page_limit(*limit, MAX_SERVICE_SESSION_PAGE)
             }
             Self::Run { request, .. } => request.validate(),
             Self::RunResume { request, .. } => request.validate(),
@@ -1561,6 +1616,10 @@ pub enum ServiceResponse {
         protocol_version: u16,
         proposal: ServiceEvolutionSummary,
     },
+    EvolutionActivations {
+        protocol_version: u16,
+        activations: Vec<ServiceArtifactActivation>,
+    },
     Run {
         protocol_version: u16,
         run: ServiceRunResult,
@@ -1670,6 +1729,13 @@ impl ServiceResponse {
         }
     }
 
+    pub fn evolution_activations(activations: Vec<ServiceArtifactActivation>) -> Self {
+        Self::EvolutionActivations {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            activations,
+        }
+    }
+
     pub const fn run(run: ServiceRunResult) -> Self {
         Self::Run {
             protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
@@ -1726,6 +1792,9 @@ impl ServiceResponse {
                 protocol_version, ..
             }
             | Self::EvolutionInspect {
+                protocol_version, ..
+            }
+            | Self::EvolutionActivations {
                 protocol_version, ..
             }
             | Self::Run {

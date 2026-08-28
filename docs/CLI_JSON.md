@@ -38,6 +38,11 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora evaluation golden --input <path> --json` | `evaluation golden` | `total`, `passed`, `failed`, `digest`, `cases` |
 | `pandora evolution evaluate --id <proposal-id> --input <path> --json` | `evolution evaluate` | `proposal_id`, `total`, `passed`, `failed`, `trajectory_score`, `outcome_score`, `holdout_passed`, `policy_passed`, `regression_passed`, `digest`, `cases`, `durability` |
 | `pandora evolution submit --input <path> --json` | `evolution submit` | `proposal_id`, `state`, `durability` |
+| `pandora evolution approve --input <path> --json` | `evolution approve` | `proposal_id`, `state`, `approver`, `signer`, `durability` |
+| `pandora evolution stage --id <proposal-id> --json` | `evolution stage` | `proposal_id`, `state`, `durability` |
+| `pandora evolution canary --input <path> --json` | `evolution canary` | `proposal_id`, `state`, `passed`, `failure_count`, `durability` |
+| `pandora evolution activate --id <proposal-id> --json` | `evolution activate` | `proposal_id`, `state`, `base_artifact`, `candidate_artifact`, `activated_at`, `runtime_authority_changed`, `durability` |
+| `pandora evolution rollback --id <proposal-id> --reason <text> --json` | `evolution rollback` | `proposal_id`, `state`, `restored_artifact`, `rolled_back_at`, `reason`, `durability` |
 | `pandora evaluation inspect --session <id> --json` | `evaluation inspect` | `session_id`, `execution_id`, `count`, `result_counts`, `receipts`, `durability` |
 | `pandora graph <kind> --input <path> [--store <path>] --json` | `graph build` | `kind`, `scope`, `source_count`, `nodes`, `edges`, `digest`, optional `persisted` |
 | `pandora update --artifact ... --json` | `update` | `verified`, `artifact`, `target`, `signature_verified`, `dry_run` |

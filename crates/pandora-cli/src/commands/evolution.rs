@@ -1,13 +1,14 @@
 use super::{load_config, parse_options, require_config_file, timestamp};
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{
-    EvaluationEngine, EvolutionEngine, EvolutionError, EvolutionRecord, HoldoutCase,
-    HoldoutSetReport, MAX_HOLDOUT_CASES,
+    ArtifactCatalog, EvaluationEngine, EvolutionEngine, EvolutionError, EvolutionRecord,
+    HoldoutCase, HoldoutSetReport, MAX_HOLDOUT_CASES, PackageStore, ReplacementEngine,
+    ReplacementError,
 };
 use pandora_types::{
-    ArtifactId, ArtifactSignature, EvaluationRequest, EvolutionPolicy, EvolutionSource,
-    ExecutionId, HoldoutEvaluation, MutationProposal, ParliamentApproval, PrincipalId, ProposalId,
-    RequestDigest, Timestamp,
+    ArtifactId, ArtifactSignature, CanaryResult, EvaluationRequest, EvolutionPolicy,
+    EvolutionSource, ExecutionId, HoldoutEvaluation, MutationProposal, ParliamentApproval,
+    PrincipalId, ProposalId, RequestDigest, Timestamp,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -47,6 +48,15 @@ struct ApprovalInput {
 }
 
 #[derive(Debug, Deserialize)]
+struct CanaryInput {
+    proposal_id: String,
+    passed: bool,
+    failure_count: u32,
+    note: String,
+    evaluated_at: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
 struct HoldoutCaseInput {
     id: String,
     execution_id: String,
@@ -61,15 +71,23 @@ struct HoldoutCaseInput {
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args
         .first()
-        .ok_or_else(|| CliError::usage("evolution requires 'list' or 'inspect'"))?;
+        .ok_or_else(|| {
+            CliError::usage(
+                "evolution requires 'list', 'inspect', 'submit', 'evaluate', 'approve', 'stage', 'canary', 'activate', or 'rollback'",
+            )
+        })?;
     match subcommand.as_str() {
         "list" => list(&args[1..]),
         "inspect" => inspect(&args[1..]),
         "submit" => submit(&args[1..]),
         "evaluate" => evaluate(&args[1..]),
         "approve" => approve(&args[1..]),
+        "stage" => stage(&args[1..]),
+        "canary" => canary(&args[1..]),
+        "activate" => activate(&args[1..]),
+        "rollback" => rollback(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown evolution command '{unknown}', expected 'list', 'inspect', 'submit', 'evaluate', or 'approve'"
+            "unknown evolution command '{unknown}', expected 'list', 'inspect', 'submit', 'evaluate', 'approve', 'stage', 'canary', 'activate', or 'rollback'"
         ))),
     }
 }
@@ -102,6 +120,120 @@ fn approve(args: &[String]) -> Result<CommandResult, CliError> {
             "durability": "sqlite",
         }),
         format!("Approved evolution proposal {proposal_id}"),
+    ))
+}
+
+fn stage(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "id"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evolution stage does not accept positional arguments",
+        ));
+    }
+    let proposal_id = required_proposal_id(parsed.value("id"), "stage")?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    ReplacementEngine::new()
+        .stage(&open_engine(&config)?, &proposal_id)
+        .map_err(replacement_error)?;
+    Ok(success(
+        "evolution stage",
+        json!({"proposal_id": proposal_id, "state": "staged", "durability": "sqlite"}),
+        format!("Staged evolution proposal {proposal_id}"),
+    ))
+}
+
+fn canary(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "input"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evolution canary does not accept positional arguments",
+        ));
+    }
+    let input = parsed
+        .value("input")
+        .ok_or_else(|| CliError::usage("evolution canary requires '--input <path>'"))?;
+    let canary = parse_canary(&read_bounded(Path::new(input))?)?;
+    let proposal_id = canary.proposal_id().clone();
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    ReplacementEngine::new()
+        .record_canary(&open_engine(&config)?, canary.clone())
+        .map_err(replacement_error)?;
+    Ok(success(
+        "evolution canary",
+        json!({
+            "proposal_id": proposal_id,
+            "state": if canary.passed() { "canary_passed" } else { "canary_failed" },
+            "passed": canary.passed(),
+            "failure_count": canary.failure_count(),
+            "durability": "sqlite",
+        }),
+        format!("Recorded canary result for evolution proposal {proposal_id}"),
+    ))
+}
+
+fn activate(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "id"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evolution activate does not accept positional arguments",
+        ));
+    }
+    let proposal_id = required_proposal_id(parsed.value("id"), "activate")?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let engine = open_engine(&config)?;
+    let packages = PackageStore::open(config.data_dir().join("packages.sqlite3"))
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let catalog = open_artifact_catalog(&config)?;
+    let receipt = ReplacementEngine::new()
+        .activate_admitted(&engine, &packages, &catalog, &proposal_id, timestamp())
+        .map_err(replacement_error)?;
+    Ok(success(
+        "evolution activate",
+        json!({
+            "proposal_id": proposal_id,
+            "state": "active",
+            "base_artifact": receipt.base_artifact(),
+            "candidate_artifact": receipt.candidate_artifact(),
+            "activated_at": receipt.activated_at(),
+            "runtime_authority_changed": false,
+            "durability": "sqlite",
+        }),
+        format!("Activated admitted artifact for evolution proposal {proposal_id}"),
+    ))
+}
+
+fn rollback(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "id", "reason"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evolution rollback does not accept positional arguments",
+        ));
+    }
+    let proposal_id = required_proposal_id(parsed.value("id"), "rollback")?;
+    let reason = parsed
+        .value("reason")
+        .ok_or_else(|| CliError::usage("evolution rollback requires '--reason <text>'"))?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let engine = open_engine(&config)?;
+    let catalog = open_artifact_catalog(&config)?;
+    let receipt = ReplacementEngine::new()
+        .rollback_admitted(&engine, &catalog, &proposal_id, timestamp(), reason)
+        .map_err(replacement_error)?;
+    Ok(success(
+        "evolution rollback",
+        json!({
+            "proposal_id": proposal_id,
+            "state": "rolled_back",
+            "restored_artifact": receipt.restored_artifact(),
+            "rolled_back_at": receipt.rolled_back_at(),
+            "reason": receipt.reason(),
+            "durability": "sqlite",
+        }),
+        format!("Rolled back evolution proposal {proposal_id}"),
     ))
 }
 
@@ -250,6 +382,20 @@ fn open_engine(
     .map_err(evolution_error)
 }
 
+fn open_artifact_catalog(
+    config: &pandora_runtime::config::RuntimeConfig,
+) -> Result<ArtifactCatalog, CliError> {
+    ArtifactCatalog::open(config.data_dir().join("artifact-catalog.sqlite3"))
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))
+}
+
+fn required_proposal_id(value: Option<&str>, command: &str) -> Result<ProposalId, CliError> {
+    let value = value.ok_or_else(|| {
+        CliError::usage(format!("evolution {command} requires '--id <proposal-id>'"))
+    })?;
+    ProposalId::new(value.to_owned()).map_err(|_| CliError::usage("proposal ID is invalid"))
+}
+
 fn parse_limit(value: Option<&str>) -> Result<usize, CliError> {
     let limit = value
         .map(str::parse)
@@ -267,18 +413,18 @@ fn parse_limit(value: Option<&str>) -> Result<usize, CliError> {
 fn read_bounded(path: &Path) -> Result<Vec<u8>, CliError> {
     let metadata = fs::metadata(path).map_err(|error| {
         CliError::execution(
-            "could not read holdout input",
+            "could not read evolution input",
             json!({"path": path, "error": error.to_string()}),
         )
     })?;
     if metadata.len() > MAX_HOLDOUT_INPUT_BYTES {
         return Err(CliError::usage(format!(
-            "holdout input exceeds {MAX_HOLDOUT_INPUT_BYTES} bytes"
+            "evolution input exceeds {MAX_HOLDOUT_INPUT_BYTES} bytes"
         )));
     }
     let file = fs::File::open(path).map_err(|error| {
         CliError::execution(
-            "could not open holdout input",
+            "could not open evolution input",
             json!({"path": path, "error": error.to_string()}),
         )
     })?;
@@ -287,16 +433,35 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>, CliError> {
         .read_to_end(&mut bytes)
         .map_err(|error| {
             CliError::execution(
-                "could not read holdout input",
+                "could not read evolution input",
                 json!({"path": path, "error": error.to_string()}),
             )
         })?;
     if bytes.len() as u64 > MAX_HOLDOUT_INPUT_BYTES {
         return Err(CliError::usage(format!(
-            "holdout input exceeds {MAX_HOLDOUT_INPUT_BYTES} bytes"
+            "evolution input exceeds {MAX_HOLDOUT_INPUT_BYTES} bytes"
         )));
     }
     Ok(bytes)
+}
+
+fn parse_canary(bytes: &[u8]) -> Result<CanaryResult, CliError> {
+    let input = serde_json::from_slice::<CanaryInput>(bytes)
+        .map_err(|error| CliError::usage(format!("invalid canary JSON: {error}")))?;
+    let proposal_id = ProposalId::new(input.proposal_id)
+        .map_err(|error| CliError::usage(format!("invalid proposal ID: {error}")))?;
+    let evaluated_at = input
+        .evaluated_at
+        .map(Timestamp::from_unix_seconds)
+        .unwrap_or_else(timestamp);
+    CanaryResult::new(
+        proposal_id,
+        input.passed,
+        input.failure_count,
+        input.note,
+        evaluated_at,
+    )
+    .map_err(|error| CliError::usage(format!("invalid canary result: {error}")))
 }
 
 fn parse_holdout_cases(bytes: &[u8]) -> Result<Vec<HoldoutCase>, CliError> {
@@ -493,9 +658,24 @@ fn evolution_error(error: EvolutionError) -> CliError {
     }
 }
 
+fn replacement_error(error: ReplacementError) -> CliError {
+    let message = error.to_string();
+    match error {
+        ReplacementError::Evolution(EvolutionError::NotFound)
+        | ReplacementError::ExecutionActive
+        | ReplacementError::ExecutionNotFound
+        | ReplacementError::BaseArtifactNotAdmitted
+        | ReplacementError::CandidateArtifactNotAdmitted => CliError::execution(message, json!({})),
+        _ => CliError::internal(message, json!({})),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{parse_approval, parse_holdout_cases, parse_limit, parse_proposal};
+    use super::{
+        parse_approval, parse_canary, parse_holdout_cases, parse_limit, parse_proposal,
+        required_proposal_id,
+    };
 
     #[test]
     fn limits_are_bounded_for_operator_queries() {
@@ -550,5 +730,25 @@ mod tests {
         assert_eq!(approval.policy_version(), 1);
         assert_eq!(signature.artifact_id().as_str(), "candidate-1");
         assert_eq!(signature.signer().as_str(), "signer-1");
+    }
+
+    #[test]
+    fn parses_canary_evidence_without_granting_authority() {
+        let canary = parse_canary(
+            br#"{"proposal_id":"proposal-1","passed":true,"failure_count":0,"note":"shadow traffic passed"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(canary.proposal_id().as_str(), "proposal-1");
+        assert!(canary.passed());
+        assert_eq!(canary.failure_count(), 0);
+        assert_eq!(canary.note(), "shadow traffic passed");
+    }
+
+    #[test]
+    fn lifecycle_commands_require_a_valid_proposal_id() {
+        assert!(required_proposal_id(None, "activate").is_err());
+        assert!(required_proposal_id(Some("proposal-1"), "activate").is_ok());
+        assert!(required_proposal_id(Some(""), "activate").is_err());
     }
 }

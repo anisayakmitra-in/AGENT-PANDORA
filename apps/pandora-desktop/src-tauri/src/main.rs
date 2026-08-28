@@ -118,7 +118,7 @@ fn pandora_rpc(
 ) -> Result<Value, String> {
     if !matches!(
         method.as_str(),
-        "runtime.health" | "runtime.capabilities" | "runtime.providers" | "runtime.engines" | "runtime.tools" | "session.list" | "session.inspect" | "session.events" | "session.memory" | "approval.list" | "approval.inspect" | "approval.resolve" | "evolution.list" | "evolution.inspect" | "run.execute" | "run.resume" | "agent.execute" | "agent.resume"
+        "runtime.health" | "runtime.capabilities" | "runtime.providers" | "runtime.engines" | "runtime.tools" | "session.list" | "session.inspect" | "session.events" | "session.memory" | "approval.list" | "approval.inspect" | "approval.resolve" | "evolution.list" | "evolution.inspect" | "evolution.activations" | "run.execute" | "run.resume" | "agent.execute" | "agent.resume"
     ) {
         return Err("unsupported Pandora service method".to_owned());
     }

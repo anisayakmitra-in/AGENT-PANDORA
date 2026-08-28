@@ -71,7 +71,7 @@ fn powershell() -> &'static str {
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'strategies') {
         'list','population'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'evolution') {
-        'list','inspect','submit','evaluate'
+        'list','inspect','submit','evaluate','approve','stage','canary','activate','rollback'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'efficiency') {
         'rank'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'evaluation') {
@@ -142,7 +142,7 @@ fn bash() -> &'static str {
     elif [[ "$previous" == "evaluation" ]]; then
         COMPREPLY=( $(compgen -W 'golden inspect' -- "$current") )
     elif [[ "$previous" == "evolution" ]]; then
-        COMPREPLY=( $(compgen -W 'list inspect submit evaluate' -- "$current") )
+        COMPREPLY=( $(compgen -W 'list inspect submit evaluate approve stage canary activate rollback' -- "$current") )
     elif [[ "$previous" == "graph" ]]; then
         COMPREPLY=( $(compgen -W 'code knowledge review architecture' -- "$current") )
     elif [[ "$previous" == "fleet" ]]; then
@@ -201,7 +201,7 @@ elif [[ ${words[2]} == efficiency ]]; then
 elif [[ ${words[2]} == evaluation ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet graph completions migrate update uninstall doctor)' '2:evaluation command:(golden inspect)'
 elif [[ ${words[2]} == evolution ]]; then
-    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet graph completions migrate update uninstall doctor)' '2:evolution command:(list inspect submit evaluate)'
+    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet graph completions migrate update uninstall doctor)' '2:evolution command:(list inspect submit evaluate approve stage canary activate rollback)'
 elif [[ ${words[2]} == graph ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet graph completions migrate update uninstall doctor)' '2:graph command:(code knowledge review architecture)'
 elif [[ ${words[2]} == fleet ]]; then
@@ -237,7 +237,7 @@ complete -c pandora -f -n '__fish_seen_subcommand_from strategies; and __fish_se
 complete -c pandora -f -n '__fish_seen_subcommand_from strategies; and __fish_seen_subcommand_from population; and __fish_seen_subcommand_from inspect' -l id -r
 complete -c pandora -f -n '__fish_seen_subcommand_from efficiency' -a 'rank'
 complete -c pandora -f -n '__fish_seen_subcommand_from evaluation' -a 'golden inspect'
-complete -c pandora -f -n '__fish_seen_subcommand_from evolution' -a 'list inspect submit evaluate'
+complete -c pandora -f -n '__fish_seen_subcommand_from evolution' -a 'list inspect submit evaluate approve stage canary activate rollback'
 complete -c pandora -f -n '__fish_seen_subcommand_from graph' -a 'code knowledge review architecture'
 complete -c pandora -f -n '__fish_seen_subcommand_from fleet' -a 'list register dispatch lease release expire quarantine revoke kill'
 complete -c pandora -f -n '__fish_seen_subcommand_from feedback' -a 'coding'"#

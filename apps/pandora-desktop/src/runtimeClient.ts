@@ -112,6 +112,13 @@ export type RuntimeEvolutionProposal = {
   } | null;
 };
 
+export type RuntimeArtifactActivation = {
+  proposal_id: string;
+  base_artifact: string;
+  candidate_artifact: string;
+  activated_at_unix_seconds: number;
+};
+
 export type RuntimeRun = {
   mode: "direct" | "agent";
   session_id: string;
@@ -228,6 +235,11 @@ type EvolutionListResponse = {
 type EvolutionInspectResponse = {
   kind: "evolution_inspect";
   proposal: RuntimeEvolutionProposal;
+};
+
+type EvolutionActivationsResponse = {
+  kind: "evolution_activations";
+  activations: RuntimeArtifactActivation[];
 };
 
 const endpointStorageKey = "pandora.runtime.endpoint";
@@ -412,6 +424,18 @@ export class RuntimeClient {
       proposal_id: proposalId,
     });
     return response.proposal;
+  }
+
+  async evolutionActivations(limit = 64): Promise<RuntimeArtifactActivation[]> {
+    try {
+      const response = await this.call<EvolutionActivationsResponse>("evolution.activations", { limit });
+      return response.activations;
+    } catch (error: unknown) {
+      if (error instanceof Error && error.message === "method_not_found") {
+        return [];
+      }
+      throw error;
+    }
   }
 
   async events(sessionId: string, limit = 256): Promise<RuntimeEvent[]> {

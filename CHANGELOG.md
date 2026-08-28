@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added governed admitted-artifact evolution activation. The durable artifact
+  catalog resolves bounded replacement chains, rejects cycles and out-of-order
+  rollback, and exposes active bindings read-only through the local service and
+  desktop. New CLI stage, canary, activate, and rollback commands preserve
+  Parliament, evaluation, package-admission, and no-authority-expansion gates.
+
 - Added runtime-owned approval list, inspection, resolution, and exact-digest
   run resumption to the authenticated local service. Pandora Desktop now shows
   the real approval subject and digest, supports deny or allow-once decisions,

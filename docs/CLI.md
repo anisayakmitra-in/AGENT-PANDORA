@@ -434,6 +434,32 @@ candidate.
 pandora evolution submit --input proposal.json --json
 ```
 
+After evaluation, Parliament approval and candidate signature evidence are
+recorded from a bounded JSON document. Approval alone does not install,
+execute, stage, or activate the candidate.
+
+```text
+pandora evolution approve --input approval.json --json
+pandora evolution stage --id proposal-1 --json
+pandora evolution canary --input canary.json --json
+pandora evolution activate --id proposal-1 --json
+pandora evolution rollback --id proposal-1 --reason "regression observed" --json
+```
+
+The canary document contains `proposal_id`, `passed`, `failure_count`, `note`,
+and an optional `evaluated_at` Unix timestamp. Activation succeeds only after
+all production gates pass and the exact base and candidate content hashes are
+already present in the admitted package store. It writes a durable
+base-to-candidate binding to `artifact-catalog.sqlite3`; it does not grant
+permissions or runtime authority. Rollback is tip-first for replacement chains
+and restores the recorded base binding.
+
+In this preview, built-in Harness and Gene execution does not yet consume the
+artifact catalog, and execution quiescence is not coordinated across separate
+Pandora processes. Stop concurrent runs before activation or rollback. These
+commands manage governed catalog state; they do not silently replace running
+code.
+
 `evaluation inspect` reads the persisted evaluation receipts for one scoped
 session, optionally filtered to one execution. It reports trajectory, outcome,
 policy, human, regression, and adversarial results without replaying the
@@ -601,6 +627,11 @@ pandora evolution list [--limit <1-256>]
 pandora evolution inspect --id <proposal-id>
 pandora evolution submit --input <path>
 pandora evolution evaluate --id <proposal-id> --input <path> [--fail-on-failure]
+pandora evolution approve --input <path>
+pandora evolution stage --id <proposal-id>
+pandora evolution canary --input <path>
+pandora evolution activate --id <proposal-id>
+pandora evolution rollback --id <proposal-id> --reason <text>
 pandora rollout inspect --session <id> [--execution <id>]
 pandora graph code|knowledge|review|architecture --input <path> [--store <path>] [--tenant <id>] [--workspace <id>]
 pandora completions powershell

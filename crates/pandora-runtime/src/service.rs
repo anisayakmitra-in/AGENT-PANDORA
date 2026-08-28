@@ -2,6 +2,7 @@ use crate::agent_loop::{
     AgentApprovalContext, AgentLoop, AgentLoopError, AgentRunRequest, AgentRunSummary,
 };
 use crate::approvals::{ApprovalError, ApprovalRequest, ApprovalStore, PendingApproval};
+use crate::artifact_catalog::{ArtifactCatalog, ArtifactCatalogError};
 use crate::evaluation_engine::EvaluationEngine;
 use crate::evolution::{EvolutionEngine, EvolutionError, EvolutionRecord};
 use crate::execution_controller::{ExecutionController, RunStatus, RunSummary, RuntimeError};
@@ -11,13 +12,14 @@ use pandora_provider::Provider;
 use pandora_types::{
     EvaluationContractError, EvaluationReceipt, EvaluationRequest, EventPayload, EventType,
     IdError, MemoryTier, PrincipalId, ProposalId, ServiceAgentResumeRequest,
-    ServiceAgentRunRequest, ServiceAgentRunResult, ServiceApprovalSummary, ServiceContractError,
-    ServiceEngineSummary, ServiceEventPage, ServiceEvolutionApproval, ServiceEvolutionCanary,
-    ServiceEvolutionEvaluation, ServiceEvolutionSummary, ServiceHarnessSummary, ServiceHealth,
-    ServiceMemoryPage, ServiceMemoryRecord, ServiceProviderSummary, ServiceRequest,
-    ServiceResponse, ServiceRunRequest, ServiceRunResult, ServiceRunResumeRequest,
-    ServiceSessionDetail, ServiceSessionSummary, ServiceToolSummary, Session, SessionId,
-    TaskIntent, TenantId, Timestamp, WorkspaceId,
+    ServiceAgentRunRequest, ServiceAgentRunResult, ServiceApprovalSummary,
+    ServiceArtifactActivation, ServiceContractError, ServiceEngineSummary, ServiceEventPage,
+    ServiceEvolutionApproval, ServiceEvolutionCanary, ServiceEvolutionEvaluation,
+    ServiceEvolutionSummary, ServiceHarnessSummary, ServiceHealth, ServiceMemoryPage,
+    ServiceMemoryRecord, ServiceProviderSummary, ServiceRequest, ServiceResponse,
+    ServiceRunRequest, ServiceRunResult, ServiceRunResumeRequest, ServiceSessionDetail,
+    ServiceSessionSummary, ServiceToolSummary, Session, SessionId, TaskIntent, TenantId, Timestamp,
+    WorkspaceId,
 };
 use std::fmt;
 use std::path::Path;
@@ -65,6 +67,8 @@ pub enum RuntimeServiceError {
     AgentUnavailable,
     Evolution(EvolutionError),
     EvolutionUnavailable,
+    ArtifactCatalog(ArtifactCatalogError),
+    ArtifactCatalogUnavailable,
     Approval(ApprovalError),
     Session(SessionError),
 }
@@ -88,6 +92,8 @@ impl RuntimeServiceError {
             Self::Evolution(EvolutionError::NotFound) => "evolution_proposal_not_found",
             Self::Evolution(_) => "evolution_store_failed",
             Self::EvolutionUnavailable => "evolution_unavailable",
+            Self::ArtifactCatalog(_) => "artifact_catalog_failed",
+            Self::ArtifactCatalogUnavailable => "artifact_catalog_unavailable",
             Self::Approval(ApprovalError::NotFound) => "approval_not_found",
             Self::Approval(ApprovalError::Expired) => "approval_expired",
             Self::Approval(ApprovalError::Terminal) => "approval_terminal",
@@ -120,6 +126,10 @@ impl fmt::Display for RuntimeServiceError {
             Self::Evolution(error) => error.fmt(formatter),
             Self::EvolutionUnavailable => {
                 formatter.write_str("evolution records are not configured")
+            }
+            Self::ArtifactCatalog(error) => error.fmt(formatter),
+            Self::ArtifactCatalogUnavailable => {
+                formatter.write_str("artifact activation catalog is not configured")
             }
             Self::Approval(error) => error.fmt(formatter),
             Self::Session(error) => error.fmt(formatter),
@@ -165,6 +175,12 @@ impl From<EvolutionError> for RuntimeServiceError {
     }
 }
 
+impl From<ArtifactCatalogError> for RuntimeServiceError {
+    fn from(error: ArtifactCatalogError) -> Self {
+        Self::ArtifactCatalog(error)
+    }
+}
+
 impl From<ApprovalError> for RuntimeServiceError {
     fn from(error: ApprovalError) -> Self {
         Self::Approval(error)
@@ -185,6 +201,7 @@ pub struct RuntimeService {
     providers: Vec<ServiceProviderSummary>,
     agent: Option<RuntimeServiceAgent>,
     evolution: Option<Arc<EvolutionEngine>>,
+    artifact_catalog: Option<Arc<ArtifactCatalog>>,
     next_session: AtomicU64,
 }
 
@@ -219,6 +236,7 @@ impl RuntimeService {
             providers,
             agent: None,
             evolution: None,
+            artifact_catalog: None,
             next_session: AtomicU64::new(1),
         }
     }
@@ -243,6 +261,11 @@ impl RuntimeService {
 
     pub fn with_evolution(mut self, evolution: Arc<EvolutionEngine>) -> Self {
         self.evolution = Some(evolution);
+        self
+    }
+
+    pub fn with_artifact_catalog(mut self, catalog: Arc<ArtifactCatalog>) -> Self {
+        self.artifact_catalog = Some(catalog);
         self
     }
 
@@ -286,6 +309,9 @@ impl RuntimeService {
             ServiceRequest::EvolutionList { limit, .. } => self.list_evolution(*limit),
             ServiceRequest::EvolutionInspect { proposal_id, .. } => {
                 self.inspect_evolution(proposal_id)
+            }
+            ServiceRequest::EvolutionActivations { limit, .. } => {
+                self.list_artifact_activations(*limit)
             }
             ServiceRequest::Run { request, .. } => self.run(request, now),
             ServiceRequest::RunResume { request, .. } => self.resume_run(request, now),
@@ -651,6 +677,29 @@ impl RuntimeService {
         Ok(ServiceResponse::evolution_inspect(
             service_evolution_summary(engine.inspect(proposal_id)?),
         ))
+    }
+
+    fn list_artifact_activations(
+        &self,
+        limit: u16,
+    ) -> Result<ServiceResponse, RuntimeServiceError> {
+        let catalog = self
+            .artifact_catalog
+            .as_ref()
+            .ok_or(RuntimeServiceError::ArtifactCatalogUnavailable)?;
+        let activations = catalog
+            .list(usize::from(limit))?
+            .into_iter()
+            .map(|activation| {
+                ServiceArtifactActivation::new(
+                    activation.proposal_id().clone(),
+                    activation.base_artifact().clone(),
+                    activation.candidate_artifact().clone(),
+                    activation.activated_at(),
+                )
+            })
+            .collect();
+        Ok(ServiceResponse::evolution_activations(activations))
     }
 
     fn run(
@@ -1185,7 +1234,8 @@ mod tests {
     use pandora_types::{
         ArtifactId, ArtifactSignature, Capability, ContextClassification, EvolutionPolicy,
         EvolutionSource, HoldoutEvaluation, MemoryApproval, MemoryKind, MemoryRecord, MemoryScope,
-        MutationProposal, Operation, ParliamentApproval, PolicyContext, RequestDigest,
+        MutationProposal, Operation, ParliamentApproval, PolicyContext, ReplacementReceipt,
+        RequestDigest,
     };
     use std::sync::Mutex;
 
@@ -1296,13 +1346,24 @@ mod tests {
                 .unwrap(),
             )
             .unwrap();
+        let catalog =
+            Arc::new(ArtifactCatalog::open(root.join("artifact-catalog.sqlite3")).unwrap());
+        catalog
+            .activate(&ReplacementReceipt::new(
+                proposal_id.clone(),
+                ArtifactId::new("base-a").unwrap(),
+                ArtifactId::new("candidate-a").unwrap(),
+                Timestamp::from_unix_seconds(13),
+            ))
+            .unwrap();
         let service = RuntimeService::new(
             ExecutionController::new(WorkspaceRoot::new(&root).unwrap()),
             SessionStore::open(root.join("sessions.sqlite3")).unwrap(),
             ApprovalStore::open(root.join("sessions.sqlite3")).unwrap(),
             scope,
         )
-        .with_evolution(evolution);
+        .with_evolution(evolution)
+        .with_artifact_catalog(catalog);
 
         let response = service
             .handle(
@@ -1322,6 +1383,20 @@ mod tests {
         assert!(proposals[0].approval().unwrap().signature_present());
         let serialized = serde_json::to_string(&response).unwrap();
         assert!(!serialized.contains("secret-signature-material"));
+
+        let response = service
+            .handle(
+                &ServiceRequest::evolution_activations(16).unwrap(),
+                Timestamp::from_unix_seconds(14),
+            )
+            .unwrap();
+        let ServiceResponse::EvolutionActivations { activations, .. } = response else {
+            panic!("expected an evolution activation response");
+        };
+        assert_eq!(activations.len(), 1);
+        assert_eq!(activations[0].proposal_id(), &proposal_id);
+        assert_eq!(activations[0].base_artifact().as_str(), "base-a");
+        assert_eq!(activations[0].candidate_artifact().as_str(), "candidate-a");
 
         let _ = std::fs::remove_dir_all(root);
     }

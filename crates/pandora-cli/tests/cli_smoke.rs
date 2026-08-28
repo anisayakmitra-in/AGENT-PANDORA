@@ -504,6 +504,221 @@ fn evolution_cli_can_submit_evaluate_and_approve() {
 }
 
 #[test]
+fn evolution_cli_activates_only_admitted_artifacts_and_rolls_back() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let base_artifact = b"base evolution gene\n";
+    let candidate_artifact = b"candidate evolution gene\n";
+    let base_manifest = PackageManifest::new(
+        "evolution/base-gene",
+        "1.0.0",
+        PackageKind::Gene,
+        "local-publisher",
+        hash_artifact(base_artifact),
+        Vec::new(),
+        PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+        "MIT",
+        TrustEvidence::unsigned(),
+    )
+    .unwrap();
+    let candidate_manifest = PackageManifest::new(
+        "evolution/candidate-gene",
+        "1.0.0",
+        PackageKind::Gene,
+        "local-publisher",
+        hash_artifact(candidate_artifact),
+        Vec::new(),
+        PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+        "MIT",
+        TrustEvidence::unsigned(),
+    )
+    .unwrap();
+
+    for (name, manifest, artifact) in [
+        ("base", &base_manifest, base_artifact.as_slice()),
+        (
+            "candidate",
+            &candidate_manifest,
+            candidate_artifact.as_slice(),
+        ),
+    ] {
+        let manifest_path = fixture.root.join(format!("{name}-evolution.json"));
+        let artifact_path = fixture.root.join(format!("{name}-evolution.artifact"));
+        fs::write(&manifest_path, serde_json::to_vec_pretty(manifest).unwrap()).unwrap();
+        fs::write(&artifact_path, artifact).unwrap();
+        let admitted = fixture
+            .command(&[
+                "package",
+                "admit",
+                "--manifest",
+                manifest_path.to_str().unwrap(),
+                "--artifact",
+                artifact_path.to_str().unwrap(),
+                "--json",
+            ])
+            .output()
+            .expect("evolution package admission should start");
+        assert_success_with_context(&admitted, "evolution package admission");
+    }
+
+    let proposal_path = fixture.root.join("admitted-proposal.json");
+    fs::write(
+        &proposal_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "proposal_id": "proposal-admitted-cli",
+            "source": "gepa",
+            "base_artifact": base_manifest.content_hash(),
+            "candidate_artifact": candidate_manifest.content_hash(),
+            "evidence_digest": "evidence-admitted-cli",
+            "expected_outcome": "improve admitted gene reliability"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let submitted = fixture
+        .command(&[
+            "evolution",
+            "submit",
+            "--input",
+            proposal_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("admitted evolution submit should start");
+    assert_success_with_context(&submitted, "admitted evolution submit");
+
+    let holdout_path = fixture.root.join("admitted-holdout.json");
+    fs::write(
+        &holdout_path,
+        br#"{"cases":[{"id":"case-admitted-cli","execution_id":"execution-admitted-cli","output":"candidate","expected_output":"candidate","baseline_output":"candidate"}]}"#,
+    )
+    .unwrap();
+    let evaluated = fixture
+        .command(&[
+            "evolution",
+            "evaluate",
+            "--id",
+            "proposal-admitted-cli",
+            "--input",
+            holdout_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("admitted evolution evaluation should start");
+    assert_success_with_context(&evaluated, "admitted evolution evaluation");
+
+    let approval_path = fixture.root.join("admitted-approval.json");
+    fs::write(
+        &approval_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "proposal_id": "proposal-admitted-cli",
+            "approver": "parliament-cli",
+            "policy_version": 1,
+            "artifact_id": candidate_manifest.content_hash(),
+            "signer": "signer-cli",
+            "signature": "signed-admitted-candidate"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let approved = fixture
+        .command(&[
+            "evolution",
+            "approve",
+            "--input",
+            approval_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("admitted evolution approval should start");
+    assert_success_with_context(&approved, "admitted evolution approval");
+
+    let staged = fixture
+        .command(&[
+            "evolution",
+            "stage",
+            "--id",
+            "proposal-admitted-cli",
+            "--json",
+        ])
+        .output()
+        .expect("evolution staging should start");
+    assert_success_with_context(&staged, "evolution staging");
+    assert_eq!(parse_json(&staged)["state"], "staged");
+
+    let canary_path = fixture.root.join("admitted-canary.json");
+    fs::write(
+        &canary_path,
+        br#"{"proposal_id":"proposal-admitted-cli","passed":true,"failure_count":0,"note":"shadow canary passed"}"#,
+    )
+    .unwrap();
+    let canary = fixture
+        .command(&[
+            "evolution",
+            "canary",
+            "--input",
+            canary_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("evolution canary recording should start");
+    assert_success_with_context(&canary, "evolution canary recording");
+    assert_eq!(parse_json(&canary)["state"], "canary_passed");
+
+    let activated = fixture
+        .command(&[
+            "evolution",
+            "activate",
+            "--id",
+            "proposal-admitted-cli",
+            "--json",
+        ])
+        .output()
+        .expect("admitted evolution activation should start");
+    assert_success_with_context(&activated, "admitted evolution activation");
+    let activated = parse_json(&activated);
+    assert_eq!(activated["state"], "active");
+    assert_eq!(activated["runtime_authority_changed"], false);
+    assert_eq!(
+        activated["candidate_artifact"],
+        candidate_manifest.content_hash()
+    );
+
+    let rolled_back = fixture
+        .command(&[
+            "evolution",
+            "rollback",
+            "--id",
+            "proposal-admitted-cli",
+            "--reason",
+            "operator regression review",
+            "--json",
+        ])
+        .output()
+        .expect("admitted evolution rollback should start");
+    assert_success_with_context(&rolled_back, "admitted evolution rollback");
+    let rolled_back = parse_json(&rolled_back);
+    assert_eq!(rolled_back["state"], "rolled_back");
+    assert_eq!(
+        rolled_back["restored_artifact"],
+        base_manifest.content_hash()
+    );
+
+    let inspected = fixture
+        .command(&[
+            "evolution",
+            "inspect",
+            "--id",
+            "proposal-admitted-cli",
+            "--json",
+        ])
+        .output()
+        .expect("rolled-back evolution inspection should start");
+    assert_success_with_context(&inspected, "rolled-back evolution inspection");
+    assert_eq!(parse_json(&inspected)["state"], "rolled_back");
+}
+
+#[test]
 fn service_start_reports_a_loopback_endpoint_and_token_path() {
     let fixture = Fixture::new();
     fixture.setup();

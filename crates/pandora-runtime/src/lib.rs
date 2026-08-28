@@ -3,6 +3,7 @@
 pub mod adaptive_engine;
 pub mod agent_loop;
 pub mod approvals;
+pub mod artifact_catalog;
 pub mod coding_feedback;
 pub mod composition_ledger;
 pub mod config;
@@ -61,6 +62,7 @@ pub use agent_loop::{
 pub use approvals::{
     ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, PendingApproval,
 };
+pub use artifact_catalog::{ArtifactActivation, ArtifactCatalog, ArtifactCatalogError};
 pub use coding_feedback::{
     CodingFeedbackError, CodingFeedbackInput, CodingFeedbackLoop, CodingFeedbackResult,
 };

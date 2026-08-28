@@ -264,6 +264,10 @@ fn service_request(request: &JsonRpcRequest) -> Result<Option<ServiceRequest>, (
             let params: EvolutionInspectParams = deserialize_params(params)?;
             ServiceRequest::evolution_inspect(params.proposal_id).map_err(|_| ())?
         }
+        "evolution.activations" => {
+            let params: EvolutionListParams = deserialize_params(params)?;
+            ServiceRequest::evolution_activations(params.limit).map_err(|_| ())?
+        }
         "run.execute" => {
             let params: ServiceRunRequest = deserialize_params(params)?;
             ServiceRequest::run(params)
@@ -435,8 +439,8 @@ mod tests {
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode, header};
     use pandora_runtime::{
-        ApprovalStore, EvolutionEngine, ExecutionController, RuntimeService, RuntimeServiceScope,
-        ServiceTokenStore,
+        ApprovalStore, ArtifactCatalog, EvolutionEngine, ExecutionController, RuntimeService,
+        RuntimeServiceScope, ServiceTokenStore,
     };
     use pandora_runtime::{executors::WorkspaceRoot, sessions::SessionStore};
     use pandora_types::{
@@ -526,6 +530,22 @@ mod tests {
         let body: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(body["result"]["kind"], "evolution_list");
         assert_eq!(body["result"]["proposals"], json!([]));
+
+        let response = post(
+            &fixture,
+            Some(&fixture.token),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "evolution.activations",
+                "params": {"limit": 64}
+            }),
+        )
+        .await;
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["result"]["kind"], "evolution_activations");
+        assert_eq!(body["result"]["activations"], json!([]));
     }
 
     #[tokio::test]
@@ -925,6 +945,9 @@ mod tests {
                 EvolutionPolicy::production(1),
             )
             .unwrap(),
+        ))
+        .with_artifact_catalog(Arc::new(
+            ArtifactCatalog::open(root.join("artifact-catalog.sqlite3")).unwrap(),
         ))
     }
 }

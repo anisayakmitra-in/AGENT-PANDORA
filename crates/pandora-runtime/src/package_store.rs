@@ -1,5 +1,7 @@
 use crate::harness_registry::{HarnessRegistry, HarnessRegistryError, PackageRecord};
-use pandora_types::{PackageId, PackageKind, PackageLock, PackageManifest, hash_artifact};
+use pandora_types::{
+    ArtifactId, PackageId, PackageKind, PackageLock, PackageManifest, hash_artifact,
+};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::fmt;
 use std::fs;
@@ -196,6 +198,13 @@ impl PackageStore {
             return Err(PackageStoreError::CorruptRecord);
         }
         Ok(Some(artifact))
+    }
+
+    pub fn contains_artifact(&self, artifact_id: &ArtifactId) -> Result<bool, PackageStoreError> {
+        Ok(self
+            .list()?
+            .into_iter()
+            .any(|record| record.manifest().content_hash() == artifact_id.as_str()))
     }
 
     pub fn lockfile(&self) -> Result<PackageLock, PackageStoreError> {

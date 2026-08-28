@@ -17,8 +17,11 @@ Pandora records improvement evidence without allowing the improvement system to 
 - `pandora evolution submit` records a bounded proposal in the durable store. Submission is evidence intake only; it cannot approve, activate, or execute a candidate.
 - `pandora evolution approve --input <path>` records Parliament approval and candidate signature evidence after evaluation gates pass. Approval does not activate a candidate.
 - Approval requires policy, regression, and holdout evidence, Parliament approval, and candidate-artifact signature evidence.
-- `ReplacementEngine` requires a passed canary and an idle execution boundary before activation.
-- Activation produces a receipt. Rollback restores the proposal's base artifact and produces a receipt.
+- `pandora evolution stage`, `pandora evolution canary`, `pandora evolution activate`, and `pandora evolution rollback` expose the remaining governed lifecycle to operators.
+- Activation requires both the base and candidate content hashes to exist in the admitted package store. Admission still grants no runtime authority.
+- `ArtifactCatalog` persists active base-to-candidate bindings, resolves bounded replacement chains, rejects cycles and duplicate bases, and requires dependent replacements to roll back first.
+- `ReplacementEngine` requires a passed canary and an idle execution boundary registered with that engine before activation. Activation and rollback produce typed receipts, and failed catalog changes compensate by rolling evolution state back closed.
+- The local service and desktop expose active catalog bindings read-only. They do not expose mutation, approval, staging, activation, or rollback controls.
 
 ## Authority
 
@@ -30,8 +33,10 @@ The package admission boundary validates artifact identity and supported
 Ed25519 signature evidence before recording a package. It does not establish
 publisher trust, grant permissions, or make the artifact executable.
 
-Replacement is available only between executions registered with `ReplacementEngine`. A failed canary cannot activate, and an active replacement can be rolled back to its recorded base artifact.
+Replacement is available only between executions registered with the same `ReplacementEngine`. A failed canary or an artifact absent from the admitted package store cannot activate, and an active replacement can be rolled back to its recorded base artifact. Chained replacements unwind from the tip so rollback cannot strand an active dependent.
 
 ## Not shipped
 
 Autonomous code mutation, automatic promotion, hidden reasoning storage, and mid-execution replacement are not part of the current public contract.
+
+Built-in Harness and Gene execution does not yet resolve artifact identities through `ArtifactCatalog`. The catalog therefore records and exposes the admitted active binding, but does not silently substitute executable code. Cross-process execution leases are also not yet durable; operators must stop concurrent service and CLI runs before changing catalog activation. Wiring resolver consumption and a shared quiescence boundary is required before Pandora can claim runtime artifact replacement.
