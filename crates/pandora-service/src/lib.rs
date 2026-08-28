@@ -349,6 +349,24 @@ fn service_request(request: &JsonRpcRequest) -> Result<Option<ServiceRequest>, (
                 return Err(());
             }
         }
+        "orchestration.list" => {
+            let params: OrchestrationListParams = deserialize_params(params)?;
+            ServiceRequest::orchestration_list(params.limit).map_err(|_| ())?
+        }
+        "orchestration.inspect" => {
+            let params: OrchestrationInspectParams = deserialize_params(params)?;
+            ServiceRequest::orchestration_inspect(params.run_id).map_err(|_| ())?
+        }
+        "orchestration.cancel" => {
+            let params: OrchestrationMutationParams = deserialize_params(params)?;
+            ServiceRequest::orchestration_cancel(params.run_id, params.confirmation)
+                .map_err(|_| ())?
+        }
+        "orchestration.resume" => {
+            let params: OrchestrationMutationParams = deserialize_params(params)?;
+            ServiceRequest::orchestration_resume(params.run_id, params.confirmation)
+                .map_err(|_| ())?
+        }
         "session.list" => {
             let params: SessionListParams = deserialize_params(params)?;
             ServiceRequest::session_list(params.limit).map_err(|_| ())?
@@ -456,6 +474,22 @@ impl JsonRpcRequest {
             && matches!(self.id, Value::Null | Value::Number(_) | Value::String(_))
             && !self.method.trim().is_empty()
     }
+}
+
+#[derive(Deserialize)]
+struct OrchestrationListParams {
+    limit: u16,
+}
+
+#[derive(Deserialize)]
+struct OrchestrationInspectParams {
+    run_id: String,
+}
+
+#[derive(Deserialize)]
+struct OrchestrationMutationParams {
+    run_id: String,
+    confirmation: String,
 }
 
 #[derive(Deserialize)]

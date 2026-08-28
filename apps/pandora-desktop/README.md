@@ -11,13 +11,14 @@ npm install
 npm run dev
 ```
 
-Without a connection, the screen uses clearly marked preview data. In the
-desktop app, open Connections and choose Start local service. The shell starts
-the existing Pandora service process and keeps its bearer token and Ed25519
-device key in the native layer. Every native RPC uses a fresh signed device
-proof; the webview never receives either credential. Live sessions and run
-results come from the authenticated service. The UI cannot issue permits or
-execute tools by itself.
+Without a connection, the screen uses clearly marked preview data. Pandora is a
+local application and has no account, login, or sign-in screen. In the desktop
+app, open Connections and choose Start local service. The shell establishes
+device trust automatically, starts the existing Pandora service process, and
+keeps its service credential and Ed25519 device key in the native layer. Every
+native RPC uses a fresh signed device proof; the webview never receives either
+credential. Live sessions and run results come from the authenticated local
+service. The UI cannot issue permits or execute tools by itself.
 
 Use `Ctrl/Cmd-K` to switch between Pandora surfaces. The Command Center
 profile selector routes a run to Auto, Coding, Research, Design, or Security;
@@ -30,6 +31,12 @@ Harness Lab is a read-only catalog browser for runtime-reported Harnesses,
 Genes, plugins and tools, authority posture, and receipt requirements. Catalog
 metadata never grants execution authority, and the offline UI does not invent
 entries.
+
+Background Runs inspects the scoped durable orchestration queue, exact repository
+and commit assignments, worker ownership, role state, receipts, and handoffs.
+The desktop can exactly cancel queued runs and resume safely reconciled
+interruptions; it cannot claim work, steal leases, complete roles, mint permits,
+or bypass the existing Harness and ReferenceMonitor path.
 
 Open Settings to choose a locally stored light or dark theme. Select a live
 session from the sidebar or Connections to inspect its recorded event count;

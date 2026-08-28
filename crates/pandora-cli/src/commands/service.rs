@@ -7,8 +7,8 @@ use pandora_runtime::config::RuntimeConfig;
 use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::{
     AccessRole, ApprovalStore, ArtifactCatalog, DeviceKeyStore, EvolutionEngine,
-    ExecutionController, FleetEngine, IdentityEnrollmentRequest, IdentityStore, RuntimeService,
-    RuntimeServiceScope,
+    ExecutionController, FleetEngine, IdentityEnrollmentRequest, IdentityStore, OrchestrationStore,
+    RuntimeService, RuntimeServiceScope,
 };
 use pandora_service::{LocalService, LocalServiceConfig};
 use pandora_types::{
@@ -152,6 +152,10 @@ fn build_runtime_service(config: &RuntimeConfig) -> Result<RuntimeService, CliEr
         "pandora-service",
     )
     .map_err(|error| CliError::internal(error.to_string(), json!({})))?
+    .with_orchestration(
+        OrchestrationStore::open(config.data_dir().join("orchestration.sqlite3"))
+            .map_err(|error| CliError::internal(error.to_string(), json!({})))?,
+    )
     .with_evolution(Arc::new(evolution))
     .with_artifact_catalog(Arc::new(artifact_catalog))
     .with_evolution_control(config.data_dir());

@@ -61,3 +61,11 @@ fn approval_and_resume_requests_reject_blank_approval_identifiers() {
     assert!(ServiceRequest::approval_list(0).is_err());
     assert!(ServiceRunResumeRequest::new(" ", run).is_err());
 }
+
+#[test]
+fn orchestration_mutations_require_the_exact_run_identifier() {
+    assert!(ServiceRequest::orchestration_list(0).is_err());
+    assert!(ServiceRequest::orchestration_inspect(" ").is_err());
+    assert!(ServiceRequest::orchestration_cancel("run-1", "run-2").is_err());
+    assert!(ServiceRequest::orchestration_resume("run-1", "run-1").is_ok());
+}

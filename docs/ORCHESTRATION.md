@@ -118,3 +118,18 @@ Resume succeeds only when the durable snapshot has no active roles. If roles
 were dispatched, Pandora requires their effect receipts to be reconciled first
 instead of guessing that retry is safe. Queued runs may be cancelled with
 `pandora orchestration cancel <run-id>`.
+
+## Desktop inspection and control
+
+The authenticated local service exposes scoped `orchestration.list`,
+`orchestration.inspect`, `orchestration.cancel`, and `orchestration.resume` RPC
+methods. The desktop Background Runs surface uses those methods; it never reads
+the orchestration database directly and cannot claim a run, steal a worker
+lease, complete a role, issue a permit, or fabricate a receipt.
+
+Cancellation is available only for queued work. Resume is available only for an
+interrupted snapshot that the orchestration store considers safe to requeue.
+Both mutations require the exact run ID as confirmation, and service role policy
+limits them to operators and administrators. Native desktop device trust is
+established automatically, so this internal service boundary does not create an
+account or sign-in flow.

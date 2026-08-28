@@ -8,6 +8,9 @@ use crate::evolution::{EvolutionEngine, EvolutionError, EvolutionRecord};
 use crate::execution_controller::{ExecutionController, RunStatus, RunSummary, RuntimeError};
 use crate::fleet::{FleetBudget, FleetEngine, FleetError, FleetLeaseState, FleetNode};
 use crate::identity::{AccessRole, ServiceIdentity};
+use crate::orchestration_store::{
+    OrchestrationRunRecord, OrchestrationStore, OrchestrationStoreError,
+};
 use crate::package_store::{PackageStore, PackageStoreError};
 use crate::replacement::{ReplacementEngine, ReplacementError};
 use crate::research_artifact::{ResearchArtifactError, ResearchArtifactStore};
@@ -21,10 +24,11 @@ use pandora_types::{
     ServiceArtifactActivation, ServiceContractError, ServiceEngineSummary, ServiceEventPage,
     ServiceEvolutionApproval, ServiceEvolutionCanary, ServiceEvolutionCandidate,
     ServiceEvolutionEvaluation, ServiceEvolutionSummary, ServiceHarnessSummary, ServiceHealth,
-    ServiceMemoryPage, ServiceMemoryRecord, ServiceProviderSummary, ServiceRequest,
-    ServiceResponse, ServiceRunRequest, ServiceRunResult, ServiceRunResumeRequest,
-    ServiceSessionDetail, ServiceSessionSummary, ServiceToolSummary, Session, SessionId,
-    TaskIntent, TenantId, Timestamp, WorkspaceId,
+    ServiceMemoryPage, ServiceMemoryRecord, ServiceOrchestrationRoleSummary,
+    ServiceOrchestrationRunSummary, ServiceProviderSummary, ServiceRequest, ServiceResponse,
+    ServiceRunRequest, ServiceRunResult, ServiceRunResumeRequest, ServiceSessionDetail,
+    ServiceSessionSummary, ServiceToolSummary, Session, SessionId, TaskIntent, TenantId, Timestamp,
+    WorkspaceId,
 };
 use rusqlite::Connection;
 use std::fmt;
@@ -101,6 +105,8 @@ pub enum RuntimeServiceError {
     Replacement(ReplacementError),
     ResearchArtifact(ResearchArtifactError),
     PackageStore(PackageStoreError),
+    Orchestration(OrchestrationStoreError),
+    OrchestrationUnavailable,
     Backup,
     Approval(ApprovalError),
     Session(SessionError),
@@ -134,6 +140,17 @@ impl RuntimeServiceError {
             Self::Replacement(_) => "evolution_replacement_failed",
             Self::ResearchArtifact(_) => "research_artifact_failed",
             Self::PackageStore(_) => "package_store_failed",
+            Self::Orchestration(OrchestrationStoreError::RunNotFound) => {
+                "orchestration_run_not_found"
+            }
+            Self::Orchestration(OrchestrationStoreError::ActiveRolesRequireReconciliation) => {
+                "orchestration_reconciliation_required"
+            }
+            Self::Orchestration(OrchestrationStoreError::InvalidTransition { .. }) => {
+                "orchestration_invalid_transition"
+            }
+            Self::Orchestration(_) => "orchestration_store_failed",
+            Self::OrchestrationUnavailable => "orchestration_unavailable",
             Self::Backup => "evolution_backup_failed",
             Self::Approval(ApprovalError::NotFound) => "approval_not_found",
             Self::Approval(ApprovalError::Expired) => "approval_expired",
@@ -183,6 +200,10 @@ impl fmt::Display for RuntimeServiceError {
             Self::Replacement(error) => error.fmt(formatter),
             Self::ResearchArtifact(error) => error.fmt(formatter),
             Self::PackageStore(error) => error.fmt(formatter),
+            Self::Orchestration(error) => error.fmt(formatter),
+            Self::OrchestrationUnavailable => {
+                formatter.write_str("orchestration records are not configured")
+            }
             Self::Backup => formatter.write_str("could not create a verified evolution backup"),
             Self::Approval(error) => error.fmt(formatter),
             Self::Session(error) => error.fmt(formatter),
@@ -254,6 +275,12 @@ impl From<PackageStoreError> for RuntimeServiceError {
     }
 }
 
+impl From<OrchestrationStoreError> for RuntimeServiceError {
+    fn from(error: OrchestrationStoreError) -> Self {
+        Self::Orchestration(error)
+    }
+}
+
 impl From<ApprovalError> for RuntimeServiceError {
     fn from(error: ApprovalError) -> Self {
         Self::Approval(error)
@@ -278,6 +305,7 @@ pub struct RuntimeService {
     approvals: ApprovalStore,
     scope: RuntimeServiceScope,
     providers: Vec<ServiceProviderSummary>,
+    orchestration: Option<OrchestrationStore>,
     agent: Option<RuntimeServiceAgent>,
     evolution: Option<Arc<EvolutionEngine>>,
     artifact_catalog: Option<Arc<ArtifactCatalog>>,
@@ -335,6 +363,7 @@ impl RuntimeService {
             approvals,
             scope,
             providers,
+            orchestration: None,
             agent: None,
             evolution: None,
             artifact_catalog: None,
@@ -371,6 +400,11 @@ impl RuntimeService {
             node_id,
         });
         Ok(self)
+    }
+
+    pub fn with_orchestration(mut self, orchestration: OrchestrationStore) -> Self {
+        self.orchestration = Some(orchestration);
+        self
     }
 
     pub fn with_agent(
@@ -441,6 +475,18 @@ impl RuntimeService {
             }
             ServiceRequest::Engines { .. } => self.engines(),
             ServiceRequest::Tools { .. } => self.tools(),
+            ServiceRequest::OrchestrationList { limit, .. } => {
+                self.list_orchestrations(scope, *limit)
+            }
+            ServiceRequest::OrchestrationInspect { run_id, .. } => {
+                self.inspect_orchestration(scope, run_id)
+            }
+            ServiceRequest::OrchestrationCancel { run_id, .. } => {
+                self.cancel_orchestration(scope, run_id, now)
+            }
+            ServiceRequest::OrchestrationResume { run_id, .. } => {
+                self.resume_orchestration(scope, run_id, now)
+            }
             ServiceRequest::SessionList { limit, .. } => self.list_sessions(scope, *limit),
             ServiceRequest::SessionInspect { session_id, .. } => {
                 self.inspect_session(scope, session_id)
@@ -488,6 +534,87 @@ impl RuntimeService {
                 self.resume_agent(scope, request, now)
             }
         }
+    }
+
+    fn orchestration_store(&self) -> Result<&OrchestrationStore, RuntimeServiceError> {
+        self.orchestration
+            .as_ref()
+            .ok_or(RuntimeServiceError::OrchestrationUnavailable)
+    }
+
+    fn list_orchestrations(
+        &self,
+        scope: &RuntimeServiceScope,
+        limit: u16,
+    ) -> Result<ServiceResponse, RuntimeServiceError> {
+        let runs = self
+            .orchestration_store()?
+            .list(
+                scope.principal_id(),
+                scope.tenant_id(),
+                scope.workspace_id(),
+            )?
+            .into_iter()
+            .take(usize::from(limit))
+            .map(orchestration_summary)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ServiceResponse::orchestration_list(runs))
+    }
+
+    fn inspect_orchestration(
+        &self,
+        scope: &RuntimeServiceScope,
+        run_id: &pandora_types::OrchestrationRunId,
+    ) -> Result<ServiceResponse, RuntimeServiceError> {
+        let record = self.orchestration_store()?.inspect(
+            run_id,
+            scope.principal_id(),
+            scope.tenant_id(),
+            scope.workspace_id(),
+        )?;
+        Ok(ServiceResponse::orchestration_inspect(
+            orchestration_summary(record)?,
+        ))
+    }
+
+    fn cancel_orchestration(
+        &self,
+        scope: &RuntimeServiceScope,
+        run_id: &pandora_types::OrchestrationRunId,
+        now: Timestamp,
+    ) -> Result<ServiceResponse, RuntimeServiceError> {
+        self.ensure_execution_owner(scope)?;
+        let record = self.orchestration_store()?.cancel(
+            run_id,
+            scope.principal_id(),
+            scope.tenant_id(),
+            scope.workspace_id(),
+            now,
+        )?;
+        Ok(ServiceResponse::orchestration_mutation(
+            "cancel",
+            orchestration_summary(record)?,
+        ))
+    }
+
+    fn resume_orchestration(
+        &self,
+        scope: &RuntimeServiceScope,
+        run_id: &pandora_types::OrchestrationRunId,
+        now: Timestamp,
+    ) -> Result<ServiceResponse, RuntimeServiceError> {
+        self.ensure_execution_owner(scope)?;
+        let record = self.orchestration_store()?.resume(
+            run_id,
+            scope.principal_id(),
+            scope.tenant_id(),
+            scope.workspace_id(),
+            now,
+        )?;
+        Ok(ServiceResponse::orchestration_mutation(
+            "resume",
+            orchestration_summary(record)?,
+        ))
     }
 
     fn capabilities(&self) -> Result<ServiceResponse, RuntimeServiceError> {
@@ -1534,12 +1661,64 @@ impl RuntimeService {
     }
 }
 
+fn orchestration_summary(
+    record: OrchestrationRunRecord,
+) -> Result<ServiceOrchestrationRunSummary, OrchestrationStoreError> {
+    let completed = record.snapshot().completed_roles();
+    let active = record.snapshot().active_roles();
+    let roles = record
+        .plan()
+        .plan()
+        .roles()
+        .iter()
+        .map(|role| {
+            let repository = record
+                .plan()
+                .repository_for_role(role.id())
+                .ok_or(OrchestrationStoreError::CorruptRecord)?;
+            let state = if completed.contains(role.id()) {
+                "completed"
+            } else if active.contains(role.id()) {
+                "running"
+            } else {
+                "queued"
+            };
+            Ok(ServiceOrchestrationRoleSummary::new(
+                role.id().clone(),
+                role.role().as_str(),
+                role.harness_id().clone(),
+                repository.repository_id().clone(),
+                repository.workspace_id().clone(),
+                repository.exact_commit(),
+                state,
+            ))
+        })
+        .collect::<Result<Vec<_>, OrchestrationStoreError>>()?;
+    let receipt_count = u32::try_from(record.role_receipts().len())
+        .map_err(|_| OrchestrationStoreError::CorruptRecord)?;
+    Ok(ServiceOrchestrationRunSummary::new(
+        record.run_id().clone(),
+        record.coordinator_workspace_id().clone(),
+        record.plan().plan().id().clone(),
+        record.status().as_str(),
+        record.worker_id().cloned(),
+        roles,
+        receipt_count,
+        record.snapshot().handoffs_used(),
+        record.interruption_reason().map(str::to_owned),
+        record.created_at(),
+        record.updated_at(),
+    ))
+}
+
 fn authorize_role(role: AccessRole, request: &ServiceRequest) -> Result<(), RuntimeServiceError> {
     let allowed = match request {
         ServiceRequest::EvolutionActivate { .. } | ServiceRequest::EvolutionRollback { .. } => {
             matches!(role, AccessRole::Administrator)
         }
         ServiceRequest::ApprovalResolve { .. }
+        | ServiceRequest::OrchestrationCancel { .. }
+        | ServiceRequest::OrchestrationResume { .. }
         | ServiceRequest::Run { .. }
         | ServiceRequest::RunResume { .. }
         | ServiceRequest::AgentRun { .. }

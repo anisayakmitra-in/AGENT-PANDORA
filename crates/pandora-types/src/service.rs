@@ -1,8 +1,8 @@
 use crate::effect::{RequestError, Timestamp};
 use crate::events::RuntimeEvent;
 use crate::ids::{
-    ArtifactId, ExecutionId, GeneId, HarnessId, IdError, PrincipalId, ProposalId, RequestDigest,
-    SessionId, TenantId, WorkspaceId,
+    ArtifactId, ExecutionId, GeneId, HarnessId, IdError, JobWorkerId, OrchestrationRunId, PlanId,
+    PrincipalId, ProposalId, RepositoryId, RequestDigest, RoleId, SessionId, TenantId, WorkspaceId,
 };
 use crate::memory::{MemoryKind, MemoryTier};
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,7 @@ pub enum ServiceContractError {
     InvalidApprovalSummary,
     InvalidEvolutionConfirmation,
     InvalidEvolutionReason,
+    InvalidOrchestrationConfirmation,
     InvalidPageLimit { limit: u16, maximum: u16 },
 }
 
@@ -37,6 +38,8 @@ impl fmt::Display for ServiceContractError {
             Self::InvalidEvolutionReason => {
                 formatter.write_str("evolution rollback reason is invalid")
             }
+            Self::InvalidOrchestrationConfirmation => formatter
+                .write_str("orchestration confirmation must match the exact run identifier"),
             Self::InvalidPageLimit { limit, maximum } => {
                 write!(
                     formatter,
@@ -798,6 +801,142 @@ impl ServiceEventPageRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServiceOrchestrationRoleSummary {
+    role_id: RoleId,
+    role: String,
+    harness_id: HarnessId,
+    repository_id: RepositoryId,
+    workspace_id: WorkspaceId,
+    exact_commit: String,
+    state: String,
+}
+
+impl ServiceOrchestrationRoleSummary {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        role_id: RoleId,
+        role: impl Into<String>,
+        harness_id: HarnessId,
+        repository_id: RepositoryId,
+        workspace_id: WorkspaceId,
+        exact_commit: impl Into<String>,
+        state: impl Into<String>,
+    ) -> Self {
+        Self {
+            role_id,
+            role: role.into(),
+            harness_id,
+            repository_id,
+            workspace_id,
+            exact_commit: exact_commit.into(),
+            state: state.into(),
+        }
+    }
+
+    pub fn role_id(&self) -> &RoleId {
+        &self.role_id
+    }
+    pub fn role(&self) -> &str {
+        &self.role
+    }
+    pub fn harness_id(&self) -> &HarnessId {
+        &self.harness_id
+    }
+    pub fn repository_id(&self) -> &RepositoryId {
+        &self.repository_id
+    }
+    pub fn workspace_id(&self) -> &WorkspaceId {
+        &self.workspace_id
+    }
+    pub fn exact_commit(&self) -> &str {
+        &self.exact_commit
+    }
+    pub fn state(&self) -> &str {
+        &self.state
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServiceOrchestrationRunSummary {
+    run_id: OrchestrationRunId,
+    coordinator_workspace_id: WorkspaceId,
+    plan_id: PlanId,
+    status: String,
+    worker_id: Option<JobWorkerId>,
+    roles: Vec<ServiceOrchestrationRoleSummary>,
+    receipt_count: u32,
+    handoffs_used: u32,
+    interruption_reason: Option<String>,
+    created_at_unix_seconds: u64,
+    updated_at_unix_seconds: u64,
+}
+
+impl ServiceOrchestrationRunSummary {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        run_id: OrchestrationRunId,
+        coordinator_workspace_id: WorkspaceId,
+        plan_id: PlanId,
+        status: impl Into<String>,
+        worker_id: Option<JobWorkerId>,
+        roles: Vec<ServiceOrchestrationRoleSummary>,
+        receipt_count: u32,
+        handoffs_used: u32,
+        interruption_reason: Option<String>,
+        created_at: Timestamp,
+        updated_at: Timestamp,
+    ) -> Self {
+        Self {
+            run_id,
+            coordinator_workspace_id,
+            plan_id,
+            status: status.into(),
+            worker_id,
+            roles,
+            receipt_count,
+            handoffs_used,
+            interruption_reason,
+            created_at_unix_seconds: created_at.as_unix_seconds(),
+            updated_at_unix_seconds: updated_at.as_unix_seconds(),
+        }
+    }
+
+    pub fn run_id(&self) -> &OrchestrationRunId {
+        &self.run_id
+    }
+    pub fn coordinator_workspace_id(&self) -> &WorkspaceId {
+        &self.coordinator_workspace_id
+    }
+    pub fn plan_id(&self) -> &PlanId {
+        &self.plan_id
+    }
+    pub fn status(&self) -> &str {
+        &self.status
+    }
+    pub fn worker_id(&self) -> Option<&JobWorkerId> {
+        self.worker_id.as_ref()
+    }
+    pub fn roles(&self) -> &[ServiceOrchestrationRoleSummary] {
+        &self.roles
+    }
+    pub const fn receipt_count(&self) -> u32 {
+        self.receipt_count
+    }
+    pub const fn handoffs_used(&self) -> u32 {
+        self.handoffs_used
+    }
+    pub fn interruption_reason(&self) -> Option<&str> {
+        self.interruption_reason.as_deref()
+    }
+    pub const fn created_at_unix_seconds(&self) -> u64 {
+        self.created_at_unix_seconds
+    }
+    pub const fn updated_at_unix_seconds(&self) -> u64 {
+        self.updated_at_unix_seconds
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ServiceRequest {
     Health {
@@ -814,6 +953,24 @@ pub enum ServiceRequest {
     },
     Tools {
         protocol_version: u16,
+    },
+    OrchestrationList {
+        protocol_version: u16,
+        limit: u16,
+    },
+    OrchestrationInspect {
+        protocol_version: u16,
+        run_id: OrchestrationRunId,
+    },
+    OrchestrationCancel {
+        protocol_version: u16,
+        run_id: OrchestrationRunId,
+        confirmation: String,
+    },
+    OrchestrationResume {
+        protocol_version: u16,
+        run_id: OrchestrationRunId,
+        confirmation: String,
     },
     SessionList {
         protocol_version: u16,
@@ -915,6 +1072,47 @@ impl ServiceRequest {
         Self::Tools {
             protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
         }
+    }
+
+    pub fn orchestration_list(limit: u16) -> Result<Self, ServiceContractError> {
+        validate_page_limit(limit, MAX_SERVICE_SESSION_PAGE)?;
+        Ok(Self::OrchestrationList {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            limit,
+        })
+    }
+
+    pub fn orchestration_inspect(run_id: impl Into<String>) -> Result<Self, ServiceContractError> {
+        Ok(Self::OrchestrationInspect {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            run_id: OrchestrationRunId::new(run_id)?,
+        })
+    }
+
+    pub fn orchestration_cancel(
+        run_id: impl Into<String>,
+        confirmation: impl Into<String>,
+    ) -> Result<Self, ServiceContractError> {
+        let request = Self::OrchestrationCancel {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            run_id: OrchestrationRunId::new(run_id)?,
+            confirmation: confirmation.into(),
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
+    pub fn orchestration_resume(
+        run_id: impl Into<String>,
+        confirmation: impl Into<String>,
+    ) -> Result<Self, ServiceContractError> {
+        let request = Self::OrchestrationResume {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            run_id: OrchestrationRunId::new(run_id)?,
+            confirmation: confirmation.into(),
+        };
+        request.validate()?;
+        Ok(request)
     }
 
     pub fn session_list(limit: u16) -> Result<Self, ServiceContractError> {
@@ -1067,6 +1265,18 @@ impl ServiceRequest {
             | Self::Providers { protocol_version }
             | Self::Engines { protocol_version }
             | Self::Tools { protocol_version }
+            | Self::OrchestrationList {
+                protocol_version, ..
+            }
+            | Self::OrchestrationInspect {
+                protocol_version, ..
+            }
+            | Self::OrchestrationCancel {
+                protocol_version, ..
+            }
+            | Self::OrchestrationResume {
+                protocol_version, ..
+            }
             | Self::SessionList {
                 protocol_version, ..
             }
@@ -1129,6 +1339,23 @@ impl ServiceRequest {
             | Self::Providers { .. }
             | Self::Engines { .. } => Ok(()),
             Self::Tools { .. } => Ok(()),
+            Self::OrchestrationList { limit, .. } => {
+                validate_page_limit(*limit, MAX_SERVICE_SESSION_PAGE)
+            }
+            Self::OrchestrationInspect { run_id, .. } => {
+                OrchestrationRunId::new(run_id.as_str())?;
+                Ok(())
+            }
+            Self::OrchestrationCancel {
+                run_id,
+                confirmation,
+                ..
+            }
+            | Self::OrchestrationResume {
+                run_id,
+                confirmation,
+                ..
+            } => validate_orchestration_confirmation(run_id, confirmation),
             Self::SessionList { limit, .. } => {
                 validate_page_limit(*limit, MAX_SERVICE_SESSION_PAGE)
             }
@@ -1742,6 +1969,19 @@ pub enum ServiceResponse {
         protocol_version: u16,
         tools: Vec<ServiceToolSummary>,
     },
+    OrchestrationList {
+        protocol_version: u16,
+        runs: Vec<ServiceOrchestrationRunSummary>,
+    },
+    OrchestrationInspect {
+        protocol_version: u16,
+        run: ServiceOrchestrationRunSummary,
+    },
+    OrchestrationMutation {
+        protocol_version: u16,
+        operation: String,
+        run: ServiceOrchestrationRunSummary,
+    },
     SessionList {
         protocol_version: u16,
         sessions: Vec<ServiceSessionSummary>,
@@ -1835,6 +2075,31 @@ impl ServiceResponse {
         Self::Tools {
             protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
             tools,
+        }
+    }
+
+    pub fn orchestration_list(runs: Vec<ServiceOrchestrationRunSummary>) -> Self {
+        Self::OrchestrationList {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            runs,
+        }
+    }
+
+    pub const fn orchestration_inspect(run: ServiceOrchestrationRunSummary) -> Self {
+        Self::OrchestrationInspect {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            run,
+        }
+    }
+
+    pub fn orchestration_mutation(
+        operation: impl Into<String>,
+        run: ServiceOrchestrationRunSummary,
+    ) -> Self {
+        Self::OrchestrationMutation {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            operation: operation.into(),
+            run,
         }
     }
 
@@ -1960,6 +2225,15 @@ impl ServiceResponse {
             | Self::Tools {
                 protocol_version, ..
             }
+            | Self::OrchestrationList {
+                protocol_version, ..
+            }
+            | Self::OrchestrationInspect {
+                protocol_version, ..
+            }
+            | Self::OrchestrationMutation {
+                protocol_version, ..
+            }
             | Self::SessionList {
                 protocol_version, ..
             }
@@ -2016,6 +2290,17 @@ fn validate_approval_id(approval_id: &str) -> Result<(), ServiceContractError> {
     } else {
         Ok(())
     }
+}
+
+fn validate_orchestration_confirmation(
+    run_id: &OrchestrationRunId,
+    confirmation: &str,
+) -> Result<(), ServiceContractError> {
+    OrchestrationRunId::new(run_id.as_str())?;
+    if confirmation != run_id.as_str() {
+        return Err(ServiceContractError::InvalidOrchestrationConfirmation);
+    }
+    Ok(())
 }
 
 fn validate_evolution_confirmation(

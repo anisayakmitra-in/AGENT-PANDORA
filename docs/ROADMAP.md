@@ -29,10 +29,11 @@ model.
 
 ## Phase 8 - Agent experience and disclosure
 
-Status: in progress. The desktop now has Flow, Evidence, and Context disclosure
-and a Harness Lab for runtime-reported Genes, plugins and tools, authority, and
-receipt posture. Background orchestration views and deeper artifact previews
-remain.
+Status: in progress. The desktop now has Flow, Evidence, and Context disclosure,
+a Harness Lab for runtime-reported Genes, plugins and tools, authority, and
+receipt posture, plus a scoped Background Runs surface for durable orchestration
+inspection, exact queued cancellation, and safely reconciled resume. Deeper
+artifact previews and provider configuration remain.
 
 - Progressive disclosure for plans, evidence, receipts, approvals, and tool
   state.
@@ -110,13 +111,13 @@ The current tree is roughly production-ready for a governed local CLI/runtime,
 but still early for the full Pandora platform. A practical estimate is:
 
 - local governed runtime and production controls: about 70-80% complete;
-- desktop/product frontend: about 35-45% complete;
+- desktop/product frontend: about 45-55% complete;
 - autonomous evolution loops: about 35-45% complete;
-- multi-agent orchestration and background scale: about 50-60% complete;
+- multi-agent orchestration and background scale: about 60-70% complete;
 - memory consolidation: about 25-35% complete;
 - adversarial resilience and agent operations: about 35-45% complete.
 
-Overall, Pandora is around 50-60% of the intended full platform. The remaining
+Overall, Pandora is around 55-65% of the intended full platform. The remaining
 work is not a rewrite. It is mostly product surface, orchestration durability,
 evaluation depth, memory governance, and operational hardening on top of the
 architecture that already exists.

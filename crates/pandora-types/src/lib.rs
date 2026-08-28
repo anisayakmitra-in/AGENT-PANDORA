@@ -111,8 +111,9 @@ pub use service::{
     ServiceEventPage, ServiceEventPageRequest, ServiceEvolutionApproval, ServiceEvolutionCanary,
     ServiceEvolutionCandidate, ServiceEvolutionEvaluation, ServiceEvolutionSummary,
     ServiceHarnessSummary, ServiceHealth, ServiceMemoryPage, ServiceMemoryRecord,
-    ServiceProviderSummary, ServiceRequest, ServiceResponse, ServiceRunRequest, ServiceRunResult,
-    ServiceRunResumeRequest, ServiceSessionDetail, ServiceSessionSummary, ServiceToolSummary,
+    ServiceOrchestrationRoleSummary, ServiceOrchestrationRunSummary, ServiceProviderSummary,
+    ServiceRequest, ServiceResponse, ServiceRunRequest, ServiceRunResult, ServiceRunResumeRequest,
+    ServiceSessionDetail, ServiceSessionSummary, ServiceToolSummary,
 };
 pub use session::{Session, TaskIntent};
 pub use skill::{SkillId, SkillManifest, SkillManifestError};

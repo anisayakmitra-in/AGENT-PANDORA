@@ -40,6 +40,30 @@ export type RuntimeTool = {
   operation: string;
 };
 
+export type RuntimeOrchestrationRole = {
+  role_id: string;
+  role: string;
+  harness_id: string;
+  repository_id: string;
+  workspace_id: string;
+  exact_commit: string;
+  state: "queued" | "running" | "completed";
+};
+
+export type RuntimeOrchestrationRun = {
+  run_id: string;
+  coordinator_workspace_id: string;
+  plan_id: string;
+  status: "queued" | "running" | "completed" | "interrupted" | "cancelled";
+  worker_id: string | null;
+  roles: RuntimeOrchestrationRole[];
+  receipt_count: number;
+  handoffs_used: number;
+  interruption_reason: string | null;
+  created_at_unix_seconds: number;
+  updated_at_unix_seconds: number;
+};
+
 export type RuntimeSession = {
   session_id: string;
   principal_id: string;
@@ -205,6 +229,22 @@ type ToolsResponse = {
   tools: RuntimeTool[];
 };
 
+type OrchestrationListResponse = {
+  kind: "orchestration_list";
+  runs: RuntimeOrchestrationRun[];
+};
+
+type OrchestrationInspectResponse = {
+  kind: "orchestration_inspect";
+  run: RuntimeOrchestrationRun;
+};
+
+type OrchestrationMutationResponse = {
+  kind: "orchestration_mutation";
+  operation: "cancel" | "resume";
+  run: RuntimeOrchestrationRun;
+};
+
 type SessionListResponse = {
   kind: "session_list";
   sessions: RuntimeSession[];
@@ -368,6 +408,39 @@ export class RuntimeClient {
       }
       throw error;
     }
+  }
+
+  async orchestrations(limit = 64): Promise<RuntimeOrchestrationRun[]> {
+    try {
+      const response = await this.call<OrchestrationListResponse>("orchestration.list", { limit });
+      return response.runs;
+    } catch (error: unknown) {
+      if (error instanceof Error && (error.message === "method_not_found" || error.message === "orchestration_unavailable")) {
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  async inspectOrchestration(runId: string): Promise<RuntimeOrchestrationRun> {
+    const response = await this.call<OrchestrationInspectResponse>("orchestration.inspect", { run_id: runId });
+    return response.run;
+  }
+
+  async cancelOrchestration(runId: string, confirmation: string): Promise<RuntimeOrchestrationRun> {
+    const response = await this.call<OrchestrationMutationResponse>("orchestration.cancel", {
+      run_id: runId,
+      confirmation,
+    });
+    return response.run;
+  }
+
+  async resumeOrchestration(runId: string, confirmation: string): Promise<RuntimeOrchestrationRun> {
+    const response = await this.call<OrchestrationMutationResponse>("orchestration.resume", {
+      run_id: runId,
+      confirmation,
+    });
+    return response.run;
   }
 
   async sessions(limit = 8): Promise<RuntimeSession[]> {

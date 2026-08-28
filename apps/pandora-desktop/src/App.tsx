@@ -17,6 +17,7 @@ import {
   type RuntimeHarness,
   type RuntimeHealth,
   type RuntimeMemoryRecord,
+  type RuntimeOrchestrationRun,
   type RuntimeProvider,
   type RuntimeStatus,
   type RuntimeSession,
@@ -26,6 +27,7 @@ import {
 
 type ViewId =
   | "command"
+  | "runs"
   | "council"
   | "memory"
   | "workflows"
@@ -106,6 +108,7 @@ const navigation: Array<{ label: string; items: Array<{ id: ViewId; label: strin
     label: "Operate",
     items: [
       { id: "command", label: "Command", icon: "activity" },
+      { id: "runs", label: "Background Runs", icon: "stack" },
       { id: "council", label: "Council", icon: "council" },
       { id: "memory", label: "Memory", icon: "graph" },
       { id: "workflows", label: "Workflows", icon: "stack" }
@@ -186,7 +189,7 @@ function mergeEvolutionDetails(current: RuntimeEvolutionProposal[], incoming: Ru
   }));
 }
 
-const viewDetails: Record<Exclude<ViewId, "command" | "memory" | "workflows">, { eyebrow: string; title: string; description: string }> = {
+const viewDetails: Record<Exclude<ViewId, "command" | "runs" | "memory" | "workflows">, { eyebrow: string; title: string; description: string }> = {
   council: {
     eyebrow: "Governance",
     title: "Council",
@@ -321,6 +324,7 @@ function App() {
   const [selectedSession, setSelectedSession] = useState<RuntimeSessionDetail | null>(null);
   const [events, setEvents] = useState<RuntimeEvent[]>([]);
   const [memoryRecords, setMemoryRecords] = useState<RuntimeMemoryRecord[]>([]);
+  const [orchestrationRuns, setOrchestrationRuns] = useState<RuntimeOrchestrationRun[]>([]);
   const [harnesses, setHarnesses] = useState<RuntimeHarness[]>([]);
   const [engines, setEngines] = useState<RuntimeEngine[]>([]);
   const [tools, setTools] = useState<RuntimeTool[]>([]);
@@ -380,6 +384,7 @@ function App() {
       setSelectedSession(null);
       setEvents([]);
       setMemoryRecords([]);
+      setOrchestrationRuns([]);
       setHarnesses([]);
       setEngines([]);
       setTools([]);
@@ -392,11 +397,12 @@ function App() {
     let cancelled = false;
     setRuntimeStatus("checking");
     setRuntimeError("");
-    Promise.all([client.health(), client.sessions(), client.capabilities(), client.engines(), client.tools(), client.providers(), client.evolution(), client.evolutionActivations()])
-      .then(([health, nextSessions, nextHarnesses, nextEngines, nextTools, nextProviders, nextEvolutionProposals, nextArtifactActivations]) => {
+    Promise.all([client.health(), client.sessions(), client.orchestrations(), client.capabilities(), client.engines(), client.tools(), client.providers(), client.evolution(), client.evolutionActivations()])
+      .then(([health, nextSessions, nextOrchestrationRuns, nextHarnesses, nextEngines, nextTools, nextProviders, nextEvolutionProposals, nextArtifactActivations]) => {
         if (!cancelled) {
           setRuntimeHealth(health);
           setSessions(nextSessions);
+          setOrchestrationRuns(nextOrchestrationRuns);
           setHarnesses(nextHarnesses);
           setEngines(nextEngines);
           setTools(nextTools);
@@ -475,6 +481,28 @@ function App() {
     };
   }, [activeView, client, runtimeStatus]);
 
+  useEffect(() => {
+    if (!client || runtimeStatus !== "connected" || activeView !== "runs") {
+      return;
+    }
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const runs = await client.orchestrations();
+        if (!cancelled) {
+          setOrchestrationRuns(runs);
+        }
+      } catch {
+      }
+    };
+    void refresh();
+    const interval = window.setInterval(() => void refresh(), 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [activeView, client, runtimeStatus]);
+
   const connect = (nextEndpoint: string, nextToken: string) => {
     setEndpoint(nextEndpoint);
     setToken(nextToken);
@@ -511,6 +539,7 @@ function App() {
       setSelectedSessionId("");
       setSelectedSession(null);
       setEvents([]);
+      setOrchestrationRuns([]);
       setHarnesses([]);
       setEngines([]);
       setTools([]);
@@ -666,6 +695,21 @@ function App() {
     return detail;
   };
 
+  const mutateOrchestration = async (
+    operation: "cancel" | "resume",
+    runId: string,
+    confirmation: string,
+  ): Promise<RuntimeOrchestrationRun> => {
+    if (!client) {
+      throw new Error("Connect to the local Pandora service first");
+    }
+    const run = operation === "cancel"
+      ? await client.cancelOrchestration(runId, confirmation)
+      : await client.resumeOrchestration(runId, confirmation);
+    setOrchestrationRuns((current) => current.map((item) => item.run_id === run.run_id ? run : item));
+    return run;
+  };
+
   const createWorkflow = (name: string, task: string, profile: RunProfile) => {
     const recipe = { id: crypto.randomUUID(), name, task, profile };
     setWorkflows((current) => [recipe, ...current].slice(0, 24));
@@ -704,6 +748,8 @@ function App() {
             onRun={runTask}
             onResolveApproval={resolvePendingApproval}
           />
+        ) : activeView === "runs" ? (
+          <RunsView runs={orchestrationRuns} runtimeStatus={runtimeStatus} onMutate={mutateOrchestration} />
         ) : activeView === "memory" ? (
           <MemoryView runtimeStatus={runtimeStatus} records={memoryRecords} selectedSession={selectedSession} />
         ) : activeView === "workflows" ? (
@@ -775,7 +821,7 @@ function Sidebar({ activeView, onSelect, runtimeStatus, sessions, selectedSessio
 }
 
 function TopBar({ activeView, runtimeStatus, onOpenPalette }: { activeView: ViewId; runtimeStatus: RuntimeStatus; onOpenPalette: () => void }) {
-  const label = activeView === "command" ? "Command Center" : activeView[0].toUpperCase() + activeView.slice(1);
+  const label = activeView === "command" ? "Command Center" : activeView === "runs" ? "Background Runs" : activeView[0].toUpperCase() + activeView.slice(1);
   const tone = runtimeStatus === "connected" ? "green" : runtimeStatus === "offline" ? "amber" : "blue";
   return <header className="top-bar"><div className="breadcrumb"><span className="breadcrumb-muted">Pandora</span><Icon name="chevron" size={13} /><strong>{label}</strong></div><div className="top-actions"><Chip tone={tone} icon="lock">{runtimeStatusLabel(runtimeStatus)}</Chip><button className="icon-button" type="button" aria-label="Search" onClick={onOpenPalette}><Icon name="search" size={17} /></button><button className="icon-button" type="button" aria-label="More options" disabled><Icon name="dots" size={18} /></button><div className="operator-avatar" aria-label="Operator profile">AK</div></div></header>;
 }
@@ -912,6 +958,59 @@ function Inspector({ steps, approvalPreview, lastRun, events, selectedSession, a
   </aside>;
 }
 
+function RunsView({ runs, runtimeStatus, onMutate }: { runs: RuntimeOrchestrationRun[]; runtimeStatus: RuntimeStatus; onMutate: (operation: "cancel" | "resume", runId: string, confirmation: string) => Promise<RuntimeOrchestrationRun> }) {
+  const [selectedRunId, setSelectedRunId] = useState("");
+  const [pendingOperation, setPendingOperation] = useState<"cancel" | "resume" | null>(null);
+  const [confirmation, setConfirmation] = useState("");
+  const [mutationError, setMutationError] = useState("");
+  const [mutationInFlight, setMutationInFlight] = useState(false);
+  const [mutationReceipt, setMutationReceipt] = useState<RuntimeOrchestrationRun | null>(null);
+  const selected = runs.find((run) => run.run_id === selectedRunId) ?? runs[0] ?? null;
+  const connected = runtimeStatus === "connected";
+  const statusTone = (status: RuntimeOrchestrationRun["status"]): "neutral" | "green" | "amber" | "blue" | "gold" => status === "completed" ? "green" : status === "running" ? "blue" : status === "interrupted" ? "amber" : status === "queued" ? "gold" : "neutral";
+  const statusCounts = runs.reduce<Record<string, number>>((counts, run) => ({ ...counts, [run.status]: (counts[run.status] ?? 0) + 1 }), {});
+
+  const beginMutation = (operation: "cancel" | "resume") => {
+    setPendingOperation(operation);
+    setConfirmation("");
+    setMutationError("");
+    setMutationReceipt(null);
+  };
+
+  const submitMutation = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!selected || !pendingOperation || confirmation !== selected.run_id) {
+      return;
+    }
+    setMutationInFlight(true);
+    setMutationError("");
+    try {
+      const result = await onMutate(pendingOperation, selected.run_id, confirmation);
+      setMutationReceipt(result);
+      setPendingOperation(null);
+      setConfirmation("");
+    } catch (error: unknown) {
+      setMutationError(error instanceof Error ? error.message : "Could not update the orchestration run");
+    } finally {
+      setMutationInFlight(false);
+    }
+  };
+
+  return <div className="full-view runs-view"><PageHeader eyebrow="Durable orchestration" title="Background Runs" description={connected ? "Inspect scoped multi-agent work without creating a second execution path. Workers coordinate; Harnesses and ReferenceMonitor retain authority." : "Connect the authenticated local runtime to inspect background work."} actions={<div className="run-status-summary"><Chip tone="gold">{statusCounts.queued ?? 0} queued</Chip><Chip tone="blue">{statusCounts.running ?? 0} running</Chip><Chip tone="amber">{statusCounts.interrupted ?? 0} interrupted</Chip></div>} />
+    <div className="runs-workbench">
+      <Panel className="runs-browser"><div className="panel-heading"><div><span className="eyebrow">SCOPED QUEUE</span><h3>{runs.length} orchestration runs</h3></div><Chip tone={connected ? "green" : "neutral"}>{connected ? "Live" : "Offline"}</Chip></div><div className="runs-list">{runs.length ? runs.map((run) => <button type="button" className={`run-browser-row ${selected?.run_id === run.run_id ? "is-selected" : ""}`} onClick={() => { setSelectedRunId(run.run_id); setPendingOperation(null); setMutationReceipt(null); }} key={run.run_id}><span className={`run-state-dot state-${run.status}`} /><span><strong>{run.plan_id}</strong><small className="mono">{run.run_id}</small><small>{run.roles.length} roles · {run.coordinator_workspace_id}</small></span><Chip tone={statusTone(run.status)}>{run.status}</Chip></button>) : <div className="runs-empty"><Icon name={connected ? "stack" : "lock"} size={24} /><h3>{connected ? "No background runs" : "Runtime connection required"}</h3><p>{connected ? "Submit a governed orchestration plan through the CLI or headless runner; it will appear here." : "This surface does not fabricate queue state."}</p></div>}</div></Panel>
+      <Panel className="run-inspection">{selected ? <><div className="run-hero"><span className={`run-hero-icon state-${selected.status}`}><Icon name={selected.status === "completed" ? "check" : selected.status === "interrupted" ? "clock" : "stack"} size={21} /></span><div><span className="eyebrow">{selected.status === "running" ? "WORKER OWNED" : selected.status === "interrupted" ? "RECONCILIATION BOUNDARY" : "DURABLE RUN"}</span><h2>{selected.plan_id}</h2><p className="mono">{selected.run_id}</p></div><Chip tone={statusTone(selected.status)} icon={selected.status === "completed" ? "check" : selected.status === "interrupted" ? "clock" : "activity"}>{selected.status}</Chip></div>
+        <div className="run-facts"><div><span>Coordinator workspace</span><strong>{selected.coordinator_workspace_id}</strong></div><div><span>Worker lease</span><strong className="mono">{selected.worker_id ?? "unclaimed"}</strong></div><div><span>Role receipts</span><strong>{selected.receipt_count} / {selected.roles.length}</strong></div><div><span>Handoffs used</span><strong>{selected.handoffs_used}</strong></div><div><span>Updated</span><strong>{new Date(selected.updated_at_unix_seconds * 1000).toLocaleString()}</strong></div></div>
+        {selected.interruption_reason ? <div className="interruption-banner"><Icon name="shield" size={15} /><div><strong>Run interrupted</strong><span>{selected.interruption_reason}</span></div></div> : null}
+        <div className="role-inspector"><div className="inspection-heading"><div><span className="eyebrow">ROLE GRAPH</span><h3>Exact repository assignments</h3></div><Chip tone="blue">{selected.roles.filter((role) => role.state === "completed").length}/{selected.roles.length} complete</Chip></div><div className="role-run-list">{selected.roles.map((role, index) => <article className="role-run-row" key={role.role_id}><span className={`role-state state-${role.state}`}>{role.state === "completed" ? <Icon name="check" size={12} /> : <span className="mono">{String(index + 1).padStart(2, "0")}</span>}</span><div><strong>{role.role}</strong><small className="mono">{role.role_id} · {role.harness_id}</small><span>{role.repository_id} / {role.workspace_id}</span></div><div className="role-commit"><span>{role.state}</span><strong className="mono">{role.exact_commit}</strong></div></article>)}</div></div>
+        <div className="run-control-boundary"><div><span className="eyebrow">CONTROL BOUNDARY</span><h3>{selected.status === "queued" ? "Queued work may be cancelled" : selected.status === "interrupted" ? "Resume only after safe reconciliation" : selected.status === "running" ? "The active worker owns this run" : "This run is terminal"}</h3><p>{selected.status === "queued" ? "Cancellation is scoped to this exact run and cannot affect another workspace." : selected.status === "interrupted" ? "The runtime refuses resume while any role remains active without reconciled evidence." : selected.status === "running" ? "The desktop cannot steal the lease, complete roles, issue permits, or fabricate receipts." : "Completed and cancelled runs remain inspectable as durable evidence."}</p></div>{selected.status === "queued" ? <button className="button button-deny" type="button" onClick={() => beginMutation("cancel")}>Cancel run</button> : selected.status === "interrupted" ? <button className="button button-primary" type="button" onClick={() => beginMutation("resume")}>Resume safely <Icon name="arrow" size={13} /></button> : null}</div>
+        {pendingOperation ? <form className="run-confirm" onSubmit={submitMutation}><div><span className="eyebrow">EXACT CONFIRMATION</span><strong>{pendingOperation === "cancel" ? "Cancel queued orchestration" : "Requeue reconciled orchestration"}</strong><p>Type <span className="mono">{selected.run_id}</span> to confirm this exact run.</p></div><label><span>Run ID</span><input aria-label={`Confirm ${pendingOperation} ${selected.run_id}`} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="off" spellCheck={false} /></label><div className="run-confirm-actions"><button className="button button-secondary" type="button" onClick={() => setPendingOperation(null)} disabled={mutationInFlight}>Close</button><button className={pendingOperation === "cancel" ? "button button-deny" : "button button-primary"} type="submit" disabled={mutationInFlight || confirmation !== selected.run_id}>{mutationInFlight ? "Applying…" : pendingOperation === "cancel" ? "Confirm cancellation" : "Confirm resume"}</button></div>{mutationError ? <p className="connection-error" role="alert">{mutationError}</p> : null}</form> : null}
+        {mutationReceipt ? <div className="run-mutation-receipt"><Icon name="check" size={15} /><span><strong>{mutationReceipt.status === "cancelled" ? "Run cancelled" : "Run requeued"}</strong><small className="mono">{mutationReceipt.run_id} · {mutationReceipt.updated_at_unix_seconds}</small></span></div> : null}
+      </> : <div className="runs-empty"><Icon name="stack" size={27} /><h3>No run selected</h3><p>Background orchestration evidence will appear here after the runtime reports it.</p></div>}</Panel>
+    </div>
+  </div>;
+}
+
 function MemoryView({ runtimeStatus, records, selectedSession }: { runtimeStatus: RuntimeStatus; records: RuntimeMemoryRecord[]; selectedSession: RuntimeSessionDetail | null }) {
   const graphNodes = [
     { className: "graph-node graph-node-gold node-a", label: "active plan" },
@@ -981,7 +1080,7 @@ function EnginesView({ engines, runtimeStatus }: { engines: RuntimeEngine[]; run
 }
 
 function SettingsView({ theme, onThemeChange, runtimeStatus, health, native, endpoint }: { theme: ThemeMode; onThemeChange: (nextTheme: ThemeMode) => void; runtimeStatus: RuntimeStatus; health: RuntimeHealth | null; native: boolean; endpoint: string }) {
-  return <div className="full-view"><PageHeader eyebrow="Workspace" title="Settings" description="Personalize the desktop shell while keeping runtime authority in Pandora." actions={<Chip tone="neutral" icon="gear">Local preference</Chip>} /><div className="settings-grid"><Panel className="settings-panel"><div className="panel-heading"><div><span className="eyebrow">APPEARANCE</span><h3>Theme</h3></div><Icon name="spark" size={18} /></div><p className="settings-copy">Choose the visual mode for this device. The setting is stored locally and does not change runtime policy.</p><div className="theme-toggle" role="group" aria-label="Theme mode"><button type="button" className={`theme-option ${theme === "dark" ? "is-selected" : ""}`} aria-pressed={theme === "dark"} onClick={() => onThemeChange("dark")}>Dark<span>Low-light command surface</span></button><button type="button" className={`theme-option ${theme === "light" ? "is-selected" : ""}`} aria-pressed={theme === "light"} onClick={() => onThemeChange("light")}>Light<span>High-contrast workspace</span></button></div></Panel><Panel className="settings-panel"><div className="panel-heading"><div><span className="eyebrow">RUNTIME</span><h3>Connection posture</h3></div><Chip tone={runtimeStatus === "connected" ? "green" : runtimeStatus === "offline" ? "amber" : "neutral"} icon="lock">{runtimeStatusLabel(runtimeStatus)}</Chip></div><div className="settings-facts"><div><span>Client</span><strong>{native ? "Native desktop shell" : "Browser preview"}</strong></div><div><span>Endpoint</span><strong className="mono">{endpoint || "Not connected"}</strong></div><div><span>Health</span><strong>{health?.status ?? "Unavailable"}</strong></div><div><span>Authority</span><strong>Local service only</strong></div></div><p className="settings-copy">The desktop client never stores bearer tokens in local preferences. Effect authorization remains inside the authenticated Pandora runtime.</p></Panel></div></div>;
+  return <div className="full-view"><PageHeader eyebrow="Workspace" title="Settings" description="Personalize the desktop shell while keeping runtime authority in Pandora." actions={<Chip tone="neutral" icon="gear">Local preference</Chip>} /><div className="settings-grid"><Panel className="settings-panel"><div className="panel-heading"><div><span className="eyebrow">APPEARANCE</span><h3>Theme</h3></div><Icon name="spark" size={18} /></div><p className="settings-copy">Choose the visual mode for this device. The setting is stored locally and does not change runtime policy.</p><div className="theme-toggle" role="group" aria-label="Theme mode"><button type="button" className={`theme-option ${theme === "dark" ? "is-selected" : ""}`} aria-pressed={theme === "dark"} onClick={() => onThemeChange("dark")}>Dark<span>Low-light command surface</span></button><button type="button" className={`theme-option ${theme === "light" ? "is-selected" : ""}`} aria-pressed={theme === "light"} onClick={() => onThemeChange("light")}>Light<span>High-contrast workspace</span></button></div></Panel><Panel className="settings-panel"><div className="panel-heading"><div><span className="eyebrow">RUNTIME</span><h3>Connection posture</h3></div><Chip tone={runtimeStatus === "connected" ? "green" : runtimeStatus === "offline" ? "amber" : "neutral"} icon="lock">{runtimeStatusLabel(runtimeStatus)}</Chip></div><div className="settings-facts"><div><span>Client</span><strong>{native ? "Native desktop shell" : "Browser preview"}</strong></div><div><span>Endpoint</span><strong className="mono">{endpoint || "Not connected"}</strong></div><div><span>Health</span><strong>{health?.status ?? "Unavailable"}</strong></div><div><span>Authority</span><strong>Local service only</strong></div></div><p className="settings-copy">Local device trust is established automatically. Effect authorization remains inside the Pandora runtime.</p></Panel></div></div>;
 }
 
 function ConnectionView({ endpoint, runtimeStatus, runtimeError, health, providers, sessions, selectedSessionId, selectedSession, native, serviceActive, onConnect, onStartService, onStopService, onSelectSession }: { endpoint: string; runtimeStatus: RuntimeStatus; runtimeError: string; health: RuntimeHealth | null; providers: RuntimeProvider[]; sessions: RuntimeSession[]; selectedSessionId: string; selectedSession: RuntimeSessionDetail | null; native: boolean; serviceActive: boolean; onConnect: (endpoint: string, token: string) => void; onStartService: () => Promise<void>; onStopService: () => Promise<void>; onSelectSession: (sessionId: string) => Promise<void> }) {
@@ -1000,7 +1099,7 @@ function ConnectionView({ endpoint, runtimeStatus, runtimeError, health, provide
     }
   };
 
-  return <div className="full-view"><PageHeader eyebrow="Runtime surface" title="Connections" description="Connect this desktop shell to the authenticated loopback Pandora service." actions={<Chip tone={runtimeStatus === "connected" ? "green" : runtimeStatus === "offline" ? "amber" : "blue"} icon="lock">{runtimeStatusLabel(runtimeStatus)}</Chip>} /><div className="connection-grid"><Panel className="connection-panel"><div className="panel-heading"><div><span className="eyebrow">LOCAL RPC</span><h3>Pandora service</h3></div><Icon name="terminal" size={19} /></div><div className="settings-facts connection-health"><div><span>Service health</span><strong>{health?.status ?? "Unavailable"}</strong></div><div><span>Transport</span><strong>{native ? "Native bridge" : "Loopback RPC"}</strong></div></div>{native ? <button className={`button ${serviceActive ? "button-secondary" : "button-primary"} connection-start`} type="button" onClick={() => void (serviceActive ? onStopService() : onStartService())}>{serviceActive ? "Stop local service" : "Start local service"} <Icon name={serviceActive ? "lock" : "arrow"} size={14} /></button> : null}<form className="connection-form" onSubmit={submit}><label><span>Endpoint</span><input value={draftEndpoint} onChange={(event) => setDraftEndpoint(event.target.value)} placeholder="http://127.0.0.1:PORT/v1/rpc" spellCheck={false} /></label><label><span>Bearer token</span><input value={draftToken} onChange={(event) => setDraftToken(event.target.value)} type="password" placeholder="Paste the service token for this session" autoComplete="off" /></label><button className="button button-secondary" type="submit" disabled={!draftEndpoint.trim() || !draftToken.trim()}>Connect manually <Icon name="arrow" size={14} /> </button></form><p className="connection-note">Desktop startup keeps the bearer token native-side. Manual browser connections keep it in memory and never write it to storage. Endpoints must be loopback-only.</p>{runtimeError ? <p className="connection-error" role="alert">{runtimeError}</p> : null}</Panel><Panel className="connection-panel"><div className="panel-heading"><div><span className="eyebrow">PROVIDER PROFILES</span><h3>{providers.length} configured</h3></div><Chip tone={providers.some((provider) => provider.active) ? "blue" : "neutral"} icon="spark">Redacted</Chip></div>{providers.length ? <div className="provider-list">{providers.map((provider) => <div className="provider-row" key={provider.name}><span className={`provider-dot ${provider.active ? "is-active" : ""}`} /><span><strong>{provider.name}</strong><small>{provider.model} · {provider.protocol}</small></span><span className={`provider-state ${provider.credential_configured ? "is-ready" : ""}`}>{provider.credential_configured ? "Ready" : "Credential needed"}</span></div>)}</div> : <div className="connection-empty"><Icon name="lock" size={21} /><p>Provider profiles are not configured.</p></div>}</Panel><Panel className="connection-panel"><div className="panel-heading"><div><span className="eyebrow">SCOPED SESSIONS</span><h3>{sessions.length} available</h3></div><Chip tone="green" icon="shield">Tenant scoped</Chip></div>{sessions.length ? <div className="session-list">{sessions.map((session) => <button className={`session-row ${selectedSessionId === session.session_id ? "is-selected" : ""}`} key={session.session_id} type="button" onClick={() => void onSelectSession(session.session_id)}><span className="session-dot" /><span><strong>{session.session_id}</strong><small>{session.workspace_id} · {session.tenant_id}</small></span><Icon name="chevron" size={13} /></button>)}</div> : <div className="connection-empty"><Icon name="archive" size={21} /><p>Connect to load scoped sessions.</p></div>}{selectedSession ? <div className="selected-session"><span className="eyebrow">SELECTED SESSION</span><strong>{selectedSession.session.session_id}</strong><small>{selectedSession.event_count} recorded events · ready to inspect</small></div> : null}</Panel></div></div>;
+  return <div className="full-view"><PageHeader eyebrow="Runtime surface" title="Connections" description={native ? "Pandora runs locally and establishes device trust automatically." : "Connect this development preview to a loopback Pandora service."} actions={<Chip tone={runtimeStatus === "connected" ? "green" : runtimeStatus === "offline" ? "amber" : "blue"} icon="lock">{runtimeStatusLabel(runtimeStatus)}</Chip>} /><div className="connection-grid"><Panel className="connection-panel"><div className="panel-heading"><div><span className="eyebrow">LOCAL RPC</span><h3>Pandora service</h3></div><Icon name="terminal" size={19} /></div><div className="settings-facts connection-health"><div><span>Service health</span><strong>{health?.status ?? "Unavailable"}</strong></div><div><span>Transport</span><strong>{native ? "Native bridge" : "Loopback RPC"}</strong></div></div>{native ? <><button className={`button ${serviceActive ? "button-secondary" : "button-primary"} connection-start`} type="button" onClick={() => void (serviceActive ? onStopService() : onStartService())}>{serviceActive ? "Stop local service" : "Start local service"} <Icon name={serviceActive ? "lock" : "arrow"} size={14} /></button><div className="native-trust-note"><Icon name="shield" size={17} /><div><strong>No account required</strong><p>Device trust and the loopback service session are established automatically. Credentials remain native-side and are never exposed to this interface.</p></div></div></> : <><form className="connection-form" onSubmit={submit}><label><span>Endpoint</span><input value={draftEndpoint} onChange={(event) => setDraftEndpoint(event.target.value)} placeholder="http://127.0.0.1:PORT/v1/rpc" spellCheck={false} /></label><label><span>Development token</span><input value={draftToken} onChange={(event) => setDraftToken(event.target.value)} type="password" placeholder="Paste the local service token" autoComplete="off" /></label><button className="button button-secondary" type="submit" disabled={!draftEndpoint.trim() || !draftToken.trim()}>Connect preview <Icon name="arrow" size={14} /> </button></form><p className="connection-note">Browser-preview credentials stay in memory and are never written to storage. Endpoints must be loopback-only.</p></>}{runtimeError ? <p className="connection-error" role="alert">{runtimeError}</p> : null}</Panel><Panel className="connection-panel"><div className="panel-heading"><div><span className="eyebrow">PROVIDER PROFILES</span><h3>{providers.length} configured</h3></div><Chip tone={providers.some((provider) => provider.active) ? "blue" : "neutral"} icon="spark">Redacted</Chip></div>{providers.length ? <div className="provider-list">{providers.map((provider) => <div className="provider-row" key={provider.name}><span className={`provider-dot ${provider.active ? "is-active" : ""}`} /><span><strong>{provider.name}</strong><small>{provider.model} · {provider.protocol}</small></span><span className={`provider-state ${provider.credential_configured ? "is-ready" : ""}`}>{provider.credential_configured ? "Ready" : "Credential needed"}</span></div>)}</div> : <div className="connection-empty"><Icon name="lock" size={21} /><p>Provider profiles are not configured.</p></div>}</Panel><Panel className="connection-panel"><div className="panel-heading"><div><span className="eyebrow">SCOPED SESSIONS</span><h3>{sessions.length} available</h3></div><Chip tone="green" icon="shield">Tenant scoped</Chip></div>{sessions.length ? <div className="session-list">{sessions.map((session) => <button className={`session-row ${selectedSessionId === session.session_id ? "is-selected" : ""}`} key={session.session_id} type="button" onClick={() => void onSelectSession(session.session_id)}><span className="session-dot" /><span><strong>{session.session_id}</strong><small>{session.workspace_id} · {session.tenant_id}</small></span><Icon name="chevron" size={13} /></button>)}</div> : <div className="connection-empty"><Icon name="archive" size={21} /><p>Connect to load scoped sessions.</p></div>}{selectedSession ? <div className="selected-session"><span className="eyebrow">SELECTED SESSION</span><strong>{selectedSession.session.session_id}</strong><small>{selectedSession.event_count} recorded events · ready to inspect</small></div> : null}</Panel></div></div>;
 }
 
 function EvolutionView({ proposals, activations, runtimeStatus, onInspect, onMutate }: { proposals: RuntimeEvolutionProposal[]; activations: RuntimeArtifactActivation[]; runtimeStatus: RuntimeStatus; onInspect: (proposalId: string) => Promise<RuntimeEvolutionProposal>; onMutate: (operation: "activate" | "rollback", proposalId: string, confirmation: string, reason: string) => Promise<RuntimeEvolutionMutation> }) {
@@ -1070,7 +1169,7 @@ function EvolutionView({ proposals, activations, runtimeStatus, onInspect, onMut
   </div>;
 }
 
-function SecondaryView({ view, runtimeStatus }: { view: Exclude<ViewId, "command" | "memory" | "workflows" | "engines">; runtimeStatus: RuntimeStatus }) {
+function SecondaryView({ view, runtimeStatus }: { view: Exclude<ViewId, "command" | "runs" | "memory" | "workflows" | "engines">; runtimeStatus: RuntimeStatus }) {
   const detail = viewDetails[view];
   const cards = view === "connections" ? ["Local provider profile", "MCP stdio · local", "Connection policy"] : view === "capabilities" ? ["coding-domain", "research-domain", "Installed Skills"] : view === "evolution" ? ["Proposal intake", "Holdout evaluation", "Rollback readiness"] : view === "audit" ? ["Effect receipts", "Evaluation evidence", "Runtime events"] : ["Policy posture", "Workspace boundary", "Runtime configuration"];
   const availability = runtimeStatus === "connected" ? "The current service does not expose this surface yet." : "Connect the authenticated Pandora service when this surface is available.";

@@ -13,11 +13,15 @@ const runtime = vi.hoisted(() => ({
   events: vi.fn(),
   health: vi.fn(),
   inspectEvolution: vi.fn(),
+  inspectOrchestration: vi.fn(),
   inspectSession: vi.fn(),
   memory: vi.fn(),
+  orchestrations: vi.fn(),
   providers: vi.fn(),
   resolveApproval: vi.fn(),
   rollbackEvolution: vi.fn(),
+  cancelOrchestration: vi.fn(),
+  resumeOrchestration: vi.fn(),
   resume: vi.fn(),
   run: vi.fn(),
   sessions: vi.fn(),
@@ -42,11 +46,15 @@ vi.mock("./runtimeClient", () => ({
     events = runtime.events;
     health = runtime.health;
     inspectEvolution = runtime.inspectEvolution;
+    inspectOrchestration = runtime.inspectOrchestration;
     inspectSession = runtime.inspectSession;
     memory = runtime.memory;
+    orchestrations = runtime.orchestrations;
     providers = runtime.providers;
     resolveApproval = runtime.resolveApproval;
     rollbackEvolution = runtime.rollbackEvolution;
+    cancelOrchestration = runtime.cancelOrchestration;
+    resumeOrchestration = runtime.resumeOrchestration;
     resume = runtime.resume;
     run = runtime.run;
     sessions = runtime.sessions;
@@ -76,6 +84,7 @@ beforeEach(() => {
   runtime.inspectSession.mockResolvedValue({ session, event_count: 0 });
   runtime.events.mockResolvedValue([]);
   runtime.memory.mockResolvedValue([]);
+  runtime.orchestrations.mockResolvedValue([]);
 });
 
 afterEach(() => cleanup());
@@ -395,6 +404,99 @@ describe("Pandora desktop run state", () => {
     expect(screen.getByText("Never directly")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "receipts" }));
     expect(screen.getByRole("heading", { name: "Evidence follows execution" })).toBeInTheDocument();
+  });
+
+
+  it("keeps native local service credentials out of the interface", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Connections" }));
+
+    expect(await screen.findByText("No account required")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Development token")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Connect preview/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /local service/ })).toBeInTheDocument();
+  });
+
+  it("inspects and exactly cancels a queued background orchestration", async () => {
+    const queuedRun = {
+      run_id: "run-queued-1",
+      coordinator_workspace_id: "workspace-1",
+      plan_id: "release-plan",
+      status: "queued",
+      worker_id: null,
+      roles: [{
+        role_id: "role-review",
+        role: "reviewer",
+        harness_id: "coding-domain",
+        repository_id: "pandora-agent",
+        workspace_id: "workspace-1",
+        exact_commit: "abc1234",
+        state: "pending",
+      }],
+      receipt_count: 0,
+      handoffs_used: 0,
+      interruption_reason: null,
+      created_at_unix_seconds: 30,
+      updated_at_unix_seconds: 30,
+    };
+    runtime.orchestrations.mockResolvedValue([queuedRun]);
+    runtime.cancelOrchestration.mockResolvedValue({ ...queuedRun, status: "cancelled", updated_at_unix_seconds: 31 });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Background Runs" }));
+
+    expect(await screen.findByRole("heading", { name: "release-plan" })).toBeInTheDocument();
+    expect(screen.getByText("pandora-agent / workspace-1")).toBeInTheDocument();
+    expect(screen.getByText("abc1234")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel run" }));
+    const cancel = screen.getByRole("button", { name: "Confirm cancellation" });
+    expect(cancel).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Confirm cancel run-queued-1"), { target: { value: "run-queued-1" } });
+    fireEvent.click(cancel);
+
+    await waitFor(() => {
+      expect(runtime.cancelOrchestration).toHaveBeenCalledWith("run-queued-1", "run-queued-1");
+      expect(screen.getByText("Run cancelled")).toBeInTheDocument();
+    });
+  });
+
+  it("resumes an interrupted orchestration only after exact confirmation", async () => {
+    const interruptedRun = {
+      run_id: "run-interrupted-1",
+      coordinator_workspace_id: "workspace-1",
+      plan_id: "repair-plan",
+      status: "interrupted",
+      worker_id: null,
+      roles: [{
+        role_id: "role-repair",
+        role: "repairer",
+        harness_id: "coding-domain",
+        repository_id: "pandora-agent",
+        workspace_id: "workspace-1",
+        exact_commit: "def5678",
+        state: "interrupted",
+      }],
+      receipt_count: 0,
+      handoffs_used: 1,
+      interruption_reason: "worker lease expired",
+      created_at_unix_seconds: 40,
+      updated_at_unix_seconds: 41,
+    };
+    runtime.orchestrations.mockResolvedValue([interruptedRun]);
+    runtime.resumeOrchestration.mockResolvedValue({ ...interruptedRun, status: "queued", interruption_reason: null, updated_at_unix_seconds: 42 });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Background Runs" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Resume safely/ }));
+    const resume = screen.getByRole("button", { name: "Confirm resume" });
+    expect(resume).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Confirm resume run-interrupted-1"), { target: { value: "run-interrupted-1" } });
+    fireEvent.click(resume);
+
+    await waitFor(() => {
+      expect(runtime.resumeOrchestration).toHaveBeenCalledWith("run-interrupted-1", "run-interrupted-1");
+      expect(screen.getByText("Run requeued")).toBeInTheDocument();
+    });
   });
 
 });
