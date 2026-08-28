@@ -30,8 +30,10 @@ class ReleaseEvidenceTests(unittest.TestCase):
         (dist / "checksums.txt").write_text(f"{checksums}\n", encoding="utf-8")
         (dist / "checksums.txt.sig").write_bytes(b"cosign signature\n")
         (dist / "checksums.txt.pem").write_bytes(b"cosign certificate\n")
-        (dist / "pandora-cargo-metadata.json").write_text("{}\n", encoding="utf-8")
-        (dist / "pandora.spdx.json").write_text("{}\n", encoding="utf-8")
+        # Keep fixture bytes identical on POSIX and Windows. Text-mode writes
+        # normalize newlines on Windows after the checksum manifest is built.
+        (dist / "pandora-cargo-metadata.json").write_bytes(b"{}\n")
+        (dist / "pandora.spdx.json").write_bytes(b"{}\n")
         return dist, artifacts
 
     def test_binds_checksums_signatures_sbom_provenance_and_artifacts(self) -> None:
