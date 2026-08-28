@@ -170,6 +170,83 @@ describe("Pandora desktop run state", () => {
     expect(screen.queryByText("notes.ts")).not.toBeInTheDocument();
   });
 
+  it("reads a workspace file through the governed runtime inspector", async () => {
+    runtime.run.mockResolvedValue({
+      mode: "direct",
+      session_id: "session-inspect",
+      execution_id: "execution-inspect",
+      selected_harness: "coding-domain",
+      selected_gene: "workspace.read",
+      status: "completed",
+      output: "# Pandora\n",
+      receipt_count: 1,
+      event_count: 4,
+    });
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "workspace" }));
+    fireEvent.change(screen.getByLabelText("Workspace file path"), { target: { value: "docs/architecture.md" } });
+    fireEvent.click(screen.getByRole("button", { name: "Read file" }));
+
+    await waitFor(() => expect(runtime.run).toHaveBeenCalledWith("read:docs/architecture.md", "coding-domain"));
+    expect(await screen.findByLabelText("Workspace inspection output")).toHaveTextContent("# Pandora");
+    expect(screen.getByText("workspace.read")).toBeInTheDocument();
+    expect(screen.getByText("1 receipt")).toBeInTheDocument();
+  });
+
+  it("requires an exact approval before the workspace diff command resumes", async () => {
+    const approval = {
+      approval_id: "approval-diff",
+      session_id: "session-diff",
+      execution_id: "execution-diff",
+      gene_id: "workspace.diff",
+      request_digest: "sha256:diff",
+      request_summary: "Execute workspace.diff once",
+      policy_version: 1,
+      expires_at_unix_seconds: 999,
+      status: "pending",
+      approver_id: null,
+      created_at_unix_seconds: 1,
+    };
+    runtime.run.mockResolvedValue({
+      mode: "direct",
+      session_id: "session-diff",
+      execution_id: "execution-diff",
+      selected_harness: "coding-domain",
+      selected_gene: "workspace.diff",
+      status: "approval_required",
+      output: "",
+      receipt_count: 0,
+      event_count: 3,
+      approval,
+    });
+    runtime.resolveApproval.mockResolvedValue({ ...approval, status: "approved", approver_id: "local-operator" });
+    runtime.resume.mockResolvedValue({
+      mode: "direct",
+      session_id: "session-diff",
+      execution_id: "execution-diff",
+      selected_harness: "coding-domain",
+      selected_gene: "workspace.diff",
+      status: "completed",
+      output: "diff --git a/README.md b/README.md",
+      receipt_count: 1,
+      event_count: 7,
+    });
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "workspace" }));
+    fireEvent.click(screen.getByRole("button", { name: /Working diff/ }));
+    expect(await screen.findByText("Execute workspace.diff once")).toBeInTheDocument();
+    expect(screen.getByText("sha256:diff")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
+
+    await waitFor(() => {
+      expect(runtime.resolveApproval).toHaveBeenCalledWith("approval-diff", true);
+      expect(runtime.resume).toHaveBeenCalledWith("approval-diff", "diff", "coding-domain");
+    });
+    expect(await screen.findByLabelText("Workspace inspection output")).toHaveTextContent("diff --git");
+  });
+
   it("keeps the composer available after inspecting an existing session", async () => {
     runtime.sessions.mockResolvedValue([session]);
 
@@ -409,9 +486,9 @@ describe("Pandora desktop run state", () => {
     expect(screen.getByText("No run selected")).toBeInTheDocument();
     expect(screen.getByText("policy approved")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("tab", { name: "context" }));
+    fireEvent.click(screen.getByRole("tab", { name: "workspace" }));
     expect(screen.getByRole("heading", { name: "workspace-1" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Context is evidence, not authority" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Inspection is evidence, not authority" })).toBeInTheDocument();
     expect(screen.getByText("Progressive · redacted")).toBeInTheDocument();
   });
 

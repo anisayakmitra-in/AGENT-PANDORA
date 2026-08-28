@@ -44,12 +44,17 @@ type ViewId =
 
 type RunProfile = string;
 type ThemeMode = "dark" | "light";
-type InspectorTab = "flow" | "evidence" | "context";
+type InspectorTab = "flow" | "evidence" | "workspace";
 type HarnessTab = "genes" | "extensions" | "authority" | "receipts";
 
 type PendingRunRequest = {
   task: string;
   requestedHarness: string | null;
+};
+
+type WorkspaceInspectionRequest = {
+  task: string;
+  requestedHarness: string;
 };
 
 type WorkflowRecipe = {
@@ -372,6 +377,9 @@ function App() {
   const [artifactActivations, setArtifactActivations] = useState<RuntimeArtifactActivation[]>([]);
   const [lastRun, setLastRun] = useState<RuntimeRun | null>(null);
   const [pendingRun, setPendingRun] = useState<PendingRunRequest | null>(null);
+  const [workspaceInspection, setWorkspaceInspection] = useState<RuntimeRun | null>(null);
+  const [pendingWorkspaceInspection, setPendingWorkspaceInspection] = useState<WorkspaceInspectionRequest | null>(null);
+  const [workspaceInspectionInFlight, setWorkspaceInspectionInFlight] = useState(false);
   const [runInFlight, setRunInFlight] = useState(false);
   const [runProfile, setRunProfile] = useState<RunProfile>("auto");
   const [theme, setTheme] = useState<ThemeMode>(loadTheme);
@@ -431,6 +439,8 @@ function App() {
       setEvolutionProposals([]);
       setArtifactActivations([]);
       setPendingRun(null);
+      setWorkspaceInspection(null);
+      setPendingWorkspaceInspection(null);
       return;
     }
     let cancelled = false;
@@ -586,6 +596,8 @@ function App() {
       setEvolutionProposals([]);
       setArtifactActivations([]);
       setPendingRun(null);
+      setWorkspaceInspection(null);
+      setPendingWorkspaceInspection(null);
       setRuntimeStatus("preview");
     } catch (error: unknown) {
       setRuntimeStatus("offline");
@@ -707,6 +719,55 @@ function App() {
     }
   };
 
+  const inspectWorkspace = async (task: string): Promise<void> => {
+    if (!client) {
+      throw new Error("Connect to the local Pandora service first");
+    }
+    const request = { task, requestedHarness: "coding-domain" };
+    setWorkspaceInspectionInFlight(true);
+    try {
+      const result = await client.run(request.task, request.requestedHarness);
+      setWorkspaceInspection(result);
+      setPendingWorkspaceInspection(result.approval ? request : null);
+      setSessions(await client.sessions());
+    } finally {
+      setWorkspaceInspectionInFlight(false);
+    }
+  };
+
+  const resolveWorkspaceInspection = async (allow: boolean): Promise<void> => {
+    const approval = workspaceInspection?.approval;
+    if (!client || !workspaceInspection || !approval || !pendingWorkspaceInspection) {
+      throw new Error("No workspace inspection approval is available");
+    }
+    setWorkspaceInspectionInFlight(true);
+    try {
+      const resolved = approval.status === "pending"
+        ? await client.resolveApproval(approval.approval_id, allow)
+        : approval;
+      setWorkspaceInspection({ ...workspaceInspection, approval: resolved });
+      if (allow) {
+        const result = await client.resume(
+          approval.approval_id,
+          pendingWorkspaceInspection.task,
+          pendingWorkspaceInspection.requestedHarness,
+        );
+        setWorkspaceInspection(result);
+      } else {
+        setWorkspaceInspection({
+          ...workspaceInspection,
+          status: "denied",
+          status_detail: "The operator denied this exact inspection request.",
+          approval: resolved,
+        });
+      }
+      setPendingWorkspaceInspection(null);
+      setSessions(await client.sessions());
+    } finally {
+      setWorkspaceInspectionInFlight(false);
+    }
+  };
+
   const mutateEvolution = async (
     operation: "activate" | "rollback",
     proposalId: string,
@@ -782,10 +843,14 @@ function App() {
             events={events}
             harnesses={harnesses}
             runInFlight={runInFlight}
+            workspaceInspection={workspaceInspection}
+            workspaceInspectionInFlight={workspaceInspectionInFlight}
             runProfile={runProfile}
             onRunProfileChange={setRunProfile}
             onRun={runTask}
             onResolveApproval={resolvePendingApproval}
+            onInspectWorkspace={inspectWorkspace}
+            onResolveWorkspaceInspection={resolveWorkspaceInspection}
           />
         ) : activeView === "runs" ? (
           <RunsView runs={orchestrationRuns} runtimeStatus={runtimeStatus} onMutate={mutateOrchestration} />
@@ -878,7 +943,7 @@ function runtimeStatusLabel(status: RuntimeStatus): string {
   }
 }
 
-function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onApprovalClose, onSelectStep, runtimeStatus, selectedSession, lastRun, events, harnesses, runInFlight, runProfile, onRunProfileChange, onRun, onResolveApproval }: { approvalPreview: boolean; selectedStep: string; onApprovalPreview: () => void; onApprovalClose: () => void; onSelectStep: (id: string) => void; runtimeStatus: RuntimeStatus; selectedSession: RuntimeSessionDetail | null; lastRun: RuntimeRun | null; events: RuntimeEvent[]; harnesses: RuntimeHarness[]; runInFlight: boolean; runProfile: RunProfile; onRunProfileChange: (profile: RunProfile) => void; onRun: (task: string, profile: RunProfile, contextAttachments: RuntimeContextAttachment[]) => Promise<void>; onResolveApproval: (allow: boolean) => Promise<void> }) {
+function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onApprovalClose, onSelectStep, runtimeStatus, selectedSession, lastRun, events, harnesses, runInFlight, workspaceInspection, workspaceInspectionInFlight, runProfile, onRunProfileChange, onRun, onResolveApproval, onInspectWorkspace, onResolveWorkspaceInspection }: { approvalPreview: boolean; selectedStep: string; onApprovalPreview: () => void; onApprovalClose: () => void; onSelectStep: (id: string) => void; runtimeStatus: RuntimeStatus; selectedSession: RuntimeSessionDetail | null; lastRun: RuntimeRun | null; events: RuntimeEvent[]; harnesses: RuntimeHarness[]; runInFlight: boolean; workspaceInspection: RuntimeRun | null; workspaceInspectionInFlight: boolean; runProfile: RunProfile; onRunProfileChange: (profile: RunProfile) => void; onRun: (task: string, profile: RunProfile, contextAttachments: RuntimeContextAttachment[]) => Promise<void>; onResolveApproval: (allow: boolean) => Promise<void>; onInspectWorkspace: (task: string) => Promise<void>; onResolveWorkspaceInspection: (allow: boolean) => Promise<void> }) {
   const [task, setTask] = useState("");
   const [runError, setRunError] = useState("");
   const [contextAttachments, setContextAttachments] = useState<RuntimeContextAttachment[]>([]);
@@ -991,7 +1056,7 @@ function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onAppro
       </form>
       {lastRun ? <Panel className="run-result"><div className="panel-heading"><h3>Latest {lastRun.mode} run</h3><Chip tone={lastRun.status === "completed" ? "green" : "amber"}>{lastRun.status}</Chip></div><div className="run-result-meta"><span className="mono">{lastRun.execution_id ?? "provider-only response"}</span><span>{lastRun.selected_gene ?? "No gene selected"}</span></div><p>{lastRun.output || "No output returned."}</p>{events.length ? <div className="event-list"><span className="eyebrow">LIVE ACTIVITY</span>{events.map((event) => <div className="event-row" key={event.event_id}><span className="event-dot" /><span>{event.event_type.replaceAll("_", " ")}</span><span className="mono">{event.event_id}</span></div>)}</div> : null}</Panel> : null}
     </section>
-    <Inspector steps={steps} approvalPreview={approvalPreview} lastRun={lastRun} events={events} selectedSession={selectedSession} approval={lastRun?.approval} approvalDetail={lastRun?.status_detail} approvalInFlight={runInFlight} selectedStep={selectedStep} onApprovalPreview={onApprovalPreview} onApprovalClose={onApprovalClose} onResolveApproval={onResolveApproval} onSelectStep={onSelectStep} />
+    <Inspector steps={steps} approvalPreview={approvalPreview} lastRun={lastRun} events={events} selectedSession={selectedSession} runtimeStatus={runtimeStatus} approval={lastRun?.approval} approvalDetail={lastRun?.status_detail} approvalInFlight={runInFlight} workspaceInspection={workspaceInspection} workspaceInspectionInFlight={workspaceInspectionInFlight} selectedStep={selectedStep} onApprovalPreview={onApprovalPreview} onApprovalClose={onApprovalClose} onResolveApproval={onResolveApproval} onInspectWorkspace={onInspectWorkspace} onResolveWorkspaceInspection={onResolveWorkspaceInspection} onSelectStep={onSelectStep} />
   </div>;
 }
 
@@ -1025,9 +1090,11 @@ function CommandPalette({ onClose, onSelectView }: { onClose: () => void; onSele
   return <div className="palette-backdrop" role="presentation" onMouseDown={onClose}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Open Pandora surface" onMouseDown={(event) => event.stopPropagation()}><div className="palette-search"><Icon name="search" size={16} /><input autoFocus value={query} onChange={(event) => { setQuery(event.target.value); setSelectedIndex(0); }} onKeyDown={handleKeyDown} placeholder="Search Pandora surfaces…" aria-label="Search Pandora surfaces" /><kbd>ESC</kbd></div><div className="palette-list">{filtered.length ? filtered.map((action, index) => <button type="button" className={`palette-item ${index === selectedIndex ? "is-active" : ""}`} aria-selected={index === selectedIndex} key={action.id} onMouseEnter={() => setSelectedIndex(index)} onClick={() => choose(index)}><Icon name={action.icon} size={16} /><span><strong>{action.label}</strong><small>{action.group}</small></span><kbd>↵</kbd></button>) : <p className="palette-empty">No matching Pandora surface.</p>}</div><div className="palette-footer"><span>Use ↑ ↓ and Enter</span><span className="mono">⌘ K</span></div></section></div>;
 }
 
-function Inspector({ steps, approvalPreview, lastRun, events, selectedSession, approval, approvalDetail, approvalInFlight, selectedStep, onApprovalPreview, onApprovalClose, onResolveApproval, onSelectStep }: { steps: typeof authoritySteps; approvalPreview: boolean; lastRun: RuntimeRun | null; events: RuntimeEvent[]; selectedSession: RuntimeSessionDetail | null; approval?: RuntimeApproval; approvalDetail?: string; approvalInFlight: boolean; selectedStep: string; onApprovalPreview: () => void; onApprovalClose: () => void; onResolveApproval: (allow: boolean) => Promise<void>; onSelectStep: (id: string) => void }) {
+function Inspector({ steps, approvalPreview, lastRun, events, selectedSession, runtimeStatus, approval, approvalDetail, approvalInFlight, workspaceInspection, workspaceInspectionInFlight, selectedStep, onApprovalPreview, onApprovalClose, onResolveApproval, onInspectWorkspace, onResolveWorkspaceInspection, onSelectStep }: { steps: typeof authoritySteps; approvalPreview: boolean; lastRun: RuntimeRun | null; events: RuntimeEvent[]; selectedSession: RuntimeSessionDetail | null; runtimeStatus: RuntimeStatus; approval?: RuntimeApproval; approvalDetail?: string; approvalInFlight: boolean; workspaceInspection: RuntimeRun | null; workspaceInspectionInFlight: boolean; selectedStep: string; onApprovalPreview: () => void; onApprovalClose: () => void; onResolveApproval: (allow: boolean) => Promise<void>; onInspectWorkspace: (task: string) => Promise<void>; onResolveWorkspaceInspection: (allow: boolean) => Promise<void>; onSelectStep: (id: string) => void }) {
   const [approvalError, setApprovalError] = useState("");
   const [tab, setTab] = useState<InspectorTab>("flow");
+  const [workspacePath, setWorkspacePath] = useState("README.md");
+  const [workspaceError, setWorkspaceError] = useState("");
   const selected = steps.find((step) => step.id === selectedStep) ?? steps[4];
   const hasLiveRun = Boolean(lastRun);
   const decide = async (allow: boolean) => {
@@ -1038,17 +1105,53 @@ function Inspector({ steps, approvalPreview, lastRun, events, selectedSession, a
       setApprovalError(error instanceof Error ? error.message : "Could not resolve approval");
     }
   };
+  const inspectWorkspace = async (task: string) => {
+    setWorkspaceError("");
+    try {
+      await onInspectWorkspace(task);
+    } catch (error: unknown) {
+      setWorkspaceError(error instanceof Error ? error.message : "Workspace inspection failed");
+    }
+  };
+  const readWorkspaceFile = async (event: FormEvent) => {
+    event.preventDefault();
+    const path = workspacePath.trim();
+    if (!path) {
+      setWorkspaceError("Enter a workspace-relative file path");
+      return;
+    }
+    await inspectWorkspace(`read:${path}`);
+  };
+  const resolveWorkspace = async (allow: boolean) => {
+    setWorkspaceError("");
+    try {
+      await onResolveWorkspaceInspection(allow);
+    } catch (error: unknown) {
+      setWorkspaceError(error instanceof Error ? error.message : "Could not resolve inspection approval");
+    }
+  };
+  const workspaceOutput = workspaceInspection?.output.length && workspaceInspection.output.length > 120_000
+    ? `${workspaceInspection.output.slice(0, 120_000)}\n[output truncated in desktop inspector]`
+    : workspaceInspection?.output ?? "";
+  const workspaceApproval = workspaceInspection?.approval;
   return <aside className="inspector">
     <div className="inspector-header"><div><span className="eyebrow">{hasLiveRun ? "LIVE RUN SUMMARY" : "AUTHORITY CONTRACT"}</span><h2>{hasLiveRun ? "Execution recorded" : "Preview boundary"}</h2></div><button className="icon-button" type="button" aria-label="Inspector options" disabled><Icon name="dots" size={17} /></button></div>
     <div className="inspector-tabs" role="tablist" aria-label="Run inspector">
-      {(["flow", "evidence", "context"] as InspectorTab[]).map((item) => <button type="button" role="tab" aria-selected={tab === item} className={tab === item ? "is-active" : ""} key={item} onClick={() => setTab(item)}>{item}</button>)}
+      {(["flow", "evidence", "workspace"] as InspectorTab[]).map((item) => <button type="button" role="tab" aria-selected={tab === item} className={tab === item ? "is-active" : ""} key={item} onClick={() => setTab(item)}>{item}</button>)}
     </div>
     {tab === "evidence" ? <div className="inspector-pane" role="tabpanel">
       <Panel className="evidence-summary"><div className="panel-heading"><div><span className="eyebrow">RUN EVIDENCE</span><h3>{lastRun ? `${lastRun.receipt_count} receipts · ${lastRun.event_count} events` : "No run selected"}</h3></div><Chip tone={lastRun?.status === "completed" ? "green" : "neutral"} icon="archive">{lastRun?.status ?? "waiting"}</Chip></div>{lastRun ? <div className="evidence-facts"><div><span>Execution</span><strong className="mono">{lastRun.execution_id ?? "provider-only"}</strong></div><div><span>Harness</span><strong>{lastRun.selected_harness ?? "unselected"}</strong></div><div><span>Gene</span><strong>{lastRun.selected_gene ?? "unselected"}</strong></div><div><span>Prompt cache</span><strong>{lastRun.cached_prompt_tokens ?? 0} reused · {lastRun.cache_write_prompt_tokens ?? 0} written</strong></div></div> : <p className="task-copy">Run or select a session to inspect its immutable evidence summary.</p>}</Panel>
       <div className="inspector-section"><div className="section-heading"><span>Redacted activity</span><span className="mono section-count">{events.length}</span></div>{events.length ? <div className="compact-event-list">{events.map((event) => <div className="compact-event" key={event.event_id}><span className="event-dot" /><span>{event.event_type.replaceAll("_", " ")}</span><small className="mono">{event.event_id}</small></div>)}</div> : <p className="inspector-empty">No runtime events loaded.</p>}</div>
-    </div> : tab === "context" ? <div className="inspector-pane" role="tabpanel">
-      <Panel className="context-panel"><div className="panel-heading"><div><span className="eyebrow">SCOPED CONTEXT</span><h3>{selectedSession?.session.workspace_id ?? "No workspace loaded"}</h3></div><Icon name="lock" size={17} /></div><div className="evidence-facts"><div><span>Session</span><strong className="mono">{selectedSession?.session.session_id ?? "—"}</strong></div><div><span>Workspace</span><strong>{selectedSession?.session.workspace_id ?? "—"}</strong></div><div><span>Runtime scope</span><strong>Local device</strong></div><div><span>Disclosure</span><strong>Progressive · redacted</strong></div></div></Panel>
-      <Panel className="context-boundary"><span className="eyebrow">BOUNDARY</span><h3>Context is evidence, not authority</h3><p>Loaded context can guide Parliament and the Shadow Council. It cannot grant a tool capability, mint a permit, or widen a workspace boundary.</p></Panel>
+    </div> : tab === "workspace" ? <div className="inspector-pane" role="tabpanel">
+      <Panel className="context-panel"><div className="panel-heading"><div><span className="eyebrow">SCOPED WORKSPACE</span><h3>{selectedSession?.session.workspace_id ?? "Local runtime workspace"}</h3></div><Icon name="lock" size={17} /></div><div className="evidence-facts"><div><span>Session</span><strong className="mono">{workspaceInspection?.session_id ?? selectedSession?.session.session_id ?? "new inspection"}</strong></div><div><span>Runtime scope</span><strong>Local device</strong></div><div><span>Reads</span><strong>Filesystem Gene</strong></div><div><span>Commands</span><strong>Exact permit path</strong></div></div></Panel>
+      <Panel className="workspace-browser-panel">
+        <div className="panel-heading"><div><span className="eyebrow">WORKSPACE EXPLORER</span><h3>Inspect real evidence</h3></div><Chip tone={runtimeStatus === "connected" ? "green" : "neutral"} icon="code">{runtimeStatus === "connected" ? "Governed" : "Offline"}</Chip></div>
+        <form className="workspace-file-form" onSubmit={(event) => void readWorkspaceFile(event)}><label><span>Workspace-relative file</span><input aria-label="Workspace file path" value={workspacePath} onChange={(event) => setWorkspacePath(event.target.value)} maxLength={1024} spellCheck={false} autoComplete="off" placeholder="README.md" /></label><button className="button button-secondary" type="submit" disabled={runtimeStatus !== "connected" || workspaceInspectionInFlight || !workspacePath.trim()}>{workspaceInspectionInFlight ? "Inspecting…" : "Read file"}</button></form>
+        <div className="workspace-command-section"><div><span className="eyebrow">BOUNDED TERMINAL</span><small>No arbitrary shell input. Every command uses a registered Gene.</small></div><div className="workspace-command-grid"><button type="button" disabled={runtimeStatus !== "connected" || workspaceInspectionInFlight} onClick={() => void inspectWorkspace("status")}><Icon name="terminal" size={14} /><span><strong>Git status</strong><small>workspace.status</small></span></button><button type="button" disabled={runtimeStatus !== "connected" || workspaceInspectionInFlight} onClick={() => void inspectWorkspace("diff")}><Icon name="code" size={14} /><span><strong>Working diff</strong><small>workspace.diff</small></span></button><button type="button" disabled={runtimeStatus !== "connected" || workspaceInspectionInFlight} onClick={() => void inspectWorkspace("log")}><Icon name="archive" size={14} /><span><strong>Recent log</strong><small>workspace.log</small></span></button></div></div>
+        {workspaceError ? <p className="workspace-inspection-error" role="alert">{workspaceError}</p> : null}
+      </Panel>
+      {workspaceInspection ? <Panel className="workspace-result-panel"><div className="panel-heading"><div><span className="eyebrow">GOVERNED RESULT</span><h3>{workspaceInspection.selected_gene ?? "Workspace inspection"}</h3></div><Chip tone={workspaceInspection.status === "completed" ? "green" : workspaceInspection.status === "approval_required" ? "amber" : "neutral"}>{workspaceInspection.status}</Chip></div><div className="workspace-result-meta"><span className="mono">{workspaceInspection.execution_id ?? workspaceInspection.session_id}</span><span>{workspaceInspection.receipt_count} receipt{workspaceInspection.receipt_count === 1 ? "" : "s"}</span></div>{workspaceApproval ? <div className="workspace-approval"><div><span className="eyebrow">EXACT APPROVAL</span><strong>{workspaceApproval.request_summary}</strong><small className="mono">{workspaceApproval.request_digest}</small></div><div className="workspace-approval-actions">{workspaceApproval.status === "pending" ? <><button className="button button-deny" type="button" disabled={workspaceInspectionInFlight} onClick={() => void resolveWorkspace(false)}>Deny</button><button className="button button-primary" type="button" disabled={workspaceInspectionInFlight} onClick={() => void resolveWorkspace(true)}>Allow once</button></> : workspaceApproval.status === "approved" ? <button className="button button-primary" type="button" disabled={workspaceInspectionInFlight} onClick={() => void resolveWorkspace(true)}>Resume approved inspection</button> : <Chip tone="neutral">{workspaceApproval.status}</Chip>}</div></div> : null}{workspaceOutput ? <pre className="workspace-output" aria-label="Workspace inspection output">{workspaceOutput}</pre> : <p className="inspector-empty">{workspaceInspection.status_detail ?? (workspaceInspectionInFlight ? "Waiting for runtime evidence…" : "No output returned.")}</p>}</Panel> : null}
+      <Panel className="context-boundary"><span className="eyebrow">BOUNDARY</span><h3>Inspection is evidence, not authority</h3><p>File reads, status, diff, and log stay on Pandora’s existing Harness → Gene → ReferenceMonitor → receipt path. This panel cannot execute arbitrary shell commands or mint permits.</p></Panel>
     </div> : <div className="inspector-pane" role="tabpanel">
       <Panel className="task-panel"><div className="task-heading"><span className="task-icon"><Icon name="code" size={18} /></span><div><span className="eyebrow">PANDORA DESKTOP</span><h3>Governed command surface</h3></div></div><p className="task-copy">Submit work through the local service. The desktop shell does not issue permits or execute tools directly.</p><div className="task-meta"><span><Icon name="book" size={13} /> Existing runtime</span><span><Icon name="lock" size={13} /> Workspace scoped</span></div></Panel>
       <div className="inspector-section"><div className="section-heading"><span>Authority chain</span><span className="mono section-count">{steps.filter((step) => step.status !== "idle").length}/8</span></div><div className="authority-timeline">{steps.map((step) => <button className={`authority-row status-${step.status} ${selectedStep === step.id ? "is-selected" : ""}`} key={step.id} onClick={() => onSelectStep(step.id)}><span className="timeline-line" /><span className="timeline-node">{step.status === "complete" ? <Icon name="check" size={12} /> : <Icon name={step.icon} size={13} />}</span><span className="authority-copy"><strong>{step.label}</strong><small>{step.detail}</small></span><Icon name="chevron" size={14} /></button>)}</div></div>

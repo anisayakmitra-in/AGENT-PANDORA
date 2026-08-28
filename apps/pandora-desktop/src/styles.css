@@ -215,6 +215,33 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .inspector-empty { margin: 14px 0; color: var(--text-muted); font-size: 10px; line-height: 1.55; }
 .context-boundary { margin-top: 12px; border-color: rgba(86, 141, 255, .18); background: linear-gradient(145deg, rgba(86, 141, 255, .07), var(--surface-1) 55%); }
 .context-boundary p { margin: 10px 0 0; color: var(--text-secondary); font-size: 10px; line-height: 1.55; }
+.workspace-browser-panel, .workspace-result-panel { margin-top: 12px; padding: 15px; }
+.workspace-browser-panel .panel-heading, .workspace-result-panel .panel-heading { margin-bottom: 13px; }
+.workspace-browser-panel h3, .workspace-result-panel h3 { margin: 5px 0 0; font-size: 11px; }
+.workspace-file-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; }
+.workspace-file-form label { display: grid; min-width: 0; gap: 6px; color: var(--text-muted); font-size: 8px; }
+.workspace-file-form input { min-width: 0; width: 100%; padding: 9px 10px; border: 1px solid var(--border-subtle); border-radius: 8px; outline: 0; background: var(--canvas); color: var(--text-primary); font: 9px var(--font-mono); }
+.workspace-file-form input:focus-visible { border-color: rgba(215,181,109,.55); box-shadow: 0 0 0 3px rgba(215,181,109,.07); }
+.workspace-file-form .button { min-height: 34px; }
+.workspace-command-section { margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--border-subtle); }
+.workspace-command-section > div:first-child { display: grid; gap: 4px; }
+.workspace-command-section > div:first-child small { color: var(--text-muted); font-size: 8px; line-height: 1.45; }
+.workspace-command-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 9px; }
+.workspace-command-grid > button { display: flex; min-width: 0; align-items: center; gap: 7px; padding: 8px; border: 1px solid var(--border-subtle); border-radius: 8px; background: color-mix(in srgb, var(--canvas) 78%, transparent); color: var(--text-muted); text-align: left; }
+.workspace-command-grid > button:hover:not(:disabled) { border-color: rgba(215,181,109,.3); background: rgba(215,181,109,.055); color: var(--gold-light); }
+.workspace-command-grid > button span { display: grid; min-width: 0; gap: 2px; }
+.workspace-command-grid strong { overflow: hidden; color: var(--text-secondary); font-size: 8px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-command-grid small { overflow: hidden; color: var(--text-muted); font: 7px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.workspace-inspection-error { margin: 11px 0 0; color: var(--amber); font-size: 9px; line-height: 1.45; }
+.workspace-result-meta { display: flex; justify-content: space-between; gap: 12px; color: var(--text-muted); font-size: 8px; }
+.workspace-result-meta span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-output { max-height: 360px; overflow: auto; margin: 12px 0 0; padding: 11px; border: 1px solid var(--border-subtle); border-radius: 8px; background: color-mix(in srgb, var(--canvas) 90%, #000 10%); color: var(--text-secondary); font: 8px/1.55 var(--font-mono); tab-size: 2; white-space: pre-wrap; overflow-wrap: anywhere; }
+.workspace-approval { display: grid; gap: 11px; margin-top: 12px; padding: 11px; border: 1px solid rgba(240,168,75,.25); border-radius: 8px; background: rgba(240,168,75,.06); }
+.workspace-approval > div:first-child { display: grid; min-width: 0; gap: 5px; }
+.workspace-approval strong { color: var(--text-secondary); font-size: 9px; line-height: 1.45; }
+.workspace-approval small { overflow: hidden; color: var(--text-muted); font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-approval-actions { display: flex; justify-content: flex-end; gap: 7px; }
+.workspace-approval-actions .button { min-height: 30px; padding: 7px 10px; font-size: 8px; }
 
 .harness-lab { padding-top: 28px; }
 .harness-lab .page-header { margin-bottom: 18px; }
