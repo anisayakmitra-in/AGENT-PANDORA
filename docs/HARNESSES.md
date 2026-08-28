@@ -234,8 +234,8 @@ change a deployment. Those effects require separate capabilities and approvals.
 
 ## Security Domain Harness
 
-The built-in `security-domain` Harness is Pandora's Codex Security-style,
-evidence-first workflow surface. It owns eighteen read-only evidence Genes:
+The built-in `security-domain` Harness is Pandora's staged, evidence-first
+workflow surface. It owns eighteen read-only evidence Genes:
 
 - `security.assess` performs one bounded fixed-marker evidence pass without
   claiming complete scanner coverage;
@@ -271,10 +271,10 @@ evidence-first workflow surface. It owns eighteen read-only evidence Genes:
   markers;
 - `security.guide` returns static guidance without requesting an effect.
 
-The Security Domain follows the same broad lifecycle as Codex Security's
-standard, deep, diff, threat-model, discovery, triage, attack-path, validation,
-fix, verification, writeup, tracking, hardening, and policy workflows. It is a
-native Pandora workflow, not a Codex Security workbench client.
+The Security Domain follows a staged lifecycle: standard, deep, diff,
+threat-model, discovery, triage, attack-path, validation, fix, verification,
+writeup, tracking, hardening, and policy workflows. Every stage is a native
+Pandora workflow.
 
 It remains a bounded assessment surface, not a complete vulnerability scanner,
 finding database, or compliance certification. It does not execute scanners,
@@ -450,6 +450,35 @@ with its exact version when every required dependency resolves exactly. The
 profile still uses the existing execution controller and effect policy. The
 profile artifact is never loaded as code, and the profile cannot issue permits
 or grant runtime authority.
+
+## Local service activation snapshot
+
+The local desktop service builds its runtime catalog from the package store's
+active exact-version bindings at startup. Enabled custom Domain Harnesses load
+before enabled Meta Harnesses, and their installed WebAssembly Gene
+dependencies are resolved through the active artifact catalog. A Gene shared by
+multiple Domain Harnesses is compiled once only when every Harness resolves the
+same exact identity to the same artifact. Conflicting resolutions fail service
+startup rather than selecting one implicitly.
+
+The service exposes loaded custom Harnesses through `runtime.capabilities`, so
+the desktop Harness Lab, Command selector, and saved workflows use the same
+catalog that can execute. Enabling, disabling, updating, or rolling back a
+package changes the persisted binding but does not mutate a running controller;
+the desktop therefore requires a local-service restart before the new snapshot
+is active.
+
+In agent mode, each loaded WebAssembly Gene receives a deterministic,
+provider-safe tool alias. That alias is presentation only: invocation binds
+back to the exact admitted Gene ID inside the selected Harness. Shared exact
+Gene identities are exposed once, while conflicting versions fail agent startup
+instead of offering an ambiguous tool.
+
+Loading a package never changes the constitutional path. A WebAssembly Gene
+still receives a bound execution profile, policy evaluation, exact approval
+when required, a fresh one-shot ReferenceMonitor permit, and an effect receipt.
+Parliament, Shadow Council, ReferenceMonitor, and the permit system are not
+package bindings and cannot be replaced through this catalog.
 
 ## Ownership
 

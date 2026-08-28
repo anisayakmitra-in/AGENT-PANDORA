@@ -163,6 +163,24 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("Pandora desktop run state", () => {
+  it("keeps command-palette keyboard navigation visible and restores focus", async () => {
+    render(<App />);
+
+    const trigger = await screen.findByRole("button", { name: "Search" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const search = screen.getByRole("combobox", { name: "Search Pandora surfaces" });
+    expect(search).toHaveAttribute("aria-activedescendant", "pandora-palette-option-0");
+
+    fireEvent.keyDown(search, { key: "ArrowDown" });
+    expect(search).toHaveAttribute("aria-activedescendant", "pandora-palette-option-1");
+    expect(screen.getByRole("option", { name: /Background Runs/ })).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(search, { key: "Enter" });
+
+    expect(await screen.findByRole("heading", { name: "Background Runs" })).toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
   it("disables duplicate submission while a governed run is active", async () => {
     let completeRun!: (value: unknown) => void;
     runtime.agentRun.mockImplementation(
@@ -200,6 +218,70 @@ describe("Pandora desktop run state", () => {
       expect(composer).toBeEnabled();
       expect(composer).toHaveValue("");
     });
+  });
+
+  it("routes a run through the selected configured provider and model", async () => {
+    runtime.providers.mockResolvedValue([
+      {
+        name: "primary",
+        model: "model-a",
+        protocol: "openai-compatible",
+        active: true,
+        credential_configured: true,
+        fallback_provider: null,
+      },
+      {
+        name: "local-fast",
+        model: "model-b",
+        protocol: "openai-compatible",
+        active: false,
+        credential_configured: true,
+        fallback_provider: null,
+      },
+      {
+        name: "missing-credential",
+        model: "model-c",
+        protocol: "openai-compatible",
+        active: false,
+        credential_configured: false,
+        fallback_provider: null,
+      },
+    ]);
+    runtime.agentRun.mockResolvedValue({
+      mode: "agent",
+      session_id: session.session_id,
+      execution_id: "execution-provider-selection",
+      selected_harness: "coding-domain",
+      selected_gene: null,
+      status: "completed",
+      output: "selected provider used",
+      receipt_count: 0,
+      event_count: 1,
+    });
+
+    render(<App />);
+
+    const provider = await screen.findByLabelText("Model provider");
+    const model = screen.getByLabelText("Model");
+    expect(within(provider).queryByRole("option", { name: "missing-credential" })).not.toBeInTheDocument();
+    await waitFor(() => expect(model).toHaveValue("model-a"));
+    fireEvent.change(provider, { target: { value: "local-fast" } });
+    expect(model).toHaveValue("model-b");
+    fireEvent.change(model, { target: { value: "model-b-preview" } });
+
+    const composer = screen.getByLabelText("Pandora task");
+    fireEvent.change(composer, { target: { value: "Use the selected model" } });
+    fireEvent.submit(composer.closest("form")!);
+
+    await waitFor(() => expect(runtime.agentRun).toHaveBeenCalledWith(
+      "Use the selected model",
+      null,
+      null,
+      [],
+      "local-fast",
+      "model-b-preview",
+    ));
+    expect(await screen.findByText("selected provider used")).toBeInTheDocument();
   });
 
   it("keeps a failed request editable and retryable without marking the service offline", async () => {
@@ -241,7 +323,7 @@ describe("Pandora desktop run state", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Retry request" }));
 
     await waitFor(() => expect(runtime.agentRun).toHaveBeenCalledTimes(2));
-    expect(runtime.agentRun).toHaveBeenNthCalledWith(2, "Recover this exact task", null, null, []);
+    expect(runtime.agentRun).toHaveBeenNthCalledWith(2, "Recover this exact task", null, null, [], null, null);
     expect(await screen.findByText("recovered output")).toBeInTheDocument();
     expect(composer).toHaveValue("");
     expect(screen.queryByText("provider timed out")).not.toBeInTheDocument();
@@ -283,7 +365,7 @@ describe("Pandora desktop run state", () => {
     fireEvent.click(screen.getByRole("button", { name: /Retry with fresh verification/ }));
 
     await waitFor(() => expect(runtime.agentRun).toHaveBeenCalledTimes(2));
-    expect(runtime.agentRun).toHaveBeenNthCalledWith(2, "Run the verification suite", session.session_id, null, []);
+    expect(runtime.agentRun).toHaveBeenNthCalledWith(2, "Run the verification suite", session.session_id, null, [], null, null);
     expect(await screen.findByText("tests passed")).toBeInTheDocument();
     expect(screen.getAllByText("execution-retry").length).toBeGreaterThan(0);
   });
@@ -318,6 +400,8 @@ describe("Pandora desktop run state", () => {
         null,
         null,
         [{ name: "notes.ts", media_type: "text/plain", content: "const answer = 42;" }],
+        null,
+        null,
       );
     });
     expect(screen.queryByText("notes.ts")).not.toBeInTheDocument();
@@ -799,7 +883,7 @@ describe("Pandora desktop run state", () => {
 
     await waitFor(() => {
       expect(runtime.resolveApproval).toHaveBeenCalledWith(approval.approval_id, true);
-      expect(runtime.agentResume).toHaveBeenCalledWith(approval.approval_id);
+      expect(runtime.agentResume).toHaveBeenCalledWith(approval.approval_id, null, null);
       expect(screen.getByText("README updated")).toBeInTheDocument();
     });
   });
@@ -973,6 +1057,47 @@ describe("Pandora desktop run state", () => {
     expect(screen.getByText("Never directly")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "receipts" }));
     expect(screen.getByRole("heading", { name: "Evidence follows execution" })).toBeInTheDocument();
+  });
+
+  it("offers a runtime-loaded custom Harness for governed desktop runs", async () => {
+    runtime.capabilities.mockResolvedValue([{
+      id: "example/service-domain",
+      version: "1.0.0",
+      name: "Example Service Domain",
+      kind: "domain",
+      gene_count: 1,
+      runnable: true,
+      gene_ids: ["example/service-echo"],
+    }]);
+    runtime.agentRun.mockResolvedValue({
+      mode: "agent",
+      session_id: session.session_id,
+      execution_id: "execution-custom-harness",
+      selected_harness: "example/service-domain",
+      selected_gene: "example/service-echo",
+      status: "completed",
+      output: "custom package output",
+      receipt_count: 1,
+      event_count: 4,
+    });
+
+    render(<App />);
+    const selector = await screen.findByLabelText("Execution Harness");
+    expect(within(selector).getByRole("option", { name: "Example Service Domain" })).toBeInTheDocument();
+    fireEvent.change(selector, { target: { value: "example/service-domain" } });
+    const composer = screen.getByLabelText("Pandora task");
+    fireEvent.change(composer, { target: { value: "Run the installed transformation" } });
+    fireEvent.submit(composer.closest("form")!);
+
+    await waitFor(() => expect(runtime.agentRun).toHaveBeenCalledWith(
+      "Run the installed transformation",
+      null,
+      "example/service-domain",
+      [],
+      null,
+      null,
+    ));
+    expect(await screen.findByText("custom package output")).toBeInTheDocument();
   });
 
   it("manages exact local packages without granting runtime authority", async () => {

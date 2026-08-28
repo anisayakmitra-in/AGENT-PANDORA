@@ -86,6 +86,18 @@ only protocol, endpoint, model, environment-variable names, and optional declare
 token pricing; Pandora never stores API key values in configuration or output. Pricing
 uses integer micro-units per million input and output tokens. Both rates must be
 provided together. A profile can name one fallback profile.
+
+The desktop Command composer exposes the same explicit one-run routing. Its
+provider selector lists only configured profiles whose credential is available
+when the local service starts; the service default is the active profile when
+that profile is available, otherwise the first available configured profile.
+The adjacent model field starts from the profile default and accepts a bounded
+model-ID override. The exact provider and model selection is preserved for a
+fresh retry and for the resume of an approved pending call. It does not change
+the active profile, store credentials, grant tools, or weaken effect policy.
+Provider configuration or credential changes require a local-service restart
+before they appear in this execution snapshot.
+
 Pandora uses it only for credential, transport, timeout, rate-limit, or server
 failures; invalid requests and other client errors return immediately. Fallback
 selection does not grant tools or permissions. The controller creates a new

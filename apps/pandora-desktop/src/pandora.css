@@ -33,6 +33,8 @@
   --glass-highlight: rgba(255, 255, 255, .035);
   --radius-panel: 6px;
   --radius-control: 4px;
+  --motion-hover: 140ms;
+  --motion-ease: cubic-bezier(.2, .8, .2, 1);
   --sidebar-width: 244px;
   --topbar-height: 58px;
 }
@@ -69,7 +71,8 @@
 html, body, #root { width: 100%; min-width: 320px; height: 100%; margin: 0; }
 body { overflow: hidden; background: var(--canvas); color: var(--text-primary); }
 button, input, textarea, select { font: inherit; }
-button { border: 0; cursor: pointer; }
+button { border: 0; cursor: pointer; user-select: none; }
+button > svg { pointer-events: none; }
 button:disabled { cursor: not-allowed; opacity: .42; }
 button, input, textarea, select { -webkit-tap-highlight-color: transparent; }
 button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
@@ -552,6 +555,7 @@ kbd {
   justify-content: flex-end;
   gap: 9px;
 }
+.composer-routing { display: flex; min-width: 0; align-items: center; gap: 6px; margin-right: auto; }
 .composer-profile select {
   max-width: 180px;
   padding: 5px 8px;
@@ -562,6 +566,7 @@ kbd {
   color: var(--text-secondary);
   font-size: 8px;
 }
+.composer-model input { width: 138px; min-height: 28px; padding: 0 8px; background: var(--canvas); font-size: 8px; }
 .composer-mode { display: inline-flex; align-items: center; gap: 5px; color: var(--text-muted); font-family: var(--font-mono); font-size: 7px; text-transform: uppercase; }
 .composer-mode svg { color: var(--signal); }
 .send-button {
@@ -901,6 +906,23 @@ input:focus, textarea:focus, select:focus { border-color: var(--signal); box-sha
 .palette-item small { color: var(--text-muted); font-size: 7px; }
 .palette-empty { padding: 30px; color: var(--text-muted); font-size: 9px; text-align: center; }
 .palette-footer { display: flex; justify-content: space-between; padding: 9px 14px; border-top: 1px solid var(--line); color: var(--text-muted); font-size: 7px; }
+
+.core-column, .full-view, .navigation, .thread-list, .inspector-scroll, .palette-list,
+.engine-list, .tool-list, .harness-list, .council-event-trace {
+  scrollbar-gutter: stable;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  button:not(:disabled) {
+    transition:
+      background-color var(--motion-hover) var(--motion-ease),
+      border-color var(--motion-hover) var(--motion-ease),
+      box-shadow var(--motion-hover) var(--motion-ease),
+      color var(--motion-hover) var(--motion-ease),
+      opacity var(--motion-hover) var(--motion-ease);
+  }
+  button:not(:disabled):active { transform: translateY(1px); }
+}
 
 @keyframes pulse { 50% { opacity: .35; transform: scale(.85); } }
 @media (prefers-reduced-motion: reduce) {
@@ -1546,6 +1568,9 @@ input:focus, textarea:focus, select:focus { border-color: var(--signal); box-sha
   .metric strong { font-size: 13px; }
   .composer { grid-template-columns: 32px minmax(0, 1fr); }
   .composer textarea, .composer-actions { grid-column: 2; }
+  .composer-actions { align-items: flex-end; flex-wrap: wrap; }
+  .composer-routing { flex-wrap: wrap; }
+  .composer-model input { width: 132px; }
   .composer-mode { display: none; }
   .composer-hint { align-items: flex-start; flex-direction: column; gap: 3px; }
   .composer-recovery { grid-template-columns: 20px minmax(0, 1fr); }

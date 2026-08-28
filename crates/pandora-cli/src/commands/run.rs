@@ -414,6 +414,94 @@ pub(super) fn configured_harnesses(
     configured_runtime(config, requested, version).map(|(harnesses, _, _)| harnesses)
 }
 
+pub(super) fn configured_service_runtime(
+    config: &RuntimeConfig,
+) -> Result<(HarnessCatalog, WasmExecutor), CliError> {
+    let store = PackageStore::open(config.data_dir().join("packages.sqlite3"))
+        .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+    let artifact_catalog =
+        ArtifactCatalog::open(config.data_dir().join("artifact-catalog.sqlite3"))
+            .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+    let bindings = store
+        .bindings()
+        .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+    let mut active_harnesses = Vec::new();
+    for binding in bindings {
+        let Some(version) = binding.active_version() else {
+            continue;
+        };
+        let package_id = PackageId::new(binding.id().to_owned()).map_err(|_| {
+            CliError::execution(
+                "active package binding has an invalid package ID",
+                json!({"id": binding.id(), "version": version}),
+            )
+        })?;
+        let record = store
+            .get(&package_id, version)
+            .map_err(|error| CliError::execution(error.to_string(), json!({})))?
+            .ok_or_else(|| {
+                CliError::execution(
+                    "active package binding references a missing package record",
+                    json!({"id": binding.id(), "version": version}),
+                )
+            })?;
+        if matches!(
+            record.manifest().kind(),
+            PackageKind::DomainHarness | PackageKind::MetaHarness
+        ) {
+            if record.state() != PackageState::Admitted {
+                return Err(CliError::execution(
+                    "active Harness binding is not admitted",
+                    json!({
+                        "id": record.manifest().id(),
+                        "version": record.manifest().version(),
+                        "state": record.state().as_str(),
+                    }),
+                ));
+            }
+            active_harnesses.push(record);
+        }
+    }
+
+    let mut harnesses = HarnessCatalog::builtins();
+    let mut wasm = WasmExecutor::new();
+    for record in active_harnesses
+        .iter()
+        .filter(|record| record.manifest().kind() == PackageKind::DomainHarness)
+    {
+        let (genes, _) =
+            package_wasm_genes(&store, &artifact_catalog, record.manifest(), &mut wasm)?;
+        harnesses = harnesses
+            .with_declarative_domain_genes(record.manifest(), genes)
+            .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+    }
+    for record in active_harnesses
+        .iter()
+        .filter(|record| record.manifest().kind() == PackageKind::MetaHarness)
+    {
+        let composition = record
+            .manifest()
+            .meta_composition()
+            .expect("admitted Meta Harness has a composition");
+        for domain in composition.allowed_domains() {
+            if harnesses.find(domain).is_none() {
+                return Err(CliError::execution(
+                    "active Meta Harness references an unavailable Domain Harness",
+                    json!({
+                        "id": record.manifest().id(),
+                        "version": record.manifest().version(),
+                        "domain": domain,
+                    }),
+                ));
+            }
+        }
+        harnesses = harnesses
+            .with_declarative_meta(record.manifest())
+            .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+    }
+    Ok((harnesses, wasm))
+}
+
 fn configured_runtime(
     config: &RuntimeConfig,
     requested: Option<&str>,
@@ -578,8 +666,23 @@ fn package_wasm_genes(
                 }),
             ));
         }
-        wasm.register_resolved(record.manifest(), resolved_record.manifest(), &artifact)
-            .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+        match wasm.content_hash(record.manifest().id().as_str(), record.manifest().version()) {
+            Some(content_hash) if content_hash == resolved_record.manifest().content_hash() => {}
+            Some(content_hash) => {
+                return Err(CliError::execution(
+                    "enabled Harnesses resolve the same Gene identity to different artifacts",
+                    json!({
+                        "id": record.manifest().id(),
+                        "version": record.manifest().version(),
+                        "registered_artifact": content_hash,
+                        "resolved_artifact": resolved_record.manifest().content_hash(),
+                    }),
+                ));
+            }
+            None => wasm
+                .register_resolved(record.manifest(), resolved_record.manifest(), &artifact)
+                .map_err(|error| CliError::execution(error.to_string(), json!({})))?,
+        }
         approval_subjects.insert(
             record.manifest().id().as_str().to_owned(),
             WasmGeneResolution {
@@ -1799,6 +1902,7 @@ fn agent_error(error: AgentLoopError) -> CliError {
             }),
         ),
         AgentLoopError::EmptyResponse
+        | AgentLoopError::Tool(_)
         | AgentLoopError::ToolBudgetExceeded
         | AgentLoopError::TurnBudgetExceeded
         | AgentLoopError::ControlledStop { .. } => {

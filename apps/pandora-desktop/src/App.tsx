@@ -70,11 +70,15 @@ type InventoryTab = "overview" | "contract" | "boundaries" | "evidence";
 type PendingRunRequest = {
   task: string;
   requestedHarness: string | null;
+  requestedProvider: string | null;
+  requestedModel: string | null;
 };
 
 type SubmittedRunRequest = {
   task: string;
   profile: RunProfile;
+  provider: string;
+  model: string;
   contextAttachments: RuntimeContextAttachment[];
 };
 
@@ -407,6 +411,8 @@ function App() {
   const [browserInspectionInFlight, setBrowserInspectionInFlight] = useState(false);
   const [runInFlight, setRunInFlight] = useState(false);
   const [runProfile, setRunProfile] = useState<RunProfile>("auto");
+  const [runProvider, setRunProvider] = useState("auto");
+  const [runModel, setRunModel] = useState("");
   const [theme, setTheme] = useState<ThemeMode>(loadTheme);
   const [workflows, setWorkflows] = useState<WorkflowRecipe[]>(loadWorkflows);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -432,6 +438,20 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem(workflowStorageKey, JSON.stringify(workflows));
   }, [workflows]);
+
+  useEffect(() => {
+    const availableProviders = providers.filter((provider) => provider.credential_configured);
+    const selected = runProvider === "auto"
+      ? availableProviders.find((provider) => provider.active) ?? availableProviders[0]
+      : availableProviders.find((provider) => provider.name === runProvider);
+    if (!selected && runProvider !== "auto") {
+      setRunProvider("auto");
+      return;
+    }
+    if (!runModel && selected) {
+      setRunModel(selected.model);
+    }
+  }, [providers, runModel, runProvider]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -670,7 +690,13 @@ function App() {
     }
   };
 
-  const runTask = async (task: string, profile: RunProfile = runProfile, contextAttachments: RuntimeContextAttachment[] = []) => {
+  const runTask = async (
+    task: string,
+    profile: RunProfile = runProfile,
+    contextAttachments: RuntimeContextAttachment[] = [],
+    providerSelection: string = runProvider,
+    modelSelection: string = runModel,
+  ) => {
     if (!client) {
       throw new Error("Connect to the local Pandora service first");
     }
@@ -680,12 +706,16 @@ function App() {
     setLastRunRequest({
       task,
       profile,
+      provider: providerSelection,
+      model: modelSelection,
       contextAttachments: contextAttachments.map((attachment) => ({ ...attachment })),
     });
     try {
       const requestedHarness = harnessForProfile(profile);
-      const result = await client.agentRun(task, selectedSessionId || null, requestedHarness, contextAttachments);
-      setPendingRun(result.approval ? { task, requestedHarness } : null);
+      const requestedProvider = providerSelection === "auto" ? null : providerSelection;
+      const requestedModel = modelSelection.trim() || null;
+      const result = await client.agentRun(task, selectedSessionId || null, requestedHarness, contextAttachments, requestedProvider, requestedModel);
+      setPendingRun(result.approval ? { task, requestedHarness, requestedProvider, requestedModel } : null);
       await loadRunResult(result);
       setRuntimeStatus("connected");
       return result;
@@ -703,7 +733,13 @@ function App() {
     if (!lastRunRequest) {
       throw new Error("No previous governed request is available");
     }
-    return runTask(lastRunRequest.task, lastRunRequest.profile, lastRunRequest.contextAttachments);
+    return runTask(
+      lastRunRequest.task,
+      lastRunRequest.profile,
+      lastRunRequest.contextAttachments,
+      lastRunRequest.provider,
+      lastRunRequest.model,
+    );
   };
 
   const loadRunResult = async (result: RuntimeRun) => {
@@ -736,7 +772,11 @@ function App() {
       setLastRun({ ...lastRun, approval: resolved });
       if (allow) {
         const result = lastRun.mode === "agent"
-          ? await client.agentResume(approval.approval_id)
+          ? await client.agentResume(
+              approval.approval_id,
+              pendingRun?.requestedProvider ?? (runProvider === "auto" ? null : runProvider),
+              pendingRun?.requestedModel ?? (runModel.trim() || null),
+            )
           : await client.resume(
               approval.approval_id,
               pendingRun!.task,
@@ -934,6 +974,7 @@ function App() {
             lastRunRequest={lastRunRequest}
             events={events}
             harnesses={harnesses}
+            providers={providers}
             runInFlight={runInFlight}
             workspaceInspection={workspaceInspection}
             workspaceInspectionInFlight={workspaceInspectionInFlight}
@@ -941,6 +982,17 @@ function App() {
             browserInspectionInFlight={browserInspectionInFlight}
             runProfile={runProfile}
             onRunProfileChange={setRunProfile}
+            runProvider={runProvider}
+            runModel={runModel}
+            onRunProviderChange={(provider) => {
+              setRunProvider(provider);
+              const availableProviders = providers.filter((candidate) => candidate.credential_configured);
+              const selected = provider === "auto"
+                ? availableProviders.find((candidate) => candidate.active) ?? availableProviders[0]
+                : availableProviders.find((candidate) => candidate.name === provider);
+              setRunModel(selected?.model ?? "");
+            }}
+            onRunModelChange={setRunModel}
             onRun={runTask}
             onRetryRun={retryLastRun}
             onResolveApproval={resolvePendingApproval}
@@ -1047,7 +1099,7 @@ function RunResultPanel({ lastRun, request, events, runInFlight, onRepeat }: { l
   return <Panel className={`run-result run-result-${lastRun.status}`}>
     <div className="panel-heading"><div><span className="eyebrow">RECORDED EXECUTION</span><h3>Latest {lastRun.mode} run</h3></div><Chip tone={lastRun.status === "completed" ? "green" : "amber"}>{lastRun.status}</Chip></div>
     <div className="run-result-meta"><span className="mono">{lastRun.execution_id ?? "provider-only response"}</span><span>{lastRun.selected_gene ?? "No gene selected"}</span></div>
-    {request ? <div className="run-request-evidence"><span>Request snapshot</span><p>{request.task}</p><small>{request.profile === "auto" ? "Auto route" : request.profile} · {request.contextAttachments.length} context file{request.contextAttachments.length === 1 ? "" : "s"}</small></div> : null}
+    {request ? <div className="run-request-evidence"><span>Request snapshot</span><p>{request.task}</p><small>{request.profile === "auto" ? "Auto route" : request.profile} · {request.provider === "auto" ? "Service default" : request.provider} / {request.model || "default model"} · {request.contextAttachments.length} context file{request.contextAttachments.length === 1 ? "" : "s"}</small></div> : null}
     {lastRun.status_detail ? <div className="run-status-detail"><Icon name={lastRun.status === "failed" || lastRun.status === "denied" ? "shield" : "activity"} size={14} /><span>{lastRun.status_detail}</span></div> : null}
     <p className="run-output">{lastRun.output || "No output returned."}</p>
     {canRepeat ? <div className="run-result-actions"><p>{lastRun.status === "failed" || lastRun.status === "denied" ? "A retry creates a new execution and re-runs every policy, evaluation, and permit check." : "Repeating this request creates a new governed execution. Previous permits are never reused."}</p><button className="button button-secondary" type="button" disabled={runInFlight} onClick={() => void onRepeat()}>{runInFlight ? "Running…" : repeatLabel} <Icon name="arrow" size={13} /></button></div> : null}
@@ -1064,6 +1116,7 @@ type CommandViewProps = {
   lastRunRequest: SubmittedRunRequest | null;
   events: RuntimeEvent[];
   harnesses: RuntimeHarness[];
+  providers: RuntimeProvider[];
   runInFlight: boolean;
   workspaceInspection: RuntimeRun | null;
   workspaceInspectionInFlight: boolean;
@@ -1071,6 +1124,10 @@ type CommandViewProps = {
   browserInspectionInFlight: boolean;
   runProfile: RunProfile;
   onRunProfileChange: (profile: RunProfile) => void;
+  runProvider: string;
+  runModel: string;
+  onRunProviderChange: (provider: string) => void;
+  onRunModelChange: (model: string) => void;
   onRun: (task: string, profile: RunProfile, contextAttachments: RuntimeContextAttachment[]) => Promise<RuntimeRun>;
   onRetryRun: () => Promise<RuntimeRun>;
   onResolveApproval: (allow: boolean) => Promise<void>;
@@ -1080,7 +1137,7 @@ type CommandViewProps = {
   onResolveBrowserInspection: (allow: boolean) => Promise<void>;
 };
 
-function CommandView({ selectedStep, onSelectStep, runtimeStatus, selectedSession, lastRun, lastRunRequest, events, harnesses, runInFlight, workspaceInspection, workspaceInspectionInFlight, browserInspection, browserInspectionInFlight, runProfile, onRunProfileChange, onRun, onRetryRun, onResolveApproval, onInspectWorkspace, onResolveWorkspaceInspection, onInspectBrowser, onResolveBrowserInspection }: CommandViewProps) {
+function CommandView({ selectedStep, onSelectStep, runtimeStatus, selectedSession, lastRun, lastRunRequest, events, harnesses, providers, runInFlight, workspaceInspection, workspaceInspectionInFlight, browserInspection, browserInspectionInFlight, runProfile, onRunProfileChange, runProvider, runModel, onRunProviderChange, onRunModelChange, onRun, onRetryRun, onResolveApproval, onInspectWorkspace, onResolveWorkspaceInspection, onInspectBrowser, onResolveBrowserInspection }: CommandViewProps) {
   const [task, setTask] = useState("");
   const [runError, setRunError] = useState("");
   const [contextAttachments, setContextAttachments] = useState<RuntimeContextAttachment[]>([]);
@@ -1174,6 +1231,8 @@ function CommandView({ selectedStep, onSelectStep, runtimeStatus, selectedSessio
 
   const connected = runtimeStatus === "connected";
   const profileOptions = connected && harnesses.length ? [{ id: "auto", label: "Auto route" }, ...harnesses.filter((harness) => harness.runnable).map((harness) => ({ id: harness.id, label: harness.name }))] : runProfiles;
+  const availableProviders = providers.filter((provider) => provider.credential_configured);
+  const modelOptions = [...new Set(providers.map((provider) => provider.model))];
   const coreTitle = runInFlight ? "Pandora is executing" : lastRun ? `Run ${lastRun.status}` : selectedSession ? "Session ready to inspect" : connected ? "Ready for a governed run" : "Awaiting your decision";
   const coreDescription = runInFlight ? "The request is in the governed runtime; wait for its recorded result." : lastRun ? `${lastRun.receipt_count} receipts · ${lastRun.event_count} events${lastRun.mode === "agent" ? ` · ${lastRun.turns ?? 0} turns · ${lastRun.tool_calls ?? 0} tools` : ""} recorded.` : selectedSession ? `${selectedSession.event_count} recorded events · ${selectedSession.session.workspace_id}` : connected ? "Connected to the local Pandora service." : "Connect the local service to submit a real governed run.";
   const steps = authorityStepsForRun(lastRun, events, runProfile);
@@ -1201,7 +1260,7 @@ function CommandView({ selectedStep, onSelectStep, runtimeStatus, selectedSessio
           <input ref={contextInput} className="sr-only" type="file" multiple accept="text/*,.c,.cc,.cpp,.css,.csv,.go,.h,.hpp,.html,.java,.js,.json,.jsx,.md,.mjs,.py,.rb,.rs,.sh,.sql,.svg,.toml,.ts,.tsx,.xml,.yaml,.yml" aria-label="Choose context files" onChange={(event) => void addContextAttachments(event)} disabled={runInFlight} />
           <button type="button" className="composer-add" aria-label="Add context files" title="Attach bounded text or source files as untrusted evidence" onClick={() => contextInput.current?.click()} disabled={runInFlight}><Icon name="plus" size={17} /></button>
           <textarea value={task} onChange={(event) => setTask(event.target.value)} onKeyDown={handleTaskKeyDown} placeholder="Ask Pandora to inspect, plan, or act…" aria-label="Pandora task" rows={1} disabled={runInFlight} />
-          <div className="composer-actions"><label className="composer-profile"><span className="sr-only">Execution Harness</span><select value={runProfile} onChange={(event) => onRunProfileChange(event.target.value)} aria-label="Execution Harness" disabled={runInFlight}>{profileOptions.map((profile) => <option value={profile.id} key={profile.id}>{profile.label}</option>)}</select></label><span className="composer-mode"><Icon name="spark" size={14} /> Governed run</span><button type="submit" className="send-button" aria-label={runInFlight ? "Pandora is running" : "Send"} disabled={!connected || !task.trim() || runInFlight}><Icon name="arrow" size={16} /></button></div>
+          <div className="composer-actions"><div className="composer-routing"><label className="composer-profile"><span className="sr-only">Execution Harness</span><select value={runProfile} onChange={(event) => onRunProfileChange(event.target.value)} aria-label="Execution Harness" disabled={runInFlight}>{profileOptions.map((profile) => <option value={profile.id} key={profile.id}>{profile.label}</option>)}</select></label><label className="composer-profile"><span className="sr-only">Model provider</span><select value={runProvider} onChange={(event) => onRunProviderChange(event.target.value)} aria-label="Model provider" disabled={runInFlight || !availableProviders.length}><option value="auto">Service default</option>{availableProviders.map((provider) => <option value={provider.name} key={provider.name}>{provider.name}</option>)}</select></label><label className="composer-model"><span className="sr-only">Model</span><input aria-label="Model" list="pandora-model-options" value={runModel} onChange={(event) => onRunModelChange(event.target.value)} placeholder="Provider default" maxLength={128} pattern="[A-Za-z0-9._-]+" autoComplete="off" spellCheck={false} disabled={runInFlight || !availableProviders.length} /></label><datalist id="pandora-model-options">{modelOptions.map((model) => <option value={model} key={model} />)}</datalist></div><span className="composer-mode"><Icon name="spark" size={14} /> Governed run</span><button type="submit" className="send-button" aria-label={runInFlight ? "Pandora is running" : "Send"} disabled={!connected || !task.trim() || runInFlight}><Icon name="arrow" size={16} /></button></div>
         </div>
         <div className="composer-hint"><span>{runInFlight ? "Pandora is running the governed request…" : connected ? "Ctrl/⌘ + Enter to send" : "Connect the local service in Connections"}</span><span>{contextAttachments.length ? `${contextAttachments.length} context file${contextAttachments.length === 1 ? "" : "s"} · effects still require a permit` : "All effects require an exact permit"}</span></div>
         {runError ? <div className="composer-recovery" role="alert"><Icon name="shield" size={16} /><div><strong>Request did not complete</strong><span>{runError}</span><small>The task and selected context remain editable. Retrying creates a fresh governed request.</small></div><div><button className="button button-secondary" type="button" disabled={runInFlight || !task.trim()} onClick={retryPreservedRequest}>Retry request</button><button className="text-link" type="button" onClick={() => setRunError("")}>Dismiss</button></div></div> : null}
@@ -1219,8 +1278,14 @@ function Metric({ label, value, detail }: { label: string; value: string; detail
 function CommandPalette({ onClose, onSelectView }: { onClose: () => void; onSelectView: (view: ViewId) => void }) {
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
+  const previousFocus = useRef<HTMLElement | null>(document.activeElement instanceof HTMLElement ? document.activeElement : null);
   const actions = navigation.flatMap((group) => group.items.map((item) => ({ ...item, group: group.label })));
   const filtered = actions.filter((action) => `${action.label} ${action.group}`.toLowerCase().includes(query.toLowerCase()));
+  useEffect(() => {
+    listRef.current?.querySelector<HTMLElement>(`#pandora-palette-option-${selectedIndex}`)?.scrollIntoView?.({ block: "nearest" });
+  }, [selectedIndex]);
+  useEffect(() => () => previousFocus.current?.focus(), []);
   const choose = (index: number) => {
     const action = filtered[index];
     if (action) {
@@ -1239,7 +1304,7 @@ function CommandPalette({ onClose, onSelectView }: { onClose: () => void; onSele
       choose(selectedIndex);
     }
   };
-  return <div className="palette-backdrop" role="presentation" onMouseDown={onClose}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Open Pandora surface" onMouseDown={(event) => event.stopPropagation()}><div className="palette-search"><Icon name="search" size={16} /><input autoFocus value={query} onChange={(event) => { setQuery(event.target.value); setSelectedIndex(0); }} onKeyDown={handleKeyDown} placeholder="Search Pandora surfaces…" aria-label="Search Pandora surfaces" /><kbd>ESC</kbd></div><div className="palette-list">{filtered.length ? filtered.map((action, index) => <button type="button" className={`palette-item ${index === selectedIndex ? "is-active" : ""}`} aria-selected={index === selectedIndex} key={action.id} onMouseEnter={() => setSelectedIndex(index)} onClick={() => choose(index)}><Icon name={action.icon} size={16} /><span><strong>{action.label}</strong><small>{action.group}</small></span><kbd>↵</kbd></button>) : <p className="palette-empty">No matching Pandora surface.</p>}</div><div className="palette-footer"><span>Use ↑ ↓ and Enter</span><span className="mono">⌘ K</span></div></section></div>;
+  return <div className="palette-backdrop" role="presentation" onMouseDown={onClose}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Open Pandora surface" onMouseDown={(event) => event.stopPropagation()}><div className="palette-search"><Icon name="search" size={16} /><input autoFocus value={query} onChange={(event) => { setQuery(event.target.value); setSelectedIndex(0); }} onKeyDown={handleKeyDown} placeholder="Search Pandora surfaces…" aria-label="Search Pandora surfaces" role="combobox" aria-controls="pandora-palette-list" aria-expanded="true" aria-autocomplete="list" aria-activedescendant={filtered.length ? `pandora-palette-option-${selectedIndex}` : undefined} /><kbd>ESC</kbd></div><div ref={listRef} id="pandora-palette-list" className="palette-list" role="listbox" aria-label="Pandora surfaces">{filtered.length ? filtered.map((action, index) => <button id={`pandora-palette-option-${index}`} type="button" role="option" className={`palette-item ${index === selectedIndex ? "is-active" : ""}`} aria-selected={index === selectedIndex} key={action.id} onMouseEnter={() => setSelectedIndex(index)} onClick={() => choose(index)}><Icon name={action.icon} size={16} /><span><strong>{action.label}</strong><small>{action.group}</small></span><kbd>↵</kbd></button>) : <p className="palette-empty">No matching Pandora surface.</p>}</div><div className="palette-footer"><span>Use ↑ ↓ and Enter</span><span className="mono">Ctrl/⌘ K</span></div></section></div>;
 }
 
 function workSurfaceForTask(task: string): WorkSurface {

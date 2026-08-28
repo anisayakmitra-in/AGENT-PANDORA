@@ -37,8 +37,11 @@ provider and MCP configuration, persistent registry profiles, and governed
 registry, pinned-GitHub, and local package admission. A runtime-reported
 inventory now exposes deep contracts for 22 engines, adapters, strategies, and
 embedded resilience components, including context-rot recovery and governed
-provider failover. Replaceable packaged Harness execution and the remaining
-ecosystem lifecycle still remain.
+provider failover. Enabled custom Domain and Meta Harness packages now load as
+an exact startup snapshot in the local service; custom WebAssembly Genes are
+selectable from the desktop and execute through the ordinary approval, permit,
+and receipt path. Optional built-in Harness replacement and the remaining
+ecosystem lifecycles still remain.
 
 - Progressive disclosure for plans, evidence, receipts, approvals, and tool
   state.

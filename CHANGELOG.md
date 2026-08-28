@@ -137,7 +137,7 @@
   without database connections, query execution, data mutation, or statistical
   correctness claims.
 - Added explicit `security.deep-scan` and `security.diff-scan` Genes to the
-  read-only Security Domain. They mirror Codex Security workflow boundaries
+  read-only Security Domain. They mirror staged security workflow boundaries
   for broader evidence collection and changed-code review while remaining
   non-scanning, non-remediating, and governed by workspace read permits.
 - Added `security.assess` as the single bounded read-only entry point for a
@@ -145,7 +145,7 @@
   execute scanners, assign findings, or certify compliance.
 - Extended the read-only `security-domain` Harness with explicit discovery,
   attack-path, fix-planning, fix-verification, vulnerability-writeup, and
-  finding-tracking workflow Genes modeled on the Codex Security lifecycle.
+  finding-tracking workflow Genes modeled on the same staged lifecycle.
   These Genes collect local evidence only; they do not execute scanners,
   assign findings, modify code, or mutate a finding database.
 

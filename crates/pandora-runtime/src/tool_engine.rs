@@ -1,6 +1,7 @@
 use pandora_types::{
-    ArtifactId, Capability, EffectTarget, ExecutionId, ExecutionProfile, GeneId, HarnessId,
-    Operation, OperationRequest, PrincipalId, RequestError, ResourceScope, SessionId, TaskIntent,
+    ArtifactId, Capability, EffectTarget, ExecutionId, ExecutionProfile, GeneId, GeneManifest,
+    HarnessId, Operation, OperationRequest, PrincipalId, RequestError, ResourceScope, SessionId,
+    TaskIntent, hash_artifact,
 };
 use serde_json::Value;
 use serde_json::json;
@@ -47,6 +48,7 @@ impl ToolError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ToolDefinition {
     id: GeneId,
+    execution_gene_id: Option<GeneId>,
     version: String,
     name: String,
     input_schema: Value,
@@ -70,6 +72,7 @@ impl ToolDefinition {
         validate_schema(&input_schema)?;
         Ok(Self {
             id,
+            execution_gene_id: None,
             version,
             name,
             input_schema,
@@ -80,6 +83,15 @@ impl ToolDefinition {
 
     pub fn id(&self) -> &GeneId {
         &self.id
+    }
+
+    pub(crate) fn execution_gene_id(&self) -> Option<&GeneId> {
+        self.execution_gene_id.as_ref()
+    }
+
+    fn with_execution_gene(mut self, gene_id: GeneId) -> Self {
+        self.execution_gene_id = Some(gene_id);
+        self
     }
 
     pub fn version(&self) -> &str {
@@ -629,6 +641,42 @@ impl ToolEngine {
         Ok(())
     }
 
+    pub(crate) fn register_wasm_genes(
+        &self,
+        manifests: impl IntoIterator<Item = GeneManifest>,
+    ) -> Result<(), ToolError> {
+        let mut versions = HashMap::<GeneId, String>::new();
+        let mut definitions = Vec::new();
+        for manifest in manifests {
+            if !manifest.capabilities().contains(&Capability::WasmExecute) {
+                continue;
+            }
+            if let Some(version) = versions.get(manifest.id()) {
+                if version == manifest.version() {
+                    continue;
+                }
+                return Err(ToolError::DuplicateTool);
+            }
+            versions.insert(manifest.id().clone(), manifest.version().to_owned());
+            definitions.push(
+                ToolDefinition::new(
+                    wasm_tool_alias(&manifest),
+                    manifest.version(),
+                    format!(
+                        "Execute packaged WebAssembly Gene {}@{}",
+                        manifest.id(),
+                        manifest.version()
+                    ),
+                    json!({"type": "object", "additionalProperties": true}),
+                    Capability::WasmExecute,
+                    Operation::Execute,
+                )?
+                .with_execution_gene(manifest.id().clone()),
+            );
+        }
+        self.register_batch(definitions)
+    }
+
     pub(crate) fn unregister_batch(&self, tool_ids: &[GeneId]) {
         let tool_ids = tool_ids.iter().collect::<HashSet<_>>();
         let mut definitions = self
@@ -659,8 +707,7 @@ impl ToolEngine {
         self.list()
             .into_iter()
             .filter(|definition| {
-                gene_id_for_tool(definition.id().as_str())
-                    .is_ok_and(|gene_id| gene_ids.contains(&gene_id))
+                execution_gene_id(definition).is_ok_and(|gene_id| gene_ids.contains(&gene_id))
             })
             .collect()
     }
@@ -694,6 +741,19 @@ impl ToolEngine {
     ) -> Result<ToolInvocation, ToolError> {
         let definition = self.definition(tool_id)?;
         validate_arguments(definition.input_schema(), arguments)?;
+        if let Some(gene_id) = definition.execution_gene_id().cloned() {
+            let task = TaskIntent::new(
+                serde_json::to_string(arguments)
+                    .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
+            )
+            .map_err(|error| ToolError::InvalidArguments(error.to_string()))?
+            .with_harness(harness.clone())
+            .with_gene(gene_id);
+            return Ok(ToolInvocation {
+                tool_id: definition.id().clone(),
+                task,
+            });
+        }
         let task = match definition.id().as_str() {
             "workspace.read" => task_from_argument(arguments, "read", "path")?,
             "workspace.search" => task_from_argument(arguments, "search", "query")?,
@@ -862,6 +922,33 @@ impl ToolEngine {
             .cloned()
             .ok_or_else(|| ToolError::UnknownTool(tool_id.to_owned()))
     }
+}
+
+fn execution_gene_id(definition: &ToolDefinition) -> Result<GeneId, ToolError> {
+    definition
+        .execution_gene_id()
+        .cloned()
+        .map(Ok)
+        .unwrap_or_else(|| gene_id_for_tool(definition.id().as_str()))
+}
+
+fn wasm_tool_alias(manifest: &GeneManifest) -> String {
+    let label = manifest
+        .id()
+        .as_str()
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .take(80)
+        .collect::<String>();
+    let identity = format!("{}@{}", manifest.id(), manifest.version());
+    let digest = hash_artifact(identity.as_bytes());
+    format!("package.{label}.{}", &digest["sha256:".len()..][..16])
 }
 
 fn gene_id_for_tool(tool_id: &str) -> Result<GeneId, ToolError> {
@@ -1081,7 +1168,9 @@ fn bounded_text(value: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pandora_types::{ExecutionProfileBinding, ExecutionProfileBindingKind, hash_artifact};
+    use pandora_types::{
+        ExecutionProfileBinding, ExecutionProfileBindingKind, GeneKind, hash_artifact,
+    };
     use serde_json::json;
 
     fn definition() -> ToolDefinition {
@@ -1239,6 +1328,63 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["workspace.read"]
         );
+    }
+
+    #[test]
+    fn packaged_wasm_genes_use_safe_aliases_and_exact_execution_bindings() {
+        let manifest = GeneManifest::new(
+            "example/echo",
+            "1.0.0",
+            GeneKind::Tool,
+            vec![Capability::WasmExecute],
+        )
+        .unwrap();
+        let engine = ToolEngine::new();
+        engine
+            .register_wasm_genes(vec![manifest.clone(), manifest.clone()])
+            .unwrap();
+
+        let tools = engine.list_for_genes(&[manifest.id().clone()]);
+        assert_eq!(tools.len(), 1);
+        let tool = &tools[0];
+        assert!(tool.id().as_str().starts_with("package.example_echo."));
+        assert!(
+            tool.id()
+                .as_str()
+                .bytes()
+                .all(|byte| { byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.') })
+        );
+        assert_eq!(tool.execution_gene_id(), Some(manifest.id()));
+
+        let invocation = engine
+            .prepare_invocation_for_harness(
+                tool.id().as_str(),
+                &json!({"value": 42}),
+                &HarnessId::new("example/wasm-domain").unwrap(),
+            )
+            .unwrap();
+        assert_eq!(invocation.task().summary(), r#"{"value":42}"#);
+        assert_eq!(invocation.task().requested_gene(), Some(manifest.id()));
+    }
+
+    #[test]
+    fn packaged_wasm_gene_version_conflicts_fail_atomically() {
+        let engine = ToolEngine::new();
+        let manifests = ["1.0.0", "2.0.0"].map(|version| {
+            GeneManifest::new(
+                "example/echo",
+                version,
+                GeneKind::Tool,
+                vec![Capability::WasmExecute],
+            )
+            .unwrap()
+        });
+
+        assert_eq!(
+            engine.register_wasm_genes(manifests),
+            Err(ToolError::DuplicateTool)
+        );
+        assert!(engine.list().is_empty());
     }
 
     #[test]

@@ -36,7 +36,7 @@ iteration count, timeout, build profile, and workload. Hosted runner load
 varies, so a single sample is not a performance claim.
 
 These measurements establish Pandora's own trend line. They do not support
-claims that Pandora is faster or more reliable than Codex, Hermes Agent, Prime
-Agent, or another tool. A cross-product claim requires a separate reproducible
+claims that Pandora is faster or more reliable than another coding agent. A
+cross-product claim requires a separate reproducible
 benchmark with pinned versions, equivalent tasks, disclosed hardware, repeated
 trials, and published raw results.

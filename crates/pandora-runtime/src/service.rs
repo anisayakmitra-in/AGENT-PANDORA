@@ -16,7 +16,7 @@ use crate::replacement::{ReplacementEngine, ReplacementError};
 use crate::research_artifact::{ResearchArtifactError, ResearchArtifactStore};
 use crate::sessions::{SessionError, SessionStore};
 use crate::tool_engine::ToolEngine;
-use pandora_provider::Provider;
+use pandora_provider::{ModelId, Provider};
 use pandora_types::{
     ContextClassification, ContextFragment, ContextOrigin, ContextSource, ContextTrust,
     EvaluationContractError, EvaluationReceipt, EvaluationRequest, EventPayload, EventType,
@@ -32,6 +32,7 @@ use pandora_types::{
     Session, SessionId, TaskIntent, TenantId, Timestamp, WorkspaceId,
 };
 use rusqlite::Connection;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -97,6 +98,7 @@ pub enum RuntimeServiceError {
     Runtime(RuntimeError),
     Agent(AgentLoopError),
     AgentUnavailable,
+    AgentProviderUnavailable(String),
     Evolution(EvolutionError),
     EvolutionUnavailable,
     ArtifactCatalog(ArtifactCatalogError),
@@ -131,6 +133,7 @@ impl RuntimeServiceError {
             Self::Runtime(_) => "runtime_execution_failed",
             Self::Agent(_) => "agent_execution_failed",
             Self::AgentUnavailable => "agent_unavailable",
+            Self::AgentProviderUnavailable(_) => "agent_provider_unavailable",
             Self::Evolution(EvolutionError::NotFound) => "evolution_proposal_not_found",
             Self::Evolution(_) => "evolution_store_failed",
             Self::EvolutionUnavailable => "evolution_unavailable",
@@ -184,6 +187,9 @@ impl fmt::Display for RuntimeServiceError {
             Self::Runtime(_) => formatter.write_str("governed runtime execution failed"),
             Self::Agent(_) => formatter.write_str("governed agent execution failed"),
             Self::AgentUnavailable => formatter.write_str("agent provider is not configured"),
+            Self::AgentProviderUnavailable(provider) => {
+                write!(formatter, "agent provider '{provider}' is unavailable")
+            }
             Self::Evolution(error) => error.fmt(formatter),
             Self::EvolutionUnavailable => {
                 formatter.write_str("evolution records are not configured")
@@ -335,10 +341,23 @@ impl Drop for ActiveServiceLease {
 }
 
 struct RuntimeServiceAgent {
-    provider: Arc<dyn Provider>,
+    providers: BTreeMap<String, Arc<dyn Provider>>,
+    default_provider: String,
     loop_engine: AgentLoop,
     max_tool_calls: u32,
     skill_context: Option<String>,
+}
+
+impl RuntimeServiceAgent {
+    fn provider(
+        &self,
+        requested_provider: Option<&str>,
+    ) -> Result<&Arc<dyn Provider>, RuntimeServiceError> {
+        let provider_id = requested_provider.unwrap_or(&self.default_provider);
+        self.providers
+            .get(provider_id)
+            .ok_or_else(|| RuntimeServiceError::AgentProviderUnavailable(provider_id.to_owned()))
+    }
 }
 
 impl RuntimeService {
@@ -409,17 +428,54 @@ impl RuntimeService {
     }
 
     pub fn with_agent(
-        mut self,
+        self,
         provider: Arc<dyn Provider>,
         max_turns: u32,
         max_tool_calls: u32,
         context_cache_path: impl AsRef<Path>,
         skill_context: Option<String>,
     ) -> Result<Self, RuntimeServiceError> {
-        let loop_engine =
-            AgentLoop::new(max_turns, max_tool_calls)?.with_context_cache(context_cache_path)?;
+        let default_provider = provider.manifest().id().as_str().to_owned();
+        self.with_agent_providers(
+            vec![provider],
+            default_provider,
+            max_turns,
+            max_tool_calls,
+            context_cache_path,
+            skill_context,
+        )
+    }
+
+    pub fn with_agent_providers(
+        mut self,
+        providers: Vec<Arc<dyn Provider>>,
+        default_provider: impl Into<String>,
+        max_turns: u32,
+        max_tool_calls: u32,
+        context_cache_path: impl AsRef<Path>,
+        skill_context: Option<String>,
+    ) -> Result<Self, RuntimeServiceError> {
+        let default_provider = default_provider.into();
+        let mut provider_map = BTreeMap::new();
+        for provider in providers {
+            let id = provider.manifest().id().as_str().to_owned();
+            if provider_map.insert(id, provider).is_some() {
+                return Err(RuntimeServiceError::AgentProviderUnavailable(
+                    "duplicate provider identity".to_owned(),
+                ));
+            }
+        }
+        if !provider_map.contains_key(&default_provider) {
+            return Err(RuntimeServiceError::AgentProviderUnavailable(
+                default_provider,
+            ));
+        }
+        let loop_engine = AgentLoop::new(max_turns, max_tool_calls)?
+            .with_context_cache(context_cache_path)?
+            .with_runtime_genes(&self.controller)?;
         self.agent = Some(RuntimeServiceAgent {
-            provider,
+            providers: provider_map,
+            default_provider,
             loop_engine,
             max_tool_calls,
             skill_context,
@@ -1534,8 +1590,17 @@ impl RuntimeService {
     }
 
     fn tools(&self) -> Result<ServiceResponse, RuntimeServiceError> {
+        let engine = ToolEngine::with_builtins();
+        engine
+            .register_wasm_genes(
+                self.controller
+                    .harnesses()
+                    .flat_map(|harness| harness.genes().iter())
+                    .map(|gene| gene.manifest().clone()),
+            )
+            .map_err(AgentLoopError::from)?;
         Ok(ServiceResponse::tools(
-            ToolEngine::with_builtins()
+            engine
                 .list()
                 .into_iter()
                 .map(|tool| {
@@ -2114,6 +2179,16 @@ impl RuntimeService {
             .agent
             .as_ref()
             .ok_or(RuntimeServiceError::AgentUnavailable)?;
+        let provider = agent.provider(request.requested_provider())?;
+        let requested_model = request
+            .requested_model()
+            .map(ModelId::new)
+            .transpose()
+            .map_err(|_| {
+                RuntimeServiceError::Contract(ServiceContractError::InvalidProviderSelection(
+                    "model",
+                ))
+            })?;
         let (session, history) = match request.session_id() {
             Some(session_id) => {
                 let snapshot = self.sessions.resume(
@@ -2135,7 +2210,7 @@ impl RuntimeService {
         };
         let _active_lease =
             self.acquire_execution_lease(&session, now, u64::from(agent.max_tool_calls))?;
-        let provider_id = agent.provider.manifest().id().as_str();
+        let provider_id = provider.manifest().id().as_str();
         let l1_evidence = self.sessions.l1_evidence_context(
             session.id(),
             session.principal_id(),
@@ -2151,12 +2226,14 @@ impl RuntimeService {
         if let Some(harness) = request.requested_harness() {
             agent_request = agent_request.with_trusted_harness(harness.clone());
         }
+        if let Some(model) = requested_model {
+            agent_request = agent_request.with_model(model);
+        }
 
-        match agent.loop_engine.run_with_request(
-            agent.provider.as_ref(),
-            &self.controller,
-            agent_request,
-        ) {
+        match agent
+            .loop_engine
+            .run_with_request(provider.as_ref(), &self.controller, agent_request)
+        {
             Ok(summary) => self.finish_agent_run(
                 &session,
                 &summary,
@@ -2193,6 +2270,16 @@ impl RuntimeService {
             .agent
             .as_ref()
             .ok_or(RuntimeServiceError::AgentUnavailable)?;
+        let provider = agent.provider(request.requested_provider())?;
+        let requested_model = request
+            .requested_model()
+            .map(ModelId::new)
+            .transpose()
+            .map_err(|_| {
+                RuntimeServiceError::Contract(ServiceContractError::InvalidProviderSelection(
+                    "model",
+                ))
+            })?;
         let approval = self.scoped_approval(scope, request.approval_id())?;
         let snapshot = self.sessions.resume(
             approval.session_id(),
@@ -2203,7 +2290,7 @@ impl RuntimeService {
         let session = snapshot.session().clone();
         let _active_lease =
             self.acquire_execution_lease(&session, now, u64::from(agent.max_tool_calls))?;
-        let provider_id = agent.provider.manifest().id().as_str();
+        let provider_id = provider.manifest().id().as_str();
         let l1_evidence = self.sessions.l1_evidence_context(
             session.id(),
             session.principal_id(),
@@ -2227,11 +2314,14 @@ impl RuntimeService {
         if let Some(harness) = trusted_harness {
             approval_context = approval_context.with_trusted_harness(harness);
         }
+        if let Some(model) = requested_model {
+            approval_context = approval_context.with_model(model);
+        }
 
         match agent
             .loop_engine
             .run_with_history_and_approval_and_skill_context(
-                agent.provider.as_ref(),
+                provider.as_ref(),
                 &self.controller,
                 snapshot.agent_messages().to_vec(),
                 approval_context,
@@ -2851,14 +2941,19 @@ mod tests {
         manifest: ProviderManifest,
         responses: Mutex<Vec<ModelResponse>>,
         requests: Mutex<Vec<Vec<pandora_provider::ChatMessage>>>,
+        model_ids: Mutex<Vec<String>>,
     }
 
     impl SequenceProvider {
         fn new(responses: Vec<ModelResponse>) -> Self {
+            Self::named("service-provider", responses)
+        }
+
+        fn named(id: &str, responses: Vec<ModelResponse>) -> Self {
             Self {
                 manifest: ProviderManifest::new(
-                    "service-provider",
-                    "Service provider",
+                    id,
+                    id,
                     "http://127.0.0.1:1/v1",
                     "model-a",
                     "PANDORA_SERVICE_PROVIDER_KEY",
@@ -2866,11 +2961,16 @@ mod tests {
                 .unwrap(),
                 responses: Mutex::new(responses),
                 requests: Mutex::new(Vec::new()),
+                model_ids: Mutex::new(Vec::new()),
             }
         }
 
         fn requests(&self) -> Vec<Vec<pandora_provider::ChatMessage>> {
             self.requests.lock().unwrap().clone()
+        }
+
+        fn model_ids(&self) -> Vec<String> {
+            self.model_ids.lock().unwrap().clone()
         }
     }
 
@@ -2880,6 +2980,10 @@ mod tests {
         }
 
         fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+            self.model_ids
+                .lock()
+                .unwrap()
+                .push(request.model_id().as_str().to_owned());
             self.requests
                 .lock()
                 .unwrap()
@@ -3365,6 +3469,86 @@ mod tests {
         assert_eq!(requests[1][2].role(), MessageRole::User);
         assert_eq!(requests[1][3].role(), MessageRole::Assistant);
         assert_eq!(requests[1][4].role(), MessageRole::Tool);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn agent_run_uses_the_explicit_configured_provider_and_model() {
+        let root = crate::test_support::new_temp_dir("pandora-runtime-service-provider-selection")
+            .unwrap();
+        let scope = RuntimeServiceScope::new(
+            PrincipalId::new("principal-a").unwrap(),
+            TenantId::new("tenant-a").unwrap(),
+            WorkspaceId::new("workspace-a").unwrap(),
+        );
+        let provider_a = Arc::new(SequenceProvider::named(
+            "provider-a",
+            vec![ModelResponse::new(
+                "provider a",
+                Vec::new(),
+                TokenUsage::default(),
+            )],
+        ));
+        let provider_b = Arc::new(SequenceProvider::named(
+            "provider-b",
+            vec![ModelResponse::new(
+                "provider b",
+                Vec::new(),
+                TokenUsage::default(),
+            )],
+        ));
+        let policy = PolicyContext::new(1, [Capability::ProviderInvoke], []);
+        let service = RuntimeService::new(
+            ExecutionController::with_policy(WorkspaceRoot::new(&root).unwrap(), policy),
+            SessionStore::open(root.join("sessions.sqlite3")).unwrap(),
+            ApprovalStore::open(root.join("sessions.sqlite3")).unwrap(),
+            scope,
+        )
+        .with_agent_providers(
+            vec![provider_a.clone(), provider_b.clone()],
+            "provider-a",
+            2,
+            1,
+            root.join("context-cache.json"),
+            None,
+        )
+        .unwrap();
+        let request = ServiceAgentRunRequest::new("Use provider B", None, None)
+            .unwrap()
+            .with_provider_selection(
+                Some("provider-b".to_owned()),
+                Some("model-b-preview".to_owned()),
+            )
+            .unwrap();
+
+        let response = service
+            .handle(
+                &ServiceRequest::agent_run(request),
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap();
+        let ServiceResponse::AgentRun { run, .. } = response else {
+            panic!("expected an agent run response");
+        };
+
+        assert_eq!(run.output(), "provider b");
+        assert!(provider_a.requests().is_empty());
+        assert_eq!(provider_b.requests().len(), 1);
+        assert_eq!(provider_b.model_ids(), vec!["model-b-preview"]);
+
+        let unavailable = ServiceAgentRunRequest::new("Use another provider", None, None)
+            .unwrap()
+            .with_provider_selection(Some("provider-c".to_owned()), None)
+            .unwrap();
+        assert!(matches!(
+            service.handle(
+                &ServiceRequest::agent_run(unavailable),
+                Timestamp::from_unix_seconds(11),
+            ),
+            Err(RuntimeServiceError::AgentProviderUnavailable(provider))
+                if provider == "provider-c"
+        ));
 
         let _ = std::fs::remove_dir_all(root);
     }

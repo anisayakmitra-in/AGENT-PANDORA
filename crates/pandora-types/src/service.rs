@@ -20,6 +20,7 @@ pub enum ServiceContractError {
     InvalidTask(RequestError),
     InvalidIdentifier(IdError),
     InvalidContextAttachment(&'static str),
+    InvalidProviderSelection(&'static str),
     InvalidApprovalIdentifier,
     InvalidApprovalSummary,
     InvalidEvolutionConfirmation,
@@ -35,6 +36,9 @@ impl fmt::Display for ServiceContractError {
             Self::InvalidIdentifier(error) => error.fmt(formatter),
             Self::InvalidContextAttachment(reason) => {
                 write!(formatter, "context attachment is invalid: {reason}")
+            }
+            Self::InvalidProviderSelection(reason) => {
+                write!(formatter, "provider selection is invalid: {reason}")
             }
             Self::InvalidApprovalIdentifier => {
                 formatter.write_str("approval identifier is invalid")
@@ -89,6 +93,10 @@ pub struct ServiceAgentRunRequest {
     task: String,
     session_id: Option<SessionId>,
     requested_harness: Option<HarnessId>,
+    #[serde(default)]
+    requested_provider: Option<String>,
+    #[serde(default)]
+    requested_model: Option<String>,
     #[serde(default)]
     context_attachments: Vec<ServiceContextAttachment>,
 }
@@ -188,6 +196,8 @@ impl ServiceAgentRunRequest {
             task,
             session_id,
             requested_harness,
+            requested_provider: None,
+            requested_model: None,
             context_attachments: Vec::new(),
         };
         request.validate()?;
@@ -206,6 +216,14 @@ impl ServiceAgentRunRequest {
         self.requested_harness.as_ref()
     }
 
+    pub fn requested_provider(&self) -> Option<&str> {
+        self.requested_provider.as_deref()
+    }
+
+    pub fn requested_model(&self) -> Option<&str> {
+        self.requested_model.as_deref()
+    }
+
     pub fn context_attachments(&self) -> &[ServiceContextAttachment] {
         &self.context_attachments
     }
@@ -219,6 +237,17 @@ impl ServiceAgentRunRequest {
         Ok(self)
     }
 
+    pub fn with_provider_selection(
+        mut self,
+        requested_provider: Option<String>,
+        requested_model: Option<String>,
+    ) -> Result<Self, ServiceContractError> {
+        self.requested_provider = requested_provider;
+        self.requested_model = requested_model;
+        self.validate()?;
+        Ok(self)
+    }
+
     pub fn validate(&self) -> Result<(), ServiceContractError> {
         crate::session::TaskIntent::new(self.task.clone())?;
         if let Some(session_id) = self.session_id() {
@@ -227,6 +256,8 @@ impl ServiceAgentRunRequest {
         if let Some(harness_id) = self.requested_harness() {
             HarnessId::new(harness_id.as_str())?;
         }
+        validate_provider_selection(self.requested_provider(), "provider")?;
+        validate_provider_selection(self.requested_model(), "model")?;
         if self.context_attachments.len() > MAX_SERVICE_CONTEXT_ATTACHMENTS {
             return Err(ServiceContractError::InvalidContextAttachment(
                 "too many files",
@@ -251,21 +282,50 @@ impl ServiceAgentRunRequest {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ServiceAgentResumeRequest {
     approval_id: String,
+    #[serde(default)]
+    requested_provider: Option<String>,
+    #[serde(default)]
+    requested_model: Option<String>,
 }
 
 impl ServiceAgentResumeRequest {
     pub fn new(approval_id: impl Into<String>) -> Result<Self, ServiceContractError> {
         let approval_id = approval_id.into();
         validate_approval_id(&approval_id)?;
-        Ok(Self { approval_id })
+        Ok(Self {
+            approval_id,
+            requested_provider: None,
+            requested_model: None,
+        })
     }
 
     pub fn approval_id(&self) -> &str {
         &self.approval_id
     }
 
+    pub fn requested_provider(&self) -> Option<&str> {
+        self.requested_provider.as_deref()
+    }
+
+    pub fn requested_model(&self) -> Option<&str> {
+        self.requested_model.as_deref()
+    }
+
+    pub fn with_provider_selection(
+        mut self,
+        requested_provider: Option<String>,
+        requested_model: Option<String>,
+    ) -> Result<Self, ServiceContractError> {
+        self.requested_provider = requested_provider;
+        self.requested_model = requested_model;
+        self.validate()?;
+        Ok(self)
+    }
+
     pub fn validate(&self) -> Result<(), ServiceContractError> {
-        validate_approval_id(&self.approval_id)
+        validate_approval_id(&self.approval_id)?;
+        validate_provider_selection(self.requested_provider(), "provider")?;
+        validate_provider_selection(self.requested_model(), "model")
     }
 }
 
@@ -2566,6 +2626,23 @@ fn validate_approval_id(approval_id: &str) -> Result<(), ServiceContractError> {
     }
 }
 
+fn validate_provider_selection(
+    value: Option<&str>,
+    label: &'static str,
+) -> Result<(), ServiceContractError> {
+    if value.is_some_and(|value| {
+        value.trim().is_empty()
+            || value.len() > 128
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    }) {
+        Err(ServiceContractError::InvalidProviderSelection(label))
+    } else {
+        Ok(())
+    }
+}
+
 fn validate_orchestration_confirmation(
     run_id: &OrchestrationRunId,
     confirmation: &str,
@@ -2644,6 +2721,23 @@ mod tests {
             Err(ServiceContractError::InvalidContextAttachment(
                 "combined content exceeds the request limit"
             ))
+        ));
+    }
+
+    #[test]
+    fn agent_provider_and_model_selection_is_explicit_and_bounded() {
+        let request = ServiceAgentRunRequest::new("Inspect", None, None)
+            .unwrap()
+            .with_provider_selection(Some("provider-a".to_owned()), Some("model-2.1".to_owned()))
+            .unwrap();
+
+        assert_eq!(request.requested_provider(), Some("provider-a"));
+        assert_eq!(request.requested_model(), Some("model-2.1"));
+        assert!(matches!(
+            ServiceAgentRunRequest::new("Inspect", None, None)
+                .unwrap()
+                .with_provider_selection(Some("bad/provider".to_owned()), None),
+            Err(ServiceContractError::InvalidProviderSelection("provider"))
         ));
     }
 }

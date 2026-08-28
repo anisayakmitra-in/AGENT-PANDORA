@@ -741,19 +741,29 @@ export class RuntimeClient {
     sessionId: string | null = null,
     requestedHarness: string | null = null,
     contextAttachments: RuntimeContextAttachment[] = [],
+    requestedProvider: string | null = null,
+    requestedModel: string | null = null,
   ): Promise<RuntimeRun> {
     const response = await this.call<AgentRunResponse>("agent.execute", {
       task,
       session_id: sessionId,
       requested_harness: requestedHarness,
       context_attachments: contextAttachments,
+      requested_provider: requestedProvider,
+      requested_model: requestedModel,
     });
     return { ...response.run, mode: "agent" };
   }
 
-  async agentResume(approvalId: string): Promise<RuntimeRun> {
+  async agentResume(
+    approvalId: string,
+    requestedProvider: string | null = null,
+    requestedModel: string | null = null,
+  ): Promise<RuntimeRun> {
     const response = await this.call<AgentRunResponse>("agent.resume", {
       approval_id: approvalId,
+      requested_provider: requestedProvider,
+      requested_model: requestedModel,
     });
     return { ...response.run, mode: "agent" };
   }
