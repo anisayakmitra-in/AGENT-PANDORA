@@ -181,7 +181,78 @@ describe("Pandora desktop run state", () => {
     expect(composer).toBeEnabled();
     expect(composer).toHaveValue("Inspect and recover");
     expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Retry request" })).toBeEnabled();
+    expect(screen.getByText(/task and selected context remain editable/i)).toBeInTheDocument();
     expect(screen.getAllByText("Runtime connected").length).toBeGreaterThan(0);
+  });
+
+  it("retries a preserved transport failure as a fresh governed request", async () => {
+    runtime.agentRun
+      .mockRejectedValueOnce(new Error("provider timed out"))
+      .mockResolvedValueOnce({
+        mode: "agent",
+        session_id: session.session_id,
+        execution_id: "execution-recovered",
+        selected_harness: "coding-domain",
+        selected_gene: null,
+        status: "completed",
+        output: "recovered output",
+        receipt_count: 1,
+        event_count: 2,
+      });
+
+    render(<App />);
+    const composer = await screen.findByLabelText("Pandora task");
+    fireEvent.change(composer, { target: { value: "Recover this exact task" } });
+    fireEvent.submit(composer.closest("form")!);
+    fireEvent.click(await screen.findByRole("button", { name: "Retry request" }));
+
+    await waitFor(() => expect(runtime.agentRun).toHaveBeenCalledTimes(2));
+    expect(runtime.agentRun).toHaveBeenNthCalledWith(2, "Recover this exact task", null, null, []);
+    expect(await screen.findByText("recovered output")).toBeInTheDocument();
+    expect(composer).toHaveValue("");
+    expect(screen.queryByText("provider timed out")).not.toBeInTheDocument();
+  });
+
+  it("retries a recorded failed run without reusing its permits", async () => {
+    runtime.agentRun
+      .mockResolvedValueOnce({
+        mode: "agent",
+        session_id: session.session_id,
+        execution_id: "execution-failed",
+        selected_harness: "coding-domain",
+        selected_gene: "workspace.test",
+        status: "failed",
+        status_detail: "Verification failed before completion",
+        output: "tests failed",
+        receipt_count: 1,
+        event_count: 4,
+      })
+      .mockResolvedValueOnce({
+        mode: "agent",
+        session_id: session.session_id,
+        execution_id: "execution-retry",
+        selected_harness: "coding-domain",
+        selected_gene: "workspace.test",
+        status: "completed",
+        output: "tests passed",
+        receipt_count: 2,
+        event_count: 7,
+      });
+
+    render(<App />);
+    const composer = await screen.findByLabelText("Pandora task");
+    fireEvent.change(composer, { target: { value: "Run the verification suite" } });
+    fireEvent.submit(composer.closest("form")!);
+
+    expect((await screen.findAllByText("Verification failed before completion")).length).toBeGreaterThan(0);
+    expect(screen.getByText(/new execution and re-runs every policy, evaluation, and permit check/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Retry with fresh verification/ }));
+
+    await waitFor(() => expect(runtime.agentRun).toHaveBeenCalledTimes(2));
+    expect(runtime.agentRun).toHaveBeenNthCalledWith(2, "Run the verification suite", session.session_id, null, []);
+    expect(await screen.findByText("tests passed")).toBeInTheDocument();
+    expect(screen.getAllByText("execution-retry").length).toBeGreaterThan(0);
   });
 
   it("sends selected text files through the bounded context contract", async () => {
@@ -722,6 +793,29 @@ describe("Pandora desktop run state", () => {
     expect(screen.getByRole("heading", { name: "Work surfaces expose evidence, not authority" })).toBeInTheDocument();
     expect(screen.getByText("Read only")).toBeInTheDocument();
     expect(screen.getByText("Exact permit path")).toBeInTheDocument();
+  });
+
+  it("inspects runtime-reported engine contracts without changing authority", async () => {
+    runtime.engines.mockResolvedValue([
+      { id: "execution-controller", name: "ExecutionController", role: "Fixed runtime pipeline", authority: "Runtime authority" },
+      { id: "reference-monitor", name: "ReferenceMonitor", role: "Authorization", authority: "Sole permit issuer" },
+    ]);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Engines" }));
+
+    expect(await screen.findByRole("heading", { name: "ExecutionController" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Engine contract JSON")).toHaveTextContent('"id": "execution-controller"');
+    expect(screen.getByText("Runtime authority")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /ReferenceMonitor/ }));
+    expect(screen.getByRole("heading", { name: "ReferenceMonitor" })).toBeInTheDocument();
+    expect(screen.getByText("Sole permit issuer")).toBeInTheDocument();
+    expect(screen.getByText("CONSTITUTIONAL RUNTIME BOUNDARY")).toBeInTheDocument();
+    expect(screen.getByText(/Selecting an engine never changes the active Harness or Gene/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Inspect runtime evidence/ }));
+    expect(screen.getByRole("heading", { name: "Audit" })).toBeInTheDocument();
   });
 
   it("inspects Genes, extensions, authority, and receipt posture in Harness Lab", async () => {

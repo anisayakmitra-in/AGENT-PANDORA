@@ -67,6 +67,12 @@ type PendingRunRequest = {
   requestedHarness: string | null;
 };
 
+type SubmittedRunRequest = {
+  task: string;
+  profile: RunProfile;
+  contextAttachments: RuntimeContextAttachment[];
+};
+
 type WorkspaceInspectionRequest = {
   task: string;
   requestedHarness: string;
@@ -386,6 +392,7 @@ function App() {
   const [evolutionProposals, setEvolutionProposals] = useState<RuntimeEvolutionProposal[]>([]);
   const [artifactActivations, setArtifactActivations] = useState<RuntimeArtifactActivation[]>([]);
   const [lastRun, setLastRun] = useState<RuntimeRun | null>(null);
+  const [lastRunRequest, setLastRunRequest] = useState<SubmittedRunRequest | null>(null);
   const [pendingRun, setPendingRun] = useState<PendingRunRequest | null>(null);
   const [workspaceInspection, setWorkspaceInspection] = useState<RuntimeRun | null>(null);
   const [pendingWorkspaceInspection, setPendingWorkspaceInspection] = useState<WorkspaceInspectionRequest | null>(null);
@@ -451,6 +458,7 @@ function App() {
       setProviders([]);
       setEvolutionProposals([]);
       setArtifactActivations([]);
+      setLastRunRequest(null);
       setPendingRun(null);
       setWorkspaceInspection(null);
       setPendingWorkspaceInspection(null);
@@ -610,6 +618,7 @@ function App() {
       setProviders([]);
       setEvolutionProposals([]);
       setArtifactActivations([]);
+      setLastRunRequest(null);
       setPendingRun(null);
       setWorkspaceInspection(null);
       setPendingWorkspaceInspection(null);
@@ -643,6 +652,7 @@ function App() {
         client.memory(sessionId),
       ]);
       setLastRun(null);
+      setLastRunRequest(null);
       setPendingRun(null);
       setSelectedSessionId(sessionId);
       setSelectedSession(detail);
@@ -662,12 +672,18 @@ function App() {
     setRunInFlight(true);
     setRuntimeStatus("checking");
     setRuntimeError("");
+    setLastRunRequest({
+      task,
+      profile,
+      contextAttachments: contextAttachments.map((attachment) => ({ ...attachment })),
+    });
     try {
       const requestedHarness = harnessForProfile(profile);
       const result = await client.agentRun(task, selectedSessionId || null, requestedHarness, contextAttachments);
       setPendingRun(result.approval ? { task, requestedHarness } : null);
       await loadRunResult(result);
       setRuntimeStatus("connected");
+      return result;
     } catch (error: unknown) {
       setRuntimeStatus("connected");
       const message = error instanceof Error ? error.message : "Pandora run failed";
@@ -676,6 +692,13 @@ function App() {
     } finally {
       setRunInFlight(false);
     }
+  };
+
+  const retryLastRun = async () => {
+    if (!lastRunRequest) {
+      throw new Error("No previous governed request is available");
+    }
+    return runTask(lastRunRequest.task, lastRunRequest.profile, lastRunRequest.contextAttachments);
   };
 
   const loadRunResult = async (result: RuntimeRun) => {
@@ -903,6 +926,7 @@ function App() {
             runtimeStatus={runtimeStatus}
             selectedSession={selectedSession}
             lastRun={lastRun}
+            lastRunRequest={lastRunRequest}
             events={events}
             harnesses={harnesses}
             runInFlight={runInFlight}
@@ -913,6 +937,7 @@ function App() {
             runProfile={runProfile}
             onRunProfileChange={setRunProfile}
             onRun={runTask}
+            onRetryRun={retryLastRun}
             onResolveApproval={resolvePendingApproval}
             onInspectWorkspace={inspectWorkspace}
             onResolveWorkspaceInspection={resolveWorkspaceInspection}
@@ -942,7 +967,7 @@ function App() {
         ) : activeView === "capabilities" ? (
           <CapabilitiesView harnesses={harnesses} tools={tools} runtimeStatus={runtimeStatus} native={native} />
         ) : activeView === "engines" ? (
-          <EnginesView engines={engines} runtimeStatus={runtimeStatus} />
+          <EnginesView engines={engines} runtimeStatus={runtimeStatus} onOpenView={setActiveView} />
         ) : activeView === "tools" ? (
           <ToolsView tools={tools} runtimeStatus={runtimeStatus} />
         ) : activeView === "evolution" ? (
@@ -1009,11 +1034,53 @@ function runtimeStatusLabel(status: RuntimeStatus): string {
   }
 }
 
-function CommandView({ selectedStep, onSelectStep, runtimeStatus, selectedSession, lastRun, events, harnesses, runInFlight, workspaceInspection, workspaceInspectionInFlight, browserInspection, browserInspectionInFlight, runProfile, onRunProfileChange, onRun, onResolveApproval, onInspectWorkspace, onResolveWorkspaceInspection, onInspectBrowser, onResolveBrowserInspection }: { selectedStep: string; onSelectStep: (id: string) => void; runtimeStatus: RuntimeStatus; selectedSession: RuntimeSessionDetail | null; lastRun: RuntimeRun | null; events: RuntimeEvent[]; harnesses: RuntimeHarness[]; runInFlight: boolean; workspaceInspection: RuntimeRun | null; workspaceInspectionInFlight: boolean; browserInspection: RuntimeRun | null; browserInspectionInFlight: boolean; runProfile: RunProfile; onRunProfileChange: (profile: RunProfile) => void; onRun: (task: string, profile: RunProfile, contextAttachments: RuntimeContextAttachment[]) => Promise<void>; onResolveApproval: (allow: boolean) => Promise<void>; onInspectWorkspace: (task: string) => Promise<void>; onResolveWorkspaceInspection: (allow: boolean) => Promise<void>; onInspectBrowser: (url: string) => Promise<void>; onResolveBrowserInspection: (allow: boolean) => Promise<void> }) {
+function RunResultPanel({ lastRun, request, events, runInFlight, onRepeat }: { lastRun: RuntimeRun; request: SubmittedRunRequest | null; events: RuntimeEvent[]; runInFlight: boolean; onRepeat: () => Promise<void> }) {
+  const canRepeat = Boolean(request && lastRun.status !== "approval_required");
+  const repeatLabel = lastRun.status === "failed" || lastRun.status === "denied"
+    ? "Retry with fresh verification"
+    : "Run again";
+  return <Panel className={`run-result run-result-${lastRun.status}`}>
+    <div className="panel-heading"><div><span className="eyebrow">RECORDED EXECUTION</span><h3>Latest {lastRun.mode} run</h3></div><Chip tone={lastRun.status === "completed" ? "green" : "amber"}>{lastRun.status}</Chip></div>
+    <div className="run-result-meta"><span className="mono">{lastRun.execution_id ?? "provider-only response"}</span><span>{lastRun.selected_gene ?? "No gene selected"}</span></div>
+    {request ? <div className="run-request-evidence"><span>Request snapshot</span><p>{request.task}</p><small>{request.profile === "auto" ? "Auto route" : request.profile} · {request.contextAttachments.length} context file{request.contextAttachments.length === 1 ? "" : "s"}</small></div> : null}
+    {lastRun.status_detail ? <div className="run-status-detail"><Icon name={lastRun.status === "failed" || lastRun.status === "denied" ? "shield" : "activity"} size={14} /><span>{lastRun.status_detail}</span></div> : null}
+    <p className="run-output">{lastRun.output || "No output returned."}</p>
+    {canRepeat ? <div className="run-result-actions"><p>{lastRun.status === "failed" || lastRun.status === "denied" ? "A retry creates a new execution and re-runs every policy, evaluation, and permit check." : "Repeating this request creates a new governed execution. Previous permits are never reused."}</p><button className="button button-secondary" type="button" disabled={runInFlight} onClick={() => void onRepeat()}>{runInFlight ? "Running…" : repeatLabel} <Icon name="arrow" size={13} /></button></div> : null}
+    {events.length ? <div className="event-list"><span className="eyebrow">LIVE ACTIVITY</span>{events.map((event) => <div className="event-row" key={event.event_id}><span className="event-dot" /><span>{event.event_type.replaceAll("_", " ")}</span><span className="mono">{event.event_id}</span></div>)}</div> : null}
+  </Panel>;
+}
+
+type CommandViewProps = {
+  selectedStep: string;
+  onSelectStep: (id: string) => void;
+  runtimeStatus: RuntimeStatus;
+  selectedSession: RuntimeSessionDetail | null;
+  lastRun: RuntimeRun | null;
+  lastRunRequest: SubmittedRunRequest | null;
+  events: RuntimeEvent[];
+  harnesses: RuntimeHarness[];
+  runInFlight: boolean;
+  workspaceInspection: RuntimeRun | null;
+  workspaceInspectionInFlight: boolean;
+  browserInspection: RuntimeRun | null;
+  browserInspectionInFlight: boolean;
+  runProfile: RunProfile;
+  onRunProfileChange: (profile: RunProfile) => void;
+  onRun: (task: string, profile: RunProfile, contextAttachments: RuntimeContextAttachment[]) => Promise<RuntimeRun>;
+  onRetryRun: () => Promise<RuntimeRun>;
+  onResolveApproval: (allow: boolean) => Promise<void>;
+  onInspectWorkspace: (task: string) => Promise<void>;
+  onResolveWorkspaceInspection: (allow: boolean) => Promise<void>;
+  onInspectBrowser: (url: string) => Promise<void>;
+  onResolveBrowserInspection: (allow: boolean) => Promise<void>;
+};
+
+function CommandView({ selectedStep, onSelectStep, runtimeStatus, selectedSession, lastRun, lastRunRequest, events, harnesses, runInFlight, workspaceInspection, workspaceInspectionInFlight, browserInspection, browserInspectionInFlight, runProfile, onRunProfileChange, onRun, onRetryRun, onResolveApproval, onInspectWorkspace, onResolveWorkspaceInspection, onInspectBrowser, onResolveBrowserInspection }: CommandViewProps) {
   const [task, setTask] = useState("");
   const [runError, setRunError] = useState("");
   const [contextAttachments, setContextAttachments] = useState<RuntimeContextAttachment[]>([]);
   const contextInput = useRef<HTMLInputElement>(null);
+  const composerForm = useRef<HTMLFormElement>(null);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -1029,6 +1096,23 @@ function CommandView({ selectedStep, onSelectStep, runtimeStatus, selectedSessio
     } catch (error: unknown) {
       setRunError(error instanceof Error ? error.message : "Pandora run failed");
     }
+  };
+
+  const repeatRecordedRun = async () => {
+    if (runInFlight || !lastRunRequest) {
+      return;
+    }
+    setRunError("");
+    try {
+      await onRetryRun();
+    } catch (error: unknown) {
+      setRunError(error instanceof Error ? error.message : "Pandora retry failed");
+    }
+  };
+
+  const retryPreservedRequest = () => {
+    setRunError("");
+    composerForm.current?.requestSubmit();
   };
 
   const handleTaskKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1103,7 +1187,7 @@ function CommandView({ selectedStep, onSelectStep, runtimeStatus, selectedSessio
           <div className="core-metrics"><Metric label="Context" value={selectedSession ? "Scoped" : "None"} detail={selectedSession ? selectedSession.session.workspace_id : "not loaded"} /><Metric label="Policy" value={policyValue} detail={policyDetail} /><Metric label="Evidence" value={evidenceValue} detail={evidenceDetail} /></div>
         </div>
       </div>
-      <form className="composer-wrap" onSubmit={submit}>
+      <form ref={composerForm} className="composer-wrap" onSubmit={submit}>
         {contextAttachments.length ? <div className="context-attachments" aria-label="Selected context files">
           <div className="context-attachments-heading"><span><Icon name="archive" size={13} /> Context evidence</span><small>Untrusted · no authority · {attachmentByteLength(contextAttachments.map((attachment) => attachment.content).join(""))} / {maxContextBytes} bytes</small></div>
           <div className="context-attachment-list">{contextAttachments.map((attachment, index) => <span className="context-attachment" key={`${attachment.name}-${index}`}><span><strong>{attachment.name}</strong><small>{attachmentByteLength(attachment.content)} bytes</small></span><button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => removeContextAttachment(index)} disabled={runInFlight}>×</button></span>)}</div>
@@ -1114,9 +1198,10 @@ function CommandView({ selectedStep, onSelectStep, runtimeStatus, selectedSessio
           <textarea value={task} onChange={(event) => setTask(event.target.value)} onKeyDown={handleTaskKeyDown} placeholder="Ask Pandora to inspect, plan, or act…" aria-label="Pandora task" rows={1} disabled={runInFlight} />
           <div className="composer-actions"><label className="composer-profile"><span className="sr-only">Execution Harness</span><select value={runProfile} onChange={(event) => onRunProfileChange(event.target.value)} aria-label="Execution Harness" disabled={runInFlight}>{profileOptions.map((profile) => <option value={profile.id} key={profile.id}>{profile.label}</option>)}</select></label><span className="composer-mode"><Icon name="spark" size={14} /> Governed run</span><button type="submit" className="send-button" aria-label={runInFlight ? "Pandora is running" : "Send"} disabled={!connected || !task.trim() || runInFlight}><Icon name="arrow" size={16} /></button></div>
         </div>
-        <div className="composer-hint"><span>{runError || (runInFlight ? "Pandora is running the governed request…" : connected ? "Ctrl/⌘ + Enter to send" : "Connect the local service in Connections")}</span><span>{contextAttachments.length ? `${contextAttachments.length} context file${contextAttachments.length === 1 ? "" : "s"} · effects still require a permit` : "All effects require an exact permit"}</span></div>
+        <div className="composer-hint"><span>{runInFlight ? "Pandora is running the governed request…" : connected ? "Ctrl/⌘ + Enter to send" : "Connect the local service in Connections"}</span><span>{contextAttachments.length ? `${contextAttachments.length} context file${contextAttachments.length === 1 ? "" : "s"} · effects still require a permit` : "All effects require an exact permit"}</span></div>
+        {runError ? <div className="composer-recovery" role="alert"><Icon name="shield" size={16} /><div><strong>Request did not complete</strong><span>{runError}</span><small>The task and selected context remain editable. Retrying creates a fresh governed request.</small></div><div><button className="button button-secondary" type="button" disabled={runInFlight || !task.trim()} onClick={retryPreservedRequest}>Retry request</button><button className="text-link" type="button" onClick={() => setRunError("")}>Dismiss</button></div></div> : null}
       </form>
-      {lastRun ? <Panel className="run-result"><div className="panel-heading"><h3>Latest {lastRun.mode} run</h3><Chip tone={lastRun.status === "completed" ? "green" : "amber"}>{lastRun.status}</Chip></div><div className="run-result-meta"><span className="mono">{lastRun.execution_id ?? "provider-only response"}</span><span>{lastRun.selected_gene ?? "No gene selected"}</span></div><p>{lastRun.output || "No output returned."}</p>{events.length ? <div className="event-list"><span className="eyebrow">LIVE ACTIVITY</span>{events.map((event) => <div className="event-row" key={event.event_id}><span className="event-dot" /><span>{event.event_type.replaceAll("_", " ")}</span><span className="mono">{event.event_id}</span></div>)}</div> : null}</Panel> : null}
+      {lastRun ? <RunResultPanel lastRun={lastRun} request={lastRunRequest} events={events} runInFlight={runInFlight} onRepeat={repeatRecordedRun} /> : null}
     </section>
     <Inspector steps={steps} lastRun={lastRun} events={events} selectedSession={selectedSession} runtimeStatus={runtimeStatus} approval={lastRun?.approval} approvalDetail={lastRun?.status_detail} approvalInFlight={runInFlight} workspaceInspection={workspaceInspection} workspaceInspectionInFlight={workspaceInspectionInFlight} browserInspection={browserInspection} browserInspectionInFlight={browserInspectionInFlight} selectedStep={selectedStep} onResolveApproval={onResolveApproval} onInspectWorkspace={onInspectWorkspace} onResolveWorkspaceInspection={onResolveWorkspaceInspection} onInspectBrowser={onInspectBrowser} onResolveBrowserInspection={onResolveBrowserInspection} onSelectStep={onSelectStep} />
   </div>;
@@ -1753,9 +1838,41 @@ function ToolsView({ tools, runtimeStatus }: { tools: RuntimeTool[]; runtimeStat
   return <div className="full-view"><PageHeader eyebrow="Runtime surface" title="Built-in Tools" description="Tool definitions exposed by Pandora’s ToolEngine. Tool metadata does not grant execution authority." actions={<Chip tone={connected ? "green" : "neutral"} icon="terminal">{connected ? `${tools.length} available` : "Unavailable"}</Chip>} /><div className="engine-notice"><Icon name="lock" size={16} /><span>{connected ? "Schemas and effect classifications are read-only here. Execution still requires the runtime’s policy and permit path." : "Connect the local runtime to inspect built-in tools."}</span></div><div className="tool-grid">{connected && tools.length ? tools.map((tool) => <Panel className="tool-row" key={tool.id}><div><strong>{tool.name}</strong><small className="mono">{tool.id} · v{tool.version}</small></div><span className="tool-capability">{tool.capability}</span><span className="tool-operation">{tool.operation}</span></Panel>) : <Panel className="secondary-card"><div className="secondary-icon secondary-icon-1"><Icon name="lock" size={20} /></div><span className="eyebrow">{connected ? "EMPTY" : "UNAVAILABLE"}</span><h3>{connected ? "No tools reported" : "Runtime connection required"}</h3><p>{connected ? "The local service returned an empty tool catalog." : "This surface does not fabricate tool definitions."}</p></Panel>}</div></div>;
 }
 
-function EnginesView({ engines, runtimeStatus }: { engines: RuntimeEngine[]; runtimeStatus: RuntimeStatus }) {
+function relatedEngineView(engineId: string): { view: ViewId; label: string } | null {
+  if (engineId === "tool-engine") return { view: "tools", label: "Inspect tools" };
+  if (["memory-engine", "context-engine", "graph-intelligence-engine"].includes(engineId)) return { view: "memory", label: "Inspect memory evidence" };
+  if (["evolution-engine", "adaptive-engine", "coding-feedback-loop", "evaluation-engine", "efficiency-engine", "self-healing-engine", "mutation-engine", "replacement-engine", "population-strategy"].includes(engineId)) return { view: "evolution", label: "Inspect evolution" };
+  if (["orchestration-engine", "fleet-engine"].includes(engineId)) return { view: "runs", label: "Inspect background runs" };
+  if (engineId === "skill-engine") return { view: "capabilities", label: "Inspect Harnesses" };
+  if (engineId === "mcp-adapter") return { view: "connections", label: "Inspect connections" };
+  if (["execution-controller", "reference-monitor", "observability-engine"].includes(engineId)) return { view: "audit", label: "Inspect runtime evidence" };
+  return null;
+}
+
+function EnginesView({ engines, runtimeStatus, onOpenView }: { engines: RuntimeEngine[]; runtimeStatus: RuntimeStatus; onOpenView: (view: ViewId) => void }) {
+  const [selectedEngineId, setSelectedEngineId] = useState("");
   const connected = runtimeStatus === "connected";
-  return <div className="full-view"><PageHeader eyebrow="Architecture" title="Engines" description="Pandora’s engines are bounded modules around one governed execution path." actions={<Chip tone={connected ? "green" : "neutral"} icon="stack">{connected ? `${engines.length} reported` : "Unavailable"}</Chip>} /><div className="engine-notice"><Icon name="lock" size={16} /><span>{connected ? "Engine metadata is reported by the local runtime. This describes ownership, not live health." : "Connect the local runtime to inspect Pandora’s engine inventory."}</span></div><div className="secondary-grid">{connected && engines.length ? engines.map((engine, index) => <Panel className="secondary-card engine-card" key={engine.id}><div className={`secondary-icon secondary-icon-${index % 3}`}><Icon name={index < 2 ? "shield" : "stack"} size={20} /></div><span className="eyebrow">RUNTIME MODULE</span><h3>{engine.name}</h3><strong className="engine-role">{engine.role}</strong><p>{engine.authority}</p><span className="text-link">{engine.id}</span></Panel>) : <Panel className="secondary-card"><div className="secondary-icon secondary-icon-1"><Icon name="lock" size={20} /></div><span className="eyebrow">{connected ? "EMPTY" : "UNAVAILABLE"}</span><h3>{connected ? "No engines reported" : "Runtime connection required"}</h3><p>{connected ? "The local service returned an empty engine inventory." : "This surface does not fabricate engine state."}</p></Panel>}</div></div>;
+  const selected = engines.find((engine) => engine.id === selectedEngineId) ?? engines[0] ?? null;
+  const related = selected ? relatedEngineView(selected.id) : null;
+  const constitutional = selected ? ["execution-controller", "reference-monitor"].includes(selected.id) : false;
+
+  return <div className="full-view engines-view">
+    <PageHeader eyebrow="Architecture" title="Engines" description="Inspect runtime-reported engine contracts without changing routing, activation, or authority." actions={<Chip tone={connected ? "green" : "neutral"} icon="stack">{connected ? `${engines.length} reported` : "Unavailable"}</Chip>} />
+    <div className="engine-notice"><Icon name="lock" size={16} /><span>{connected ? "This inventory is reported by the local runtime. Inspection proves identity, role, and declared authority—not health or permission to execute." : "Connect the local runtime to inspect Pandora’s engine inventory."}</span></div>
+    <div className="engine-workbench">
+      <Panel className="engine-browser">
+        <div className="panel-heading"><div><span className="eyebrow">ENGINE INVENTORY</span><h3>{engines.length} runtime modules</h3></div><Chip tone={connected ? "blue" : "neutral"}>{connected ? "Evidence" : "Offline"}</Chip></div>
+        <div className="engine-list">{connected && engines.length ? engines.map((engine) => <button type="button" className={`engine-browser-row ${selected?.id === engine.id ? "is-selected" : ""}`} aria-pressed={selected?.id === engine.id} onClick={() => setSelectedEngineId(engine.id)} key={engine.id}><span className={`engine-state-mark ${["execution-controller", "reference-monitor"].includes(engine.id) ? "is-core" : ""}`}><Icon name={engine.id === "reference-monitor" ? "shield" : "stack"} size={13} /></span><span><strong>{engine.name}</strong><small>{engine.role}</small><small className="mono">{engine.id}</small></span><Icon name="chevron" size={12} /></button>) : <div className="runs-empty"><Icon name="lock" size={24} /><h3>{connected ? "No engines reported" : "Runtime connection required"}</h3><p>{connected ? "The local service returned an empty engine inventory." : "This surface does not fabricate engine state."}</p></div>}</div>
+      </Panel>
+      <Panel className="engine-inspection">{selected ? <>
+        <div className="engine-inspection-hero"><span className={`engine-hero-icon ${constitutional ? "is-core" : ""}`}><Icon name={selected.id === "reference-monitor" ? "shield" : "stack"} size={22} /></span><div><span className="eyebrow">{constitutional ? "CONSTITUTIONAL RUNTIME BOUNDARY" : "BOUNDED RUNTIME MODULE"}</span><h2>{selected.name}</h2><p className="mono">{selected.id}</p></div><Chip tone={constitutional ? "gold" : "blue"}>{constitutional ? "Core" : "Reported"}</Chip></div>
+        <div className="engine-contract-grid"><div><span>Owned role</span><strong>{selected.role}</strong></div><div><span>Authority boundary</span><strong>{selected.authority}</strong></div><div><span>Contract source</span><strong className="mono">runtime.engines</strong></div><div><span>Inspection mode</span><strong>Read-only evidence</strong></div></div>
+        <div className="engine-proof-grid"><section><span className="eyebrow">WHAT THIS PROVES</span><p>The connected runtime reports this exact engine identity, ownership role, and authority summary.</p></section><section><span className="eyebrow">WHAT THIS DOES NOT PROVE</span><p>Inventory metadata is not a health check, execution permit, activation receipt, or proof that a replaceable package is trusted.</p></section></div>
+        <pre className="engine-contract-json" aria-label="Engine contract JSON">{JSON.stringify(selected, null, 2)}</pre>
+        <div className="engine-inspection-actions"><p><Icon name="lock" size={13} /> Only ReferenceMonitor may issue permits. Selecting an engine never changes the active Harness or Gene.</p>{related ? <button className="button button-secondary" type="button" onClick={() => onOpenView(related.view)}>{related.label} <Icon name="arrow" size={13} /></button> : null}</div>
+      </> : <div className="runs-empty"><Icon name="stack" size={27} /><h3>No engine selected</h3><p>Choose a runtime-reported engine to inspect its bounded contract.</p></div>}</Panel>
+    </div>
+  </div>;
 }
 
 function SettingsView({ theme, onThemeChange, runtimeStatus, health, native, endpoint }: { theme: ThemeMode; onThemeChange: (nextTheme: ThemeMode) => void; runtimeStatus: RuntimeStatus; health: RuntimeHealth | null; native: boolean; endpoint: string }) {
