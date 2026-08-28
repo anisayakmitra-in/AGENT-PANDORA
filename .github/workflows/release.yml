@@ -548,6 +548,15 @@ jobs:
           "$cli" setup --json
           printf '%s\n' preserved > "$PANDORA_WORKSPACE/sentinel.txt"
           "$cli" doctor --json
+          export PANDORA_BACKUP_KEY="release-drill-backup-key"
+          backup="$RUNNER_TEMP/pandora-recovery.json"
+          marker="$PANDORA_DATA_DIR/release-drill.marker"
+          printf '%s\n' before > "$marker"
+          "$cli" backup create --output "$backup" --json
+          "$cli" backup inspect --input "$backup" --json
+          printf '%s\n' after > "$marker"
+          "$cli" backup restore --input "$backup" --yes --json
+          test "$(cat "$marker")" = before
           "$cli" uninstall --dry-run --json
           test -f "$PANDORA_CONFIG"
           test -d "$PANDORA_DATA_DIR"
@@ -616,6 +625,15 @@ jobs:
           & $cli setup --json
           Set-Content -LiteralPath (Join-Path $env:PANDORA_WORKSPACE "sentinel.txt") -Value "preserved"
           & $cli doctor --json
+          $env:PANDORA_BACKUP_KEY = "release-drill-backup-key"
+          $backup = Join-Path $env:RUNNER_TEMP "pandora-recovery.json"
+          $marker = Join-Path $env:PANDORA_DATA_DIR "release-drill.marker"
+          Set-Content -LiteralPath $marker -Value "before"
+          & $cli backup create --output $backup --json
+          & $cli backup inspect --input $backup --json
+          Set-Content -LiteralPath $marker -Value "after"
+          & $cli backup restore --input $backup --yes --json
+          if ((Get-Content -LiteralPath $marker).Trim() -ne "before") { throw "restore did not recover the marker" }
           & $cli uninstall --dry-run --json
           if (-not (Test-Path -LiteralPath $env:PANDORA_CONFIG -PathType Leaf)) { throw "dry-run removed config" }
           if (-not (Test-Path -LiteralPath $env:PANDORA_DATA_DIR -PathType Container)) { throw "dry-run removed data" }
