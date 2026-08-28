@@ -247,6 +247,19 @@ impl ArtifactCatalog {
         .collect()
     }
 
+    pub fn references(
+        &self,
+        artifact: &ArtifactId,
+    ) -> Result<Vec<ArtifactActivation>, ArtifactCatalogError> {
+        Ok(self
+            .list(usize::MAX)?
+            .into_iter()
+            .filter(|binding| {
+                binding.base_artifact() == artifact || binding.candidate_artifact() == artifact
+            })
+            .collect())
+    }
+
     fn lock(&self) -> Result<MutexGuard<'_, Connection>, ArtifactCatalogError> {
         self.connection
             .lock()

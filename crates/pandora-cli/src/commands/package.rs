@@ -1,10 +1,10 @@
 use super::{load_config, parse_options};
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{
-    MAX_STORED_ARTIFACT_BYTES, PackageRecord, PackageRegistryClient, PackageRegistryError,
-    PackageStore, PackageStoreError, WasmExecutor,
+    ArtifactCatalog, MAX_STORED_ARTIFACT_BYTES, PackageRecord, PackageRegistryClient,
+    PackageRegistryError, PackageStore, PackageStoreError, WasmExecutor,
 };
-use pandora_types::{PackageId, PackageKind, PackageManifest, hash_artifact};
+use pandora_types::{ArtifactId, PackageId, PackageKind, PackageManifest, hash_artifact};
 use serde_json::json;
 use std::fs;
 use std::io::{self, Read};
@@ -227,7 +227,9 @@ fn admit(args: &[String]) -> Result<CommandResult, CliError> {
     let artifact_path = required_path(&parsed, "artifact")?;
     let manifest = read_manifest(&manifest_path)?;
     let artifact = read_artifact(&artifact_path)?;
-    let store = store(&parsed)?;
+    let config = load_config(&parsed)?;
+    let store =
+        PackageStore::open(config.data_dir().join("packages.sqlite3")).map_err(store_error)?;
     let record = store
         .admit(&manifest, &manifest, &artifact)
         .map_err(store_error)?;
@@ -317,7 +319,9 @@ fn remove(args: &[String]) -> Result<CommandResult, CliError> {
     let id = PackageId::new(parsed.positionals[0].clone())
         .map_err(|_| CliError::usage("package ID is invalid"))?;
     let version = &parsed.positionals[1];
-    let store = store(&parsed)?;
+    let config = load_config(&parsed)?;
+    let store =
+        PackageStore::open(config.data_dir().join("packages.sqlite3")).map_err(store_error)?;
     let record = store
         .get(&id, version)
         .map_err(store_error)?
@@ -327,6 +331,19 @@ fn remove(args: &[String]) -> Result<CommandResult, CliError> {
                 json!({"id": id.as_str(), "version": version}),
             )
         })?;
+    let artifact = ArtifactId::new(record.manifest().content_hash())
+        .map_err(|_| CliError::internal("package artifact identity is invalid", json!({})))?;
+    let catalog = ArtifactCatalog::open(config.data_dir().join("artifact-catalog.sqlite3"))
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let bindings = catalog
+        .references(&artifact)
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    if !bindings.is_empty() {
+        return Err(CliError::execution(
+            "package artifact is referenced by an active evolution binding",
+            json!({"id": id.as_str(), "version": version, "artifact": artifact, "proposals": bindings.iter().map(|binding| binding.proposal_id()).collect::<Vec<_>>() }),
+        ));
+    }
     if dry_run {
         return Ok(success(
             "package remove",
