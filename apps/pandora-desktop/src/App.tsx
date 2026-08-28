@@ -7,6 +7,7 @@ import {
   saveRuntimeEndpoint,
   startLocalService,
   stopLocalService,
+  type RuntimeApproval,
   type RuntimeRun,
   type RuntimeEvent,
   type RuntimeEngine,
@@ -35,6 +36,11 @@ type ViewId =
 
 type RunProfile = string;
 type ThemeMode = "dark" | "light";
+
+type PendingRunRequest = {
+  task: string;
+  requestedHarness: string | null;
+};
 
 type WorkflowRecipe = {
   id: string;
@@ -152,9 +158,9 @@ function authorityStepsForRun(lastRun: RuntimeRun | null, events: RuntimeEvent[]
   }
   const eventTypes = new Set(events.map((event) => event.event_type));
   const policyResolved = eventTypes.has("policy_approved") || eventTypes.has("policy_denied") || eventTypes.has("approval_required");
-  const denied = lastRun.status === "denied" || lastRun.status === "failed" || eventTypes.has("policy_denied");
+  const denied = lastRun.status === "denied" || lastRun.status === "failed";
   const completed = lastRun.status === "completed";
-  const approvalRequired = lastRun.status === "approval_required" || eventTypes.has("approval_required");
+  const approvalRequired = lastRun.status === "approval_required";
   return [
     { id: "parliament", label: "Parliament", detail: denied ? "Policy denied" : "Policy decision recorded", status: policyResolved ? "complete" : "bound", icon: "council" },
     { id: "shadow", label: "Shadow Council", detail: "Routing evidence recorded", status: "complete", icon: "users" },
@@ -306,6 +312,7 @@ function App() {
   const [tools, setTools] = useState<RuntimeTool[]>([]);
   const [providers, setProviders] = useState<RuntimeProvider[]>([]);
   const [lastRun, setLastRun] = useState<RuntimeRun | null>(null);
+  const [pendingRun, setPendingRun] = useState<PendingRunRequest | null>(null);
   const [runInFlight, setRunInFlight] = useState(false);
   const [runProfile, setRunProfile] = useState<RunProfile>("auto");
   const [theme, setTheme] = useState<ThemeMode>(loadTheme);
@@ -361,6 +368,7 @@ function App() {
       setEngines([]);
       setTools([]);
       setProviders([]);
+      setPendingRun(null);
       return;
     }
     let cancelled = false;
@@ -464,6 +472,7 @@ function App() {
       setEngines([]);
       setTools([]);
       setProviders([]);
+      setPendingRun(null);
       setRuntimeStatus("preview");
     } catch (error: unknown) {
       setRuntimeStatus("offline");
@@ -492,6 +501,7 @@ function App() {
         client.memory(sessionId),
       ]);
       setLastRun(null);
+      setPendingRun(null);
       setSelectedSessionId(sessionId);
       setSelectedSession(detail);
       setEvents(nextEvents);
@@ -511,22 +521,70 @@ function App() {
     setRuntimeStatus("checking");
     setRuntimeError("");
     try {
-      const result = await client.run(task, harnessForProfile(profile));
-      setLastRun(result);
-      setSessions(await client.sessions());
-      const [detail, nextEvents, nextMemory] = await Promise.all([
-        client.inspectSession(result.session_id),
-        client.events(result.session_id),
-        client.memory(result.session_id),
-      ]);
-      setSelectedSessionId(result.session_id);
-      setSelectedSession(detail);
-      setEvents(nextEvents);
-      setMemoryRecords(nextMemory);
+      const requestedHarness = harnessForProfile(profile);
+      const result = await client.run(task, requestedHarness);
+      setPendingRun(result.approval ? { task, requestedHarness } : null);
+      await loadRunResult(result);
       setRuntimeStatus("connected");
     } catch (error: unknown) {
       setRuntimeStatus("offline");
       const message = error instanceof Error ? error.message : "Pandora run failed";
+      setRuntimeError(message);
+      throw error;
+    } finally {
+      setRunInFlight(false);
+    }
+  };
+
+  const loadRunResult = async (result: RuntimeRun) => {
+    setLastRun(result);
+    const [nextSessions, detail, nextEvents, nextMemory] = await Promise.all([
+      client!.sessions(),
+      client!.inspectSession(result.session_id),
+      client!.events(result.session_id),
+      client!.memory(result.session_id),
+    ]);
+    setSessions(nextSessions);
+    setSelectedSessionId(result.session_id);
+    setSelectedSession(detail);
+    setEvents(nextEvents);
+    setMemoryRecords(nextMemory);
+  };
+
+  const resolvePendingApproval = async (allow: boolean) => {
+    const approval = lastRun?.approval;
+    if (!client || !approval || !pendingRun) {
+      throw new Error("No resumable approval is available");
+    }
+    setRunInFlight(true);
+    setRuntimeStatus("checking");
+    setRuntimeError("");
+    try {
+      const resolved = approval.status === "pending"
+        ? await client.resolveApproval(approval.approval_id, allow)
+        : approval;
+      setLastRun({ ...lastRun, approval: resolved });
+      if (allow) {
+        const result = await client.resume(
+          approval.approval_id,
+          pendingRun.task,
+          pendingRun.requestedHarness,
+        );
+        setPendingRun(null);
+        await loadRunResult(result);
+      } else {
+        setPendingRun(null);
+        setLastRun({
+          ...lastRun,
+          status: "denied",
+          status_detail: "The operator denied this exact request.",
+          approval: resolved,
+        });
+      }
+      setRuntimeStatus("connected");
+    } catch (error: unknown) {
+      setRuntimeStatus("offline");
+      const message = error instanceof Error ? error.message : "Could not resolve Pandora approval";
       setRuntimeError(message);
       throw error;
     } finally {
@@ -570,6 +628,7 @@ function App() {
             runProfile={runProfile}
             onRunProfileChange={setRunProfile}
             onRun={runTask}
+            onResolveApproval={resolvePendingApproval}
           />
         ) : activeView === "memory" ? (
           <MemoryView runtimeStatus={runtimeStatus} records={memoryRecords} selectedSession={selectedSession} />
@@ -658,7 +717,7 @@ function runtimeStatusLabel(status: RuntimeStatus): string {
   }
 }
 
-function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onApprovalClose, onSelectStep, runtimeStatus, selectedSession, lastRun, events, harnesses, runInFlight, runProfile, onRunProfileChange, onRun }: { approvalPreview: boolean; selectedStep: string; onApprovalPreview: () => void; onApprovalClose: () => void; onSelectStep: (id: string) => void; runtimeStatus: RuntimeStatus; selectedSession: RuntimeSessionDetail | null; lastRun: RuntimeRun | null; events: RuntimeEvent[]; harnesses: RuntimeHarness[]; runInFlight: boolean; runProfile: RunProfile; onRunProfileChange: (profile: RunProfile) => void; onRun: (task: string, profile: RunProfile) => Promise<void> }) {
+function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onApprovalClose, onSelectStep, runtimeStatus, selectedSession, lastRun, events, harnesses, runInFlight, runProfile, onRunProfileChange, onRun, onResolveApproval }: { approvalPreview: boolean; selectedStep: string; onApprovalPreview: () => void; onApprovalClose: () => void; onSelectStep: (id: string) => void; runtimeStatus: RuntimeStatus; selectedSession: RuntimeSessionDetail | null; lastRun: RuntimeRun | null; events: RuntimeEvent[]; harnesses: RuntimeHarness[]; runInFlight: boolean; runProfile: RunProfile; onRunProfileChange: (profile: RunProfile) => void; onRun: (task: string, profile: RunProfile) => Promise<void>; onResolveApproval: (allow: boolean) => Promise<void> }) {
   const [task, setTask] = useState("");
   const [runError, setRunError] = useState("");
 
@@ -709,7 +768,7 @@ function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onAppro
       <form className="composer-wrap" onSubmit={submit}><div className="composer"><button type="button" className="composer-add" aria-label="Context attachments unavailable" title="Context attachments are not available yet" disabled><Icon name="plus" size={17} /></button><textarea value={task} onChange={(event) => setTask(event.target.value)} onKeyDown={handleTaskKeyDown} placeholder="Ask Pandora to inspect, plan, or act…" aria-label="Pandora task" rows={1} disabled={runInFlight} /><div className="composer-actions"><label className="composer-profile"><span className="sr-only">Execution Harness</span><select value={runProfile} onChange={(event) => onRunProfileChange(event.target.value)} aria-label="Execution Harness" disabled={runInFlight}>{profileOptions.map((profile) => <option value={profile.id} key={profile.id}>{profile.label}</option>)}</select></label><span className="composer-mode"><Icon name="spark" size={14} /> Governed run</span><button type="submit" className="send-button" aria-label={runInFlight ? "Pandora is running" : "Send"} disabled={!connected || !task.trim() || runInFlight}><Icon name="arrow" size={16} /></button></div></div><div className="composer-hint"><span>{runError || (runInFlight ? "Pandora is running the governed request…" : connected ? "Ctrl/⌘ + Enter to send" : "Connect the local service in Connections")}</span><span>All effects require an exact permit</span></div></form>
       {lastRun ? <Panel className="run-result"><div className="panel-heading"><h3>Latest run</h3><Chip tone={lastRun.status === "completed" ? "green" : "amber"}>{lastRun.status}</Chip></div><div className="run-result-meta"><span className="mono">{lastRun.execution_id}</span><span>{lastRun.selected_gene ?? "No gene selected"}</span></div><p>{lastRun.output || "No output returned."}</p>{events.length ? <div className="event-list"><span className="eyebrow">LIVE ACTIVITY</span>{events.map((event) => <div className="event-row" key={event.event_id}><span className="event-dot" /><span>{event.event_type.replaceAll("_", " ")}</span><span className="mono">{event.event_id}</span></div>)}</div> : null}</Panel> : null}
     </section>
-    <Inspector steps={steps} approvalPreview={approvalPreview} hasLiveRun={Boolean(lastRun)} approvalDetail={lastRun?.status_detail} selectedStep={selectedStep} onApprovalPreview={onApprovalPreview} onApprovalClose={onApprovalClose} onSelectStep={onSelectStep} />
+    <Inspector steps={steps} approvalPreview={approvalPreview} hasLiveRun={Boolean(lastRun)} approval={lastRun?.approval} approvalDetail={lastRun?.status_detail} approvalInFlight={runInFlight} selectedStep={selectedStep} onApprovalPreview={onApprovalPreview} onApprovalClose={onApprovalClose} onResolveApproval={onResolveApproval} onSelectStep={onSelectStep} />
   </div>;
 }
 
@@ -743,13 +802,23 @@ function CommandPalette({ onClose, onSelectView }: { onClose: () => void; onSele
   return <div className="palette-backdrop" role="presentation" onMouseDown={onClose}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Open Pandora surface" onMouseDown={(event) => event.stopPropagation()}><div className="palette-search"><Icon name="search" size={16} /><input autoFocus value={query} onChange={(event) => { setQuery(event.target.value); setSelectedIndex(0); }} onKeyDown={handleKeyDown} placeholder="Search Pandora surfaces…" aria-label="Search Pandora surfaces" /><kbd>ESC</kbd></div><div className="palette-list">{filtered.length ? filtered.map((action, index) => <button type="button" className={`palette-item ${index === selectedIndex ? "is-active" : ""}`} aria-selected={index === selectedIndex} key={action.id} onMouseEnter={() => setSelectedIndex(index)} onClick={() => choose(index)}><Icon name={action.icon} size={16} /><span><strong>{action.label}</strong><small>{action.group}</small></span><kbd>↵</kbd></button>) : <p className="palette-empty">No matching Pandora surface.</p>}</div><div className="palette-footer"><span>Use ↑ ↓ and Enter</span><span className="mono">⌘ K</span></div></section></div>;
 }
 
-function Inspector({ steps, approvalPreview, hasLiveRun, approvalDetail, selectedStep, onApprovalPreview, onApprovalClose, onSelectStep }: { steps: typeof authoritySteps; approvalPreview: boolean; hasLiveRun: boolean; approvalDetail?: string; selectedStep: string; onApprovalPreview: () => void; onApprovalClose: () => void; onSelectStep: (id: string) => void }) {
+function Inspector({ steps, approvalPreview, hasLiveRun, approval, approvalDetail, approvalInFlight, selectedStep, onApprovalPreview, onApprovalClose, onResolveApproval, onSelectStep }: { steps: typeof authoritySteps; approvalPreview: boolean; hasLiveRun: boolean; approval?: RuntimeApproval; approvalDetail?: string; approvalInFlight: boolean; selectedStep: string; onApprovalPreview: () => void; onApprovalClose: () => void; onResolveApproval: (allow: boolean) => Promise<void>; onSelectStep: (id: string) => void }) {
+  const [approvalError, setApprovalError] = useState("");
   const selected = steps.find((step) => step.id === selectedStep) ?? steps[4];
+  const decide = async (allow: boolean) => {
+    setApprovalError("");
+    try {
+      await onResolveApproval(allow);
+    } catch (error: unknown) {
+      setApprovalError(error instanceof Error ? error.message : "Could not resolve approval");
+    }
+  };
   return <aside className="inspector">
     <div className="inspector-header"><div><span className="eyebrow">{hasLiveRun ? "LIVE RUN SUMMARY" : "AUTHORITY CONTRACT"}</span><h2>{hasLiveRun ? "Execution recorded" : "Preview boundary"}</h2></div><button className="icon-button" type="button" aria-label="Inspector options" disabled><Icon name="dots" size={17} /></button></div>
     <Panel className="task-panel"><div className="task-heading"><span className="task-icon"><Icon name="code" size={18} /></span><div><span className="eyebrow">PANDORA DESKTOP</span><h3>Governed command surface</h3></div></div><p className="task-copy">Submit work through the authenticated local service. The desktop shell does not issue permits or execute tools directly.</p><div className="task-meta"><span><Icon name="book" size={13} /> Existing runtime</span><span><Icon name="lock" size={13} /> Service scoped</span></div></Panel>
     <div className="inspector-section"><div className="section-heading"><span>Authority chain</span><span className="mono section-count">{steps.filter((step) => step.status !== "idle").length}/7</span></div><div className="authority-timeline">{steps.map((step) => <button className={`authority-row status-${step.status} ${selectedStep === step.id ? "is-selected" : ""}`} key={step.id} onClick={() => onSelectStep(step.id)}><span className="timeline-line" /><span className="timeline-node">{step.status === "complete" ? <Icon name="check" size={12} /> : <Icon name={step.icon} size={13} />}</span><span className="authority-copy"><strong>{step.label}</strong><small>{step.detail}</small></span><Icon name="chevron" size={14} /></button>)}</div></div>
-    <Panel className={`approval-panel ${approvalPreview ? "is-preview-complete" : ""}`}><div className="approval-top"><span className="approval-icon"><Icon name={approvalPreview ? "check" : "shield"} size={17} /></span><div><span className="eyebrow">{approvalDetail ? "LIVE RUNTIME" : "PREVIEW ONLY"}</span><h3>{approvalDetail ? "Approval required" : approvalPreview ? "No permit was issued" : "Preview one exact operation"}</h3></div></div>{approvalDetail ? <><p className="approval-note">The runtime paused before permit issuance.</p><div className="operation-box"><div><span className="eyebrow">REASON</span><strong>{approvalDetail}</strong></div><div><span className="eyebrow">SCOPE</span><span className="mono">Exact session and request</span></div></div><div className="approval-actions"><button className="button button-secondary" type="button" onClick={onApprovalClose}>Close</button></div></> : approvalPreview ? <><p className="approval-note">The interface state changed locally. The current service surface exposes no approval mutation here.</p><div className="approval-actions"><button className="button button-secondary" type="button" onClick={onApprovalClose}>Close</button></div></> : <><p className="approval-note">This panel documents the exact-scope approval contract. It does not create an approval or permit.</p><div className="operation-box"><div><span className="eyebrow">OPERATION</span><strong>workspace.diff</strong></div><div><span className="eyebrow">TARGET</span><span className="mono">Pandora / local</span></div><div><span className="eyebrow">REQUEST DIGEST</span><span className="digest"><span className="mono">sha256:4c19…e08a</span><button className="copy-button" type="button" aria-label="Copy request digest" disabled><Icon name="copy" size={13} /></button></span></div></div><div className="approval-actions"><button className="button button-deny" type="button" onClick={onApprovalClose}>Close</button><button className="button button-primary" type="button" onClick={onApprovalPreview}>Show preview <Icon name="arrow" size={14} /></button></div></>}</Panel>
+    <Panel className={`approval-panel ${approvalPreview || (approval && approval.status !== "pending") ? "is-preview-complete" : ""}`}><div className="approval-top"><span className="approval-icon"><Icon name={approvalPreview || (approval && approval.status !== "pending") ? "check" : "shield"} size={17} /></span><div><span className="eyebrow">{approval ? "LIVE APPROVAL" : approvalDetail ? "LIVE RUNTIME" : "PREVIEW ONLY"}</span><h3>{approval ? approval.status === "pending" ? "Exact approval required" : `Approval ${approval.status}` : approvalDetail ? "Approval metadata unavailable" : approvalPreview ? "No permit was issued" : "Preview one exact operation"}</h3></div></div>{approval ? <><p className="approval-note">{approval.status === "pending" ? "Review the exact digest before allowing this operation once." : `This approval is ${approval.status}; it cannot authorize another execution.`}</p><div className="operation-box"><div><span className="eyebrow">OPERATION</span><strong>{approval.request_summary}</strong></div><div><span className="eyebrow">GENE</span><span className="mono">{approval.gene_id}</span></div><div><span className="eyebrow">REQUEST DIGEST</span><span className="digest"><span className="mono">{approval.request_digest}</span></span></div><div><span className="eyebrow">SCOPE</span><span className="mono">{approval.session_id}</span></div></div>{approvalError ? <p className="approval-error" role="alert">{approvalError}</p> : null}<div className="approval-actions">{approval.status === "pending" ? <><button className="button button-deny" type="button" disabled={approvalInFlight} onClick={() => void decide(false)}>Deny</button><button className="button button-primary" type="button" disabled={approvalInFlight} onClick={() => void decide(true)}>{approvalInFlight ? "Resolving…" : "Allow once"} <Icon name="arrow" size={14} /></button></> : <button className="button button-secondary" type="button" onClick={onApprovalClose}>Close</button>}</div></> : approvalDetail ? <><p className="approval-note">The runtime paused, but this service did not return an exact approval record. Upgrade the local service before resuming.</p><div className="operation-box"><div><span className="eyebrow">REASON</span><strong>{approvalDetail}</strong></div><div><span className="eyebrow">SCOPE</span><span className="mono">Exact session and request</span></div></div><div className="approval-actions"><button className="button button-secondary" type="button" onClick={onApprovalClose}>Close</button></div></> : approvalPreview ? <><p className="approval-note">This preview records no decision and issues no permit.</p><div className="approval-actions"><button className="button button-secondary" type="button" onClick={onApprovalClose}>Close</button></div></> : <><p className="approval-note">This panel documents the exact-scope approval contract. It does not create an approval or permit.</p><div className="operation-box"><div><span className="eyebrow">OPERATION</span><strong>workspace.diff</strong></div><div><span className="eyebrow">TARGET</span><span className="mono">Pandora / local</span></div><div><span className="eyebrow">REQUEST DIGEST</span><span className="digest"><span className="mono">sha256:4c19…e08a</span><button className="copy-button" type="button" aria-label="Copy request digest" disabled><Icon name="copy" size={13} /></button></span></div></div><div className="approval-actions"><button className="button button-deny" type="button" onClick={onApprovalClose}>Close</button><button className="button button-primary" type="button" onClick={onApprovalPreview}>Show preview <Icon name="arrow" size={14} /></button></div></>}</Panel>
+    {approval?.status === "approved" ? <button className="button button-primary approval-resume" type="button" disabled={approvalInFlight} onClick={() => void decide(true)}>{approvalInFlight ? "Resuming…" : "Resume approved run"} <Icon name="arrow" size={14} /></button> : null}
     <div className="selected-detail"><div className="section-heading"><span>Selected evidence</span><Icon name="chevron" size={14} /></div><div className="detail-row"><span className="detail-label">Stage</span><span>{selected.label}</span></div><div className="detail-row"><span className="detail-label">Status</span><Chip tone={selected.status === "waiting" ? "amber" : selected.status === "idle" ? "neutral" : "green"} icon={selected.status === "waiting" ? "clock" : selected.status === "idle" ? "lock" : "check"}>{selected.status}</Chip></div></div>
   </aside>;
 }

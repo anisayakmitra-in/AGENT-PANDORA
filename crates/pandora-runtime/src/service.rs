@@ -1,12 +1,14 @@
+use crate::approvals::{ApprovalError, ApprovalRequest, ApprovalStore, PendingApproval};
 use crate::evaluation_engine::EvaluationEngine;
 use crate::execution_controller::{ExecutionController, RunStatus, RunSummary, RuntimeError};
 use crate::sessions::{SessionError, SessionStore};
 use crate::tool_engine::ToolEngine;
 use pandora_types::{
-    EvaluationContractError, EvaluationReceipt, EvaluationRequest, EventType, IdError, MemoryTier,
-    PrincipalId, ServiceContractError, ServiceEngineSummary, ServiceEventPage,
-    ServiceHarnessSummary, ServiceHealth, ServiceMemoryPage, ServiceMemoryRecord,
-    ServiceProviderSummary, ServiceRequest, ServiceResponse, ServiceRunRequest, ServiceRunResult,
+    EvaluationContractError, EvaluationReceipt, EvaluationRequest, EventPayload, EventType,
+    IdError, MemoryTier, PrincipalId, ServiceApprovalSummary, ServiceContractError,
+    ServiceEngineSummary, ServiceEventPage, ServiceHarnessSummary, ServiceHealth,
+    ServiceMemoryPage, ServiceMemoryRecord, ServiceProviderSummary, ServiceRequest,
+    ServiceResponse, ServiceRunRequest, ServiceRunResult, ServiceRunResumeRequest,
     ServiceSessionDetail, ServiceSessionSummary, ServiceToolSummary, Session, SessionId,
     TaskIntent, TenantId, Timestamp, WorkspaceId,
 };
@@ -50,6 +52,7 @@ pub enum RuntimeServiceError {
     Evaluation(EvaluationContractError),
     Identifier(IdError),
     Runtime(RuntimeError),
+    Approval(ApprovalError),
     Session(SessionError),
 }
 
@@ -60,7 +63,20 @@ impl RuntimeServiceError {
             Self::Contract(_) => "invalid_service_request",
             Self::Evaluation(_) => "invalid_evaluation",
             Self::Identifier(_) => "invalid_session_identifier",
+            Self::Runtime(RuntimeError::Approval(ApprovalError::NotFound)) => "approval_not_found",
+            Self::Runtime(RuntimeError::Approval(ApprovalError::Expired)) => "approval_expired",
+            Self::Runtime(RuntimeError::Approval(ApprovalError::Terminal)) => "approval_terminal",
+            Self::Runtime(RuntimeError::Approval(
+                ApprovalError::ScopeMismatch | ApprovalError::DigestMismatch,
+            )) => "approval_scope_mismatch",
             Self::Runtime(_) => "runtime_execution_failed",
+            Self::Approval(ApprovalError::NotFound) => "approval_not_found",
+            Self::Approval(ApprovalError::Expired) => "approval_expired",
+            Self::Approval(ApprovalError::Terminal) => "approval_terminal",
+            Self::Approval(ApprovalError::ScopeMismatch | ApprovalError::DigestMismatch) => {
+                "approval_scope_mismatch"
+            }
+            Self::Approval(_) => "approval_store_failed",
             Self::Session(SessionError::SessionNotFound) => "session_not_found",
             Self::Session(SessionError::ScopeViolation) => "session_scope_violation",
             Self::Session(_) => "session_store_failed",
@@ -81,6 +97,7 @@ impl fmt::Display for RuntimeServiceError {
             Self::Evaluation(_) => formatter.write_str("execution evaluation is invalid"),
             Self::Identifier(_) => formatter.write_str("service session identifier is invalid"),
             Self::Runtime(_) => formatter.write_str("governed runtime execution failed"),
+            Self::Approval(error) => error.fmt(formatter),
             Self::Session(error) => error.fmt(formatter),
         }
     }
@@ -112,6 +129,12 @@ impl From<RuntimeError> for RuntimeServiceError {
     }
 }
 
+impl From<ApprovalError> for RuntimeServiceError {
+    fn from(error: ApprovalError) -> Self {
+        Self::Approval(error)
+    }
+}
+
 impl From<SessionError> for RuntimeServiceError {
     fn from(error: SessionError) -> Self {
         Self::Session(error)
@@ -121,6 +144,7 @@ impl From<SessionError> for RuntimeServiceError {
 pub struct RuntimeService {
     controller: ExecutionController,
     sessions: SessionStore,
+    approvals: ApprovalStore,
     scope: RuntimeServiceScope,
     providers: Vec<ServiceProviderSummary>,
     next_session: AtomicU64,
@@ -130,20 +154,23 @@ impl RuntimeService {
     pub fn new(
         controller: ExecutionController,
         sessions: SessionStore,
+        approvals: ApprovalStore,
         scope: RuntimeServiceScope,
     ) -> Self {
-        Self::new_with_providers(controller, sessions, scope, Vec::new())
+        Self::new_with_providers(controller, sessions, approvals, scope, Vec::new())
     }
 
     pub fn new_with_providers(
         controller: ExecutionController,
         sessions: SessionStore,
+        approvals: ApprovalStore,
         scope: RuntimeServiceScope,
         providers: Vec<ServiceProviderSummary>,
     ) -> Self {
         Self {
             controller,
             sessions,
+            approvals,
             scope,
             providers,
             next_session: AtomicU64::new(1),
@@ -180,7 +207,15 @@ impl RuntimeService {
             ServiceRequest::SessionMemory {
                 session_id, limit, ..
             } => self.session_memory(session_id, *limit),
+            ServiceRequest::ApprovalList { limit, .. } => self.list_approvals(*limit, now),
+            ServiceRequest::ApprovalInspect { approval_id, .. } => {
+                self.inspect_approval(approval_id, now)
+            }
+            ServiceRequest::ApprovalResolve {
+                approval_id, allow, ..
+            } => self.resolve_approval(approval_id, *allow, now),
             ServiceRequest::Run { request, .. } => self.run(request, now),
+            ServiceRequest::RunResume { request, .. } => self.resume_run(request, now),
         }
     }
 
@@ -447,38 +482,163 @@ impl RuntimeService {
         )))
     }
 
+    fn list_approvals(
+        &self,
+        limit: u16,
+        now: Timestamp,
+    ) -> Result<ServiceResponse, RuntimeServiceError> {
+        let mut approvals = Vec::new();
+        let mut available = self.approvals.list(self.scope.principal_id())?;
+        available.reverse();
+        for approval in available {
+            match self.sessions.resume(
+                approval.session_id(),
+                self.scope.principal_id(),
+                self.scope.tenant_id(),
+                self.scope.workspace_id(),
+            ) {
+                Ok(_) => approvals.push(service_approval_summary(&approval, now)?),
+                Err(SessionError::SessionNotFound | SessionError::ScopeViolation) => {}
+                Err(error) => return Err(error.into()),
+            }
+            if approvals.len() >= usize::from(limit) {
+                break;
+            }
+        }
+        Ok(ServiceResponse::approval_list(approvals))
+    }
+
+    fn inspect_approval(
+        &self,
+        approval_id: &str,
+        now: Timestamp,
+    ) -> Result<ServiceResponse, RuntimeServiceError> {
+        let approval = self.scoped_approval(approval_id)?;
+        Ok(ServiceResponse::approval_inspect(service_approval_summary(
+            &approval, now,
+        )?))
+    }
+
+    fn resolve_approval(
+        &self,
+        approval_id: &str,
+        allow: bool,
+        now: Timestamp,
+    ) -> Result<ServiceResponse, RuntimeServiceError> {
+        self.scoped_approval(approval_id)?;
+        let approval = self.approvals.resolve(
+            approval_id,
+            self.scope.principal_id(),
+            self.scope.principal_id(),
+            allow,
+            now,
+        )?;
+        Ok(ServiceResponse::approval_resolve(service_approval_summary(
+            &approval, now,
+        )?))
+    }
+
+    fn scoped_approval(&self, approval_id: &str) -> Result<PendingApproval, RuntimeServiceError> {
+        let approval = self
+            .approvals
+            .inspect(approval_id, self.scope.principal_id())?;
+        self.sessions.resume(
+            approval.session_id(),
+            self.scope.principal_id(),
+            self.scope.tenant_id(),
+            self.scope.workspace_id(),
+        )?;
+        Ok(approval)
+    }
+
     fn run(
         &self,
         request: &ServiceRunRequest,
         now: Timestamp,
     ) -> Result<ServiceResponse, RuntimeServiceError> {
         let session = self.allocate_session(now)?;
-        let mut intent = TaskIntent::new(request.task()).map_err(ServiceContractError::from)?;
-        if let Some(harness_id) = request.requested_harness() {
-            intent = intent.with_harness(harness_id.clone());
-        }
-        if let Some(gene_id) = request.requested_gene() {
-            intent = intent.with_gene(gene_id.clone());
-        }
+        let intent = service_task_intent(request)?;
 
         let summary = self.controller.run_at(intent, session.clone(), now)?;
         self.sessions.create(&session)?;
         self.persist_execution(&session, &summary, now)?;
 
-        let mut result = ServiceRunResult::new(
+        let approval = if matches!(summary.status(), RunStatus::ApprovalRequired { .. }) {
+            Some(self.create_approval(request, &session, &summary, now)?)
+        } else {
+            None
+        };
+
+        Ok(ServiceResponse::run(service_run_result(
+            &summary,
+            session.id().clone(),
+            approval.as_ref(),
+            now,
+        )?))
+    }
+
+    fn resume_run(
+        &self,
+        request: &ServiceRunResumeRequest,
+        now: Timestamp,
+    ) -> Result<ServiceResponse, RuntimeServiceError> {
+        let approval = self.scoped_approval(request.approval_id())?;
+        let snapshot = self.sessions.resume(
+            approval.session_id(),
+            self.scope.principal_id(),
+            self.scope.tenant_id(),
+            self.scope.workspace_id(),
+        )?;
+        let session = snapshot.session().clone();
+        let intent = service_task_intent(request.request())?;
+        let summary = self.controller.run_with_approval(
+            intent,
+            session.clone(),
+            &self.approvals,
+            request.approval_id(),
+            now,
+        )?;
+        self.persist_execution(&session, &summary, now)?;
+
+        Ok(ServiceResponse::run(service_run_result(
+            &summary,
+            session.id().clone(),
+            None,
+            now,
+        )?))
+    }
+
+    fn create_approval(
+        &self,
+        request: &ServiceRunRequest,
+        session: &Session,
+        summary: &RunSummary,
+        now: Timestamp,
+    ) -> Result<PendingApproval, RuntimeServiceError> {
+        let (capability, request_digest) = summary
+            .events()
+            .iter()
+            .find_map(|event| match event.payload() {
+                EventPayload::Effect {
+                    capability,
+                    request_digest,
+                } => Some((capability.as_str(), request_digest.clone())),
+                _ => None,
+            })
+            .ok_or(ApprovalError::InvalidSummary)?;
+        let expires_at = Timestamp::from_unix_seconds(now.as_unix_seconds().saturating_add(900));
+        let approval = ApprovalRequest::new(
+            format!("approval-{}-{}", session.id(), summary.execution_id()),
             session.id().clone(),
             summary.execution_id().clone(),
-            Some(summary.selected_harness().clone()),
-            Some(summary.selected_gene().clone()),
-            run_status(summary.status()),
-            output_text(summary.output()),
-            u64::try_from(summary.receipts().len()).unwrap_or(u64::MAX),
-            u64::try_from(summary.events().len()).unwrap_or(u64::MAX),
-        );
-        if let RunStatus::ApprovalRequired { reason } = summary.status() {
-            result = result.with_status_detail(reason.clone());
-        }
-        Ok(ServiceResponse::run(result))
+            session.principal_id().clone(),
+            summary.selected_gene().clone(),
+            request_digest,
+            service_approval_request_summary(request.task(), capability),
+            self.controller.policy_version(),
+            expires_at,
+        )?;
+        Ok(self.approvals.create(approval)?)
     }
 
     fn allocate_session(&self, now: Timestamp) -> Result<Session, RuntimeServiceError> {
@@ -553,6 +713,68 @@ impl RuntimeService {
     }
 }
 
+fn service_task_intent(request: &ServiceRunRequest) -> Result<TaskIntent, RuntimeServiceError> {
+    let mut intent = TaskIntent::new(request.task()).map_err(ServiceContractError::from)?;
+    if let Some(harness_id) = request.requested_harness() {
+        intent = intent.with_harness(harness_id.clone());
+    }
+    if let Some(gene_id) = request.requested_gene() {
+        intent = intent.with_gene(gene_id.clone());
+    }
+    Ok(intent)
+}
+
+fn service_run_result(
+    summary: &RunSummary,
+    session_id: SessionId,
+    approval: Option<&PendingApproval>,
+    now: Timestamp,
+) -> Result<ServiceRunResult, RuntimeServiceError> {
+    let mut result = ServiceRunResult::new(
+        session_id,
+        summary.execution_id().clone(),
+        Some(summary.selected_harness().clone()),
+        Some(summary.selected_gene().clone()),
+        run_status(summary.status()),
+        output_text(summary.output()),
+        u64::try_from(summary.receipts().len()).unwrap_or(u64::MAX),
+        u64::try_from(summary.events().len()).unwrap_or(u64::MAX),
+    );
+    if let RunStatus::ApprovalRequired { reason } = summary.status() {
+        result = result.with_status_detail(reason.clone());
+    }
+    if let Some(approval) = approval {
+        result = result.with_approval(service_approval_summary(approval, now)?);
+    }
+    Ok(result)
+}
+
+fn service_approval_summary(
+    approval: &PendingApproval,
+    now: Timestamp,
+) -> Result<ServiceApprovalSummary, RuntimeServiceError> {
+    Ok(ServiceApprovalSummary::new(
+        approval.id(),
+        approval.session_id().clone(),
+        approval.execution_id().clone(),
+        approval.gene_id().clone(),
+        approval.request_digest().clone(),
+        approval.request_summary(),
+        approval.policy_version(),
+        approval.expires_at().as_unix_seconds(),
+        approval.status_at(now).as_str(),
+        approval.approver_id().cloned(),
+        approval.created_at().as_unix_seconds(),
+    )?)
+}
+
+fn service_approval_request_summary(task: &str, capability: &str) -> String {
+    let mut parts = task.splitn(3, ':');
+    let action = parts.next().unwrap_or("task");
+    let target = parts.next().unwrap_or("workspace");
+    format!("{capability} for {action} on {target}")
+}
+
 fn service_session_summary(session: Session) -> ServiceSessionSummary {
     ServiceSessionSummary::new(
         session.id().clone(),
@@ -598,6 +820,7 @@ mod tests {
         let service = RuntimeService::new(
             ExecutionController::new(WorkspaceRoot::new(&root).unwrap()),
             SessionStore::open(root.join("sessions.sqlite3")).unwrap(),
+            ApprovalStore::open(root.join("sessions.sqlite3")).unwrap(),
             scope,
         );
         let session = Session::new(
@@ -681,6 +904,7 @@ mod tests {
         let service = RuntimeService::new(
             ExecutionController::new(WorkspaceRoot::new(&root).unwrap()),
             SessionStore::open(root.join("sessions.sqlite3")).unwrap(),
+            ApprovalStore::open(root.join("sessions.sqlite3")).unwrap(),
             scope,
         );
 

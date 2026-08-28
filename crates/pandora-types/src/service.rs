@@ -1,7 +1,8 @@
 use crate::effect::{RequestError, Timestamp};
 use crate::events::RuntimeEvent;
 use crate::ids::{
-    ExecutionId, GeneId, HarnessId, IdError, PrincipalId, SessionId, TenantId, WorkspaceId,
+    ExecutionId, GeneId, HarnessId, IdError, PrincipalId, RequestDigest, SessionId, TenantId,
+    WorkspaceId,
 };
 use crate::memory::{MemoryKind, MemoryTier};
 use serde::{Deserialize, Serialize};
@@ -15,6 +16,8 @@ pub const MAX_SERVICE_SESSION_PAGE: u16 = 256;
 pub enum ServiceContractError {
     InvalidTask(RequestError),
     InvalidIdentifier(IdError),
+    InvalidApprovalIdentifier,
+    InvalidApprovalSummary,
     InvalidPageLimit { limit: u16, maximum: u16 },
 }
 
@@ -23,6 +26,10 @@ impl fmt::Display for ServiceContractError {
         match self {
             Self::InvalidTask(error) => error.fmt(formatter),
             Self::InvalidIdentifier(error) => error.fmt(formatter),
+            Self::InvalidApprovalIdentifier => {
+                formatter.write_str("approval identifier is invalid")
+            }
+            Self::InvalidApprovalSummary => formatter.write_str("approval summary is invalid"),
             Self::InvalidPageLimit { limit, maximum } => {
                 write!(
                     formatter,
@@ -52,6 +59,40 @@ pub struct ServiceRunRequest {
     task: String,
     requested_harness: Option<HarnessId>,
     requested_gene: Option<GeneId>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServiceRunResumeRequest {
+    approval_id: String,
+    request: ServiceRunRequest,
+}
+
+impl ServiceRunResumeRequest {
+    pub fn new(
+        approval_id: impl Into<String>,
+        request: ServiceRunRequest,
+    ) -> Result<Self, ServiceContractError> {
+        let approval_id = approval_id.into();
+        validate_approval_id(&approval_id)?;
+        request.validate()?;
+        Ok(Self {
+            approval_id,
+            request,
+        })
+    }
+
+    pub fn approval_id(&self) -> &str {
+        &self.approval_id
+    }
+
+    pub const fn request(&self) -> &ServiceRunRequest {
+        &self.request
+    }
+
+    pub fn validate(&self) -> Result<(), ServiceContractError> {
+        validate_approval_id(&self.approval_id)?;
+        self.request.validate()
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -376,9 +417,26 @@ pub enum ServiceRequest {
         session_id: SessionId,
         limit: u16,
     },
+    ApprovalList {
+        protocol_version: u16,
+        limit: u16,
+    },
+    ApprovalInspect {
+        protocol_version: u16,
+        approval_id: String,
+    },
+    ApprovalResolve {
+        protocol_version: u16,
+        approval_id: String,
+        allow: bool,
+    },
     Run {
         protocol_version: u16,
         request: ServiceRunRequest,
+    },
+    RunResume {
+        protocol_version: u16,
+        request: ServiceRunResumeRequest,
     },
 }
 
@@ -454,6 +512,43 @@ impl ServiceRequest {
         }
     }
 
+    pub fn approval_list(limit: u16) -> Result<Self, ServiceContractError> {
+        validate_page_limit(limit, MAX_SERVICE_SESSION_PAGE)?;
+        Ok(Self::ApprovalList {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            limit,
+        })
+    }
+
+    pub fn approval_inspect(approval_id: impl Into<String>) -> Result<Self, ServiceContractError> {
+        let approval_id = approval_id.into();
+        validate_approval_id(&approval_id)?;
+        Ok(Self::ApprovalInspect {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            approval_id,
+        })
+    }
+
+    pub fn approval_resolve(
+        approval_id: impl Into<String>,
+        allow: bool,
+    ) -> Result<Self, ServiceContractError> {
+        let approval_id = approval_id.into();
+        validate_approval_id(&approval_id)?;
+        Ok(Self::ApprovalResolve {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            approval_id,
+            allow,
+        })
+    }
+
+    pub const fn run_resume(request: ServiceRunResumeRequest) -> Self {
+        Self::RunResume {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            request,
+        }
+    }
+
     pub const fn protocol_version(&self) -> u16 {
         match self {
             Self::Health { protocol_version }
@@ -473,7 +568,19 @@ impl ServiceRequest {
             | Self::SessionMemory {
                 protocol_version, ..
             }
+            | Self::ApprovalList {
+                protocol_version, ..
+            }
+            | Self::ApprovalInspect {
+                protocol_version, ..
+            }
+            | Self::ApprovalResolve {
+                protocol_version, ..
+            }
             | Self::Run {
+                protocol_version, ..
+            }
+            | Self::RunResume {
                 protocol_version, ..
             } => *protocol_version,
         }
@@ -504,7 +611,13 @@ impl ServiceRequest {
                 SessionId::new(session_id.as_str())?;
                 validate_page_limit(*limit, MAX_SERVICE_SESSION_PAGE)
             }
+            Self::ApprovalList { limit, .. } => {
+                validate_page_limit(*limit, MAX_SERVICE_SESSION_PAGE)
+            }
+            Self::ApprovalInspect { approval_id, .. }
+            | Self::ApprovalResolve { approval_id, .. } => validate_approval_id(approval_id),
             Self::Run { request, .. } => request.validate(),
+            Self::RunResume { request, .. } => request.validate(),
         }
     }
 }
@@ -729,6 +842,102 @@ impl ServiceEventPage {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServiceApprovalSummary {
+    approval_id: String,
+    session_id: SessionId,
+    execution_id: ExecutionId,
+    gene_id: GeneId,
+    request_digest: RequestDigest,
+    request_summary: String,
+    policy_version: u32,
+    expires_at_unix_seconds: u64,
+    status: String,
+    approver_id: Option<PrincipalId>,
+    created_at_unix_seconds: u64,
+}
+
+impl ServiceApprovalSummary {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        approval_id: impl Into<String>,
+        session_id: SessionId,
+        execution_id: ExecutionId,
+        gene_id: GeneId,
+        request_digest: RequestDigest,
+        request_summary: impl Into<String>,
+        policy_version: u32,
+        expires_at_unix_seconds: u64,
+        status: impl Into<String>,
+        approver_id: Option<PrincipalId>,
+        created_at_unix_seconds: u64,
+    ) -> Result<Self, ServiceContractError> {
+        let approval_id = approval_id.into();
+        validate_approval_id(&approval_id)?;
+        let request_summary = request_summary.into();
+        if request_summary.trim().is_empty() {
+            return Err(ServiceContractError::InvalidApprovalSummary);
+        }
+        Ok(Self {
+            approval_id,
+            session_id,
+            execution_id,
+            gene_id,
+            request_digest,
+            request_summary,
+            policy_version,
+            expires_at_unix_seconds,
+            status: status.into(),
+            approver_id,
+            created_at_unix_seconds,
+        })
+    }
+
+    pub fn approval_id(&self) -> &str {
+        &self.approval_id
+    }
+
+    pub fn session_id(&self) -> &SessionId {
+        &self.session_id
+    }
+
+    pub fn execution_id(&self) -> &ExecutionId {
+        &self.execution_id
+    }
+
+    pub fn gene_id(&self) -> &GeneId {
+        &self.gene_id
+    }
+
+    pub fn request_digest(&self) -> &RequestDigest {
+        &self.request_digest
+    }
+
+    pub fn request_summary(&self) -> &str {
+        &self.request_summary
+    }
+
+    pub const fn policy_version(&self) -> u32 {
+        self.policy_version
+    }
+
+    pub const fn expires_at_unix_seconds(&self) -> u64 {
+        self.expires_at_unix_seconds
+    }
+
+    pub fn status(&self) -> &str {
+        &self.status
+    }
+
+    pub fn approver_id(&self) -> Option<&PrincipalId> {
+        self.approver_id.as_ref()
+    }
+
+    pub const fn created_at_unix_seconds(&self) -> u64 {
+        self.created_at_unix_seconds
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ServiceRunResult {
     session_id: SessionId,
     execution_id: ExecutionId,
@@ -740,6 +949,8 @@ pub struct ServiceRunResult {
     event_count: u64,
     #[serde(default)]
     status_detail: Option<String>,
+    #[serde(default)]
+    approval: Option<ServiceApprovalSummary>,
 }
 
 impl ServiceRunResult {
@@ -764,12 +975,22 @@ impl ServiceRunResult {
             receipt_count,
             event_count,
             status_detail: None,
+            approval: None,
         }
     }
 
     pub fn with_status_detail(mut self, detail: impl Into<String>) -> Self {
         self.status_detail = Some(detail.into());
         self
+    }
+
+    pub fn with_approval(mut self, approval: ServiceApprovalSummary) -> Self {
+        self.approval = Some(approval);
+        self
+    }
+
+    pub const fn approval(&self) -> Option<&ServiceApprovalSummary> {
+        self.approval.as_ref()
     }
 
     pub fn status_detail(&self) -> Option<&str> {
@@ -848,6 +1069,18 @@ pub enum ServiceResponse {
         protocol_version: u16,
         memory: ServiceMemoryPage,
     },
+    ApprovalList {
+        protocol_version: u16,
+        approvals: Vec<ServiceApprovalSummary>,
+    },
+    ApprovalInspect {
+        protocol_version: u16,
+        approval: ServiceApprovalSummary,
+    },
+    ApprovalResolve {
+        protocol_version: u16,
+        approval: ServiceApprovalSummary,
+    },
     Run {
         protocol_version: u16,
         run: ServiceRunResult,
@@ -918,6 +1151,27 @@ impl ServiceResponse {
         }
     }
 
+    pub fn approval_list(approvals: Vec<ServiceApprovalSummary>) -> Self {
+        Self::ApprovalList {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            approvals,
+        }
+    }
+
+    pub const fn approval_inspect(approval: ServiceApprovalSummary) -> Self {
+        Self::ApprovalInspect {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            approval,
+        }
+    }
+
+    pub const fn approval_resolve(approval: ServiceApprovalSummary) -> Self {
+        Self::ApprovalResolve {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            approval,
+        }
+    }
+
     pub const fn run(run: ServiceRunResult) -> Self {
         Self::Run {
             protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
@@ -954,6 +1208,15 @@ impl ServiceResponse {
             | Self::SessionMemory {
                 protocol_version, ..
             }
+            | Self::ApprovalList {
+                protocol_version, ..
+            }
+            | Self::ApprovalInspect {
+                protocol_version, ..
+            }
+            | Self::ApprovalResolve {
+                protocol_version, ..
+            }
             | Self::Run {
                 protocol_version, ..
             } => *protocol_version,
@@ -966,4 +1229,12 @@ fn validate_page_limit(limit: u16, maximum: u16) -> Result<(), ServiceContractEr
         return Err(ServiceContractError::InvalidPageLimit { limit, maximum });
     }
     Ok(())
+}
+
+fn validate_approval_id(approval_id: &str) -> Result<(), ServiceContractError> {
+    if approval_id.trim().is_empty() || approval_id.len() > 256 {
+        Err(ServiceContractError::InvalidApprovalIdentifier)
+    } else {
+        Ok(())
+    }
 }

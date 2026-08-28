@@ -1,6 +1,6 @@
 use pandora_types::{
     ExecutionId, GeneId, HarnessId, LOCAL_SERVICE_PROTOCOL_VERSION, ServiceEventPageRequest,
-    ServiceRequest, ServiceRunRequest, ServiceRunResult, SessionId,
+    ServiceRequest, ServiceRunRequest, ServiceRunResult, ServiceRunResumeRequest, SessionId,
 };
 
 #[test]
@@ -50,4 +50,14 @@ fn deserialized_service_request_validates_nested_page_limits() {
     .unwrap();
 
     assert!(request.validate().is_err());
+}
+
+#[test]
+fn approval_and_resume_requests_reject_blank_approval_identifiers() {
+    let run = ServiceRunRequest::new("guide", None, None).unwrap();
+
+    assert!(ServiceRequest::approval_inspect(" ").is_err());
+    assert!(ServiceRequest::approval_resolve("", true).is_err());
+    assert!(ServiceRequest::approval_list(0).is_err());
+    assert!(ServiceRunResumeRequest::new(" ", run).is_err());
 }

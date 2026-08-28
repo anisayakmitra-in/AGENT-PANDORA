@@ -11,7 +11,8 @@ use axum::{
 };
 use pandora_runtime::{RuntimeService, RuntimeServiceError, ServiceTokenStore};
 use pandora_types::{
-    ServiceEventPageRequest, ServiceRequest, ServiceResponse, ServiceRunRequest, Timestamp,
+    ServiceEventPageRequest, ServiceRequest, ServiceResponse, ServiceRunRequest,
+    ServiceRunResumeRequest, Timestamp,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -243,9 +244,25 @@ fn service_request(request: &JsonRpcRequest) -> Result<Option<ServiceRequest>, (
             let params: SessionMemoryParams = deserialize_params(params)?;
             ServiceRequest::session_memory(params.session_id, params.limit).map_err(|_| ())?
         }
+        "approval.list" => {
+            let params: ApprovalListParams = deserialize_params(params)?;
+            ServiceRequest::approval_list(params.limit).map_err(|_| ())?
+        }
+        "approval.inspect" => {
+            let params: ApprovalInspectParams = deserialize_params(params)?;
+            ServiceRequest::approval_inspect(params.approval_id).map_err(|_| ())?
+        }
+        "approval.resolve" => {
+            let params: ApprovalResolveParams = deserialize_params(params)?;
+            ServiceRequest::approval_resolve(params.approval_id, params.allow).map_err(|_| ())?
+        }
         "run.execute" => {
             let params: ServiceRunRequest = deserialize_params(params)?;
             ServiceRequest::run(params)
+        }
+        "run.resume" => {
+            let params: ServiceRunResumeRequest = deserialize_params(params)?;
+            ServiceRequest::run_resume(params)
         }
         _ => return Ok(None),
     };
@@ -300,6 +317,22 @@ struct SessionInspectParams {
 struct SessionMemoryParams {
     session_id: String,
     limit: u16,
+}
+
+#[derive(Deserialize)]
+struct ApprovalInspectParams {
+    approval_id: String,
+}
+
+#[derive(Deserialize)]
+struct ApprovalListParams {
+    limit: u16,
+}
+
+#[derive(Deserialize)]
+struct ApprovalResolveParams {
+    approval_id: String,
+    allow: bool,
 }
 
 #[derive(Serialize)]
@@ -376,10 +409,13 @@ mod tests {
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode, header};
     use pandora_runtime::{
-        ExecutionController, RuntimeService, RuntimeServiceScope, ServiceTokenStore,
+        ApprovalStore, ExecutionController, RuntimeService, RuntimeServiceScope, ServiceTokenStore,
     };
     use pandora_runtime::{executors::WorkspaceRoot, sessions::SessionStore};
-    use pandora_types::{PrincipalId, ServiceProviderSummary, TenantId, WorkspaceId};
+    use pandora_types::{
+        Capability, Operation, PolicyContext, PrincipalId, ServiceProviderSummary, TenantId,
+        WorkspaceId,
+    };
     use serde_json::{Value, json};
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -419,6 +455,81 @@ mod tests {
         let body: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(body["result"]["kind"], "run");
         assert_eq!(body["result"]["run"]["status"], "completed");
+    }
+
+    #[tokio::test]
+    async fn rpc_resolves_and_resumes_an_exact_approval() {
+        let fixture = Fixture::new();
+        std::fs::write(fixture._root.root.join("README.md"), "fixture\n").unwrap();
+        let first = post(
+            &fixture,
+            Some(&fixture.token),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "run.execute",
+                "params": {"task": "patch:README.md:approved"}
+            }),
+        )
+        .await;
+        let body = to_bytes(first.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["result"]["run"]["status"], "approval_required");
+        let approval_id = body["result"]["run"]["approval"]["approval_id"]
+            .as_str()
+            .unwrap();
+
+        let listed = post(
+            &fixture,
+            Some(&fixture.token),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "approval.list",
+                "params": {"limit": 32}
+            }),
+        )
+        .await;
+        let body = to_bytes(listed.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["result"]["approvals"][0]["approval_id"], approval_id);
+
+        let resolved = post(
+            &fixture,
+            Some(&fixture.token),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "approval.resolve",
+                "params": {"approval_id": approval_id, "allow": true}
+            }),
+        )
+        .await;
+        let body = to_bytes(resolved.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["result"]["approval"]["status"], "approved");
+
+        let resumed = post(
+            &fixture,
+            Some(&fixture.token),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "run.resume",
+                "params": {
+                    "approval_id": approval_id,
+                    "request": {"task": "patch:README.md:approved"}
+                }
+            }),
+        )
+        .await;
+        let body = to_bytes(resumed.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["result"]["run"]["status"], "completed");
+        assert_eq!(
+            std::fs::read_to_string(fixture._root.root.join("README.md")).unwrap(),
+            "approved"
+        );
     }
 
     #[tokio::test]
@@ -709,9 +820,20 @@ mod tests {
     }
 
     fn runtime(root: &std::path::Path) -> RuntimeService {
+        let policy = PolicyContext::new(
+            1,
+            [
+                Capability::FilesystemRead,
+                Capability::FilesystemWrite,
+                Capability::ProcessExecute,
+                Capability::ProviderInvoke,
+            ],
+            [Operation::Write, Operation::Execute],
+        );
         RuntimeService::new_with_providers(
-            ExecutionController::new(WorkspaceRoot::new(root).unwrap()),
+            ExecutionController::with_policy(WorkspaceRoot::new(root).unwrap(), policy),
             SessionStore::open(root.join("sessions.sqlite3")).unwrap(),
+            ApprovalStore::open(root.join("sessions.sqlite3")).unwrap(),
             RuntimeServiceScope::new(
                 PrincipalId::new("principal-a").unwrap(),
                 TenantId::new("tenant-a").unwrap(),

@@ -65,6 +65,20 @@ export type RuntimeMemoryRecord = {
   evidence_count: number;
 };
 
+export type RuntimeApproval = {
+  approval_id: string;
+  session_id: string;
+  execution_id: string;
+  gene_id: string;
+  request_digest: string;
+  request_summary: string;
+  policy_version: number;
+  expires_at_unix_seconds: number;
+  status: string;
+  approver_id: string | null;
+  created_at_unix_seconds: number;
+};
+
 export type RuntimeRun = {
   session_id: string;
   execution_id: string;
@@ -75,6 +89,7 @@ export type RuntimeRun = {
   receipt_count: number;
   event_count: number;
   status_detail?: string;
+  approval?: RuntimeApproval;
 };
 
 export type RuntimeEvent = {
@@ -146,6 +161,16 @@ type SessionMemoryResponse = {
     session_id: string;
     records: RuntimeMemoryRecord[];
   };
+};
+
+type ApprovalListResponse = {
+  kind: "approval_list";
+  approvals: RuntimeApproval[];
+};
+
+type ApprovalResponse = {
+  kind: "approval_inspect" | "approval_resolve";
+  approval: RuntimeApproval;
 };
 
 const endpointStorageKey = "pandora.runtime.endpoint";
@@ -264,6 +289,33 @@ export class RuntimeClient {
       requested_gene: null,
     });
     return response.run;
+  }
+
+  async resume(approvalId: string, task: string, requestedHarness: string | null = null): Promise<RuntimeRun> {
+    const response = await this.call<RunResponse>("run.resume", {
+      approval_id: approvalId,
+      request: {
+        task,
+        requested_harness: requestedHarness,
+        requested_gene: null,
+      },
+    });
+    return response.run;
+  }
+
+  async approvals(limit = 64): Promise<RuntimeApproval[]> {
+    const response = await this.call<ApprovalListResponse>("approval.list", { limit });
+    return response.approvals;
+  }
+
+  async inspectApproval(approvalId: string): Promise<RuntimeApproval> {
+    const response = await this.call<ApprovalResponse>("approval.inspect", { approval_id: approvalId });
+    return response.approval;
+  }
+
+  async resolveApproval(approvalId: string, allow: boolean): Promise<RuntimeApproval> {
+    const response = await this.call<ApprovalResponse>("approval.resolve", { approval_id: approvalId, allow });
+    return response.approval;
   }
 
   async events(sessionId: string, limit = 256): Promise<RuntimeEvent[]> {

@@ -1,10 +1,12 @@
 use pandora_runtime::sessions::SessionStore;
 use pandora_runtime::{
-    ExecutionController, RuntimeService, RuntimeServiceScope, executors::WorkspaceRoot,
+    ApprovalStore, ExecutionController, RuntimeService, RuntimeServiceScope,
+    executors::WorkspaceRoot,
 };
 use pandora_types::{
-    GeneId, PrincipalId, ServiceEventPageRequest, ServiceRequest, ServiceResponse,
-    ServiceRunRequest, Session, SessionId, TenantId, Timestamp, WorkspaceId,
+    Capability, GeneId, Operation, PolicyContext, PrincipalId, ServiceEventPageRequest,
+    ServiceRequest, ServiceResponse, ServiceRunRequest, ServiceRunResumeRequest, Session,
+    SessionId, TenantId, Timestamp, WorkspaceId,
 };
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -25,6 +27,7 @@ fn service_session_list_never_crosses_its_configured_scope() {
     let service = RuntimeService::new(
         ExecutionController::new(WorkspaceRoot::new(&fixture.root).unwrap()),
         store,
+        ApprovalStore::open(fixture.root.join("sessions.sqlite3")).unwrap(),
         scope("principal-a"),
     );
 
@@ -49,6 +52,7 @@ fn service_run_persists_events_for_its_returned_session() {
     let service = RuntimeService::new(
         ExecutionController::new(WorkspaceRoot::new(&fixture.root).unwrap()),
         store,
+        ApprovalStore::open(fixture.root.join("sessions.sqlite3")).unwrap(),
         scope("principal-a"),
     );
     let request = ServiceRequest::run(
@@ -83,6 +87,7 @@ fn service_rejects_deserialized_invalid_requests_before_session_lookup() {
     let service = RuntimeService::new(
         ExecutionController::new(WorkspaceRoot::new(&fixture.root).unwrap()),
         SessionStore::open(fixture.root.join("sessions.sqlite3")).unwrap(),
+        ApprovalStore::open(fixture.root.join("sessions.sqlite3")).unwrap(),
         scope("principal-a"),
     );
     let request: ServiceRequest = serde_json::from_value(serde_json::json!({
@@ -101,6 +106,81 @@ fn service_rejects_deserialized_invalid_requests_before_session_lookup() {
         .unwrap_err();
 
     assert_eq!(error.code(), "invalid_service_request");
+}
+
+#[test]
+fn service_creates_resolves_and_consumes_an_exact_run_approval() {
+    let fixture = Fixture::new();
+    let database = fixture.root.join("sessions.sqlite3");
+    let policy = PolicyContext::new(
+        1,
+        [Capability::FilesystemRead, Capability::FilesystemWrite],
+        [Operation::Write],
+    );
+    let service = RuntimeService::new(
+        ExecutionController::with_policy(WorkspaceRoot::new(&fixture.root).unwrap(), policy),
+        SessionStore::open(&database).unwrap(),
+        ApprovalStore::open(&database).unwrap(),
+        scope("principal-a"),
+    );
+    let run_request = ServiceRunRequest::new("patch:README.md:approved\n", None, None).unwrap();
+
+    let first = service
+        .handle(
+            &ServiceRequest::run(run_request.clone()),
+            Timestamp::from_unix_seconds(10),
+        )
+        .unwrap();
+    let ServiceResponse::Run { run, .. } = first else {
+        panic!("run must return a governed result");
+    };
+    assert_eq!(run.status(), "approval_required");
+    let approval = run.approval().expect("approval metadata must be returned");
+    assert_eq!(approval.status(), "pending");
+    assert_eq!(
+        std::fs::read_to_string(fixture.root.join("README.md")).unwrap(),
+        "fixture\n"
+    );
+
+    let resolved = service
+        .handle(
+            &ServiceRequest::approval_resolve(approval.approval_id(), true).unwrap(),
+            Timestamp::from_unix_seconds(11),
+        )
+        .unwrap();
+    let ServiceResponse::ApprovalResolve { approval, .. } = resolved else {
+        panic!("approval resolution must return its record");
+    };
+    assert_eq!(approval.status(), "approved");
+
+    let resumed = service
+        .handle(
+            &ServiceRequest::run_resume(
+                ServiceRunResumeRequest::new(approval.approval_id(), run_request).unwrap(),
+            ),
+            Timestamp::from_unix_seconds(12),
+        )
+        .unwrap();
+    let ServiceResponse::Run { run, .. } = resumed else {
+        panic!("resumed run must return a governed result");
+    };
+    assert_eq!(run.status(), "completed");
+    assert_eq!(run.session_id(), approval.session_id());
+    assert_eq!(
+        std::fs::read_to_string(fixture.root.join("README.md")).unwrap(),
+        "approved\n"
+    );
+
+    let inspected = service
+        .handle(
+            &ServiceRequest::approval_inspect(approval.approval_id()).unwrap(),
+            Timestamp::from_unix_seconds(13),
+        )
+        .unwrap();
+    let ServiceResponse::ApprovalInspect { approval, .. } = inspected else {
+        panic!("approval inspection must return its record");
+    };
+    assert_eq!(approval.status(), "consumed");
 }
 
 fn scope(principal: &str) -> RuntimeServiceScope {

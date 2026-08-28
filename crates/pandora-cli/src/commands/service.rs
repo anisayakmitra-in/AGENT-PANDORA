@@ -4,7 +4,7 @@ use pandora_harnesses::HarnessCatalog;
 use pandora_runtime::config::RuntimeConfig;
 use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::{
-    ExecutionController, RuntimeService, RuntimeServiceScope, ServiceTokenStore,
+    ApprovalStore, ExecutionController, RuntimeService, RuntimeServiceScope, ServiceTokenStore,
 };
 use pandora_service::{LocalService, LocalServiceConfig};
 use pandora_types::{Capability, Operation, PolicyContext, ServiceProviderSummary};
@@ -86,6 +86,8 @@ fn build_runtime_service(config: &RuntimeConfig) -> Result<RuntimeService, CliEr
         HarnessCatalog::builtins(),
     );
     let sessions = session_store(config)?;
+    let approvals = ApprovalStore::open(config.data_dir().join("sessions.sqlite3"))
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
     let (principal, tenant, workspace) = session_scope();
     let providers = config
         .provider_names()
@@ -105,6 +107,7 @@ fn build_runtime_service(config: &RuntimeConfig) -> Result<RuntimeService, CliEr
     Ok(RuntimeService::new_with_providers(
         controller,
         sessions,
+        approvals,
         RuntimeServiceScope::new(principal, tenant, workspace),
         providers,
     ))

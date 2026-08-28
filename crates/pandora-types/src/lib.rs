@@ -104,10 +104,11 @@ pub use rollout::{
 };
 pub use service::{
     LOCAL_SERVICE_PROTOCOL_VERSION, MAX_SERVICE_EVENT_PAGE, MAX_SERVICE_SESSION_PAGE,
-    ServiceContractError, ServiceEngineSummary, ServiceEventPage, ServiceEventPageRequest,
-    ServiceHarnessSummary, ServiceHealth, ServiceMemoryPage, ServiceMemoryRecord,
-    ServiceProviderSummary, ServiceRequest, ServiceResponse, ServiceRunRequest, ServiceRunResult,
-    ServiceSessionDetail, ServiceSessionSummary, ServiceToolSummary,
+    ServiceApprovalSummary, ServiceContractError, ServiceEngineSummary, ServiceEventPage,
+    ServiceEventPageRequest, ServiceHarnessSummary, ServiceHealth, ServiceMemoryPage,
+    ServiceMemoryRecord, ServiceProviderSummary, ServiceRequest, ServiceResponse,
+    ServiceRunRequest, ServiceRunResult, ServiceRunResumeRequest, ServiceSessionDetail,
+    ServiceSessionSummary, ServiceToolSummary,
 };
 pub use session::{Session, TaskIntent};
 pub use skill::{SkillId, SkillManifest, SkillManifestError};

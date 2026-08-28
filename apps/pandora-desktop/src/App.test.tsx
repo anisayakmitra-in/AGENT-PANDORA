@@ -10,6 +10,8 @@ const runtime = vi.hoisted(() => ({
   inspectSession: vi.fn(),
   memory: vi.fn(),
   providers: vi.fn(),
+  resolveApproval: vi.fn(),
+  resume: vi.fn(),
   run: vi.fn(),
   sessions: vi.fn(),
   tools: vi.fn(),
@@ -30,6 +32,8 @@ vi.mock("./runtimeClient", () => ({
     inspectSession = runtime.inspectSession;
     memory = runtime.memory;
     providers = runtime.providers;
+    resolveApproval = runtime.resolveApproval;
+    resume = runtime.resume;
     run = runtime.run;
     sessions = runtime.sessions;
     tools = runtime.tools;
@@ -109,5 +113,62 @@ describe("Pandora desktop run state", () => {
 
     await waitFor(() => expect(runtime.inspectSession).toHaveBeenCalledWith(session.session_id));
     expect(screen.getByLabelText("Pandora task")).toBeEnabled();
+  });
+
+  it("resolves and resumes an exact runtime approval", async () => {
+    const approval = {
+      approval_id: "approval-execution-1",
+      session_id: session.session_id,
+      execution_id: "execution-1",
+      gene_id: "coding.patch",
+      request_digest: "digest-1",
+      request_summary: "filesystem.write for patch on README.md",
+      policy_version: 1,
+      expires_at_unix_seconds: 900,
+      status: "pending",
+      approver_id: null,
+      created_at_unix_seconds: 1,
+    };
+    runtime.run.mockResolvedValue({
+      session_id: session.session_id,
+      execution_id: "execution-1",
+      selected_harness: "coding-domain",
+      selected_gene: "coding.patch",
+      status: "approval_required",
+      status_detail: "explicit approval is required",
+      output: "",
+      receipt_count: 0,
+      event_count: 4,
+      approval,
+    });
+    runtime.resolveApproval.mockResolvedValue({ ...approval, status: "approved" });
+    runtime.resume.mockResolvedValue({
+      session_id: session.session_id,
+      execution_id: "execution-1",
+      selected_harness: "coding-domain",
+      selected_gene: "coding.patch",
+      status: "completed",
+      output: "README updated",
+      receipt_count: 1,
+      event_count: 8,
+    });
+
+    render(<App />);
+
+    const composer = await screen.findByLabelText("Pandora task");
+    fireEvent.change(composer, { target: { value: "patch:README.md:approved" } });
+    fireEvent.submit(composer.closest("form")!);
+    const allow = await screen.findByRole("button", { name: /Allow once/ });
+    fireEvent.click(allow);
+
+    await waitFor(() => {
+      expect(runtime.resolveApproval).toHaveBeenCalledWith(approval.approval_id, true);
+      expect(runtime.resume).toHaveBeenCalledWith(
+        approval.approval_id,
+        "patch:README.md:approved",
+        null,
+      );
+      expect(screen.getByText("README updated")).toBeInTheDocument();
+    });
   });
 });

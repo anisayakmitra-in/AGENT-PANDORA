@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added runtime-owned approval list, inspection, resolution, and exact-digest
+  run resumption to the authenticated local service. Pandora Desktop now shows
+  the real approval subject and digest, supports deny or allow-once decisions,
+  and resumes the paused run only after the approved grant is consumed.
+
 - Fixed a process-output polling race that could report a completed child
   reader as an I/O failure after its bounded output had already been received.
   This stabilizes governed process execution across runner timing differences.
