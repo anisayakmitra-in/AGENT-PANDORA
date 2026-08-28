@@ -21,7 +21,15 @@ execute tools by itself.
 
 Use `Ctrl/Cmd-K` to switch between Pandora surfaces. The Command Center
 profile selector routes a run to Auto, Coding, Research, Design, or Security;
-the selected profile uses the existing requested Harness field.
+the selected profile uses the existing requested Harness field. Its inspector
+uses progressive Flow, Evidence, and Context tabs, keeping approvals and the
+authority chain close while moving redacted receipts, cache usage, events, and
+scope details behind deliberate disclosure.
+
+Harness Lab is a read-only catalog browser for runtime-reported Harnesses,
+Genes, plugins and tools, authority posture, and receipt requirements. Catalog
+metadata never grants execution authority, and the offline UI does not invent
+entries.
 
 Open Settings to choose a locally stored light or dark theme. Select a live
 session from the sidebar or Connections to inspect its recorded event count;

@@ -341,4 +341,60 @@ describe("Pandora desktop run state", () => {
       expect(screen.getByText("README updated")).toBeInTheDocument();
     });
   });
+
+  it("progressively discloses run evidence and scoped context", async () => {
+    runtime.sessions.mockResolvedValue([session]);
+    runtime.events.mockResolvedValue([{
+      event_id: "event-1",
+      event_type: "policy_approved",
+      payload: {},
+    }]);
+    runtime.inspectSession.mockResolvedValue({ session, event_count: 1 });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /session-1/ }));
+    await waitFor(() => expect(runtime.inspectSession).toHaveBeenCalledWith(session.session_id));
+
+    fireEvent.click(screen.getByRole("tab", { name: "evidence" }));
+    expect(screen.getByText("No run selected")).toBeInTheDocument();
+    expect(screen.getByText("policy approved")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "context" }));
+    expect(screen.getByRole("heading", { name: "workspace-1" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Context is evidence, not authority" })).toBeInTheDocument();
+    expect(screen.getByText("Progressive · redacted")).toBeInTheDocument();
+  });
+
+  it("inspects Genes, extensions, authority, and receipt posture in Harness Lab", async () => {
+    runtime.capabilities.mockResolvedValue([{
+      id: "coding-domain",
+      version: "1.2.0",
+      name: "Coding Domain",
+      kind: "domain",
+      gene_count: 2,
+      runnable: true,
+      gene_ids: ["coding.inspect", "coding.patch"],
+    }]);
+    runtime.tools.mockResolvedValue([{
+      id: "filesystem.read",
+      version: "1.0.0",
+      name: "Filesystem Reader",
+      capability: "filesystem",
+      operation: "read",
+    }]);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Harness Lab" }));
+
+    expect(await screen.findByRole("heading", { name: "Coding Domain" })).toBeInTheDocument();
+    expect(screen.getByText("coding.inspect")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Plugins & tools" }));
+    expect(screen.getByText("Filesystem Reader")).toBeInTheDocument();
+    expect(screen.getByText("filesystem / read")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "authority" }));
+    expect(screen.getByText("Never directly")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "receipts" }));
+    expect(screen.getByRole("heading", { name: "Evidence follows execution" })).toBeInTheDocument();
+  });
+
 });

@@ -9,6 +9,11 @@ execution architecture.
 
 ## Phase 7 - Runtime scale and orchestration
 
+Status: foundation implemented on `main`. Prompt caching, durable scoped worker
+claims, interruption and resume evidence, role receipts, and exact-commit
+multi-repository plans are present. Further load testing and fleet operations
+continue in Phase 12.
+
 - Prompt caching for repeated planning, evaluation, and tool-use contexts.
 - Parallel agents with bounded work queues, leases, cancellation, and receipts.
 - Background agents that can resume governed runs without a second execution
@@ -23,6 +28,11 @@ Outcome: Pandora can run larger agent workloads without bypassing its authority
 model.
 
 ## Phase 8 - Agent experience and disclosure
+
+Status: in progress. The desktop now has Flow, Evidence, and Context disclosure
+and a Harness Lab for runtime-reported Genes, plugins and tools, authority, and
+receipt posture. Background orchestration views and deeper artifact previews
+remain.
 
 - Progressive disclosure for plans, evidence, receipts, approvals, and tool
   state.
@@ -100,13 +110,13 @@ The current tree is roughly production-ready for a governed local CLI/runtime,
 but still early for the full Pandora platform. A practical estimate is:
 
 - local governed runtime and production controls: about 70-80% complete;
-- desktop/product frontend: about 20-30% complete;
+- desktop/product frontend: about 35-45% complete;
 - autonomous evolution loops: about 35-45% complete;
-- multi-agent orchestration and background scale: about 30-40% complete;
+- multi-agent orchestration and background scale: about 50-60% complete;
 - memory consolidation: about 25-35% complete;
 - adversarial resilience and agent operations: about 35-45% complete.
 
-Overall, Pandora is around 45-55% of the intended full platform. The remaining
+Overall, Pandora is around 50-60% of the intended full platform. The remaining
 work is not a rewrite. It is mostly product surface, orchestration durability,
 evaluation depth, memory governance, and operational hardening on top of the
 architecture that already exists.
