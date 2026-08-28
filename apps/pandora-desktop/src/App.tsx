@@ -1,10 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
 import {
+  admitLocalPackage,
   configureMcp,
   configureProvider,
+  installRegistryPackage,
+  listLocalPackages,
   loadRuntimeEndpoint,
   isNativeRuntime,
+  lockLocalPackages,
   nativeEndpoint,
+  previewPackageRemoval,
+  removeLocalPackage,
   RuntimeClient,
   saveRuntimeEndpoint,
   startLocalService,
@@ -21,6 +27,7 @@ import {
   type RuntimeHealth,
   type RuntimeMemoryRecord,
   type RuntimeOrchestrationRun,
+  type RuntimePackage,
   type RuntimeProvider,
   type RuntimeStatus,
   type RuntimeSession,
@@ -45,7 +52,7 @@ type ViewId =
 type RunProfile = string;
 type ThemeMode = "dark" | "light";
 type InspectorTab = "flow" | "evidence" | "workspace" | "browser";
-type HarnessTab = "genes" | "extensions" | "authority" | "receipts";
+type HarnessTab = "genes" | "extensions" | "packages" | "authority" | "receipts";
 
 type PendingRunRequest = {
   task: string;
@@ -925,7 +932,7 @@ function App() {
         ) : activeView === "audit" ? (
           <AuditView events={events} selectedSession={selectedSession} runtimeStatus={runtimeStatus} />
         ) : activeView === "capabilities" ? (
-          <CapabilitiesView harnesses={harnesses} tools={tools} runtimeStatus={runtimeStatus} />
+          <CapabilitiesView harnesses={harnesses} tools={tools} runtimeStatus={runtimeStatus} native={native} />
         ) : activeView === "engines" ? (
           <EnginesView engines={engines} runtimeStatus={runtimeStatus} />
         ) : activeView === "tools" ? (
@@ -1381,7 +1388,7 @@ function AuditView({ events, selectedSession, runtimeStatus }: { events: Runtime
   return <div className="full-view"><PageHeader eyebrow="Evidence" title="Audit" description="Inspect redacted runtime activity without exposing event payloads or credentials." actions={<Chip tone={live ? "green" : "neutral"} icon="archive">{live ? `${events.length} events loaded` : "Select a live session"}</Chip>} /><div className="audit-grid"><Panel className="audit-summary"><div className="panel-heading"><div><span className="eyebrow">SESSION SCOPE</span><h3>{selectedSession?.session.session_id ?? "No session selected"}</h3></div><Icon name="lock" size={18} /></div><div className="audit-summary-rows"><div><span>Workspace</span><strong>{selectedSession?.session.workspace_id ?? "—"}</strong></div><div><span>Runtime scope</span><strong>Local device</strong></div><div><span>Recorded events</span><strong>{selectedSession?.event_count ?? 0}</strong></div></div><p>Event payloads stay in the local runtime. This surface shows identifiers and event types only.</p></Panel><Panel className="audit-events"><div className="panel-heading"><div><span className="eyebrow">ACTIVITY</span><h3>Runtime event timeline</h3></div><Chip tone="blue" icon="activity">Redacted</Chip></div>{events.length ? <div className="audit-event-list">{events.map((event) => <div className="audit-event-row" key={event.event_id}><span className="event-dot" /><div><strong>{event.event_type.replaceAll("_", " ")}</strong><small className="mono">{event.event_id}</small></div><span className="audit-event-state">recorded</span></div>)}</div> : <div className="connection-empty"><Icon name="archive" size={21} /><p>{live ? "No events recorded for this session." : "Connect and select a session to inspect activity."}</p></div>}</Panel></div></div>;
 }
 
-function CapabilitiesView({ harnesses, tools, runtimeStatus }: { harnesses: RuntimeHarness[]; tools: RuntimeTool[]; runtimeStatus: RuntimeStatus }) {
+function CapabilitiesView({ harnesses, tools, runtimeStatus, native }: { harnesses: RuntimeHarness[]; tools: RuntimeTool[]; runtimeStatus: RuntimeStatus; native: boolean }) {
   const connected = runtimeStatus === "connected";
   const [kindFilter, setKindFilter] = useState("all");
   const [selectedHarnessId, setSelectedHarnessId] = useState("");
@@ -1394,9 +1401,161 @@ function CapabilitiesView({ harnesses, tools, runtimeStatus }: { harnesses: Runt
     <div className="harness-workbench">
       <Panel className="harness-browser"><div className="panel-heading"><div><span className="eyebrow">CATALOG</span><h3>{visibleHarnesses.length} Harnesses</h3></div><Icon name="search" size={16} /></div><div className="harness-browser-list">{connected && visibleHarnesses.length ? visibleHarnesses.map((harness) => <button type="button" className={`harness-browser-row ${selectedHarness?.id === harness.id ? "is-selected" : ""}`} key={harness.id} onClick={() => setSelectedHarnessId(harness.id)}><span className="harness-browser-icon"><Icon name="box" size={16} /></span><span><strong>{harness.name}</strong><small>{harness.kind} · v{harness.version}</small></span><Chip tone={harness.runnable ? "green" : "neutral"}>{harness.runnable ? "ready" : "bound"}</Chip></button>) : <div className="harness-empty"><Icon name="lock" size={20} /><p>{connected ? "No Harnesses in this filter." : "Runtime connection required."}</p></div>}</div></Panel>
       <Panel className="harness-inspection">{selectedHarness ? <><div className="harness-hero"><span className="harness-hero-icon"><Icon name="box" size={22} /></span><div><span className="eyebrow">VERSIONED HARNESS</span><h2>{selectedHarness.name}</h2><p className="mono">{selectedHarness.id} · {selectedHarness.kind} · v{selectedHarness.version}</p></div><Chip tone={selectedHarness.runnable ? "green" : "gold"} icon={selectedHarness.runnable ? "check" : "lock"}>{selectedHarness.runnable ? "Runnable" : "Bound"}</Chip></div>
-        <div className="harness-tabs" role="tablist" aria-label="Harness inspector">{(["genes", "extensions", "authority", "receipts"] as HarnessTab[]).map((item) => <button type="button" role="tab" aria-selected={tab === item} className={tab === item ? "is-active" : ""} onClick={() => setTab(item)} key={item}>{item === "extensions" ? "Plugins & tools" : item}</button>)}</div>
-        <div className="harness-tab-panel" role="tabpanel">{tab === "genes" ? <><div className="inspection-heading"><div><span className="eyebrow">GENE CATALOG</span><h3>{selectedHarness.gene_count} admitted Genes</h3></div><Chip tone="blue">Exact versions</Chip></div>{selectedHarness.gene_ids?.length ? <div className="gene-table">{selectedHarness.gene_ids.map((gene, index) => <div className="gene-row" key={gene}><span className="gene-index mono">{String(index + 1).padStart(2, "0")}</span><span><strong>{gene}</strong><small>Capability identity reported by runtime</small></span><Chip tone="green" icon="check">admitted</Chip></div>)}</div> : <p className="inspector-empty">Gene identities are unavailable from this runtime version.</p>}</> : tab === "extensions" ? <><div className="inspection-heading"><div><span className="eyebrow">ADMITTED EXTENSIONS</span><h3>{tools.length} plugin and tool surfaces</h3></div><Chip tone="gold" icon="shield">No authority implied</Chip></div>{tools.length ? <div className="gene-table">{tools.map((tool) => <div className="gene-row" key={tool.id}><span className="harness-browser-icon"><Icon name="terminal" size={14} /></span><span><strong>{tool.name}</strong><small className="mono">{tool.id} · v{tool.version}</small></span><span className="extension-operation">{tool.capability} / {tool.operation}</span></div>)}</div> : <p className="inspector-empty">No extension metadata reported.</p>}</> : tab === "authority" ? <div className="authority-map"><div><span>May select</span><strong>{selectedHarness.gene_count} admitted Genes</strong></div><div><span>May propose</span><strong>Bound tool requests</strong></div><div><span>May approve</span><strong className="authority-denied">Never</strong></div><div><span>May execute</span><strong className="authority-denied">Never directly</strong></div><p><Icon name="shield" size={14} /> Parliament plans, the Shadow Council routes, and ReferenceMonitor alone can authorize an exact effect.</p></div> : <div className="receipt-posture"><div className="receipt-seal"><Icon name="archive" size={24} /></div><h3>Evidence follows execution</h3><p>This catalog exposes capability identity and admission state. Receipts are run-scoped and appear in the Command inspector after an exact permit is consumed.</p><div className="receipt-rules"><span><Icon name="check" size={12} /> Request digest</span><span><Icon name="check" size={12} /> Bound Gene version</span><span><Icon name="check" size={12} /> Workspace scope</span><span><Icon name="check" size={12} /> Effect outcome</span></div></div>}</div>
+        <div className="harness-tabs" role="tablist" aria-label="Harness inspector">{(["genes", "extensions", "packages", "authority", "receipts"] as HarnessTab[]).map((item) => <button type="button" role="tab" aria-selected={tab === item} className={tab === item ? "is-active" : ""} onClick={() => setTab(item)} key={item}>{item === "extensions" ? "Plugins & tools" : item}</button>)}</div>
+        <div className={`harness-tab-panel ${tab === "packages" ? "package-tab-panel" : ""}`} role="tabpanel">{tab === "genes" ? <><div className="inspection-heading"><div><span className="eyebrow">GENE CATALOG</span><h3>{selectedHarness.gene_count} admitted Genes</h3></div><Chip tone="blue">Exact versions</Chip></div>{selectedHarness.gene_ids?.length ? <div className="gene-table">{selectedHarness.gene_ids.map((gene, index) => <div className="gene-row" key={gene}><span className="gene-index mono">{String(index + 1).padStart(2, "0")}</span><span><strong>{gene}</strong><small>Capability identity reported by runtime</small></span><Chip tone="green" icon="check">admitted</Chip></div>)}</div> : <p className="inspector-empty">Gene identities are unavailable from this runtime version.</p>}</> : tab === "extensions" ? <><div className="inspection-heading"><div><span className="eyebrow">ADMITTED EXTENSIONS</span><h3>{tools.length} plugin and tool surfaces</h3></div><Chip tone="gold" icon="shield">No authority implied</Chip></div>{tools.length ? <div className="gene-table">{tools.map((tool) => <div className="gene-row" key={tool.id}><span className="harness-browser-icon"><Icon name="terminal" size={14} /></span><span><strong>{tool.name}</strong><small className="mono">{tool.id} · v{tool.version}</small></span><span className="extension-operation">{tool.capability} / {tool.operation}</span></div>)}</div> : <p className="inspector-empty">No extension metadata reported.</p>}</> : tab === "packages" ? <PackageManager native={native} /> : tab === "authority" ? <div className="authority-map"><div><span>May select</span><strong>{selectedHarness.gene_count} admitted Genes</strong></div><div><span>May propose</span><strong>Bound tool requests</strong></div><div><span>May approve</span><strong className="authority-denied">Never</strong></div><div><span>May execute</span><strong className="authority-denied">Never directly</strong></div><p><Icon name="shield" size={14} /> Parliament plans, the Shadow Council routes, and ReferenceMonitor alone can authorize an exact effect.</p></div> : <div className="receipt-posture"><div className="receipt-seal"><Icon name="archive" size={24} /></div><h3>Evidence follows execution</h3><p>This catalog exposes capability identity and admission state. Receipts are run-scoped and appear in the Command inspector after an exact permit is consumed.</p><div className="receipt-rules"><span><Icon name="check" size={12} /> Request digest</span><span><Icon name="check" size={12} /> Bound Gene version</span><span><Icon name="check" size={12} /> Workspace scope</span><span><Icon name="check" size={12} /> Effect outcome</span></div></div>}</div>
       </> : <div className="harness-empty"><Icon name="box" size={24} /><h3>Select a Harness</h3><p>The inspector never fabricates catalog entries.</p></div>}</Panel>
+    </div>
+  </div>;
+}
+
+function PackageManager({ native }: { native: boolean }) {
+  const [packages, setPackages] = useState<RuntimePackage[]>([]);
+  const [selectedIdentity, setSelectedIdentity] = useState("");
+  const [sourceTab, setSourceTab] = useState<"registry" | "local">("registry");
+  const [packageId, setPackageId] = useState("");
+  const [version, setVersion] = useState("");
+  const [registryUrl, setRegistryUrl] = useState("");
+  const [registryToken, setRegistryToken] = useState("");
+  const [manifestPath, setManifestPath] = useState("");
+  const [artifactPath, setArtifactPath] = useState("");
+  const [removeTarget, setRemoveTarget] = useState<RuntimePackage | null>(null);
+  const [removeConfirmation, setRemoveConfirmation] = useState("");
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const selectedPackage = packages.find((item) => `${item.id}@${item.version}` === selectedIdentity) ?? packages[0] ?? null;
+
+  const refreshPackages = async () => {
+    if (!native) {
+      setPackages([]);
+      return;
+    }
+    const result = await listLocalPackages();
+    const records = result.data.packages ?? [];
+    setPackages(records);
+    setSelectedIdentity((current) => records.some((item) => `${item.id}@${item.version}` === current) ? current : records[0] ? `${records[0].id}@${records[0].version}` : "");
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!native) {
+      setPackages([]);
+      return;
+    }
+    setBusy("refresh");
+    setError("");
+    listLocalPackages()
+      .then((result) => {
+        if (!cancelled) {
+          const records = result.data.packages ?? [];
+          setPackages(records);
+          setSelectedIdentity(records[0] ? `${records[0].id}@${records[0].version}` : "");
+        }
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) {
+          setError(reason instanceof Error ? reason.message : "Could not load local packages");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setBusy("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [native]);
+
+  const completeOperation = async (operation: () => Promise<{ message: string; restartRequired: boolean }>) => {
+    setError("");
+    setMessage("");
+    try {
+      const result = await operation();
+      setMessage(`${result.message}${result.restartRequired ? " Restart the local service to load the new catalog." : ""}`);
+      await refreshPackages();
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "Package operation failed");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const submitRegistry = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!packageId.trim() || !registryUrl.trim() || busy) return;
+    setBusy("install");
+    try {
+      await completeOperation(() => installRegistryPackage({
+        packageId: packageId.trim(),
+        version: version.trim(),
+        registryUrl: registryUrl.trim(),
+        token: registryToken,
+      }));
+    } finally {
+      setRegistryToken("");
+    }
+  };
+
+  const submitLocal = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!manifestPath.trim() || !artifactPath.trim() || busy) return;
+    setBusy("admit");
+    await completeOperation(() => admitLocalPackage({
+      manifestPath: manifestPath.trim(),
+      artifactPath: artifactPath.trim(),
+    }));
+  };
+
+  const writeLock = async () => {
+    if (busy) return;
+    setBusy("lock");
+    await completeOperation(lockLocalPackages);
+  };
+
+  const previewRemoval = async (target: RuntimePackage) => {
+    if (busy) return;
+    setBusy("preview-remove");
+    setError("");
+    setMessage("");
+    try {
+      const result = await previewPackageRemoval(target.id, target.version);
+      setRemoveTarget(target);
+      setRemoveConfirmation("");
+      setMessage(result.message);
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "Package removal preview failed");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const confirmRemoval = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!removeTarget || busy) return;
+    setBusy("remove");
+    await completeOperation(async () => {
+      const result = await removeLocalPackage(removeTarget.id, removeTarget.version, removeConfirmation);
+      setRemoveTarget(null);
+      setRemoveConfirmation("");
+      return result;
+    });
+  };
+
+  if (!native) {
+    return <div className="package-manager-unavailable"><Icon name="lock" size={25} /><h3>Native desktop required</h3><p>Package mutation is unavailable in the loopback browser shell. The local service and CLI remain the source of truth.</p></div>;
+  }
+
+  return <div className="package-manager">
+    <div className="package-manager-heading"><div><span className="eyebrow">MODULAR ECOSYSTEM</span><h3>Signed package manager</h3><p>Install and inspect exact Gene, Domain Harness, and Meta Harness records without granting them authority.</p></div><div><button className="button button-secondary" type="button" disabled={Boolean(busy)} onClick={() => void writeLock()}>{busy === "lock" ? "Locking…" : "Write lockfile"}</button><button className="icon-button" type="button" aria-label="Refresh local packages" disabled={Boolean(busy)} onClick={() => { setBusy("refresh"); void completeOperation(async () => ({ message: "Local package catalog refreshed.", restartRequired: false })); }}><Icon name="activity" size={15} /></button></div></div>
+    <div className="package-boundary"><Icon name="shield" size={14} /><span>Admission verifies identity, artifact hash, dependencies, compatibility, and available signature evidence. Package records cannot replace Parliament, Shadow Council, ReferenceMonitor, permits, or the constitutional service.</span></div>
+    {message ? <p className="configuration-result is-success" role="status"><Icon name="check" size={13} /> {message}</p> : null}
+    {error ? <p className="configuration-result is-error" role="alert">{error}</p> : null}
+    <div className="package-manager-grid">
+      <div className="package-catalog"><div className="package-section-heading"><div><span className="eyebrow">LOCAL CATALOG</span><h4>{busy === "refresh" ? "Refreshing…" : `${packages.length} exact package${packages.length === 1 ? "" : "s"}`}</h4></div><Chip tone={packages.length ? "green" : "neutral"}>{packages.length ? "verified records" : "empty"}</Chip></div><div className="package-list">{packages.length ? packages.map((item) => <button type="button" className={`package-row ${selectedPackage?.id === item.id && selectedPackage.version === item.version ? "is-selected" : ""}`} onClick={() => { setSelectedIdentity(`${item.id}@${item.version}`); setRemoveTarget(null); }} key={`${item.id}@${item.version}`}><span className="package-kind-icon"><Icon name={item.kind === "gene" ? "code" : "box"} size={15} /></span><span><strong>{item.id}</strong><small>{item.kind.replaceAll("_", " ")} · v{item.version}</small></span><Chip tone={item.trust.level === "verified" ? "green" : "gold"}>{item.trust.level}</Chip></button>) : <div className="package-empty"><Icon name="box" size={22} /><p>No local package records. Built-in Harnesses remain core catalog entries.</p></div>}</div></div>
+      <div className="package-console">
+        {selectedPackage ? <div className="package-inspection"><div className="package-section-heading"><div><span className="eyebrow">SELECTED PACKAGE</span><h4>{selectedPackage.id}@{selectedPackage.version}</h4></div><Chip tone={selectedPackage.state === "admitted" ? "green" : "blue"}>{selectedPackage.state}</Chip></div><div className="package-facts"><div><span>Publisher</span><strong>{selectedPackage.publisher}</strong></div><div><span>Artifact</span><strong className="mono">{selectedPackage.content_hash}</strong></div><div><span>Compatibility</span><strong>{selectedPackage.compatibility}</strong></div><div><span>Dependencies</span><strong>{selectedPackage.dependencies.length}</strong></div><div><span>Signature evidence</span><strong>{selectedPackage.trust.has_signature && selectedPackage.trust.has_public_key ? "present" : "not present"}</strong></div><div><span>Runtime authority</span><strong className="authority-denied">{selectedPackage.runtime_authority ? "unexpected" : "none"}</strong></div></div><button className="button button-deny package-remove-button" type="button" disabled={Boolean(busy)} onClick={() => void previewRemoval(selectedPackage)}>Preview removal</button>{removeTarget ? <form className="package-remove-confirm" onSubmit={confirmRemoval}><p>Dependency and active-binding checks passed. Type <span className="mono">{removeTarget.id}@{removeTarget.version}</span> to remove this exact record.</p><input aria-label={`Confirm removal ${removeTarget.id}@${removeTarget.version}`} value={removeConfirmation} onChange={(event) => setRemoveConfirmation(event.target.value)} autoComplete="off" spellCheck={false} /><div><button className="button button-secondary" type="button" onClick={() => setRemoveTarget(null)}>Close</button><button className="button button-deny" type="submit" disabled={busy === "remove" || removeConfirmation !== `${removeTarget.id}@${removeTarget.version}`}>{busy === "remove" ? "Removing…" : "Remove package"}</button></div></form> : null}</div> : null}
+        <div className="package-source-tabs" role="tablist" aria-label="Package source"><button type="button" role="tab" aria-selected={sourceTab === "registry"} className={sourceTab === "registry" ? "is-selected" : ""} onClick={() => setSourceTab("registry")}>Registry URL</button><button type="button" role="tab" aria-selected={sourceTab === "local"} className={sourceTab === "local" ? "is-selected" : ""} onClick={() => setSourceTab("local")}>Local artifact</button></div>
+        {sourceTab === "registry" ? <form className="package-form" onSubmit={submitRegistry}><label><span>Package ID</span><input aria-label="Registry package ID" value={packageId} onChange={(event) => setPackageId(event.target.value)} placeholder="publisher/gene" maxLength={256} autoComplete="off" spellCheck={false} /></label><label><span>Exact version <small>optional current release</small></span><input aria-label="Registry package version" value={version} onChange={(event) => setVersion(event.target.value)} placeholder="1.0.0" maxLength={128} autoComplete="off" spellCheck={false} /></label><label className="package-form-wide"><span>M-Place registry URL</span><input aria-label="Package registry URL" value={registryUrl} onChange={(event) => setRegistryUrl(event.target.value)} placeholder="https://registry.example.com" maxLength={2048} autoComplete="url" spellCheck={false} /></label><label className="package-form-wide"><span>Registry token <small>optional · process-scoped only</small></span><input aria-label="Package registry token" type="password" value={registryToken} onChange={(event) => setRegistryToken(event.target.value)} autoComplete="new-password" /></label><div className="package-form-footer"><p>HTTPS only outside loopback. Redirects and registry-controlled artifact URLs are refused by the existing client.</p><button className="button button-primary" type="submit" disabled={Boolean(busy) || !packageId.trim() || !registryUrl.trim()}>{busy === "install" ? "Installing…" : "Fetch and admit"}</button></div></form> : <form className="package-form" onSubmit={submitLocal}><label className="package-form-wide"><span>Absolute manifest path</span><input aria-label="Local package manifest path" value={manifestPath} onChange={(event) => setManifestPath(event.target.value)} placeholder="C:\path\to\manifest.json" maxLength={4096} autoComplete="off" spellCheck={false} /></label><label className="package-form-wide"><span>Absolute artifact path</span><input aria-label="Local package artifact path" value={artifactPath} onChange={(event) => setArtifactPath(event.target.value)} placeholder="C:\path\to\gene.wasm" maxLength={4096} autoComplete="off" spellCheck={false} /></label><div className="package-form-footer"><p>Both paths must be regular local files, not symlinks. Admission remains metadata-only until an exact governed run selects the package.</p><button className="button button-primary" type="submit" disabled={Boolean(busy) || !manifestPath.trim() || !artifactPath.trim()}>{busy === "admit" ? "Admitting…" : "Validate and admit"}</button></div></form>}
+      </div>
     </div>
   </div>;
 }

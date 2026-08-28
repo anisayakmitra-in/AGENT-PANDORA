@@ -165,6 +165,45 @@ struct NativeConfigurationResult {
     restart_required: bool,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RegistryPackageInstall {
+    package_id: String,
+    version: String,
+    registry_url: String,
+    token: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalPackageAdmission {
+    manifest_path: String,
+    artifact_path: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PackageIdentity {
+    package_id: String,
+    version: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PackageRemoval {
+    package_id: String,
+    version: String,
+    confirmation: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativePackageResult {
+    message: String,
+    restart_required: bool,
+    data: Value,
+}
+
 #[tauri::command]
 fn configure_provider(
     mut input: ProviderConfiguration,
@@ -258,6 +297,142 @@ fn configure_mcp(input: McpConfiguration) -> Result<NativeConfigurationResult, S
     })
 }
 
+#[tauri::command]
+fn list_local_packages() -> Result<NativePackageResult, String> {
+    let args = vec!["package".to_owned(), "list".to_owned(), "--json".to_owned()];
+    let data = run_cli_json(&args, "listing local packages")?;
+    Ok(NativePackageResult {
+        message: package_count_message(&data),
+        restart_required: false,
+        data,
+    })
+}
+
+#[tauri::command]
+fn install_registry_package(
+    mut input: RegistryPackageInstall,
+) -> Result<NativePackageResult, String> {
+    validate_package_id(&input.package_id)?;
+    let version = optional_package_version(&input.version)?;
+    validate_registry_url(&input.registry_url)?;
+    let mut token = Zeroizing::new(std::mem::take(&mut input.token));
+    if token.len() >= 64 * 1024 || token.contains('\0') {
+        return Err("registry token exceeds Pandora's secret size limit".to_owned());
+    }
+
+    let mut args = vec![
+        "package".to_owned(),
+        "install".to_owned(),
+        input.package_id.clone(),
+    ];
+    if let Some(version) = version {
+        args.push(version);
+    }
+    args.extend([
+        "--registry".to_owned(),
+        input.registry_url,
+        "--json".to_owned(),
+    ]);
+    let data = if token.is_empty() {
+        run_cli_json(&args, "installing the registry package")?
+    } else {
+        const TOKEN_ENV: &str = "PANDORA_DESKTOP_REGISTRY_TOKEN";
+        args.extend(["--token-env".to_owned(), TOKEN_ENV.to_owned()]);
+        run_cli_json_with_secret_environment(
+            &args,
+            TOKEN_ENV,
+            &mut token,
+            "installing the registry package",
+        )?
+    };
+    token.zeroize();
+    Ok(NativePackageResult {
+        message: format!("Package {} admitted from the registry.", input.package_id),
+        restart_required: true,
+        data,
+    })
+}
+
+#[tauri::command]
+fn admit_local_package(input: LocalPackageAdmission) -> Result<NativePackageResult, String> {
+    let manifest = validate_regular_absolute_path(&input.manifest_path, "package manifest")?;
+    let artifact = validate_regular_absolute_path(&input.artifact_path, "package artifact")?;
+    let args = vec![
+        "package".to_owned(),
+        "admit".to_owned(),
+        "--manifest".to_owned(),
+        manifest.to_string_lossy().into_owned(),
+        "--artifact".to_owned(),
+        artifact.to_string_lossy().into_owned(),
+        "--json".to_owned(),
+    ];
+    let data = run_cli_json(&args, "admitting the local package")?;
+    Ok(NativePackageResult {
+        message: "Local package admitted after manifest, artifact, dependency, and trust checks."
+            .to_owned(),
+        restart_required: true,
+        data,
+    })
+}
+
+#[tauri::command]
+fn preview_package_removal(input: PackageIdentity) -> Result<NativePackageResult, String> {
+    validate_package_identity(&input.package_id, &input.version)?;
+    let args = vec![
+        "package".to_owned(),
+        "remove".to_owned(),
+        input.package_id.clone(),
+        input.version.clone(),
+        "--dry-run".to_owned(),
+        "--json".to_owned(),
+    ];
+    let data = run_cli_json(&args, "previewing package removal")?;
+    Ok(NativePackageResult {
+        message: format!(
+            "Removal preview recorded for {}@{}; no package changed.",
+            input.package_id, input.version
+        ),
+        restart_required: false,
+        data,
+    })
+}
+
+#[tauri::command]
+fn remove_local_package(input: PackageRemoval) -> Result<NativePackageResult, String> {
+    validate_package_identity(&input.package_id, &input.version)?;
+    let expected = format!("{}@{}", input.package_id, input.version);
+    if input.confirmation != expected {
+        return Err(format!(
+            "type {expected} to confirm this exact package removal"
+        ));
+    }
+    let args = vec![
+        "package".to_owned(),
+        "remove".to_owned(),
+        input.package_id.clone(),
+        input.version.clone(),
+        "--yes".to_owned(),
+        "--json".to_owned(),
+    ];
+    let data = run_cli_json(&args, "removing the local package")?;
+    Ok(NativePackageResult {
+        message: format!("Package {expected} removed after dependency and binding checks."),
+        restart_required: true,
+        data,
+    })
+}
+
+#[tauri::command]
+fn lock_local_packages() -> Result<NativePackageResult, String> {
+    let args = vec!["package".to_owned(), "lock".to_owned(), "--json".to_owned()];
+    let data = run_cli_json(&args, "writing the package lock")?;
+    Ok(NativePackageResult {
+        message: "Deterministic package lock written for the current workspace.".to_owned(),
+        restart_required: false,
+        data,
+    })
+}
+
 fn validate_identifier(value: &str, label: &str) -> Result<(), String> {
     if value.is_empty()
         || value.len() > 64
@@ -302,19 +477,66 @@ fn validate_environment_name(value: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_provider_url(value: &str) -> Result<(), String> {
-    if value.len() > 2048 {
-        return Err("provider URL exceeds the local configuration limit".to_owned());
+fn validate_package_id(value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 256
+        || value.split('/').any(|part| {
+            part.is_empty()
+                || matches!(part, "." | "..")
+                || !part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+        })
+    {
+        return Err(
+            "package ID must contain bounded slash-separated names without path traversal"
+                .to_owned(),
+        );
     }
-    let url = Url::parse(value).map_err(|_| "provider URL is invalid".to_owned())?;
+    Ok(())
+}
+
+fn optional_package_version(value: &str) -> Result<Option<String>, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    validate_text_field(value, "package version", 128)?;
+    if value.bytes().any(|byte| byte.is_ascii_whitespace()) {
+        return Err("package version must be one exact SemVer value".to_owned());
+    }
+    Ok(Some(value.to_owned()))
+}
+
+fn validate_package_identity(id: &str, version: &str) -> Result<(), String> {
+    validate_package_id(id)?;
+    if optional_package_version(version)?.is_none() {
+        return Err("package version is required".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_registry_url(value: &str) -> Result<(), String> {
+    validate_secure_url(value, "registry")
+}
+
+fn validate_provider_url(value: &str) -> Result<(), String> {
+    validate_secure_url(value, "provider")
+}
+
+fn validate_secure_url(value: &str, label: &str) -> Result<(), String> {
+    if value.len() > 2048 {
+        return Err(format!("{label} URL exceeds the local configuration limit"));
+    }
+    let url = Url::parse(value).map_err(|_| format!("{label} URL is invalid"))?;
     if !url.username().is_empty()
         || url.password().is_some()
         || url.query().is_some()
         || url.fragment().is_some()
     {
-        return Err(
-            "provider URL must not contain credentials, query data, or a fragment".to_owned(),
-        );
+        return Err(format!(
+            "{label} URL must not contain credentials, query data, or a fragment"
+        ));
     }
     let loopback = match url.host() {
         Some(Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
@@ -323,11 +545,27 @@ fn validate_provider_url(value: &str) -> Result<(), String> {
         None => false,
     };
     if url.scheme() != "https" && !(url.scheme() == "http" && loopback) {
-        return Err(
-            "provider URL must use HTTPS; HTTP is allowed only for loopback providers".to_owned(),
-        );
+        return Err(format!(
+            "{label} URL must use HTTPS; HTTP is allowed only for loopback services"
+        ));
     }
     Ok(())
+}
+
+fn validate_regular_absolute_path(value: &str, label: &str) -> Result<std::path::PathBuf, String> {
+    if value.is_empty() || value.len() > 4096 || value.chars().any(char::is_control) {
+        return Err(format!("{label} path is empty or invalid"));
+    }
+    let path = std::path::PathBuf::from(value);
+    if !path.is_absolute() {
+        return Err(format!("{label} path must be absolute"));
+    }
+    let metadata = std::fs::symlink_metadata(&path)
+        .map_err(|_| format!("{label} path does not exist or is not readable"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(format!("{label} must be a regular file, not a symlink"));
+    }
+    Ok(path)
 }
 
 fn cli_program() -> std::ffi::OsString {
@@ -343,6 +581,60 @@ fn run_cli(args: &[String], action: &str) -> Result<(), String> {
         .output()
         .map_err(|_| format!("could not launch the Pandora CLI while {action}"))?;
     validate_cli_output(output, action)
+}
+
+fn run_cli_json(args: &[String], action: &str) -> Result<Value, String> {
+    let output = Command::new(cli_program())
+        .args(args)
+        .env_remove("PANDORA_REGISTRY_TOKEN")
+        .env_remove("PANDORA_DESKTOP_REGISTRY_TOKEN")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|_| format!("could not launch the Pandora CLI while {action}"))?;
+    parse_cli_json(output, action)
+}
+
+fn run_cli_json_with_secret_environment(
+    args: &[String],
+    environment: &str,
+    secret: &mut String,
+    action: &str,
+) -> Result<Value, String> {
+    let output = Command::new(cli_program())
+        .args(args)
+        .env_remove("PANDORA_REGISTRY_TOKEN")
+        .env_remove("PANDORA_DESKTOP_REGISTRY_TOKEN")
+        .env(environment, secret.as_str())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output();
+    secret.zeroize();
+    let output = output.map_err(|_| format!("could not launch the Pandora CLI while {action}"))?;
+    parse_cli_json(output, action)
+}
+
+fn parse_cli_json(output: std::process::Output, action: &str) -> Result<Value, String> {
+    if !output.status.success() {
+        return validate_cli_output(output, action).map(|()| Value::Null);
+    }
+    const MAX_CLI_JSON_BYTES: usize = 1024 * 1024;
+    if output.stdout.len() > MAX_CLI_JSON_BYTES {
+        return Err(format!("Pandora CLI returned too much data while {action}"));
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|_| format!("Pandora CLI returned invalid JSON while {action}"))
+}
+
+fn package_count_message(data: &Value) -> String {
+    let count = data
+        .get("packages")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or_default();
+    format!("{count} local package(s) available.")
 }
 
 fn run_cli_with_secret(args: &[String], secret: &mut String, action: &str) -> Result<(), String> {
@@ -627,6 +919,12 @@ fn main() {
             stop_local_service,
             configure_provider,
             configure_mcp,
+            list_local_packages,
+            install_registry_package,
+            admit_local_package,
+            preview_package_removal,
+            remove_local_package,
+            lock_local_packages,
             pandora_rpc
         ])
         .on_window_event(|window, event| {
@@ -719,7 +1017,10 @@ fn install_desktop_crash_reporter() {
 
 #[cfg(test)]
 mod configuration_tests {
-    use super::{validate_environment_name, validate_identifier, validate_provider_url};
+    use super::{
+        optional_package_version, validate_environment_name, validate_identifier,
+        validate_package_id, validate_provider_url, validate_registry_url,
+    };
 
     #[test]
     fn provider_urls_require_https_except_for_loopback() {
@@ -737,5 +1038,21 @@ mod configuration_tests {
         assert!(validate_identifier("../escape", "MCP server").is_err());
         assert!(validate_environment_name("PANDORA_CUSTOM_API_KEY").is_ok());
         assert!(validate_environment_name("Pandora-Key").is_err());
+    }
+
+    #[test]
+    fn package_inputs_preserve_exact_identity_and_secure_registry_urls() {
+        assert!(validate_package_id("owner/coding-gene").is_ok());
+        assert!(validate_package_id("../coding-gene").is_err());
+        assert!(validate_package_id("owner//coding-gene").is_err());
+        assert_eq!(
+            optional_package_version("2.0.0-beta.7").unwrap(),
+            Some("2.0.0-beta.7".to_owned())
+        );
+        assert!(optional_package_version("2.0.0 beta").is_err());
+        assert!(validate_registry_url("https://registry.example.test").is_ok());
+        assert!(validate_registry_url("http://127.0.0.1:8080").is_ok());
+        assert!(validate_registry_url("http://registry.example.test").is_err());
+        assert!(validate_registry_url("https://user@registry.example.test").is_err());
     }
 }

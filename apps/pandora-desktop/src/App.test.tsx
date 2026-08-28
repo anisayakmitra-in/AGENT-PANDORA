@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
 const runtime = vi.hoisted(() => ({
+  admitLocalPackage: vi.fn(),
   activateEvolution: vi.fn(),
   agentResume: vi.fn(),
   agentRun: vi.fn(),
@@ -17,9 +18,14 @@ const runtime = vi.hoisted(() => ({
   inspectEvolution: vi.fn(),
   inspectOrchestration: vi.fn(),
   inspectSession: vi.fn(),
+  installRegistryPackage: vi.fn(),
+  listLocalPackages: vi.fn(),
+  lockLocalPackages: vi.fn(),
   memory: vi.fn(),
   orchestrations: vi.fn(),
   providers: vi.fn(),
+  previewPackageRemoval: vi.fn(),
+  removeLocalPackage: vi.fn(),
   resolveApproval: vi.fn(),
   rollbackEvolution: vi.fn(),
   cancelOrchestration: vi.fn(),
@@ -37,6 +43,12 @@ vi.mock("./runtimeClient", () => ({
   saveRuntimeEndpoint: vi.fn(),
   configureMcp: runtime.configureMcp,
   configureProvider: runtime.configureProvider,
+  admitLocalPackage: runtime.admitLocalPackage,
+  installRegistryPackage: runtime.installRegistryPackage,
+  listLocalPackages: runtime.listLocalPackages,
+  lockLocalPackages: runtime.lockLocalPackages,
+  previewPackageRemoval: runtime.previewPackageRemoval,
+  removeLocalPackage: runtime.removeLocalPackage,
   startLocalService: vi.fn(),
   stopLocalService: vi.fn(),
   RuntimeClient: class {
@@ -87,6 +99,16 @@ beforeEach(() => {
   runtime.providers.mockResolvedValue([]);
   runtime.configureProvider.mockResolvedValue({ message: "Provider custom configured.", restartRequired: true });
   runtime.configureMcp.mockResolvedValue({ message: "MCP server local-tools configured.", restartRequired: true });
+  runtime.listLocalPackages.mockResolvedValue({
+    message: "0 local package(s) available.",
+    restartRequired: false,
+    data: { packages: [] },
+  });
+  runtime.lockLocalPackages.mockResolvedValue({
+    message: "Deterministic package lock written for the current workspace.",
+    restartRequired: false,
+    data: { package_count: 0 },
+  });
   runtime.inspectSession.mockResolvedValue({ session, event_count: 0 });
   runtime.events.mockResolvedValue([]);
   runtime.memory.mockResolvedValue([]);
@@ -147,7 +169,7 @@ describe("Pandora desktop run state", () => {
     expect(composer).toBeEnabled();
     expect(composer).toHaveValue("Inspect and recover");
     expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
-    expect(screen.getAllByText("Local runtime connected").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Runtime connected").length).toBeGreaterThan(0);
   });
 
   it("sends selected text files through the bounded context contract", async () => {
@@ -634,7 +656,8 @@ describe("Pandora desktop run state", () => {
     fireEvent.click(screen.getByRole("tab", { name: "workspace" }));
     expect(screen.getByRole("heading", { name: "workspace-1" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Inspection is evidence, not authority" })).toBeInTheDocument();
-    expect(screen.getByText("Progressive · redacted")).toBeInTheDocument();
+    expect(screen.getByText("Governed")).toBeInTheDocument();
+    expect(screen.getByText("Exact permit path")).toBeInTheDocument();
   });
 
   it("inspects Genes, extensions, authority, and receipt posture in Harness Lab", async () => {
@@ -667,6 +690,118 @@ describe("Pandora desktop run state", () => {
     expect(screen.getByText("Never directly")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "receipts" }));
     expect(screen.getByRole("heading", { name: "Evidence follows execution" })).toBeInTheDocument();
+  });
+
+  it("manages exact local packages without granting runtime authority", async () => {
+    const localPackage = {
+      id: "example/refactor",
+      version: "1.2.3",
+      kind: "gene",
+      publisher: "example",
+      content_hash: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      dependencies: [],
+      compatibility: "pandora>=0.1.0",
+      license: "MIT",
+      trust: {
+        level: "verified",
+        has_signature: true,
+        has_public_key: true,
+      },
+      meta_composition: null,
+      state: "admitted",
+      runtime_authority: false,
+    };
+    runtime.capabilities.mockResolvedValue([{
+      id: "coding-domain",
+      version: "1.2.0",
+      name: "Coding Domain",
+      kind: "domain",
+      gene_count: 1,
+      runnable: true,
+      gene_ids: ["coding.inspect"],
+    }]);
+    runtime.listLocalPackages.mockResolvedValue({
+      message: "1 local package(s) available.",
+      restartRequired: false,
+      data: { packages: [localPackage] },
+    });
+    runtime.installRegistryPackage.mockResolvedValue({
+      message: "Package owner/new-gene admitted from the registry.",
+      restartRequired: true,
+      data: { package: localPackage },
+    });
+    runtime.previewPackageRemoval.mockResolvedValue({
+      message: "Removal preview recorded for example/refactor@1.2.3; no package changed.",
+      restartRequired: false,
+      data: { dry_run: true, removed: false },
+    });
+    runtime.removeLocalPackage.mockResolvedValue({
+      message: "Package example/refactor@1.2.3 removed after dependency and binding checks.",
+      restartRequired: true,
+      data: { dry_run: false, removed: true },
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Harness Lab" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "packages" }));
+
+    expect(await screen.findByRole("heading", { name: "Signed package manager" })).toBeInTheDocument();
+    expect(await screen.findByText("example/refactor")).toBeInTheDocument();
+    expect(screen.getByText("Runtime authority").nextElementSibling).toHaveTextContent("none");
+    expect(screen.getByText(/cannot replace Parliament, Shadow Council, ReferenceMonitor/)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Registry package ID"), { target: { value: "owner/new-gene" } });
+    fireEvent.change(screen.getByLabelText("Registry package version"), { target: { value: "2.0.0" } });
+    fireEvent.change(screen.getByLabelText("Package registry URL"), { target: { value: "https://registry.example.test" } });
+    fireEvent.change(screen.getByLabelText("Package registry token"), { target: { value: "process-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch and admit" }));
+
+    await waitFor(() => expect(runtime.installRegistryPackage).toHaveBeenCalledWith({
+      packageId: "owner/new-gene",
+      version: "2.0.0",
+      registryUrl: "https://registry.example.test",
+      token: "process-secret",
+    }));
+    expect(screen.getByLabelText("Package registry token")).toHaveValue("");
+    expect(await screen.findByRole("status")).toHaveTextContent("Restart the local service");
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview removal" }));
+    expect(await screen.findByLabelText("Confirm removal example/refactor@1.2.3")).toBeInTheDocument();
+    expect(runtime.previewPackageRemoval).toHaveBeenCalledWith("example/refactor", "1.2.3");
+    const confirmation = screen.getByLabelText("Confirm removal example/refactor@1.2.3");
+    fireEvent.change(confirmation, { target: { value: "example/refactor@1.2.3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Remove package" }));
+
+    await waitFor(() => expect(runtime.removeLocalPackage).toHaveBeenCalledWith(
+      "example/refactor",
+      "1.2.3",
+      "example/refactor@1.2.3",
+    ));
+  });
+
+  it("clears a registry token when package installation fails", async () => {
+    runtime.capabilities.mockResolvedValue([{
+      id: "coding-domain",
+      version: "1.2.0",
+      name: "Coding Domain",
+      kind: "domain",
+      gene_count: 0,
+      runnable: true,
+      gene_ids: [],
+    }]);
+    runtime.installRegistryPackage.mockRejectedValue(new Error("registry refused the release"));
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Harness Lab" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "packages" }));
+    await screen.findByRole("heading", { name: "Signed package manager" });
+    fireEvent.change(screen.getByLabelText("Registry package ID"), { target: { value: "owner/bad-gene" } });
+    fireEvent.change(screen.getByLabelText("Package registry URL"), { target: { value: "https://registry.example.test" } });
+    fireEvent.change(screen.getByLabelText("Package registry token"), { target: { value: "discard-me" } });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch and admit" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("registry refused the release");
+    expect(screen.getByLabelText("Package registry token")).toHaveValue("");
   });
 
 

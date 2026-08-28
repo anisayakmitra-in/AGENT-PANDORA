@@ -52,6 +52,58 @@ export type NativeConfigurationResult = {
   restartRequired: boolean;
 };
 
+export type RuntimePackage = {
+  id: string;
+  version: string;
+  kind: "gene" | "domain_harness" | "meta_harness" | "source_harness" | "package" | "provider" | "skill";
+  publisher: string;
+  content_hash: string;
+  dependencies: Array<{
+    id: string;
+    version: string;
+    optional: boolean;
+  }>;
+  compatibility: string;
+  license: string;
+  trust: {
+    level: "unverified" | "verified" | "official";
+    has_signature: boolean;
+    has_public_key: boolean;
+  };
+  meta_composition: {
+    allowed_domains: string[];
+    max_handoffs: number;
+  } | null;
+  state: "installed" | "admitted";
+  runtime_authority: boolean;
+};
+
+export type NativePackageResult = {
+  message: string;
+  restartRequired: boolean;
+  data: {
+    packages?: RuntimePackage[];
+    package?: RuntimePackage;
+    path?: string;
+    package_count?: number;
+    format_version?: number;
+    dry_run?: boolean;
+    removed?: boolean;
+  };
+};
+
+export type RegistryPackageInstall = {
+  packageId: string;
+  version: string;
+  registryUrl: string;
+  token: string;
+};
+
+export type LocalPackageAdmission = {
+  manifestPath: string;
+  artifactPath: string;
+};
+
 export type RuntimeEngine = {
   id: string;
   name: string;
@@ -377,6 +429,56 @@ export async function configureMcp(input: McpConfiguration): Promise<NativeConfi
     throw new Error("MCP configuration is available only in the Pandora desktop app");
   }
   return invoke<NativeConfigurationResult>("configure_mcp", { input });
+}
+
+export async function listLocalPackages(): Promise<NativePackageResult> {
+  if (!isNativeRuntime()) {
+    return {
+      message: "Package management is available only in the Pandora desktop app.",
+      restartRequired: false,
+      data: { packages: [] },
+    };
+  }
+  return invoke<NativePackageResult>("list_local_packages");
+}
+
+export async function installRegistryPackage(input: RegistryPackageInstall): Promise<NativePackageResult> {
+  if (!isNativeRuntime()) {
+    throw new Error("Registry package installation is available only in the Pandora desktop app");
+  }
+  return invoke<NativePackageResult>("install_registry_package", { input });
+}
+
+export async function admitLocalPackage(input: LocalPackageAdmission): Promise<NativePackageResult> {
+  if (!isNativeRuntime()) {
+    throw new Error("Local package admission is available only in the Pandora desktop app");
+  }
+  return invoke<NativePackageResult>("admit_local_package", { input });
+}
+
+export async function previewPackageRemoval(packageId: string, version: string): Promise<NativePackageResult> {
+  if (!isNativeRuntime()) {
+    throw new Error("Package removal is available only in the Pandora desktop app");
+  }
+  return invoke<NativePackageResult>("preview_package_removal", {
+    input: { packageId, version },
+  });
+}
+
+export async function removeLocalPackage(packageId: string, version: string, confirmation: string): Promise<NativePackageResult> {
+  if (!isNativeRuntime()) {
+    throw new Error("Package removal is available only in the Pandora desktop app");
+  }
+  return invoke<NativePackageResult>("remove_local_package", {
+    input: { packageId, version, confirmation },
+  });
+}
+
+export async function lockLocalPackages(): Promise<NativePackageResult> {
+  if (!isNativeRuntime()) {
+    throw new Error("Package locking is available only in the Pandora desktop app");
+  }
+  return invoke<NativePackageResult>("lock_local_packages");
 }
 
 export function loadRuntimeEndpoint(): string {
