@@ -135,6 +135,41 @@ describe("Pandora desktop run state", () => {
     });
   });
 
+  it("sends selected text files through the bounded context contract", async () => {
+    runtime.agentRun.mockResolvedValue({
+      mode: "agent",
+      session_id: session.session_id,
+      execution_id: "execution-context",
+      selected_harness: "coding-domain",
+      selected_gene: null,
+      status: "completed",
+      output: "context used",
+      receipt_count: 0,
+      event_count: 0,
+    });
+    render(<App />);
+
+    const file = new File(["const answer = 42;"], "notes.ts", { type: "text/plain" });
+    fireEvent.change(await screen.findByLabelText("Choose context files"), { target: { files: [file] } });
+
+    expect(await screen.findByText("notes.ts")).toBeInTheDocument();
+    expect(screen.getByText("Untrusted · no authority · 18 / 24576 bytes")).toBeInTheDocument();
+    const composer = screen.getByLabelText("Pandora task");
+    fireEvent.change(composer, { target: { value: "Use the selected notes" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
+    fireEvent.submit(composer.closest("form")!);
+
+    await waitFor(() => {
+      expect(runtime.agentRun).toHaveBeenCalledWith(
+        "Use the selected notes",
+        null,
+        null,
+        [{ name: "notes.ts", media_type: "text/plain", content: "const answer = 42;" }],
+      );
+    });
+    expect(screen.queryByText("notes.ts")).not.toBeInTheDocument();
+  });
+
   it("keeps the composer available after inspecting an existing session", async () => {
     runtime.sessions.mockResolvedValue([session]);
 

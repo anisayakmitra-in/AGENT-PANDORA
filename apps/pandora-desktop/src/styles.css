@@ -319,6 +319,22 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .core-status-dock, .composer { background: var(--surface-1); }
 }
 
+/* Bounded local context attachments */
+.context-attachments { margin-bottom: 8px; padding: 10px 11px; border: 1px solid rgba(215,181,109,.2); border-radius: 11px; background: color-mix(in srgb, var(--surface-glass) 82%, transparent); box-shadow: inset 0 1px 0 var(--glass-highlight); }
+.context-attachments-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--text-muted); font-size: 8px; }
+.context-attachments-heading > span { display: inline-flex; align-items: center; gap: 6px; color: var(--gold-light); font-size: 9px; font-weight: 600; }
+.context-attachments-heading small { font-size: 8px; }
+.context-attachment-list { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+.context-attachment { display: inline-flex; max-width: 230px; align-items: center; gap: 9px; padding: 7px 7px 7px 9px; border: 1px solid var(--border-subtle); border-radius: 8px; background: color-mix(in srgb, var(--canvas) 78%, transparent); }
+.context-attachment > span { display: grid; min-width: 0; gap: 2px; }
+.context-attachment strong { overflow: hidden; color: var(--text-secondary); font-size: 9px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.context-attachment small { color: var(--text-muted); font-size: 7px; }
+.context-attachment button { display: grid; width: 20px; height: 20px; flex-shrink: 0; place-items: center; border: 0; border-radius: 6px; color: var(--text-muted); font-size: 14px; line-height: 1; }
+.context-attachment button:hover:not(:disabled) { background: var(--glass-control); color: var(--text-primary); }
+.composer-add { transition: border-color 130ms ease, background 130ms ease, color 130ms ease, transform 120ms ease; }
+.composer-add:hover:not(:disabled) { border-color: rgba(215,181,109,.34); background: rgba(215,181,109,.07); color: var(--gold-light); }
+.composer-add:active:not(:disabled) { transform: scale(.96); }
+
 
 /* Native provider and MCP configuration */
 .connection-config-panel { grid-column: 1 / -1; min-height: 0; }

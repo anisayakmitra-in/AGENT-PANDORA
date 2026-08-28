@@ -6,6 +6,12 @@ export type RuntimeHealth = {
   status: string;
 };
 
+export type RuntimeContextAttachment = {
+  name: string;
+  media_type: string;
+  content: string;
+};
+
 export type RuntimeHarness = {
   id: string;
   version: string;
@@ -513,11 +519,13 @@ export class RuntimeClient {
     task: string,
     sessionId: string | null = null,
     requestedHarness: string | null = null,
+    contextAttachments: RuntimeContextAttachment[] = [],
   ): Promise<RuntimeRun> {
     const response = await this.call<AgentRunResponse>("agent.execute", {
       task,
       session_id: sessionId,
       requested_harness: requestedHarness,
+      context_attachments: contextAttachments,
     });
     return { ...response.run, mode: "agent" };
   }

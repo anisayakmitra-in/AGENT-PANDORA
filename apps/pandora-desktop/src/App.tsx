@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
 import {
   configureMcp,
   configureProvider,
@@ -11,6 +11,7 @@ import {
   stopLocalService,
   type RuntimeApproval,
   type RuntimeArtifactActivation,
+  type RuntimeContextAttachment,
   type RuntimeRun,
   type RuntimeEvent,
   type RuntimeEngine,
@@ -60,6 +61,42 @@ type WorkflowRecipe = {
 
 const themeStorageKey = "pandora.desktop.theme";
 const workflowStorageKey = "pandora.desktop.workflows";
+const maxContextAttachments = 8;
+const maxContextAttachmentBytes = 16 * 1024;
+const maxContextBytes = 24 * 1024;
+const textAttachmentExtensions = new Set([
+  "c", "cc", "cpp", "css", "csv", "go", "h", "hpp", "html", "java", "js", "json", "jsx",
+  "md", "mjs", "py", "rb", "rs", "sh", "sql", "svg", "toml", "ts", "tsx", "txt", "xml", "yaml", "yml",
+]);
+const applicationTextMediaTypes = new Set(["application/json", "application/javascript", "application/sql", "application/xml", "application/yaml"]);
+
+function attachmentByteLength(content: string): number {
+  return new TextEncoder().encode(content).length;
+}
+
+function isTextAttachment(file: File): boolean {
+  if (file.type.startsWith("text/")) {
+    return true;
+  }
+  if (applicationTextMediaTypes.has(file.type)) {
+    return true;
+  }
+  const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+  return textAttachmentExtensions.has(extension);
+}
+
+function contextMediaType(file: File): string {
+  return file.type.startsWith("text/") || applicationTextMediaTypes.has(file.type) ? file.type : "text/plain";
+}
+
+function readTextAttachment(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(typeof reader.result === "string" ? reader.result : ""));
+    reader.addEventListener("error", () => reject(new Error(`Could not read ${file.name}`)));
+    reader.readAsText(file);
+  });
+}
 
 function loadTheme(): ThemeMode {
   return typeof window !== "undefined" && window.localStorage.getItem(themeStorageKey) === "light" ? "light" : "dark";
@@ -589,7 +626,7 @@ function App() {
     }
   };
 
-  const runTask = async (task: string, profile: RunProfile = runProfile) => {
+  const runTask = async (task: string, profile: RunProfile = runProfile, contextAttachments: RuntimeContextAttachment[] = []) => {
     if (!client) {
       throw new Error("Connect to the local Pandora service first");
     }
@@ -598,7 +635,7 @@ function App() {
     setRuntimeError("");
     try {
       const requestedHarness = harnessForProfile(profile);
-      const result = await client.agentRun(task, selectedSessionId || null, requestedHarness);
+      const result = await client.agentRun(task, selectedSessionId || null, requestedHarness, contextAttachments);
       setPendingRun(result.approval ? { task, requestedHarness } : null);
       await loadRunResult(result);
       setRuntimeStatus("connected");
@@ -841,9 +878,11 @@ function runtimeStatusLabel(status: RuntimeStatus): string {
   }
 }
 
-function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onApprovalClose, onSelectStep, runtimeStatus, selectedSession, lastRun, events, harnesses, runInFlight, runProfile, onRunProfileChange, onRun, onResolveApproval }: { approvalPreview: boolean; selectedStep: string; onApprovalPreview: () => void; onApprovalClose: () => void; onSelectStep: (id: string) => void; runtimeStatus: RuntimeStatus; selectedSession: RuntimeSessionDetail | null; lastRun: RuntimeRun | null; events: RuntimeEvent[]; harnesses: RuntimeHarness[]; runInFlight: boolean; runProfile: RunProfile; onRunProfileChange: (profile: RunProfile) => void; onRun: (task: string, profile: RunProfile) => Promise<void>; onResolveApproval: (allow: boolean) => Promise<void> }) {
+function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onApprovalClose, onSelectStep, runtimeStatus, selectedSession, lastRun, events, harnesses, runInFlight, runProfile, onRunProfileChange, onRun, onResolveApproval }: { approvalPreview: boolean; selectedStep: string; onApprovalPreview: () => void; onApprovalClose: () => void; onSelectStep: (id: string) => void; runtimeStatus: RuntimeStatus; selectedSession: RuntimeSessionDetail | null; lastRun: RuntimeRun | null; events: RuntimeEvent[]; harnesses: RuntimeHarness[]; runInFlight: boolean; runProfile: RunProfile; onRunProfileChange: (profile: RunProfile) => void; onRun: (task: string, profile: RunProfile, contextAttachments: RuntimeContextAttachment[]) => Promise<void>; onResolveApproval: (allow: boolean) => Promise<void> }) {
   const [task, setTask] = useState("");
   const [runError, setRunError] = useState("");
+  const [contextAttachments, setContextAttachments] = useState<RuntimeContextAttachment[]>([]);
+  const contextInput = useRef<HTMLInputElement>(null);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -853,8 +892,9 @@ function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onAppro
     }
     setRunError("");
     try {
-      await onRun(nextTask, runProfile);
+      await onRun(nextTask, runProfile, contextAttachments);
       setTask("");
+      setContextAttachments([]);
     } catch (error: unknown) {
       setRunError(error instanceof Error ? error.message : "Pandora run failed");
     }
@@ -865,6 +905,51 @@ function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onAppro
       event.preventDefault();
       event.currentTarget.form?.requestSubmit();
     }
+  };
+
+  const addContextAttachments = async (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (!files.length) {
+      return;
+    }
+    try {
+      if (contextAttachments.length + files.length > maxContextAttachments) {
+        throw new Error(`Attach at most ${maxContextAttachments} text files`);
+      }
+      let totalBytes = contextAttachments.reduce((total, attachment) => total + attachmentByteLength(attachment.content), 0);
+      const nextAttachments: RuntimeContextAttachment[] = [];
+      for (const file of files) {
+        if (!isTextAttachment(file)) {
+          throw new Error(`${file.name} is not a supported text or source file`);
+        }
+        if (!file.size || file.size > maxContextAttachmentBytes) {
+          throw new Error(`${file.name} must be between 1 byte and 16 KiB`);
+        }
+        const content = await readTextAttachment(file);
+        const contentBytes = attachmentByteLength(content);
+        if (!contentBytes || contentBytes > maxContextAttachmentBytes || content.includes("\0")) {
+          throw new Error(`${file.name} is empty, binary, or exceeds 16 KiB after decoding`);
+        }
+        totalBytes += contentBytes;
+        if (totalBytes > maxContextBytes) {
+          throw new Error("Selected context exceeds the 24 KiB request limit");
+        }
+        nextAttachments.push({
+          name: file.name,
+          media_type: contextMediaType(file),
+          content,
+        });
+      }
+      setContextAttachments((current) => [...current, ...nextAttachments]);
+      setRunError("");
+    } catch (error: unknown) {
+      setRunError(error instanceof Error ? error.message : "Could not attach the selected context");
+    }
+  };
+
+  const removeContextAttachment = (index: number) => {
+    setContextAttachments((current) => current.filter((_, candidateIndex) => candidateIndex !== index));
   };
 
   const connected = runtimeStatus === "connected";
@@ -891,7 +976,19 @@ function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onAppro
           <div className="core-metrics"><Metric label="Context" value={selectedSession ? "Scoped" : "None"} detail={selectedSession ? selectedSession.session.workspace_id : "not loaded"} /><Metric label="Policy" value={policyValue} detail={policyDetail} /><Metric label="Evidence" value={evidenceValue} detail={evidenceDetail} /></div>
         </div>
       </div>
-      <form className="composer-wrap" onSubmit={submit}><div className="composer"><button type="button" className="composer-add" aria-label="Context attachments unavailable" title="Context attachments are not available yet" disabled><Icon name="plus" size={17} /></button><textarea value={task} onChange={(event) => setTask(event.target.value)} onKeyDown={handleTaskKeyDown} placeholder="Ask Pandora to inspect, plan, or act…" aria-label="Pandora task" rows={1} disabled={runInFlight} /><div className="composer-actions"><label className="composer-profile"><span className="sr-only">Execution Harness</span><select value={runProfile} onChange={(event) => onRunProfileChange(event.target.value)} aria-label="Execution Harness" disabled={runInFlight}>{profileOptions.map((profile) => <option value={profile.id} key={profile.id}>{profile.label}</option>)}</select></label><span className="composer-mode"><Icon name="spark" size={14} /> Governed run</span><button type="submit" className="send-button" aria-label={runInFlight ? "Pandora is running" : "Send"} disabled={!connected || !task.trim() || runInFlight}><Icon name="arrow" size={16} /></button></div></div><div className="composer-hint"><span>{runError || (runInFlight ? "Pandora is running the governed request…" : connected ? "Ctrl/⌘ + Enter to send" : "Connect the local service in Connections")}</span><span>All effects require an exact permit</span></div></form>
+      <form className="composer-wrap" onSubmit={submit}>
+        {contextAttachments.length ? <div className="context-attachments" aria-label="Selected context files">
+          <div className="context-attachments-heading"><span><Icon name="archive" size={13} /> Context evidence</span><small>Untrusted · no authority · {attachmentByteLength(contextAttachments.map((attachment) => attachment.content).join(""))} / {maxContextBytes} bytes</small></div>
+          <div className="context-attachment-list">{contextAttachments.map((attachment, index) => <span className="context-attachment" key={`${attachment.name}-${index}`}><span><strong>{attachment.name}</strong><small>{attachmentByteLength(attachment.content)} bytes</small></span><button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => removeContextAttachment(index)} disabled={runInFlight}>×</button></span>)}</div>
+        </div> : null}
+        <div className="composer">
+          <input ref={contextInput} className="sr-only" type="file" multiple accept="text/*,.c,.cc,.cpp,.css,.csv,.go,.h,.hpp,.html,.java,.js,.json,.jsx,.md,.mjs,.py,.rb,.rs,.sh,.sql,.svg,.toml,.ts,.tsx,.xml,.yaml,.yml" aria-label="Choose context files" onChange={(event) => void addContextAttachments(event)} disabled={runInFlight} />
+          <button type="button" className="composer-add" aria-label="Add context files" title="Attach bounded text or source files as untrusted evidence" onClick={() => contextInput.current?.click()} disabled={runInFlight}><Icon name="plus" size={17} /></button>
+          <textarea value={task} onChange={(event) => setTask(event.target.value)} onKeyDown={handleTaskKeyDown} placeholder="Ask Pandora to inspect, plan, or act…" aria-label="Pandora task" rows={1} disabled={runInFlight} />
+          <div className="composer-actions"><label className="composer-profile"><span className="sr-only">Execution Harness</span><select value={runProfile} onChange={(event) => onRunProfileChange(event.target.value)} aria-label="Execution Harness" disabled={runInFlight}>{profileOptions.map((profile) => <option value={profile.id} key={profile.id}>{profile.label}</option>)}</select></label><span className="composer-mode"><Icon name="spark" size={14} /> Governed run</span><button type="submit" className="send-button" aria-label={runInFlight ? "Pandora is running" : "Send"} disabled={!connected || !task.trim() || runInFlight}><Icon name="arrow" size={16} /></button></div>
+        </div>
+        <div className="composer-hint"><span>{runError || (runInFlight ? "Pandora is running the governed request…" : connected ? "Ctrl/⌘ + Enter to send" : "Connect the local service in Connections")}</span><span>{contextAttachments.length ? `${contextAttachments.length} context file${contextAttachments.length === 1 ? "" : "s"} · effects still require a permit` : "All effects require an exact permit"}</span></div>
+      </form>
       {lastRun ? <Panel className="run-result"><div className="panel-heading"><h3>Latest {lastRun.mode} run</h3><Chip tone={lastRun.status === "completed" ? "green" : "amber"}>{lastRun.status}</Chip></div><div className="run-result-meta"><span className="mono">{lastRun.execution_id ?? "provider-only response"}</span><span>{lastRun.selected_gene ?? "No gene selected"}</span></div><p>{lastRun.output || "No output returned."}</p>{events.length ? <div className="event-list"><span className="eyebrow">LIVE ACTIVITY</span>{events.map((event) => <div className="event-row" key={event.event_id}><span className="event-dot" /><span>{event.event_type.replaceAll("_", " ")}</span><span className="mono">{event.event_id}</span></div>)}</div> : null}</Panel> : null}
     </section>
     <Inspector steps={steps} approvalPreview={approvalPreview} lastRun={lastRun} events={events} selectedSession={selectedSession} approval={lastRun?.approval} approvalDetail={lastRun?.status_detail} approvalInFlight={runInFlight} selectedStep={selectedStep} onApprovalPreview={onApprovalPreview} onApprovalClose={onApprovalClose} onResolveApproval={onResolveApproval} onSelectStep={onSelectStep} />

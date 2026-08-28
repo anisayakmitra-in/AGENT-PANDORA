@@ -11,11 +11,15 @@ use std::fmt;
 pub const LOCAL_SERVICE_PROTOCOL_VERSION: u16 = 1;
 pub const MAX_SERVICE_EVENT_PAGE: u16 = 256;
 pub const MAX_SERVICE_SESSION_PAGE: u16 = 256;
+pub const MAX_SERVICE_CONTEXT_ATTACHMENTS: usize = 8;
+pub const MAX_SERVICE_CONTEXT_ATTACHMENT_BYTES: usize = 16 * 1024;
+pub const MAX_SERVICE_CONTEXT_BYTES: usize = 24 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ServiceContractError {
     InvalidTask(RequestError),
     InvalidIdentifier(IdError),
+    InvalidContextAttachment(&'static str),
     InvalidApprovalIdentifier,
     InvalidApprovalSummary,
     InvalidEvolutionConfirmation,
@@ -29,6 +33,9 @@ impl fmt::Display for ServiceContractError {
         match self {
             Self::InvalidTask(error) => error.fmt(formatter),
             Self::InvalidIdentifier(error) => error.fmt(formatter),
+            Self::InvalidContextAttachment(reason) => {
+                write!(formatter, "context attachment is invalid: {reason}")
+            }
             Self::InvalidApprovalIdentifier => {
                 formatter.write_str("approval identifier is invalid")
             }
@@ -82,6 +89,90 @@ pub struct ServiceAgentRunRequest {
     task: String,
     session_id: Option<SessionId>,
     requested_harness: Option<HarnessId>,
+    #[serde(default)]
+    context_attachments: Vec<ServiceContextAttachment>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServiceContextAttachment {
+    name: String,
+    media_type: String,
+    content: String,
+}
+
+impl ServiceContextAttachment {
+    pub fn new(
+        name: impl Into<String>,
+        media_type: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Result<Self, ServiceContractError> {
+        let attachment = Self {
+            name: name.into(),
+            media_type: media_type.into(),
+            content: content.into(),
+        };
+        attachment.validate()?;
+        Ok(attachment)
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn media_type(&self) -> &str {
+        &self.media_type
+    }
+
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+
+    pub fn validate(&self) -> Result<(), ServiceContractError> {
+        if self.name.trim().is_empty() || self.name.len() > 240 {
+            return Err(ServiceContractError::InvalidContextAttachment(
+                "name must be between 1 and 240 bytes",
+            ));
+        }
+        if self.name.chars().any(|character| character.is_control()) {
+            return Err(ServiceContractError::InvalidContextAttachment(
+                "name contains a control character",
+            ));
+        }
+        if self.media_type.trim().is_empty() || self.media_type.len() > 128 {
+            return Err(ServiceContractError::InvalidContextAttachment(
+                "media type must be between 1 and 128 bytes",
+            ));
+        }
+        if self
+            .media_type
+            .chars()
+            .any(|character| character.is_control())
+        {
+            return Err(ServiceContractError::InvalidContextAttachment(
+                "media type contains a control character",
+            ));
+        }
+        if !supported_context_media_type(self.media_type.trim()) {
+            return Err(ServiceContractError::InvalidContextAttachment(
+                "media type is not supported for text context",
+            ));
+        }
+        if self.content.is_empty() || self.content.len() > MAX_SERVICE_CONTEXT_ATTACHMENT_BYTES {
+            return Err(ServiceContractError::InvalidContextAttachment(
+                "content is empty or exceeds the per-file limit",
+            ));
+        }
+        if self
+            .content
+            .chars()
+            .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+        {
+            return Err(ServiceContractError::InvalidContextAttachment(
+                "content contains a non-text control character",
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl ServiceAgentRunRequest {
@@ -97,6 +188,7 @@ impl ServiceAgentRunRequest {
             task,
             session_id,
             requested_harness,
+            context_attachments: Vec::new(),
         };
         request.validate()?;
         Ok(request)
@@ -114,6 +206,19 @@ impl ServiceAgentRunRequest {
         self.requested_harness.as_ref()
     }
 
+    pub fn context_attachments(&self) -> &[ServiceContextAttachment] {
+        &self.context_attachments
+    }
+
+    pub fn with_context_attachments(
+        mut self,
+        context_attachments: Vec<ServiceContextAttachment>,
+    ) -> Result<Self, ServiceContractError> {
+        self.context_attachments = context_attachments;
+        self.validate()?;
+        Ok(self)
+    }
+
     pub fn validate(&self) -> Result<(), ServiceContractError> {
         crate::session::TaskIntent::new(self.task.clone())?;
         if let Some(session_id) = self.session_id() {
@@ -121,6 +226,23 @@ impl ServiceAgentRunRequest {
         }
         if let Some(harness_id) = self.requested_harness() {
             HarnessId::new(harness_id.as_str())?;
+        }
+        if self.context_attachments.len() > MAX_SERVICE_CONTEXT_ATTACHMENTS {
+            return Err(ServiceContractError::InvalidContextAttachment(
+                "too many files",
+            ));
+        }
+        let mut total_bytes = 0usize;
+        for attachment in &self.context_attachments {
+            attachment.validate()?;
+            total_bytes = total_bytes.checked_add(attachment.content().len()).ok_or(
+                ServiceContractError::InvalidContextAttachment("total size overflowed"),
+            )?;
+        }
+        if total_bytes > MAX_SERVICE_CONTEXT_BYTES {
+            return Err(ServiceContractError::InvalidContextAttachment(
+                "combined content exceeds the request limit",
+            ));
         }
         Ok(())
     }
@@ -2284,6 +2406,18 @@ fn validate_page_limit(limit: u16, maximum: u16) -> Result<(), ServiceContractEr
     Ok(())
 }
 
+fn supported_context_media_type(media_type: &str) -> bool {
+    media_type.starts_with("text/")
+        || matches!(
+            media_type,
+            "application/json"
+                | "application/javascript"
+                | "application/sql"
+                | "application/xml"
+                | "application/yaml"
+        )
+}
+
 fn validate_approval_id(approval_id: &str) -> Result<(), ServiceContractError> {
     if approval_id.trim().is_empty() || approval_id.len() > 256 {
         Err(ServiceContractError::InvalidApprovalIdentifier)
@@ -2316,4 +2450,60 @@ fn validate_evolution_confirmation(
         return Err(ServiceContractError::InvalidEvolutionReason);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_context_attachments_are_bounded_and_text_only() {
+        let attachment =
+            ServiceContextAttachment::new("notes.txt", "text/plain", "Use this as evidence only.")
+                .unwrap();
+        let request = ServiceAgentRunRequest::new("Inspect the notes", None, None)
+            .unwrap()
+            .with_context_attachments(vec![attachment])
+            .unwrap();
+
+        assert_eq!(request.context_attachments().len(), 1);
+        assert_eq!(request.context_attachments()[0].name(), "notes.txt");
+        assert!(request.validate().is_ok());
+
+        assert!(matches!(
+            ServiceContextAttachment::new("binary.dat", "application/octet-stream", "payload"),
+            Err(ServiceContractError::InvalidContextAttachment(_))
+        ));
+        assert!(matches!(
+            ServiceContextAttachment::new("control.txt", "text/plain", "a\0b"),
+            Err(ServiceContractError::InvalidContextAttachment(_))
+        ));
+    }
+
+    #[test]
+    fn agent_context_attachments_enforce_the_combined_limit() {
+        let first = ServiceContextAttachment::new(
+            "first.txt",
+            "text/plain",
+            "a".repeat(MAX_SERVICE_CONTEXT_BYTES / 2 + 1),
+        )
+        .unwrap();
+        let second = ServiceContextAttachment::new(
+            "second.txt",
+            "text/plain",
+            "b".repeat(MAX_SERVICE_CONTEXT_BYTES / 2 + 1),
+        )
+        .unwrap();
+
+        let result = ServiceAgentRunRequest::new("Inspect both", None, None)
+            .unwrap()
+            .with_context_attachments(vec![first, second]);
+
+        assert!(matches!(
+            result,
+            Err(ServiceContractError::InvalidContextAttachment(
+                "combined content exceeds the request limit"
+            ))
+        ));
+    }
 }
