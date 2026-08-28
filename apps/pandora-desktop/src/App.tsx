@@ -177,6 +177,13 @@ function authorityStepsForRun(lastRun: RuntimeRun | null, events: RuntimeEvent[]
   ] as typeof authoritySteps;
 }
 
+function mergeEvolutionDetails(current: RuntimeEvolutionProposal[], incoming: RuntimeEvolutionProposal[]) {
+  return incoming.map((proposal) => ({
+    ...proposal,
+    candidate: current.find((existing) => existing.proposal_id === proposal.proposal_id)?.candidate ?? proposal.candidate,
+  }));
+}
+
 const viewDetails: Record<Exclude<ViewId, "command" | "memory" | "workflows">, { eyebrow: string; title: string; description: string }> = {
   council: {
     eyebrow: "Governance",
@@ -452,7 +459,7 @@ function App() {
       try {
         const [proposals, activations] = await Promise.all([client.evolution(), client.evolutionActivations()]);
         if (!cancelled) {
-          setEvolutionProposals(proposals);
+          setEvolutionProposals((current) => mergeEvolutionDetails(current, proposals));
           setArtifactActivations(activations);
         }
       } catch {
@@ -643,9 +650,18 @@ function App() {
       ? await client.activateEvolution(proposalId, confirmation)
       : await client.rollbackEvolution(proposalId, confirmation, reason);
     const [proposals, activations] = await Promise.all([client.evolution(), client.evolutionActivations()]);
-    setEvolutionProposals(proposals);
+    setEvolutionProposals((current) => mergeEvolutionDetails(current, proposals));
     setArtifactActivations(activations);
     return mutation;
+  };
+
+  const inspectEvolutionCandidate = async (proposalId: string): Promise<RuntimeEvolutionProposal> => {
+    if (!client) {
+      throw new Error("Connect to the local Pandora service first");
+    }
+    const detail = await client.inspectEvolution(proposalId);
+    setEvolutionProposals((current) => current.map((proposal) => proposal.proposal_id === proposalId ? detail : proposal));
+    return detail;
   };
 
   const createWorkflow = (name: string, task: string, profile: RunProfile) => {
@@ -701,7 +717,7 @@ function App() {
         ) : activeView === "tools" ? (
           <ToolsView tools={tools} runtimeStatus={runtimeStatus} />
         ) : activeView === "evolution" ? (
-          <EvolutionView proposals={evolutionProposals} activations={artifactActivations} runtimeStatus={runtimeStatus} onMutate={mutateEvolution} />
+          <EvolutionView proposals={evolutionProposals} activations={artifactActivations} runtimeStatus={runtimeStatus} onInspect={inspectEvolutionCandidate} onMutate={mutateEvolution} />
         ) : activeView === "settings" ? (
           <SettingsView theme={theme} onThemeChange={setTheme} runtimeStatus={runtimeStatus} health={runtimeHealth} native={native} endpoint={endpoint} />
         ) : (
@@ -960,14 +976,28 @@ function ConnectionView({ endpoint, runtimeStatus, runtimeError, health, provide
   return <div className="full-view"><PageHeader eyebrow="Runtime surface" title="Connections" description="Connect this desktop shell to the authenticated loopback Pandora service." actions={<Chip tone={runtimeStatus === "connected" ? "green" : runtimeStatus === "offline" ? "amber" : "blue"} icon="lock">{runtimeStatusLabel(runtimeStatus)}</Chip>} /><div className="connection-grid"><Panel className="connection-panel"><div className="panel-heading"><div><span className="eyebrow">LOCAL RPC</span><h3>Pandora service</h3></div><Icon name="terminal" size={19} /></div><div className="settings-facts connection-health"><div><span>Service health</span><strong>{health?.status ?? "Unavailable"}</strong></div><div><span>Transport</span><strong>{native ? "Native bridge" : "Loopback RPC"}</strong></div></div>{native ? <button className={`button ${serviceActive ? "button-secondary" : "button-primary"} connection-start`} type="button" onClick={() => void (serviceActive ? onStopService() : onStartService())}>{serviceActive ? "Stop local service" : "Start local service"} <Icon name={serviceActive ? "lock" : "arrow"} size={14} /></button> : null}<form className="connection-form" onSubmit={submit}><label><span>Endpoint</span><input value={draftEndpoint} onChange={(event) => setDraftEndpoint(event.target.value)} placeholder="http://127.0.0.1:PORT/v1/rpc" spellCheck={false} /></label><label><span>Bearer token</span><input value={draftToken} onChange={(event) => setDraftToken(event.target.value)} type="password" placeholder="Paste the service token for this session" autoComplete="off" /></label><button className="button button-secondary" type="submit" disabled={!draftEndpoint.trim() || !draftToken.trim()}>Connect manually <Icon name="arrow" size={14} /> </button></form><p className="connection-note">Desktop startup keeps the bearer token native-side. Manual browser connections keep it in memory and never write it to storage. Endpoints must be loopback-only.</p>{runtimeError ? <p className="connection-error" role="alert">{runtimeError}</p> : null}</Panel><Panel className="connection-panel"><div className="panel-heading"><div><span className="eyebrow">PROVIDER PROFILES</span><h3>{providers.length} configured</h3></div><Chip tone={providers.some((provider) => provider.active) ? "blue" : "neutral"} icon="spark">Redacted</Chip></div>{providers.length ? <div className="provider-list">{providers.map((provider) => <div className="provider-row" key={provider.name}><span className={`provider-dot ${provider.active ? "is-active" : ""}`} /><span><strong>{provider.name}</strong><small>{provider.model} · {provider.protocol}</small></span><span className={`provider-state ${provider.credential_configured ? "is-ready" : ""}`}>{provider.credential_configured ? "Ready" : "Credential needed"}</span></div>)}</div> : <div className="connection-empty"><Icon name="lock" size={21} /><p>Provider profiles are not configured.</p></div>}</Panel><Panel className="connection-panel"><div className="panel-heading"><div><span className="eyebrow">SCOPED SESSIONS</span><h3>{sessions.length} available</h3></div><Chip tone="green" icon="shield">Tenant scoped</Chip></div>{sessions.length ? <div className="session-list">{sessions.map((session) => <button className={`session-row ${selectedSessionId === session.session_id ? "is-selected" : ""}`} key={session.session_id} type="button" onClick={() => void onSelectSession(session.session_id)}><span className="session-dot" /><span><strong>{session.session_id}</strong><small>{session.workspace_id} · {session.tenant_id}</small></span><Icon name="chevron" size={13} /></button>)}</div> : <div className="connection-empty"><Icon name="archive" size={21} /><p>Connect to load scoped sessions.</p></div>}{selectedSession ? <div className="selected-session"><span className="eyebrow">SELECTED SESSION</span><strong>{selectedSession.session.session_id}</strong><small>{selectedSession.event_count} recorded events · ready to inspect</small></div> : null}</Panel></div></div>;
 }
 
-function EvolutionView({ proposals, activations, runtimeStatus, onMutate }: { proposals: RuntimeEvolutionProposal[]; activations: RuntimeArtifactActivation[]; runtimeStatus: RuntimeStatus; onMutate: (operation: "activate" | "rollback", proposalId: string, confirmation: string, reason: string) => Promise<RuntimeEvolutionMutation> }) {
+function EvolutionView({ proposals, activations, runtimeStatus, onInspect, onMutate }: { proposals: RuntimeEvolutionProposal[]; activations: RuntimeArtifactActivation[]; runtimeStatus: RuntimeStatus; onInspect: (proposalId: string) => Promise<RuntimeEvolutionProposal>; onMutate: (operation: "activate" | "rollback", proposalId: string, confirmation: string, reason: string) => Promise<RuntimeEvolutionMutation> }) {
   const [pending, setPending] = useState<{ operation: "activate" | "rollback"; proposalId: string } | null>(null);
   const [confirmation, setConfirmation] = useState("");
   const [reason, setReason] = useState("");
   const [mutationError, setMutationError] = useState("");
   const [mutationInFlight, setMutationInFlight] = useState(false);
   const [receipt, setReceipt] = useState<RuntimeEvolutionMutation | null>(null);
+  const [inspectInFlight, setInspectInFlight] = useState<string | null>(null);
+  const [inspectError, setInspectError] = useState<{ proposalId: string; message: string } | null>(null);
   const stateTone = (state: string): "neutral" | "green" | "amber" | "blue" | "gold" => state === "active" ? "green" : state.includes("failed") || state === "rolled_back" ? "amber" : state === "approved" || state === "staged" || state === "canary_passed" ? "gold" : state === "evaluated" ? "blue" : "neutral";
+
+  const inspectCandidate = async (proposalId: string) => {
+    setInspectInFlight(proposalId);
+    setInspectError(null);
+    try {
+      await onInspect(proposalId);
+    } catch (error: unknown) {
+      setInspectError({ proposalId, message: error instanceof Error ? error.message : "Candidate inspection failed" });
+    } finally {
+      setInspectInFlight(null);
+    }
+  };
 
   const beginMutation = (operation: "activate" | "rollback", proposalId: string) => {
     setPending({ operation, proposalId });
@@ -1005,7 +1035,7 @@ function EvolutionView({ proposals, activations, runtimeStatus, onMutate }: { pr
         const activation = activations.find((candidate) => candidate.proposal_id === proposal.proposal_id);
         const canActivate = !activation && proposal.state === "canary_passed";
         const isPending = pending?.proposalId === proposal.proposal_id;
-        return <Panel className="secondary-card evolution-card" key={proposal.proposal_id}><div className="panel-heading"><div><span className="eyebrow">{proposal.source} · {proposal.proposal_id}</span><h3>{proposal.expected_outcome}</h3></div><Chip tone={stateTone(proposal.state)}>{proposal.state.replaceAll("_", " ")}</Chip></div><div className={`secondary-icon secondary-icon-${index % 3}`}><Icon name="evolution" size={20} /></div><div className="settings-facts"><div><span>Artifact transition</span><strong>{proposal.base_artifact} → {proposal.candidate_artifact}</strong></div><div><span>Evidence digest</span><strong className="mono">{proposal.evidence_digest}</strong></div><div><span>Why proposed</span><strong>{proposal.expected_outcome}</strong></div><div><span>Holdout gate</span><strong>{proposal.evaluation ? `${proposal.evaluation.holdout_passed ? "Passed" : "Failed"} · ${proposal.evaluation.trajectory_score}/${proposal.evaluation.outcome_score}` : "Not evaluated"}</strong></div><div><span>Policy / regression</span><strong>{proposal.evaluation ? `${proposal.evaluation.policy_passed ? "Pass" : "Fail"} / ${proposal.evaluation.regression_passed ? "Pass" : "Fail"}` : "Pending"}</strong></div><div><span>Who approved</span><strong>{proposal.approval ? `${proposal.approval.approver_id} · policy v${proposal.approval.policy_version}` : "Not approved"}</strong></div><div><span>Signed artifact</span><strong>{proposal.approval?.signature_present ? `Verified · ${proposal.approval.signer_id}` : "Absent"}</strong></div><div><span>Canary</span><strong>{proposal.canary ? `${proposal.canary.passed ? "Passed" : "Failed"} · ${proposal.canary.failure_count} failures` : "Not run"}</strong></div></div>
+        return <Panel className="secondary-card evolution-card" key={proposal.proposal_id}><div className="panel-heading"><div><span className="eyebrow">{proposal.source} · {proposal.proposal_id}</span><h3>{proposal.expected_outcome}</h3></div><Chip tone={stateTone(proposal.state)}>{proposal.state.replaceAll("_", " ")}</Chip></div><div className={`secondary-icon secondary-icon-${index % 3}`}><Icon name="evolution" size={20} /></div><div className="settings-facts"><div><span>Artifact transition</span><strong>{proposal.base_artifact} → {proposal.candidate_artifact}</strong></div><div><span>Evidence digest</span><strong className="mono">{proposal.evidence_digest}</strong></div><div><span>Why proposed</span><strong>{proposal.expected_outcome}</strong></div><div><span>Holdout gate</span><strong>{proposal.evaluation ? `${proposal.evaluation.holdout_passed ? "Passed" : "Failed"} · ${proposal.evaluation.trajectory_score}/${proposal.evaluation.outcome_score}` : "Not evaluated"}</strong></div><div><span>Policy / regression</span><strong>{proposal.evaluation ? `${proposal.evaluation.policy_passed ? "Pass" : "Fail"} / ${proposal.evaluation.regression_passed ? "Pass" : "Fail"}` : "Pending"}</strong></div><div><span>Who approved</span><strong>{proposal.approval ? `${proposal.approval.approver_id} · policy v${proposal.approval.policy_version}` : "Not approved"}</strong></div><div><span>Signed artifact</span><strong>{proposal.approval?.signature_present ? `Verified · ${proposal.approval.signer_id}` : "Absent"}</strong></div><div><span>Canary</span><strong>{proposal.canary ? `${proposal.canary.passed ? "Passed" : "Failed"} · ${proposal.canary.failure_count} failures` : "Not run"}</strong></div><div><span>Candidate diff</span><strong>{proposal.candidate ? `${proposal.candidate.changed_units} changed · +${proposal.candidate.added_units} / −${proposal.candidate.removed_units} ${proposal.candidate.unit} · ${proposal.candidate.base_bytes} → ${proposal.candidate.candidate_bytes} bytes` : "Structural diff unavailable"}</strong></div><div><span>Provenance</span><strong>{proposal.candidate ? `${proposal.candidate.kind} · ${proposal.candidate.target_id} · ${proposal.candidate.provider_id}` : `${proposal.source} · ${proposal.evidence_digest}`}</strong></div></div><div className="evolution-lineage"><span className="eyebrow">LINEAGE</span><div className="lineage-chain"><div><small>Parent</small><strong className="mono">{proposal.base_artifact}</strong></div><Icon name="arrow" size={14} /><div><small>Candidate</small><strong className="mono">{proposal.candidate_artifact}</strong></div><Icon name="arrow" size={14} /><div><small>State</small><strong>{proposal.state.replaceAll("_", " ")}</strong></div></div><p>Bound by evidence <span className="mono">{proposal.evidence_digest}</span>{proposal.candidate ? ` · proposed by ${proposal.candidate.provider_id}` : ""}.</p>{!proposal.candidate ? <button className="text-link lineage-inspect" type="button" disabled={inspectInFlight !== null} onClick={() => void inspectCandidate(proposal.proposal_id)}>{inspectInFlight === proposal.proposal_id ? "Inspecting candidate…" : "Inspect candidate diff"} <Icon name="arrow" size={13} /></button> : null}{inspectError?.proposalId === proposal.proposal_id ? <p className="connection-error" role="alert">{inspectError.message}</p> : null}</div>
           {canActivate || activation ? <div className="evolution-actions"><button className={activation ? "button button-secondary" : "button button-primary"} type="button" disabled={mutationInFlight} onClick={() => beginMutation(activation ? "rollback" : "activate", proposal.proposal_id)}>{activation ? "Rollback binding" : "Activate candidate"} <Icon name={activation ? "archive" : "arrow"} size={14} /></button></div> : <p className="evolution-gate-note"><Icon name="shield" size={13} /> Activation stays unavailable until evaluation, approval, signature, admission, and canary gates pass.</p>}
           {isPending ? <form className="evolution-confirm" onSubmit={submitMutation}><div><span className="eyebrow">EXACT CONFIRMATION</span><strong>{pending.operation === "activate" ? "Activate admitted candidate" : "Restore previous binding"}</strong><p>Type <span className="mono">{proposal.proposal_id}</span> to confirm this exact mutation. A verified backup is created first.</p></div><label><span>Proposal ID</span><input aria-label={`Confirm ${pending.operation} ${proposal.proposal_id}`} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="off" spellCheck={false} /></label>{pending.operation === "rollback" ? <label><span>Rollback reason</span><textarea aria-label={`Rollback reason ${proposal.proposal_id}`} value={reason} onChange={(event) => setReason(event.target.value)} rows={2} maxLength={500} /></label> : null}<div className="evolution-confirm-actions"><button className="button button-secondary" type="button" onClick={() => setPending(null)} disabled={mutationInFlight}>Cancel</button><button className="button button-primary" type="submit" disabled={mutationInFlight || confirmation !== proposal.proposal_id || (pending.operation === "rollback" && !reason.trim())}>{mutationInFlight ? "Applying…" : pending.operation === "activate" ? "Confirm activation" : "Confirm rollback"}</button></div>{mutationError ? <p className="connection-error" role="alert">{mutationError}</p> : null}</form> : null}
         </Panel>;

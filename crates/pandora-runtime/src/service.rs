@@ -18,12 +18,12 @@ use pandora_types::{
     IdError, MemoryTier, PrincipalId, ProposalId, ResearchArtifactKind, ServiceAgentResumeRequest,
     ServiceAgentRunRequest, ServiceAgentRunResult, ServiceApprovalSummary,
     ServiceArtifactActivation, ServiceContractError, ServiceEngineSummary, ServiceEventPage,
-    ServiceEvolutionApproval, ServiceEvolutionCanary, ServiceEvolutionEvaluation,
-    ServiceEvolutionSummary, ServiceHarnessSummary, ServiceHealth, ServiceMemoryPage,
-    ServiceMemoryRecord, ServiceProviderSummary, ServiceRequest, ServiceResponse,
-    ServiceRunRequest, ServiceRunResult, ServiceRunResumeRequest, ServiceSessionDetail,
-    ServiceSessionSummary, ServiceToolSummary, Session, SessionId, TaskIntent, TenantId, Timestamp,
-    WorkspaceId,
+    ServiceEvolutionApproval, ServiceEvolutionCanary, ServiceEvolutionCandidate,
+    ServiceEvolutionEvaluation, ServiceEvolutionSummary, ServiceHarnessSummary, ServiceHealth,
+    ServiceMemoryPage, ServiceMemoryRecord, ServiceProviderSummary, ServiceRequest,
+    ServiceResponse, ServiceRunRequest, ServiceRunResult, ServiceRunResumeRequest,
+    ServiceSessionDetail, ServiceSessionSummary, ServiceToolSummary, Session, SessionId,
+    TaskIntent, TenantId, Timestamp, WorkspaceId,
 };
 use rusqlite::Connection;
 use std::fmt;
@@ -797,8 +797,94 @@ impl RuntimeService {
             .as_ref()
             .ok_or(RuntimeServiceError::EvolutionUnavailable)?;
         Ok(ServiceResponse::evolution_inspect(
-            service_evolution_summary(engine.inspect(proposal_id)?),
+            self.service_evolution_summary(engine.inspect(proposal_id)?)?,
         ))
+    }
+
+    fn service_evolution_summary(
+        &self,
+        record: EvolutionRecord,
+    ) -> Result<ServiceEvolutionSummary, RuntimeServiceError> {
+        let candidate = self.evolution_candidate(&record)?;
+        let summary = service_evolution_summary(record);
+        Ok(match candidate {
+            Some(candidate) => summary.with_candidate(candidate),
+            None => summary,
+        })
+    }
+
+    fn evolution_candidate(
+        &self,
+        record: &EvolutionRecord,
+    ) -> Result<Option<ServiceEvolutionCandidate>, RuntimeServiceError> {
+        let Some(data_dir) = self.evolution_data_dir.as_ref() else {
+            return Ok(None);
+        };
+        let proposal = record.proposal();
+        let research_path = data_dir.join("research-artifacts.sqlite3");
+        if research_path.is_file() {
+            let research = ResearchArtifactStore::open(research_path)?;
+            if let Some(candidate) = research.inspect(proposal.proposal_id())? {
+                let base = research
+                    .load_artifact(
+                        proposal.base_artifact(),
+                        candidate.kind(),
+                        candidate.target_id(),
+                    )?
+                    .ok_or(ResearchArtifactError::ProposalNotFound)?;
+                let artifact = research
+                    .load_artifact(
+                        proposal.candidate_artifact(),
+                        candidate.kind(),
+                        candidate.target_id(),
+                    )?
+                    .ok_or(ResearchArtifactError::ProposalNotFound)?;
+                let (changed, added, removed, unit) = artifact_delta(&base, &artifact);
+                return Ok(Some(ServiceEvolutionCandidate::new(
+                    candidate.kind().as_str(),
+                    candidate.target_id(),
+                    candidate.provider_id(),
+                    Some(candidate.generated_at()),
+                    bounded_len(base.len()),
+                    bounded_len(artifact.len()),
+                    changed,
+                    added,
+                    removed,
+                    unit,
+                )));
+            }
+        }
+
+        let packages_path = data_dir.join("packages.sqlite3");
+        if !packages_path.is_file() {
+            return Ok(None);
+        }
+        let packages = PackageStore::open(packages_path)?;
+        let Some((_, base)) = packages.load_artifact_by_id(proposal.base_artifact())? else {
+            return Ok(None);
+        };
+        let Some((candidate, artifact)) =
+            packages.load_artifact_by_id(proposal.candidate_artifact())?
+        else {
+            return Ok(None);
+        };
+        let (changed, added, removed, unit) = artifact_delta(&base, &artifact);
+        Ok(Some(ServiceEvolutionCandidate::new(
+            candidate.manifest().kind().as_str(),
+            format!(
+                "{}@{}",
+                candidate.manifest().id(),
+                candidate.manifest().version()
+            ),
+            candidate.manifest().publisher(),
+            None,
+            bounded_len(base.len()),
+            bounded_len(artifact.len()),
+            changed,
+            added,
+            removed,
+            unit,
+        )))
     }
 
     fn list_artifact_activations(
@@ -1475,6 +1561,51 @@ fn service_approval_request_summary(task: &str, capability: &str) -> String {
     format!("{capability} for {action} on {target}")
 }
 
+fn bounded_len(length: usize) -> u64 {
+    u64::try_from(length).unwrap_or(u64::MAX)
+}
+
+fn artifact_delta(base: &[u8], candidate: &[u8]) -> (u64, u64, u64, &'static str) {
+    if let (Ok(base), Ok(candidate)) = (std::str::from_utf8(base), std::str::from_utf8(candidate)) {
+        let base = base.lines().collect::<Vec<_>>();
+        let candidate = candidate.lines().collect::<Vec<_>>();
+        let prefix = base
+            .iter()
+            .zip(&candidate)
+            .take_while(|(left, right)| left == right)
+            .count();
+        let suffix = base[prefix..]
+            .iter()
+            .rev()
+            .zip(candidate[prefix..].iter().rev())
+            .take_while(|(left, right)| left == right)
+            .count();
+        let base_delta = base.len().saturating_sub(prefix).saturating_sub(suffix);
+        let candidate_delta = candidate
+            .len()
+            .saturating_sub(prefix)
+            .saturating_sub(suffix);
+        let changed = base_delta.min(candidate_delta);
+        return (
+            bounded_len(changed),
+            bounded_len(candidate_delta.saturating_sub(changed)),
+            bounded_len(base_delta.saturating_sub(changed)),
+            "lines",
+        );
+    }
+    let changed = base
+        .iter()
+        .zip(candidate)
+        .filter(|(left, right)| left != right)
+        .count();
+    (
+        bounded_len(changed),
+        bounded_len(candidate.len().saturating_sub(base.len())),
+        bounded_len(base.len().saturating_sub(candidate.len())),
+        "bytes",
+    )
+}
+
 fn service_evolution_summary(record: EvolutionRecord) -> ServiceEvolutionSummary {
     let proposal = record.proposal();
     let evaluation = record.evaluation().map(|evaluation| {
@@ -1846,6 +1977,31 @@ mod tests {
         .with_evolution(Arc::clone(&evolution))
         .with_artifact_catalog(Arc::clone(&catalog))
         .with_evolution_control(&root);
+
+        let inspected = service
+            .handle(
+                &ServiceRequest::evolution_inspect(proposal_id.as_str()).unwrap(),
+                Timestamp::from_unix_seconds(14),
+            )
+            .unwrap();
+        let ServiceResponse::EvolutionInspect { proposal, .. } = inspected else {
+            panic!("expected an evolution inspect response");
+        };
+        let candidate_details = proposal.candidate().expect("candidate details");
+        assert_eq!(candidate_details.kind(), "gene");
+        assert_eq!(candidate_details.provider_id(), "publisher");
+        assert_eq!(candidate_details.unit(), "lines");
+        assert_eq!(candidate_details.changed_units(), 1);
+        assert_eq!(candidate_details.added_units(), 0);
+        assert_eq!(candidate_details.removed_units(), 0);
+        assert_eq!(
+            candidate_details.base_bytes(),
+            bounded_len(base_bytes.len())
+        );
+        assert_eq!(
+            candidate_details.candidate_bytes(),
+            bounded_len(candidate_bytes.len())
+        );
 
         let fleet_control = FleetEngine::open(root.join("fleet.sqlite3")).unwrap();
         fleet_control

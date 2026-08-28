@@ -110,6 +110,18 @@ export type RuntimeEvolutionProposal = {
     note: string;
     evaluated_at_unix_seconds: number;
   } | null;
+  candidate?: {
+    kind: string;
+    target_id: string;
+    provider_id: string;
+    generated_at_unix_seconds: number | null;
+    base_bytes: number;
+    candidate_bytes: number;
+    changed_units: number;
+    added_units: number;
+    removed_units: number;
+    unit: string;
+  } | null;
 };
 
 export type RuntimeArtifactActivation = {

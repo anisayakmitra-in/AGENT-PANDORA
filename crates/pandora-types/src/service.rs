@@ -478,6 +478,80 @@ impl ServiceEvolutionCanary {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServiceEvolutionCandidate {
+    kind: String,
+    target_id: String,
+    provider_id: String,
+    generated_at_unix_seconds: Option<u64>,
+    base_bytes: u64,
+    candidate_bytes: u64,
+    changed_units: u64,
+    added_units: u64,
+    removed_units: u64,
+    unit: String,
+}
+
+impl ServiceEvolutionCandidate {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        kind: impl Into<String>,
+        target_id: impl Into<String>,
+        provider_id: impl Into<String>,
+        generated_at: Option<Timestamp>,
+        base_bytes: u64,
+        candidate_bytes: u64,
+        changed_units: u64,
+        added_units: u64,
+        removed_units: u64,
+        unit: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: kind.into(),
+            target_id: target_id.into(),
+            provider_id: provider_id.into(),
+            generated_at_unix_seconds: generated_at.map(Timestamp::as_unix_seconds),
+            base_bytes,
+            candidate_bytes,
+            changed_units,
+            added_units,
+            removed_units,
+            unit: unit.into(),
+        }
+    }
+
+    pub fn kind(&self) -> &str {
+        &self.kind
+    }
+    pub fn target_id(&self) -> &str {
+        &self.target_id
+    }
+    pub fn provider_id(&self) -> &str {
+        &self.provider_id
+    }
+    pub const fn generated_at_unix_seconds(&self) -> Option<u64> {
+        self.generated_at_unix_seconds
+    }
+    pub const fn base_bytes(&self) -> u64 {
+        self.base_bytes
+    }
+    pub const fn candidate_bytes(&self) -> u64 {
+        self.candidate_bytes
+    }
+    pub const fn changed_units(&self) -> u64 {
+        self.changed_units
+    }
+    pub const fn added_units(&self) -> u64 {
+        self.added_units
+    }
+    pub const fn removed_units(&self) -> u64 {
+        self.removed_units
+    }
+    pub fn unit(&self) -> &str {
+        &self.unit
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ServiceEvolutionSummary {
     proposal_id: ProposalId,
     source: String,
@@ -490,6 +564,8 @@ pub struct ServiceEvolutionSummary {
     evaluation: Option<ServiceEvolutionEvaluation>,
     approval: Option<ServiceEvolutionApproval>,
     canary: Option<ServiceEvolutionCanary>,
+    #[serde(default)]
+    candidate: Option<ServiceEvolutionCandidate>,
 }
 
 impl ServiceEvolutionSummary {
@@ -519,7 +595,13 @@ impl ServiceEvolutionSummary {
             evaluation,
             approval,
             canary,
+            candidate: None,
         }
+    }
+
+    pub fn with_candidate(mut self, candidate: ServiceEvolutionCandidate) -> Self {
+        self.candidate = Some(candidate);
+        self
     }
 
     pub fn proposal_id(&self) -> &ProposalId {
@@ -554,6 +636,9 @@ impl ServiceEvolutionSummary {
     }
     pub const fn canary(&self) -> Option<&ServiceEvolutionCanary> {
         self.canary.as_ref()
+    }
+    pub const fn candidate(&self) -> Option<&ServiceEvolutionCandidate> {
+        self.candidate.as_ref()
     }
 }
 

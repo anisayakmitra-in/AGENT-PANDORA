@@ -12,6 +12,7 @@ const runtime = vi.hoisted(() => ({
   evolutionActivations: vi.fn(),
   events: vi.fn(),
   health: vi.fn(),
+  inspectEvolution: vi.fn(),
   inspectSession: vi.fn(),
   memory: vi.fn(),
   providers: vi.fn(),
@@ -40,6 +41,7 @@ vi.mock("./runtimeClient", () => ({
     evolutionActivations = runtime.evolutionActivations;
     events = runtime.events;
     health = runtime.health;
+    inspectEvolution = runtime.inspectEvolution;
     inspectSession = runtime.inspectSession;
     memory = runtime.memory;
     providers = runtime.providers;
@@ -173,6 +175,21 @@ describe("Pandora desktop run state", () => {
       backup_directory: "backups/evolution-14",
       reconciled_bindings: 0,
     });
+    runtime.inspectEvolution.mockImplementation(async () => ({
+      ...(await runtime.evolution())[0],
+      candidate: {
+        kind: "gene",
+        target_id: "publisher/candidate@1.0.0",
+        provider_id: "publisher",
+        generated_at_unix_seconds: null,
+        base_bytes: 17,
+        candidate_bytes: 22,
+        changed_units: 1,
+        added_units: 0,
+        removed_units: 0,
+        unit: "lines",
+      },
+    }));
 
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: /Evolution/ }));
@@ -182,6 +199,11 @@ describe("Pandora desktop run state", () => {
     expect(screen.getByText("parliament-a · policy v1")).toBeInTheDocument();
     expect(screen.getByText("catalog active")).toBeInTheDocument();
     expect(screen.getByText("Runtime authority").nextSibling).toHaveTextContent("Unchanged");
+    fireEvent.click(screen.getByRole("button", { name: /Inspect candidate diff/ }));
+    await waitFor(() => {
+      expect(runtime.inspectEvolution).toHaveBeenCalledWith("proposal-a");
+      expect(screen.getByText("1 changed · +0 / −0 lines · 17 → 22 bytes")).toBeInTheDocument();
+    });
     fireEvent.click(screen.getByRole("button", { name: /Rollback binding/ }));
     fireEvent.change(screen.getByLabelText("Confirm rollback proposal-a"), { target: { value: "proposal-a" } });
     fireEvent.change(screen.getByLabelText("Rollback reason proposal-a"), { target: { value: "Canary regression" } });
@@ -225,6 +247,18 @@ describe("Pandora desktop run state", () => {
         note: "passed",
         evaluated_at_unix_seconds: 23,
       },
+      candidate: {
+        kind: "prompt",
+        target_id: "planner.system",
+        provider_id: "research-provider",
+        generated_at_unix_seconds: 20,
+        base_bytes: 120,
+        candidate_bytes: 138,
+        changed_units: 3,
+        added_units: 2,
+        removed_units: 1,
+        unit: "lines",
+      },
     }]);
     runtime.activateEvolution.mockResolvedValue({
       operation: "activate",
@@ -238,6 +272,8 @@ describe("Pandora desktop run state", () => {
 
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: /Evolution/ }));
+    expect(screen.getByText("3 changed · +2 / −1 lines · 120 → 138 bytes")).toBeInTheDocument();
+    expect(screen.getByText("LINEAGE")).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "Activate candidate" }));
     const confirm = screen.getByRole("button", { name: "Confirm activation" });
     expect(confirm).toBeDisabled();
