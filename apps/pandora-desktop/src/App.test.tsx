@@ -247,6 +247,69 @@ describe("Pandora desktop run state", () => {
     expect(await screen.findByLabelText("Workspace inspection output")).toHaveTextContent("diff --git");
   });
 
+  it("fetches browser source only after exact network approval and renders it inertly", async () => {
+    const approval = {
+      approval_id: "approval-browser",
+      session_id: "session-browser",
+      execution_id: "execution-browser",
+      gene_id: "browser.fetch",
+      request_digest: "pandora-request-v2:sha256:browser",
+      request_summary: "network.connect for fetch on example.com",
+      policy_version: 1,
+      expires_at_unix_seconds: 999,
+      status: "pending",
+      approver_id: null,
+      created_at_unix_seconds: 1,
+    };
+    runtime.run.mockResolvedValue({
+      mode: "direct",
+      session_id: "session-browser",
+      execution_id: "execution-browser",
+      selected_harness: "research-domain",
+      selected_gene: "browser.fetch",
+      status: "approval_required",
+      output: "",
+      receipt_count: 0,
+      event_count: 3,
+      approval,
+    });
+    runtime.resolveApproval.mockResolvedValue({ ...approval, status: "approved", approver_id: "local-operator" });
+    runtime.resume.mockResolvedValue({
+      mode: "direct",
+      session_id: "session-browser",
+      execution_id: "execution-browser",
+      selected_harness: "research-domain",
+      selected_gene: "browser.fetch",
+      status: "completed",
+      output: JSON.stringify({
+        url: "https://example.com/",
+        status: 200,
+        content_type: "text/html; charset=utf-8",
+        body: "<h1>Pandora evidence</h1>",
+        truncated: false,
+        lossy: false,
+      }),
+      receipt_count: 1,
+      event_count: 7,
+    });
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "browser" }));
+    fireEvent.click(screen.getByRole("button", { name: "Fetch source" }));
+    expect(await screen.findByText("network.connect for fetch on example.com")).toBeInTheDocument();
+    expect(screen.getByText("pandora-request-v2:sha256:browser")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
+
+    await waitFor(() => {
+      expect(runtime.run).toHaveBeenCalledWith("fetch:https://example.com/", "research-domain");
+      expect(runtime.resolveApproval).toHaveBeenCalledWith("approval-browser", true);
+      expect(runtime.resume).toHaveBeenCalledWith("approval-browser", "fetch:https://example.com/", "research-domain");
+    });
+    expect(await screen.findByLabelText("Browser evidence body")).toHaveTextContent("<h1>Pandora evidence</h1>");
+    expect(screen.getByText("text/html; charset=utf-8")).toBeInTheDocument();
+    expect(screen.queryByRole("iframe")).not.toBeInTheDocument();
+  });
+
   it("keeps the composer available after inspecting an existing session", async () => {
     runtime.sessions.mockResolvedValue([session]);
 

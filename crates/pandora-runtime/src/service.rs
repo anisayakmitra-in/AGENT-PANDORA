@@ -1904,6 +1904,13 @@ fn service_approval_summary(
 }
 
 fn service_approval_request_summary(task: &str, capability: &str) -> String {
+    if let Some(source) = task.strip_prefix("fetch:") {
+        let host = url::Url::parse(source)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_owned))
+            .unwrap_or_else(|| "network host".to_owned());
+        return format!("{capability} for fetch on {host}");
+    }
     let mut parts = task.splitn(3, ':');
     let action = parts.next().unwrap_or("task");
     let target = parts.next().unwrap_or("workspace");

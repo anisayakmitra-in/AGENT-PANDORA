@@ -4389,6 +4389,13 @@ fn harness_discovery_exposes_the_built_in_domains_without_runtime_internals() {
     assert_eq!(response["harness"]["id"], "research-domain");
     assert_eq!(response["harness"]["kind"], "domain");
     assert_eq!(response["harness"]["execution"]["runnable"], true);
+    assert!(
+        response["harness"]["genes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|gene| gene["id"] == "browser.fetch")
+    );
 
     let output = fixture
         .command(&["harness", "run", "core-source", "--json"])

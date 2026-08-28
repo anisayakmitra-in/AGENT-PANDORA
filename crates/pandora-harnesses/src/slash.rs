@@ -322,6 +322,7 @@ fn built_in_gene_alias(id: &str) -> Option<&'static str> {
         "evidence.search" => Some("/evidence-search"),
         "source.read" => Some("/source-read"),
         "source.compare" => Some("/source-compare"),
+        "browser.fetch" => Some("/browser-fetch"),
         "citation.inventory" => Some("/citation-inventory"),
         "research.guide" => Some("/research-guide"),
         "design.inventory" => Some("/design-inventory"),

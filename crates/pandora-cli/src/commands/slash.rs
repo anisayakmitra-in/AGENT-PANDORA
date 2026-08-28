@@ -252,6 +252,7 @@ fn task_for(gene_id: &str, values: &[String]) -> Result<String, CliError> {
         "evidence.inventory" => no_argument("evidence-inventory", values),
         "evidence.search" => joined_argument("evidence-search", values),
         "source.read" => one_argument("source-read", values),
+        "browser.fetch" => one_argument("fetch", values),
         "source.compare" => {
             if values.len() != 2 {
                 return Err(CliError::usage(

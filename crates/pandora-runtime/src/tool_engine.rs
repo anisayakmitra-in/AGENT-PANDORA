@@ -513,6 +513,19 @@ impl ToolEngine {
                 Operation::Read,
             ),
             ToolDefinition::new(
+                "browser.fetch",
+                "0.1.0",
+                "Fetch one exact approval-bound text URL without following redirects",
+                json!({
+                    "type": "object",
+                    "required": ["url"],
+                    "properties": {"url": {"type": "string"}},
+                    "additionalProperties": false
+                }),
+                Capability::NetworkConnect,
+                Operation::Connect,
+            ),
+            ToolDefinition::new(
                 "citation.inventory",
                 "0.1.0",
                 "Find explicit URL and DOI markers in workspace sources",
@@ -719,6 +732,7 @@ impl ToolEngine {
                 .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
             "evidence.search" => task_from_argument(arguments, "evidence-search", "query")?,
             "source.read" => task_from_argument(arguments, "source-read", "path")?,
+            "browser.fetch" => task_from_argument(arguments, "fetch", "url")?,
             "source.compare" => {
                 let left = required_text_argument(arguments, "left")?;
                 let right = required_text_argument(arguments, "right")?;
@@ -871,6 +885,7 @@ fn gene_id_for_tool(tool_id: &str) -> Result<GeneId, ToolError> {
         "evidence.inventory" => "evidence.inventory",
         "evidence.search" => "evidence.search",
         "source.read" => "source.read",
+        "browser.fetch" => "browser.fetch",
         "source.compare" => "source.compare",
         "citation.inventory" => "citation.inventory",
         "design.inventory" => "design.inventory",
@@ -889,6 +904,7 @@ fn is_research_tool(tool_id: &str) -> bool {
         "evidence.inventory"
             | "evidence.search"
             | "source.read"
+            | "browser.fetch"
             | "source.compare"
             | "citation.inventory"
     )
@@ -1382,6 +1398,11 @@ mod tests {
                 "source.read",
                 json!({"path": "docs/source.md"}),
                 "source-read:docs/source.md",
+            ),
+            (
+                "browser.fetch",
+                json!({"url": "https://example.test/docs"}),
+                "fetch:https://example.test/docs",
             ),
             (
                 "source.compare",

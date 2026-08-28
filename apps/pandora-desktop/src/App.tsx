@@ -44,7 +44,7 @@ type ViewId =
 
 type RunProfile = string;
 type ThemeMode = "dark" | "light";
-type InspectorTab = "flow" | "evidence" | "workspace";
+type InspectorTab = "flow" | "evidence" | "workspace" | "browser";
 type HarnessTab = "genes" | "extensions" | "authority" | "receipts";
 
 type PendingRunRequest = {
@@ -55,6 +55,15 @@ type PendingRunRequest = {
 type WorkspaceInspectionRequest = {
   task: string;
   requestedHarness: string;
+};
+
+type BrowserEvidence = {
+  url: string;
+  status: number;
+  content_type: string | null;
+  body: string;
+  truncated: boolean;
+  lossy: boolean;
 };
 
 type WorkflowRecipe = {
@@ -74,6 +83,25 @@ const textAttachmentExtensions = new Set([
   "md", "mjs", "py", "rb", "rs", "sh", "sql", "svg", "toml", "ts", "tsx", "txt", "xml", "yaml", "yml",
 ]);
 const applicationTextMediaTypes = new Set(["application/json", "application/javascript", "application/sql", "application/xml", "application/yaml"]);
+
+function parseBrowserEvidence(output: string): BrowserEvidence | null {
+  try {
+    const value = JSON.parse(output) as Partial<BrowserEvidence>;
+    if (typeof value.url !== "string" || typeof value.status !== "number" || typeof value.body !== "string") {
+      return null;
+    }
+    return {
+      url: value.url,
+      status: value.status,
+      content_type: typeof value.content_type === "string" ? value.content_type : null,
+      body: value.body,
+      truncated: value.truncated === true,
+      lossy: value.lossy === true,
+    };
+  } catch {
+    return null;
+  }
+}
 
 function attachmentByteLength(content: string): number {
   return new TextEncoder().encode(content).length;
@@ -380,6 +408,9 @@ function App() {
   const [workspaceInspection, setWorkspaceInspection] = useState<RuntimeRun | null>(null);
   const [pendingWorkspaceInspection, setPendingWorkspaceInspection] = useState<WorkspaceInspectionRequest | null>(null);
   const [workspaceInspectionInFlight, setWorkspaceInspectionInFlight] = useState(false);
+  const [browserInspection, setBrowserInspection] = useState<RuntimeRun | null>(null);
+  const [pendingBrowserInspection, setPendingBrowserInspection] = useState<WorkspaceInspectionRequest | null>(null);
+  const [browserInspectionInFlight, setBrowserInspectionInFlight] = useState(false);
   const [runInFlight, setRunInFlight] = useState(false);
   const [runProfile, setRunProfile] = useState<RunProfile>("auto");
   const [theme, setTheme] = useState<ThemeMode>(loadTheme);
@@ -441,6 +472,8 @@ function App() {
       setPendingRun(null);
       setWorkspaceInspection(null);
       setPendingWorkspaceInspection(null);
+      setBrowserInspection(null);
+      setPendingBrowserInspection(null);
       return;
     }
     let cancelled = false;
@@ -598,6 +631,8 @@ function App() {
       setPendingRun(null);
       setWorkspaceInspection(null);
       setPendingWorkspaceInspection(null);
+      setBrowserInspection(null);
+      setPendingBrowserInspection(null);
       setRuntimeStatus("preview");
     } catch (error: unknown) {
       setRuntimeStatus("offline");
@@ -768,6 +803,55 @@ function App() {
     }
   };
 
+  const inspectBrowser = async (url: string): Promise<void> => {
+    if (!client) {
+      throw new Error("Connect to the local Pandora service first");
+    }
+    const request = { task: `fetch:${url}`, requestedHarness: "research-domain" };
+    setBrowserInspectionInFlight(true);
+    try {
+      const result = await client.run(request.task, request.requestedHarness);
+      setBrowserInspection(result);
+      setPendingBrowserInspection(result.approval ? request : null);
+      setSessions(await client.sessions());
+    } finally {
+      setBrowserInspectionInFlight(false);
+    }
+  };
+
+  const resolveBrowserInspection = async (allow: boolean): Promise<void> => {
+    const approval = browserInspection?.approval;
+    if (!client || !browserInspection || !approval || !pendingBrowserInspection) {
+      throw new Error("No browser approval is available");
+    }
+    setBrowserInspectionInFlight(true);
+    try {
+      const resolved = approval.status === "pending"
+        ? await client.resolveApproval(approval.approval_id, allow)
+        : approval;
+      setBrowserInspection({ ...browserInspection, approval: resolved });
+      if (allow) {
+        const result = await client.resume(
+          approval.approval_id,
+          pendingBrowserInspection.task,
+          pendingBrowserInspection.requestedHarness,
+        );
+        setBrowserInspection(result);
+      } else {
+        setBrowserInspection({
+          ...browserInspection,
+          status: "denied",
+          status_detail: "The operator denied this exact browser request.",
+          approval: resolved,
+        });
+      }
+      setPendingBrowserInspection(null);
+      setSessions(await client.sessions());
+    } finally {
+      setBrowserInspectionInFlight(false);
+    }
+  };
+
   const mutateEvolution = async (
     operation: "activate" | "rollback",
     proposalId: string,
@@ -845,12 +929,16 @@ function App() {
             runInFlight={runInFlight}
             workspaceInspection={workspaceInspection}
             workspaceInspectionInFlight={workspaceInspectionInFlight}
+            browserInspection={browserInspection}
+            browserInspectionInFlight={browserInspectionInFlight}
             runProfile={runProfile}
             onRunProfileChange={setRunProfile}
             onRun={runTask}
             onResolveApproval={resolvePendingApproval}
             onInspectWorkspace={inspectWorkspace}
             onResolveWorkspaceInspection={resolveWorkspaceInspection}
+            onInspectBrowser={inspectBrowser}
+            onResolveBrowserInspection={resolveBrowserInspection}
           />
         ) : activeView === "runs" ? (
           <RunsView runs={orchestrationRuns} runtimeStatus={runtimeStatus} onMutate={mutateOrchestration} />
@@ -943,7 +1031,7 @@ function runtimeStatusLabel(status: RuntimeStatus): string {
   }
 }
 
-function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onApprovalClose, onSelectStep, runtimeStatus, selectedSession, lastRun, events, harnesses, runInFlight, workspaceInspection, workspaceInspectionInFlight, runProfile, onRunProfileChange, onRun, onResolveApproval, onInspectWorkspace, onResolveWorkspaceInspection }: { approvalPreview: boolean; selectedStep: string; onApprovalPreview: () => void; onApprovalClose: () => void; onSelectStep: (id: string) => void; runtimeStatus: RuntimeStatus; selectedSession: RuntimeSessionDetail | null; lastRun: RuntimeRun | null; events: RuntimeEvent[]; harnesses: RuntimeHarness[]; runInFlight: boolean; workspaceInspection: RuntimeRun | null; workspaceInspectionInFlight: boolean; runProfile: RunProfile; onRunProfileChange: (profile: RunProfile) => void; onRun: (task: string, profile: RunProfile, contextAttachments: RuntimeContextAttachment[]) => Promise<void>; onResolveApproval: (allow: boolean) => Promise<void>; onInspectWorkspace: (task: string) => Promise<void>; onResolveWorkspaceInspection: (allow: boolean) => Promise<void> }) {
+function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onApprovalClose, onSelectStep, runtimeStatus, selectedSession, lastRun, events, harnesses, runInFlight, workspaceInspection, workspaceInspectionInFlight, browserInspection, browserInspectionInFlight, runProfile, onRunProfileChange, onRun, onResolveApproval, onInspectWorkspace, onResolveWorkspaceInspection, onInspectBrowser, onResolveBrowserInspection }: { approvalPreview: boolean; selectedStep: string; onApprovalPreview: () => void; onApprovalClose: () => void; onSelectStep: (id: string) => void; runtimeStatus: RuntimeStatus; selectedSession: RuntimeSessionDetail | null; lastRun: RuntimeRun | null; events: RuntimeEvent[]; harnesses: RuntimeHarness[]; runInFlight: boolean; workspaceInspection: RuntimeRun | null; workspaceInspectionInFlight: boolean; browserInspection: RuntimeRun | null; browserInspectionInFlight: boolean; runProfile: RunProfile; onRunProfileChange: (profile: RunProfile) => void; onRun: (task: string, profile: RunProfile, contextAttachments: RuntimeContextAttachment[]) => Promise<void>; onResolveApproval: (allow: boolean) => Promise<void>; onInspectWorkspace: (task: string) => Promise<void>; onResolveWorkspaceInspection: (allow: boolean) => Promise<void>; onInspectBrowser: (url: string) => Promise<void>; onResolveBrowserInspection: (allow: boolean) => Promise<void> }) {
   const [task, setTask] = useState("");
   const [runError, setRunError] = useState("");
   const [contextAttachments, setContextAttachments] = useState<RuntimeContextAttachment[]>([]);
@@ -1056,7 +1144,7 @@ function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onAppro
       </form>
       {lastRun ? <Panel className="run-result"><div className="panel-heading"><h3>Latest {lastRun.mode} run</h3><Chip tone={lastRun.status === "completed" ? "green" : "amber"}>{lastRun.status}</Chip></div><div className="run-result-meta"><span className="mono">{lastRun.execution_id ?? "provider-only response"}</span><span>{lastRun.selected_gene ?? "No gene selected"}</span></div><p>{lastRun.output || "No output returned."}</p>{events.length ? <div className="event-list"><span className="eyebrow">LIVE ACTIVITY</span>{events.map((event) => <div className="event-row" key={event.event_id}><span className="event-dot" /><span>{event.event_type.replaceAll("_", " ")}</span><span className="mono">{event.event_id}</span></div>)}</div> : null}</Panel> : null}
     </section>
-    <Inspector steps={steps} approvalPreview={approvalPreview} lastRun={lastRun} events={events} selectedSession={selectedSession} runtimeStatus={runtimeStatus} approval={lastRun?.approval} approvalDetail={lastRun?.status_detail} approvalInFlight={runInFlight} workspaceInspection={workspaceInspection} workspaceInspectionInFlight={workspaceInspectionInFlight} selectedStep={selectedStep} onApprovalPreview={onApprovalPreview} onApprovalClose={onApprovalClose} onResolveApproval={onResolveApproval} onInspectWorkspace={onInspectWorkspace} onResolveWorkspaceInspection={onResolveWorkspaceInspection} onSelectStep={onSelectStep} />
+    <Inspector steps={steps} approvalPreview={approvalPreview} lastRun={lastRun} events={events} selectedSession={selectedSession} runtimeStatus={runtimeStatus} approval={lastRun?.approval} approvalDetail={lastRun?.status_detail} approvalInFlight={runInFlight} workspaceInspection={workspaceInspection} workspaceInspectionInFlight={workspaceInspectionInFlight} browserInspection={browserInspection} browserInspectionInFlight={browserInspectionInFlight} selectedStep={selectedStep} onApprovalPreview={onApprovalPreview} onApprovalClose={onApprovalClose} onResolveApproval={onResolveApproval} onInspectWorkspace={onInspectWorkspace} onResolveWorkspaceInspection={onResolveWorkspaceInspection} onInspectBrowser={onInspectBrowser} onResolveBrowserInspection={onResolveBrowserInspection} onSelectStep={onSelectStep} />
   </div>;
 }
 
@@ -1090,11 +1178,13 @@ function CommandPalette({ onClose, onSelectView }: { onClose: () => void; onSele
   return <div className="palette-backdrop" role="presentation" onMouseDown={onClose}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Open Pandora surface" onMouseDown={(event) => event.stopPropagation()}><div className="palette-search"><Icon name="search" size={16} /><input autoFocus value={query} onChange={(event) => { setQuery(event.target.value); setSelectedIndex(0); }} onKeyDown={handleKeyDown} placeholder="Search Pandora surfaces…" aria-label="Search Pandora surfaces" /><kbd>ESC</kbd></div><div className="palette-list">{filtered.length ? filtered.map((action, index) => <button type="button" className={`palette-item ${index === selectedIndex ? "is-active" : ""}`} aria-selected={index === selectedIndex} key={action.id} onMouseEnter={() => setSelectedIndex(index)} onClick={() => choose(index)}><Icon name={action.icon} size={16} /><span><strong>{action.label}</strong><small>{action.group}</small></span><kbd>↵</kbd></button>) : <p className="palette-empty">No matching Pandora surface.</p>}</div><div className="palette-footer"><span>Use ↑ ↓ and Enter</span><span className="mono">⌘ K</span></div></section></div>;
 }
 
-function Inspector({ steps, approvalPreview, lastRun, events, selectedSession, runtimeStatus, approval, approvalDetail, approvalInFlight, workspaceInspection, workspaceInspectionInFlight, selectedStep, onApprovalPreview, onApprovalClose, onResolveApproval, onInspectWorkspace, onResolveWorkspaceInspection, onSelectStep }: { steps: typeof authoritySteps; approvalPreview: boolean; lastRun: RuntimeRun | null; events: RuntimeEvent[]; selectedSession: RuntimeSessionDetail | null; runtimeStatus: RuntimeStatus; approval?: RuntimeApproval; approvalDetail?: string; approvalInFlight: boolean; workspaceInspection: RuntimeRun | null; workspaceInspectionInFlight: boolean; selectedStep: string; onApprovalPreview: () => void; onApprovalClose: () => void; onResolveApproval: (allow: boolean) => Promise<void>; onInspectWorkspace: (task: string) => Promise<void>; onResolveWorkspaceInspection: (allow: boolean) => Promise<void>; onSelectStep: (id: string) => void }) {
+function Inspector({ steps, approvalPreview, lastRun, events, selectedSession, runtimeStatus, approval, approvalDetail, approvalInFlight, workspaceInspection, workspaceInspectionInFlight, browserInspection, browserInspectionInFlight, selectedStep, onApprovalPreview, onApprovalClose, onResolveApproval, onInspectWorkspace, onResolveWorkspaceInspection, onInspectBrowser, onResolveBrowserInspection, onSelectStep }: { steps: typeof authoritySteps; approvalPreview: boolean; lastRun: RuntimeRun | null; events: RuntimeEvent[]; selectedSession: RuntimeSessionDetail | null; runtimeStatus: RuntimeStatus; approval?: RuntimeApproval; approvalDetail?: string; approvalInFlight: boolean; workspaceInspection: RuntimeRun | null; workspaceInspectionInFlight: boolean; browserInspection: RuntimeRun | null; browserInspectionInFlight: boolean; selectedStep: string; onApprovalPreview: () => void; onApprovalClose: () => void; onResolveApproval: (allow: boolean) => Promise<void>; onInspectWorkspace: (task: string) => Promise<void>; onResolveWorkspaceInspection: (allow: boolean) => Promise<void>; onInspectBrowser: (url: string) => Promise<void>; onResolveBrowserInspection: (allow: boolean) => Promise<void>; onSelectStep: (id: string) => void }) {
   const [approvalError, setApprovalError] = useState("");
   const [tab, setTab] = useState<InspectorTab>("flow");
   const [workspacePath, setWorkspacePath] = useState("README.md");
   const [workspaceError, setWorkspaceError] = useState("");
+  const [browserUrl, setBrowserUrl] = useState("https://example.com/");
+  const [browserError, setBrowserError] = useState("");
   const selected = steps.find((step) => step.id === selectedStep) ?? steps[4];
   const hasLiveRun = Boolean(lastRun);
   const decide = async (allow: boolean) => {
@@ -1134,10 +1224,37 @@ function Inspector({ steps, approvalPreview, lastRun, events, selectedSession, r
     ? `${workspaceInspection.output.slice(0, 120_000)}\n[output truncated in desktop inspector]`
     : workspaceInspection?.output ?? "";
   const workspaceApproval = workspaceInspection?.approval;
+  const fetchBrowser = async (event: FormEvent) => {
+    event.preventDefault();
+    setBrowserError("");
+    const source = browserUrl.trim();
+    try {
+      const parsed = new URL(source);
+      const loopback = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname);
+      if (source.length > 2048 || parsed.username || parsed.password || parsed.search || parsed.hash || (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback))) {
+        throw new Error("Use HTTPS, or HTTP for loopback only, without credentials, query data, or a fragment");
+      }
+      await onInspectBrowser(source);
+    } catch (error: unknown) {
+      setBrowserError(error instanceof Error ? error.message : "Browser URL is invalid");
+    }
+  };
+  const resolveBrowser = async (allow: boolean) => {
+    setBrowserError("");
+    try {
+      await onResolveBrowserInspection(allow);
+    } catch (error: unknown) {
+      setBrowserError(error instanceof Error ? error.message : "Could not resolve browser approval");
+    }
+  };
+  const browserApproval = browserInspection?.approval;
+  const browserEvidence = browserInspection?.status === "completed"
+    ? parseBrowserEvidence(browserInspection.output)
+    : null;
   return <aside className="inspector">
     <div className="inspector-header"><div><span className="eyebrow">{hasLiveRun ? "LIVE RUN SUMMARY" : "AUTHORITY CONTRACT"}</span><h2>{hasLiveRun ? "Execution recorded" : "Preview boundary"}</h2></div><button className="icon-button" type="button" aria-label="Inspector options" disabled><Icon name="dots" size={17} /></button></div>
     <div className="inspector-tabs" role="tablist" aria-label="Run inspector">
-      {(["flow", "evidence", "workspace"] as InspectorTab[]).map((item) => <button type="button" role="tab" aria-selected={tab === item} className={tab === item ? "is-active" : ""} key={item} onClick={() => setTab(item)}>{item}</button>)}
+      {(["flow", "evidence", "workspace", "browser"] as InspectorTab[]).map((item) => <button type="button" role="tab" aria-selected={tab === item} className={tab === item ? "is-active" : ""} key={item} onClick={() => setTab(item)}>{item}</button>)}
     </div>
     {tab === "evidence" ? <div className="inspector-pane" role="tabpanel">
       <Panel className="evidence-summary"><div className="panel-heading"><div><span className="eyebrow">RUN EVIDENCE</span><h3>{lastRun ? `${lastRun.receipt_count} receipts · ${lastRun.event_count} events` : "No run selected"}</h3></div><Chip tone={lastRun?.status === "completed" ? "green" : "neutral"} icon="archive">{lastRun?.status ?? "waiting"}</Chip></div>{lastRun ? <div className="evidence-facts"><div><span>Execution</span><strong className="mono">{lastRun.execution_id ?? "provider-only"}</strong></div><div><span>Harness</span><strong>{lastRun.selected_harness ?? "unselected"}</strong></div><div><span>Gene</span><strong>{lastRun.selected_gene ?? "unselected"}</strong></div><div><span>Prompt cache</span><strong>{lastRun.cached_prompt_tokens ?? 0} reused · {lastRun.cache_write_prompt_tokens ?? 0} written</strong></div></div> : <p className="task-copy">Run or select a session to inspect its immutable evidence summary.</p>}</Panel>
@@ -1152,6 +1269,10 @@ function Inspector({ steps, approvalPreview, lastRun, events, selectedSession, r
       </Panel>
       {workspaceInspection ? <Panel className="workspace-result-panel"><div className="panel-heading"><div><span className="eyebrow">GOVERNED RESULT</span><h3>{workspaceInspection.selected_gene ?? "Workspace inspection"}</h3></div><Chip tone={workspaceInspection.status === "completed" ? "green" : workspaceInspection.status === "approval_required" ? "amber" : "neutral"}>{workspaceInspection.status}</Chip></div><div className="workspace-result-meta"><span className="mono">{workspaceInspection.execution_id ?? workspaceInspection.session_id}</span><span>{workspaceInspection.receipt_count} receipt{workspaceInspection.receipt_count === 1 ? "" : "s"}</span></div>{workspaceApproval ? <div className="workspace-approval"><div><span className="eyebrow">EXACT APPROVAL</span><strong>{workspaceApproval.request_summary}</strong><small className="mono">{workspaceApproval.request_digest}</small></div><div className="workspace-approval-actions">{workspaceApproval.status === "pending" ? <><button className="button button-deny" type="button" disabled={workspaceInspectionInFlight} onClick={() => void resolveWorkspace(false)}>Deny</button><button className="button button-primary" type="button" disabled={workspaceInspectionInFlight} onClick={() => void resolveWorkspace(true)}>Allow once</button></> : workspaceApproval.status === "approved" ? <button className="button button-primary" type="button" disabled={workspaceInspectionInFlight} onClick={() => void resolveWorkspace(true)}>Resume approved inspection</button> : <Chip tone="neutral">{workspaceApproval.status}</Chip>}</div></div> : null}{workspaceOutput ? <pre className="workspace-output" aria-label="Workspace inspection output">{workspaceOutput}</pre> : <p className="inspector-empty">{workspaceInspection.status_detail ?? (workspaceInspectionInFlight ? "Waiting for runtime evidence…" : "No output returned.")}</p>}</Panel> : null}
       <Panel className="context-boundary"><span className="eyebrow">BOUNDARY</span><h3>Inspection is evidence, not authority</h3><p>File reads, status, diff, and log stay on Pandora’s existing Harness → Gene → ReferenceMonitor → receipt path. This panel cannot execute arbitrary shell commands or mint permits.</p></Panel>
+    </div> : tab === "browser" ? <div className="inspector-pane" role="tabpanel">
+      <Panel className="browser-control-panel"><div className="panel-heading"><div><span className="eyebrow">GOVERNED BROWSER</span><h3>Fetch inert source evidence</h3></div><Chip tone={runtimeStatus === "connected" ? "green" : "neutral"} icon="shield">{runtimeStatus === "connected" ? "Exact approval" : "Offline"}</Chip></div><form className="browser-fetch-form" onSubmit={(event) => void fetchBrowser(event)}><label><span>Exact URL</span><input aria-label="Browser URL" value={browserUrl} onChange={(event) => setBrowserUrl(event.target.value)} maxLength={2048} spellCheck={false} autoComplete="off" /></label><button className="button button-primary" type="submit" disabled={runtimeStatus !== "connected" || browserInspectionInFlight || !browserUrl.trim()}>{browserInspectionInFlight ? "Fetching…" : "Fetch source"}</button></form><div className="browser-rules"><span><Icon name="check" size={11} /> HTTPS, or loopback HTTP</span><span><Icon name="check" size={11} /> No redirects</span><span><Icon name="check" size={11} /> Text only · 128 KiB</span></div>{browserError ? <p className="workspace-inspection-error" role="alert">{browserError}</p> : null}</Panel>
+      {browserInspection ? <Panel className="browser-result-panel"><div className="panel-heading"><div><span className="eyebrow">NETWORK RECEIPT PATH</span><h3>{browserInspection.selected_gene ?? "browser.fetch"}</h3></div><Chip tone={browserInspection.status === "completed" ? "green" : browserInspection.status === "approval_required" ? "amber" : "neutral"}>{browserInspection.status}</Chip></div><div className="workspace-result-meta"><span className="mono">{browserInspection.execution_id ?? browserInspection.session_id}</span><span>{browserInspection.receipt_count} receipt{browserInspection.receipt_count === 1 ? "" : "s"}</span></div>{browserApproval ? <div className="workspace-approval"><div><span className="eyebrow">EXACT NETWORK APPROVAL</span><strong>{browserApproval.request_summary}</strong><small className="mono">{browserApproval.request_digest}</small></div><div className="workspace-approval-actions">{browserApproval.status === "pending" ? <><button className="button button-deny" type="button" disabled={browserInspectionInFlight} onClick={() => void resolveBrowser(false)}>Deny</button><button className="button button-primary" type="button" disabled={browserInspectionInFlight} onClick={() => void resolveBrowser(true)}>Allow once</button></> : browserApproval.status === "approved" ? <button className="button button-primary" type="button" disabled={browserInspectionInFlight} onClick={() => void resolveBrowser(true)}>Resume approved fetch</button> : <Chip tone="neutral">{browserApproval.status}</Chip>}</div></div> : null}{browserEvidence ? <div className="browser-evidence"><div className="browser-evidence-meta"><div><span>Status</span><strong>{browserEvidence.status}</strong></div><div><span>Media</span><strong>{browserEvidence.content_type ?? "UTF-8 text"}</strong></div><div><span>Boundary</span><strong>{browserEvidence.truncated ? "Truncated" : "Complete"}{browserEvidence.lossy ? " · normalized" : ""}</strong></div></div><div className="browser-address mono">{browserEvidence.url}</div><pre aria-label="Browser evidence body">{browserEvidence.body}</pre></div> : browserInspection.output ? <pre className="workspace-output" aria-label="Browser inspection output">{browserInspection.output}</pre> : <p className="inspector-empty">{browserInspection.status_detail ?? (browserInspectionInFlight ? "Waiting for network evidence…" : "No source returned.")}</p>}</Panel> : null}
+      <Panel className="context-boundary browser-boundary"><span className="eyebrow">UNTRUSTED EVIDENCE</span><h3>Remote content cannot speak with authority</h3><p>Pandora never executes returned HTML or scripts. The exact URL is payload-digest bound, DNS is pinned after boundary checks, every connection consumes one permit, and the result enters context only as untrusted evidence.</p></Panel>
     </div> : <div className="inspector-pane" role="tabpanel">
       <Panel className="task-panel"><div className="task-heading"><span className="task-icon"><Icon name="code" size={18} /></span><div><span className="eyebrow">PANDORA DESKTOP</span><h3>Governed command surface</h3></div></div><p className="task-copy">Submit work through the local service. The desktop shell does not issue permits or execute tools directly.</p><div className="task-meta"><span><Icon name="book" size={13} /> Existing runtime</span><span><Icon name="lock" size={13} /> Workspace scoped</span></div></Panel>
       <div className="inspector-section"><div className="section-heading"><span>Authority chain</span><span className="mono section-count">{steps.filter((step) => step.status !== "idle").length}/8</span></div><div className="authority-timeline">{steps.map((step) => <button className={`authority-row status-${step.status} ${selectedStep === step.id ? "is-selected" : ""}`} key={step.id} onClick={() => onSelectStep(step.id)}><span className="timeline-line" /><span className="timeline-node">{step.status === "complete" ? <Icon name="check" size={12} /> : <Icon name={step.icon} size={13} />}</span><span className="authority-copy"><strong>{step.label}</strong><small>{step.detail}</small></span><Icon name="chevron" size={14} /></button>)}</div></div>

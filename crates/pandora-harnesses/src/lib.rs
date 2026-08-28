@@ -482,7 +482,7 @@ mod tests {
     }
 
     #[test]
-    fn research_domain_exposes_only_bounded_read_workflows() {
+    fn research_domain_exposes_bounded_filesystem_and_network_evidence_genes() {
         let research = builtin_harnesses()
             .into_iter()
             .find(|harness| harness.manifest().id().as_str() == "research-domain")
@@ -494,12 +494,13 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(research.manifest().kind(), HarnessKind::Domain);
-        assert_eq!(genes.len(), 6);
+        assert_eq!(genes.len(), 7);
         for id in [
             "evidence.inventory",
             "evidence.search",
             "source.read",
             "source.compare",
+            "browser.fetch",
             "citation.inventory",
             "research.guide",
         ] {
@@ -508,6 +509,7 @@ mod tests {
         assert!(genes.iter().all(|gene| {
             gene.capabilities().is_empty()
                 || gene.capabilities() == [pandora_types::Capability::FilesystemRead]
+                || gene.capabilities() == [pandora_types::Capability::NetworkConnect]
         }));
     }
 

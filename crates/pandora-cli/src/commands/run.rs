@@ -231,10 +231,11 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             Capability::FilesystemRead,
             Capability::FilesystemWrite,
             Capability::ProcessExecute,
+            Capability::NetworkConnect,
             Capability::ProviderInvoke,
             Capability::WasmExecute,
         ],
-        [Operation::Write, Operation::Execute],
+        [Operation::Write, Operation::Execute, Operation::Connect],
     );
     let controller = ExecutionController::with_policy_and_harnesses(workspace, policy, harnesses)
         .with_wasm_executor(wasm);

@@ -71,6 +71,7 @@ pub fn research_manifest() -> Result<HarnessManifest, ManifestError> {
         "evidence.search",
         "source.read",
         "source.compare",
+        "browser.fetch",
         "citation.inventory",
         "research.guide",
     ]

@@ -1,8 +1,8 @@
 use crate::execution_profile::{ExecutionProfileAssemblyError, assemble_execution_profile};
 use crate::executors::{
-    FilesystemError, FilesystemExecutor, GitWorktreeExecutor, ProcessError, ProcessExecutor,
-    ProviderExecutor, ProviderResult, VerificationCommand, VerificationOptions, WorkspaceRoot,
-    WorktreeCommand, WorktreeResult,
+    FilesystemError, FilesystemExecutor, GitWorktreeExecutor, NetworkError, NetworkExecutor,
+    ProcessError, ProcessExecutor, ProviderExecutor, ProviderResult, VerificationCommand,
+    VerificationOptions, WorkspaceRoot, WorktreeCommand, WorktreeResult,
 };
 use crate::hooks::{HookDecision, HookPoint, LifecycleHooks};
 use crate::mcp::{
@@ -50,6 +50,7 @@ pub enum RuntimeError {
     Provider(ProviderError),
     Request(RequestError),
     Filesystem(FilesystemError),
+    Network(NetworkError),
     Process(ProcessError),
     Wasm(WasmError),
     ExecutionProfile(ExecutionProfileAssemblyError),
@@ -64,6 +65,7 @@ pub struct ExecutionController {
     reference_monitor: ReferenceMonitor,
     harnesses: HarnessCatalog,
     filesystem: FilesystemExecutor,
+    network: NetworkExecutor,
     process: ProcessExecutor,
     provider: ProviderExecutor,
     wasm: WasmExecutor,
@@ -183,6 +185,7 @@ impl ExecutionController {
         let policy_version = policy.policy_version();
         Self {
             filesystem: FilesystemExecutor::for_workspace(workspace.clone()),
+            network: NetworkExecutor::new(),
             process: ProcessExecutor::new(workspace.clone()),
             provider: ProviderExecutor::new(),
             wasm: WasmExecutor::new(),
@@ -1464,6 +1467,34 @@ impl ExecutionController {
                     .map(|_| ())
                     .map_err(|error| RuntimeError::Filesystem(error.clone()))
             }
+            Capability::NetworkConnect => {
+                let source = std::str::from_utf8(
+                    payload.ok_or(RuntimeError::Network(NetworkError::PermissionDenied))?,
+                )
+                .map_err(|_| RuntimeError::Network(NetworkError::InvalidUrl))?;
+                let response = self.network.fetch(permit, source, now);
+                let receipt = response.receipt().clone();
+                output.receipts.push(receipt.clone());
+                output.events.push(self.event(
+                    EventType::EffectCompleted,
+                    self.context(
+                        session,
+                        execution_id,
+                        Some(output.selected_harness.clone()),
+                        Some(output.selected_gene.clone()),
+                        Some(receipt),
+                    ),
+                    EventPayload::Effect {
+                        capability: permit.request().capability().as_str().to_owned(),
+                        request_digest: permit.request().request_digest().clone(),
+                    },
+                ));
+                let evidence = response.into_result().map_err(RuntimeError::Network)?;
+                output.output = Some(serde_json::to_vec(&evidence).map_err(|_| {
+                    RuntimeError::InvalidIntent("browser evidence could not be encoded")
+                })?);
+                Ok(())
+            }
             Capability::WasmExecute => {
                 let payload = payload.ok_or(RuntimeError::Wasm(WasmError::InvalidInput))?;
                 let response = self.wasm.execute(permit, payload, now);
@@ -1687,6 +1718,11 @@ fn executor_for_gene(manifest: &GeneManifest) -> &'static str {
         "provider"
     } else if manifest.capabilities().contains(&Capability::McpInvoke) {
         "mcp_stdio"
+    } else if manifest
+        .capabilities()
+        .contains(&Capability::NetworkConnect)
+    {
+        "network"
     } else {
         "filesystem"
     }
@@ -1709,6 +1745,7 @@ fn runtime_error_code(error: &RuntimeError) -> &'static str {
         RuntimeError::Provider(_) => "provider_failed",
         RuntimeError::Request(_) => "request_failed",
         RuntimeError::Filesystem(_) => "filesystem_failed",
+        RuntimeError::Network(_) => "network_failed",
         RuntimeError::Process(_) => "process_failed",
         RuntimeError::Wasm(_) => "wasm_failed",
         RuntimeError::ExecutionProfile(_) => "execution_profile_failed",
@@ -1749,6 +1786,7 @@ fn default_gene_id(intent: &TaskIntent) -> GeneId {
         "evidence-search" => GeneId::new("evidence.search").expect("built-in Gene ID is valid"),
         "source-read" => GeneId::new("source.read").expect("built-in Gene ID is valid"),
         "source-compare" => GeneId::new("source.compare").expect("built-in Gene ID is valid"),
+        "fetch" => GeneId::new("browser.fetch").expect("built-in Gene ID is valid"),
         "citation-inventory" => {
             GeneId::new("citation.inventory").expect("built-in Gene ID is valid")
         }
@@ -1942,6 +1980,7 @@ fn research_input(
                 ))?;
             ResearchRequest::compare(context, left, right)
         }
+        "browser.fetch" if action == "fetch" => ResearchRequest::fetch(context, remainder),
         "citation.inventory" if action == "citation-inventory" && remainder.is_empty() => {
             ResearchRequest::citation_inventory(context)
         }
@@ -1954,8 +1993,9 @@ fn research_input(
             ));
         }
     };
+    let payload = (gene_id.as_str() == "browser.fetch").then(|| remainder.as_bytes().to_vec());
     let input = request.into_gene_input().map_err(RuntimeError::Planning)?;
-    Ok((input, None))
+    Ok((input, payload))
 }
 
 fn design_input(

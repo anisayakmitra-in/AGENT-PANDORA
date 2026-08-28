@@ -6,9 +6,10 @@ use pandora_types::{
     ResourceScope,
 };
 use serde::{Deserialize, Serialize};
+use url::{Host, Url};
 
 const CITATION_MARKERS: [&str; 3] = ["http://", "https://", "doi:"];
-const RESEARCH_GUIDE: &str = "Evidence inventory maps the bounded workspace.\nEvidence search locates relevant local material.\nSource read and source compare preserve exact evidence.\nCitation inventory finds explicit URL and DOI markers without claiming they are valid.\nAll filesystem effects require Pandora permits and receipts; network retrieval requires a separately governed tool.";
+const RESEARCH_GUIDE: &str = "Evidence inventory maps the bounded workspace.\nEvidence search locates relevant local material.\nSource read and source compare preserve exact evidence.\nBrowser fetch retrieves one exact, approval-bound text URL without following redirects.\nCitation inventory finds explicit URL and DOI markers without claiming they are valid.\nAll filesystem and network effects require Pandora permits and receipts.";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -17,6 +18,7 @@ pub enum ResearchAction {
     Search,
     Read,
     Compare,
+    Fetch,
     CitationInventory,
     Guide,
 }
@@ -28,6 +30,7 @@ pub struct ResearchRequest {
     context: PlanningContext,
     query: Option<String>,
     paths: Vec<String>,
+    url: Option<String>,
 }
 
 impl ResearchRequest {
@@ -41,6 +44,7 @@ impl ResearchRequest {
             context,
             query: Some(query.into()),
             paths: Vec::new(),
+            url: None,
         }
     }
 
@@ -62,6 +66,16 @@ impl ResearchRequest {
 
     pub fn citation_inventory(context: PlanningContext) -> Self {
         Self::empty(ResearchAction::CitationInventory, context)
+    }
+
+    pub fn fetch(context: PlanningContext, url: impl Into<String>) -> Self {
+        Self {
+            action: ResearchAction::Fetch,
+            context,
+            query: None,
+            paths: Vec::new(),
+            url: Some(url.into()),
+        }
     }
 
     pub fn guide(context: PlanningContext) -> Self {
@@ -86,6 +100,7 @@ impl ResearchRequest {
             context,
             query: None,
             paths: Vec::new(),
+            url: None,
         }
     }
 
@@ -99,6 +114,7 @@ impl ResearchRequest {
             context,
             query: None,
             paths: paths.into_iter().collect(),
+            url: None,
         }
     }
 }
@@ -109,6 +125,7 @@ pub enum ResearchGeneRole {
     EvidenceSearch,
     SourceRead,
     SourceCompare,
+    BrowserFetch,
     CitationInventory,
     ResearchGuide,
 }
@@ -120,6 +137,7 @@ impl ResearchGeneRole {
             Self::EvidenceSearch => ResearchAction::Search,
             Self::SourceRead => ResearchAction::Read,
             Self::SourceCompare => ResearchAction::Compare,
+            Self::BrowserFetch => ResearchAction::Fetch,
             Self::CitationInventory => ResearchAction::CitationInventory,
             Self::ResearchGuide => ResearchAction::Guide,
         }
@@ -131,6 +149,7 @@ impl ResearchGeneRole {
             Self::EvidenceSearch => "evidence.search",
             Self::SourceRead => "source.read",
             Self::SourceCompare => "source.compare",
+            Self::BrowserFetch => "browser.fetch",
             Self::CitationInventory => "citation.inventory",
             Self::ResearchGuide => "research.guide",
         }
@@ -138,7 +157,7 @@ impl ResearchGeneRole {
 
     const fn kind(self) -> GeneKind {
         match self {
-            Self::EvidenceSearch | Self::SourceRead => GeneKind::Tool,
+            Self::EvidenceSearch | Self::SourceRead | Self::BrowserFetch => GeneKind::Tool,
             Self::EvidenceInventory
             | Self::SourceCompare
             | Self::CitationInventory
@@ -149,6 +168,7 @@ impl ResearchGeneRole {
     const fn capability(self) -> Option<Capability> {
         match self {
             Self::ResearchGuide => None,
+            Self::BrowserFetch => Some(Capability::NetworkConnect),
             _ => Some(Capability::FilesystemRead),
         }
     }
@@ -176,6 +196,7 @@ impl ResearchGene {
             ResearchGeneRole::EvidenceSearch,
             ResearchGeneRole::SourceRead,
             ResearchGeneRole::SourceCompare,
+            ResearchGeneRole::BrowserFetch,
             ResearchGeneRole::CitationInventory,
             ResearchGeneRole::ResearchGuide,
         ]
@@ -201,6 +222,28 @@ impl Gene for ResearchGene {
             ));
         }
 
+        if self.role == ResearchGeneRole::BrowserFetch {
+            let source = request
+                .url
+                .as_deref()
+                .ok_or(GeneError::InvalidInput("URL is required"))?;
+            let (host, port) = validate_fetch_url(source)?;
+            let operation = OperationRequest::new(
+                request.context.execution_id().clone(),
+                request.context.session_id().clone(),
+                request.context.principal_id().clone(),
+                request.context.execution_profile().clone(),
+                self.manifest.id().clone(),
+                request.context.artifact_id().cloned(),
+                Capability::NetworkConnect,
+                Operation::Connect,
+                EffectTarget::network(host.clone(), port),
+                ResourceScope::host(host),
+            )?
+            .with_payload_digest(source.as_bytes())?;
+            return Ok(vec![operation]);
+        }
+
         let targets = match self.role {
             ResearchGeneRole::EvidenceInventory => vec![EffectTarget::path(".")],
             ResearchGeneRole::EvidenceSearch => vec![EffectTarget::path(
@@ -219,6 +262,7 @@ impl Gene for ResearchGene {
                 .map(EffectTarget::path)
                 .collect(),
             ResearchGeneRole::ResearchGuide => return Ok(Vec::new()),
+            ResearchGeneRole::BrowserFetch => unreachable!("browser fetch is planned above"),
         };
 
         targets
@@ -256,6 +300,7 @@ pub fn is_research_gene(gene_id: &GeneId) -> bool {
             | "evidence.search"
             | "source.read"
             | "source.compare"
+            | "browser.fetch"
             | "citation.inventory"
             | "research.guide"
     )
@@ -268,7 +313,7 @@ pub fn research_static_output(gene_id: &GeneId) -> Option<&'static str> {
 fn validate_request(request: &ResearchRequest) -> Result<(), GeneError> {
     match request.action {
         ResearchAction::Inventory | ResearchAction::CitationInventory | ResearchAction::Guide => {
-            if request.query.is_some() || !request.paths.is_empty() {
+            if request.query.is_some() || !request.paths.is_empty() || request.url.is_some() {
                 return Err(GeneError::InvalidInput(
                     "query and paths are not valid for this research action",
                 ));
@@ -281,7 +326,7 @@ fn validate_request(request: &ResearchRequest) -> Result<(), GeneError> {
                     .as_deref()
                     .ok_or(GeneError::InvalidInput("query is required"))?,
             )?;
-            if !request.paths.is_empty() {
+            if !request.paths.is_empty() || request.url.is_some() {
                 return Err(GeneError::InvalidInput(
                     "paths are not valid for evidence search",
                 ));
@@ -301,12 +346,25 @@ fn validate_request(request: &ResearchRequest) -> Result<(), GeneError> {
                 ));
             }
         }
+        ResearchAction::Fetch => {
+            if request.query.is_some() || !request.paths.is_empty() {
+                return Err(GeneError::InvalidInput(
+                    "query and paths are not valid for browser fetch",
+                ));
+            }
+            validate_fetch_url(
+                request
+                    .url
+                    .as_deref()
+                    .ok_or(GeneError::InvalidInput("URL is required"))?,
+            )?;
+        }
     }
     Ok(())
 }
 
 fn validate_paths(request: &ResearchRequest, expected: usize) -> Result<(), GeneError> {
-    if request.query.is_some() || request.paths.len() != expected {
+    if request.query.is_some() || request.url.is_some() || request.paths.len() != expected {
         return Err(GeneError::InvalidInput(
             "research action has an invalid path count",
         ));
@@ -315,6 +373,48 @@ fn validate_paths(request: &ResearchRequest, expected: usize) -> Result<(), Gene
         validate_path(path)?;
     }
     Ok(())
+}
+
+fn validate_fetch_url(value: &str) -> Result<(String, u16), GeneError> {
+    if value.len() > 2048 || value.chars().any(char::is_control) {
+        return Err(GeneError::InvalidInput(
+            "browser URL is invalid or too long",
+        ));
+    }
+    let parsed =
+        Url::parse(value).map_err(|_| GeneError::InvalidInput("browser URL is invalid"))?;
+    if !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err(GeneError::InvalidInput(
+            "browser URL cannot contain credentials, query data, or a fragment",
+        ));
+    }
+    let host = parsed
+        .host()
+        .ok_or(GeneError::InvalidInput("browser URL requires a host"))?;
+    let loopback = match host {
+        Host::Domain(value) => value.eq_ignore_ascii_case("localhost"),
+        Host::Ipv4(value) => value.is_loopback(),
+        Host::Ipv6(value) => value.is_loopback(),
+    };
+    if parsed.scheme() != "https" && !(parsed.scheme() == "http" && loopback) {
+        return Err(GeneError::InvalidInput(
+            "browser URL must use HTTPS; HTTP is allowed only for loopback",
+        ));
+    }
+    let port = parsed
+        .port_or_known_default()
+        .ok_or(GeneError::InvalidInput("browser URL requires a valid port"))?;
+    Ok((
+        parsed
+            .host_str()
+            .ok_or(GeneError::InvalidInput("browser URL requires a host"))?
+            .to_owned(),
+        port,
+    ))
 }
 
 #[cfg(test)]
@@ -422,5 +522,52 @@ mod tests {
         assert!(requests.is_empty());
         assert!(gene.manifest().capabilities().is_empty());
         assert!(research_static_output(gene.manifest().id()).is_some());
+    }
+
+    #[test]
+    fn browser_fetch_binds_the_exact_url_payload_and_host_scope() {
+        let gene = ResearchGene::new(ResearchGeneRole::BrowserFetch).unwrap();
+        let source = "https://example.test/docs";
+        let requests = gene
+            .plan(
+                &ResearchRequest::fetch(context(), source)
+                    .into_gene_input()
+                    .unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].capability(), Capability::NetworkConnect);
+        assert_eq!(requests[0].operation(), Operation::Connect);
+        assert_eq!(
+            requests[0].target(),
+            &EffectTarget::network("example.test", 443)
+        );
+        assert_eq!(
+            requests[0].resource_scope(),
+            &ResourceScope::host("example.test")
+        );
+        assert!(requests[0].payload_digest_matches(source.as_bytes()));
+    }
+
+    #[test]
+    fn browser_fetch_rejects_unsafe_or_secret_bearing_urls() {
+        for source in [
+            "http://example.test/docs",
+            "https://token@example.test/docs",
+            "https://example.test/docs?token=secret",
+            "file:///etc/passwd",
+        ] {
+            assert!(
+                ResearchRequest::fetch(context(), source)
+                    .into_gene_input()
+                    .is_err()
+            );
+        }
+        assert!(
+            ResearchRequest::fetch(context(), "http://127.0.0.1:5173/")
+                .into_gene_input()
+                .is_ok()
+        );
     }
 }

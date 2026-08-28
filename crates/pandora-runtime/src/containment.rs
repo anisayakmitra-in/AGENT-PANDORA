@@ -13,6 +13,7 @@ pub fn shipped_executor_containment() -> Result<ContainmentSnapshot, Containment
             worktree_evidence()?,
             mcp_evidence()?,
             process_evidence()?,
+            network_evidence()?,
             provider_evidence()?,
             wasm_evidence()?,
         ],
@@ -144,6 +145,25 @@ fn provider_evidence() -> Result<ContainmentEvidence, ContainmentContractError> 
     )
 }
 
+fn network_evidence() -> Result<ContainmentEvidence, ContainmentContractError> {
+    ContainmentEvidence::new(
+        identity("network", ExecutorWorkerClass::InProcess)?,
+        vec![partial(
+            ContainmentBoundaryKind::Network,
+            vec![
+                ContainmentControl::PermitRequestBinding,
+                ContainmentControl::PayloadDigestBinding,
+                ContainmentControl::DnsResolutionPinning,
+                ContainmentControl::RedirectsDisabled,
+                ContainmentControl::TextMediaOnly,
+                ContainmentControl::BoundedIo,
+                ContainmentControl::TimeoutAndCancellation,
+            ],
+            ContainmentLimitation::HostNetworkNotSandboxed,
+        )?],
+    )
+}
+
 fn wasm_evidence() -> Result<ContainmentEvidence, ContainmentContractError> {
     ContainmentEvidence::new(
         identity("wasm", ExecutorWorkerClass::InProcess)?,
@@ -204,6 +224,7 @@ mod tests {
                 "git_worktree",
                 "mcp_stdio",
                 "process",
+                "network",
                 "provider",
                 "wasm"
             ]
@@ -290,6 +311,42 @@ mod tests {
             ContainmentBoundaryKind::Network,
             ContainmentLevel::Partial,
             ContainmentLimitation::RemoteServiceOutsideLocalBoundary,
+        );
+    }
+
+    #[test]
+    fn browser_network_executor_reports_logical_controls_without_claiming_an_os_sandbox() {
+        let snapshot = shipped_executor_containment().unwrap();
+        let network = executor(&snapshot, "network");
+        let boundary = network
+            .boundaries()
+            .iter()
+            .find(|boundary| boundary.kind() == ContainmentBoundaryKind::Network)
+            .unwrap();
+
+        assert_eq!(
+            network.identity().worker_class(),
+            ExecutorWorkerClass::InProcess
+        );
+        assert_eq!(boundary.level(), ContainmentLevel::Partial);
+        assert_eq!(
+            boundary.limitation(),
+            Some(ContainmentLimitation::HostNetworkNotSandboxed)
+        );
+        assert!(
+            boundary
+                .controls()
+                .contains(&ContainmentControl::DnsResolutionPinning)
+        );
+        assert!(
+            boundary
+                .controls()
+                .contains(&ContainmentControl::RedirectsDisabled)
+        );
+        assert!(
+            boundary
+                .controls()
+                .contains(&ContainmentControl::TextMediaOnly)
         );
     }
 

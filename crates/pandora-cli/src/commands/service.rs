@@ -103,9 +103,10 @@ fn build_runtime_service(config: &RuntimeConfig) -> Result<RuntimeService, CliEr
             Capability::FilesystemRead,
             Capability::FilesystemWrite,
             Capability::ProcessExecute,
+            Capability::NetworkConnect,
             Capability::ProviderInvoke,
         ],
-        [Operation::Write, Operation::Execute],
+        [Operation::Write, Operation::Execute, Operation::Connect],
     );
     let controller = ExecutionController::with_policy_and_harnesses(
         workspace,
