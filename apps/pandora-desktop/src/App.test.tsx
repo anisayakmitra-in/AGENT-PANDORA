@@ -793,6 +793,7 @@ describe("Pandora desktop run state", () => {
     expect(screen.getByRole("heading", { name: "Work surfaces expose evidence, not authority" })).toBeInTheDocument();
     expect(screen.getByText("Read only")).toBeInTheDocument();
     expect(screen.getByText("Exact permit path")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Inspector options" })).not.toBeInTheDocument();
   });
 
   it("inspects runtime-reported engine contracts without changing authority", async () => {
@@ -816,6 +817,43 @@ describe("Pandora desktop run state", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Inspect runtime evidence/ }));
     expect(screen.getByRole("heading", { name: "Audit" })).toBeInTheDocument();
+  });
+
+  it("inspects runtime-reported tool contracts without granting execution authority", async () => {
+    runtime.tools.mockResolvedValue([
+      { id: "filesystem.read", version: "1.0.0", name: "Filesystem Reader", capability: "filesystem", operation: "read" },
+      { id: "process.spawn", version: "2.1.0", name: "Process Runner", capability: "process", operation: "execute" },
+    ]);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Tools" }));
+
+    expect(await screen.findByRole("heading", { name: "Filesystem Reader" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Tool contract JSON")).toHaveTextContent('"id": "filesystem.read"');
+    expect(screen.getByText("Harness → Gene → ReferenceMonitor → ToolEngine")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Process Runner/ }));
+    expect(screen.getByRole("heading", { name: "Process Runner" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Tool contract JSON")).toHaveTextContent('"operation": "execute"');
+    expect(screen.getByText(/Selecting a tool never activates it/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Inspect Harnesses/ }));
+    expect(screen.getByRole("heading", { name: "Harness Lab" })).toBeInTheDocument();
+  });
+
+  it("shows a truthful memory empty state instead of invented graph nodes", async () => {
+    runtime.sessions.mockResolvedValue([session]);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /session-1/ }));
+    await waitFor(() => expect(runtime.inspectSession).toHaveBeenCalledWith(session.session_id));
+    fireEvent.click(screen.getByRole("button", { name: "Memory" }));
+
+    expect(await screen.findByRole("heading", { name: "No memory evidence recorded" })).toBeInTheDocument();
+    expect(screen.getByText("The selected session returned no durable memory records.")).toBeInTheDocument();
+    expect(screen.getByText(/does not invent graph nodes/)).toBeInTheDocument();
+    expect(screen.queryByText("active plan")).not.toBeInTheDocument();
+    expect(screen.queryByText("verified run")).not.toBeInTheDocument();
   });
 
   it("inspects Genes, extensions, authority, and receipt posture in Harness Lab", async () => {
@@ -1001,7 +1039,8 @@ describe("Pandora desktop run state", () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Connections" }));
 
-    expect(await screen.findByText("No account required")).toBeInTheDocument();
+    expect(await screen.findByText("Device-local trust")).toBeInTheDocument();
+    expect(screen.queryByText(/account|login|tenant/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Development token")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Connect preview/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /local service/ })).toBeInTheDocument();
