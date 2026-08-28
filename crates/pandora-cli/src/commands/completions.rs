@@ -150,7 +150,7 @@ fn bash() -> &'static str {
     elif [[ "$previous" == "graph" ]]; then
         COMPREPLY=( $(compgen -W 'code knowledge review architecture' -- "$current") )
     elif [[ "$previous" == "fleet" ]]; then
-        COMPREPLY=( $(compgen -W 'list register dispatch lease release expire quarantine revoke kill' -- "$current") )
+        COMPREPLY=( $(compgen -W 'list register dispatch lease renew release expire quarantine revoke kill' -- "$current") )
     elif [[ "$previous" == "feedback" ]]; then
         COMPREPLY=( $(compgen -W 'coding' -- "$current") )
     else
@@ -211,7 +211,7 @@ elif [[ ${words[2]} == evolution ]]; then
 elif [[ ${words[2]} == graph ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet graph completions migrate update uninstall doctor)' '2:graph command:(code knowledge review architecture)'
 elif [[ ${words[2]} == fleet ]]; then
-    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet completions migrate update uninstall doctor)' '2:fleet command:(list register dispatch lease release expire quarantine revoke kill)'
+    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet completions migrate update uninstall doctor)' '2:fleet command:(list register dispatch lease renew release expire quarantine revoke kill)'
 elif [[ ${words[2]} == feedback ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:feedback command:(coding)'
 else
@@ -246,7 +246,7 @@ complete -c pandora -f -n '__fish_seen_subcommand_from efficiency' -a 'rank'
 complete -c pandora -f -n '__fish_seen_subcommand_from evaluation' -a 'golden inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from evolution' -a 'generate list inspect submit evaluate approve stage canary activate rollback'
 complete -c pandora -f -n '__fish_seen_subcommand_from graph' -a 'code knowledge review architecture'
-complete -c pandora -f -n '__fish_seen_subcommand_from fleet' -a 'list register dispatch lease release expire quarantine revoke kill'
+complete -c pandora -f -n '__fish_seen_subcommand_from fleet' -a 'list register dispatch lease renew release expire quarantine revoke kill'
 complete -c pandora -f -n '__fish_seen_subcommand_from feedback' -a 'coding'"#
 }
 
@@ -303,10 +303,10 @@ mod tests {
                 "list inspect submit evaluate",
                 "submit work list inspect cancel mark-interrupted",
                 "spawn work list inspect cancel mark-interrupted cleanup",
-                "list register dispatch lease release expire quarantine revoke kill",
+                "list register dispatch lease renew release expire quarantine revoke kill",
                 "roles",
                 "rank",
-                "list register dispatch lease release expire quarantine revoke kill",
+                "list register dispatch lease renew release expire quarantine revoke kill",
             ] {
                 assert!(script.contains(expected), "missing {expected} in {script}");
             }

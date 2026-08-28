@@ -218,6 +218,7 @@ pub enum FleetError {
     LeaseAlreadyExists,
     LeaseNotFound,
     LeaseNotActive(FleetLeaseState),
+    LeaseExecutionMismatch,
     InvalidLeaseDuration,
     FleetNodeLimitExceeded,
     FleetLeaseLimitExceeded,
@@ -244,6 +245,9 @@ impl fmt::Display for FleetError {
             Self::LeaseNotFound => formatter.write_str("fleet lease was not found"),
             Self::LeaseNotActive(state) => {
                 write!(formatter, "fleet lease is already {}", state.as_str())
+            }
+            Self::LeaseExecutionMismatch => {
+                formatter.write_str("fleet lease execution identity does not match")
             }
             Self::InvalidLeaseDuration => formatter.write_str("fleet lease duration is invalid"),
             Self::FleetNodeLimitExceeded => formatter.write_str("fleet node limit was exceeded"),
@@ -444,6 +448,71 @@ impl FleetEngine {
             }
             Err(error) => Err(FleetError::Database(error)),
         }
+    }
+
+    pub fn renew_lease(
+        &self,
+        lease_id: &str,
+        execution_id: &str,
+        now: u64,
+        duration_seconds: u64,
+    ) -> Result<FleetLease, FleetError> {
+        if duration_seconds == 0 {
+            return Err(FleetError::InvalidLeaseDuration);
+        }
+        let execution_id = validate_text("execution ID", execution_id.to_owned(), 256)?;
+        let expires_at = now
+            .checked_add(duration_seconds)
+            .ok_or(FleetError::InvalidLeaseDuration)?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let lease = transaction
+            .query_row(
+                "SELECT state, execution_id, expires_at
+                 FROM fleet_leases WHERE id = ?1",
+                params![lease_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        decode_u64(row.get(2)?)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((state, stored_execution_id, current_expires_at)) = lease else {
+            return Err(FleetError::LeaseNotFound);
+        };
+        let state = decode_lease_state(&state)?;
+        if state != FleetLeaseState::Active {
+            return Err(FleetError::LeaseNotActive(state));
+        }
+        if stored_execution_id != execution_id {
+            return Err(FleetError::LeaseExecutionMismatch);
+        }
+        if current_expires_at <= now {
+            transaction.execute(
+                "UPDATE fleet_leases SET state = 'expired'
+                 WHERE id = ?1 AND state = 'active'",
+                params![lease_id],
+            )?;
+            transaction.commit()?;
+            return Err(FleetError::LeaseNotActive(FleetLeaseState::Expired));
+        }
+        transaction.execute(
+            "UPDATE fleet_leases SET expires_at = ?1
+             WHERE id = ?2 AND state = 'active' AND execution_id = ?3",
+            params![to_i64(expires_at)?, lease_id, execution_id],
+        )?;
+        let renewed = transaction.query_row(
+            "SELECT id, node_id, execution_id, budget_json, issued_at,
+                    expires_at, state
+             FROM fleet_leases WHERE id = ?1",
+            params![lease_id],
+            decode_lease,
+        )?;
+        transaction.commit()?;
+        Ok(renewed)
     }
 
     pub fn list_leases(&self) -> Result<Vec<FleetLease>, FleetError> {
@@ -680,6 +749,38 @@ mod tests {
         assert_eq!(lease.state(), FleetLeaseState::Active);
         assert_eq!(fleet.expire_leases(29).unwrap(), 0);
         assert_eq!(fleet.expire_leases(30).unwrap(), 1);
+        assert_eq!(
+            fleet.list_leases().unwrap()[0].state(),
+            FleetLeaseState::Expired
+        );
+    }
+
+    #[test]
+    fn active_lease_renews_only_for_its_execution_and_cannot_be_resurrected() {
+        let fleet = engine("pandora-fleet-renew");
+        fleet.register_node(&node("node-a", &["coding"])).unwrap();
+        let lease = fleet
+            .acquire_lease(
+                "lease-a",
+                "node-a",
+                "execution-a",
+                FleetBudget::new(100, 4, 30, 10_000),
+                10,
+                20,
+            )
+            .unwrap();
+        assert_eq!(lease.expires_at(), 30);
+        assert!(matches!(
+            fleet.renew_lease("lease-a", "execution-b", 20, 60),
+            Err(FleetError::LeaseExecutionMismatch)
+        ));
+        let renewed = fleet.renew_lease("lease-a", "execution-a", 20, 60).unwrap();
+        assert_eq!(renewed.expires_at(), 80);
+        assert_eq!(fleet.expire_leases(80).unwrap(), 1);
+        assert!(matches!(
+            fleet.renew_lease("lease-a", "execution-a", 80, 60),
+            Err(FleetError::LeaseNotActive(FleetLeaseState::Expired))
+        ));
         assert_eq!(
             fleet.list_leases().unwrap()[0].state(),
             FleetLeaseState::Expired

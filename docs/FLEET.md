@@ -13,9 +13,11 @@ SQLite transaction as those node controls, so a stopped node cannot retain an
 active lease.
 
 Leases bind an operator-provided lease ID to a node, execution identity, expiry,
-and bounded token/tool/duration/cost budget. Expiry is explicit and can be
-reaped. A lease is scheduling evidence only. It is not an `EffectPermit`, does
-not authorize an operation, and cannot bypass Parliament, the ReferenceMonitor,
+and bounded token/tool/duration/cost budget. A live worker can renew its lease
+only with the matching execution identity. Renewal never resurrects an expired,
+released, revoked, or killed lease; expiry is explicit and can be reaped. A
+lease is scheduling evidence only. It is not an `EffectPermit`, does not
+authorize an operation, and cannot bypass Parliament, the ReferenceMonitor,
 one-shot permit consumption, or the EffectExecutor.
 
 The store caps nodes at 256, leases at 4,096, and capabilities per node at 64.

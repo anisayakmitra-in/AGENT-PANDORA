@@ -35,6 +35,7 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora fleet list --json` | `fleet list` | `nodes`, `leases` |
 | `pandora fleet dispatch <capability> --json` | `fleet dispatch` | `capability`, `node` |
 | `pandora fleet lease <id> ... --json` | `fleet lease` | `lease` |
+| `pandora fleet renew <id> ... --json` | `fleet renew` | `lease` |
 | `pandora registry list --json` | `registry list` | `registries` |
 | `pandora registry set ... --json` | `registry set` | `registry` |
 | `pandora registry use <name> --json` | `registry use` | `registry` |

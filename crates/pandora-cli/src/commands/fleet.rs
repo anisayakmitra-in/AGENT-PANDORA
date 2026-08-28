@@ -6,12 +6,13 @@ use serde_json::{Value, json};
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args
         .first()
-        .ok_or_else(|| CliError::usage("fleet requires 'list', 'register', 'dispatch', 'lease', 'release', 'expire', 'quarantine', 'revoke', or 'kill'"))?;
+        .ok_or_else(|| CliError::usage("fleet requires 'list', 'register', 'dispatch', 'lease', 'renew', 'release', 'expire', 'quarantine', 'revoke', or 'kill'"))?;
     match subcommand.as_str() {
         "list" => list(&args[1..]),
         "register" => register(&args[1..]),
         "dispatch" => dispatch(&args[1..]),
         "lease" => lease(&args[1..]),
+        "renew" => renew(&args[1..]),
         "release" => release(&args[1..]),
         "expire" => expire(&args[1..]),
         "quarantine" => transition(&args[1..], "quarantine", FleetEngine::quarantine_node),
@@ -146,6 +147,37 @@ fn lease(args: &[String]) -> Result<CommandResult, CliError> {
         "fleet lease",
         json!({"lease": lease_value(&lease)}),
         format!("Issued Fleet lease {}", lease.id()),
+    ))
+}
+
+fn renew(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "execution", "duration", "now"],
+    )?;
+    if parsed.positionals.len() != 1 {
+        return Err(CliError::usage("fleet renew requires exactly one lease ID"));
+    }
+    let now = parsed.value("now").map_or_else(
+        || Ok(timestamp().as_unix_seconds()),
+        |value| {
+            value
+                .parse()
+                .map_err(|_| CliError::usage("--now must be an unsigned integer"))
+        },
+    )?;
+    let lease = engine(&parsed)?
+        .renew_lease(
+            &parsed.positionals[0],
+            required(&parsed, "execution")?,
+            now,
+            number(&parsed, "duration")?,
+        )
+        .map_err(fleet_error)?;
+    Ok(success(
+        "fleet renew",
+        json!({"lease": lease_value(&lease)}),
+        format!("Renewed Fleet lease {}", lease.id()),
     ))
 }
 

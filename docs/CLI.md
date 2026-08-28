@@ -584,6 +584,7 @@ pandora fleet register node-a --version 2.0.0-beta.7 --worker-class local --capa
 pandora fleet list --json
 pandora fleet dispatch coding --json
 pandora fleet lease lease-a --node node-a --execution execution-a --max-tokens 10000 --max-tools 20 --max-duration 900 --max-cost 500000 --duration 600
+pandora fleet renew lease-a --execution execution-a --duration 600
 pandora fleet release lease-a
 pandora fleet expire
 pandora fleet quarantine node-a --yes
