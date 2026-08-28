@@ -17,7 +17,7 @@ operations, and signed native releases.
 | Phase | Estimate | Shipped in the source tree | Work still open |
 | --- | ---: | --- | --- |
 | 6. Production readiness | 85-90% | scoped identity, automatic local device trust, encrypted secrets, local telemetry and crash records, encrypted backup and restore, fresh-runner install/update/rollback/backup/restore/uninstall drills, update channels, release workflows, checksum signature verification, release evidence index, CodeQL, dependency audits | signed stable artifacts, real clean-machine release proof on every advertised platform, installer rollback exercises with the stable artifact |
-| 7. Runtime scale and orchestration | 75-85% | persistent prompt-context cache, headless jobs, bounded parallel subagents, exact-commit worktrees, durable orchestration claims and receipts, interruption and resume rules, multi-repository plans, fleet leases, budgets, execution-bound lease renewal, and durable supervisor state with lease gating | long-running worker supervision, cross-process quiescence, load and soak tests, operator recovery for abandoned leases |
+| 7. Runtime scale and orchestration | 75-85% | persistent prompt-context cache, headless jobs, bounded parallel subagents, exact-commit worktrees, durable orchestration claims and receipts, interruption and resume rules, multi-repository plans, fleet leases, budgets, execution-bound lease renewal, and durable supervisor state with lease gating, worker heartbeats, and stale-supervisor reconciliation without replay | long-running worker supervision, cross-process quiescence, load and soak tests, crash and cancellation races, multi-repository partial failure |
 | 8. Agent experience and disclosure | 70-80% | native desktop source, Command and Council inspection, background runs, runtime inventory, Harness Lab, package lifecycle, BYOK providers and models, MCP configuration, pinned GitHub packages, active custom Domain and Meta Harnesses, WebAssembly Genes, custom Auto Route contracts, optional built-in Domain and Meta replacement | package-authoring UI, route-conflict preview before enable, broader Skill and provider package lifecycles, desktop accessibility pass, native installer release proof |
 | 9. Evaluation-driven loops | 50-60% | trajectory, outcome, policy, regression, adversarial, golden, and holdout evaluation; coding feedback; research-only mutation and population strategies; durable evolution state; canary activation and rollback | scheduled evaluation loops, self-healing test generation, automatic canary policy, operator scorecards, quality gates for every artifact class |
 | 10. Memory consolidation | 50-60% | scoped L0, L1, and L2 records; durable recall; approval-gated promotion; revocation, audit, and compaction; deterministic evidence-bound synthesis | cross-session and cross-project consolidation policy, scheduled synthesis, desktop removal and provenance views, source graph for consolidated lessons |
@@ -53,8 +53,8 @@ not one command invocation.
 
 Next work:
 
-- add a local supervisor with explicit start, stop, drain, and recovery states;
-- reconcile expired fleet and orchestration leases without replaying effects;
+- connect the durable supervisor records to actual long-running worker processes;
+- add cross-process quiescence and crash recovery evidence around those workers;
 - persist a process-wide execution lease so replacement can prove quiescence
   across workers;
 - test queue pressure, cancellation races, worker crashes, and multi-repository

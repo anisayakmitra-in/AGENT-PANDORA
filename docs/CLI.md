@@ -590,6 +590,8 @@ pandora fleet supervisor start node-a
 pandora fleet supervisor drain node-a
 pandora fleet supervisor stop node-a --yes
 pandora fleet supervisor recover node-a
+pandora fleet supervisor heartbeat node-a
+pandora fleet supervisor reconcile node-a --stale-after 30
 pandora fleet release lease-a
 pandora fleet expire
 pandora fleet quarantine node-a --yes

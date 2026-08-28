@@ -55,7 +55,7 @@ fn list(args: &[String]) -> Result<CommandResult, CliError> {
 
 fn supervisor(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
-        CliError::usage("fleet supervisor requires 'list', 'start', 'drain', 'stop', or 'recover'")
+        CliError::usage("fleet supervisor requires 'list', 'start', 'drain', 'stop', 'recover', 'heartbeat', or 'reconcile'")
     })?;
     match subcommand.as_str() {
         "list" => supervisor_list(&args[1..]),
@@ -63,6 +63,8 @@ fn supervisor(args: &[String]) -> Result<CommandResult, CliError> {
         "drain" => supervisor_mutation(&args[1..], "drain", FleetEngine::drain_supervisor),
         "stop" => supervisor_mutation(&args[1..], "stop", FleetEngine::stop_supervisor),
         "recover" => supervisor_mutation(&args[1..], "recover", FleetEngine::recover_supervisor),
+        "heartbeat" => supervisor_heartbeat(&args[1..]),
+        "reconcile" => supervisor_reconcile(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown fleet supervisor command '{unknown}'"
         ))),
@@ -111,6 +113,64 @@ fn supervisor_mutation(
     let supervisor = apply(&engine(&parsed)?, &parsed.positionals[0], now).map_err(fleet_error)?;
     Ok(success(
         "fleet supervisor",
+        json!({"supervisor": supervisor_value(&supervisor)}),
+        format!(
+            "Fleet supervisor {} is {}",
+            supervisor.node_id(),
+            supervisor.state().as_str()
+        ),
+    ))
+}
+
+fn supervisor_heartbeat(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "now"])?;
+    if parsed.positionals.len() != 1 {
+        return Err(CliError::usage(
+            "fleet supervisor heartbeat requires exactly one node ID",
+        ));
+    }
+    let now = parsed.value("now").map_or_else(
+        || Ok(timestamp().as_unix_seconds()),
+        |value| {
+            value
+                .parse()
+                .map_err(|_| CliError::usage("--now must be an unsigned integer"))
+        },
+    )?;
+    let supervisor = engine(&parsed)?
+        .heartbeat_supervisor(&parsed.positionals[0], now)
+        .map_err(fleet_error)?;
+    Ok(success(
+        "fleet supervisor heartbeat",
+        json!({"supervisor": supervisor_value(&supervisor)}),
+        format!(
+            "Fleet supervisor {} is {}",
+            supervisor.node_id(),
+            supervisor.state().as_str()
+        ),
+    ))
+}
+
+fn supervisor_reconcile(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "now", "stale-after"])?;
+    if parsed.positionals.len() != 1 {
+        return Err(CliError::usage(
+            "fleet supervisor reconcile requires exactly one node ID",
+        ));
+    }
+    let now = parsed.value("now").map_or_else(
+        || Ok(timestamp().as_unix_seconds()),
+        |value| {
+            value
+                .parse()
+                .map_err(|_| CliError::usage("--now must be an unsigned integer"))
+        },
+    )?;
+    let supervisor = engine(&parsed)?
+        .reconcile_supervisor(&parsed.positionals[0], now, number(&parsed, "stale-after")?)
+        .map_err(fleet_error)?;
+    Ok(success(
+        "fleet supervisor reconcile",
         json!({"supervisor": supervisor_value(&supervisor)}),
         format!(
             "Fleet supervisor {} is {}",

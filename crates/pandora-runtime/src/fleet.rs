@@ -278,6 +278,7 @@ pub enum FleetError {
         state: FleetSupervisorState,
         action: &'static str,
     },
+    InvalidSupervisorStaleness,
     InvalidLeaseDuration,
     FleetNodeLimitExceeded,
     FleetLeaseLimitExceeded,
@@ -324,6 +325,9 @@ impl fmt::Display for FleetError {
                     "cannot {action} a {} fleet supervisor",
                     state.as_str()
                 )
+            }
+            Self::InvalidSupervisorStaleness => {
+                formatter.write_str("supervisor staleness window is invalid")
             }
             Self::InvalidLeaseDuration => formatter.write_str("fleet lease duration is invalid"),
             Self::FleetNodeLimitExceeded => formatter.write_str("fleet node limit was exceeded"),
@@ -473,6 +477,73 @@ impl FleetEngine {
         let rows = statement.query_map([], decode_supervisor)?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(FleetError::Database)
+    }
+
+    pub fn heartbeat_supervisor(
+        &self,
+        node_id: &str,
+        now: u64,
+    ) -> Result<FleetSupervisor, FleetError> {
+        let node_id = validate_text("node ID", node_id.to_owned(), 256)?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current =
+            load_supervisor(&transaction, &node_id)?.ok_or(FleetError::SupervisorNotFound)?;
+        if current.state != FleetSupervisorState::Running {
+            return Err(FleetError::InvalidSupervisorTransition {
+                state: current.state,
+                action: "heartbeat",
+            });
+        }
+        let supervisor = FleetSupervisor {
+            reason: Some("worker_heartbeat".to_owned()),
+            updated_at: now,
+            ..current
+        };
+        save_supervisor(&transaction, &supervisor)?;
+        transaction.commit()?;
+        Ok(supervisor)
+    }
+
+    pub fn reconcile_supervisor(
+        &self,
+        node_id: &str,
+        now: u64,
+        stale_after: u64,
+    ) -> Result<FleetSupervisor, FleetError> {
+        if stale_after == 0 {
+            return Err(FleetError::InvalidSupervisorStaleness);
+        }
+        let node_id = validate_text("node ID", node_id.to_owned(), 256)?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current =
+            load_supervisor(&transaction, &node_id)?.ok_or(FleetError::SupervisorNotFound)?;
+        if current.state != FleetSupervisorState::Running
+            || now.saturating_sub(current.updated_at) <= stale_after
+        {
+            transaction.commit()?;
+            return Ok(current);
+        }
+        transaction.execute(
+            "UPDATE fleet_leases SET state = ?1
+             WHERE node_id = ?2 AND state = ?3 AND expires_at <= ?4",
+            params![
+                FleetLeaseState::Expired.as_str(),
+                node_id,
+                FleetLeaseState::Active.as_str(),
+                to_i64(now)?,
+            ],
+        )?;
+        let supervisor = FleetSupervisor {
+            state: FleetSupervisorState::Recovering,
+            reason: Some("heartbeat_expired".to_owned()),
+            updated_at: now,
+            ..current
+        };
+        save_supervisor(&transaction, &supervisor)?;
+        transaction.commit()?;
+        Ok(supervisor)
     }
 
     pub fn start_supervisor(&self, node_id: &str, now: u64) -> Result<FleetSupervisor, FleetError> {
@@ -1238,6 +1309,62 @@ mod tests {
             fleet.start_supervisor("node-a", 12).unwrap().state(),
             FleetSupervisorState::Running
         );
+    }
+
+    #[test]
+    fn supervisor_heartbeat_is_durable_and_reconcile_is_bounded() {
+        let root = crate::test_support::new_temp_dir("pandora-fleet-heartbeat").unwrap();
+        let path = root.join("fleet.sqlite3");
+        let fleet = FleetEngine::open(&path).unwrap();
+        fleet.register_node(&node("node-a", &["coding"])).unwrap();
+        fleet.start_supervisor("node-a", 10).unwrap();
+        fleet
+            .acquire_lease(
+                "lease-a",
+                "node-a",
+                "execution-a",
+                FleetBudget::new(1, 1, 10, 1),
+                10,
+                40,
+            )
+            .unwrap();
+        let heartbeat = fleet.heartbeat_supervisor("node-a", 20).unwrap();
+        assert_eq!(heartbeat.updated_at(), 20);
+        drop(fleet);
+
+        let reopened = FleetEngine::open(&path).unwrap();
+        assert_eq!(reopened.list_supervisors().unwrap()[0].updated_at(), 20);
+        assert_eq!(
+            reopened
+                .reconcile_supervisor("node-a", 30, 10)
+                .unwrap()
+                .state(),
+            FleetSupervisorState::Running
+        );
+        let recovering = reopened.reconcile_supervisor("node-a", 31, 10).unwrap();
+        assert_eq!(recovering.state(), FleetSupervisorState::Recovering);
+        assert_eq!(recovering.reason(), Some("heartbeat_expired"));
+        assert_eq!(
+            reopened.list_leases().unwrap()[0].state(),
+            FleetLeaseState::Active
+        );
+        assert!(matches!(
+            reopened.start_supervisor("node-a", 31),
+            Err(FleetError::ActiveLeasesPresent)
+        ));
+        reopened.recover_supervisor("node-a", 51).unwrap();
+        assert_eq!(
+            reopened.list_leases().unwrap()[0].state(),
+            FleetLeaseState::Expired
+        );
+        assert_eq!(
+            reopened
+                .start_supervisor("node-a", 52)
+                .unwrap()
+                .generation(),
+            2
+        );
+        assert!(reopened.heartbeat_supervisor("node-a", 53).is_ok());
     }
 
     #[test]

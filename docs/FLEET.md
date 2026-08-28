@@ -33,4 +33,6 @@ Supervisor commands:
   pandora fleet supervisor drain node-a
   pandora fleet supervisor stop node-a --yes
   pandora fleet supervisor recover node-a
+  pandora fleet supervisor heartbeat node-a
+  pandora fleet supervisor reconcile node-a --stale-after 30
   pandora fleet supervisor list --json
