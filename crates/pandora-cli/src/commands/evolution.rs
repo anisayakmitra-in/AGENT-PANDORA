@@ -698,7 +698,20 @@ fn sqlite_backup(source: &Path, destination: &Path) -> Result<(), CliError> {
     let quote = char::from(39);
     connection
         .execute_batch(&format!("VACUUM INTO {quote}{destination}{quote}"))
-        .map_err(|_| CliError::internal("could not create consistent runtime backup", json!({})))
+        .map_err(|_| CliError::internal("could not create consistent runtime backup", json!({})))?;
+    let backup = Connection::open(destination)
+        .map_err(|_| CliError::internal("could not verify runtime backup", json!({})))?;
+    let integrity = backup
+        .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
+        .map_err(|_| CliError::internal("could not verify runtime backup", json!({})))?;
+    if integrity == "ok" {
+        Ok(())
+    } else {
+        Err(CliError::internal(
+            "runtime backup integrity check failed",
+            json!({}),
+        ))
+    }
 }
 
 fn ensure_evolution_quiescent(
