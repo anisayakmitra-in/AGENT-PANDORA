@@ -11,8 +11,8 @@ use axum::{
 };
 use pandora_runtime::{RuntimeService, RuntimeServiceError, ServiceTokenStore};
 use pandora_types::{
-    ServiceEventPageRequest, ServiceRequest, ServiceResponse, ServiceRunRequest,
-    ServiceRunResumeRequest, Timestamp,
+    ServiceAgentResumeRequest, ServiceAgentRunRequest, ServiceEventPageRequest, ServiceRequest,
+    ServiceResponse, ServiceRunRequest, ServiceRunResumeRequest, Timestamp,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -264,6 +264,14 @@ fn service_request(request: &JsonRpcRequest) -> Result<Option<ServiceRequest>, (
             let params: ServiceRunResumeRequest = deserialize_params(params)?;
             ServiceRequest::run_resume(params)
         }
+        "agent.execute" => {
+            let params: ServiceAgentRunRequest = deserialize_params(params)?;
+            ServiceRequest::agent_run(params)
+        }
+        "agent.resume" => {
+            let params: ServiceAgentResumeRequest = deserialize_params(params)?;
+            ServiceRequest::agent_resume(params)
+        }
         _ => return Ok(None),
     };
 
@@ -455,6 +463,27 @@ mod tests {
         let body: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(body["result"]["kind"], "run");
         assert_eq!(body["result"]["run"]["status"], "completed");
+    }
+
+    #[tokio::test]
+    async fn rpc_exposes_agent_execution_without_bypassing_provider_configuration() {
+        let fixture = Fixture::new();
+        let response = post(
+            &fixture,
+            Some(&fixture.token),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "agent.execute",
+                "params": {"task": "Inspect this repository"}
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"]["data"]["code"], "agent_unavailable");
     }
 
     #[tokio::test]

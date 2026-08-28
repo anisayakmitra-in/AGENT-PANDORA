@@ -1,3 +1,5 @@
+use super::provider::configured_provider_for;
+use super::run::active_skill_context;
 use super::{load_config, parse_options, require_config_file, session_scope, session_store};
 use crate::output::{CliError, CommandResult, already_printed};
 use pandora_harnesses::HarnessCatalog;
@@ -12,6 +14,10 @@ use serde_json::json;
 use std::io::{self, Write};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::Path;
+use std::sync::Arc;
+
+const SERVICE_AGENT_MAX_TURNS: u32 = 8;
+const SERVICE_AGENT_MAX_TOOL_CALLS: u32 = 16;
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(args, &["config", "data-dir", "workspace", "port"])?;
@@ -104,13 +110,36 @@ fn build_runtime_service(config: &RuntimeConfig) -> Result<RuntimeService, CliEr
             )
         })
         .collect();
-    Ok(RuntimeService::new_with_providers(
+    let runtime = RuntimeService::new_with_providers(
         controller,
         sessions,
         approvals,
         RuntimeServiceScope::new(principal, tenant, workspace),
         providers,
-    ))
+    );
+    let Some(model) = config.provider_model() else {
+        return Ok(runtime);
+    };
+    let credential_environment = config
+        .active_provider()
+        .and_then(|name| config.provider_profile(name))
+        .map(|profile| profile.api_key_env())
+        .or_else(|| config.provider_api_key_env());
+    let credential_configured = credential_environment
+        .is_some_and(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()));
+    if !credential_configured || config.provider_url().is_none() {
+        return Ok(runtime);
+    }
+    let provider = configured_provider_for(config, model, "desktop agent mode", None)?;
+    runtime
+        .with_agent(
+            Arc::from(provider),
+            SERVICE_AGENT_MAX_TURNS,
+            SERVICE_AGENT_MAX_TOOL_CALLS,
+            config.data_dir().join("context-cache.json"),
+            active_skill_context(config)?,
+        )
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))
 }
 
 fn write_readiness(address: SocketAddr, token_path: &Path) -> Result<(), CliError> {

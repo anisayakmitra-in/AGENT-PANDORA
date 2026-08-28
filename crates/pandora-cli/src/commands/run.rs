@@ -838,7 +838,7 @@ fn effect_receipts_json(receipts: &[pandora_types::EffectReceipt]) -> Value {
     )
 }
 
-fn active_skill_context(config: &RuntimeConfig) -> Result<Option<String>, CliError> {
+pub(super) fn active_skill_context(config: &RuntimeConfig) -> Result<Option<String>, CliError> {
     let root = config.data_dir().join("skills");
     let metadata = match fs::symlink_metadata(&root) {
         Ok(metadata) => metadata,

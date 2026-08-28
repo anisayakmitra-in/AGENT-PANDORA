@@ -417,6 +417,7 @@ impl AgentLoop {
             id,
             now,
             l1_evidence,
+            trusted_harness,
         } = approval;
         self.run_with_context(
             provider,
@@ -428,7 +429,7 @@ impl AgentLoop {
                 approval: Some(AgentApproval { store, id }),
                 l1_evidence,
                 control: None,
-                trusted_harness: None,
+                trusted_harness,
             },
             None,
             task,
@@ -450,6 +451,7 @@ impl AgentLoop {
             id,
             now,
             l1_evidence,
+            trusted_harness,
         } = approval;
         self.run_with_context(
             provider,
@@ -461,7 +463,7 @@ impl AgentLoop {
                 approval: Some(AgentApproval { store, id }),
                 l1_evidence,
                 control: None,
-                trusted_harness: None,
+                trusted_harness,
             },
             skill_context,
             task,
@@ -516,6 +518,11 @@ impl AgentLoop {
                 "agent session has a pending approval",
             )));
         }
+        if pending_tool_calls.is_empty() && approval.is_some() {
+            return Err(AgentLoopError::Execution(RuntimeError::InvalidIntent(
+                "agent approval has no pending tool call",
+            )));
+        }
 
         if skill_context.is_some_and(|context| {
             context.is_empty()
@@ -558,7 +565,9 @@ impl AgentLoop {
             .collect::<Result<Vec<_>, ProviderError>>()?;
         let mut messages = vec![ChatMessage::system(context_assembly.text())?];
         messages.extend(history);
-        messages.push(ChatMessage::user(task)?);
+        if approval.is_none() {
+            messages.push(ChatMessage::user(task)?);
+        }
         let mut usage = TokenUsage::default();
         let mut runs = Vec::new();
         let mut provider_receipts = Vec::new();
@@ -1077,6 +1086,7 @@ pub struct AgentApprovalContext<'a> {
     id: &'a str,
     now: Timestamp,
     l1_evidence: Option<&'a L1EvidenceContext>,
+    trusted_harness: Option<HarnessId>,
 }
 
 impl<'a> AgentApprovalContext<'a> {
@@ -1092,11 +1102,17 @@ impl<'a> AgentApprovalContext<'a> {
             id: approval_id,
             now,
             l1_evidence: None,
+            trusted_harness: None,
         }
     }
 
     pub fn with_l1_evidence(mut self, l1_evidence: Option<&'a L1EvidenceContext>) -> Self {
         self.l1_evidence = l1_evidence;
+        self
+    }
+
+    pub fn with_trusted_harness(mut self, harness: HarnessId) -> Self {
+        self.trusted_harness = Some(harness);
         self
     }
 }
@@ -1485,6 +1501,38 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0][1].content(), "previous task");
         assert_eq!(requests[0][2].content(), "continue the task");
+    }
+
+    #[test]
+    fn approval_resume_without_a_pending_tool_call_fails_closed() {
+        let fixture = Fixture::new();
+        let provider = SequenceProvider::new(Vec::new());
+        let controller = ExecutionController::new(fixture.root.clone());
+        let approvals = ApprovalStore::open(fixture.path.join("approvals.jsonl")).unwrap();
+
+        let error = AgentLoop::new(1, 1)
+            .unwrap()
+            .run_with_history_and_approval(
+                &provider,
+                &controller,
+                vec![ChatMessage::user("previous task").unwrap()],
+                AgentApprovalContext::new(
+                    fixture.session(),
+                    &approvals,
+                    "approval-missing",
+                    Timestamp::from_unix_seconds(10),
+                ),
+                "continue the task",
+            )
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            AgentLoopError::Execution(RuntimeError::InvalidIntent(
+                "agent approval has no pending tool call"
+            ))
+        );
+        assert!(provider.requests().is_empty());
     }
 
     #[test]

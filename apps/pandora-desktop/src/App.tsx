@@ -522,7 +522,7 @@ function App() {
     setRuntimeError("");
     try {
       const requestedHarness = harnessForProfile(profile);
-      const result = await client.run(task, requestedHarness);
+      const result = await client.agentRun(task, selectedSessionId || null, requestedHarness);
       setPendingRun(result.approval ? { task, requestedHarness } : null);
       await loadRunResult(result);
       setRuntimeStatus("connected");
@@ -553,7 +553,7 @@ function App() {
 
   const resolvePendingApproval = async (allow: boolean) => {
     const approval = lastRun?.approval;
-    if (!client || !approval || !pendingRun) {
+    if (!client || !approval || (lastRun.mode === "direct" && !pendingRun)) {
       throw new Error("No resumable approval is available");
     }
     setRunInFlight(true);
@@ -565,11 +565,13 @@ function App() {
         : approval;
       setLastRun({ ...lastRun, approval: resolved });
       if (allow) {
-        const result = await client.resume(
-          approval.approval_id,
-          pendingRun.task,
-          pendingRun.requestedHarness,
-        );
+        const result = lastRun.mode === "agent"
+          ? await client.agentResume(approval.approval_id)
+          : await client.resume(
+              approval.approval_id,
+              pendingRun!.task,
+              pendingRun!.requestedHarness,
+            );
         setPendingRun(null);
         await loadRunResult(result);
       } else {
@@ -746,7 +748,7 @@ function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onAppro
   const connected = runtimeStatus === "connected";
   const profileOptions = connected && harnesses.length ? [{ id: "auto", label: "Auto route" }, ...harnesses.filter((harness) => harness.runnable).map((harness) => ({ id: harness.id, label: harness.name }))] : runProfiles;
   const coreTitle = runInFlight ? "Pandora is executing" : lastRun ? `Run ${lastRun.status}` : selectedSession ? "Session ready to inspect" : connected ? "Ready for a governed run" : "Awaiting your decision";
-  const coreDescription = runInFlight ? "The request is in the governed runtime; wait for its recorded result." : lastRun ? `${lastRun.receipt_count} receipts · ${lastRun.event_count} events recorded.` : selectedSession ? `${selectedSession.event_count} recorded events · ${selectedSession.session.workspace_id}` : connected ? "Connected to the authenticated local Pandora service." : "Connect the local service to submit a real governed run.";
+  const coreDescription = runInFlight ? "The request is in the governed runtime; wait for its recorded result." : lastRun ? `${lastRun.receipt_count} receipts · ${lastRun.event_count} events${lastRun.mode === "agent" ? ` · ${lastRun.turns ?? 0} turns · ${lastRun.tool_calls ?? 0} tools` : ""} recorded.` : selectedSession ? `${selectedSession.event_count} recorded events · ${selectedSession.session.workspace_id}` : connected ? "Connected to the authenticated local Pandora service." : "Connect the local service to submit a real governed run.";
   const steps = authorityStepsForRun(lastRun, events, runProfile);
   const policyValue = lastRun?.status === "denied" ? "Denied" : lastRun?.status === "approval_required" ? "Approval" : connected ? "Supervised" : "Waiting";
   const policyDetail = lastRun ? "run decision" : "Parliament + monitor";
@@ -766,7 +768,7 @@ function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onAppro
         <div className="core-metrics"><Metric label="Context" value={selectedSession ? "Scoped" : "—"} detail={selectedSession ? selectedSession.session.workspace_id : "not loaded"} /><Metric label="Policy" value={policyValue} detail={policyDetail} /><Metric label="Evidence" value={evidenceValue} detail={evidenceDetail} /></div>
       </div>
       <form className="composer-wrap" onSubmit={submit}><div className="composer"><button type="button" className="composer-add" aria-label="Context attachments unavailable" title="Context attachments are not available yet" disabled><Icon name="plus" size={17} /></button><textarea value={task} onChange={(event) => setTask(event.target.value)} onKeyDown={handleTaskKeyDown} placeholder="Ask Pandora to inspect, plan, or act…" aria-label="Pandora task" rows={1} disabled={runInFlight} /><div className="composer-actions"><label className="composer-profile"><span className="sr-only">Execution Harness</span><select value={runProfile} onChange={(event) => onRunProfileChange(event.target.value)} aria-label="Execution Harness" disabled={runInFlight}>{profileOptions.map((profile) => <option value={profile.id} key={profile.id}>{profile.label}</option>)}</select></label><span className="composer-mode"><Icon name="spark" size={14} /> Governed run</span><button type="submit" className="send-button" aria-label={runInFlight ? "Pandora is running" : "Send"} disabled={!connected || !task.trim() || runInFlight}><Icon name="arrow" size={16} /></button></div></div><div className="composer-hint"><span>{runError || (runInFlight ? "Pandora is running the governed request…" : connected ? "Ctrl/⌘ + Enter to send" : "Connect the local service in Connections")}</span><span>All effects require an exact permit</span></div></form>
-      {lastRun ? <Panel className="run-result"><div className="panel-heading"><h3>Latest run</h3><Chip tone={lastRun.status === "completed" ? "green" : "amber"}>{lastRun.status}</Chip></div><div className="run-result-meta"><span className="mono">{lastRun.execution_id}</span><span>{lastRun.selected_gene ?? "No gene selected"}</span></div><p>{lastRun.output || "No output returned."}</p>{events.length ? <div className="event-list"><span className="eyebrow">LIVE ACTIVITY</span>{events.map((event) => <div className="event-row" key={event.event_id}><span className="event-dot" /><span>{event.event_type.replaceAll("_", " ")}</span><span className="mono">{event.event_id}</span></div>)}</div> : null}</Panel> : null}
+      {lastRun ? <Panel className="run-result"><div className="panel-heading"><h3>Latest {lastRun.mode} run</h3><Chip tone={lastRun.status === "completed" ? "green" : "amber"}>{lastRun.status}</Chip></div><div className="run-result-meta"><span className="mono">{lastRun.execution_id ?? "provider-only response"}</span><span>{lastRun.selected_gene ?? "No gene selected"}</span></div><p>{lastRun.output || "No output returned."}</p>{events.length ? <div className="event-list"><span className="eyebrow">LIVE ACTIVITY</span>{events.map((event) => <div className="event-row" key={event.event_id}><span className="event-dot" /><span>{event.event_type.replaceAll("_", " ")}</span><span className="mono">{event.event_id}</span></div>)}</div> : null}</Panel> : null}
     </section>
     <Inspector steps={steps} approvalPreview={approvalPreview} hasLiveRun={Boolean(lastRun)} approval={lastRun?.approval} approvalDetail={lastRun?.status_detail} approvalInFlight={runInFlight} selectedStep={selectedStep} onApprovalPreview={onApprovalPreview} onApprovalClose={onApprovalClose} onResolveApproval={onResolveApproval} onSelectStep={onSelectStep} />
   </div>;

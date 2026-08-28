@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
 const runtime = vi.hoisted(() => ({
+  agentResume: vi.fn(),
+  agentRun: vi.fn(),
   capabilities: vi.fn(),
   engines: vi.fn(),
   events: vi.fn(),
@@ -25,6 +27,8 @@ vi.mock("./runtimeClient", () => ({
   startLocalService: vi.fn(),
   stopLocalService: vi.fn(),
   RuntimeClient: class {
+    agentResume = runtime.agentResume;
+    agentRun = runtime.agentRun;
     capabilities = runtime.capabilities;
     engines = runtime.engines;
     events = runtime.events;
@@ -67,7 +71,7 @@ afterEach(() => cleanup());
 describe("Pandora desktop run state", () => {
   it("disables duplicate submission while a governed run is active", async () => {
     let completeRun!: (value: unknown) => void;
-    runtime.run.mockImplementation(
+    runtime.agentRun.mockImplementation(
       () => new Promise((resolve) => {
         completeRun = resolve;
       }),
@@ -83,9 +87,10 @@ describe("Pandora desktop run state", () => {
       expect(screen.getByRole("button", { name: "Pandora is running" })).toBeDisabled();
       expect(composer).toBeDisabled();
     });
-    expect(runtime.run).toHaveBeenCalledTimes(1);
+    expect(runtime.agentRun).toHaveBeenCalledTimes(1);
 
     completeRun({
+      mode: "agent",
       session_id: session.session_id,
       execution_id: "execution-1",
       selected_harness: "coding-domain",
@@ -129,7 +134,8 @@ describe("Pandora desktop run state", () => {
       approver_id: null,
       created_at_unix_seconds: 1,
     };
-    runtime.run.mockResolvedValue({
+    runtime.agentRun.mockResolvedValue({
+      mode: "agent",
       session_id: session.session_id,
       execution_id: "execution-1",
       selected_harness: "coding-domain",
@@ -142,7 +148,8 @@ describe("Pandora desktop run state", () => {
       approval,
     });
     runtime.resolveApproval.mockResolvedValue({ ...approval, status: "approved" });
-    runtime.resume.mockResolvedValue({
+    runtime.agentResume.mockResolvedValue({
+      mode: "agent",
       session_id: session.session_id,
       execution_id: "execution-1",
       selected_harness: "coding-domain",
@@ -163,11 +170,7 @@ describe("Pandora desktop run state", () => {
 
     await waitFor(() => {
       expect(runtime.resolveApproval).toHaveBeenCalledWith(approval.approval_id, true);
-      expect(runtime.resume).toHaveBeenCalledWith(
-        approval.approval_id,
-        "patch:README.md:approved",
-        null,
-      );
+      expect(runtime.agentResume).toHaveBeenCalledWith(approval.approval_id);
       expect(screen.getByText("README updated")).toBeInTheDocument();
     });
   });

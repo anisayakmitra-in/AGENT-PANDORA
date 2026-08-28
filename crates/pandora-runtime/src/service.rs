@@ -1,18 +1,24 @@
+use crate::agent_loop::{
+    AgentApprovalContext, AgentLoop, AgentLoopError, AgentRunRequest, AgentRunSummary,
+};
 use crate::approvals::{ApprovalError, ApprovalRequest, ApprovalStore, PendingApproval};
 use crate::evaluation_engine::EvaluationEngine;
 use crate::execution_controller::{ExecutionController, RunStatus, RunSummary, RuntimeError};
 use crate::sessions::{SessionError, SessionStore};
 use crate::tool_engine::ToolEngine;
+use pandora_provider::Provider;
 use pandora_types::{
     EvaluationContractError, EvaluationReceipt, EvaluationRequest, EventPayload, EventType,
-    IdError, MemoryTier, PrincipalId, ServiceApprovalSummary, ServiceContractError,
-    ServiceEngineSummary, ServiceEventPage, ServiceHarnessSummary, ServiceHealth,
-    ServiceMemoryPage, ServiceMemoryRecord, ServiceProviderSummary, ServiceRequest,
-    ServiceResponse, ServiceRunRequest, ServiceRunResult, ServiceRunResumeRequest,
-    ServiceSessionDetail, ServiceSessionSummary, ServiceToolSummary, Session, SessionId,
-    TaskIntent, TenantId, Timestamp, WorkspaceId,
+    IdError, MemoryTier, PrincipalId, ServiceAgentResumeRequest, ServiceAgentRunRequest,
+    ServiceAgentRunResult, ServiceApprovalSummary, ServiceContractError, ServiceEngineSummary,
+    ServiceEventPage, ServiceHarnessSummary, ServiceHealth, ServiceMemoryPage, ServiceMemoryRecord,
+    ServiceProviderSummary, ServiceRequest, ServiceResponse, ServiceRunRequest, ServiceRunResult,
+    ServiceRunResumeRequest, ServiceSessionDetail, ServiceSessionSummary, ServiceToolSummary,
+    Session, SessionId, TaskIntent, TenantId, Timestamp, WorkspaceId,
 };
 use std::fmt;
+use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -52,6 +58,8 @@ pub enum RuntimeServiceError {
     Evaluation(EvaluationContractError),
     Identifier(IdError),
     Runtime(RuntimeError),
+    Agent(AgentLoopError),
+    AgentUnavailable,
     Approval(ApprovalError),
     Session(SessionError),
 }
@@ -70,6 +78,8 @@ impl RuntimeServiceError {
                 ApprovalError::ScopeMismatch | ApprovalError::DigestMismatch,
             )) => "approval_scope_mismatch",
             Self::Runtime(_) => "runtime_execution_failed",
+            Self::Agent(_) => "agent_execution_failed",
+            Self::AgentUnavailable => "agent_unavailable",
             Self::Approval(ApprovalError::NotFound) => "approval_not_found",
             Self::Approval(ApprovalError::Expired) => "approval_expired",
             Self::Approval(ApprovalError::Terminal) => "approval_terminal",
@@ -97,6 +107,8 @@ impl fmt::Display for RuntimeServiceError {
             Self::Evaluation(_) => formatter.write_str("execution evaluation is invalid"),
             Self::Identifier(_) => formatter.write_str("service session identifier is invalid"),
             Self::Runtime(_) => formatter.write_str("governed runtime execution failed"),
+            Self::Agent(_) => formatter.write_str("governed agent execution failed"),
+            Self::AgentUnavailable => formatter.write_str("agent provider is not configured"),
             Self::Approval(error) => error.fmt(formatter),
             Self::Session(error) => error.fmt(formatter),
         }
@@ -129,6 +141,12 @@ impl From<RuntimeError> for RuntimeServiceError {
     }
 }
 
+impl From<AgentLoopError> for RuntimeServiceError {
+    fn from(error: AgentLoopError) -> Self {
+        Self::Agent(error)
+    }
+}
+
 impl From<ApprovalError> for RuntimeServiceError {
     fn from(error: ApprovalError) -> Self {
         Self::Approval(error)
@@ -147,7 +165,14 @@ pub struct RuntimeService {
     approvals: ApprovalStore,
     scope: RuntimeServiceScope,
     providers: Vec<ServiceProviderSummary>,
+    agent: Option<RuntimeServiceAgent>,
     next_session: AtomicU64,
+}
+
+struct RuntimeServiceAgent {
+    provider: Arc<dyn Provider>,
+    loop_engine: AgentLoop,
+    skill_context: Option<String>,
 }
 
 impl RuntimeService {
@@ -173,8 +198,27 @@ impl RuntimeService {
             approvals,
             scope,
             providers,
+            agent: None,
             next_session: AtomicU64::new(1),
         }
+    }
+
+    pub fn with_agent(
+        mut self,
+        provider: Arc<dyn Provider>,
+        max_turns: u32,
+        max_tool_calls: u32,
+        context_cache_path: impl AsRef<Path>,
+        skill_context: Option<String>,
+    ) -> Result<Self, RuntimeServiceError> {
+        let loop_engine =
+            AgentLoop::new(max_turns, max_tool_calls)?.with_context_cache(context_cache_path)?;
+        self.agent = Some(RuntimeServiceAgent {
+            provider,
+            loop_engine,
+            skill_context,
+        });
+        Ok(self)
     }
 
     pub fn scope(&self) -> &RuntimeServiceScope {
@@ -216,6 +260,8 @@ impl RuntimeService {
             } => self.resolve_approval(approval_id, *allow, now),
             ServiceRequest::Run { request, .. } => self.run(request, now),
             ServiceRequest::RunResume { request, .. } => self.resume_run(request, now),
+            ServiceRequest::AgentRun { request, .. } => self.run_agent(request, now),
+            ServiceRequest::AgentResume { request, .. } => self.resume_agent(request, now),
         }
     }
 
@@ -561,10 +607,10 @@ impl RuntimeService {
 
         let summary = self.controller.run_at(intent, session.clone(), now)?;
         self.sessions.create(&session)?;
-        self.persist_execution(&session, &summary, now)?;
+        self.persist_execution(&session, &summary, "local", now)?;
 
         let approval = if matches!(summary.status(), RunStatus::ApprovalRequired { .. }) {
-            Some(self.create_approval(request, &session, &summary, now)?)
+            Some(self.create_approval(request.task(), &session, &summary, now)?)
         } else {
             None
         };
@@ -598,7 +644,7 @@ impl RuntimeService {
             request.approval_id(),
             now,
         )?;
-        self.persist_execution(&session, &summary, now)?;
+        self.persist_execution(&session, &summary, "local", now)?;
 
         Ok(ServiceResponse::run(service_run_result(
             &summary,
@@ -608,9 +654,193 @@ impl RuntimeService {
         )?))
     }
 
+    fn run_agent(
+        &self,
+        request: &ServiceAgentRunRequest,
+        now: Timestamp,
+    ) -> Result<ServiceResponse, RuntimeServiceError> {
+        let agent = self
+            .agent
+            .as_ref()
+            .ok_or(RuntimeServiceError::AgentUnavailable)?;
+        let (session, history) = match request.session_id() {
+            Some(session_id) => {
+                let snapshot = self.sessions.resume(
+                    session_id,
+                    self.scope.principal_id(),
+                    self.scope.tenant_id(),
+                    self.scope.workspace_id(),
+                )?;
+                (
+                    snapshot.session().clone(),
+                    snapshot.agent_messages().to_vec(),
+                )
+            }
+            None => {
+                let session = self.allocate_session(now)?;
+                self.sessions.create(&session)?;
+                (session, Vec::new())
+            }
+        };
+        let provider_id = agent.provider.manifest().id().as_str();
+        let l1_evidence = self.sessions.l1_evidence_context(
+            session.id(),
+            session.principal_id(),
+            session.tenant_id(),
+            session.workspace_id(),
+            provider_id,
+        )?;
+        let mut agent_request = AgentRunRequest::new(session.clone(), history, request.task(), now)
+            .with_skill_context(agent.skill_context.as_deref())
+            .with_l1_evidence(Some(&l1_evidence));
+        if let Some(harness) = request.requested_harness() {
+            agent_request = agent_request.with_trusted_harness(harness.clone());
+        }
+
+        match agent.loop_engine.run_with_request(
+            agent.provider.as_ref(),
+            &self.controller,
+            agent_request,
+        ) {
+            Ok(summary) => self.finish_agent_run(
+                &session,
+                &summary,
+                provider_id,
+                "completed",
+                None,
+                None,
+                now,
+            ),
+            Err(AgentLoopError::ApprovalRequired { reason, summary }) => {
+                let run = summary.runs().last().ok_or(ApprovalError::InvalidSummary)?;
+                let approval = self.create_approval(request.task(), &session, run, now)?;
+                self.finish_agent_run(
+                    &session,
+                    &summary,
+                    provider_id,
+                    "approval_required",
+                    Some(reason),
+                    Some(&approval),
+                    now,
+                )
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn resume_agent(
+        &self,
+        request: &ServiceAgentResumeRequest,
+        now: Timestamp,
+    ) -> Result<ServiceResponse, RuntimeServiceError> {
+        let agent = self
+            .agent
+            .as_ref()
+            .ok_or(RuntimeServiceError::AgentUnavailable)?;
+        let approval = self.scoped_approval(request.approval_id())?;
+        let snapshot = self.sessions.resume(
+            approval.session_id(),
+            self.scope.principal_id(),
+            self.scope.tenant_id(),
+            self.scope.workspace_id(),
+        )?;
+        let session = snapshot.session().clone();
+        let provider_id = agent.provider.manifest().id().as_str();
+        let l1_evidence = self.sessions.l1_evidence_context(
+            session.id(),
+            session.principal_id(),
+            session.tenant_id(),
+            session.workspace_id(),
+            provider_id,
+        )?;
+        let trusted_harness = snapshot
+            .events()
+            .iter()
+            .rev()
+            .find(|event| {
+                event.context().execution_id() == Some(approval.execution_id())
+                    && event.context().harness_id().is_some()
+            })
+            .and_then(|event| event.context().harness_id())
+            .cloned();
+        let mut approval_context =
+            AgentApprovalContext::new(session.clone(), &self.approvals, request.approval_id(), now)
+                .with_l1_evidence(Some(&l1_evidence));
+        if let Some(harness) = trusted_harness {
+            approval_context = approval_context.with_trusted_harness(harness);
+        }
+
+        match agent
+            .loop_engine
+            .run_with_history_and_approval_and_skill_context(
+                agent.provider.as_ref(),
+                &self.controller,
+                snapshot.agent_messages().to_vec(),
+                approval_context,
+                agent.skill_context.as_deref(),
+                "resume approved operation",
+            ) {
+            Ok(summary) => self.finish_agent_run(
+                &session,
+                &summary,
+                provider_id,
+                "completed",
+                None,
+                None,
+                now,
+            ),
+            Err(AgentLoopError::ApprovalRequired { reason, summary }) => {
+                let run = summary.runs().last().ok_or(ApprovalError::InvalidSummary)?;
+                let next_approval =
+                    self.create_approval("agent continuation", &session, run, now)?;
+                self.finish_agent_run(
+                    &session,
+                    &summary,
+                    provider_id,
+                    "approval_required",
+                    Some(reason),
+                    Some(&next_approval),
+                    now,
+                )
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn finish_agent_run(
+        &self,
+        session: &Session,
+        summary: &AgentRunSummary,
+        provider: &str,
+        status: &str,
+        status_detail: Option<String>,
+        approval: Option<&PendingApproval>,
+        now: Timestamp,
+    ) -> Result<ServiceResponse, RuntimeServiceError> {
+        for run in summary.runs() {
+            self.persist_execution(session, run, provider, now)?;
+        }
+        self.sessions.save_agent_transcript(
+            session.id(),
+            session.principal_id(),
+            session.tenant_id(),
+            session.workspace_id(),
+            summary.messages(),
+        )?;
+        let mut result = service_agent_run_result(summary, session.id().clone(), status);
+        if let Some(detail) = status_detail {
+            result = result.with_status_detail(detail);
+        }
+        if let Some(approval) = approval {
+            result = result.with_approval(service_approval_summary(approval, now)?);
+        }
+        Ok(ServiceResponse::agent_run(result))
+    }
+
     fn create_approval(
         &self,
-        request: &ServiceRunRequest,
+        task: &str,
         session: &Session,
         summary: &RunSummary,
         now: Timestamp,
@@ -634,7 +864,7 @@ impl RuntimeService {
             session.principal_id().clone(),
             summary.selected_gene().clone(),
             request_digest,
-            service_approval_request_summary(request.task(), capability),
+            service_approval_request_summary(task, capability),
             self.controller.policy_version(),
             expires_at,
         )?;
@@ -661,6 +891,7 @@ impl RuntimeService {
         &self,
         session: &Session,
         summary: &RunSummary,
+        provider: &str,
         now: Timestamp,
     ) -> Result<EvaluationReceipt, RuntimeServiceError> {
         let mut evaluation_request = EvaluationRequest::new(
@@ -706,7 +937,7 @@ impl RuntimeService {
         let _ = self.sessions.record_evaluation_feedback(
             session,
             session.principal_id(),
-            "local",
+            provider,
             &receipt,
         );
         Ok(receipt)
@@ -747,6 +978,43 @@ fn service_run_result(
         result = result.with_approval(service_approval_summary(approval, now)?);
     }
     Ok(result)
+}
+
+fn service_agent_run_result(
+    summary: &AgentRunSummary,
+    session_id: SessionId,
+    status: &str,
+) -> ServiceAgentRunResult {
+    let last_run = summary.runs().last();
+    let receipt_count = summary
+        .runs()
+        .iter()
+        .map(|run| u64::try_from(run.receipts().len()).unwrap_or(u64::MAX))
+        .fold(
+            u64::try_from(summary.provider_receipts().len()).unwrap_or(u64::MAX),
+            u64::saturating_add,
+        );
+    let event_count = summary
+        .runs()
+        .iter()
+        .map(|run| u64::try_from(run.events().len()).unwrap_or(u64::MAX))
+        .fold(0_u64, u64::saturating_add);
+    ServiceAgentRunResult::new(
+        session_id,
+        last_run.map(|run| run.execution_id().clone()),
+        last_run.map(|run| run.selected_harness().clone()),
+        last_run.map(|run| run.selected_gene().clone()),
+        status,
+        summary.final_text(),
+        summary.turns(),
+        summary.tool_calls(),
+        u32::try_from(summary.provider_receipts().len()).unwrap_or(u32::MAX),
+        u64::from(summary.usage().prompt_tokens()),
+        u64::from(summary.usage().completion_tokens()),
+        u32::try_from(summary.runs().len()).unwrap_or(u32::MAX),
+        receipt_count,
+        event_count,
+    )
 }
 
 fn service_approval_summary(
@@ -805,9 +1073,158 @@ fn output_text(output: Option<&[u8]>) -> String {
 mod tests {
     use super::*;
     use crate::executors::WorkspaceRoot;
-    use pandora_types::{
-        ContextClassification, MemoryApproval, MemoryKind, MemoryRecord, MemoryScope,
+    use pandora_harnesses::HarnessCatalog;
+    use pandora_provider::{
+        MessageRole, ModelRequest, ModelResponse, ProviderError, ProviderManifest, TokenUsage,
+        ToolCall,
     };
+    use pandora_types::{
+        Capability, ContextClassification, MemoryApproval, MemoryKind, MemoryRecord, MemoryScope,
+        Operation, PolicyContext,
+    };
+    use std::sync::Mutex;
+
+    struct SequenceProvider {
+        manifest: ProviderManifest,
+        responses: Mutex<Vec<ModelResponse>>,
+        requests: Mutex<Vec<Vec<pandora_provider::ChatMessage>>>,
+    }
+
+    impl SequenceProvider {
+        fn new(responses: Vec<ModelResponse>) -> Self {
+            Self {
+                manifest: ProviderManifest::new(
+                    "service-provider",
+                    "Service provider",
+                    "http://127.0.0.1:1/v1",
+                    "model-a",
+                    "PANDORA_SERVICE_PROVIDER_KEY",
+                )
+                .unwrap(),
+                responses: Mutex::new(responses),
+                requests: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn requests(&self) -> Vec<Vec<pandora_provider::ChatMessage>> {
+            self.requests.lock().unwrap().clone()
+        }
+    }
+
+    impl Provider for SequenceProvider {
+        fn manifest(&self) -> &ProviderManifest {
+            &self.manifest
+        }
+
+        fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+            self.requests
+                .lock()
+                .unwrap()
+                .push(request.messages().to_vec());
+            self.responses
+                .lock()
+                .unwrap()
+                .pop()
+                .ok_or(ProviderError::InvalidResponse)
+        }
+    }
+
+    #[test]
+    fn agent_write_resumes_only_the_exact_governed_pending_call() {
+        let root = crate::test_support::new_temp_dir("pandora-runtime-service-agent").unwrap();
+        std::fs::write(root.join("README.md"), b"fixture\n").unwrap();
+        let scope = RuntimeServiceScope::new(
+            PrincipalId::new("principal-a").unwrap(),
+            TenantId::new("tenant-a").unwrap(),
+            WorkspaceId::new("workspace-a").unwrap(),
+        );
+        let provider = Arc::new(SequenceProvider::new(vec![
+            ModelResponse::new("README updated", Vec::new(), TokenUsage::new(4, 2)),
+            ModelResponse::new(
+                "",
+                vec![
+                    ToolCall::new(
+                        "call-patch",
+                        "workspace.patch",
+                        serde_json::json!({"path": "README.md", "content": "changed"}),
+                    )
+                    .unwrap(),
+                ],
+                TokenUsage::new(8, 3),
+            ),
+        ]));
+        let policy = PolicyContext::new(
+            1,
+            [
+                Capability::FilesystemRead,
+                Capability::FilesystemWrite,
+                Capability::ProviderInvoke,
+            ],
+            [Operation::Write],
+        );
+        let service = RuntimeService::new(
+            ExecutionController::with_policy_and_harnesses(
+                WorkspaceRoot::new(&root).unwrap(),
+                policy,
+                HarnessCatalog::builtins(),
+            ),
+            SessionStore::open(root.join("sessions.sqlite3")).unwrap(),
+            ApprovalStore::open(root.join("sessions.sqlite3")).unwrap(),
+            scope,
+        )
+        .with_agent(
+            provider.clone(),
+            4,
+            4,
+            root.join("context-cache.json"),
+            None,
+        )
+        .unwrap();
+
+        let first = service
+            .handle(
+                &ServiceRequest::agent_run(
+                    ServiceAgentRunRequest::new("Update the README", None, None).unwrap(),
+                ),
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap();
+        let ServiceResponse::AgentRun { run, .. } = first else {
+            panic!("expected an agent run response");
+        };
+        assert_eq!(run.status(), "approval_required");
+        let approval_id = run.approval().unwrap().approval_id().to_owned();
+        assert_eq!(std::fs::read(root.join("README.md")).unwrap(), b"fixture\n");
+
+        service
+            .handle(
+                &ServiceRequest::approval_resolve(&approval_id, true).unwrap(),
+                Timestamp::from_unix_seconds(11),
+            )
+            .unwrap();
+        let resumed = service
+            .handle(
+                &ServiceRequest::agent_resume(
+                    ServiceAgentResumeRequest::new(&approval_id).unwrap(),
+                ),
+                Timestamp::from_unix_seconds(12),
+            )
+            .unwrap();
+        let ServiceResponse::AgentRun { run, .. } = resumed else {
+            panic!("expected a resumed agent run response");
+        };
+        assert_eq!(run.status(), "completed");
+        assert_eq!(run.output(), "README updated");
+        assert_eq!(std::fs::read(root.join("README.md")).unwrap(), b"changed");
+
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[1][1].role(), MessageRole::User);
+        assert_eq!(requests[1][2].role(), MessageRole::Assistant);
+        assert_eq!(requests[1][3].role(), MessageRole::Tool);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     #[test]
     fn session_memory_returns_scoped_l1_and_l2_records() {

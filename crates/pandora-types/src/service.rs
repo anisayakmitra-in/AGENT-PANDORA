@@ -67,6 +67,76 @@ pub struct ServiceRunResumeRequest {
     request: ServiceRunRequest,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServiceAgentRunRequest {
+    task: String,
+    session_id: Option<SessionId>,
+    requested_harness: Option<HarnessId>,
+}
+
+impl ServiceAgentRunRequest {
+    pub fn new(
+        task: impl Into<String>,
+        session_id: Option<SessionId>,
+        requested_harness: Option<HarnessId>,
+    ) -> Result<Self, ServiceContractError> {
+        let task = crate::session::TaskIntent::new(task.into())?
+            .summary()
+            .to_owned();
+        let request = Self {
+            task,
+            session_id,
+            requested_harness,
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
+    pub fn task(&self) -> &str {
+        &self.task
+    }
+
+    pub fn session_id(&self) -> Option<&SessionId> {
+        self.session_id.as_ref()
+    }
+
+    pub fn requested_harness(&self) -> Option<&HarnessId> {
+        self.requested_harness.as_ref()
+    }
+
+    pub fn validate(&self) -> Result<(), ServiceContractError> {
+        crate::session::TaskIntent::new(self.task.clone())?;
+        if let Some(session_id) = self.session_id() {
+            SessionId::new(session_id.as_str())?;
+        }
+        if let Some(harness_id) = self.requested_harness() {
+            HarnessId::new(harness_id.as_str())?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServiceAgentResumeRequest {
+    approval_id: String,
+}
+
+impl ServiceAgentResumeRequest {
+    pub fn new(approval_id: impl Into<String>) -> Result<Self, ServiceContractError> {
+        let approval_id = approval_id.into();
+        validate_approval_id(&approval_id)?;
+        Ok(Self { approval_id })
+    }
+
+    pub fn approval_id(&self) -> &str {
+        &self.approval_id
+    }
+
+    pub fn validate(&self) -> Result<(), ServiceContractError> {
+        validate_approval_id(&self.approval_id)
+    }
+}
+
 impl ServiceRunResumeRequest {
     pub fn new(
         approval_id: impl Into<String>,
@@ -438,6 +508,14 @@ pub enum ServiceRequest {
         protocol_version: u16,
         request: ServiceRunResumeRequest,
     },
+    AgentRun {
+        protocol_version: u16,
+        request: ServiceAgentRunRequest,
+    },
+    AgentResume {
+        protocol_version: u16,
+        request: ServiceAgentResumeRequest,
+    },
 }
 
 impl ServiceRequest {
@@ -549,6 +627,20 @@ impl ServiceRequest {
         }
     }
 
+    pub const fn agent_run(request: ServiceAgentRunRequest) -> Self {
+        Self::AgentRun {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            request,
+        }
+    }
+
+    pub const fn agent_resume(request: ServiceAgentResumeRequest) -> Self {
+        Self::AgentResume {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            request,
+        }
+    }
+
     pub const fn protocol_version(&self) -> u16 {
         match self {
             Self::Health { protocol_version }
@@ -581,6 +673,12 @@ impl ServiceRequest {
                 protocol_version, ..
             }
             | Self::RunResume {
+                protocol_version, ..
+            }
+            | Self::AgentRun {
+                protocol_version, ..
+            }
+            | Self::AgentResume {
                 protocol_version, ..
             } => *protocol_version,
         }
@@ -618,6 +716,8 @@ impl ServiceRequest {
             | Self::ApprovalResolve { approval_id, .. } => validate_approval_id(approval_id),
             Self::Run { request, .. } => request.validate(),
             Self::RunResume { request, .. } => request.validate(),
+            Self::AgentRun { request, .. } => request.validate(),
+            Self::AgentResume { request, .. } => request.validate(),
         }
     }
 }
@@ -1031,6 +1131,126 @@ impl ServiceRunResult {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServiceAgentRunResult {
+    session_id: SessionId,
+    execution_id: Option<ExecutionId>,
+    selected_harness: Option<HarnessId>,
+    selected_gene: Option<GeneId>,
+    status: String,
+    output: String,
+    turns: u32,
+    tool_calls: u32,
+    provider_calls: u32,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    run_count: u32,
+    receipt_count: u64,
+    event_count: u64,
+    #[serde(default)]
+    status_detail: Option<String>,
+    #[serde(default)]
+    approval: Option<ServiceApprovalSummary>,
+}
+
+impl ServiceAgentRunResult {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        session_id: SessionId,
+        execution_id: Option<ExecutionId>,
+        selected_harness: Option<HarnessId>,
+        selected_gene: Option<GeneId>,
+        status: impl Into<String>,
+        output: impl Into<String>,
+        turns: u32,
+        tool_calls: u32,
+        provider_calls: u32,
+        prompt_tokens: u64,
+        completion_tokens: u64,
+        run_count: u32,
+        receipt_count: u64,
+        event_count: u64,
+    ) -> Self {
+        Self {
+            session_id,
+            execution_id,
+            selected_harness,
+            selected_gene,
+            status: status.into(),
+            output: output.into(),
+            turns,
+            tool_calls,
+            provider_calls,
+            prompt_tokens,
+            completion_tokens,
+            run_count,
+            receipt_count,
+            event_count,
+            status_detail: None,
+            approval: None,
+        }
+    }
+
+    pub fn with_status_detail(mut self, detail: impl Into<String>) -> Self {
+        self.status_detail = Some(detail.into());
+        self
+    }
+
+    pub fn with_approval(mut self, approval: ServiceApprovalSummary) -> Self {
+        self.approval = Some(approval);
+        self
+    }
+
+    pub fn session_id(&self) -> &SessionId {
+        &self.session_id
+    }
+    pub fn execution_id(&self) -> Option<&ExecutionId> {
+        self.execution_id.as_ref()
+    }
+    pub fn selected_harness(&self) -> Option<&HarnessId> {
+        self.selected_harness.as_ref()
+    }
+    pub fn selected_gene(&self) -> Option<&GeneId> {
+        self.selected_gene.as_ref()
+    }
+    pub fn status(&self) -> &str {
+        &self.status
+    }
+    pub fn output(&self) -> &str {
+        &self.output
+    }
+    pub const fn turns(&self) -> u32 {
+        self.turns
+    }
+    pub const fn tool_calls(&self) -> u32 {
+        self.tool_calls
+    }
+    pub const fn provider_calls(&self) -> u32 {
+        self.provider_calls
+    }
+    pub const fn prompt_tokens(&self) -> u64 {
+        self.prompt_tokens
+    }
+    pub const fn completion_tokens(&self) -> u64 {
+        self.completion_tokens
+    }
+    pub const fn run_count(&self) -> u32 {
+        self.run_count
+    }
+    pub const fn receipt_count(&self) -> u64 {
+        self.receipt_count
+    }
+    pub const fn event_count(&self) -> u64 {
+        self.event_count
+    }
+    pub fn status_detail(&self) -> Option<&str> {
+        self.status_detail.as_deref()
+    }
+    pub const fn approval(&self) -> Option<&ServiceApprovalSummary> {
+        self.approval.as_ref()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ServiceResponse {
     Health {
@@ -1084,6 +1304,10 @@ pub enum ServiceResponse {
     Run {
         protocol_version: u16,
         run: ServiceRunResult,
+    },
+    AgentRun {
+        protocol_version: u16,
+        run: ServiceAgentRunResult,
     },
 }
 
@@ -1179,6 +1403,13 @@ impl ServiceResponse {
         }
     }
 
+    pub const fn agent_run(run: ServiceAgentRunResult) -> Self {
+        Self::AgentRun {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            run,
+        }
+    }
+
     pub const fn protocol_version(&self) -> u16 {
         match self {
             Self::Health {
@@ -1218,6 +1449,9 @@ impl ServiceResponse {
                 protocol_version, ..
             }
             | Self::Run {
+                protocol_version, ..
+            }
+            | Self::AgentRun {
                 protocol_version, ..
             } => *protocol_version,
         }

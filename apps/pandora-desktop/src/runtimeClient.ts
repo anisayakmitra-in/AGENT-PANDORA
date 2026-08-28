@@ -80,8 +80,9 @@ export type RuntimeApproval = {
 };
 
 export type RuntimeRun = {
+  mode: "direct" | "agent";
   session_id: string;
-  execution_id: string;
+  execution_id: string | null;
   selected_harness: string | null;
   selected_gene: string | null;
   status: string;
@@ -90,7 +91,15 @@ export type RuntimeRun = {
   event_count: number;
   status_detail?: string;
   approval?: RuntimeApproval;
+  turns?: number;
+  tool_calls?: number;
+  provider_calls?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  run_count?: number;
 };
+
+type RuntimeRunWire = Omit<RuntimeRun, "mode">;
 
 export type RuntimeEvent = {
   event_id: string;
@@ -144,7 +153,12 @@ type SessionInspectResponse = {
 
 type RunResponse = {
   kind: "run";
-  run: RuntimeRun;
+  run: RuntimeRunWire;
+};
+
+type AgentRunResponse = {
+  kind: "agent_run";
+  run: RuntimeRunWire;
 };
 
 type SessionEventsResponse = {
@@ -288,7 +302,7 @@ export class RuntimeClient {
       requested_harness: requestedHarness,
       requested_gene: null,
     });
-    return response.run;
+    return { ...response.run, mode: "direct" };
   }
 
   async resume(approvalId: string, task: string, requestedHarness: string | null = null): Promise<RuntimeRun> {
@@ -300,7 +314,27 @@ export class RuntimeClient {
         requested_gene: null,
       },
     });
-    return response.run;
+    return { ...response.run, mode: "direct" };
+  }
+
+  async agentRun(
+    task: string,
+    sessionId: string | null = null,
+    requestedHarness: string | null = null,
+  ): Promise<RuntimeRun> {
+    const response = await this.call<AgentRunResponse>("agent.execute", {
+      task,
+      session_id: sessionId,
+      requested_harness: requestedHarness,
+    });
+    return { ...response.run, mode: "agent" };
+  }
+
+  async agentResume(approvalId: string): Promise<RuntimeRun> {
+    const response = await this.call<AgentRunResponse>("agent.resume", {
+      approval_id: approvalId,
+    });
+    return { ...response.run, mode: "agent" };
   }
 
   async approvals(limit = 64): Promise<RuntimeApproval[]> {
