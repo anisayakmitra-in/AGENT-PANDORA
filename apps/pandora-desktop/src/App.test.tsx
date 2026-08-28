@@ -135,6 +135,21 @@ describe("Pandora desktop run state", () => {
     });
   });
 
+  it("keeps a failed request editable and retryable without marking the service offline", async () => {
+    runtime.agentRun.mockRejectedValueOnce(new Error("provider timed out"));
+
+    render(<App />);
+    const composer = await screen.findByLabelText("Pandora task");
+    fireEvent.change(composer, { target: { value: "Inspect and recover" } });
+    fireEvent.submit(composer.closest("form")!);
+
+    expect(await screen.findByText("provider timed out")).toBeInTheDocument();
+    expect(composer).toBeEnabled();
+    expect(composer).toHaveValue("Inspect and recover");
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+    expect(screen.getAllByText("Local runtime connected").length).toBeGreaterThan(0);
+  });
+
   it("sends selected text files through the bounded context contract", async () => {
     runtime.agentRun.mockResolvedValue({
       mode: "agent",
@@ -168,6 +183,65 @@ describe("Pandora desktop run state", () => {
       );
     });
     expect(screen.queryByText("notes.ts")).not.toBeInTheDocument();
+  });
+
+  it("renders Council from recorded run evidence without fabricating authority", async () => {
+    runtime.capabilities.mockResolvedValue([{
+      id: "coding-domain",
+      version: "2.1.0",
+      name: "Coding",
+      kind: "domain",
+      gene_count: 4,
+      runnable: true,
+      gene_ids: ["workspace.diff"],
+    }]);
+    runtime.events.mockResolvedValue([
+      { event_id: "event-policy", event_type: "policy_approved", payload: {} },
+      { event_id: "event-approval", event_type: "approval_required", payload: {} },
+    ]);
+    runtime.agentRun.mockResolvedValue({
+      mode: "agent",
+      session_id: session.session_id,
+      execution_id: "execution-council",
+      selected_harness: "coding-domain",
+      selected_gene: "workspace.diff",
+      status: "approval_required",
+      status_detail: "explicit approval is required",
+      output: "",
+      receipt_count: 0,
+      event_count: 2,
+      approval: {
+        approval_id: "approval-council",
+        session_id: session.session_id,
+        execution_id: "execution-council",
+        gene_id: "workspace.diff",
+        request_digest: "sha256:council",
+        request_summary: "Execute workspace.diff once",
+        policy_version: 1,
+        expires_at_unix_seconds: 999,
+        status: "pending",
+        approver_id: null,
+        created_at_unix_seconds: 1,
+      },
+    });
+
+    render(<App />);
+    const composer = await screen.findByLabelText("Pandora task");
+    fireEvent.change(composer, { target: { value: "Inspect the working diff" } });
+    fireEvent.submit(composer.closest("form")!);
+    await screen.findByText("Execute workspace.diff once");
+
+    fireEvent.click(screen.getByRole("button", { name: "Council" }));
+
+    expect(await screen.findByRole("heading", { name: "Council" })).toBeInTheDocument();
+    expect(screen.getByText("PARLIAMENT")).toBeInTheDocument();
+    expect(screen.getByText("SHADOW COUNCIL")).toBeInTheDocument();
+    expect(screen.getByText("REFERENCE MONITOR")).toBeInTheDocument();
+    expect(screen.getByText("v2.1.0 · domain")).toBeInTheDocument();
+    expect(screen.getByText("sha256:council")).toBeInTheDocument();
+    expect(screen.getByText("event-approval")).toBeInTheDocument();
+    expect(screen.queryByText(/design preview/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/This page cannot vote, route, approve, or execute/)).toBeInTheDocument();
   });
 
   it("reads a workspace file through the governed runtime inspector", async () => {

@@ -235,7 +235,18 @@ function authorityStepsForRun(lastRun: RuntimeRun | null, events: RuntimeEvent[]
   if (!lastRun) {
     const profile = runProfiles.find((candidate) => candidate.id === runProfile);
     const label = profile?.harness ?? "Auto-selected Harness";
-    return authoritySteps.map((step) => step.id === "harness" ? { ...step, label, detail: "Awaiting runtime selection" } : step);
+    return authoritySteps.map((step) => {
+      if (step.id === "harness") {
+        return { ...step, label, detail: "Awaiting runtime selection", status: "idle" as const };
+      }
+      if (step.id === "parliament") {
+        return { ...step, detail: "Begins when a request is submitted", status: "idle" as const };
+      }
+      if (step.id === "shadow") {
+        return { ...step, detail: "No routing evidence recorded yet", status: "idle" as const };
+      }
+      return { ...step, status: "idle" as const };
+    });
   }
   const eventTypes = new Set(events.map((event) => event.event_type));
   const policyResolved = eventTypes.has("policy_approved") || eventTypes.has("policy_denied") || eventTypes.has("approval_required");
@@ -260,49 +271,6 @@ function mergeEvolutionDetails(current: RuntimeEvolutionProposal[], incoming: Ru
     candidate: current.find((existing) => existing.proposal_id === proposal.proposal_id)?.candidate ?? proposal.candidate,
   }));
 }
-
-const viewDetails: Record<Exclude<ViewId, "command" | "runs" | "memory" | "workflows">, { eyebrow: string; title: string; description: string }> = {
-  council: {
-    eyebrow: "Governance",
-    title: "Council",
-    description: "Inspect policy decisions, routing evidence, and pending approvals."
-  },
-  capabilities: {
-    eyebrow: "Runtime surface",
-    title: "Harnesses & Genes",
-    description: "Installed Harnesses, Genes, Skills, versions, and admission state."
-  },
-  engines: {
-    eyebrow: "Architecture",
-    title: "Engines",
-    description: "Pandora’s bounded engines and the authority each one owns."
-  },
-  tools: {
-    eyebrow: "Runtime surface",
-    title: "Built-in Tools",
-    description: "Tool definitions and effect classifications exposed by ToolEngine."
-  },
-  connections: {
-    eyebrow: "Runtime surface",
-    title: "Connections",
-    description: "Provider profiles, local MCP servers, and connection health."
-  },
-  audit: {
-    eyebrow: "Evidence",
-    title: "Audit",
-    description: "Receipts, evaluations, redacted events, and execution lineage."
-  },
-  evolution: {
-    eyebrow: "Governed improvement",
-    title: "Evolution",
-    description: "Evidence-backed proposals remain separate from permission and activation."
-  },
-  settings: {
-    eyebrow: "Workspace",
-    title: "Settings",
-    description: "Configure policy, containment, providers, and local workspace behavior."
-  }
-};
 
 function Icon({ name, size = 17 }: { name: IconName; size?: number }) {
   const common = {
@@ -383,7 +351,6 @@ function Panel({ className = "", children }: { className?: string; children: Rea
 
 function App() {
   const [activeView, setActiveView] = useState<ViewId>("command");
-  const [approvalPreview, setApprovalPreview] = useState(false);
   const [selectedStep, setSelectedStep] = useState("monitor");
   const [endpoint, setEndpoint] = useState(loadRuntimeEndpoint);
   const [token, setToken] = useState("");
@@ -687,7 +654,7 @@ function App() {
       await loadRunResult(result);
       setRuntimeStatus("connected");
     } catch (error: unknown) {
-      setRuntimeStatus("offline");
+      setRuntimeStatus("connected");
       const message = error instanceof Error ? error.message : "Pandora run failed";
       setRuntimeError(message);
       throw error;
@@ -745,7 +712,7 @@ function App() {
       }
       setRuntimeStatus("connected");
     } catch (error: unknown) {
-      setRuntimeStatus("offline");
+      setRuntimeStatus("connected");
       const message = error instanceof Error ? error.message : "Could not resolve Pandora approval";
       setRuntimeError(message);
       throw error;
@@ -916,10 +883,7 @@ function App() {
         {paletteOpen ? <CommandPalette onClose={() => setPaletteOpen(false)} onSelectView={(view) => { setActiveView(view); setPaletteOpen(false); }} /> : null}
         {activeView === "command" ? (
           <CommandView
-            approvalPreview={approvalPreview}
             selectedStep={selectedStep}
-            onApprovalPreview={() => setApprovalPreview(true)}
-            onApprovalClose={() => setApprovalPreview(false)}
             onSelectStep={setSelectedStep}
             runtimeStatus={runtimeStatus}
             selectedSession={selectedSession}
@@ -942,6 +906,16 @@ function App() {
           />
         ) : activeView === "runs" ? (
           <RunsView runs={orchestrationRuns} runtimeStatus={runtimeStatus} onMutate={mutateOrchestration} />
+        ) : activeView === "council" ? (
+          <CouncilView
+            runtimeStatus={runtimeStatus}
+            lastRun={lastRun}
+            events={events}
+            selectedSession={selectedSession}
+            harnesses={harnesses}
+            onOpenCommand={() => setActiveView("command")}
+            onOpenAudit={() => setActiveView("audit")}
+          />
         ) : activeView === "memory" ? (
           <MemoryView runtimeStatus={runtimeStatus} records={memoryRecords} selectedSession={selectedSession} />
         ) : activeView === "workflows" ? (
@@ -958,10 +932,8 @@ function App() {
           <ToolsView tools={tools} runtimeStatus={runtimeStatus} />
         ) : activeView === "evolution" ? (
           <EvolutionView proposals={evolutionProposals} activations={artifactActivations} runtimeStatus={runtimeStatus} onInspect={inspectEvolutionCandidate} onMutate={mutateEvolution} />
-        ) : activeView === "settings" ? (
-          <SettingsView theme={theme} onThemeChange={setTheme} runtimeStatus={runtimeStatus} health={runtimeHealth} native={native} endpoint={endpoint} />
         ) : (
-          <SecondaryView view={activeView} runtimeStatus={runtimeStatus} />
+          <SettingsView theme={theme} onThemeChange={setTheme} runtimeStatus={runtimeStatus} health={runtimeHealth} native={native} endpoint={endpoint} />
         )}
       </main>
     </div>
@@ -1015,7 +987,7 @@ function Sidebar({ activeView, onSelect, runtimeStatus, sessions, selectedSessio
 function TopBar({ activeView, runtimeStatus, onOpenPalette }: { activeView: ViewId; runtimeStatus: RuntimeStatus; onOpenPalette: () => void }) {
   const label = activeView === "command" ? "Command Center" : activeView === "runs" ? "Background Runs" : activeView[0].toUpperCase() + activeView.slice(1);
   const tone = runtimeStatus === "connected" ? "green" : runtimeStatus === "offline" ? "amber" : "blue";
-  return <header className="top-bar"><div className="breadcrumb"><span className="breadcrumb-muted">Pandora</span><Icon name="chevron" size={13} /><strong>{label}</strong></div><div className="top-actions"><Chip tone={tone} icon="lock">{runtimeStatusLabel(runtimeStatus)}</Chip><button className="icon-button" type="button" aria-label="Search" onClick={onOpenPalette}><Icon name="search" size={17} /></button><button className="icon-button" type="button" aria-label="More options" disabled><Icon name="dots" size={18} /></button><div className="operator-avatar" aria-label="Operator profile">AK</div></div></header>;
+  return <header className="top-bar"><div className="breadcrumb"><span className="breadcrumb-muted">Pandora</span><Icon name="chevron" size={13} /><strong>{label}</strong></div><div className="top-actions"><Chip tone={tone} icon="lock">{runtimeStatusLabel(runtimeStatus)}</Chip><button className="icon-button" type="button" aria-label="Search" onClick={onOpenPalette}><Icon name="search" size={17} /></button><button className="icon-button" type="button" aria-label="More options" disabled><Icon name="dots" size={18} /></button><div className="operator-avatar" aria-label="Local operator">AK</div></div></header>;
 }
 
 function runtimeStatusLabel(status: RuntimeStatus): string {
@@ -1027,11 +999,11 @@ function runtimeStatusLabel(status: RuntimeStatus): string {
     case "offline":
       return "Runtime offline";
     case "preview":
-      return "Local preview";
+      return "Local service stopped";
   }
 }
 
-function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onApprovalClose, onSelectStep, runtimeStatus, selectedSession, lastRun, events, harnesses, runInFlight, workspaceInspection, workspaceInspectionInFlight, browserInspection, browserInspectionInFlight, runProfile, onRunProfileChange, onRun, onResolveApproval, onInspectWorkspace, onResolveWorkspaceInspection, onInspectBrowser, onResolveBrowserInspection }: { approvalPreview: boolean; selectedStep: string; onApprovalPreview: () => void; onApprovalClose: () => void; onSelectStep: (id: string) => void; runtimeStatus: RuntimeStatus; selectedSession: RuntimeSessionDetail | null; lastRun: RuntimeRun | null; events: RuntimeEvent[]; harnesses: RuntimeHarness[]; runInFlight: boolean; workspaceInspection: RuntimeRun | null; workspaceInspectionInFlight: boolean; browserInspection: RuntimeRun | null; browserInspectionInFlight: boolean; runProfile: RunProfile; onRunProfileChange: (profile: RunProfile) => void; onRun: (task: string, profile: RunProfile, contextAttachments: RuntimeContextAttachment[]) => Promise<void>; onResolveApproval: (allow: boolean) => Promise<void>; onInspectWorkspace: (task: string) => Promise<void>; onResolveWorkspaceInspection: (allow: boolean) => Promise<void>; onInspectBrowser: (url: string) => Promise<void>; onResolveBrowserInspection: (allow: boolean) => Promise<void> }) {
+function CommandView({ selectedStep, onSelectStep, runtimeStatus, selectedSession, lastRun, events, harnesses, runInFlight, workspaceInspection, workspaceInspectionInFlight, browserInspection, browserInspectionInFlight, runProfile, onRunProfileChange, onRun, onResolveApproval, onInspectWorkspace, onResolveWorkspaceInspection, onInspectBrowser, onResolveBrowserInspection }: { selectedStep: string; onSelectStep: (id: string) => void; runtimeStatus: RuntimeStatus; selectedSession: RuntimeSessionDetail | null; lastRun: RuntimeRun | null; events: RuntimeEvent[]; harnesses: RuntimeHarness[]; runInFlight: boolean; workspaceInspection: RuntimeRun | null; workspaceInspectionInFlight: boolean; browserInspection: RuntimeRun | null; browserInspectionInFlight: boolean; runProfile: RunProfile; onRunProfileChange: (profile: RunProfile) => void; onRun: (task: string, profile: RunProfile, contextAttachments: RuntimeContextAttachment[]) => Promise<void>; onResolveApproval: (allow: boolean) => Promise<void>; onInspectWorkspace: (task: string) => Promise<void>; onResolveWorkspaceInspection: (allow: boolean) => Promise<void>; onInspectBrowser: (url: string) => Promise<void>; onResolveBrowserInspection: (allow: boolean) => Promise<void> }) {
   const [task, setTask] = useState("");
   const [runError, setRunError] = useState("");
   const [contextAttachments, setContextAttachments] = useState<RuntimeContextAttachment[]>([]);
@@ -1121,11 +1093,11 @@ function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onAppro
       <div className="core-stage">
         <div className="stage-grid" />
         <div className="ambient-glow ambient-glow-one" /><div className="ambient-glow ambient-glow-two" />
-        <div className={`pandora-vessel ${approvalPreview ? "vessel-approved" : "vessel-waiting"}`} aria-label={`Pandora runtime ${lastRun?.status ?? (connected ? "ready" : "awaiting connection")}`}>
+        <div className={`pandora-vessel ${lastRun?.status === "completed" ? "vessel-approved" : "vessel-waiting"}`} aria-label={`Pandora runtime ${lastRun?.status ?? (connected ? "ready" : "awaiting connection")}`}>
           <div className="vessel-orbit vessel-orbit-one" /><div className="vessel-orbit vessel-orbit-two" /><div className="vessel-core"><div className="core-symbol"><span /><span /><span /></div></div>
         </div>
         <div className="core-status-dock">
-          <div className="core-caption"><span className="eyebrow">PANDORA CORE</span><h1>{approvalPreview ? "Approval recorded in preview" : coreTitle}</h1><p>{approvalPreview ? "No permit issued · runtime service is not connected to this preview." : coreDescription}</p></div>
+          <div className="core-caption"><span className="eyebrow">PANDORA CORE</span><h1>{coreTitle}</h1><p>{coreDescription}</p></div>
           <div className="core-metrics"><Metric label="Context" value={selectedSession ? "Scoped" : "None"} detail={selectedSession ? selectedSession.session.workspace_id : "not loaded"} /><Metric label="Policy" value={policyValue} detail={policyDetail} /><Metric label="Evidence" value={evidenceValue} detail={evidenceDetail} /></div>
         </div>
       </div>
@@ -1144,7 +1116,7 @@ function CommandView({ approvalPreview, selectedStep, onApprovalPreview, onAppro
       </form>
       {lastRun ? <Panel className="run-result"><div className="panel-heading"><h3>Latest {lastRun.mode} run</h3><Chip tone={lastRun.status === "completed" ? "green" : "amber"}>{lastRun.status}</Chip></div><div className="run-result-meta"><span className="mono">{lastRun.execution_id ?? "provider-only response"}</span><span>{lastRun.selected_gene ?? "No gene selected"}</span></div><p>{lastRun.output || "No output returned."}</p>{events.length ? <div className="event-list"><span className="eyebrow">LIVE ACTIVITY</span>{events.map((event) => <div className="event-row" key={event.event_id}><span className="event-dot" /><span>{event.event_type.replaceAll("_", " ")}</span><span className="mono">{event.event_id}</span></div>)}</div> : null}</Panel> : null}
     </section>
-    <Inspector steps={steps} approvalPreview={approvalPreview} lastRun={lastRun} events={events} selectedSession={selectedSession} runtimeStatus={runtimeStatus} approval={lastRun?.approval} approvalDetail={lastRun?.status_detail} approvalInFlight={runInFlight} workspaceInspection={workspaceInspection} workspaceInspectionInFlight={workspaceInspectionInFlight} browserInspection={browserInspection} browserInspectionInFlight={browserInspectionInFlight} selectedStep={selectedStep} onApprovalPreview={onApprovalPreview} onApprovalClose={onApprovalClose} onResolveApproval={onResolveApproval} onInspectWorkspace={onInspectWorkspace} onResolveWorkspaceInspection={onResolveWorkspaceInspection} onInspectBrowser={onInspectBrowser} onResolveBrowserInspection={onResolveBrowserInspection} onSelectStep={onSelectStep} />
+    <Inspector steps={steps} lastRun={lastRun} events={events} selectedSession={selectedSession} runtimeStatus={runtimeStatus} approval={lastRun?.approval} approvalDetail={lastRun?.status_detail} approvalInFlight={runInFlight} workspaceInspection={workspaceInspection} workspaceInspectionInFlight={workspaceInspectionInFlight} browserInspection={browserInspection} browserInspectionInFlight={browserInspectionInFlight} selectedStep={selectedStep} onResolveApproval={onResolveApproval} onInspectWorkspace={onInspectWorkspace} onResolveWorkspaceInspection={onResolveWorkspaceInspection} onInspectBrowser={onInspectBrowser} onResolveBrowserInspection={onResolveBrowserInspection} onSelectStep={onSelectStep} />
   </div>;
 }
 
@@ -1178,7 +1150,7 @@ function CommandPalette({ onClose, onSelectView }: { onClose: () => void; onSele
   return <div className="palette-backdrop" role="presentation" onMouseDown={onClose}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Open Pandora surface" onMouseDown={(event) => event.stopPropagation()}><div className="palette-search"><Icon name="search" size={16} /><input autoFocus value={query} onChange={(event) => { setQuery(event.target.value); setSelectedIndex(0); }} onKeyDown={handleKeyDown} placeholder="Search Pandora surfaces…" aria-label="Search Pandora surfaces" /><kbd>ESC</kbd></div><div className="palette-list">{filtered.length ? filtered.map((action, index) => <button type="button" className={`palette-item ${index === selectedIndex ? "is-active" : ""}`} aria-selected={index === selectedIndex} key={action.id} onMouseEnter={() => setSelectedIndex(index)} onClick={() => choose(index)}><Icon name={action.icon} size={16} /><span><strong>{action.label}</strong><small>{action.group}</small></span><kbd>↵</kbd></button>) : <p className="palette-empty">No matching Pandora surface.</p>}</div><div className="palette-footer"><span>Use ↑ ↓ and Enter</span><span className="mono">⌘ K</span></div></section></div>;
 }
 
-function Inspector({ steps, approvalPreview, lastRun, events, selectedSession, runtimeStatus, approval, approvalDetail, approvalInFlight, workspaceInspection, workspaceInspectionInFlight, browserInspection, browserInspectionInFlight, selectedStep, onApprovalPreview, onApprovalClose, onResolveApproval, onInspectWorkspace, onResolveWorkspaceInspection, onInspectBrowser, onResolveBrowserInspection, onSelectStep }: { steps: typeof authoritySteps; approvalPreview: boolean; lastRun: RuntimeRun | null; events: RuntimeEvent[]; selectedSession: RuntimeSessionDetail | null; runtimeStatus: RuntimeStatus; approval?: RuntimeApproval; approvalDetail?: string; approvalInFlight: boolean; workspaceInspection: RuntimeRun | null; workspaceInspectionInFlight: boolean; browserInspection: RuntimeRun | null; browserInspectionInFlight: boolean; selectedStep: string; onApprovalPreview: () => void; onApprovalClose: () => void; onResolveApproval: (allow: boolean) => Promise<void>; onInspectWorkspace: (task: string) => Promise<void>; onResolveWorkspaceInspection: (allow: boolean) => Promise<void>; onInspectBrowser: (url: string) => Promise<void>; onResolveBrowserInspection: (allow: boolean) => Promise<void>; onSelectStep: (id: string) => void }) {
+function Inspector({ steps, lastRun, events, selectedSession, runtimeStatus, approval, approvalDetail, approvalInFlight, workspaceInspection, workspaceInspectionInFlight, browserInspection, browserInspectionInFlight, selectedStep, onResolveApproval, onInspectWorkspace, onResolveWorkspaceInspection, onInspectBrowser, onResolveBrowserInspection, onSelectStep }: { steps: typeof authoritySteps; lastRun: RuntimeRun | null; events: RuntimeEvent[]; selectedSession: RuntimeSessionDetail | null; runtimeStatus: RuntimeStatus; approval?: RuntimeApproval; approvalDetail?: string; approvalInFlight: boolean; workspaceInspection: RuntimeRun | null; workspaceInspectionInFlight: boolean; browserInspection: RuntimeRun | null; browserInspectionInFlight: boolean; selectedStep: string; onResolveApproval: (allow: boolean) => Promise<void>; onInspectWorkspace: (task: string) => Promise<void>; onResolveWorkspaceInspection: (allow: boolean) => Promise<void>; onInspectBrowser: (url: string) => Promise<void>; onResolveBrowserInspection: (allow: boolean) => Promise<void>; onSelectStep: (id: string) => void }) {
   const [approvalError, setApprovalError] = useState("");
   const [tab, setTab] = useState<InspectorTab>("flow");
   const [workspacePath, setWorkspacePath] = useState("README.md");
@@ -1252,7 +1224,7 @@ function Inspector({ steps, approvalPreview, lastRun, events, selectedSession, r
     ? parseBrowserEvidence(browserInspection.output)
     : null;
   return <aside className="inspector">
-    <div className="inspector-header"><div><span className="eyebrow">{hasLiveRun ? "LIVE RUN SUMMARY" : "AUTHORITY CONTRACT"}</span><h2>{hasLiveRun ? "Execution recorded" : "Preview boundary"}</h2></div><button className="icon-button" type="button" aria-label="Inspector options" disabled><Icon name="dots" size={17} /></button></div>
+    <div className="inspector-header"><div><span className="eyebrow">{hasLiveRun ? "LIVE RUN SUMMARY" : "AUTHORITY CONTRACT"}</span><h2>{hasLiveRun ? "Execution recorded" : "Waiting for a run"}</h2></div><button className="icon-button" type="button" aria-label="Inspector options" disabled><Icon name="dots" size={17} /></button></div>
     <div className="inspector-tabs" role="tablist" aria-label="Run inspector">
       {(["flow", "evidence", "workspace", "browser"] as InspectorTab[]).map((item) => <button type="button" role="tab" aria-selected={tab === item} className={tab === item ? "is-active" : ""} key={item} onClick={() => setTab(item)}>{item}</button>)}
     </div>
@@ -1276,11 +1248,46 @@ function Inspector({ steps, approvalPreview, lastRun, events, selectedSession, r
     </div> : <div className="inspector-pane" role="tabpanel">
       <Panel className="task-panel"><div className="task-heading"><span className="task-icon"><Icon name="code" size={18} /></span><div><span className="eyebrow">PANDORA DESKTOP</span><h3>Governed command surface</h3></div></div><p className="task-copy">Submit work through the local service. The desktop shell does not issue permits or execute tools directly.</p><div className="task-meta"><span><Icon name="book" size={13} /> Existing runtime</span><span><Icon name="lock" size={13} /> Workspace scoped</span></div></Panel>
       <div className="inspector-section"><div className="section-heading"><span>Authority chain</span><span className="mono section-count">{steps.filter((step) => step.status !== "idle").length}/8</span></div><div className="authority-timeline">{steps.map((step) => <button className={`authority-row status-${step.status} ${selectedStep === step.id ? "is-selected" : ""}`} key={step.id} onClick={() => onSelectStep(step.id)}><span className="timeline-line" /><span className="timeline-node">{step.status === "complete" ? <Icon name="check" size={12} /> : <Icon name={step.icon} size={13} />}</span><span className="authority-copy"><strong>{step.label}</strong><small>{step.detail}</small></span><Icon name="chevron" size={14} /></button>)}</div></div>
-      <Panel className={`approval-panel ${approvalPreview || (approval && approval.status !== "pending") ? "is-preview-complete" : ""}`}><div className="approval-top"><span className="approval-icon"><Icon name={approvalPreview || (approval && approval.status !== "pending") ? "check" : "shield"} size={17} /></span><div><span className="eyebrow">{approval ? "LIVE APPROVAL" : approvalDetail ? "LIVE RUNTIME" : "PREVIEW ONLY"}</span><h3>{approval ? approval.status === "pending" ? "Exact approval required" : `Approval ${approval.status}` : approvalDetail ? "Approval metadata unavailable" : approvalPreview ? "No permit was issued" : "Preview one exact operation"}</h3></div></div>{approval ? <><p className="approval-note">{approval.status === "pending" ? "Review the exact digest before allowing this operation once." : `This approval is ${approval.status}; it cannot authorize another execution.`}</p><div className="operation-box"><div><span className="eyebrow">OPERATION</span><strong>{approval.request_summary}</strong></div><div><span className="eyebrow">GENE</span><span className="mono">{approval.gene_id}</span></div><div><span className="eyebrow">REQUEST DIGEST</span><span className="digest"><span className="mono">{approval.request_digest}</span></span></div><div><span className="eyebrow">SCOPE</span><span className="mono">{approval.session_id}</span></div></div>{approvalError ? <p className="approval-error" role="alert">{approvalError}</p> : null}<div className="approval-actions">{approval.status === "pending" ? <><button className="button button-deny" type="button" disabled={approvalInFlight} onClick={() => void decide(false)}>Deny</button><button className="button button-primary" type="button" disabled={approvalInFlight} onClick={() => void decide(true)}>{approvalInFlight ? "Resolving…" : "Allow once"} <Icon name="arrow" size={14} /></button></> : <button className="button button-secondary" type="button" onClick={onApprovalClose}>Close</button>}</div></> : approvalDetail ? <><p className="approval-note">The runtime paused, but this service did not return an exact approval record. Upgrade the local service before resuming.</p><div className="operation-box"><div><span className="eyebrow">REASON</span><strong>{approvalDetail}</strong></div><div><span className="eyebrow">SCOPE</span><span className="mono">Exact session and request</span></div></div><div className="approval-actions"><button className="button button-secondary" type="button" onClick={onApprovalClose}>Close</button></div></> : approvalPreview ? <><p className="approval-note">This preview records no decision and issues no permit.</p><div className="approval-actions"><button className="button button-secondary" type="button" onClick={onApprovalClose}>Close</button></div></> : <><p className="approval-note">This panel documents the exact-scope approval contract. It does not create an approval or permit.</p><div className="operation-box"><div><span className="eyebrow">OPERATION</span><strong>workspace.diff</strong></div><div><span className="eyebrow">TARGET</span><span className="mono">Pandora / local</span></div><div><span className="eyebrow">REQUEST DIGEST</span><span className="digest"><span className="mono">sha256:4c19…e08a</span><button className="copy-button" type="button" aria-label="Copy request digest" disabled><Icon name="copy" size={13} /></button></span></div></div><div className="approval-actions"><button className="button button-deny" type="button" onClick={onApprovalClose}>Close</button><button className="button button-primary" type="button" onClick={onApprovalPreview}>Show preview <Icon name="arrow" size={14} /></button></div></>}</Panel>
+      <Panel className={`approval-panel ${approval && approval.status !== "pending" ? "is-preview-complete" : ""}`}><div className="approval-top"><span className="approval-icon"><Icon name={approval && approval.status !== "pending" ? "check" : "shield"} size={17} /></span><div><span className="eyebrow">{approval ? "LIVE APPROVAL" : approvalDetail ? "LIVE RUNTIME" : "REFERENCE MONITOR"}</span><h3>{approval ? approval.status === "pending" ? "Exact approval required" : `Approval ${approval.status}` : approvalDetail ? "Approval metadata unavailable" : "No pending approval"}</h3></div></div>{approval ? <><p className="approval-note">{approval.status === "pending" ? "Review the exact digest before allowing this operation once." : `This approval is ${approval.status}; it cannot authorize another execution.`}</p><div className="operation-box"><div><span className="eyebrow">OPERATION</span><strong>{approval.request_summary}</strong></div><div><span className="eyebrow">GENE</span><span className="mono">{approval.gene_id}</span></div><div><span className="eyebrow">REQUEST DIGEST</span><span className="digest"><span className="mono">{approval.request_digest}</span></span></div><div><span className="eyebrow">SCOPE</span><span className="mono">{approval.session_id}</span></div></div>{approvalError ? <p className="approval-error" role="alert">{approvalError}</p> : null}{approval.status === "pending" ? <div className="approval-actions"><button className="button button-deny" type="button" disabled={approvalInFlight} onClick={() => void decide(false)}>Deny</button><button className="button button-primary" type="button" disabled={approvalInFlight} onClick={() => void decide(true)}>{approvalInFlight ? "Resolving…" : "Allow once"} <Icon name="arrow" size={14} /></button></div> : null}</> : approvalDetail ? <><p className="approval-note">The runtime paused, but this service did not return an exact approval record. Upgrade the local service before resuming.</p><div className="operation-box"><div><span className="eyebrow">REASON</span><strong>{approvalDetail}</strong></div><div><span className="eyebrow">SCOPE</span><span className="mono">Exact session and request</span></div></div></> : <><p className="approval-note">An exact request digest appears here only when the runtime pauses a real operation. This desktop cannot fabricate an approval or issue a permit.</p><div className="operation-box"><div><span className="eyebrow">STATE</span><strong>Waiting for governed work</strong></div><div><span className="eyebrow">AUTHORITY</span><span className="mono">ReferenceMonitor only</span></div></div></>}</Panel>
       {approval?.status === "approved" ? <button className="button button-primary approval-resume" type="button" disabled={approvalInFlight} onClick={() => void decide(true)}>{approvalInFlight ? "Resuming…" : "Resume approved run"} <Icon name="arrow" size={14} /></button> : null}
       <div className="selected-detail"><div className="section-heading"><span>Selected evidence</span><Icon name="chevron" size={14} /></div><div className="detail-row"><span className="detail-label">Stage</span><span>{selected.label}</span></div><div className="detail-row"><span className="detail-label">Status</span><Chip tone={selected.status === "waiting" ? "amber" : selected.status === "idle" ? "neutral" : "green"} icon={selected.status === "waiting" ? "clock" : selected.status === "idle" ? "lock" : "check"}>{selected.status}</Chip></div></div>
     </div>}
   </aside>;
+}
+
+function CouncilView({ runtimeStatus, lastRun, events, selectedSession, harnesses, onOpenCommand, onOpenAudit }: { runtimeStatus: RuntimeStatus; lastRun: RuntimeRun | null; events: RuntimeEvent[]; selectedSession: RuntimeSessionDetail | null; harnesses: RuntimeHarness[]; onOpenCommand: () => void; onOpenAudit: () => void }) {
+  const connected = runtimeStatus === "connected";
+  const eventTypes = new Set(events.map((event) => event.event_type));
+  const selectedHarness = harnesses.find((harness) => harness.id === lastRun?.selected_harness) ?? null;
+  const policyState = eventTypes.has("policy_denied")
+    ? "denied"
+    : eventTypes.has("approval_required") || lastRun?.status === "approval_required"
+      ? "approval required"
+      : eventTypes.has("policy_approved")
+        ? "approved"
+        : lastRun
+          ? lastRun.status
+          : "not evaluated";
+  const monitorTone: "neutral" | "green" | "amber" = policyState === "approved" || lastRun?.status === "completed"
+    ? "green"
+    : policyState === "not evaluated"
+      ? "neutral"
+      : "amber";
+  const trace = events.slice(-12).reverse();
+  const recordAvailable = Boolean(lastRun || selectedSession);
+
+  return <div className="full-view council-view">
+    <PageHeader eyebrow="Governance" title="Council" description="Inspect the evidence Pandora exposes for planning, routing, and exact authorization. Deliberation may propose; it never grants authority." actions={<div className="council-actions"><Chip tone={recordAvailable ? "gold" : connected ? "neutral" : "amber"} icon="council">{recordAvailable ? "Evidence loaded" : connected ? "Awaiting run" : "Runtime offline"}</Chip><button className="button button-secondary" type="button" onClick={onOpenCommand}>Open Command</button></div>} />
+    <div className="council-boundary"><Icon name="shield" size={16} /><div><strong>One governed path</strong><span>Parliament frames intent, the Shadow Council selects among admitted Harnesses, and ReferenceMonitor alone can authorize an exact effect. This page cannot vote, route, approve, or execute.</span></div></div>
+    {recordAvailable ? <>
+      <div className="council-chambers">
+        <Panel className="council-chamber parliament-chamber"><div className="council-chamber-head"><span className="council-seal"><Icon name="council" size={20} /></span><div><span className="eyebrow">PARLIAMENT</span><h3>Intent and policy posture</h3></div><Chip tone={lastRun ? "blue" : "neutral"}>{lastRun ? "recorded" : "history only"}</Chip></div><p>{lastRun ? "A governed run record exists for this exact local session. Internal deliberation text is not exposed, so the desktop does not invent it." : "A local session is selected, but no current run summary is loaded. Select or submit a run to bind Council evidence."}</p><div className="council-facts"><div><span>Session</span><strong className="mono">{lastRun?.session_id ?? selectedSession?.session.session_id}</strong></div><div><span>Execution</span><strong className="mono">{lastRun?.execution_id ?? "not loaded"}</strong></div><div><span>Outcome</span><strong>{lastRun?.status ?? "session history"}</strong></div></div></Panel>
+        <Panel className="council-chamber shadow-chamber"><div className="council-chamber-head"><span className="council-seal"><Icon name="users" size={20} /></span><div><span className="eyebrow">SHADOW COUNCIL</span><h3>Admitted route selection</h3></div><Chip tone={lastRun?.selected_harness ? "gold" : "neutral"}>{lastRun?.selected_harness ? "bound" : "unavailable"}</Chip></div><p>{lastRun?.selected_harness ? "The selected Harness and Gene are reported by the runtime. Catalog membership constrains the route; it does not confer execution authority." : "No runtime-reported route is available for the selected record."}</p><div className="council-facts"><div><span>Harness</span><strong>{lastRun?.selected_harness ?? "not selected"}</strong></div><div><span>Harness version</span><strong>{selectedHarness ? `v${selectedHarness.version} · ${selectedHarness.kind}` : "not reported"}</strong></div><div><span>Gene</span><strong className="mono">{lastRun?.selected_gene ?? "not selected"}</strong></div></div></Panel>
+        <Panel className="council-chamber monitor-chamber"><div className="council-chamber-head"><span className="council-seal"><Icon name="shield" size={20} /></span><div><span className="eyebrow">REFERENCE MONITOR</span><h3>Exact effect authority</h3></div><Chip tone={monitorTone}>{policyState}</Chip></div><p>{lastRun?.approval ? "The runtime paused this exact request. The digest, Gene, session, and expiry below are the complete desktop approval scope." : "No pending approval record is attached. Absence of an approval in this view never implies permission."}</p><div className="council-facts"><div><span>Decision</span><strong>{policyState}</strong></div><div><span>Approval</span><strong className="mono">{lastRun?.approval?.approval_id ?? "none attached"}</strong></div><div><span>Request digest</span><strong className="mono">{lastRun?.approval?.request_digest ?? "not issued"}</strong></div></div></Panel>
+      </div>
+      <Panel className="council-ledger"><div className="panel-heading"><div><span className="eyebrow">DECISION LEDGER</span><h3>Redacted evidence trace</h3></div><button className="button button-secondary" type="button" onClick={onOpenAudit}>Open full audit <Icon name="arrow" size={13} /></button></div><div className="council-ledger-grid"><div className="council-ledger-summary"><div><span>Workspace</span><strong>{selectedSession?.session.workspace_id ?? "local workspace"}</strong></div><div><span>Events</span><strong>{events.length}</strong></div><div><span>Receipts</span><strong>{lastRun?.receipt_count ?? 0}</strong></div><div><span>Tool calls</span><strong>{lastRun?.tool_calls ?? 0}</strong></div><p><Icon name="lock" size={13} /> Event payloads remain inside the local runtime. Only recorded event types and identifiers are shown.</p></div><div className="council-event-trace">{trace.length ? trace.map((event) => <div className="council-event-row" key={event.event_id}><span className="event-dot" /><div><strong>{event.event_type.replaceAll("_", " ")}</strong><small className="mono">{event.event_id}</small></div><span>recorded</span></div>) : <div className="council-empty-trace"><Icon name="archive" size={22} /><p>No redacted runtime events are loaded for this record.</p></div>}</div></div></Panel>
+    </> : <div className="workflow-empty council-empty"><div className="empty-orbit"><Icon name="council" size={27} /></div><h2>No Council record selected</h2><p>{connected ? "Submit a governed request or open a recorded session. Pandora will show only runtime-backed planning, routing, policy, and receipt evidence." : "Start the local service to inspect Council evidence. No login or remote account is required."}</p><button className="button button-primary" type="button" onClick={onOpenCommand}>Open Command Center <Icon name="arrow" size={14} /></button></div>}
+  </div>;
 }
 
 function RunsView({ runs, runtimeStatus, onMutate }: { runs: RuntimeOrchestrationRun[]; runtimeStatus: RuntimeStatus; onMutate: (operation: "cancel" | "resume", runId: string, confirmation: string) => Promise<RuntimeOrchestrationRun> }) {
@@ -1405,7 +1412,7 @@ function EnginesView({ engines, runtimeStatus }: { engines: RuntimeEngine[]; run
 }
 
 function SettingsView({ theme, onThemeChange, runtimeStatus, health, native, endpoint }: { theme: ThemeMode; onThemeChange: (nextTheme: ThemeMode) => void; runtimeStatus: RuntimeStatus; health: RuntimeHealth | null; native: boolean; endpoint: string }) {
-  return <div className="full-view"><PageHeader eyebrow="Workspace" title="Settings" description="Personalize the desktop shell while keeping runtime authority in Pandora." actions={<Chip tone="neutral" icon="gear">Local preference</Chip>} /><div className="settings-grid"><Panel className="settings-panel"><div className="panel-heading"><div><span className="eyebrow">APPEARANCE</span><h3>Theme</h3></div><Icon name="spark" size={18} /></div><p className="settings-copy">Choose the visual mode for this device. The setting is stored locally and does not change runtime policy.</p><div className="theme-toggle" role="group" aria-label="Theme mode"><button type="button" className={`theme-option ${theme === "dark" ? "is-selected" : ""}`} aria-pressed={theme === "dark"} onClick={() => onThemeChange("dark")}>Dark<span>Low-light command surface</span></button><button type="button" className={`theme-option ${theme === "light" ? "is-selected" : ""}`} aria-pressed={theme === "light"} onClick={() => onThemeChange("light")}>Light<span>High-contrast workspace</span></button></div></Panel><Panel className="settings-panel"><div className="panel-heading"><div><span className="eyebrow">RUNTIME</span><h3>Connection posture</h3></div><Chip tone={runtimeStatus === "connected" ? "green" : runtimeStatus === "offline" ? "amber" : "neutral"} icon="lock">{runtimeStatusLabel(runtimeStatus)}</Chip></div><div className="settings-facts"><div><span>Client</span><strong>{native ? "Native desktop shell" : "Browser preview"}</strong></div><div><span>Endpoint</span><strong className="mono">{endpoint || "Not connected"}</strong></div><div><span>Health</span><strong>{health?.status ?? "Unavailable"}</strong></div><div><span>Authority</span><strong>Local service only</strong></div></div><p className="settings-copy">Local device trust is established automatically. Effect authorization remains inside the Pandora runtime.</p></Panel></div></div>;
+  return <div className="full-view"><PageHeader eyebrow="Workspace" title="Settings" description="Personalize the desktop shell while keeping runtime authority in Pandora." actions={<Chip tone="neutral" icon="gear">Local preference</Chip>} /><div className="settings-grid"><Panel className="settings-panel"><div className="panel-heading"><div><span className="eyebrow">APPEARANCE</span><h3>Theme</h3></div><Icon name="spark" size={18} /></div><p className="settings-copy">Choose the visual mode for this device. The setting is stored locally and does not change runtime policy.</p><div className="theme-toggle" role="group" aria-label="Theme mode"><button type="button" className={`theme-option ${theme === "dark" ? "is-selected" : ""}`} aria-pressed={theme === "dark"} onClick={() => onThemeChange("dark")}>Dark<span>Low-light command surface</span></button><button type="button" className={`theme-option ${theme === "light" ? "is-selected" : ""}`} aria-pressed={theme === "light"} onClick={() => onThemeChange("light")}>Light<span>High-contrast workspace</span></button></div></Panel><Panel className="settings-panel"><div className="panel-heading"><div><span className="eyebrow">RUNTIME</span><h3>Connection posture</h3></div><Chip tone={runtimeStatus === "connected" ? "green" : runtimeStatus === "offline" ? "amber" : "neutral"} icon="lock">{runtimeStatusLabel(runtimeStatus)}</Chip></div><div className="settings-facts"><div><span>Client</span><strong>{native ? "Native desktop shell" : "Loopback development shell"}</strong></div><div><span>Endpoint</span><strong className="mono">{endpoint || "Not connected"}</strong></div><div><span>Health</span><strong>{health?.status ?? "Unavailable"}</strong></div><div><span>Authority</span><strong>Local service only</strong></div></div><p className="settings-copy">Local device trust is established automatically. No login or remote account is required. Effect authorization remains inside the Pandora runtime.</p></Panel></div></div>;
 }
 
 function ConnectionView({ endpoint, runtimeStatus, runtimeError, health, providers, sessions, selectedSessionId, selectedSession, native, serviceActive, onConnect, onStartService, onStopService, onSelectSession }: { endpoint: string; runtimeStatus: RuntimeStatus; runtimeError: string; health: RuntimeHealth | null; providers: RuntimeProvider[]; sessions: RuntimeSession[]; selectedSessionId: string; selectedSession: RuntimeSessionDetail | null; native: boolean; serviceActive: boolean; onConnect: (endpoint: string, token: string) => void; onStartService: () => Promise<void>; onStopService: () => Promise<void>; onSelectSession: (sessionId: string) => Promise<void> }) {
@@ -1483,12 +1490,12 @@ function ConnectionView({ endpoint, runtimeStatus, runtimeError, health, provide
   const mcpReady = mcpServerId.trim() && mcpProgram.trim() && mcpArguments.trim();
 
   return <div className="full-view">
-    <PageHeader eyebrow="Runtime surface" title="Connections" description={native ? "Configure Pandora’s local runtime, providers, and MCP tools without an account." : "Connect this development preview to a loopback Pandora service."} actions={<Chip tone={runtimeStatus === "connected" ? "green" : runtimeStatus === "offline" ? "amber" : "blue"} icon="lock">{runtimeStatusLabel(runtimeStatus)}</Chip>} />
+    <PageHeader eyebrow="Runtime surface" title="Connections" description={native ? "Configure Pandora’s local runtime, providers, and MCP tools without an account." : "Connect this loopback development shell to a local Pandora service."} actions={<Chip tone={runtimeStatus === "connected" ? "green" : runtimeStatus === "offline" ? "amber" : "blue"} icon="lock">{runtimeStatusLabel(runtimeStatus)}</Chip>} />
     <div className="connection-grid">
       <Panel className="connection-panel">
         <div className="panel-heading"><div><span className="eyebrow">LOCAL RPC</span><h3>Pandora service</h3></div><Icon name="terminal" size={19} /></div>
         <div className="settings-facts connection-health"><div><span>Service health</span><strong>{health?.status ?? "Unavailable"}</strong></div><div><span>Transport</span><strong>{native ? "Native bridge" : "Loopback RPC"}</strong></div></div>
-        {native ? <><button className={`button ${serviceActive ? "button-secondary" : "button-primary"} connection-start`} type="button" onClick={() => void (serviceActive ? onStopService() : onStartService())}>{serviceActive ? "Stop local service" : "Start local service"} <Icon name={serviceActive ? "lock" : "arrow"} size={14} /></button><div className="native-trust-note"><Icon name="shield" size={17} /><div><strong>No account required</strong><p>Device trust and the loopback service session are established automatically. Credentials remain native-side and are never exposed to this interface.</p></div></div></> : <><form className="connection-form" onSubmit={submit}><label><span>Endpoint</span><input value={draftEndpoint} onChange={(event) => setDraftEndpoint(event.target.value)} placeholder="http://127.0.0.1:PORT/v1/rpc" spellCheck={false} /></label><label><span>Development token</span><input value={draftToken} onChange={(event) => setDraftToken(event.target.value)} type="password" placeholder="Paste the local service token" autoComplete="off" /></label><button className="button button-secondary" type="submit" disabled={!draftEndpoint.trim() || !draftToken.trim()}>Connect preview <Icon name="arrow" size={14} /></button></form><p className="connection-note">Browser-preview credentials stay in memory and are never written to storage. Endpoints must be loopback-only.</p></>}
+        {native ? <><button className={`button ${serviceActive ? "button-secondary" : "button-primary"} connection-start`} type="button" onClick={() => void (serviceActive ? onStopService() : onStartService())}>{serviceActive ? "Stop local service" : "Start local service"} <Icon name={serviceActive ? "lock" : "arrow"} size={14} /></button><div className="native-trust-note"><Icon name="shield" size={17} /><div><strong>No account required</strong><p>Device trust and the loopback service session are established automatically. Credentials remain native-side and are never exposed to this interface.</p></div></div></> : <><form className="connection-form" onSubmit={submit}><label><span>Endpoint</span><input value={draftEndpoint} onChange={(event) => setDraftEndpoint(event.target.value)} placeholder="http://127.0.0.1:PORT/v1/rpc" spellCheck={false} /></label><label><span>Development token</span><input value={draftToken} onChange={(event) => setDraftToken(event.target.value)} type="password" placeholder="Paste the local service token" autoComplete="off" /></label><button className="button button-secondary" type="submit" disabled={!draftEndpoint.trim() || !draftToken.trim()}>Connect local service <Icon name="arrow" size={14} /></button></form><p className="connection-note">Loopback credentials stay in memory and are never written to storage. Endpoints must be loopback-only.</p></>}
         {runtimeError ? <p className="connection-error" role="alert">{runtimeError}</p> : null}
       </Panel>
 
@@ -1528,7 +1535,7 @@ function ConnectionView({ endpoint, runtimeStatus, runtimeError, health, provide
 
       <Panel className="connection-panel">
         <div className="panel-heading"><div><span className="eyebrow">SCOPED SESSIONS</span><h3>{sessions.length} available</h3></div><Chip tone="green" icon="shield">Workspace scoped</Chip></div>
-        {sessions.length ? <div className="session-list">{sessions.map((session) => <button className={`session-row ${selectedSessionId === session.session_id ? "is-selected" : ""}`} key={session.session_id} type="button" onClick={() => void onSelectSession(session.session_id)}><span className="session-dot" /><span><strong>{session.session_id}</strong><small>{session.workspace_id} · local principal</small></span><Icon name="chevron" size={13} /></button>)}</div> : <div className="connection-empty"><Icon name="archive" size={21} /><p>Connect to load workspace sessions.</p></div>}
+        {sessions.length ? <div className="session-list">{sessions.map((session) => <button className={`session-row ${selectedSessionId === session.session_id ? "is-selected" : ""}`} key={session.session_id} type="button" onClick={() => void onSelectSession(session.session_id)}><span className="session-dot" /><span><strong>{session.session_id}</strong><small>{session.workspace_id} · local device</small></span><Icon name="chevron" size={13} /></button>)}</div> : <div className="connection-empty"><Icon name="archive" size={21} /><p>Connect to load workspace sessions.</p></div>}
         {selectedSession ? <div className="selected-session"><span className="eyebrow">SELECTED SESSION</span><strong>{selectedSession.session.session_id}</strong><small>{selectedSession.event_count} recorded events · ready to inspect</small></div> : null}
       </Panel>
     </div>
@@ -1600,13 +1607,6 @@ function EvolutionView({ proposals, activations, runtimeStatus, onInspect, onMut
         </Panel>;
       })}</div> : <div className="workflow-empty"><div className="empty-orbit"><Icon name="evolution" size={25} /></div><h2>No evolution proposals</h2><p>{runtimeStatus === "connected" ? "The durable evolution and artifact catalogs are available. Self-improvement begins with measured evidence; permission remains separate." : "Connect the local Pandora service to inspect the durable evolution store."}</p></div>}
   </div>;
-}
-
-function SecondaryView({ view, runtimeStatus }: { view: Exclude<ViewId, "command" | "runs" | "memory" | "workflows" | "engines">; runtimeStatus: RuntimeStatus }) {
-  const detail = viewDetails[view];
-  const cards = view === "connections" ? ["Local provider profile", "MCP stdio · local", "Connection policy"] : view === "capabilities" ? ["coding-domain", "research-domain", "Installed Skills"] : view === "evolution" ? ["Proposal intake", "Holdout evaluation", "Rollback readiness"] : view === "audit" ? ["Effect receipts", "Evaluation evidence", "Runtime events"] : ["Policy posture", "Workspace boundary", "Runtime configuration"];
-  const availability = runtimeStatus === "connected" ? "The current service does not expose this surface yet." : "Connect the local Pandora service when this surface is available.";
-  return <div className="full-view"><PageHeader eyebrow={detail.eyebrow} title={detail.title} description={`${detail.description} This view is currently a design preview.`} actions={<button className="button button-secondary" disabled><Icon name="download" size={14} /> Export view</button>} /><div className="secondary-grid">{cards.map((card, index) => <Panel className="secondary-card" key={card}><div className={`secondary-icon secondary-icon-${index % 3}`}><Icon name={index === 0 ? "shield" : index === 1 ? "graph" : "stack"} size={20} /></div><span className="eyebrow">PREVIEW</span><h3>{card}</h3><p>{availability}</p><button className="text-link" disabled>Inspect boundary <Icon name="arrow" size={13} /></button></Panel>)}</div></div>;
 }
 
 function PageHeader({ eyebrow, title, description, actions }: { eyebrow: string; title: string; description: string; actions: ReactNode }) {
