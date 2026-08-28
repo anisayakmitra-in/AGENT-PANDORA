@@ -2,8 +2,9 @@ use super::{load_config, parse_options};
 use crate::output::{CliError, CommandResult, success};
 use pandora_harnesses::{builtin_genes, builtin_harnesses};
 use pandora_runtime::{
-    ArtifactCatalog, MAX_STORED_ARTIFACT_BYTES, PackageBinding, PackageRecord,
-    PackageRegistryClient, PackageRegistryError, PackageStore, PackageStoreError, WasmExecutor,
+    ArtifactCatalog, GitHubPackageClient, GitHubPackageError, MAX_STORED_ARTIFACT_BYTES,
+    PackageBinding, PackageRecord, PackageRegistryClient, PackageRegistryError, PackageStore,
+    PackageStoreError, WasmExecutor,
 };
 use pandora_types::{ArtifactId, PackageId, PackageKind, PackageManifest, hash_artifact};
 use serde_json::{Value, json};
@@ -12,17 +13,19 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 const DEFAULT_REGISTRY_TOKEN_ENV: &str = "PANDORA_REGISTRY_TOKEN";
+const DEFAULT_GITHUB_TOKEN_ENV: &str = "PANDORA_GITHUB_TOKEN";
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "package requires 'admit', 'validate', 'install', 'list', 'inspect', 'enable', 'disable', 'rollback', 'lock', 'verify-lock', or 'remove'",
+            "package requires 'admit', 'validate', 'install', 'install-github', 'list', 'inspect', 'enable', 'disable', 'rollback', 'lock', 'verify-lock', or 'remove'",
         )
     })?;
     match subcommand.as_str() {
         "admit" => admit(&args[1..]),
         "validate" => validate(&args[1..]),
         "install" => install(&args[1..]),
+        "install-github" => install_github(&args[1..]),
         "list" => list(&args[1..]),
         "inspect" => inspect(&args[1..]),
         "enable" => enable(&args[1..]),
@@ -35,6 +38,77 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "unknown package command '{unknown}'"
         ))),
     }
+}
+
+fn install_github(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "repository",
+            "commit",
+            "manifest",
+            "artifact",
+            "token-env",
+        ],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "package install-github does not accept positional arguments",
+        ));
+    }
+    let repository = parsed.value("repository").ok_or_else(|| {
+        CliError::usage("package install-github requires '--repository <GitHub URL>'")
+    })?;
+    let commit = parsed
+        .value("commit")
+        .ok_or_else(|| CliError::usage("package install-github requires '--commit <full SHA>'"))?;
+    let manifest_path = parsed.value("manifest").ok_or_else(|| {
+        CliError::usage("package install-github requires '--manifest <repository path>'")
+    })?;
+    let artifact_path = parsed.value("artifact").ok_or_else(|| {
+        CliError::usage("package install-github requires '--artifact <repository path>'")
+    })?;
+    let token_env = parsed.value("token-env");
+    if token_env.is_some_and(str::is_empty) {
+        return Err(CliError::usage("--token-env requires a non-empty name"));
+    }
+    let token_name = token_env.unwrap_or(DEFAULT_GITHUB_TOKEN_ENV);
+    let token = match std::env::var(token_name) {
+        Ok(token) => Some(token),
+        Err(_) if token_env.is_some() => {
+            return Err(CliError::configuration(
+                "configured GitHub token environment variable is unavailable",
+                json!({"token_env": token_name}),
+            ));
+        }
+        Err(_) => None,
+    };
+    let client = GitHubPackageClient::new(repository, commit, token).map_err(github_error)?;
+    let store = store(&parsed)?;
+    let record = client
+        .install(&store, manifest_path, artifact_path)
+        .map_err(github_error)?;
+    Ok(success(
+        "package install-github",
+        json!({
+            "source": {
+                "kind": "github",
+                "repository": repository,
+                "commit": commit.to_ascii_lowercase(),
+                "manifest_path": manifest_path,
+                "artifact_path": artifact_path,
+            },
+            "package": managed_package_value(&store, &record)?,
+        }),
+        format!(
+            "Package {}@{} admitted from pinned GitHub source",
+            record.manifest().id().as_str(),
+            record.manifest().version()
+        ),
+    ))
 }
 
 fn install(args: &[String]) -> Result<CommandResult, CliError> {
@@ -797,6 +871,10 @@ fn lifecycle_error(error: PackageStoreError) -> CliError {
 }
 
 fn registry_error(error: PackageRegistryError) -> CliError {
+    CliError::execution(error.to_string(), json!({}))
+}
+
+fn github_error(error: GitHubPackageError) -> CliError {
     CliError::execution(error.to_string(), json!({}))
 }
 

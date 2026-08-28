@@ -112,7 +112,7 @@ fn bash() -> &'static str {
     elif [[ "$previous" == "skill" ]]; then
         COMPREPLY=( $(compgen -W 'list inspect install enable disable suspend remove restore' -- "$current") )
     elif [[ "$previous" == "package" ]]; then
-        COMPREPLY=( $(compgen -W 'admit validate install list inspect enable disable rollback lock verify-lock remove' -- "$current") )
+        COMPREPLY=( $(compgen -W 'admit validate install install-github list inspect enable disable rollback lock verify-lock remove' -- "$current") )
     elif [[ "$previous" == "memory" ]]; then
         COMPREPLY=( $(compgen -W 'recall audit forget promote' -- "$current") )
     elif [[ "$previous" == "approval" ]]; then
@@ -175,7 +175,7 @@ elif [[ ${words[2]} == slash ]]; then
 elif [[ ${words[2]} == skill ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:skill command:(list inspect install enable disable suspend remove restore)'
 elif [[ ${words[2]} == package ]]; then
-    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:package command:(admit validate install list inspect enable disable rollback lock verify-lock remove)'
+    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:package command:(admit validate install install-github list inspect enable disable rollback lock verify-lock remove)'
 elif [[ ${words[2]} == memory ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package memory approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:memory command:(recall audit forget promote)'
 elif [[ ${words[2]} == approval ]]; then
@@ -223,7 +223,7 @@ complete -c pandora -f -n '__fish_seen_subcommand_from rollout' -a 'inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from job' -a 'submit work list inspect cancel mark-interrupted'
 complete -c pandora -f -n '__fish_seen_subcommand_from subagent' -a 'spawn work list inspect cancel mark-interrupted cleanup'
 complete -c pandora -f -n '__fish_seen_subcommand_from skill' -a 'list inspect install enable disable suspend remove restore'
-complete -c pandora -f -n '__fish_seen_subcommand_from package' -a 'admit validate install list inspect enable disable rollback lock verify-lock remove'
+complete -c pandora -f -n '__fish_seen_subcommand_from package' -a 'admit validate install install-github list inspect enable disable rollback lock verify-lock remove'
 complete -c pandora -f -n '__fish_seen_subcommand_from memory' -a 'recall audit forget promote'
 complete -c pandora -f -n '__fish_seen_subcommand_from approval' -a 'list inspect resolve'
 complete -c pandora -f -n '__fish_seen_subcommand_from provider' -a 'list set use test'
@@ -285,7 +285,7 @@ mod tests {
             for expected in [
                 "list inspect run",
                 "list resolve",
-                "admit validate install list inspect enable disable rollback lock verify-lock remove",
+                "admit validate install install-github list inspect enable disable rollback lock verify-lock remove",
                 "recall audit forget promote",
                 "list inspect resolve",
                 "list set use test",

@@ -176,6 +176,16 @@ struct RegistryPackageInstall {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct GitHubPackageInstall {
+    repository_url: String,
+    commit: String,
+    manifest_path: String,
+    artifact_path: String,
+    token: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct LocalPackageAdmission {
     manifest_path: String,
     artifact_path: String,
@@ -355,6 +365,52 @@ fn install_registry_package(
     token.zeroize();
     Ok(NativePackageResult {
         message: format!("Package {} admitted from the registry.", input.package_id),
+        restart_required: true,
+        data,
+    })
+}
+
+#[tauri::command]
+fn install_github_package(mut input: GitHubPackageInstall) -> Result<NativePackageResult, String> {
+    validate_github_repository_url(&input.repository_url)?;
+    validate_github_commit(&input.commit)?;
+    validate_github_repository_path(&input.manifest_path, "manifest")?;
+    validate_github_repository_path(&input.artifact_path, "artifact")?;
+    if input.manifest_path == input.artifact_path {
+        return Err("GitHub manifest and artifact paths must be different".to_owned());
+    }
+    let mut token = Zeroizing::new(std::mem::take(&mut input.token));
+    if token.len() >= 64 * 1024 || token.contains('\0') {
+        return Err("GitHub token exceeds Pandora's secret size limit".to_owned());
+    }
+    let mut args = vec![
+        "package".to_owned(),
+        "install-github".to_owned(),
+        "--repository".to_owned(),
+        input.repository_url,
+        "--commit".to_owned(),
+        input.commit,
+        "--manifest".to_owned(),
+        input.manifest_path,
+        "--artifact".to_owned(),
+        input.artifact_path,
+        "--json".to_owned(),
+    ];
+    let data = if token.is_empty() {
+        run_cli_json(&args, "installing the GitHub package")?
+    } else {
+        const TOKEN_ENV: &str = "PANDORA_DESKTOP_GITHUB_TOKEN";
+        args.extend(["--token-env".to_owned(), TOKEN_ENV.to_owned()]);
+        run_cli_json_with_secret_environment(
+            &args,
+            TOKEN_ENV,
+            &mut token,
+            "installing the GitHub package",
+        )?
+    };
+    token.zeroize();
+    Ok(NativePackageResult {
+        message: "Package admitted from the pinned GitHub source.".to_owned(),
         restart_required: true,
         data,
     })
@@ -661,6 +717,74 @@ fn validate_registry_url(value: &str) -> Result<(), String> {
     validate_secure_url(value, "registry")
 }
 
+fn validate_github_repository_url(value: &str) -> Result<(), String> {
+    if value.len() > 2048 {
+        return Err("GitHub repository URL exceeds the local limit".to_owned());
+    }
+    let url = Url::parse(value).map_err(|_| "GitHub repository URL is invalid".to_owned())?;
+    if url.scheme() != "https"
+        || !url
+            .host_str()
+            .is_some_and(|host| host.eq_ignore_ascii_case("github.com"))
+        || url.port().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("GitHub repository must be https://github.com/<owner>/<repository>".to_owned());
+    }
+    let parts = url.path().trim_matches('/').split('/').collect::<Vec<_>>();
+    if parts.len() != 2 {
+        return Err("GitHub repository must be https://github.com/<owner>/<repository>".to_owned());
+    }
+    let repository = parts[1].strip_suffix(".git").unwrap_or(parts[1]);
+    let owner_valid = !parts[0].is_empty()
+        && parts[0].len() <= 39
+        && parts[0]
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
+    let repository_valid = !repository.is_empty()
+        && repository.len() <= 100
+        && !matches!(repository, "." | "..")
+        && repository
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'));
+    if !owner_valid || !repository_valid {
+        return Err("GitHub owner or repository name is invalid".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_github_commit(value: &str) -> Result<(), String> {
+    if value.len() != 40 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("GitHub source requires one full 40-character commit SHA".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_github_repository_path(value: &str, label: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 1024
+        || value.starts_with('/')
+        || value.ends_with('/')
+        || value.contains('\\')
+        || value.chars().any(char::is_control)
+        || value.split('/').any(|segment| {
+            segment.is_empty()
+                || matches!(segment, "." | "..")
+                || !segment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        })
+    {
+        return Err(format!(
+            "GitHub {label} path must be a bounded repository-relative file path"
+        ));
+    }
+    Ok(())
+}
+
 fn validate_provider_url(value: &str) -> Result<(), String> {
     validate_secure_url(value, "provider")
 }
@@ -729,6 +853,8 @@ fn run_cli_json(args: &[String], action: &str) -> Result<Value, String> {
         .args(args)
         .env_remove("PANDORA_REGISTRY_TOKEN")
         .env_remove("PANDORA_DESKTOP_REGISTRY_TOKEN")
+        .env_remove("PANDORA_GITHUB_TOKEN")
+        .env_remove("PANDORA_DESKTOP_GITHUB_TOKEN")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -747,6 +873,8 @@ fn run_cli_json_with_secret_environment(
         .args(args)
         .env_remove("PANDORA_REGISTRY_TOKEN")
         .env_remove("PANDORA_DESKTOP_REGISTRY_TOKEN")
+        .env_remove("PANDORA_GITHUB_TOKEN")
+        .env_remove("PANDORA_DESKTOP_GITHUB_TOKEN")
         .env(environment, secret.as_str())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -1062,6 +1190,7 @@ fn main() {
             configure_mcp,
             list_local_packages,
             install_registry_package,
+            install_github_package,
             admit_local_package,
             preview_package_enable,
             enable_local_package,
@@ -1165,7 +1294,8 @@ fn install_desktop_crash_reporter() {
 #[cfg(test)]
 mod configuration_tests {
     use super::{
-        optional_package_version, validate_environment_name, validate_identifier,
+        optional_package_version, validate_environment_name, validate_github_commit,
+        validate_github_repository_path, validate_github_repository_url, validate_identifier,
         validate_package_id, validate_provider_url, validate_registry_url,
     };
 
@@ -1201,5 +1331,21 @@ mod configuration_tests {
         assert!(validate_registry_url("http://127.0.0.1:8080").is_ok());
         assert!(validate_registry_url("http://registry.example.test").is_err());
         assert!(validate_registry_url("https://user@registry.example.test").is_err());
+    }
+
+    #[test]
+    fn github_package_inputs_require_pinned_bounded_sources() {
+        let commit = "0123456789abcdef0123456789abcdef01234567";
+        assert!(validate_github_repository_url("https://github.com/owner/repository").is_ok());
+        assert!(validate_github_repository_url("https://github.com/owner/repository.git").is_ok());
+        assert!(validate_github_repository_url("https://example.com/owner/repository").is_err());
+        assert!(
+            validate_github_repository_url("https://github.com/owner/repository/tree/main")
+                .is_err()
+        );
+        assert!(validate_github_commit(commit).is_ok());
+        assert!(validate_github_commit("main").is_err());
+        assert!(validate_github_repository_path("packages/gene.json", "manifest").is_ok());
+        assert!(validate_github_repository_path("../gene.json", "manifest").is_err());
     }
 }

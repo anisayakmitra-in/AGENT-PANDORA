@@ -20,6 +20,7 @@ const runtime = vi.hoisted(() => ({
   inspectEvolution: vi.fn(),
   inspectOrchestration: vi.fn(),
   inspectSession: vi.fn(),
+  installGitHubPackage: vi.fn(),
   installRegistryPackage: vi.fn(),
   listLocalPackages: vi.fn(),
   lockLocalPackages: vi.fn(),
@@ -52,6 +53,7 @@ vi.mock("./runtimeClient", () => ({
   disableLocalPackage: runtime.disableLocalPackage,
   enableLocalPackage: runtime.enableLocalPackage,
   admitLocalPackage: runtime.admitLocalPackage,
+  installGitHubPackage: runtime.installGitHubPackage,
   installRegistryPackage: runtime.installRegistryPackage,
   listLocalPackages: runtime.listLocalPackages,
   lockLocalPackages: runtime.lockLocalPackages,
@@ -111,6 +113,11 @@ beforeEach(() => {
   runtime.providers.mockResolvedValue([]);
   runtime.configureProvider.mockResolvedValue({ message: "Provider custom configured.", restartRequired: true });
   runtime.configureMcp.mockResolvedValue({ message: "MCP server local-tools configured.", restartRequired: true });
+  runtime.installGitHubPackage.mockResolvedValue({
+    message: "Package admitted from the pinned GitHub source.",
+    restartRequired: true,
+    data: {},
+  });
   runtime.listLocalPackages.mockResolvedValue({
     message: "0 local package(s) available.",
     restartRequired: false,
@@ -1032,6 +1039,42 @@ describe("Pandora desktop run state", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("registry refused the release");
     expect(screen.getByLabelText("Package registry token")).toHaveValue("");
+  });
+
+  it("admits a GitHub package only from a pinned commit and clears its token", async () => {
+    const commit = "0123456789abcdef0123456789abcdef01234567";
+    runtime.capabilities.mockResolvedValue([{
+      id: "coding-domain",
+      version: "1.2.0",
+      name: "Coding Domain",
+      kind: "domain",
+      gene_count: 0,
+      runnable: true,
+      gene_ids: [],
+    }]);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Harness Lab" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "packages" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "GitHub commit" }));
+
+    expect(screen.getByRole("button", { name: "Fetch pinned source" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("GitHub package repository"), { target: { value: "https://github.com/owner/repository" } });
+    fireEvent.change(screen.getByLabelText("GitHub package commit"), { target: { value: commit } });
+    fireEvent.change(screen.getByLabelText("GitHub package manifest path"), { target: { value: "packages/domain.json" } });
+    fireEvent.change(screen.getByLabelText("GitHub package artifact path"), { target: { value: "dist/domain.artifact" } });
+    fireEvent.change(screen.getByLabelText("GitHub package token"), { target: { value: "github-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch pinned source" }));
+
+    await waitFor(() => expect(runtime.installGitHubPackage).toHaveBeenCalledWith({
+      repositoryUrl: "https://github.com/owner/repository",
+      commit,
+      manifestPath: "packages/domain.json",
+      artifactPath: "dist/domain.artifact",
+      token: "github-secret",
+    }));
+    expect(screen.getByLabelText("GitHub package token")).toHaveValue("");
+    expect(screen.getByText(/fetches only these two paths at the pinned commit/i)).toBeInTheDocument();
   });
 
 

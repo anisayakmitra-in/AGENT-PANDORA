@@ -119,6 +119,14 @@ export type RegistryPackageInstall = {
   token: string;
 };
 
+export type GitHubPackageInstall = {
+  repositoryUrl: string;
+  commit: string;
+  manifestPath: string;
+  artifactPath: string;
+  token: string;
+};
+
 export type LocalPackageAdmission = {
   manifestPath: string;
   artifactPath: string;
@@ -467,6 +475,13 @@ export async function installRegistryPackage(input: RegistryPackageInstall): Pro
     throw new Error("Registry package installation is available only in the Pandora desktop app");
   }
   return invoke<NativePackageResult>("install_registry_package", { input });
+}
+
+export async function installGitHubPackage(input: GitHubPackageInstall): Promise<NativePackageResult> {
+  if (!isNativeRuntime()) {
+    throw new Error("GitHub package installation is available only in the Pandora desktop app");
+  }
+  return invoke<NativePackageResult>("install_github_package", { input });
 }
 
 export async function admitLocalPackage(input: LocalPackageAdmission): Promise<NativePackageResult> {

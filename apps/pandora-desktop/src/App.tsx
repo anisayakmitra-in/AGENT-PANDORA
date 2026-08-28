@@ -5,6 +5,7 @@ import {
   configureProvider,
   disableLocalPackage,
   enableLocalPackage,
+  installGitHubPackage,
   installRegistryPackage,
   listLocalPackages,
   loadRuntimeEndpoint,
@@ -1590,11 +1591,16 @@ function CapabilitiesView({ harnesses, tools, runtimeStatus, native }: { harness
 function PackageManager({ native }: { native: boolean }) {
   const [packages, setPackages] = useState<RuntimePackage[]>([]);
   const [selectedIdentity, setSelectedIdentity] = useState("");
-  const [sourceTab, setSourceTab] = useState<"registry" | "local">("registry");
+  const [sourceTab, setSourceTab] = useState<"registry" | "github" | "local">("registry");
   const [packageId, setPackageId] = useState("");
   const [version, setVersion] = useState("");
   const [registryUrl, setRegistryUrl] = useState("");
   const [registryToken, setRegistryToken] = useState("");
+  const [githubRepository, setGithubRepository] = useState("");
+  const [githubCommit, setGithubCommit] = useState("");
+  const [githubManifestPath, setGithubManifestPath] = useState("pandora-package.json");
+  const [githubArtifactPath, setGithubArtifactPath] = useState("dist/package.artifact");
+  const [githubToken, setGithubToken] = useState("");
   const [manifestPath, setManifestPath] = useState("");
   const [artifactPath, setArtifactPath] = useState("");
   const [removeTarget, setRemoveTarget] = useState<RuntimePackage | null>(null);
@@ -1693,6 +1699,23 @@ function PackageManager({ native }: { native: boolean }) {
       manifestPath: manifestPath.trim(),
       artifactPath: artifactPath.trim(),
     }));
+  };
+
+  const submitGitHub = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!githubRepository.trim() || !githubCommit.trim() || !githubManifestPath.trim() || !githubArtifactPath.trim() || busy) return;
+    setBusy("github");
+    try {
+      await completeOperation(() => installGitHubPackage({
+        repositoryUrl: githubRepository.trim(),
+        commit: githubCommit.trim(),
+        manifestPath: githubManifestPath.trim(),
+        artifactPath: githubArtifactPath.trim(),
+        token: githubToken,
+      }));
+    } finally {
+      setGithubToken("");
+    }
   };
 
   const writeLock = async () => {
@@ -1818,8 +1841,31 @@ function PackageManager({ native }: { native: boolean }) {
           </form> : null}
           {removeTarget ? <form className="package-remove-confirm" onSubmit={confirmRemoval}><p>Dependency and lifecycle-binding checks passed. Type <span className="mono">{removeTarget.id}@{removeTarget.version}</span> to remove this exact record.</p><input aria-label={`Confirm removal ${removeTarget.id}@${removeTarget.version}`} value={removeConfirmation} onChange={(event) => setRemoveConfirmation(event.target.value)} autoComplete="off" spellCheck={false} /><div><button className="button button-secondary" type="button" onClick={() => setRemoveTarget(null)}>Close</button><button className="button button-deny" type="submit" disabled={busy === "remove" || removeConfirmation !== `${removeTarget.id}@${removeTarget.version}`}>{busy === "remove" ? "Removing…" : "Remove package"}</button></div></form> : null}
         </div> : null}
-        <div className="package-source-tabs" role="tablist" aria-label="Package source"><button type="button" role="tab" aria-selected={sourceTab === "registry"} className={sourceTab === "registry" ? "is-selected" : ""} onClick={() => setSourceTab("registry")}>Registry URL</button><button type="button" role="tab" aria-selected={sourceTab === "local"} className={sourceTab === "local" ? "is-selected" : ""} onClick={() => setSourceTab("local")}>Local artifact</button></div>
-        {sourceTab === "registry" ? <form className="package-form" onSubmit={submitRegistry}><label><span>Package ID</span><input aria-label="Registry package ID" value={packageId} onChange={(event) => setPackageId(event.target.value)} placeholder="publisher/gene" maxLength={256} autoComplete="off" spellCheck={false} /></label><label><span>Exact version <small>optional current release</small></span><input aria-label="Registry package version" value={version} onChange={(event) => setVersion(event.target.value)} placeholder="1.0.0" maxLength={128} autoComplete="off" spellCheck={false} /></label><label className="package-form-wide"><span>M-Place registry URL</span><input aria-label="Package registry URL" value={registryUrl} onChange={(event) => setRegistryUrl(event.target.value)} placeholder="https://registry.example.com" maxLength={2048} autoComplete="url" spellCheck={false} /></label><label className="package-form-wide"><span>Registry token <small>optional · process-scoped only</small></span><input aria-label="Package registry token" type="password" value={registryToken} onChange={(event) => setRegistryToken(event.target.value)} autoComplete="new-password" /></label><div className="package-form-footer"><p>HTTPS only outside loopback. Redirects and registry-controlled artifact URLs are refused by the existing client.</p><button className="button button-primary" type="submit" disabled={Boolean(busy) || !packageId.trim() || !registryUrl.trim()}>{busy === "install" ? "Installing…" : "Fetch and admit"}</button></div></form> : <form className="package-form" onSubmit={submitLocal}><label className="package-form-wide"><span>Absolute manifest path</span><input aria-label="Local package manifest path" value={manifestPath} onChange={(event) => setManifestPath(event.target.value)} placeholder="C:\path\to\manifest.json" maxLength={4096} autoComplete="off" spellCheck={false} /></label><label className="package-form-wide"><span>Absolute artifact path</span><input aria-label="Local package artifact path" value={artifactPath} onChange={(event) => setArtifactPath(event.target.value)} placeholder="C:\path\to\gene.wasm" maxLength={4096} autoComplete="off" spellCheck={false} /></label><div className="package-form-footer"><p>Both paths must be regular local files, not symlinks. Admission remains metadata-only until an exact governed run selects the package.</p><button className="button button-primary" type="submit" disabled={Boolean(busy) || !manifestPath.trim() || !artifactPath.trim()}>{busy === "admit" ? "Admitting…" : "Validate and admit"}</button></div></form>}
+        <div className="package-source-tabs" role="tablist" aria-label="Package source"><button type="button" role="tab" aria-selected={sourceTab === "registry"} className={sourceTab === "registry" ? "is-selected" : ""} onClick={() => setSourceTab("registry")}>Registry URL</button><button type="button" role="tab" aria-selected={sourceTab === "github"} className={sourceTab === "github" ? "is-selected" : ""} onClick={() => setSourceTab("github")}>GitHub commit</button><button type="button" role="tab" aria-selected={sourceTab === "local"} className={sourceTab === "local" ? "is-selected" : ""} onClick={() => setSourceTab("local")}>Local artifact</button></div>
+        {sourceTab === "registry" ? (
+          <form className="package-form" onSubmit={submitRegistry}>
+            <label><span>Package ID</span><input aria-label="Registry package ID" value={packageId} onChange={(event) => setPackageId(event.target.value)} placeholder="publisher/gene" maxLength={256} autoComplete="off" spellCheck={false} /></label>
+            <label><span>Exact version <small>optional current release</small></span><input aria-label="Registry package version" value={version} onChange={(event) => setVersion(event.target.value)} placeholder="1.0.0" maxLength={128} autoComplete="off" spellCheck={false} /></label>
+            <label className="package-form-wide"><span>M-Place registry URL</span><input aria-label="Package registry URL" value={registryUrl} onChange={(event) => setRegistryUrl(event.target.value)} placeholder="https://registry.example.com" maxLength={2048} autoComplete="url" spellCheck={false} /></label>
+            <label className="package-form-wide"><span>Registry token <small>optional · process-scoped only</small></span><input aria-label="Package registry token" type="password" value={registryToken} onChange={(event) => setRegistryToken(event.target.value)} autoComplete="new-password" /></label>
+            <div className="package-form-footer"><p>HTTPS only outside loopback. Redirects and registry-controlled artifact URLs are refused by the existing client.</p><button className="button button-primary" type="submit" disabled={Boolean(busy) || !packageId.trim() || !registryUrl.trim()}>{busy === "install" ? "Installing…" : "Fetch and admit"}</button></div>
+          </form>
+        ) : sourceTab === "github" ? (
+          <form className="package-form" onSubmit={submitGitHub}>
+            <label className="package-form-wide"><span>GitHub repository</span><input aria-label="GitHub package repository" value={githubRepository} onChange={(event) => setGithubRepository(event.target.value)} placeholder="https://github.com/owner/repository" maxLength={2048} autoComplete="url" spellCheck={false} /></label>
+            <label className="package-form-wide"><span>Exact commit SHA <small>full 40 characters · no branches or tags</small></span><input aria-label="GitHub package commit" value={githubCommit} onChange={(event) => setGithubCommit(event.target.value)} placeholder="0123456789abcdef0123456789abcdef01234567" maxLength={40} autoComplete="off" spellCheck={false} /></label>
+            <label><span>Manifest repository path</span><input aria-label="GitHub package manifest path" value={githubManifestPath} onChange={(event) => setGithubManifestPath(event.target.value)} maxLength={1024} autoComplete="off" spellCheck={false} /></label>
+            <label><span>Artifact repository path</span><input aria-label="GitHub package artifact path" value={githubArtifactPath} onChange={(event) => setGithubArtifactPath(event.target.value)} maxLength={1024} autoComplete="off" spellCheck={false} /></label>
+            <label className="package-form-wide"><span>GitHub token <small>optional · private repositories · process-scoped only</small></span><input aria-label="GitHub package token" type="password" value={githubToken} onChange={(event) => setGithubToken(event.target.value)} autoComplete="new-password" /></label>
+            <div className="package-form-footer"><p>Pandora fetches only these two paths at the pinned commit, follows no redirects, and runs the normal signed-admission checks.</p><button className="button button-primary" type="submit" disabled={Boolean(busy) || !githubRepository.trim() || githubCommit.trim().length !== 40 || !githubManifestPath.trim() || !githubArtifactPath.trim()}>{busy === "github" ? "Fetching…" : "Fetch pinned source"}</button></div>
+          </form>
+        ) : (
+          <form className="package-form" onSubmit={submitLocal}>
+            <label className="package-form-wide"><span>Absolute manifest path</span><input aria-label="Local package manifest path" value={manifestPath} onChange={(event) => setManifestPath(event.target.value)} placeholder="C:\path\to\manifest.json" maxLength={4096} autoComplete="off" spellCheck={false} /></label>
+            <label className="package-form-wide"><span>Absolute artifact path</span><input aria-label="Local package artifact path" value={artifactPath} onChange={(event) => setArtifactPath(event.target.value)} placeholder="C:\path\to\gene.wasm" maxLength={4096} autoComplete="off" spellCheck={false} /></label>
+            <div className="package-form-footer"><p>Both paths must be regular local files, not symlinks. Admission remains metadata-only until an exact governed run selects the package.</p><button className="button button-primary" type="submit" disabled={Boolean(busy) || !manifestPath.trim() || !artifactPath.trim()}>{busy === "admit" ? "Admitting…" : "Validate and admit"}</button></div>
+          </form>
+        )}
       </div>
     </div>
   </div>;

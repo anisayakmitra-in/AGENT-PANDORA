@@ -648,6 +648,7 @@ pandora package admit --manifest <manifest.json> --artifact <artifact>
 pandora package validate --manifest <manifest.json> --artifact <artifact>
 pandora package install <id> [version] --registry <url>
 pandora package install <id> [version] --registry <url> --token-env <name>
+pandora package install-github --repository https://github.com/<owner>/<repo> --commit <full-sha> --manifest <repo-path> --artifact <repo-path>
 pandora package list
 pandora package inspect <id> <version>
 pandora package lock
@@ -776,6 +777,16 @@ loopback HTTP is allowed for local development. Set `PANDORA_REGISTRY_URL` inste
 of `--registry` if preferred. Public reads need no token. For a protected registry,
 put the token in `PANDORA_REGISTRY_TOKEN` or name another environment variable with
 `--token-env`; tokens are not accepted as command-line values.
+
+`package install-github` admits a manifest and artifact from one GitHub repository
+at a full 40-character commit SHA. Branches, tags, abbreviated commits, redirects,
+non-GitHub hosts, path traversal, and unbounded responses are refused. The command
+fetches only the two declared repository-relative paths and then uses the same local
+hash, compatibility, dependency, signature, and admission checks as `package admit`.
+For a private repository, place the token in `PANDORA_GITHUB_TOKEN` or identify a
+different environment variable with `--token-env`; the token is never accepted as a
+command-line value or included in command output. Admission still grants no runtime
+authority and does not enable the package.
 
 `memory recall` exposes only the selected, redacted L1 or L2 records from the exact
 tenant, workspace, session, and provider scope. L0 remains process-local and is not

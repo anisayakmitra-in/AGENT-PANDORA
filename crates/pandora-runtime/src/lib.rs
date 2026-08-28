@@ -19,6 +19,7 @@ pub mod execution_controller;
 mod execution_profile;
 pub mod executors;
 pub mod fleet;
+pub mod github_client;
 pub mod graph_intelligence;
 pub mod harness_registry;
 pub mod hooks;
@@ -104,6 +105,7 @@ pub use fleet::{
     FLEET_SCHEMA_VERSION, FleetBudget, FleetEngine, FleetError, FleetLease, FleetLeaseState,
     FleetNode, FleetNodeState, MAX_FLEET_CAPABILITIES, MAX_FLEET_LEASES, MAX_FLEET_NODES,
 };
+pub use github_client::{GitHubPackageClient, GitHubPackageError};
 pub use graph_intelligence::{
     GraphEdge, GraphError, GraphInput, GraphIntelligenceEngine, GraphKind, GraphNode,
     GraphNodeKind, GraphScope, GraphSnapshot, GraphStore, GraphStoreError, MAX_GRAPH_EDGES,
