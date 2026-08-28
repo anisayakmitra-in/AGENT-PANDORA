@@ -128,11 +128,18 @@ fn restore(args: &[String]) -> Result<CommandResult, CliError> {
         .data_dir()
         .join("recovery")
         .join(format!("pre-restore-{}", timestamp().as_unix_seconds()));
-    reject_unsafe_target(&recovery_root)?;
+    reject_unsafe_descendant(
+        config.data_dir(),
+        &recovery_root.join(".pandora-restore-probe"),
+    )?;
     let mut targets = Vec::new();
     for entry in bundle.entries() {
         let target = restore_target(entry.path(), config.config_path(), config.data_dir())?;
-        reject_unsafe_target(&target)?;
+        if target == config.config_path() {
+            reject_unsafe_target(&target)?;
+        } else {
+            reject_unsafe_descendant(config.data_dir(), &target)?;
+        }
         targets.push((entry, target));
     }
     let mut originals = BTreeMap::new();
@@ -315,24 +322,35 @@ fn backup_relative_path(
 }
 
 fn reject_unsafe_target(path: &Path) -> Result<(), CliError> {
-    let components = path.components().collect::<Vec<_>>();
-    let mut current = PathBuf::new();
+    if let Ok(metadata) = fs::symlink_metadata(path)
+        && (metadata.file_type().is_symlink() || !metadata.is_file())
+    {
+        return unsafe_target(path);
+    }
+    Ok(())
+}
+
+fn reject_unsafe_descendant(root: &Path, path: &Path) -> Result<(), CliError> {
+    let relative = path.strip_prefix(root).map_err(|_| {
+        CliError::configuration("restore target escaped the data directory", json!({}))
+    })?;
+    let components = relative.components().collect::<Vec<_>>();
+    if components.is_empty() {
+        return unsafe_target(path);
+    }
+    let mut current = root.to_path_buf();
     for (index, component) in components.iter().enumerate() {
         match component {
             Component::ParentDir => return unsafe_target(path),
-            Component::Prefix(_) | Component::RootDir | Component::CurDir => {
-                current.push(component.as_os_str());
-                continue;
-            }
+            Component::Prefix(_) | Component::RootDir => return unsafe_target(path),
+            Component::CurDir => continue,
             Component::Normal(_) => current.push(component.as_os_str()),
         }
         match fs::symlink_metadata(&current) {
             Ok(metadata) => {
                 if metadata.file_type().is_symlink()
                     || (index + 1 < components.len() && !metadata.is_dir())
-                    || (index + 1 == components.len()
-                        && !metadata.is_file()
-                        && path.extension().is_some())
+                    || (index + 1 == components.len() && !metadata.is_file())
                 {
                     return unsafe_target(path);
                 }
@@ -452,7 +470,8 @@ mod tests {
         fs::create_dir_all(&outside).unwrap();
         symlink(&outside, data.join("redirect")).unwrap();
 
-        let error = reject_unsafe_target(&data.join("redirect/state.sqlite3")).unwrap_err();
+        let error =
+            reject_unsafe_descendant(&data, &data.join("redirect/state.sqlite3")).unwrap_err();
         assert_eq!(error.code, "configuration_error");
         assert_eq!(error.message, "restore target is unsafe");
 
