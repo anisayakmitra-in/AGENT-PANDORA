@@ -359,7 +359,7 @@ commands:
   evolution inspect --id <proposal-id>
   rollout inspect --session <id> [--execution <id>]
   efficiency rank [--task-class <name>] [--objective <cost|latency|tokens|certainty>]
-  fleet list|register|dispatch|lease|renew|release|expire|quarantine|revoke|kill
+  fleet list|register|dispatch|lease|renew|release|expire|supervisor|quarantine|revoke|kill
   graph code|knowledge|review|architecture --input <path> [--store <path>] [--tenant <id>] [--workspace <id>]
   completions <powershell|bash|zsh|fish>
   migrate config

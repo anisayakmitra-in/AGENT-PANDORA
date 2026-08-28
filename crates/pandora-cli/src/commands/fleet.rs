@@ -1,18 +1,21 @@
 use super::{load_config, parse_options, timestamp};
 use crate::output::{CliError, CommandResult, success};
-use pandora_runtime::{FleetBudget, FleetEngine, FleetError, FleetLease, FleetNode};
+use pandora_runtime::{
+    FleetBudget, FleetEngine, FleetError, FleetLease, FleetNode, FleetSupervisor,
+};
 use serde_json::{Value, json};
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args
         .first()
-        .ok_or_else(|| CliError::usage("fleet requires 'list', 'register', 'dispatch', 'lease', 'renew', 'release', 'expire', 'quarantine', 'revoke', or 'kill'"))?;
+        .ok_or_else(|| CliError::usage("fleet requires 'list', 'register', 'dispatch', 'lease', 'renew', 'release', 'expire', 'supervisor', 'quarantine', 'revoke', or 'kill'"))?;
     match subcommand.as_str() {
         "list" => list(&args[1..]),
         "register" => register(&args[1..]),
         "dispatch" => dispatch(&args[1..]),
         "lease" => lease(&args[1..]),
         "renew" => renew(&args[1..]),
+        "supervisor" => supervisor(&args[1..]),
         "release" => release(&args[1..]),
         "expire" => expire(&args[1..]),
         "quarantine" => transition(&args[1..], "quarantine", FleetEngine::quarantine_node),
@@ -34,16 +37,85 @@ fn list(args: &[String]) -> Result<CommandResult, CliError> {
     let fleet = engine(&parsed)?;
     let nodes = fleet.list_nodes().map_err(fleet_error)?;
     let leases = fleet.list_leases().map_err(fleet_error)?;
+    let supervisors = fleet.list_supervisors().map_err(fleet_error)?;
     Ok(success(
         "fleet list",
         json!({
             "nodes": nodes.iter().map(node_value).collect::<Vec<_>>(),
             "leases": leases.iter().map(lease_value).collect::<Vec<_>>(),
+            "supervisors": supervisors.iter().map(supervisor_value).collect::<Vec<_>>(),
         }),
         format!(
             "Fleet has {} node(s) and {} lease(s)",
             nodes.len(),
             leases.len()
+        ),
+    ))
+}
+
+fn supervisor(args: &[String]) -> Result<CommandResult, CliError> {
+    let subcommand = args.first().ok_or_else(|| {
+        CliError::usage("fleet supervisor requires 'list', 'start', 'drain', 'stop', or 'recover'")
+    })?;
+    match subcommand.as_str() {
+        "list" => supervisor_list(&args[1..]),
+        "start" => supervisor_mutation(&args[1..], "start", FleetEngine::start_supervisor),
+        "drain" => supervisor_mutation(&args[1..], "drain", FleetEngine::drain_supervisor),
+        "stop" => supervisor_mutation(&args[1..], "stop", FleetEngine::stop_supervisor),
+        "recover" => supervisor_mutation(&args[1..], "recover", FleetEngine::recover_supervisor),
+        unknown => Err(CliError::usage(format!(
+            "unknown fleet supervisor command '{unknown}'"
+        ))),
+    }
+}
+
+fn supervisor_list(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "fleet supervisor list does not accept positional arguments",
+        ));
+    }
+    let supervisors = engine(&parsed)?.list_supervisors().map_err(fleet_error)?;
+    Ok(success(
+        "fleet supervisor list",
+        json!({
+            "supervisors": supervisors.iter().map(supervisor_value).collect::<Vec<_>>(),
+        }),
+        format!("Found {} Fleet supervisor(s)", supervisors.len()),
+    ))
+}
+
+fn supervisor_mutation(
+    args: &[String],
+    action: &'static str,
+    apply: fn(&FleetEngine, &str, u64) -> Result<FleetSupervisor, FleetError>,
+) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "now", "yes"])?;
+    if parsed.positionals.len() != 1 {
+        return Err(CliError::usage(format!(
+            "fleet supervisor {action} requires exactly one node ID"
+        )));
+    }
+    if action == "stop" && !parsed.values.contains_key("yes") {
+        return Err(CliError::usage("fleet supervisor stop requires '--yes'"));
+    }
+    let now = parsed.value("now").map_or_else(
+        || Ok(timestamp().as_unix_seconds()),
+        |value| {
+            value
+                .parse()
+                .map_err(|_| CliError::usage("--now must be an unsigned integer"))
+        },
+    )?;
+    let supervisor = apply(&engine(&parsed)?, &parsed.positionals[0], now).map_err(fleet_error)?;
+    Ok(success(
+        "fleet supervisor",
+        json!({"supervisor": supervisor_value(&supervisor)}),
+        format!(
+            "Fleet supervisor {} is {}",
+            supervisor.node_id(),
+            supervisor.state().as_str()
         ),
     ))
 }
@@ -286,6 +358,16 @@ fn lease_value(lease: &FleetLease) -> Value {
         "issued_at": lease.issued_at(),
         "expires_at": lease.expires_at(),
         "state": lease.state().as_str(),
+    })
+}
+
+fn supervisor_value(supervisor: &FleetSupervisor) -> Value {
+    json!({
+        "node_id": supervisor.node_id(),
+        "state": supervisor.state().as_str(),
+        "generation": supervisor.generation(),
+        "reason": supervisor.reason(),
+        "updated_at": supervisor.updated_at(),
     })
 }
 

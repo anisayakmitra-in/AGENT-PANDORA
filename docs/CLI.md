@@ -585,6 +585,11 @@ pandora fleet list --json
 pandora fleet dispatch coding --json
 pandora fleet lease lease-a --node node-a --execution execution-a --max-tokens 10000 --max-tools 20 --max-duration 900 --max-cost 500000 --duration 600
 pandora fleet renew lease-a --execution execution-a --duration 600
+pandora fleet supervisor list --json
+pandora fleet supervisor start node-a
+pandora fleet supervisor drain node-a
+pandora fleet supervisor stop node-a --yes
+pandora fleet supervisor recover node-a
 pandora fleet release lease-a
 pandora fleet expire
 pandora fleet quarantine node-a --yes

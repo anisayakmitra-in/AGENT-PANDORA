@@ -25,3 +25,12 @@ Unknown states, malformed records, duplicate identities, unavailable nodes, and
 zero-duration leases fail closed. Remote Fleet preview remains a separate
 future transport boundary requiring authenticated pairing, TLS, replay
 protection, cancellation, reconnect, and remote containment evidence.
+
+The local supervisor is an optional operational layer over Fleet. It keeps a durable state record per node with explicit running, draining, recovering, and stopped states. Draining blocks new leases while existing work finishes; stopping or restarting requires no active lease. Recovery expires only leases whose recorded expiry has passed and never replays an effect. The supervisor does not spawn processes, issue permits, or replace the ReferenceMonitor.
+
+Supervisor commands:
+  pandora fleet supervisor start node-a
+  pandora fleet supervisor drain node-a
+  pandora fleet supervisor stop node-a --yes
+  pandora fleet supervisor recover node-a
+  pandora fleet supervisor list --json

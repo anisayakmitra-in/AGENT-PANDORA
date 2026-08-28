@@ -4,7 +4,7 @@ use std::fmt;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
-pub const FLEET_SCHEMA_VERSION: u32 = 1;
+pub const FLEET_SCHEMA_VERSION: u32 = 2;
 pub const MAX_FLEET_NODES: usize = 256;
 pub const MAX_FLEET_LEASES: usize = 4_096;
 pub const MAX_FLEET_CAPABILITIES: usize = 64;
@@ -48,6 +48,57 @@ impl FleetLeaseState {
             Self::Revoked => "revoked",
             Self::Killed => "killed",
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FleetSupervisorState {
+    Stopped,
+    Running,
+    Draining,
+    Recovering,
+}
+
+impl FleetSupervisorState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Stopped => "stopped",
+            Self::Running => "running",
+            Self::Draining => "draining",
+            Self::Recovering => "recovering",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FleetSupervisor {
+    node_id: String,
+    state: FleetSupervisorState,
+    generation: u64,
+    reason: Option<String>,
+    updated_at: u64,
+}
+
+impl FleetSupervisor {
+    pub fn node_id(&self) -> &str {
+        &self.node_id
+    }
+
+    pub const fn state(&self) -> FleetSupervisorState {
+        self.state
+    }
+
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn reason(&self) -> Option<&str> {
+        self.reason.as_deref()
+    }
+
+    pub const fn updated_at(&self) -> u64 {
+        self.updated_at
     }
 }
 
@@ -219,6 +270,14 @@ pub enum FleetError {
     LeaseNotFound,
     LeaseNotActive(FleetLeaseState),
     LeaseExecutionMismatch,
+    SupervisorNotFound,
+    SupervisorAlreadyRunning,
+    SupervisorNotAcceptingWork(FleetSupervisorState),
+    ActiveLeasesPresent,
+    InvalidSupervisorTransition {
+        state: FleetSupervisorState,
+        action: &'static str,
+    },
     InvalidLeaseDuration,
     FleetNodeLimitExceeded,
     FleetLeaseLimitExceeded,
@@ -248,6 +307,23 @@ impl fmt::Display for FleetError {
             }
             Self::LeaseExecutionMismatch => {
                 formatter.write_str("fleet lease execution identity does not match")
+            }
+            Self::SupervisorNotFound => formatter.write_str("fleet supervisor was not found"),
+            Self::SupervisorAlreadyRunning => {
+                formatter.write_str("fleet supervisor is already running")
+            }
+            Self::SupervisorNotAcceptingWork(state) => {
+                write!(formatter, "fleet supervisor is {}", state.as_str())
+            }
+            Self::ActiveLeasesPresent => {
+                formatter.write_str("fleet supervisor still has active leases")
+            }
+            Self::InvalidSupervisorTransition { state, action } => {
+                write!(
+                    formatter,
+                    "cannot {action} a {} fleet supervisor",
+                    state.as_str()
+                )
             }
             Self::InvalidLeaseDuration => formatter.write_str("fleet lease duration is invalid"),
             Self::FleetNodeLimitExceeded => formatter.write_str("fleet node limit was exceeded"),
@@ -312,7 +388,14 @@ impl FleetEngine {
                  state TEXT NOT NULL
              );
              CREATE INDEX IF NOT EXISTS fleet_leases_node_idx
-                 ON fleet_leases(node_id, state);",
+                 ON fleet_leases(node_id, state);
+             CREATE TABLE IF NOT EXISTS fleet_supervisors (
+                 node_id TEXT PRIMARY KEY,
+                 state TEXT NOT NULL CHECK (state IN ('stopped', 'running', 'draining', 'recovering')),
+                 generation INTEGER NOT NULL CHECK (generation > 0),
+                 reason TEXT,
+                 updated_at INTEGER NOT NULL
+             );",
         )?;
         Ok(Self {
             connection: Mutex::new(connection),
@@ -368,11 +451,168 @@ impl FleetEngine {
     }
 
     pub fn dispatch_node(&self, capability: &str) -> Result<FleetNode, FleetError> {
-        let node = self
-            .list_nodes()?
-            .into_iter()
-            .find(|node| node.state == FleetNodeState::Ready && node.supports(capability));
+        let supervisors = self.list_supervisors()?;
+        let node = self.list_nodes()?.into_iter().find(|node| {
+            let supervisor_allows_work = supervisors
+                .iter()
+                .find(|supervisor| supervisor.node_id() == node.id())
+                .is_none_or(|supervisor| supervisor.state() == FleetSupervisorState::Running);
+            node.state == FleetNodeState::Ready
+                && node.supports(capability)
+                && supervisor_allows_work
+        });
         node.ok_or(FleetError::NodeNotFound)
+    }
+
+    pub fn list_supervisors(&self) -> Result<Vec<FleetSupervisor>, FleetError> {
+        let connection = self.lock()?;
+        let mut statement = connection.prepare(
+            "SELECT node_id, state, generation, reason, updated_at
+             FROM fleet_supervisors ORDER BY node_id ASC",
+        )?;
+        let rows = statement.query_map([], decode_supervisor)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(FleetError::Database)
+    }
+
+    pub fn start_supervisor(&self, node_id: &str, now: u64) -> Result<FleetSupervisor, FleetError> {
+        let node_id = validate_text("node ID", node_id.to_owned(), 256)?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let node_state = transaction
+            .query_row(
+                "SELECT state FROM fleet_nodes WHERE id = ?1",
+                params![node_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or(FleetError::NodeNotFound)?;
+        let node_state = decode_node_state(&node_state)?;
+        if node_state != FleetNodeState::Ready {
+            return Err(FleetError::NodeUnavailable(node_state));
+        }
+        let current = load_supervisor(&transaction, &node_id)?;
+        let supervisor = match current {
+            None => FleetSupervisor {
+                node_id,
+                state: FleetSupervisorState::Running,
+                generation: 1,
+                reason: None,
+                updated_at: now,
+            },
+            Some(current) => match current.state {
+                FleetSupervisorState::Running => {
+                    return Err(FleetError::SupervisorAlreadyRunning);
+                }
+                FleetSupervisorState::Draining => {
+                    return Err(FleetError::InvalidSupervisorTransition {
+                        state: current.state,
+                        action: "start",
+                    });
+                }
+                FleetSupervisorState::Stopped | FleetSupervisorState::Recovering => {
+                    if active_lease_count(&transaction, &current.node_id)? > 0 {
+                        return Err(FleetError::ActiveLeasesPresent);
+                    }
+                    FleetSupervisor {
+                        node_id: current.node_id,
+                        state: FleetSupervisorState::Running,
+                        generation: current
+                            .generation
+                            .checked_add(1)
+                            .ok_or(FleetError::CorruptRecord)?,
+                        reason: None,
+                        updated_at: now,
+                    }
+                }
+            },
+        };
+        save_supervisor(&transaction, &supervisor)?;
+        transaction.commit()?;
+        Ok(supervisor)
+    }
+
+    pub fn drain_supervisor(&self, node_id: &str, now: u64) -> Result<FleetSupervisor, FleetError> {
+        let node_id = validate_text("node ID", node_id.to_owned(), 256)?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current =
+            load_supervisor(&transaction, &node_id)?.ok_or(FleetError::SupervisorNotFound)?;
+        if current.state != FleetSupervisorState::Running {
+            return Err(FleetError::InvalidSupervisorTransition {
+                state: current.state,
+                action: "drain",
+            });
+        }
+        let supervisor = FleetSupervisor {
+            state: FleetSupervisorState::Draining,
+            reason: Some("operator_draining".to_owned()),
+            updated_at: now,
+            ..current
+        };
+        save_supervisor(&transaction, &supervisor)?;
+        transaction.commit()?;
+        Ok(supervisor)
+    }
+
+    pub fn stop_supervisor(&self, node_id: &str, now: u64) -> Result<FleetSupervisor, FleetError> {
+        let node_id = validate_text("node ID", node_id.to_owned(), 256)?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current =
+            load_supervisor(&transaction, &node_id)?.ok_or(FleetError::SupervisorNotFound)?;
+        if !matches!(
+            current.state,
+            FleetSupervisorState::Draining | FleetSupervisorState::Recovering
+        ) {
+            return Err(FleetError::InvalidSupervisorTransition {
+                state: current.state,
+                action: "stop",
+            });
+        }
+        if active_lease_count(&transaction, &node_id)? > 0 {
+            return Err(FleetError::ActiveLeasesPresent);
+        }
+        let supervisor = FleetSupervisor {
+            state: FleetSupervisorState::Stopped,
+            reason: Some("operator_stopped".to_owned()),
+            updated_at: now,
+            ..current
+        };
+        save_supervisor(&transaction, &supervisor)?;
+        transaction.commit()?;
+        Ok(supervisor)
+    }
+
+    pub fn recover_supervisor(
+        &self,
+        node_id: &str,
+        now: u64,
+    ) -> Result<FleetSupervisor, FleetError> {
+        let node_id = validate_text("node ID", node_id.to_owned(), 256)?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current =
+            load_supervisor(&transaction, &node_id)?.ok_or(FleetError::SupervisorNotFound)?;
+        transaction.execute(
+            "UPDATE fleet_leases SET state = ?1
+             WHERE node_id = ?2 AND state = ?3 AND expires_at <= ?4",
+            params![
+                FleetLeaseState::Expired.as_str(),
+                node_id,
+                FleetLeaseState::Active.as_str(),
+                to_i64(now)?,
+            ],
+        )?;
+        let supervisor = FleetSupervisor {
+            state: FleetSupervisorState::Recovering,
+            reason: Some("operator_recovery".to_owned()),
+            updated_at: now,
+            ..current
+        };
+        save_supervisor(&transaction, &supervisor)?;
+        transaction.commit()?;
+        Ok(supervisor)
     }
 
     pub fn acquire_lease(
@@ -414,6 +654,19 @@ impl FleetEngine {
         let state = decode_node_state(&state)?;
         if state != FleetNodeState::Ready {
             return Err(FleetError::NodeUnavailable(state));
+        }
+        if let Some(supervisor_state) = transaction
+            .query_row(
+                "SELECT state FROM fleet_supervisors WHERE node_id = ?1",
+                params![node_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .map(|state| decode_supervisor_state(&state))
+            .transpose()?
+            && supervisor_state != FleetSupervisorState::Running
+        {
+            return Err(FleetError::SupervisorNotAcceptingWork(supervisor_state));
         }
         let result = transaction.execute(
             "INSERT INTO fleet_leases
@@ -622,6 +875,72 @@ impl FleetEngine {
     }
 }
 
+fn load_supervisor(
+    connection: &Connection,
+    node_id: &str,
+) -> Result<Option<FleetSupervisor>, FleetError> {
+    connection
+        .query_row(
+            "SELECT node_id, state, generation, reason, updated_at
+             FROM fleet_supervisors WHERE node_id = ?1",
+            params![node_id],
+            decode_supervisor,
+        )
+        .optional()
+        .map_err(FleetError::Database)
+}
+
+fn save_supervisor(
+    connection: &Connection,
+    supervisor: &FleetSupervisor,
+) -> Result<(), FleetError> {
+    connection.execute(
+        "INSERT INTO fleet_supervisors (node_id, state, generation, reason, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(node_id) DO UPDATE SET state = excluded.state,
+             generation = excluded.generation, reason = excluded.reason,
+             updated_at = excluded.updated_at",
+        params![
+            supervisor.node_id,
+            supervisor.state.as_str(),
+            to_i64(supervisor.generation)?,
+            supervisor.reason,
+            to_i64(supervisor.updated_at)?,
+        ],
+    )?;
+    Ok(())
+}
+
+fn active_lease_count(connection: &Connection, node_id: &str) -> Result<u64, FleetError> {
+    let count = connection.query_row(
+        "SELECT COUNT(*) FROM fleet_leases WHERE node_id = ?1 AND state = ?2",
+        params![node_id, FleetLeaseState::Active.as_str()],
+        |row| row.get::<_, i64>(0),
+    )?;
+    u64::try_from(count).map_err(|_| FleetError::CorruptRecord)
+}
+
+fn decode_supervisor(row: &rusqlite::Row<'_>) -> rusqlite::Result<FleetSupervisor> {
+    Ok(FleetSupervisor {
+        node_id: row.get(0)?,
+        state: decode_supervisor_state(&row.get::<_, String>(1)?)
+            .map_err(|_| rusqlite::Error::InvalidQuery)?,
+        generation: decode_u64(row.get(2)?)?,
+        reason: row.get(3)?,
+        updated_at: decode_u64(row.get(4)?)?,
+    })
+}
+
+fn decode_supervisor_state(value: &str) -> Result<FleetSupervisorState, FleetError> {
+    match value {
+        "stopped" => Ok(FleetSupervisorState::Stopped),
+        "running" => Ok(FleetSupervisorState::Running),
+        "draining" => Ok(FleetSupervisorState::Draining),
+        "recovering" => Ok(FleetSupervisorState::Recovering),
+        _ => Err(FleetError::CorruptRecord),
+    }
+}
+
 fn decode_node(row: &rusqlite::Row<'_>) -> rusqlite::Result<FleetNode> {
     let capabilities = serde_json::from_str::<Vec<String>>(&row.get::<_, String>(3)?)
         .map_err(|_| rusqlite::Error::InvalidQuery)?;
@@ -822,6 +1141,102 @@ mod tests {
         assert_eq!(
             fleet.list_nodes().unwrap()[0].state(),
             FleetNodeState::Killed
+        );
+    }
+
+    #[test]
+    fn supervisor_lifecycle_gates_new_leases_and_requires_drain_before_stop() {
+        let fleet = engine("pandora-fleet-supervisor-lifecycle");
+        fleet.register_node(&node("node-a", &["coding"])).unwrap();
+        let started = fleet.start_supervisor("node-a", 1).unwrap();
+        assert_eq!(started.state(), FleetSupervisorState::Running);
+        assert_eq!(started.generation(), 1);
+        fleet
+            .acquire_lease(
+                "lease-a",
+                "node-a",
+                "execution-a",
+                FleetBudget::new(1, 1, 10, 1),
+                1,
+                10,
+            )
+            .unwrap();
+        let draining = fleet.drain_supervisor("node-a", 2).unwrap();
+        assert!(matches!(
+            fleet.dispatch_node("coding"),
+            Err(FleetError::NodeNotFound)
+        ));
+        assert_eq!(draining.state(), FleetSupervisorState::Draining);
+        assert!(matches!(
+            fleet.acquire_lease(
+                "lease-b",
+                "node-a",
+                "execution-b",
+                FleetBudget::new(1, 1, 10, 1),
+                2,
+                10,
+            ),
+            Err(FleetError::SupervisorNotAcceptingWork(
+                FleetSupervisorState::Draining
+            ))
+        ));
+        assert!(matches!(
+            fleet.stop_supervisor("node-a", 2),
+            Err(FleetError::ActiveLeasesPresent)
+        ));
+        fleet.release_lease("lease-a").unwrap();
+        let stopped = fleet.stop_supervisor("node-a", 3).unwrap();
+        assert_eq!(stopped.state(), FleetSupervisorState::Stopped);
+        assert!(matches!(
+            fleet.acquire_lease(
+                "lease-c",
+                "node-a",
+                "execution-c",
+                FleetBudget::new(1, 1, 10, 1),
+                3,
+                10,
+            ),
+            Err(FleetError::SupervisorNotAcceptingWork(
+                FleetSupervisorState::Stopped
+            ))
+        ));
+        let restarted = fleet.start_supervisor("node-a", 4).unwrap();
+        assert_eq!(restarted.state(), FleetSupervisorState::Running);
+        assert_eq!(restarted.generation(), 2);
+    }
+
+    #[test]
+    fn supervisor_recovery_expires_stale_leases_before_restart() {
+        let fleet = engine("pandora-fleet-supervisor-recovery");
+        fleet.register_node(&node("node-a", &["coding"])).unwrap();
+        fleet.start_supervisor("node-a", 1).unwrap();
+        fleet
+            .acquire_lease(
+                "lease-a",
+                "node-a",
+                "execution-a",
+                FleetBudget::new(1, 1, 10, 1),
+                1,
+                10,
+            )
+            .unwrap();
+        fleet.drain_supervisor("node-a", 2).unwrap();
+        assert_eq!(
+            fleet.recover_supervisor("node-a", 5).unwrap().state(),
+            FleetSupervisorState::Recovering
+        );
+        assert!(matches!(
+            fleet.start_supervisor("node-a", 5),
+            Err(FleetError::ActiveLeasesPresent)
+        ));
+        fleet.recover_supervisor("node-a", 11).unwrap();
+        assert_eq!(
+            fleet.list_leases().unwrap()[0].state(),
+            FleetLeaseState::Expired
+        );
+        assert_eq!(
+            fleet.start_supervisor("node-a", 12).unwrap().state(),
+            FleetSupervisorState::Running
         );
     }
 

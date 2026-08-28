@@ -1441,7 +1441,7 @@ impl RuntimeService {
                 &[
                     "Capability-matched dispatch",
                     "Bounded lease",
-                    "Worker quarantine state",
+                    "Worker quarantine and supervisor state",
                 ],
                 &[
                     "Only ready matching nodes dispatch",
@@ -1451,7 +1451,7 @@ impl RuntimeService {
                 &[
                     "Worker registration",
                     "Lease lifecycle",
-                    "Quarantine record",
+                    "Quarantine and supervisor records",
                 ],
                 &[
                     "crates/pandora-runtime/src/fleet.rs",
