@@ -28,6 +28,39 @@ pub enum EvolutionSource {
     Population,
 }
 
+/// A non-executable material class that may be proposed only through Pandora's
+/// research evolution path. The class is part of candidate provenance; it does
+/// not grant a capability or select an executor.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResearchArtifactKind {
+    Prompt,
+    Skill,
+    Workflow,
+    WasmGene,
+}
+
+impl ResearchArtifactKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Prompt => "prompt",
+            Self::Skill => "skill",
+            Self::Workflow => "workflow",
+            Self::WasmGene => "wasm_gene",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "prompt" => Some(Self::Prompt),
+            "skill" => Some(Self::Skill),
+            "workflow" => Some(Self::Workflow),
+            "wasm_gene" => Some(Self::WasmGene),
+            _ => None,
+        }
+    }
+}
+
 impl EvolutionSource {
     pub const fn as_str(self) -> &'static str {
         match self {

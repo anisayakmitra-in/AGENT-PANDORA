@@ -57,7 +57,7 @@ pub use events::{EventContext, EventPayload, EventType, RuntimeEvent};
 pub use evolution::{
     ArtifactSignature, CanaryResult, EvolutionContractError, EvolutionMode, EvolutionPolicy,
     EvolutionSource, EvolutionState, HoldoutEvaluation, MutationProposal, ParliamentApproval,
-    ReflexionArtifact, ReplacementReceipt, RollbackReceipt,
+    ReflexionArtifact, ReplacementReceipt, ResearchArtifactKind, RollbackReceipt,
 };
 pub use execution_profile::{
     EXECUTION_PROFILE_VERSION, ExecutionProfile, ExecutionProfileBinding,

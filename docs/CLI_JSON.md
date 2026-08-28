@@ -40,8 +40,9 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora evolution submit --input <path> --json` | `evolution submit` | `proposal_id`, `state`, `durability` |
 | `pandora evolution approve --input <path> --json` | `evolution approve` | `proposal_id`, `state`, `approver`, `signer`, `durability` |
 | `pandora evolution stage --id <proposal-id> --json` | `evolution stage` | `proposal_id`, `state`, `durability` |
+| `pandora evolution generate --session <id> --kind <kind> --target-id <id> --base <path> --output <path> --json` | `evolution generate` | `proposal_id`, `state`, `kind`, `target_id`, `base_artifact`, `candidate_artifact`, `evidence_digest`, `provider`, `output`, `runtime_authority_changed`, `next_required`, `durability` |
 | `pandora evolution canary --input <path> --json` | `evolution canary` | `proposal_id`, `state`, `passed`, `failure_count`, `durability` |
-| `pandora evolution activate --id <proposal-id> --json` | `evolution activate` | `proposal_id`, `state`, `base_artifact`, `candidate_artifact`, `activated_at`, `runtime_authority_changed`, `durability` |
+| `pandora evolution activate --id <proposal-id> --json` | `evolution activate` | `proposal_id`, `state`, `base_artifact`, `candidate_artifact`, `activated_at`, `activation_scope`, `runtime_authority_changed`, `durability` |
 | `pandora evolution rollback --id <proposal-id> --reason <text> --json` | `evolution rollback` | `proposal_id`, `state`, `restored_artifact`, `rolled_back_at`, `reason`, `durability` |
 | `pandora evaluation inspect --session <id> --json` | `evaluation inspect` | `session_id`, `execution_id`, `count`, `result_counts`, `receipts`, `durability` |
 | `pandora graph <kind> --input <path> [--store <path>] --json` | `graph build` | `kind`, `scope`, `source_count`, `nodes`, `edges`, `digest`, optional `persisted` |

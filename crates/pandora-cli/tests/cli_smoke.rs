@@ -1,12 +1,13 @@
+use base64::Engine as _;
 use pandora_runtime::{
-    EfficiencyStore, MemoryEngine, SubagentPreparation, SubagentScope, SubagentStore,
+    EfficiencyStore, MemoryEngine, SessionStore, SubagentPreparation, SubagentScope, SubagentStore,
 };
 use pandora_types::{
     ContextClassification, EffectOutcome, EffectReceipt, ExecutionId, HarnessId, JobId,
     JobWorkerId, MemoryKind, MemoryScope, MetaComposition, PackageCompatibility, PackageDependency,
-    PackageKind, PackageManifest, PermitId, PrincipalId, ReceiptId, RequestDigest, SessionId,
-    SubagentBudgets, SubagentId, SubagentRequest, TenantId, Timestamp, TrustEvidence, WorkspaceId,
-    hash_artifact,
+    PackageKind, PackageManifest, PermitId, PrincipalId, ReceiptId, RequestDigest, Session,
+    SessionId, SubagentBudgets, SubagentId, SubagentRequest, TenantId, Timestamp, TrustEvidence,
+    WorkspaceId, hash_artifact,
 };
 use serde_json::Value;
 use std::fs;
@@ -501,6 +502,243 @@ fn evolution_cli_can_submit_evaluate_and_approve() {
     assert_eq!(response["state"], "approved");
     assert_eq!(response["approver"], "parliament-cli");
     assert_eq!(response["signer"], "signer-cli");
+}
+
+#[test]
+fn evolution_cli_generates_a_research_candidate_then_requires_every_governance_gate() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("research provider should bind");
+    let address = listener
+        .local_addr()
+        .expect("research provider should expose its address");
+    let candidate = b"Improve verification by recording the exact holdout digest.\n";
+    let generated_content = serde_json::json!({
+        "proposal_id": "research-prompt-1",
+        "expected_outcome": "reduce unverified workflow regressions",
+        "artifact_base64": base64::engine::general_purpose::STANDARD.encode(candidate),
+    })
+    .to_string();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("research provider should connect");
+        let mut request = Vec::new();
+        let header_end = loop {
+            let mut chunk = [0_u8; 1_024];
+            let bytes_read = stream
+                .read(&mut chunk)
+                .expect("research request should read");
+            request.extend_from_slice(&chunk[..bytes_read]);
+            if let Some(position) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                break position + 4;
+            }
+        };
+        let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+        let content_length = headers
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .expect("research request should send a content length");
+        while request.len() < header_end + content_length {
+            let mut chunk = [0_u8; 1_024];
+            let bytes_read = stream
+                .read(&mut chunk)
+                .expect("research request body should read");
+            request.extend_from_slice(&chunk[..bytes_read]);
+        }
+        let request_body =
+            serde_json::from_slice::<Value>(&request[header_end..header_end + content_length])
+                .expect("research request should be JSON");
+        let system = request_body["messages"][0]["content"]
+            .as_str()
+            .expect("research request should include a system boundary");
+        let user = request_body["messages"][1]["content"]
+            .as_str()
+            .expect("research request should include bounded evidence");
+        assert!(system.contains("untrusted research proposer"));
+        assert!(user.contains("base_artifact_base64"));
+        assert!(user.contains("evaluation_summaries"));
+        let response = serde_json::json!({
+            "choices": [{"message": {"content": generated_content}}],
+            "usage": {"prompt_tokens": 12, "completion_tokens": 8},
+        })
+        .to_string();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            response.len()
+        )
+        .expect("research provider response headers should be written");
+        stream
+            .write_all(response.as_bytes())
+            .expect("research provider response should be written");
+    });
+
+    let fixture = Fixture::new();
+    let configured = fixture
+        .command(&[
+            "provider",
+            "set",
+            "--provider-url",
+            &format!("http://{address}/v1"),
+            "--model",
+            "research-fixture",
+            "--json",
+        ])
+        .output()
+        .expect("provider set should start");
+    assert_success(&configured);
+    let session = Session::new(
+        SessionId::new("research-session-1").unwrap(),
+        PrincipalId::new("local-user").unwrap(),
+        TenantId::new("local-tenant").unwrap(),
+        WorkspaceId::new("local-workspace").unwrap(),
+        Timestamp::from_unix_seconds(10),
+    );
+    SessionStore::open(fixture.data.join("sessions.sqlite3"))
+        .unwrap()
+        .create(&session)
+        .unwrap();
+    let base_path = fixture.root.join("base-prompt.txt");
+    let output_path = fixture.root.join("candidate-prompt.txt");
+    fs::write(&base_path, "Verify every change against a holdout.\n").unwrap();
+    let generated = fixture
+        .command(&[
+            "evolution",
+            "generate",
+            "--session",
+            "research-session-1",
+            "--kind",
+            "prompt",
+            "--target-id",
+            "planner.system",
+            "--base",
+            base_path.to_str().unwrap(),
+            "--output",
+            output_path.to_str().unwrap(),
+            "--json",
+        ])
+        .env("PANDORA_PROVIDER_API_KEY", "research-fixture-key")
+        .output()
+        .expect("research generation should start");
+    assert_success_with_context(&generated, "evolution generate");
+    let generated = parse_json(&generated);
+    assert_eq!(generated["state"], "proposed");
+    assert_eq!(generated["kind"], "prompt");
+    assert_eq!(generated["runtime_authority_changed"], false);
+    assert_eq!(fs::read(&output_path).unwrap(), candidate);
+    let inspected = fixture
+        .command(&[
+            "evolution",
+            "inspect",
+            "--id",
+            "research-prompt-1",
+            "--json",
+        ])
+        .output()
+        .expect("research inspect should start");
+    assert_success_with_context(&inspected, "evolution inspect");
+    let inspected = parse_json(&inspected);
+    assert_eq!(
+        inspected["research_candidate"]["target_id"],
+        "planner.system"
+    );
+    assert_eq!(
+        inspected["research_candidate"]["provider"],
+        "openai-compatible"
+    );
+
+    let holdout_path = fixture.root.join("research-holdout.json");
+    fs::write(
+        &holdout_path,
+        br#"{"cases":[{"id":"research-case","execution_id":"research-execution","output":"candidate","expected_output":"candidate","baseline_output":"candidate"}]}"#,
+    )
+    .unwrap();
+    let evaluated = fixture
+        .command(&[
+            "evolution",
+            "evaluate",
+            "--id",
+            "research-prompt-1",
+            "--input",
+            holdout_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("research evaluation should start");
+    assert_success_with_context(&evaluated, "evolution evaluate");
+    let approval_path = fixture.root.join("research-approval.json");
+    fs::write(
+        &approval_path,
+        serde_json::to_vec(&serde_json::json!({
+            "proposal_id": "research-prompt-1",
+            "approver": "parliament-fixture",
+            "policy_version": 1,
+            "artifact_id": generated["candidate_artifact"],
+            "signer": "signer-fixture",
+            "signature": "research-candidate-signature",
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let approved = fixture
+        .command(&[
+            "evolution",
+            "approve",
+            "--input",
+            approval_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("research approval should start");
+    assert_success_with_context(&approved, "evolution approve");
+    let staged = fixture
+        .command(&["evolution", "stage", "--id", "research-prompt-1", "--json"])
+        .output()
+        .expect("research stage should start");
+    assert_success_with_context(&staged, "evolution stage");
+    let canary_path = fixture.root.join("research-canary.json");
+    fs::write(
+        &canary_path,
+        br#"{"proposal_id":"research-prompt-1","passed":true,"failure_count":0,"note":"research canary passed"}"#,
+    )
+    .unwrap();
+    let canary = fixture
+        .command(&[
+            "evolution",
+            "canary",
+            "--input",
+            canary_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("research canary should start");
+    assert_success_with_context(&canary, "evolution canary");
+    let activated = fixture
+        .command(&[
+            "evolution",
+            "activate",
+            "--id",
+            "research-prompt-1",
+            "--json",
+        ])
+        .output()
+        .expect("research activation should start");
+    assert_success_with_context(&activated, "evolution activate");
+    let activated = parse_json(&activated);
+    assert_eq!(activated["activation_scope"]["kind"], "prompt");
+    assert_eq!(activated["activation_scope"]["research_only"], true);
+    let rolled_back = fixture
+        .command(&[
+            "evolution",
+            "rollback",
+            "--id",
+            "research-prompt-1",
+            "--reason",
+            "research rollback verification",
+            "--json",
+        ])
+        .output()
+        .expect("research rollback should start");
+    assert_success_with_context(&rolled_back, "evolution rollback");
+    server.join().expect("research provider should finish");
 }
 
 #[test]

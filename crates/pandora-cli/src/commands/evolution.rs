@@ -1,24 +1,41 @@
-use super::{load_config, parse_options, require_config_file, timestamp};
+use super::provider::configured_research_provider_for;
+use super::{
+    load_config, parse_options, require_config_file, session_scope, session_store, timestamp,
+};
 use crate::output::{CliError, CommandResult, success};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use pandora_provider::{
+    ChatMessage, FallbackPolicy, ModelRequest, TraceMetadata, parse_and_validate,
+};
+use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::{
     ArtifactCatalog, EvaluationEngine, EvolutionEngine, EvolutionError, EvolutionRecord,
-    HoldoutCase, HoldoutSetReport, MAX_HOLDOUT_CASES, PackageStore, ReplacementEngine,
-    ReplacementError,
+    ExecutionController, HoldoutCase, HoldoutSetReport, MAX_HOLDOUT_CASES, MemoryEngine,
+    PackageStore, ReplacementEngine, ReplacementError, ResearchArtifactError,
+    ResearchArtifactStore,
 };
 use pandora_types::{
-    ArtifactId, ArtifactSignature, CanaryResult, EvaluationRequest, EvolutionPolicy,
-    EvolutionSource, ExecutionId, HoldoutEvaluation, MutationProposal, ParliamentApproval,
-    PrincipalId, ProposalId, RequestDigest, Timestamp,
+    ArtifactId, ArtifactSignature, CanaryResult, Capability, ContextClassification,
+    EvaluationRequest, EvolutionPolicy, EvolutionSource, ExecutionId, HoldoutEvaluation,
+    MemoryKind, MemoryScope, MemoryTier, MutationProposal, ParliamentApproval, PolicyContext,
+    PrincipalId, ProposalId, RequestDigest, ResearchArtifactKind, SessionId, Timestamp,
+    hash_artifact,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::Path;
+use std::time::Duration;
 
 const DEFAULT_LIST_LIMIT: usize = 64;
 const MAX_LIST_LIMIT: usize = 256;
 const MAX_HOLDOUT_INPUT_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_RESEARCH_GENERATION_BYTES: usize = 64 * 1024;
+const MAX_RESEARCH_EXPECTED_OUTCOME_BYTES: usize = 4 * 1024;
+const MAX_RESEARCH_MEMORY_SUMMARY_BYTES: usize = 512;
+const MAX_RESEARCH_EVALUATIONS: usize = 32;
+const MAX_RESEARCH_MEMORIES: usize = 8;
 
 #[derive(Debug, Deserialize)]
 struct HoldoutSetInput {
@@ -68,15 +85,24 @@ struct HoldoutCaseInput {
     terminal_failure: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GeneratedCandidateOutput {
+    proposal_id: String,
+    expected_outcome: String,
+    artifact_base64: String,
+}
+
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args
         .first()
         .ok_or_else(|| {
             CliError::usage(
-                "evolution requires 'list', 'inspect', 'submit', 'evaluate', 'approve', 'stage', 'canary', 'activate', or 'rollback'",
+                "evolution requires 'generate', 'list', 'inspect', 'submit', 'evaluate', 'approve', 'stage', 'canary', 'activate', or 'rollback'",
             )
         })?;
     match subcommand.as_str() {
+        "generate" => generate(&args[1..]),
         "list" => list(&args[1..]),
         "inspect" => inspect(&args[1..]),
         "submit" => submit(&args[1..]),
@@ -87,9 +113,179 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "activate" => activate(&args[1..]),
         "rollback" => rollback(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown evolution command '{unknown}', expected 'list', 'inspect', 'submit', 'evaluate', 'approve', 'stage', 'canary', 'activate', or 'rollback'"
+            "unknown evolution command '{unknown}', expected 'generate', 'list', 'inspect', 'submit', 'evaluate', 'approve', 'stage', 'canary', 'activate', or 'rollback'"
         ))),
     }
+}
+
+fn generate(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "session",
+            "provider",
+            "model",
+            "kind",
+            "target-id",
+            "base",
+            "output",
+        ],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evolution generate does not accept positional arguments",
+        ));
+    }
+    let session_id = required_session_id(parsed.value("session"))?;
+    let kind = required_research_kind(parsed.value("kind"))?;
+    let target_id = required_option(&parsed, "target-id", "evolution generate")?;
+    let base_path = required_option(&parsed, "base", "evolution generate")?;
+    let output_path = required_option(&parsed, "output", "evolution generate")?;
+    if Path::new(base_path) == Path::new(output_path) {
+        return Err(CliError::usage(
+            "research candidate output must not overwrite its base artifact",
+        ));
+    }
+    if Path::new(output_path).exists() {
+        return Err(CliError::usage(
+            "research candidate output already exists; choose a new path",
+        ));
+    }
+    let base = read_research_base(Path::new(base_path))?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let sessions = session_store(&config)?;
+    let (principal, tenant, workspace_id) = session_scope();
+    let snapshot = sessions
+        .resume(&session_id, &principal, &tenant, &workspace_id)
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let model = parsed
+        .value("model")
+        .or_else(|| {
+            parsed
+                .value("provider")
+                .and_then(|name| config.provider_profile(name).map(|profile| profile.model()))
+        })
+        .or(config.provider_model())
+        .unwrap_or("default");
+    let provider = configured_research_provider_for(
+        &config,
+        model,
+        "research candidate generation",
+        parsed.value("provider"),
+    )?;
+    let provider_id = provider.manifest().id().as_str().to_owned();
+    let evidence = research_evidence(&config, &snapshot, &principal, &provider_id)?;
+    let evidence_digest = hash_artifact(
+        &serde_json::to_vec(&evidence)
+            .map_err(|error| CliError::internal(error.to_string(), json!({})))?,
+    );
+    let messages = research_messages(kind, target_id, &base, &evidence, &evidence_digest)?;
+    let manifest = provider.manifest().clone();
+    let request = ModelRequest::new(
+        manifest.id().clone(),
+        manifest.default_model().clone(),
+        messages,
+    )
+    .and_then(|request| request.with_max_output_tokens(8_192))
+    .and_then(|request| request.with_timeout(Duration::from_secs(60)))
+    .map(|request| request.with_trace_metadata(TraceMetadata::new().with_session_id(session_id)))
+    .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
+    let workspace = WorkspaceRoot::new(config.workspace_dir())
+        .map_err(|_| CliError::configuration("workspace path is invalid", json!({})))?;
+    let controller = ExecutionController::with_policy(
+        workspace,
+        PolicyContext::new(1, [Capability::ProviderInvoke], []),
+    );
+    let response = controller
+        .invoke_provider(provider.as_ref(), request, snapshot.session(), timestamp())
+        .map_err(research_runtime_error)?
+        .into_result()
+        .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
+    if !response.tool_calls().is_empty() {
+        return Err(CliError::provider(
+            "research proposer returned tool calls; proposers cannot execute tools",
+            json!({}),
+        ));
+    }
+    let generated = parse_generated_candidate(response.text())?;
+    if generated.expected_outcome.len() > MAX_RESEARCH_EXPECTED_OUTCOME_BYTES {
+        return Err(CliError::provider(
+            "research proposer expected outcome exceeds the size limit",
+            json!({}),
+        ));
+    }
+    let candidate = STANDARD
+        .decode(generated.artifact_base64.as_bytes())
+        .map_err(|_| CliError::provider("research proposer returned invalid base64", json!({})))?;
+    if candidate.len() > MAX_RESEARCH_GENERATION_BYTES {
+        return Err(CliError::provider(
+            "research proposer candidate exceeds the generation size limit",
+            json!({}),
+        ));
+    }
+    let proposal = MutationProposal::new(
+        generated.proposal_id,
+        EvolutionSource::Gepa,
+        ArtifactId::new(hash_artifact(&base))
+            .map_err(|error| CliError::provider(error.to_string(), json!({})))?,
+        ArtifactId::new(hash_artifact(&candidate))
+            .map_err(|error| CliError::provider(error.to_string(), json!({})))?,
+        RequestDigest::new(evidence_digest)
+            .map_err(|error| CliError::provider(error.to_string(), json!({})))?,
+        generated.expected_outcome,
+        timestamp(),
+    )
+    .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
+    pandora_runtime::MutationEngine::new(EvolutionPolicy::research(1))
+        .propose_gepa(proposal.clone())
+        .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
+    let research =
+        ResearchArtifactStore::open(config.data_dir().join("research-artifacts.sqlite3"))
+            .map_err(research_artifact_error)?;
+    research
+        .stage_generated(
+            &proposal,
+            kind,
+            target_id,
+            &base,
+            &candidate,
+            &provider_id,
+            timestamp(),
+        )
+        .map_err(research_artifact_error)?;
+    EvolutionEngine::open(
+        config.data_dir().join("evolution.sqlite3"),
+        EvolutionPolicy::research(1),
+    )
+    .map_err(evolution_error)?
+    .submit(proposal.clone())
+    .map_err(evolution_error)?;
+    write_new_candidate(Path::new(output_path), &candidate)?;
+    Ok(success(
+        "evolution generate",
+        json!({
+            "proposal_id": proposal.proposal_id(),
+            "state": "proposed",
+            "kind": kind.as_str(),
+            "target_id": target_id,
+            "base_artifact": proposal.base_artifact(),
+            "candidate_artifact": proposal.candidate_artifact(),
+            "evidence_digest": proposal.evidence_digest(),
+            "provider": provider_id,
+            "output": output_path,
+            "runtime_authority_changed": false,
+            "next_required": ["holdout evaluation", "regression checks", "Parliament approval", "stage", "canary", "activation"],
+            "durability": "sqlite",
+        }),
+        format!(
+            "Generated research-only {} candidate {}",
+            kind.as_str(),
+            proposal.proposal_id()
+        ),
+    ))
 }
 
 fn approve(args: &[String]) -> Result<CommandResult, CliError> {
@@ -184,12 +380,58 @@ fn activate(args: &[String]) -> Result<CommandResult, CliError> {
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
     let engine = open_engine(&config)?;
-    let packages = PackageStore::open(config.data_dir().join("packages.sqlite3"))
-        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
     let catalog = open_artifact_catalog(&config)?;
-    let receipt = ReplacementEngine::new()
-        .activate_admitted(&engine, &packages, &catalog, &proposal_id, timestamp())
-        .map_err(replacement_error)?;
+    let record = engine.inspect(&proposal_id).map_err(evolution_error)?;
+    let research =
+        ResearchArtifactStore::open(config.data_dir().join("research-artifacts.sqlite3"))
+            .map_err(research_artifact_error)?;
+    let (receipt, activation_scope) = match research
+        .inspect(&proposal_id)
+        .map_err(research_artifact_error)?
+    {
+        Some(_) => {
+            let candidate = research
+                .validate_proposal(record.proposal())
+                .map_err(research_artifact_error)?;
+            if candidate.kind() == ResearchArtifactKind::WasmGene {
+                let packages = PackageStore::open(config.data_dir().join("packages.sqlite3"))
+                    .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+                if !packages
+                    .contains_artifact(record.proposal().base_artifact())
+                    .map_err(|error| CliError::internal(error.to_string(), json!({})))?
+                    || !packages
+                        .contains_artifact(record.proposal().candidate_artifact())
+                        .map_err(|error| CliError::internal(error.to_string(), json!({})))?
+                {
+                    return Err(CliError::execution(
+                        "WASM Gene candidates require package admission before activation",
+                        json!({"proposal_id": proposal_id}),
+                    ));
+                }
+            }
+            (
+                ReplacementEngine::new()
+                    .activate_cataloged(&engine, &catalog, &proposal_id, timestamp())
+                    .map_err(replacement_error)?,
+                json!({
+                    "kind": candidate.kind().as_str(),
+                    "target_id": candidate.target_id(),
+                    "provider": candidate.provider_id(),
+                    "research_only": candidate.kind() != ResearchArtifactKind::WasmGene,
+                }),
+            )
+        }
+        None => {
+            let packages = PackageStore::open(config.data_dir().join("packages.sqlite3"))
+                .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+            (
+                ReplacementEngine::new()
+                    .activate_admitted(&engine, &packages, &catalog, &proposal_id, timestamp())
+                    .map_err(replacement_error)?,
+                json!({"kind": "package", "research_only": false}),
+            )
+        }
+    };
     Ok(success(
         "evolution activate",
         json!({
@@ -198,6 +440,7 @@ fn activate(args: &[String]) -> Result<CommandResult, CliError> {
             "base_artifact": receipt.base_artifact(),
             "candidate_artifact": receipt.candidate_artifact(),
             "activated_at": receipt.activated_at(),
+            "activation_scope": activation_scope,
             "runtime_authority_changed": false,
             "durability": "sqlite",
         }),
@@ -365,9 +608,28 @@ fn inspect(args: &[String]) -> Result<CommandResult, CliError> {
     require_config_file(&config)?;
     let engine = open_engine(&config)?;
     let record = engine.inspect(&proposal_id).map_err(evolution_error)?;
+    let research =
+        ResearchArtifactStore::open(config.data_dir().join("research-artifacts.sqlite3"))
+            .map_err(research_artifact_error)?;
+    let mut data = record_value(&record);
+    if let Some(candidate) = research
+        .inspect(&proposal_id)
+        .map_err(research_artifact_error)?
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert(
+            "research_candidate".to_owned(),
+            json!({
+                "kind": candidate.kind().as_str(),
+                "target_id": candidate.target_id(),
+                "provider": candidate.provider_id(),
+                "generated_at": candidate.generated_at().as_unix_seconds(),
+            }),
+        );
+    }
     Ok(success(
         "evolution inspect",
-        record_value(&record),
+        data,
         format!("Inspected evolution proposal {proposal_id}"),
     ))
 }
@@ -394,6 +656,31 @@ fn required_proposal_id(value: Option<&str>, command: &str) -> Result<ProposalId
         CliError::usage(format!("evolution {command} requires '--id <proposal-id>'"))
     })?;
     ProposalId::new(value.to_owned()).map_err(|_| CliError::usage("proposal ID is invalid"))
+}
+
+fn required_session_id(value: Option<&str>) -> Result<SessionId, CliError> {
+    let value = value
+        .ok_or_else(|| CliError::usage("evolution generate requires '--session <session-id>'"))?;
+    SessionId::new(value.to_owned()).map_err(|_| CliError::usage("session ID is invalid"))
+}
+
+fn required_research_kind(value: Option<&str>) -> Result<ResearchArtifactKind, CliError> {
+    let value = value.ok_or_else(|| {
+        CliError::usage("evolution generate requires '--kind prompt|skill|workflow|wasm_gene'")
+    })?;
+    ResearchArtifactKind::parse(value).ok_or_else(|| {
+        CliError::usage("research kind must be prompt, skill, workflow, or wasm_gene")
+    })
+}
+
+fn required_option<'a>(
+    parsed: &'a super::ParsedArgs,
+    name: &str,
+    command: &str,
+) -> Result<&'a str, CliError> {
+    parsed
+        .value(name)
+        .ok_or_else(|| CliError::usage(format!("{command} requires '--{name} <value>'")))
 }
 
 fn parse_limit(value: Option<&str>) -> Result<usize, CliError> {
@@ -443,6 +730,215 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>, CliError> {
         )));
     }
     Ok(bytes)
+}
+
+fn read_research_base(path: &Path) -> Result<Vec<u8>, CliError> {
+    let metadata = fs::metadata(path).map_err(|error| {
+        CliError::execution(
+            "could not read research base artifact",
+            json!({"path": path, "error": error.to_string()}),
+        )
+    })?;
+    if !metadata.is_file() || metadata.len() > MAX_RESEARCH_GENERATION_BYTES as u64 {
+        return Err(CliError::usage(format!(
+            "research base artifact must be a file no larger than {MAX_RESEARCH_GENERATION_BYTES} bytes"
+        )));
+    }
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .map_err(|error| {
+            CliError::execution(
+                "could not open research base artifact",
+                json!({"path": path, "error": error.to_string()}),
+            )
+        })?
+        .take(MAX_RESEARCH_GENERATION_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| {
+            CliError::execution(
+                "could not read research base artifact",
+                json!({"path": path, "error": error.to_string()}),
+            )
+        })?;
+    if bytes.is_empty() || bytes.len() > MAX_RESEARCH_GENERATION_BYTES {
+        return Err(CliError::usage(format!(
+            "research base artifact must contain 1 to {MAX_RESEARCH_GENERATION_BYTES} bytes"
+        )));
+    }
+    Ok(bytes)
+}
+
+fn write_new_candidate(path: &Path, candidate: &[u8]) -> Result<(), CliError> {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| {
+            CliError::execution(
+                "could not create research candidate output",
+                json!({"path": path, "error": error.to_string()}),
+            )
+        })?;
+    file.write_all(candidate).map_err(|error| {
+        CliError::execution(
+            "could not write research candidate output",
+            json!({"path": path, "error": error.to_string()}),
+        )
+    })?;
+    file.sync_all().map_err(|error| {
+        CliError::execution(
+            "could not persist research candidate output",
+            json!({"path": path, "error": error.to_string()}),
+        )
+    })
+}
+
+fn research_evidence(
+    config: &pandora_runtime::config::RuntimeConfig,
+    snapshot: &pandora_runtime::sessions::SessionSnapshot,
+    principal: &PrincipalId,
+    provider_id: &str,
+) -> Result<Value, CliError> {
+    let mut evaluations = snapshot
+        .evaluations()
+        .iter()
+        .map(|receipt| {
+            json!({
+                "execution_id": receipt.execution_id(),
+                "evaluated_at": receipt.evaluated_at().as_unix_seconds(),
+                "results": receipt.results().iter().map(|result| json!({
+                    "kind": result.kind().as_str(),
+                    "status": result.status().as_str(),
+                    "score": result.score(),
+                    "advisory": result.advisory(),
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect::<Vec<_>>();
+    evaluations.sort_by(|left, right| {
+        left["execution_id"]
+            .as_str()
+            .cmp(&right["execution_id"].as_str())
+    });
+    evaluations.truncate(MAX_RESEARCH_EVALUATIONS);
+    let scope = MemoryScope::new(
+        snapshot.session().tenant_id().clone(),
+        snapshot.session().workspace_id().clone(),
+        snapshot.session().id().clone(),
+        provider_id,
+    )
+    .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let memory = MemoryEngine::open(
+        config.data_dir().join("sessions.sqlite3"),
+        2,
+        principal.clone(),
+    )
+    .map_err(research_memory_error)?;
+    let feedback_summaries = memory
+        .try_recall(&scope, MemoryTier::L1, timestamp())
+        .map_err(research_memory_error)?
+        .into_iter()
+        .filter(|memory| {
+            memory.classification() == ContextClassification::Internal
+                && memory.kind() == MemoryKind::Lesson
+                && memory.provenance().starts_with("evaluation:")
+        })
+        .take(MAX_RESEARCH_MEMORIES)
+        .map(|memory| {
+            json!({
+                "summary": bounded_text(memory.summary(), MAX_RESEARCH_MEMORY_SUMMARY_BYTES),
+                "source": "evaluation_feedback",
+            })
+        })
+        .collect::<Vec<_>>();
+    let approved_memories = memory
+        .try_recall(&scope, MemoryTier::L2, timestamp())
+        .map_err(research_memory_error)?
+        .into_iter()
+        .filter(|memory| {
+            memory.classification() == ContextClassification::Internal
+                && memory.approval().is_some()
+        })
+        .take(MAX_RESEARCH_MEMORIES)
+        .map(|memory| {
+            json!({
+                "id": memory.id(),
+                "kind": memory.kind().as_str(),
+                "summary": bounded_text(memory.summary(), MAX_RESEARCH_MEMORY_SUMMARY_BYTES),
+                "approved": true,
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "schema": "pandora.research-evidence.v1",
+        "session_id": snapshot.session().id(),
+        "evaluation_summaries": evaluations,
+        "failed_run_feedback_count": snapshot.l1_evidence_count(),
+        "feedback_summaries": feedback_summaries,
+        "approved_internal_memories": approved_memories,
+    }))
+}
+
+fn research_messages(
+    kind: ResearchArtifactKind,
+    target_id: &str,
+    base: &[u8],
+    evidence: &Value,
+    evidence_digest: &str,
+) -> Result<Vec<ChatMessage>, CliError> {
+    let system = ChatMessage::system(
+        "You are Pandora's untrusted research proposer. Produce exactly one bounded candidate artifact. You have no authority to call tools, approve, stage, activate, roll back, alter policy, or issue permits. Return only JSON with proposal_id, expected_outcome, and artifact_base64. proposal_id must be a short stable identifier. artifact_base64 must decode to a complete candidate of the requested kind, must differ from the base artifact, and must be no larger than 65536 bytes. For prompt and skill use UTF-8 text; for workflow use a JSON object; for wasm_gene use a valid WebAssembly binary. Do not include Markdown or extra fields."
+            .to_owned(),
+    )
+    .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
+    let input = json!({
+        "target_kind": kind.as_str(),
+        "target_id": target_id,
+        "base_artifact_base64": STANDARD.encode(base),
+        "evidence_digest": evidence_digest,
+        "bounded_research_evidence": evidence,
+    });
+    let user = ChatMessage::user(
+        serde_json::to_string(&input)
+            .map_err(|error| CliError::internal(error.to_string(), json!({})))?,
+    )
+    .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
+    Ok(vec![system, user])
+}
+
+fn parse_generated_candidate(text: &str) -> Result<GeneratedCandidateOutput, CliError> {
+    let validated = parse_and_validate(
+        text,
+        &json!({
+            "type": "object",
+            "required": ["proposal_id", "expected_outcome", "artifact_base64"],
+            "properties": {
+                "proposal_id": {"type": "string"},
+                "expected_outcome": {"type": "string"},
+                "artifact_base64": {"type": "string"},
+            },
+            "additionalProperties": false,
+        }),
+        None,
+        FallbackPolicy::Reject,
+    )
+    .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
+    serde_json::from_value(validated.value().clone())
+        .map_err(|error| CliError::provider(error.to_string(), json!({})))
+}
+
+fn bounded_text(value: &str, maximum_bytes: usize) -> String {
+    if value.len() <= maximum_bytes {
+        return value.to_owned();
+    }
+    let mut end = 0;
+    for (index, _) in value.char_indices() {
+        if index > maximum_bytes {
+            break;
+        }
+        end = index;
+    }
+    value[..end].to_owned()
 }
 
 fn parse_canary(bytes: &[u8]) -> Result<CanaryResult, CliError> {
@@ -670,11 +1166,49 @@ fn replacement_error(error: ReplacementError) -> CliError {
     }
 }
 
+fn research_artifact_error(error: ResearchArtifactError) -> CliError {
+    let message = error.to_string();
+    match error {
+        ResearchArtifactError::ProposalNotFound
+        | ResearchArtifactError::ProposalMismatch
+        | ResearchArtifactError::InvalidArtifact
+        | ResearchArtifactError::InvalidProvider
+        | ResearchArtifactError::InvalidTarget
+        | ResearchArtifactError::ArtifactTooLarge => CliError::execution(message, json!({})),
+        _ => CliError::internal(message, json!({})),
+    }
+}
+
+fn research_runtime_error(error: pandora_runtime::RuntimeError) -> CliError {
+    match error {
+        pandora_runtime::RuntimeError::Provider(error) => {
+            CliError::provider(error.to_string(), json!({}))
+        }
+        pandora_runtime::RuntimeError::Denied(reason) => CliError::policy(reason, json!({})),
+        pandora_runtime::RuntimeError::ApprovalRequired(reason) => {
+            CliError::approval(reason, json!({}))
+        }
+        _ => CliError::execution("research provider invocation was not authorized", json!({})),
+    }
+}
+
+fn research_memory_error(error: pandora_runtime::MemoryError) -> CliError {
+    match error {
+        pandora_runtime::MemoryError::StoreUnavailable => {
+            CliError::internal("research memory store is unavailable", json!({}))
+        }
+        _ => CliError::execution(
+            "approved research memory could not be retrieved",
+            json!({"error": format!("{error:?}")}),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_approval, parse_canary, parse_holdout_cases, parse_limit, parse_proposal,
-        required_proposal_id,
+        parse_approval, parse_canary, parse_generated_candidate, parse_holdout_cases, parse_limit,
+        parse_proposal, required_proposal_id, required_research_kind,
     };
 
     #[test]
@@ -750,5 +1284,27 @@ mod tests {
         assert!(required_proposal_id(None, "activate").is_err());
         assert!(required_proposal_id(Some("proposal-1"), "activate").is_ok());
         assert!(required_proposal_id(Some(""), "activate").is_err());
+    }
+
+    #[test]
+    fn research_generation_requires_the_exact_json_contract() {
+        let generated = parse_generated_candidate(
+            r#"{"proposal_id":"research-1","expected_outcome":"improve outcome reliability","artifact_base64":"Y2FuZGlkYXRl"}"#,
+        )
+        .unwrap();
+        assert_eq!(generated.proposal_id, "research-1");
+        assert!(parse_generated_candidate(
+            r#"{"proposal_id":"research-1","expected_outcome":"improve","artifact_base64":"Y2FuZGlkYXRl","extra":true}"#,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn research_generation_limits_kinds_to_non_executable_candidate_classes() {
+        assert!(required_research_kind(Some("prompt")).is_ok());
+        assert!(required_research_kind(Some("skill")).is_ok());
+        assert!(required_research_kind(Some("workflow")).is_ok());
+        assert!(required_research_kind(Some("wasm_gene")).is_ok());
+        assert!(required_research_kind(Some("shell")).is_err());
     }
 }

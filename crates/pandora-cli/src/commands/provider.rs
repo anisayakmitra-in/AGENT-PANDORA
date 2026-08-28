@@ -27,6 +27,30 @@ pub(crate) fn configured_provider_for(
     operation: &str,
     provider_override: Option<&str>,
 ) -> Result<Box<dyn Provider>, CliError> {
+    configured_provider_for_with_failover(config, model, operation, provider_override, true)
+}
+
+/// Resolves exactly the named provider without a fallback route.
+///
+/// Research generation uses this path because its bounded evidence is scoped
+/// and persisted against that provider identity; silently sending it to a
+/// fallback would break that provenance boundary.
+pub(crate) fn configured_research_provider_for(
+    config: &RuntimeConfig,
+    model: &str,
+    operation: &str,
+    provider_override: Option<&str>,
+) -> Result<Box<dyn Provider>, CliError> {
+    configured_provider_for_with_failover(config, model, operation, provider_override, false)
+}
+
+fn configured_provider_for_with_failover(
+    config: &RuntimeConfig,
+    model: &str,
+    operation: &str,
+    provider_override: Option<&str>,
+    allow_fallback: bool,
+) -> Result<Box<dyn Provider>, CliError> {
     let provider_name = provider_override
         .or(config.active_provider())
         .unwrap_or(DEFAULT_PROVIDER_NAME);
@@ -66,6 +90,10 @@ pub(crate) fn configured_provider_for(
     .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
     let primary = HttpProvider::from_environment(manifest)
         .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
+
+    if !allow_fallback {
+        return Ok(Box::new(primary));
+    }
 
     let Some(fallback_name) = config
         .provider_profile(provider_name)

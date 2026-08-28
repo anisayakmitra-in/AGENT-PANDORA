@@ -9,6 +9,7 @@ name = "pandora"
 path = "src/main.rs"
 
 [dependencies]
+base64.workspace = true
 crossterm.workspace = true
 ed25519-dalek.workspace = true
 ratatui.workspace = true

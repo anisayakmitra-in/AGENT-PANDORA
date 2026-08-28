@@ -160,6 +160,19 @@ impl ReplacementEngine {
         if !packages.contains_artifact(record.proposal().candidate_artifact())? {
             return Err(ReplacementError::CandidateArtifactNotAdmitted);
         }
+        self.activate_cataloged(evolution, catalog, proposal_id, activated_at)
+    }
+
+    /// Activates a proposal after its caller has verified the appropriate
+    /// admission boundary. This preserves the same quiescence, catalog, and
+    /// compensation semantics for non-package research artifacts.
+    pub fn activate_cataloged(
+        &self,
+        evolution: &EvolutionEngine,
+        catalog: &ArtifactCatalog,
+        proposal_id: &ProposalId,
+        activated_at: pandora_types::Timestamp,
+    ) -> Result<ReplacementReceipt, ReplacementError> {
         let _executions = self.quiescent()?;
         let proposal = evolution.activate(proposal_id)?;
         let receipt = ReplacementReceipt::new(

@@ -414,6 +414,24 @@ evidence through `EvolutionEngine`. Expected outputs, baselines, and raw case
 outputs are omitted from the report. A failed holdout is still recorded so the
 proposal remains auditable and cannot satisfy production approval checks.
 
+`evolution generate` turns bounded learning inputs into a research-only
+candidate proposal. It accepts a base prompt, Skill, workflow object, or WASM
+Gene artifact up to 64 KiB, sends its base64 form plus compact evaluation
+results, structured feedback, and explicitly approved internal memories to the
+configured provider, and writes the returned candidate only to the requested
+new output path and `research-artifacts.sqlite3`. The provider is an untrusted
+proposer: it cannot call tools or advance the candidate beyond `proposed`.
+
+```text
+pandora evolution generate --session session-1 --kind prompt --target-id planner.system --base planner-v1.txt --output planner-v2.txt --json
+```
+
+The result identifies the exact base/candidate hashes and evidence digest. It
+must still pass holdouts and regression checks, Parliament approval, staging,
+and canary before activation. Prompt, Skill, and workflow activation remains a
+non-executable catalog binding; a WASM Gene candidate also requires normal
+package admission before it can be activated.
+
 `evolution submit` records a bounded proposal for later evaluation. It accepts
 only the three known evolution sources and writes the proposal to the same
 durable store; submission does not approve, stage, activate, or execute a
@@ -448,11 +466,13 @@ pandora evolution rollback --id proposal-1 --reason "regression observed" --json
 
 The canary document contains `proposal_id`, `passed`, `failure_count`, `note`,
 and an optional `evaluated_at` Unix timestamp. Activation succeeds only after
-all production gates pass and the exact base and candidate content hashes are
-already present in the admitted package store. It writes a durable
-base-to-candidate binding to `artifact-catalog.sqlite3`; it does not grant
-permissions or runtime authority. Rollback is tip-first for replacement chains
-and restores the recorded base binding.
+all production gates pass. Package and WASM Gene candidates require the exact
+base and candidate content hashes to be present in the admitted package store;
+prompt, Skill, and workflow candidates instead require an exact verified record
+in `research-artifacts.sqlite3`. It writes a durable base-to-candidate binding
+to `artifact-catalog.sqlite3`; it does not grant permissions or runtime
+authority. Rollback is tip-first for replacement chains and restores the
+recorded base binding.
 
 Admitted custom Wasm Gene dependencies consume the catalog when Pandora builds
 their Domain Harness runtime. Resolution happens once per runtime assembly: the
@@ -626,6 +646,7 @@ pandora orchestration roles
 pandora strategies list
 pandora evaluation golden --input <path> [--fail-on-failure]
 pandora evaluation inspect --session <id> [--execution <id>]
+pandora evolution generate --session <id> [--provider <name>] [--model <id>] --kind prompt|skill|workflow|wasm_gene --target-id <id> --base <path> --output <path>
 pandora evolution list [--limit <1-256>]
 pandora evolution inspect --id <proposal-id>
 pandora evolution submit --input <path>

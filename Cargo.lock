@@ -1141,6 +1141,7 @@ dependencies = [
 name = "pandora-cli"
 version = "2.0.0-beta.7"
 dependencies = [
+ "base64",
  "crossterm 0.28.1",
  "ed25519-dalek",
  "pandora-harnesses",

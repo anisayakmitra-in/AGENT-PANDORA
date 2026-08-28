@@ -36,6 +36,7 @@ pub mod permit_store;
 pub mod reference_monitor;
 pub mod registry_client;
 pub mod replacement;
+pub mod research_artifact;
 pub mod rollout_reducer;
 pub mod run_loop;
 pub mod self_healing;
@@ -128,6 +129,10 @@ pub use permit_store::{ConsumedPermit, PermitError, PermitStore};
 pub use reference_monitor::{AuthorizationError, ReferenceMonitor};
 pub use registry_client::{PackageRegistryClient, PackageRegistryError};
 pub use replacement::{ReplacementEngine, ReplacementError};
+pub use research_artifact::{
+    MAX_RESEARCH_ARTIFACT_BYTES, ResearchArtifactError, ResearchArtifactRecord,
+    ResearchArtifactStore, ResearchCandidateRecord,
+};
 pub use rollout_reducer::{RolloutReducer, RolloutReducerError};
 pub use run_loop::{RunLoop, RunLoopError};
 pub use self_healing::{SelfHealingEngine, SelfHealingError};
