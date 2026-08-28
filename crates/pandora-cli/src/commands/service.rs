@@ -6,10 +6,13 @@ use pandora_harnesses::HarnessCatalog;
 use pandora_runtime::config::RuntimeConfig;
 use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::{
-    ApprovalStore, ExecutionController, RuntimeService, RuntimeServiceScope, ServiceTokenStore,
+    ApprovalStore, EvolutionEngine, ExecutionController, RuntimeService, RuntimeServiceScope,
+    ServiceTokenStore,
 };
 use pandora_service::{LocalService, LocalServiceConfig};
-use pandora_types::{Capability, Operation, PolicyContext, ServiceProviderSummary};
+use pandora_types::{
+    Capability, EvolutionPolicy, Operation, PolicyContext, ServiceProviderSummary,
+};
 use serde_json::json;
 use std::io::{self, Write};
 use std::net::{Ipv4Addr, SocketAddr};
@@ -110,13 +113,19 @@ fn build_runtime_service(config: &RuntimeConfig) -> Result<RuntimeService, CliEr
             )
         })
         .collect();
+    let evolution = EvolutionEngine::open(
+        config.data_dir().join("evolution.sqlite3"),
+        EvolutionPolicy::production(1),
+    )
+    .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
     let runtime = RuntimeService::new_with_providers(
         controller,
         sessions,
         approvals,
         RuntimeServiceScope::new(principal, tenant, workspace),
         providers,
-    );
+    )
+    .with_evolution(Arc::new(evolution));
     let Some(model) = config.provider_model() else {
         return Ok(runtime);
     };

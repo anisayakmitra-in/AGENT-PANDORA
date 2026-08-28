@@ -11,6 +11,7 @@ import {
   type RuntimeRun,
   type RuntimeEvent,
   type RuntimeEngine,
+  type RuntimeEvolutionProposal,
   type RuntimeHarness,
   type RuntimeHealth,
   type RuntimeMemoryRecord,
@@ -311,6 +312,7 @@ function App() {
   const [engines, setEngines] = useState<RuntimeEngine[]>([]);
   const [tools, setTools] = useState<RuntimeTool[]>([]);
   const [providers, setProviders] = useState<RuntimeProvider[]>([]);
+  const [evolutionProposals, setEvolutionProposals] = useState<RuntimeEvolutionProposal[]>([]);
   const [lastRun, setLastRun] = useState<RuntimeRun | null>(null);
   const [pendingRun, setPendingRun] = useState<PendingRunRequest | null>(null);
   const [runInFlight, setRunInFlight] = useState(false);
@@ -368,14 +370,15 @@ function App() {
       setEngines([]);
       setTools([]);
       setProviders([]);
+      setEvolutionProposals([]);
       setPendingRun(null);
       return;
     }
     let cancelled = false;
     setRuntimeStatus("checking");
     setRuntimeError("");
-    Promise.all([client.health(), client.sessions(), client.capabilities(), client.engines(), client.tools(), client.providers()])
-      .then(([health, nextSessions, nextHarnesses, nextEngines, nextTools, nextProviders]) => {
+    Promise.all([client.health(), client.sessions(), client.capabilities(), client.engines(), client.tools(), client.providers(), client.evolution()])
+      .then(([health, nextSessions, nextHarnesses, nextEngines, nextTools, nextProviders, nextEvolutionProposals]) => {
         if (!cancelled) {
           setRuntimeHealth(health);
           setSessions(nextSessions);
@@ -383,6 +386,7 @@ function App() {
           setEngines(nextEngines);
           setTools(nextTools);
           setProviders(nextProviders);
+          setEvolutionProposals(nextEvolutionProposals);
           setRuntimeStatus("connected");
         }
       })
@@ -432,6 +436,28 @@ function App() {
     }
   }, [harnesses, runProfile, runtimeStatus]);
 
+  useEffect(() => {
+    if (!client || runtimeStatus !== "connected" || activeView !== "evolution") {
+      return;
+    }
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const proposals = await client.evolution();
+        if (!cancelled) {
+          setEvolutionProposals(proposals);
+        }
+      } catch {
+      }
+    };
+    void refresh();
+    const interval = window.setInterval(() => void refresh(), 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [activeView, client, runtimeStatus]);
+
   const connect = (nextEndpoint: string, nextToken: string) => {
     setEndpoint(nextEndpoint);
     setToken(nextToken);
@@ -472,6 +498,7 @@ function App() {
       setEngines([]);
       setTools([]);
       setProviders([]);
+      setEvolutionProposals([]);
       setPendingRun(null);
       setRuntimeStatus("preview");
     } catch (error: unknown) {
@@ -646,6 +673,8 @@ function App() {
           <EnginesView engines={engines} runtimeStatus={runtimeStatus} />
         ) : activeView === "tools" ? (
           <ToolsView tools={tools} runtimeStatus={runtimeStatus} />
+        ) : activeView === "evolution" ? (
+          <EvolutionView proposals={evolutionProposals} runtimeStatus={runtimeStatus} />
         ) : activeView === "settings" ? (
           <SettingsView theme={theme} onThemeChange={setTheme} runtimeStatus={runtimeStatus} health={runtimeHealth} native={native} endpoint={endpoint} />
         ) : (
@@ -902,6 +931,11 @@ function ConnectionView({ endpoint, runtimeStatus, runtimeError, health, provide
   };
 
   return <div className="full-view"><PageHeader eyebrow="Runtime surface" title="Connections" description="Connect this desktop shell to the authenticated loopback Pandora service." actions={<Chip tone={runtimeStatus === "connected" ? "green" : runtimeStatus === "offline" ? "amber" : "blue"} icon="lock">{runtimeStatusLabel(runtimeStatus)}</Chip>} /><div className="connection-grid"><Panel className="connection-panel"><div className="panel-heading"><div><span className="eyebrow">LOCAL RPC</span><h3>Pandora service</h3></div><Icon name="terminal" size={19} /></div><div className="settings-facts connection-health"><div><span>Service health</span><strong>{health?.status ?? "Unavailable"}</strong></div><div><span>Transport</span><strong>{native ? "Native bridge" : "Loopback RPC"}</strong></div></div>{native ? <button className={`button ${serviceActive ? "button-secondary" : "button-primary"} connection-start`} type="button" onClick={() => void (serviceActive ? onStopService() : onStartService())}>{serviceActive ? "Stop local service" : "Start local service"} <Icon name={serviceActive ? "lock" : "arrow"} size={14} /></button> : null}<form className="connection-form" onSubmit={submit}><label><span>Endpoint</span><input value={draftEndpoint} onChange={(event) => setDraftEndpoint(event.target.value)} placeholder="http://127.0.0.1:PORT/v1/rpc" spellCheck={false} /></label><label><span>Bearer token</span><input value={draftToken} onChange={(event) => setDraftToken(event.target.value)} type="password" placeholder="Paste the service token for this session" autoComplete="off" /></label><button className="button button-secondary" type="submit" disabled={!draftEndpoint.trim() || !draftToken.trim()}>Connect manually <Icon name="arrow" size={14} /> </button></form><p className="connection-note">Desktop startup keeps the bearer token native-side. Manual browser connections keep it in memory and never write it to storage. Endpoints must be loopback-only.</p>{runtimeError ? <p className="connection-error" role="alert">{runtimeError}</p> : null}</Panel><Panel className="connection-panel"><div className="panel-heading"><div><span className="eyebrow">PROVIDER PROFILES</span><h3>{providers.length} configured</h3></div><Chip tone={providers.some((provider) => provider.active) ? "blue" : "neutral"} icon="spark">Redacted</Chip></div>{providers.length ? <div className="provider-list">{providers.map((provider) => <div className="provider-row" key={provider.name}><span className={`provider-dot ${provider.active ? "is-active" : ""}`} /><span><strong>{provider.name}</strong><small>{provider.model} · {provider.protocol}</small></span><span className={`provider-state ${provider.credential_configured ? "is-ready" : ""}`}>{provider.credential_configured ? "Ready" : "Credential needed"}</span></div>)}</div> : <div className="connection-empty"><Icon name="lock" size={21} /><p>Provider profiles are not configured.</p></div>}</Panel><Panel className="connection-panel"><div className="panel-heading"><div><span className="eyebrow">SCOPED SESSIONS</span><h3>{sessions.length} available</h3></div><Chip tone="green" icon="shield">Tenant scoped</Chip></div>{sessions.length ? <div className="session-list">{sessions.map((session) => <button className={`session-row ${selectedSessionId === session.session_id ? "is-selected" : ""}`} key={session.session_id} type="button" onClick={() => void onSelectSession(session.session_id)}><span className="session-dot" /><span><strong>{session.session_id}</strong><small>{session.workspace_id} · {session.tenant_id}</small></span><Icon name="chevron" size={13} /></button>)}</div> : <div className="connection-empty"><Icon name="archive" size={21} /><p>Connect to load scoped sessions.</p></div>}{selectedSession ? <div className="selected-session"><span className="eyebrow">SELECTED SESSION</span><strong>{selectedSession.session.session_id}</strong><small>{selectedSession.event_count} recorded events · ready to inspect</small></div> : null}</Panel></div></div>;
+}
+
+function EvolutionView({ proposals, runtimeStatus }: { proposals: RuntimeEvolutionProposal[]; runtimeStatus: RuntimeStatus }) {
+  const stateTone = (state: string): "neutral" | "green" | "amber" | "blue" | "gold" => state === "active" ? "green" : state.includes("failed") || state === "rolled_back" ? "amber" : state === "approved" || state === "staged" || state === "canary_passed" ? "gold" : state === "evaluated" ? "blue" : "neutral";
+  return <div className="full-view"><PageHeader eyebrow="Governed improvement" title="Evolution" description="Inspect durable proposal evidence and release gates. This surface cannot create, approve, or activate mutations." actions={<Chip tone={proposals.length ? "gold" : runtimeStatus === "connected" ? "neutral" : "amber"} icon="shield">{proposals.length ? `${proposals.length} proposal${proposals.length === 1 ? "" : "s"}` : "No proposals"}</Chip>} />{proposals.length ? <div className="secondary-grid">{proposals.map((proposal, index) => <Panel className="secondary-card" key={proposal.proposal_id}><div className="panel-heading"><div><span className="eyebrow">{proposal.source} · {proposal.proposal_id}</span><h3>{proposal.expected_outcome}</h3></div><Chip tone={stateTone(proposal.state)}>{proposal.state.replaceAll("_", " ")}</Chip></div><div className={`secondary-icon secondary-icon-${index % 3}`}><Icon name="evolution" size={20} /></div><div className="settings-facts"><div><span>Artifact transition</span><strong>{proposal.base_artifact} → {proposal.candidate_artifact}</strong></div><div><span>Evidence digest</span><strong className="mono">{proposal.evidence_digest}</strong></div><div><span>Holdout gate</span><strong>{proposal.evaluation ? `${proposal.evaluation.holdout_passed ? "Passed" : "Failed"} · ${proposal.evaluation.trajectory_score}/${proposal.evaluation.outcome_score}` : "Not evaluated"}</strong></div><div><span>Policy / regression</span><strong>{proposal.evaluation ? `${proposal.evaluation.policy_passed ? "Pass" : "Fail"} / ${proposal.evaluation.regression_passed ? "Pass" : "Fail"}` : "Pending"}</strong></div><div><span>Parliament</span><strong>{proposal.approval ? `${proposal.approval.approver_id} · policy v${proposal.approval.policy_version}` : "Not approved"}</strong></div><div><span>Signed artifact</span><strong>{proposal.approval?.signature_present ? `Verified · ${proposal.approval.signer_id}` : "Absent"}</strong></div><div><span>Canary</span><strong>{proposal.canary ? `${proposal.canary.passed ? "Passed" : "Failed"} · ${proposal.canary.failure_count} failures` : "Not run"}</strong></div></div></Panel>)}</div> : <div className="workflow-empty"><div className="empty-orbit"><Icon name="evolution" size={25} /></div><h2>No evolution proposals</h2><p>{runtimeStatus === "connected" ? "The durable evolution store is available. Proposal generation remains separate from permission and activation." : "Connect the authenticated Pandora service to inspect the durable evolution store."}</p></div>}</div>;
 }
 
 function SecondaryView({ view, runtimeStatus }: { view: Exclude<ViewId, "command" | "memory" | "workflows" | "engines">; runtimeStatus: RuntimeStatus }) {

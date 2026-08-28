@@ -1,8 +1,8 @@
 use crate::effect::{RequestError, Timestamp};
 use crate::events::RuntimeEvent;
 use crate::ids::{
-    ExecutionId, GeneId, HarnessId, IdError, PrincipalId, RequestDigest, SessionId, TenantId,
-    WorkspaceId,
+    ArtifactId, ExecutionId, GeneId, HarnessId, IdError, PrincipalId, ProposalId, RequestDigest,
+    SessionId, TenantId, WorkspaceId,
 };
 use crate::memory::{MemoryKind, MemoryTier};
 use serde::{Deserialize, Serialize};
@@ -334,6 +334,222 @@ pub struct ServiceToolSummary {
     operation: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServiceEvolutionEvaluation {
+    trajectory_score: u8,
+    outcome_score: u8,
+    holdout_passed: bool,
+    policy_passed: bool,
+    regression_passed: bool,
+    evaluated_at_unix_seconds: u64,
+    holdout_digest: Option<RequestDigest>,
+}
+
+impl ServiceEvolutionEvaluation {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        trajectory_score: u8,
+        outcome_score: u8,
+        holdout_passed: bool,
+        policy_passed: bool,
+        regression_passed: bool,
+        evaluated_at: Timestamp,
+        holdout_digest: Option<RequestDigest>,
+    ) -> Self {
+        Self {
+            trajectory_score,
+            outcome_score,
+            holdout_passed,
+            policy_passed,
+            regression_passed,
+            evaluated_at_unix_seconds: evaluated_at.as_unix_seconds(),
+            holdout_digest,
+        }
+    }
+
+    pub const fn trajectory_score(&self) -> u8 {
+        self.trajectory_score
+    }
+    pub const fn outcome_score(&self) -> u8 {
+        self.outcome_score
+    }
+    pub const fn holdout_passed(&self) -> bool {
+        self.holdout_passed
+    }
+    pub const fn policy_passed(&self) -> bool {
+        self.policy_passed
+    }
+    pub const fn regression_passed(&self) -> bool {
+        self.regression_passed
+    }
+    pub const fn evaluated_at_unix_seconds(&self) -> u64 {
+        self.evaluated_at_unix_seconds
+    }
+    pub fn holdout_digest(&self) -> Option<&RequestDigest> {
+        self.holdout_digest.as_ref()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServiceEvolutionApproval {
+    approver_id: PrincipalId,
+    policy_version: u32,
+    approved_at_unix_seconds: u64,
+    signer_id: PrincipalId,
+    signature_present: bool,
+}
+
+impl ServiceEvolutionApproval {
+    pub fn new(
+        approver_id: PrincipalId,
+        policy_version: u32,
+        approved_at: Timestamp,
+        signer_id: PrincipalId,
+        signature_present: bool,
+    ) -> Self {
+        Self {
+            approver_id,
+            policy_version,
+            approved_at_unix_seconds: approved_at.as_unix_seconds(),
+            signer_id,
+            signature_present,
+        }
+    }
+
+    pub fn approver_id(&self) -> &PrincipalId {
+        &self.approver_id
+    }
+    pub const fn policy_version(&self) -> u32 {
+        self.policy_version
+    }
+    pub const fn approved_at_unix_seconds(&self) -> u64 {
+        self.approved_at_unix_seconds
+    }
+    pub fn signer_id(&self) -> &PrincipalId {
+        &self.signer_id
+    }
+    pub const fn signature_present(&self) -> bool {
+        self.signature_present
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServiceEvolutionCanary {
+    passed: bool,
+    failure_count: u32,
+    note: String,
+    evaluated_at_unix_seconds: u64,
+}
+
+impl ServiceEvolutionCanary {
+    pub fn new(
+        passed: bool,
+        failure_count: u32,
+        note: impl Into<String>,
+        evaluated_at: Timestamp,
+    ) -> Self {
+        Self {
+            passed,
+            failure_count,
+            note: note.into(),
+            evaluated_at_unix_seconds: evaluated_at.as_unix_seconds(),
+        }
+    }
+
+    pub const fn passed(&self) -> bool {
+        self.passed
+    }
+    pub const fn failure_count(&self) -> u32 {
+        self.failure_count
+    }
+    pub fn note(&self) -> &str {
+        &self.note
+    }
+    pub const fn evaluated_at_unix_seconds(&self) -> u64 {
+        self.evaluated_at_unix_seconds
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServiceEvolutionSummary {
+    proposal_id: ProposalId,
+    source: String,
+    base_artifact: ArtifactId,
+    candidate_artifact: ArtifactId,
+    evidence_digest: RequestDigest,
+    expected_outcome: String,
+    created_at_unix_seconds: u64,
+    state: String,
+    evaluation: Option<ServiceEvolutionEvaluation>,
+    approval: Option<ServiceEvolutionApproval>,
+    canary: Option<ServiceEvolutionCanary>,
+}
+
+impl ServiceEvolutionSummary {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        proposal_id: ProposalId,
+        source: impl Into<String>,
+        base_artifact: ArtifactId,
+        candidate_artifact: ArtifactId,
+        evidence_digest: RequestDigest,
+        expected_outcome: impl Into<String>,
+        created_at: Timestamp,
+        state: impl Into<String>,
+        evaluation: Option<ServiceEvolutionEvaluation>,
+        approval: Option<ServiceEvolutionApproval>,
+        canary: Option<ServiceEvolutionCanary>,
+    ) -> Self {
+        Self {
+            proposal_id,
+            source: source.into(),
+            base_artifact,
+            candidate_artifact,
+            evidence_digest,
+            expected_outcome: expected_outcome.into(),
+            created_at_unix_seconds: created_at.as_unix_seconds(),
+            state: state.into(),
+            evaluation,
+            approval,
+            canary,
+        }
+    }
+
+    pub fn proposal_id(&self) -> &ProposalId {
+        &self.proposal_id
+    }
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+    pub fn base_artifact(&self) -> &ArtifactId {
+        &self.base_artifact
+    }
+    pub fn candidate_artifact(&self) -> &ArtifactId {
+        &self.candidate_artifact
+    }
+    pub fn evidence_digest(&self) -> &RequestDigest {
+        &self.evidence_digest
+    }
+    pub fn expected_outcome(&self) -> &str {
+        &self.expected_outcome
+    }
+    pub const fn created_at_unix_seconds(&self) -> u64 {
+        self.created_at_unix_seconds
+    }
+    pub fn state(&self) -> &str {
+        &self.state
+    }
+    pub const fn evaluation(&self) -> Option<&ServiceEvolutionEvaluation> {
+        self.evaluation.as_ref()
+    }
+    pub const fn approval(&self) -> Option<&ServiceEvolutionApproval> {
+        self.approval.as_ref()
+    }
+    pub const fn canary(&self) -> Option<&ServiceEvolutionCanary> {
+        self.canary.as_ref()
+    }
+}
+
 impl ServiceToolSummary {
     pub fn new(
         id: GeneId,
@@ -500,6 +716,14 @@ pub enum ServiceRequest {
         approval_id: String,
         allow: bool,
     },
+    EvolutionList {
+        protocol_version: u16,
+        limit: u16,
+    },
+    EvolutionInspect {
+        protocol_version: u16,
+        proposal_id: ProposalId,
+    },
     Run {
         protocol_version: u16,
         request: ServiceRunRequest,
@@ -620,6 +844,21 @@ impl ServiceRequest {
         })
     }
 
+    pub fn evolution_list(limit: u16) -> Result<Self, ServiceContractError> {
+        validate_page_limit(limit, MAX_SERVICE_SESSION_PAGE)?;
+        Ok(Self::EvolutionList {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            limit,
+        })
+    }
+
+    pub fn evolution_inspect(proposal_id: impl Into<String>) -> Result<Self, ServiceContractError> {
+        Ok(Self::EvolutionInspect {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            proposal_id: ProposalId::new(proposal_id)?,
+        })
+    }
+
     pub const fn run_resume(request: ServiceRunResumeRequest) -> Self {
         Self::RunResume {
             protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
@@ -669,6 +908,12 @@ impl ServiceRequest {
             | Self::ApprovalResolve {
                 protocol_version, ..
             }
+            | Self::EvolutionList {
+                protocol_version, ..
+            }
+            | Self::EvolutionInspect {
+                protocol_version, ..
+            }
             | Self::Run {
                 protocol_version, ..
             }
@@ -714,6 +959,13 @@ impl ServiceRequest {
             }
             Self::ApprovalInspect { approval_id, .. }
             | Self::ApprovalResolve { approval_id, .. } => validate_approval_id(approval_id),
+            Self::EvolutionList { limit, .. } => {
+                validate_page_limit(*limit, MAX_SERVICE_SESSION_PAGE)
+            }
+            Self::EvolutionInspect { proposal_id, .. } => {
+                ProposalId::new(proposal_id.as_str())?;
+                Ok(())
+            }
             Self::Run { request, .. } => request.validate(),
             Self::RunResume { request, .. } => request.validate(),
             Self::AgentRun { request, .. } => request.validate(),
@@ -1301,6 +1553,14 @@ pub enum ServiceResponse {
         protocol_version: u16,
         approval: ServiceApprovalSummary,
     },
+    EvolutionList {
+        protocol_version: u16,
+        proposals: Vec<ServiceEvolutionSummary>,
+    },
+    EvolutionInspect {
+        protocol_version: u16,
+        proposal: ServiceEvolutionSummary,
+    },
     Run {
         protocol_version: u16,
         run: ServiceRunResult,
@@ -1396,6 +1656,20 @@ impl ServiceResponse {
         }
     }
 
+    pub fn evolution_list(proposals: Vec<ServiceEvolutionSummary>) -> Self {
+        Self::EvolutionList {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            proposals,
+        }
+    }
+
+    pub const fn evolution_inspect(proposal: ServiceEvolutionSummary) -> Self {
+        Self::EvolutionInspect {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            proposal,
+        }
+    }
+
     pub const fn run(run: ServiceRunResult) -> Self {
         Self::Run {
             protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
@@ -1446,6 +1720,12 @@ impl ServiceResponse {
                 protocol_version, ..
             }
             | Self::ApprovalResolve {
+                protocol_version, ..
+            }
+            | Self::EvolutionList {
+                protocol_version, ..
+            }
+            | Self::EvolutionInspect {
                 protocol_version, ..
             }
             | Self::Run {

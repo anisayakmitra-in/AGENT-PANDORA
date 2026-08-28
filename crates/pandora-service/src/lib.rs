@@ -256,6 +256,14 @@ fn service_request(request: &JsonRpcRequest) -> Result<Option<ServiceRequest>, (
             let params: ApprovalResolveParams = deserialize_params(params)?;
             ServiceRequest::approval_resolve(params.approval_id, params.allow).map_err(|_| ())?
         }
+        "evolution.list" => {
+            let params: EvolutionListParams = deserialize_params(params)?;
+            ServiceRequest::evolution_list(params.limit).map_err(|_| ())?
+        }
+        "evolution.inspect" => {
+            let params: EvolutionInspectParams = deserialize_params(params)?;
+            ServiceRequest::evolution_inspect(params.proposal_id).map_err(|_| ())?
+        }
         "run.execute" => {
             let params: ServiceRunRequest = deserialize_params(params)?;
             ServiceRequest::run(params)
@@ -343,6 +351,16 @@ struct ApprovalResolveParams {
     allow: bool,
 }
 
+#[derive(Deserialize)]
+struct EvolutionListParams {
+    limit: u16,
+}
+
+#[derive(Deserialize)]
+struct EvolutionInspectParams {
+    proposal_id: String,
+}
+
 #[derive(Serialize)]
 struct JsonRpcResponse {
     jsonrpc: &'static str,
@@ -417,15 +435,17 @@ mod tests {
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode, header};
     use pandora_runtime::{
-        ApprovalStore, ExecutionController, RuntimeService, RuntimeServiceScope, ServiceTokenStore,
+        ApprovalStore, EvolutionEngine, ExecutionController, RuntimeService, RuntimeServiceScope,
+        ServiceTokenStore,
     };
     use pandora_runtime::{executors::WorkspaceRoot, sessions::SessionStore};
     use pandora_types::{
-        Capability, Operation, PolicyContext, PrincipalId, ServiceProviderSummary, TenantId,
-        WorkspaceId,
+        Capability, EvolutionPolicy, Operation, PolicyContext, PrincipalId, ServiceProviderSummary,
+        TenantId, WorkspaceId,
     };
     use serde_json::{Value, json};
     use std::path::PathBuf;
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
     use tower::ServiceExt;
@@ -484,6 +504,28 @@ mod tests {
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let body: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(body["error"]["data"]["code"], "agent_unavailable");
+    }
+
+    #[tokio::test]
+    async fn rpc_exposes_real_evolution_inventory() {
+        let fixture = Fixture::new();
+        let response = post(
+            &fixture,
+            Some(&fixture.token),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "evolution.list",
+                "params": {"limit": 64}
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["result"]["kind"], "evolution_list");
+        assert_eq!(body["result"]["proposals"], json!([]));
     }
 
     #[tokio::test]
@@ -877,5 +919,12 @@ mod tests {
                 None,
             )],
         )
+        .with_evolution(Arc::new(
+            EvolutionEngine::open(
+                root.join("evolution.sqlite3"),
+                EvolutionPolicy::production(1),
+            )
+            .unwrap(),
+        ))
     }
 }

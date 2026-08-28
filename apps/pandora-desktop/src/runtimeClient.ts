@@ -79,6 +79,39 @@ export type RuntimeApproval = {
   created_at_unix_seconds: number;
 };
 
+export type RuntimeEvolutionProposal = {
+  proposal_id: string;
+  source: string;
+  base_artifact: string;
+  candidate_artifact: string;
+  evidence_digest: string;
+  expected_outcome: string;
+  created_at_unix_seconds: number;
+  state: string;
+  evaluation: {
+    trajectory_score: number;
+    outcome_score: number;
+    holdout_passed: boolean;
+    policy_passed: boolean;
+    regression_passed: boolean;
+    evaluated_at_unix_seconds: number;
+    holdout_digest: string | null;
+  } | null;
+  approval: {
+    approver_id: string;
+    policy_version: number;
+    approved_at_unix_seconds: number;
+    signer_id: string;
+    signature_present: boolean;
+  } | null;
+  canary: {
+    passed: boolean;
+    failure_count: number;
+    note: string;
+    evaluated_at_unix_seconds: number;
+  } | null;
+};
+
 export type RuntimeRun = {
   mode: "direct" | "agent";
   session_id: string;
@@ -185,6 +218,16 @@ type ApprovalListResponse = {
 type ApprovalResponse = {
   kind: "approval_inspect" | "approval_resolve";
   approval: RuntimeApproval;
+};
+
+type EvolutionListResponse = {
+  kind: "evolution_list";
+  proposals: RuntimeEvolutionProposal[];
+};
+
+type EvolutionInspectResponse = {
+  kind: "evolution_inspect";
+  proposal: RuntimeEvolutionProposal;
 };
 
 const endpointStorageKey = "pandora.runtime.endpoint";
@@ -350,6 +393,25 @@ export class RuntimeClient {
   async resolveApproval(approvalId: string, allow: boolean): Promise<RuntimeApproval> {
     const response = await this.call<ApprovalResponse>("approval.resolve", { approval_id: approvalId, allow });
     return response.approval;
+  }
+
+  async evolution(limit = 64): Promise<RuntimeEvolutionProposal[]> {
+    try {
+      const response = await this.call<EvolutionListResponse>("evolution.list", { limit });
+      return response.proposals;
+    } catch (error: unknown) {
+      if (error instanceof Error && error.message === "method_not_found") {
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  async inspectEvolution(proposalId: string): Promise<RuntimeEvolutionProposal> {
+    const response = await this.call<EvolutionInspectResponse>("evolution.inspect", {
+      proposal_id: proposalId,
+    });
+    return response.proposal;
   }
 
   async events(sessionId: string, limit = 256): Promise<RuntimeEvent[]> {

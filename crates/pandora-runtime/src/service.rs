@@ -3,18 +3,21 @@ use crate::agent_loop::{
 };
 use crate::approvals::{ApprovalError, ApprovalRequest, ApprovalStore, PendingApproval};
 use crate::evaluation_engine::EvaluationEngine;
+use crate::evolution::{EvolutionEngine, EvolutionError, EvolutionRecord};
 use crate::execution_controller::{ExecutionController, RunStatus, RunSummary, RuntimeError};
 use crate::sessions::{SessionError, SessionStore};
 use crate::tool_engine::ToolEngine;
 use pandora_provider::Provider;
 use pandora_types::{
     EvaluationContractError, EvaluationReceipt, EvaluationRequest, EventPayload, EventType,
-    IdError, MemoryTier, PrincipalId, ServiceAgentResumeRequest, ServiceAgentRunRequest,
-    ServiceAgentRunResult, ServiceApprovalSummary, ServiceContractError, ServiceEngineSummary,
-    ServiceEventPage, ServiceHarnessSummary, ServiceHealth, ServiceMemoryPage, ServiceMemoryRecord,
-    ServiceProviderSummary, ServiceRequest, ServiceResponse, ServiceRunRequest, ServiceRunResult,
-    ServiceRunResumeRequest, ServiceSessionDetail, ServiceSessionSummary, ServiceToolSummary,
-    Session, SessionId, TaskIntent, TenantId, Timestamp, WorkspaceId,
+    IdError, MemoryTier, PrincipalId, ProposalId, ServiceAgentResumeRequest,
+    ServiceAgentRunRequest, ServiceAgentRunResult, ServiceApprovalSummary, ServiceContractError,
+    ServiceEngineSummary, ServiceEventPage, ServiceEvolutionApproval, ServiceEvolutionCanary,
+    ServiceEvolutionEvaluation, ServiceEvolutionSummary, ServiceHarnessSummary, ServiceHealth,
+    ServiceMemoryPage, ServiceMemoryRecord, ServiceProviderSummary, ServiceRequest,
+    ServiceResponse, ServiceRunRequest, ServiceRunResult, ServiceRunResumeRequest,
+    ServiceSessionDetail, ServiceSessionSummary, ServiceToolSummary, Session, SessionId,
+    TaskIntent, TenantId, Timestamp, WorkspaceId,
 };
 use std::fmt;
 use std::path::Path;
@@ -60,6 +63,8 @@ pub enum RuntimeServiceError {
     Runtime(RuntimeError),
     Agent(AgentLoopError),
     AgentUnavailable,
+    Evolution(EvolutionError),
+    EvolutionUnavailable,
     Approval(ApprovalError),
     Session(SessionError),
 }
@@ -80,6 +85,9 @@ impl RuntimeServiceError {
             Self::Runtime(_) => "runtime_execution_failed",
             Self::Agent(_) => "agent_execution_failed",
             Self::AgentUnavailable => "agent_unavailable",
+            Self::Evolution(EvolutionError::NotFound) => "evolution_proposal_not_found",
+            Self::Evolution(_) => "evolution_store_failed",
+            Self::EvolutionUnavailable => "evolution_unavailable",
             Self::Approval(ApprovalError::NotFound) => "approval_not_found",
             Self::Approval(ApprovalError::Expired) => "approval_expired",
             Self::Approval(ApprovalError::Terminal) => "approval_terminal",
@@ -109,6 +117,10 @@ impl fmt::Display for RuntimeServiceError {
             Self::Runtime(_) => formatter.write_str("governed runtime execution failed"),
             Self::Agent(_) => formatter.write_str("governed agent execution failed"),
             Self::AgentUnavailable => formatter.write_str("agent provider is not configured"),
+            Self::Evolution(error) => error.fmt(formatter),
+            Self::EvolutionUnavailable => {
+                formatter.write_str("evolution records are not configured")
+            }
             Self::Approval(error) => error.fmt(formatter),
             Self::Session(error) => error.fmt(formatter),
         }
@@ -147,6 +159,12 @@ impl From<AgentLoopError> for RuntimeServiceError {
     }
 }
 
+impl From<EvolutionError> for RuntimeServiceError {
+    fn from(error: EvolutionError) -> Self {
+        Self::Evolution(error)
+    }
+}
+
 impl From<ApprovalError> for RuntimeServiceError {
     fn from(error: ApprovalError) -> Self {
         Self::Approval(error)
@@ -166,6 +184,7 @@ pub struct RuntimeService {
     scope: RuntimeServiceScope,
     providers: Vec<ServiceProviderSummary>,
     agent: Option<RuntimeServiceAgent>,
+    evolution: Option<Arc<EvolutionEngine>>,
     next_session: AtomicU64,
 }
 
@@ -199,6 +218,7 @@ impl RuntimeService {
             scope,
             providers,
             agent: None,
+            evolution: None,
             next_session: AtomicU64::new(1),
         }
     }
@@ -219,6 +239,11 @@ impl RuntimeService {
             skill_context,
         });
         Ok(self)
+    }
+
+    pub fn with_evolution(mut self, evolution: Arc<EvolutionEngine>) -> Self {
+        self.evolution = Some(evolution);
+        self
     }
 
     pub fn scope(&self) -> &RuntimeServiceScope {
@@ -258,6 +283,10 @@ impl RuntimeService {
             ServiceRequest::ApprovalResolve {
                 approval_id, allow, ..
             } => self.resolve_approval(approval_id, *allow, now),
+            ServiceRequest::EvolutionList { limit, .. } => self.list_evolution(*limit),
+            ServiceRequest::EvolutionInspect { proposal_id, .. } => {
+                self.inspect_evolution(proposal_id)
+            }
             ServiceRequest::Run { request, .. } => self.run(request, now),
             ServiceRequest::RunResume { request, .. } => self.resume_run(request, now),
             ServiceRequest::AgentRun { request, .. } => self.run_agent(request, now),
@@ -595,6 +624,33 @@ impl RuntimeService {
             self.scope.workspace_id(),
         )?;
         Ok(approval)
+    }
+
+    fn list_evolution(&self, limit: u16) -> Result<ServiceResponse, RuntimeServiceError> {
+        let engine = self
+            .evolution
+            .as_ref()
+            .ok_or(RuntimeServiceError::EvolutionUnavailable)?;
+        let proposals = engine
+            .list()?
+            .into_iter()
+            .take(usize::from(limit))
+            .map(service_evolution_summary)
+            .collect();
+        Ok(ServiceResponse::evolution_list(proposals))
+    }
+
+    fn inspect_evolution(
+        &self,
+        proposal_id: &ProposalId,
+    ) -> Result<ServiceResponse, RuntimeServiceError> {
+        let engine = self
+            .evolution
+            .as_ref()
+            .ok_or(RuntimeServiceError::EvolutionUnavailable)?;
+        Ok(ServiceResponse::evolution_inspect(
+            service_evolution_summary(engine.inspect(proposal_id)?),
+        ))
     }
 
     fn run(
@@ -1043,6 +1099,54 @@ fn service_approval_request_summary(task: &str, capability: &str) -> String {
     format!("{capability} for {action} on {target}")
 }
 
+fn service_evolution_summary(record: EvolutionRecord) -> ServiceEvolutionSummary {
+    let proposal = record.proposal();
+    let evaluation = record.evaluation().map(|evaluation| {
+        ServiceEvolutionEvaluation::new(
+            evaluation.trajectory_score(),
+            evaluation.outcome_score(),
+            evaluation.holdout_passed(),
+            evaluation.policy_passed(),
+            evaluation.regression_passed(),
+            evaluation.evaluated_at(),
+            evaluation.holdout_digest().cloned(),
+        )
+    });
+    let approval = record
+        .approval()
+        .zip(record.signature())
+        .map(|(approval, signature)| {
+            ServiceEvolutionApproval::new(
+                approval.approver().clone(),
+                approval.policy_version(),
+                approval.approved_at(),
+                signature.signer().clone(),
+                !signature.signature().is_empty(),
+            )
+        });
+    let canary = record.canary().map(|canary| {
+        ServiceEvolutionCanary::new(
+            canary.passed(),
+            canary.failure_count(),
+            canary.note(),
+            canary.evaluated_at(),
+        )
+    });
+    ServiceEvolutionSummary::new(
+        proposal.proposal_id().clone(),
+        proposal.source().as_str(),
+        proposal.base_artifact().clone(),
+        proposal.candidate_artifact().clone(),
+        proposal.evidence_digest().clone(),
+        proposal.expected_outcome(),
+        proposal.created_at(),
+        record.state().as_str(),
+        evaluation,
+        approval,
+        canary,
+    )
+}
+
 fn service_session_summary(session: Session) -> ServiceSessionSummary {
     ServiceSessionSummary::new(
         session.id().clone(),
@@ -1079,8 +1183,9 @@ mod tests {
         ToolCall,
     };
     use pandora_types::{
-        Capability, ContextClassification, MemoryApproval, MemoryKind, MemoryRecord, MemoryScope,
-        Operation, PolicyContext,
+        ArtifactId, ArtifactSignature, Capability, ContextClassification, EvolutionPolicy,
+        EvolutionSource, HoldoutEvaluation, MemoryApproval, MemoryKind, MemoryRecord, MemoryScope,
+        MutationProposal, Operation, ParliamentApproval, PolicyContext, RequestDigest,
     };
     use std::sync::Mutex;
 
@@ -1127,6 +1232,98 @@ mod tests {
                 .pop()
                 .ok_or(ProviderError::InvalidResponse)
         }
+    }
+
+    #[test]
+    fn evolution_inventory_is_real_and_redacts_signature_material() {
+        let root = crate::test_support::new_temp_dir("pandora-runtime-service-evolution").unwrap();
+        let scope = RuntimeServiceScope::new(
+            PrincipalId::new("principal-a").unwrap(),
+            TenantId::new("tenant-a").unwrap(),
+            WorkspaceId::new("workspace-a").unwrap(),
+        );
+        let proposal_id = ProposalId::new("proposal-a").unwrap();
+        let evolution = Arc::new(
+            EvolutionEngine::open(
+                root.join("evolution.sqlite3"),
+                EvolutionPolicy::production(1),
+            )
+            .unwrap(),
+        );
+        evolution
+            .submit(
+                MutationProposal::new(
+                    proposal_id.as_str(),
+                    EvolutionSource::Gepa,
+                    ArtifactId::new("base-a").unwrap(),
+                    ArtifactId::new("candidate-a").unwrap(),
+                    RequestDigest::new("evidence-a").unwrap(),
+                    "improve verification reliability",
+                    Timestamp::from_unix_seconds(10),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        evolution
+            .record_evaluation(
+                HoldoutEvaluation::new(
+                    proposal_id.clone(),
+                    95,
+                    96,
+                    true,
+                    true,
+                    true,
+                    Timestamp::from_unix_seconds(11),
+                )
+                .with_holdout_digest("holdout-a")
+                .unwrap(),
+            )
+            .unwrap();
+        evolution
+            .approve(
+                &proposal_id,
+                ParliamentApproval::new(
+                    proposal_id.clone(),
+                    PrincipalId::new("parliament-a").unwrap(),
+                    1,
+                    Timestamp::from_unix_seconds(12),
+                ),
+                ArtifactSignature::new(
+                    ArtifactId::new("candidate-a").unwrap(),
+                    PrincipalId::new("signer-a").unwrap(),
+                    "secret-signature-material",
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let service = RuntimeService::new(
+            ExecutionController::new(WorkspaceRoot::new(&root).unwrap()),
+            SessionStore::open(root.join("sessions.sqlite3")).unwrap(),
+            ApprovalStore::open(root.join("sessions.sqlite3")).unwrap(),
+            scope,
+        )
+        .with_evolution(evolution);
+
+        let response = service
+            .handle(
+                &ServiceRequest::evolution_list(16).unwrap(),
+                Timestamp::from_unix_seconds(13),
+            )
+            .unwrap();
+        let ServiceResponse::EvolutionList { proposals, .. } = &response else {
+            panic!("expected an evolution list response");
+        };
+        assert_eq!(proposals.len(), 1);
+        assert_eq!(proposals[0].state(), "approved");
+        assert_eq!(
+            proposals[0].approval().unwrap().signer_id().as_str(),
+            "signer-a"
+        );
+        assert!(proposals[0].approval().unwrap().signature_present());
+        let serialized = serde_json::to_string(&response).unwrap();
+        assert!(!serialized.contains("secret-signature-material"));
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

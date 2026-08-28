@@ -7,6 +7,7 @@ const runtime = vi.hoisted(() => ({
   agentRun: vi.fn(),
   capabilities: vi.fn(),
   engines: vi.fn(),
+  evolution: vi.fn(),
   events: vi.fn(),
   health: vi.fn(),
   inspectSession: vi.fn(),
@@ -31,6 +32,7 @@ vi.mock("./runtimeClient", () => ({
     agentRun = runtime.agentRun;
     capabilities = runtime.capabilities;
     engines = runtime.engines;
+    evolution = runtime.evolution;
     events = runtime.events;
     health = runtime.health;
     inspectSession = runtime.inspectSession;
@@ -59,6 +61,7 @@ beforeEach(() => {
   runtime.sessions.mockResolvedValue([]);
   runtime.capabilities.mockResolvedValue([]);
   runtime.engines.mockResolvedValue([]);
+  runtime.evolution.mockResolvedValue([]);
   runtime.tools.mockResolvedValue([]);
   runtime.providers.mockResolvedValue([]);
   runtime.inspectSession.mockResolvedValue({ session, event_count: 0 });
@@ -118,6 +121,44 @@ describe("Pandora desktop run state", () => {
 
     await waitFor(() => expect(runtime.inspectSession).toHaveBeenCalledWith(session.session_id));
     expect(screen.getByLabelText("Pandora task")).toBeEnabled();
+  });
+
+  it("renders real governed evolution evidence without mutation controls", async () => {
+    runtime.evolution.mockResolvedValue([{
+      proposal_id: "proposal-a",
+      source: "gepa",
+      base_artifact: "base-a",
+      candidate_artifact: "candidate-a",
+      evidence_digest: "evidence-a",
+      expected_outcome: "Improve verification reliability",
+      created_at_unix_seconds: 10,
+      state: "approved",
+      evaluation: {
+        trajectory_score: 95,
+        outcome_score: 96,
+        holdout_passed: true,
+        policy_passed: true,
+        regression_passed: true,
+        evaluated_at_unix_seconds: 11,
+        holdout_digest: "holdout-a",
+      },
+      approval: {
+        approver_id: "parliament-a",
+        policy_version: 1,
+        approved_at_unix_seconds: 12,
+        signer_id: "signer-a",
+        signature_present: true,
+      },
+      canary: null,
+    }]);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Evolution/ }));
+
+    expect(await screen.findByText("Improve verification reliability")).toBeInTheDocument();
+    expect(screen.getByText("Passed · 95/96")).toBeInTheDocument();
+    expect(screen.getByText("parliament-a · policy v1")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /approve|activate|mutate/i })).not.toBeInTheDocument();
   });
 
   it("resolves and resumes an exact runtime approval", async () => {
