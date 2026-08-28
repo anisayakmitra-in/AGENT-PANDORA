@@ -19,8 +19,11 @@ pub enum ConfigError {
     InvalidProviderModel,
     InvalidCredentialEnvironment,
     InvalidProviderFallback,
+    InvalidRegistryUrl,
+    InvalidRegistryName,
     InvalidMcpServer,
     UnknownProvider,
+    UnknownRegistry,
     InvalidPath(&'static str),
     Serialization(serde_json::Error),
 }
@@ -34,13 +37,16 @@ impl fmt::Display for ConfigError {
             Self::InvalidProviderName => formatter.write_str("provider name is invalid"),
             Self::InvalidProviderModel => formatter.write_str("provider model is invalid"),
             Self::InvalidCredentialEnvironment => {
-                formatter.write_str("provider credential environment is invalid")
+                formatter.write_str("credential environment is invalid")
             }
             Self::InvalidProviderFallback => {
                 formatter.write_str("provider fallback configuration is invalid")
             }
+            Self::InvalidRegistryUrl => formatter.write_str("registry URL is invalid"),
+            Self::InvalidRegistryName => formatter.write_str("registry name is invalid"),
             Self::InvalidMcpServer => formatter.write_str("MCP server configuration is invalid"),
             Self::UnknownProvider => formatter.write_str("provider is not configured"),
+            Self::UnknownRegistry => formatter.write_str("registry is not configured"),
             Self::InvalidPath(field) => write!(formatter, "{field} path is invalid"),
             Self::Serialization(_) => formatter.write_str("could not serialize configuration"),
         }
@@ -65,6 +71,7 @@ impl From<std::io::Error> for ConfigError {
 
 pub const DEFAULT_PROVIDER_NAME: &str = "openai-compatible";
 pub const DEFAULT_PROVIDER_API_KEY_ENV: &str = "PANDORA_PROVIDER_API_KEY";
+pub const DEFAULT_REGISTRY_TOKEN_ENV: &str = "PANDORA_REGISTRY_TOKEN";
 const TOKENS_PER_MILLION: u128 = 1_000_000;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -202,6 +209,50 @@ impl ProviderProfile {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegistryProfile {
+    name: String,
+    base_url: String,
+    token_env: Option<String>,
+}
+
+impl RegistryProfile {
+    pub fn new(
+        name: impl Into<String>,
+        base_url: impl Into<String>,
+        token_env: Option<String>,
+    ) -> Result<Self, ConfigError> {
+        let name = name.into();
+        if !is_identifier(&name) {
+            return Err(ConfigError::InvalidRegistryName);
+        }
+        let base_url = validate_registry_url(base_url.into())?;
+        if token_env
+            .as_deref()
+            .is_some_and(|value| !is_environment_name(value))
+        {
+            return Err(ConfigError::InvalidCredentialEnvironment);
+        }
+        Ok(Self {
+            name,
+            base_url,
+            token_env,
+        })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    pub fn token_env(&self) -> Option<&str> {
+        self.token_env.as_deref()
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ConfigOverrides {
     config_path: Option<PathBuf>,
@@ -251,6 +302,8 @@ pub struct RuntimeConfig {
     active_provider: Option<String>,
     provider_url: Option<String>,
     provider_model: Option<String>,
+    registry_profiles: BTreeMap<String, RegistryProfile>,
+    active_registry: Option<String>,
     mcp_servers: BTreeMap<String, McpStdioConfig>,
     data_dir: PathBuf,
     workspace_dir: PathBuf,
@@ -360,6 +413,23 @@ impl RuntimeConfig {
             return Err(ConfigError::UnknownProvider);
         }
         validate_fallbacks(&provider_profiles)?;
+        let registry_profiles = file
+            .registries
+            .into_iter()
+            .map(|(name, profile)| {
+                let profile =
+                    RegistryProfile::new(name.clone(), profile.base_url, profile.token_env)?;
+                Ok((name, profile))
+            })
+            .collect::<Result<BTreeMap<_, _>, ConfigError>>()?;
+        let active_registry = file
+            .active_registry
+            .or_else(|| registry_profiles.keys().next().cloned());
+        if let Some(name) = active_registry.as_ref()
+            && !registry_profiles.contains_key(name)
+        {
+            return Err(ConfigError::UnknownRegistry);
+        }
         let mcp_servers = file
             .mcp_servers
             .into_iter()
@@ -404,6 +474,8 @@ impl RuntimeConfig {
             active_provider,
             provider_url,
             provider_model,
+            registry_profiles,
+            active_registry,
             mcp_servers,
             data_dir,
             workspace_dir,
@@ -436,6 +508,20 @@ impl RuntimeConfig {
                 })
                 .collect(),
             active_provider: self.active_provider.clone(),
+            registries: self
+                .registry_profiles
+                .iter()
+                .map(|(name, profile)| {
+                    (
+                        name.clone(),
+                        FileRegistryProfile {
+                            base_url: profile.base_url.clone(),
+                            token_env: profile.token_env.clone(),
+                        },
+                    )
+                })
+                .collect(),
+            active_registry: self.active_registry.clone(),
             mcp_servers: self
                 .mcp_servers
                 .iter()
@@ -533,6 +619,45 @@ impl RuntimeConfig {
             })
     }
 
+    pub fn registry_names(&self) -> Vec<String> {
+        self.registry_profiles.keys().cloned().collect()
+    }
+
+    pub fn active_registry(&self) -> Option<&str> {
+        self.active_registry.as_deref()
+    }
+
+    pub fn registry_profile(&self, name: &str) -> Option<&RegistryProfile> {
+        self.registry_profiles.get(name)
+    }
+
+    pub fn set_registry_profile(&mut self, profile: RegistryProfile) {
+        if self.active_registry.is_none() {
+            self.active_registry = Some(profile.name().to_owned());
+        }
+        self.registry_profiles
+            .insert(profile.name().to_owned(), profile);
+    }
+
+    pub fn set_active_registry(&mut self, name: impl Into<String>) -> Result<(), ConfigError> {
+        let name = name.into();
+        if !self.registry_profiles.contains_key(&name) {
+            return Err(ConfigError::UnknownRegistry);
+        }
+        self.active_registry = Some(name);
+        Ok(())
+    }
+
+    pub fn remove_registry_profile(&mut self, name: &str) -> bool {
+        if self.registry_profiles.remove(name).is_none() {
+            return false;
+        }
+        if self.active_registry.as_deref() == Some(name) {
+            self.active_registry = self.registry_profiles.keys().next().cloned();
+        }
+        true
+    }
+
     pub fn mcp_server_ids(&self) -> Vec<String> {
         self.mcp_servers.keys().cloned().collect()
     }
@@ -574,9 +699,19 @@ struct FileConfig {
     providers: BTreeMap<String, FileProviderProfile>,
     active_provider: Option<String>,
     #[serde(default)]
+    registries: BTreeMap<String, FileRegistryProfile>,
+    active_registry: Option<String>,
+    #[serde(default)]
     mcp_servers: BTreeMap<String, FileMcpServer>,
     data_dir: Option<String>,
     workspace_dir: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct FileRegistryProfile {
+    base_url: String,
+    #[serde(default)]
+    token_env: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -661,6 +796,31 @@ fn validate_provider_url(value: String) -> Result<String, ConfigError> {
         return Err(ConfigError::InvalidProviderUrl);
     }
     Ok(value)
+}
+
+fn validate_registry_url(value: String) -> Result<String, ConfigError> {
+    let parsed = Url::parse(&value).map_err(|_| ConfigError::InvalidRegistryUrl)?;
+    if parsed.username() != ""
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err(ConfigError::InvalidRegistryUrl);
+    }
+    let is_loopback_http = parsed.scheme() == "http"
+        && parsed.host_str().is_some_and(|host| {
+            host == "localhost"
+                || host
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+        });
+    if parsed.scheme() != "https" && !is_loopback_http {
+        return Err(ConfigError::InvalidRegistryUrl);
+    }
+    if parsed.host_str().is_none() {
+        return Err(ConfigError::InvalidRegistryUrl);
+    }
+    Ok(value.trim_end_matches('/').to_owned())
 }
 
 fn is_identifier(value: &str) -> bool {
@@ -755,7 +915,8 @@ fn write_atomic(path: &Path, data: &[u8]) -> Result<(), ConfigError> {
 
 #[cfg(test)]
 mod tests {
-    use super::write_atomic;
+    use super::{ConfigOverrides, RegistryProfile, RuntimeConfig, write_atomic};
+    use std::collections::BTreeMap;
     use std::fs;
     use std::path::PathBuf;
 
@@ -781,6 +942,72 @@ mod tests {
 
         assert!(path.is_dir());
         assert_no_temporary_files(&directory);
+    }
+
+    #[test]
+    fn registry_profiles_round_trip_and_reselect_after_removal() {
+        let directory = fixture("registries");
+        let path = directory.join("config.json");
+        let mut config = RuntimeConfig::from_sources(
+            &ConfigOverrides::default().with_config_path(&path),
+            &BTreeMap::new(),
+            &path,
+            directory.join("data"),
+            directory.join("workspace"),
+        )
+        .unwrap();
+        config.set_registry_profile(
+            RegistryProfile::new(
+                "private",
+                "https://registry.example.test/",
+                Some("PANDORA_PRIVATE_REGISTRY_TOKEN".to_owned()),
+            )
+            .unwrap(),
+        );
+        config.set_registry_profile(
+            RegistryProfile::new("public", "https://public.example.test", None).unwrap(),
+        );
+        config.set_active_registry("private").unwrap();
+        config.write().unwrap();
+
+        let mut reopened = RuntimeConfig::from_sources(
+            &ConfigOverrides::default().with_config_path(&path),
+            &BTreeMap::new(),
+            &path,
+            directory.join("data"),
+            directory.join("workspace"),
+        )
+        .unwrap();
+        assert_eq!(reopened.registry_names(), vec!["private", "public"]);
+        assert_eq!(reopened.active_registry(), Some("private"));
+        let private = reopened.registry_profile("private").unwrap();
+        assert_eq!(private.base_url(), "https://registry.example.test");
+        assert_eq!(private.token_env(), Some("PANDORA_PRIVATE_REGISTRY_TOKEN"));
+
+        assert!(reopened.remove_registry_profile("private"));
+        assert_eq!(reopened.active_registry(), Some("public"));
+        assert!(!reopened.remove_registry_profile("missing"));
+    }
+
+    #[test]
+    fn registry_profiles_reject_unsafe_urls_and_secret_names() {
+        assert!(RegistryProfile::new("unsafe", "http://registry.example.test", None).is_err());
+        assert!(
+            RegistryProfile::new(
+                "unsafe",
+                "https://token@registry.example.test",
+                Some("PANDORA_TOKEN".to_owned()),
+            )
+            .is_err()
+        );
+        assert!(
+            RegistryProfile::new(
+                "unsafe",
+                "https://registry.example.test",
+                Some("lowercase-token".to_owned()),
+            )
+            .is_err()
+        );
     }
 
     fn fixture(name: &str) -> PathBuf {

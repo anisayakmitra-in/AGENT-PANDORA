@@ -32,6 +32,7 @@ mod migration;
 mod orchestration;
 mod package;
 mod provider;
+mod registry;
 mod rollout;
 mod run;
 mod secret;
@@ -101,6 +102,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "skill" => skill::execute(&args[1..]),
         "subagent" => subagent::execute(&args[1..]),
         "provider" => provider::execute(&args[1..]),
+        "registry" => registry::execute(&args[1..]),
         "strategies" => strategies(&args[1..]),
         "tool" => tool::execute(&args[1..]),
         "tui" if json_requested => Err(CliError::usage("tui does not support --json")),
@@ -322,7 +324,7 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|tui|harness|slash|session|job|subagent|skill|package|memory|approval|provider|mcp|tool|orchestration|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor> [options]
+    r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|tui|harness|slash|session|job|subagent|skill|package|registry|memory|approval|provider|mcp|tool|orchestration|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor> [options]
 
 commands:
   help (or --help)
@@ -341,7 +343,8 @@ commands:
   subagent spawn --session <id> --execution <id> [--commit <sha>] [--provider <name>] [--harness <id> --harness-version <version>] [--max-turns <n>] [--max-tools <n>] [--max-tokens <n>] [--max-duration <seconds>] [--max-depth <n>] [--max-result-bytes <n>] <task>
   subagent list|inspect|cancel|mark-interrupted|cleanup <id> | work [--max-agents <1-8>]
   skill list|inspect|install|enable|disable|suspend|remove|restore <id-or-path>
-  package admit --manifest <path> --artifact <path> | validate --manifest <path> --artifact <path> | install <id> [version] --registry <url> [--token-env <name>] | install-github --repository <url> --commit <sha> --manifest <repo-path> --artifact <repo-path> [--token-env <name>] | list | inspect <id> <version> | enable|disable <id> <version> [--dry-run|--yes] | rollback <id> [--dry-run|--yes] | lock [--output <path>] | verify-lock [--lock <path>] | remove <id> <version> [--dry-run|--yes]
+  package admit --manifest <path> --artifact <path> | validate --manifest <path> --artifact <path> | install <id> [version] [--registry <url>|--registry-profile <name>] [--token-env <name>] | install-github --repository <url> --commit <sha> --manifest <repo-path> --artifact <repo-path> [--token-env <name>] | list | inspect <id> <version> | enable|disable <id> <version> [--dry-run|--yes] | rollback <id> [--dry-run|--yes] | lock [--output <path>] | verify-lock [--lock <path>] | remove <id> <version> [--dry-run|--yes]
+  registry list | set --name <name> --registry-url <url> [--token-env <name>] | use <name> | remove <name> --yes
   memory recall --session <id> --provider <name> --tier <l1|l2> [--id <memory-id>] [--limit <1-256>] | audit --session <id> --provider <name> | forget --session <id> --provider <name> <memory-id> [--yes] | promote --session <id> --provider <name> <memory-id> [--approval <id>]
   tool list|inspect <id>
   approval list|inspect|resolve

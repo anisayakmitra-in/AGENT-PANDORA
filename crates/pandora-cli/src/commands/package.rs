@@ -1,6 +1,7 @@
 use super::{load_config, parse_options};
 use crate::output::{CliError, CommandResult, success};
 use pandora_harnesses::{builtin_genes, builtin_harnesses};
+use pandora_runtime::config::DEFAULT_REGISTRY_TOKEN_ENV;
 use pandora_runtime::{
     ArtifactCatalog, GitHubPackageClient, GitHubPackageError, MAX_STORED_ARTIFACT_BYTES,
     PackageBinding, PackageRecord, PackageRegistryClient, PackageRegistryError, PackageStore,
@@ -12,7 +13,6 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
-const DEFAULT_REGISTRY_TOKEN_ENV: &str = "PANDORA_REGISTRY_TOKEN";
 const DEFAULT_GITHUB_TOKEN_ENV: &str = "PANDORA_GITHUB_TOKEN";
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
@@ -114,7 +114,14 @@ fn install_github(args: &[String]) -> Result<CommandResult, CliError> {
 fn install(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
         args,
-        &["config", "data-dir", "workspace", "registry", "token-env"],
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "registry",
+            "registry-profile",
+            "token-env",
+        ],
     )?;
     if !(1..=2).contains(&parsed.positionals.len()) {
         return Err(CliError::usage(
@@ -124,33 +131,61 @@ fn install(args: &[String]) -> Result<CommandResult, CliError> {
     let id = PackageId::new(parsed.positionals[0].clone())
         .map_err(|_| CliError::usage("package ID is invalid"))?;
     let version = parsed.positionals.get(1).map(String::as_str);
-    let registry = parsed
-        .value("registry")
-        .map(str::to_owned)
-        .or_else(|| std::env::var("PANDORA_REGISTRY_URL").ok())
-        .ok_or_else(|| {
+    if parsed.value("registry").is_some() && parsed.value("registry-profile").is_some() {
+        return Err(CliError::usage(
+            "package install accepts either '--registry' or '--registry-profile', not both",
+        ));
+    }
+    let config = load_config(&parsed)?;
+    let selected_profile = parsed.value("registry-profile").or_else(|| {
+        parsed
+            .value("registry")
+            .is_none()
+            .then(|| config.active_registry())
+            .flatten()
+    });
+    let (registry, profile_token_env, registry_profile) = if let Some(name) = selected_profile {
+        let profile = config.registry_profile(name).ok_or_else(|| {
             CliError::configuration(
-                "package install requires '--registry <url>' or PANDORA_REGISTRY_URL",
-                json!({}),
+                "registry profile is not configured",
+                json!({"registry_profile": name}),
             )
         })?;
+        (
+            profile.base_url().to_owned(),
+            profile.token_env().map(str::to_owned),
+            Some(profile.name().to_owned()),
+        )
+    } else {
+        let registry = parsed
+            .value("registry")
+            .map(str::to_owned)
+            .or_else(|| std::env::var("PANDORA_REGISTRY_URL").ok())
+            .ok_or_else(|| {
+                CliError::configuration(
+                    "package install requires a registry profile, '--registry <url>', or PANDORA_REGISTRY_URL",
+                    json!({}),
+                )
+            })?;
+        (registry, None, None)
+    };
     let token_env = parsed.value("token-env");
     if token_env.is_some_and(str::is_empty) {
         return Err(CliError::usage("--token-env requires a non-empty name"));
     }
-    let token_name = token_env.unwrap_or(DEFAULT_REGISTRY_TOKEN_ENV);
-    let token = match std::env::var(token_name) {
-        Ok(token) => Some(token),
-        Err(_) if token_env.is_some() => {
-            return Err(CliError::configuration(
-                "configured registry token environment variable is unavailable",
-                json!({"token_env": token_name}),
-            ));
-        }
-        Err(_) => None,
-    };
+    let token_name = token_env
+        .or(profile_token_env.as_deref())
+        .unwrap_or(DEFAULT_REGISTRY_TOKEN_ENV);
+    let token = super::provider::configured_credential(&config, token_name)?;
+    if token.is_none() && (token_env.is_some() || profile_token_env.is_some()) {
+        return Err(CliError::configuration(
+            "configured registry credential is unavailable",
+            json!({"token_env": token_name}),
+        ));
+    }
     let client = PackageRegistryClient::new(&registry, token).map_err(registry_error)?;
-    let store = store(&parsed)?;
+    let store =
+        PackageStore::open(config.data_dir().join("packages.sqlite3")).map_err(store_error)?;
     let record = client
         .install(&store, &id, version)
         .map_err(registry_error)?;
@@ -158,6 +193,7 @@ fn install(args: &[String]) -> Result<CommandResult, CliError> {
         "package install",
         json!({
             "registry": registry,
+            "registry_profile": registry_profile,
             "package": managed_package_value(&store, &record)?,
         }),
         format!(

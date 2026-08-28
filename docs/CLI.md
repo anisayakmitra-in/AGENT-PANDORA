@@ -648,6 +648,11 @@ pandora package admit --manifest <manifest.json> --artifact <artifact>
 pandora package validate --manifest <manifest.json> --artifact <artifact>
 pandora package install <id> [version] --registry <url>
 pandora package install <id> [version] --registry <url> --token-env <name>
+pandora registry set --name <name> --registry-url <url> [--token-env <name>]
+pandora registry list
+pandora registry use <name>
+pandora registry remove <name> --yes
+pandora package install <id> [version] [--registry-profile <name>]
 pandora package install-github --repository https://github.com/<owner>/<repo> --commit <full-sha> --manifest <repo-path> --artifact <repo-path>
 pandora package list
 pandora package inspect <id> <version>
@@ -774,9 +779,20 @@ registry, then downloads that release from the registry's exact-version endpoint
 The client follows no redirects, never contacts the package's `artifact_url`, and
 reads at most the artifact limit plus one byte. Registry URLs must use HTTPS;
 loopback HTTP is allowed for local development. Set `PANDORA_REGISTRY_URL` instead
-of `--registry` if preferred. Public reads need no token. For a protected registry,
-put the token in `PANDORA_REGISTRY_TOKEN` or name another environment variable with
-`--token-env`; tokens are not accepted as command-line values.
+of `--registry` if preferred.
+
+`registry set` persists a named base URL and optional credential-variable
+reference in Pandora's existing configuration. It never stores the credential
+value. The most recently configured or explicitly selected profile is active;
+`package install` uses that active profile when neither `--registry` nor
+`--registry-profile` is supplied. An explicit URL and profile cannot be combined.
+`registry remove` requires `--yes` and deterministically selects the next
+remaining profile if the active one is removed.
+
+Public reads need no token. For a protected registry, put the token in
+`PANDORA_REGISTRY_TOKEN`, name another environment variable with `--token-env`,
+or store the profile's named secret through Pandora's encrypted vault. Tokens are
+not accepted as command-line values and profile listings expose only the reference.
 
 `package install-github` admits a manifest and artifact from one GitHub repository
 at a full 40-character commit SHA. Branches, tags, abbreviated commits, redirects,

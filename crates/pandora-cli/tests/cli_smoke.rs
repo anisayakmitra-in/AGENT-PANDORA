@@ -5390,6 +5390,70 @@ fn package_meta_admission_survives_cli_restart_without_runtime_authority() {
 }
 
 #[test]
+fn registry_profiles_are_persistent_selectable_and_removable() {
+    let fixture = Fixture::new();
+    for arguments in [
+        [
+            "registry",
+            "set",
+            "--name",
+            "private",
+            "--registry-url",
+            "https://registry.example.test/",
+            "--token-env",
+            "PANDORA_PRIVATE_REGISTRY_TOKEN",
+            "--json",
+        ]
+        .as_slice(),
+        [
+            "registry",
+            "set",
+            "--name",
+            "public",
+            "--registry-url",
+            "https://public.example.test",
+            "--json",
+        ]
+        .as_slice(),
+        ["registry", "use", "private", "--json"].as_slice(),
+    ] {
+        let output = fixture
+            .command(arguments)
+            .output()
+            .expect("registry command should start");
+        assert_success_with_context(&output, "registry profile lifecycle");
+    }
+
+    let listed = fixture
+        .command(&["registry", "list", "--json"])
+        .output()
+        .expect("registry list should start");
+    assert_success(&listed);
+    let listed = parse_json(&listed);
+    let registries = listed["registries"].as_array().unwrap();
+    assert_eq!(registries.len(), 2);
+    assert_eq!(registries[0]["name"], "private");
+    assert_eq!(registries[0]["token_env"], "PANDORA_PRIVATE_REGISTRY_TOKEN");
+    assert_eq!(registries[0]["active"], true);
+    assert_eq!(registries[0]["base_url"], "https://registry.example.test");
+    assert_eq!(registries[1]["name"], "public");
+    assert!(registries[1]["token_env"].is_null());
+
+    let refused = fixture
+        .command(&["registry", "remove", "private", "--json"])
+        .output()
+        .expect("registry removal preview should start");
+    assert!(!refused.status.success());
+
+    let removed = fixture
+        .command(&["registry", "remove", "private", "--yes", "--json"])
+        .output()
+        .expect("registry removal should start");
+    assert_success(&removed);
+    assert_eq!(parse_json(&removed)["active_registry"], "public");
+}
+
+#[test]
 fn package_install_fetches_and_admits_one_exact_registry_release() {
     let artifact = b"registry gene artifact\n";
     let content_hash = hash_artifact(artifact);
@@ -5475,16 +5539,27 @@ fn package_install_fetches_and_admits_one_exact_registry_release() {
 
     let fixture = Fixture::new();
     let registry = format!("http://{address}");
+    let configured = fixture
+        .command(&[
+            "registry",
+            "set",
+            "--name",
+            "fixture",
+            "--registry-url",
+            &registry,
+            "--token-env",
+            "PANDORA_TEST_REGISTRY_TOKEN",
+            "--json",
+        ])
+        .output()
+        .expect("registry profile setup should start");
+    assert_success_with_context(&configured, "registry set");
     let output = fixture
         .command(&[
             "package",
             "install",
             "owner/package",
             "1.0.0-beta.1+build.5",
-            "--registry",
-            &registry,
-            "--token-env",
-            "PANDORA_TEST_REGISTRY_TOKEN",
             "--json",
         ])
         .env("PANDORA_TEST_REGISTRY_TOKEN", "registry-secret")

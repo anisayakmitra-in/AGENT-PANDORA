@@ -167,9 +167,26 @@ struct NativeConfigurationResult {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct RegistryConfiguration {
+    name: String,
+    base_url: String,
+    token_environment: String,
+    token: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeRegistryResult {
+    message: String,
+    data: Value,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct RegistryPackageInstall {
     package_id: String,
     version: String,
+    registry_profile: String,
     registry_url: String,
     token: String,
 }
@@ -315,6 +332,74 @@ fn configure_mcp(input: McpConfiguration) -> Result<NativeConfigurationResult, S
 }
 
 #[tauri::command]
+fn list_registry_profiles() -> Result<NativeRegistryResult, String> {
+    let args = vec![
+        "registry".to_owned(),
+        "list".to_owned(),
+        "--json".to_owned(),
+    ];
+    let data = run_cli_json(&args, "listing registry profiles")?;
+    let count = data
+        .get("registries")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or_default();
+    Ok(NativeRegistryResult {
+        message: format!("{count} registry profile(s) configured."),
+        data,
+    })
+}
+
+#[tauri::command]
+fn configure_registry_profile(
+    mut input: RegistryConfiguration,
+) -> Result<NativeConfigurationResult, String> {
+    validate_identifier(&input.name, "registry profile")?;
+    validate_registry_url(&input.base_url)?;
+    if !input.token_environment.is_empty() {
+        validate_environment_name(&input.token_environment)?;
+    }
+    let mut token = Zeroizing::new(std::mem::take(&mut input.token));
+    if token.len() >= 64 * 1024 || token.contains('\0') {
+        return Err("registry token exceeds Pandora's secret size limit".to_owned());
+    }
+    if !token.is_empty() && input.token_environment.is_empty() {
+        return Err("a registry token requires a secret reference".to_owned());
+    }
+    if !token.is_empty() {
+        let secret_args = vec![
+            "secret".to_owned(),
+            "set".to_owned(),
+            input.token_environment.clone(),
+            "--value-stdin".to_owned(),
+            "--json".to_owned(),
+        ];
+        run_cli_with_secret(
+            &secret_args,
+            &mut token,
+            "storing the encrypted registry token",
+        )?;
+    }
+    let mut args = vec![
+        "registry".to_owned(),
+        "set".to_owned(),
+        "--name".to_owned(),
+        input.name.clone(),
+        "--registry-url".to_owned(),
+        input.base_url,
+    ];
+    if !input.token_environment.is_empty() {
+        args.extend(["--token-env".to_owned(), input.token_environment]);
+    }
+    args.push("--json".to_owned());
+    run_cli(&args, "saving the registry profile")?;
+    Ok(NativeConfigurationResult {
+        message: format!("Registry {} configured.", input.name),
+        restart_required: false,
+    })
+}
+
+#[tauri::command]
 fn list_local_packages() -> Result<NativePackageResult, String> {
     let args = vec!["package".to_owned(), "list".to_owned(), "--json".to_owned()];
     let data = run_cli_json(&args, "listing local packages")?;
@@ -331,7 +416,14 @@ fn install_registry_package(
 ) -> Result<NativePackageResult, String> {
     validate_package_id(&input.package_id)?;
     let version = optional_package_version(&input.version)?;
-    validate_registry_url(&input.registry_url)?;
+    if input.registry_profile.is_empty() {
+        validate_registry_url(&input.registry_url)?;
+    } else {
+        validate_identifier(&input.registry_profile, "registry profile")?;
+        if !input.registry_url.is_empty() {
+            return Err("choose a registry profile or a registry URL, not both".to_owned());
+        }
+    }
     let mut token = Zeroizing::new(std::mem::take(&mut input.token));
     if token.len() >= 64 * 1024 || token.contains('\0') {
         return Err("registry token exceeds Pandora's secret size limit".to_owned());
@@ -345,11 +437,12 @@ fn install_registry_package(
     if let Some(version) = version {
         args.push(version);
     }
-    args.extend([
-        "--registry".to_owned(),
-        input.registry_url,
-        "--json".to_owned(),
-    ]);
+    if input.registry_profile.is_empty() {
+        args.extend(["--registry".to_owned(), input.registry_url]);
+    } else {
+        args.extend(["--registry-profile".to_owned(), input.registry_profile]);
+    }
+    args.push("--json".to_owned());
     let data = if token.is_empty() {
         run_cli_json(&args, "installing the registry package")?
     } else {
@@ -1188,6 +1281,8 @@ fn main() {
             stop_local_service,
             configure_provider,
             configure_mcp,
+            list_registry_profiles,
+            configure_registry_profile,
             list_local_packages,
             install_registry_package,
             install_github_package,

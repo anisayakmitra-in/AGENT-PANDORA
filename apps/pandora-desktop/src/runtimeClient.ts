@@ -47,6 +47,20 @@ export type McpConfiguration = {
   mode: "auto" | "modern-only" | "legacy-only";
 };
 
+export type RegistryProfile = {
+  name: string;
+  base_url: string;
+  token_env: string | null;
+  active: boolean;
+};
+
+export type RegistryConfiguration = {
+  name: string;
+  baseUrl: string;
+  tokenEnvironment: string;
+  token: string;
+};
+
 export type NativeConfigurationResult = {
   message: string;
   restartRequired: boolean;
@@ -115,8 +129,16 @@ export type NativePackageResult = {
 export type RegistryPackageInstall = {
   packageId: string;
   version: string;
+  registryProfile: string;
   registryUrl: string;
   token: string;
+};
+
+export type NativeRegistryResult = {
+  message: string;
+  data: {
+    registries?: RegistryProfile[];
+  };
 };
 
 export type GitHubPackageInstall = {
@@ -457,6 +479,23 @@ export async function configureMcp(input: McpConfiguration): Promise<NativeConfi
     throw new Error("MCP configuration is available only in the Pandora desktop app");
   }
   return invoke<NativeConfigurationResult>("configure_mcp", { input });
+}
+
+export async function listRegistryProfiles(): Promise<NativeRegistryResult> {
+  if (!isNativeRuntime()) {
+    return {
+      message: "Registry profiles are available only in the Pandora desktop app.",
+      data: { registries: [] },
+    };
+  }
+  return invoke<NativeRegistryResult>("list_registry_profiles");
+}
+
+export async function configureRegistryProfile(input: RegistryConfiguration): Promise<NativeConfigurationResult> {
+  if (!isNativeRuntime()) {
+    throw new Error("Registry configuration is available only in the Pandora desktop app");
+  }
+  return invoke<NativeConfigurationResult>("configure_registry_profile", { input });
 }
 
 export async function listLocalPackages(): Promise<NativePackageResult> {

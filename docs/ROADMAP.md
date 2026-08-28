@@ -32,8 +32,10 @@ model.
 Status: in progress. The desktop now has Flow, Evidence, and Context disclosure,
 a Harness Lab for runtime-reported Genes, plugins and tools, authority, and
 receipt posture, plus a scoped Background Runs surface for durable orchestration
-inspection, exact queued cancellation, and safely reconciled resume. Deeper
-artifact previews and provider configuration remain.
+inspection, exact queued cancellation, safely reconciled resume, native BYOK
+provider and MCP configuration, persistent registry profiles, and governed
+registry, pinned-GitHub, and local package admission. Replaceable packaged
+Harness execution and the remaining ecosystem lifecycle still remain.
 
 - Progressive disclosure for plans, evidence, receipts, approvals, and tool
   state.

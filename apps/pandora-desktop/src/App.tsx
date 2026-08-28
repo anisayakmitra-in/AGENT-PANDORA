@@ -3,11 +3,13 @@ import {
   admitLocalPackage,
   configureMcp,
   configureProvider,
+  configureRegistryProfile,
   disableLocalPackage,
   enableLocalPackage,
   installGitHubPackage,
   installRegistryPackage,
   listLocalPackages,
+  listRegistryProfiles,
   loadRuntimeEndpoint,
   isNativeRuntime,
   lockLocalPackages,
@@ -37,6 +39,7 @@ import {
   type RuntimeOrchestrationRun,
   type RuntimePackage,
   type RuntimeProvider,
+  type RegistryProfile,
   type RuntimeStatus,
   type RuntimeSession,
   type RuntimeSessionDetail,
@@ -1590,6 +1593,8 @@ function CapabilitiesView({ harnesses, tools, runtimeStatus, native }: { harness
 
 function PackageManager({ native }: { native: boolean }) {
   const [packages, setPackages] = useState<RuntimePackage[]>([]);
+  const [registryProfiles, setRegistryProfiles] = useState<RegistryProfile[]>([]);
+  const [registryProfile, setRegistryProfile] = useState("");
   const [selectedIdentity, setSelectedIdentity] = useState("");
   const [sourceTab, setSourceTab] = useState<"registry" | "github" | "local">("registry");
   const [packageId, setPackageId] = useState("");
@@ -1612,6 +1617,7 @@ function PackageManager({ native }: { native: boolean }) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const selectedPackage = packages.find((item) => `${item.id}@${item.version}` === selectedIdentity) ?? packages[0] ?? null;
+  const selectedRegistryProfile = registryProfiles.find((profile) => profile.name === registryProfile) ?? null;
 
   useEffect(() => {
     setRemoveTarget(null);
@@ -1661,6 +1667,33 @@ function PackageManager({ native }: { native: boolean }) {
     };
   }, [native]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!native) {
+      setRegistryProfiles([]);
+      setRegistryProfile("");
+      return;
+    }
+    listRegistryProfiles()
+      .then((result) => {
+        if (cancelled) return;
+        const profiles = result.data.registries ?? [];
+        setRegistryProfiles(profiles);
+        setRegistryProfile((current) => profiles.some((profile) => profile.name === current)
+          ? current
+          : profiles.find((profile) => profile.active)?.name ?? "");
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRegistryProfiles([]);
+          setRegistryProfile("");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [native]);
+
   const completeOperation = async (operation: () => Promise<{ message: string; restartRequired: boolean }>) => {
     setError("");
     setMessage("");
@@ -1677,13 +1710,14 @@ function PackageManager({ native }: { native: boolean }) {
 
   const submitRegistry = async (event: FormEvent) => {
     event.preventDefault();
-    if (!packageId.trim() || !registryUrl.trim() || busy) return;
+    if (!packageId.trim() || (!registryProfile && !registryUrl.trim()) || busy) return;
     setBusy("install");
     try {
       await completeOperation(() => installRegistryPackage({
         packageId: packageId.trim(),
         version: version.trim(),
-        registryUrl: registryUrl.trim(),
+        registryProfile,
+        registryUrl: registryProfile ? "" : registryUrl.trim(),
         token: registryToken,
       }));
     } finally {
@@ -1846,9 +1880,10 @@ function PackageManager({ native }: { native: boolean }) {
           <form className="package-form" onSubmit={submitRegistry}>
             <label><span>Package ID</span><input aria-label="Registry package ID" value={packageId} onChange={(event) => setPackageId(event.target.value)} placeholder="publisher/gene" maxLength={256} autoComplete="off" spellCheck={false} /></label>
             <label><span>Exact version <small>optional current release</small></span><input aria-label="Registry package version" value={version} onChange={(event) => setVersion(event.target.value)} placeholder="1.0.0" maxLength={128} autoComplete="off" spellCheck={false} /></label>
-            <label className="package-form-wide"><span>M-Place registry URL</span><input aria-label="Package registry URL" value={registryUrl} onChange={(event) => setRegistryUrl(event.target.value)} placeholder="https://registry.example.com" maxLength={2048} autoComplete="url" spellCheck={false} /></label>
+            <label className="package-form-wide"><span>Saved registry <small>optional · configured on this device</small></span><select aria-label="Saved registry profile" value={registryProfile} onChange={(event) => setRegistryProfile(event.target.value)}><option value="">Custom URL for this install</option>{registryProfiles.map((profile) => <option value={profile.name} key={profile.name}>{profile.name}{profile.active ? " · active" : ""}</option>)}</select></label>
+            <label className="package-form-wide"><span>M-Place registry URL</span><input aria-label="Package registry URL" value={selectedRegistryProfile?.base_url ?? registryUrl} onChange={(event) => setRegistryUrl(event.target.value)} placeholder="https://registry.example.com" maxLength={2048} autoComplete="url" spellCheck={false} disabled={Boolean(selectedRegistryProfile)} /></label>
             <label className="package-form-wide"><span>Registry token <small>optional · process-scoped only</small></span><input aria-label="Package registry token" type="password" value={registryToken} onChange={(event) => setRegistryToken(event.target.value)} autoComplete="new-password" /></label>
-            <div className="package-form-footer"><p>HTTPS only outside loopback. Redirects and registry-controlled artifact URLs are refused by the existing client.</p><button className="button button-primary" type="submit" disabled={Boolean(busy) || !packageId.trim() || !registryUrl.trim()}>{busy === "install" ? "Installing…" : "Fetch and admit"}</button></div>
+            <div className="package-form-footer"><p>Saved profiles contain only the URL and a secret reference. Redirects and registry-controlled artifact URLs are refused by the existing client.</p><button className="button button-primary" type="submit" disabled={Boolean(busy) || !packageId.trim() || (!registryProfile && !registryUrl.trim())}>{busy === "install" ? "Installing…" : "Fetch and admit"}</button></div>
           </form>
         ) : sourceTab === "github" ? (
           <form className="package-form" onSubmit={submitGitHub}>
@@ -1938,7 +1973,7 @@ function SettingsView({ theme, onThemeChange, runtimeStatus, health, native, end
 function ConnectionView({ endpoint, runtimeStatus, runtimeError, health, providers, sessions, selectedSessionId, selectedSession, native, serviceActive, onConnect, onStartService, onStopService, onSelectSession }: { endpoint: string; runtimeStatus: RuntimeStatus; runtimeError: string; health: RuntimeHealth | null; providers: RuntimeProvider[]; sessions: RuntimeSession[]; selectedSessionId: string; selectedSession: RuntimeSessionDetail | null; native: boolean; serviceActive: boolean; onConnect: (endpoint: string, token: string) => void; onStartService: () => Promise<void>; onStopService: () => Promise<void>; onSelectSession: (sessionId: string) => Promise<void> }) {
   const [draftEndpoint, setDraftEndpoint] = useState(endpoint);
   const [draftToken, setDraftToken] = useState("");
-  const [configurationTab, setConfigurationTab] = useState<"provider" | "mcp">("provider");
+  const [configurationTab, setConfigurationTab] = useState<"provider" | "mcp" | "registry">("provider");
   const [configurationBusy, setConfigurationBusy] = useState(false);
   const [configurationMessage, setConfigurationMessage] = useState("");
   const [configurationError, setConfigurationError] = useState("");
@@ -1952,6 +1987,10 @@ function ConnectionView({ endpoint, runtimeStatus, runtimeError, health, provide
   const [mcpProgram, setMcpProgram] = useState("");
   const [mcpArguments, setMcpArguments] = useState("[]");
   const [mcpMode, setMcpMode] = useState<"auto" | "modern-only" | "legacy-only">("auto");
+  const [registryName, setRegistryName] = useState("m-place");
+  const [registryBaseUrl, setRegistryBaseUrl] = useState("");
+  const [registryTokenEnvironment, setRegistryTokenEnvironment] = useState("");
+  const [registryProfileToken, setRegistryProfileToken] = useState("");
 
   useEffect(() => setDraftEndpoint(endpoint), [endpoint]);
 
@@ -2006,8 +2045,30 @@ function ConnectionView({ endpoint, runtimeStatus, runtimeError, health, provide
     }
   };
 
+  const submitRegistryProfile = async (event: FormEvent) => {
+    event.preventDefault();
+    setConfigurationBusy(true);
+    setConfigurationMessage("");
+    setConfigurationError("");
+    try {
+      const result = await configureRegistryProfile({
+        name: registryName.trim(),
+        baseUrl: registryBaseUrl.trim(),
+        tokenEnvironment: registryTokenEnvironment.trim(),
+        token: registryProfileToken,
+      });
+      setRegistryProfileToken("");
+      setConfigurationMessage(result.message);
+    } catch (error: unknown) {
+      setConfigurationError(error instanceof Error ? error.message : "Registry configuration failed");
+    } finally {
+      setConfigurationBusy(false);
+    }
+  };
+
   const providerReady = providerName.trim() && providerUrl.trim() && providerModel.trim() && apiKeyEnvironment.trim();
   const mcpReady = mcpServerId.trim() && mcpProgram.trim() && mcpArguments.trim();
+  const registryReady = registryName.trim() && registryBaseUrl.trim() && (!registryProfileToken || registryTokenEnvironment.trim());
 
   return <div className="full-view">
     <PageHeader eyebrow="Runtime surface" title="Connections" description={native ? "Configure Pandora’s local runtime, providers, and MCP tools on this device." : "Connect this loopback development shell to a local Pandora service."} actions={<Chip tone={runtimeStatus === "connected" ? "green" : runtimeStatus === "offline" ? "amber" : "blue"} icon="lock">{runtimeStatusLabel(runtimeStatus)}</Chip>} />
@@ -2029,6 +2090,7 @@ function ConnectionView({ endpoint, runtimeStatus, runtimeError, health, provide
         <div className="configuration-tabs" role="tablist" aria-label="Connection type">
           <button type="button" role="tab" aria-selected={configurationTab === "provider"} className={configurationTab === "provider" ? "is-selected" : ""} onClick={() => { setConfigurationTab("provider"); setConfigurationError(""); setConfigurationMessage(""); }}>Model provider</button>
           <button type="button" role="tab" aria-selected={configurationTab === "mcp"} className={configurationTab === "mcp" ? "is-selected" : ""} onClick={() => { setConfigurationTab("mcp"); setConfigurationError(""); setConfigurationMessage(""); }}>Local MCP server</button>
+          <button type="button" role="tab" aria-selected={configurationTab === "registry"} className={configurationTab === "registry" ? "is-selected" : ""} onClick={() => { setConfigurationTab("registry"); setConfigurationError(""); setConfigurationMessage(""); }}>Package registry</button>
         </div>
         {configurationTab === "provider" ? <form className="native-config-form" onSubmit={(event) => void submitProvider(event)}>
           <div className="config-form-grid">
@@ -2040,7 +2102,7 @@ function ConnectionView({ endpoint, runtimeStatus, runtimeError, health, provide
             <label className="config-span-2"><span>API key <small>optional when the secret already exists</small></span><input aria-label="Provider API key" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Stored in Pandora’s encrypted native vault" maxLength={65535} autoComplete="new-password" spellCheck={false} /></label>
           </div>
           <div className="config-form-footer"><p><Icon name="lock" size={13} /> API keys pass through process stdin, are encrypted by Pandora’s vault, cleared from the form, and never saved in browser storage.</p><button className="button button-primary" type="submit" disabled={!providerReady || configurationBusy}>{configurationBusy ? "Saving…" : "Save provider"} <Icon name="arrow" size={14} /></button></div>
-        </form> : <form className="native-config-form" onSubmit={(event) => void submitMcp(event)}>
+        </form> : configurationTab === "mcp" ? <form className="native-config-form" onSubmit={(event) => void submitMcp(event)}>
           <div className="config-form-grid">
             <label><span>Server ID</span><input aria-label="MCP server ID" value={mcpServerId} onChange={(event) => setMcpServerId(event.target.value)} placeholder="local-tools" maxLength={64} autoComplete="off" spellCheck={false} /></label>
             <label><span>Protocol mode</span><select aria-label="MCP protocol mode" value={mcpMode} onChange={(event) => setMcpMode(event.target.value as typeof mcpMode)}><option value="auto">Auto negotiate</option><option value="modern-only">Modern only</option><option value="legacy-only">Legacy only</option></select></label>
@@ -2048,6 +2110,14 @@ function ConnectionView({ endpoint, runtimeStatus, runtimeError, health, provide
             <label className="config-span-2"><span>Arguments <small>JSON array of strings</small></span><textarea aria-label="MCP arguments JSON" value={mcpArguments} onChange={(event) => setMcpArguments(event.target.value)} rows={3} maxLength={65535} spellCheck={false} /></label>
           </div>
           <div className="config-form-footer"><p><Icon name="shield" size={13} /> Pandora records the local executable and arguments. Tool authority is still granted separately by policy.</p><button className="button button-primary" type="submit" disabled={!mcpReady || configurationBusy}>{configurationBusy ? "Saving…" : "Save MCP server"} <Icon name="arrow" size={14} /></button></div>
+        </form> : <form className="native-config-form" onSubmit={(event) => void submitRegistryProfile(event)}>
+          <div className="config-form-grid">
+            <label><span>Profile name</span><input aria-label="Registry profile name" value={registryName} onChange={(event) => setRegistryName(event.target.value)} placeholder="m-place" maxLength={128} autoComplete="off" spellCheck={false} /></label>
+            <label><span>Secret reference <small>optional for public registries</small></span><input aria-label="Registry token environment name" value={registryTokenEnvironment} onChange={(event) => setRegistryTokenEnvironment(event.target.value.toUpperCase())} placeholder="PANDORA_MPLACE_TOKEN" maxLength={128} autoComplete="off" spellCheck={false} /></label>
+            <label className="config-span-2"><span>Registry base URL</span><input aria-label="Registry profile URL" value={registryBaseUrl} onChange={(event) => setRegistryBaseUrl(event.target.value)} placeholder="https://registry.example.com" maxLength={2048} autoComplete="url" spellCheck={false} /></label>
+            <label className="config-span-2"><span>Registry token <small>optional · encrypted native vault</small></span><input aria-label="Registry profile token" type="password" value={registryProfileToken} onChange={(event) => setRegistryProfileToken(event.target.value)} maxLength={65535} autoComplete="new-password" spellCheck={false} /></label>
+          </div>
+          <div className="config-form-footer"><p><Icon name="lock" size={13} /> The profile stores only its URL and secret reference. A supplied token passes through process stdin into Pandora’s encrypted vault.</p><button className="button button-primary" type="submit" disabled={!registryReady || configurationBusy}>{configurationBusy ? "Saving…" : "Save registry"} <Icon name="arrow" size={14} /></button></div>
         </form>}
         {configurationMessage ? <p className="configuration-result is-success" role="status"><Icon name="check" size={14} /> {configurationMessage}</p> : null}
         {configurationError ? <p className="configuration-result is-error" role="alert">{configurationError}</p> : null}

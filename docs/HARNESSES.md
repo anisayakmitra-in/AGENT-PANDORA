@@ -73,6 +73,8 @@ Local package admission is explicit:
 ```text
 pandora package admit --manifest <manifest.json> --artifact <artifact>
 pandora package install <id> [version] --registry <url>
+pandora registry set --name m-place --registry-url <url> [--token-env <name>]
+pandora package install <id> [version]
 pandora package list
 pandora package inspect <id> <version>
 pandora package enable <id> <version> --dry-run
@@ -92,7 +94,9 @@ Local hexadecimal trust evidence remains supported. `package install` consumes
 current or exact-version M-Place metadata, requests the direct exact-version bytes
 from the same configured registry, and retains the registry's base64 evidence
 without re-encoding it. The client follows no redirects and does not request the
-registry-controlled upstream `artifact_url`.
+registry-controlled upstream `artifact_url`. Named registry profiles persist only
+the validated base URL and an optional secret reference; they do not add authority,
+change admission policy, or store a token in configuration.
 
 Remote admission is Gene-only in this release. It requires an artifact, a canonical
 lowercase SHA-256 digest, no unresolved capability requirements, and one valid

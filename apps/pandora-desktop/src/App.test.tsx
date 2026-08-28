@@ -10,6 +10,7 @@ const runtime = vi.hoisted(() => ({
   capabilities: vi.fn(),
   configureMcp: vi.fn(),
   configureProvider: vi.fn(),
+  configureRegistryProfile: vi.fn(),
   disableLocalPackage: vi.fn(),
   enableLocalPackage: vi.fn(),
   engines: vi.fn(),
@@ -23,6 +24,7 @@ const runtime = vi.hoisted(() => ({
   installGitHubPackage: vi.fn(),
   installRegistryPackage: vi.fn(),
   listLocalPackages: vi.fn(),
+  listRegistryProfiles: vi.fn(),
   lockLocalPackages: vi.fn(),
   memory: vi.fn(),
   orchestrations: vi.fn(),
@@ -50,12 +52,14 @@ vi.mock("./runtimeClient", () => ({
   saveRuntimeEndpoint: vi.fn(),
   configureMcp: runtime.configureMcp,
   configureProvider: runtime.configureProvider,
+  configureRegistryProfile: runtime.configureRegistryProfile,
   disableLocalPackage: runtime.disableLocalPackage,
   enableLocalPackage: runtime.enableLocalPackage,
   admitLocalPackage: runtime.admitLocalPackage,
   installGitHubPackage: runtime.installGitHubPackage,
   installRegistryPackage: runtime.installRegistryPackage,
   listLocalPackages: runtime.listLocalPackages,
+  listRegistryProfiles: runtime.listRegistryProfiles,
   lockLocalPackages: runtime.lockLocalPackages,
   previewPackageRemoval: runtime.previewPackageRemoval,
   previewPackageDisable: runtime.previewPackageDisable,
@@ -113,6 +117,7 @@ beforeEach(() => {
   runtime.providers.mockResolvedValue([]);
   runtime.configureProvider.mockResolvedValue({ message: "Provider custom configured.", restartRequired: true });
   runtime.configureMcp.mockResolvedValue({ message: "MCP server local-tools configured.", restartRequired: true });
+  runtime.configureRegistryProfile.mockResolvedValue({ message: "Registry m-place configured.", restartRequired: false });
   runtime.installGitHubPackage.mockResolvedValue({
     message: "Package admitted from the pinned GitHub source.",
     restartRequired: true,
@@ -122,6 +127,10 @@ beforeEach(() => {
     message: "0 local package(s) available.",
     restartRequired: false,
     data: { packages: [] },
+  });
+  runtime.listRegistryProfiles.mockResolvedValue({
+    message: "0 registry profile(s) configured.",
+    data: { registries: [] },
   });
   runtime.lockLocalPackages.mockResolvedValue({
     message: "Deterministic package lock written for the current workspace.",
@@ -984,6 +993,7 @@ describe("Pandora desktop run state", () => {
     await waitFor(() => expect(runtime.installRegistryPackage).toHaveBeenCalledWith({
       packageId: "owner/new-gene",
       version: "2.0.0",
+      registryProfile: "",
       registryUrl: "https://registry.example.test",
       token: "process-secret",
     }));
@@ -1129,6 +1139,66 @@ describe("Pandora desktop run state", () => {
       mode: "auto",
     }));
     expect(screen.getByRole("status")).toHaveTextContent("Restart the local service to apply it");
+  });
+
+  it("stores a custom registry profile without exposing its token to browser storage", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Connections" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Package registry" }));
+
+    fireEvent.change(screen.getByLabelText("Registry profile URL"), { target: { value: "https://registry.example.test/" } });
+    fireEvent.change(screen.getByLabelText("Registry token environment name"), { target: { value: "pandora_mplace_token" } });
+    fireEvent.change(screen.getByLabelText("Registry profile token"), { target: { value: "registry-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: /Save registry/ }));
+
+    await waitFor(() => expect(runtime.configureRegistryProfile).toHaveBeenCalledWith({
+      name: "m-place",
+      baseUrl: "https://registry.example.test/",
+      tokenEnvironment: "PANDORA_MPLACE_TOKEN",
+      token: "registry-secret",
+    }));
+    expect(screen.getByLabelText("Registry profile token")).toHaveValue("");
+    expect(screen.getByRole("status")).toHaveTextContent("Registry m-place configured");
+    expect(Object.values(window.localStorage)).not.toContain("registry-secret");
+  });
+
+  it("installs through the active saved registry profile without resending its URL", async () => {
+    runtime.capabilities.mockResolvedValue([{
+      id: "coding-domain",
+      version: "1.2.0",
+      name: "Coding Domain",
+      kind: "domain",
+      gene_count: 0,
+      runnable: true,
+      gene_ids: [],
+    }]);
+    runtime.listRegistryProfiles.mockResolvedValue({
+      message: "1 registry profile configured.",
+      data: {
+        registries: [{
+          name: "m-place",
+          base_url: "https://registry.example.test",
+          token_env: "PANDORA_MPLACE_TOKEN",
+          active: true,
+        }],
+      },
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Harness Lab" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "packages" }));
+    expect(await screen.findByLabelText("Saved registry profile")).toHaveValue("m-place");
+    expect(screen.getByLabelText("Package registry URL")).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Registry package ID"), { target: { value: "owner/gene" } });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch and admit" }));
+
+    await waitFor(() => expect(runtime.installRegistryPackage).toHaveBeenCalledWith({
+      packageId: "owner/gene",
+      version: "",
+      registryProfile: "m-place",
+      registryUrl: "",
+      token: "",
+    }));
   });
 
   it("inspects and exactly cancels a queued background orchestration", async () => {

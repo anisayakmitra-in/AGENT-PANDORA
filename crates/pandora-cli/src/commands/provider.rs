@@ -88,7 +88,7 @@ fn configured_provider_for_with_failover(
         api_key_env,
     )
     .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
-    let primary_secret = provider_credential(config, api_key_env)?
+    let primary_secret = configured_credential(config, api_key_env)?
         .ok_or_else(|| CliError::provider("provider credential unavailable", json!({})))?;
     let primary = HttpProvider::new(manifest, primary_secret)
         .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
@@ -115,7 +115,7 @@ fn configured_provider_for_with_failover(
         fallback_profile.api_key_env(),
     )
     .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
-    let fallback_secret = provider_credential(config, fallback_profile.api_key_env())?
+    let fallback_secret = configured_credential(config, fallback_profile.api_key_env())?
         .ok_or_else(|| CliError::provider("provider credential unavailable", json!({})))?;
     let fallback = HttpProvider::new(fallback_manifest, fallback_secret)
         .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
@@ -129,10 +129,13 @@ pub(crate) fn provider_credential_available(
     config: &RuntimeConfig,
     name: &str,
 ) -> Result<bool, CliError> {
-    Ok(provider_credential(config, name)?.is_some())
+    Ok(configured_credential(config, name)?.is_some())
 }
 
-fn provider_credential(config: &RuntimeConfig, name: &str) -> Result<Option<String>, CliError> {
+pub(crate) fn configured_credential(
+    config: &RuntimeConfig,
+    name: &str,
+) -> Result<Option<String>, CliError> {
     if let Ok(value) = std::env::var(name)
         && !value.trim().is_empty()
     {
