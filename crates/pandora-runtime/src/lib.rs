@@ -103,8 +103,8 @@ pub use executors::{
 };
 pub use fleet::{
     FLEET_SCHEMA_VERSION, FleetBudget, FleetEngine, FleetError, FleetLease, FleetLeaseState,
-    FleetNode, FleetNodeState, FleetSupervisor, FleetSupervisorState, MAX_FLEET_CAPABILITIES,
-    MAX_FLEET_LEASES, MAX_FLEET_NODES,
+    FleetNode, FleetNodeState, FleetQuiescenceGuard, FleetSupervisor, FleetSupervisorState,
+    MAX_FLEET_CAPABILITIES, MAX_FLEET_LEASES, MAX_FLEET_NODES,
 };
 pub use github_client::{GitHubPackageClient, GitHubPackageError};
 pub use graph_intelligence::{

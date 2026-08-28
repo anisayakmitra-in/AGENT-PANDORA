@@ -6,7 +6,7 @@ use crate::artifact_catalog::{ArtifactCatalog, ArtifactCatalogError};
 use crate::evaluation_engine::EvaluationEngine;
 use crate::evolution::{EvolutionEngine, EvolutionError, EvolutionRecord};
 use crate::execution_controller::{ExecutionController, RunStatus, RunSummary, RuntimeError};
-use crate::fleet::{FleetBudget, FleetEngine, FleetError, FleetLeaseState, FleetNode};
+use crate::fleet::{FleetBudget, FleetEngine, FleetError, FleetNode, FleetQuiescenceGuard};
 use crate::identity::{AccessRole, ServiceIdentity};
 use crate::orchestration_store::{
     OrchestrationRunRecord, OrchestrationStore, OrchestrationStoreError,
@@ -1965,22 +1965,28 @@ impl RuntimeService {
         Ok(ServiceResponse::evolution_activations(activations))
     }
 
-    fn ensure_evolution_quiescent(&self, now: Timestamp) -> Result<(), RuntimeServiceError> {
+    fn ensure_evolution_quiescent(
+        &self,
+        now: Timestamp,
+    ) -> Result<FleetQuiescenceGuard, RuntimeServiceError> {
         let fleet = self
             .fleet
             .as_ref()
             .ok_or(RuntimeServiceError::EvolutionControlUnavailable)?;
-        fleet.engine.expire_leases(now.as_unix_seconds())?;
-        let active = fleet
+        let owner = format!(
+            "evolution-service:{}-{}",
+            std::process::id(),
+            self.next_mutation.fetch_add(1, Ordering::Relaxed)
+        );
+        fleet
             .engine
-            .list_leases()?
-            .into_iter()
-            .any(|lease| lease.state() == FleetLeaseState::Active);
-        if active {
-            Err(RuntimeServiceError::EvolutionExecutionActive)
-        } else {
-            Ok(())
-        }
+            .acquire_quiescence(owner, now.as_unix_seconds(), 60 * 60)
+            .map_err(|error| match error {
+                FleetError::ActiveLeasesPresent
+                | FleetError::QuiescenceHeld
+                | FleetError::QuiescenceActive => RuntimeServiceError::EvolutionExecutionActive,
+                error => error.into(),
+            })
     }
 
     fn snapshot_evolution_state(&self, now: Timestamp) -> Result<PathBuf, RuntimeServiceError> {
@@ -2022,7 +2028,7 @@ impl RuntimeService {
             .evolution_gate
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        self.ensure_evolution_quiescent(now)?;
+        let _quiescence = self.ensure_evolution_quiescent(now)?;
         let backup = self.snapshot_evolution_state(now)?;
         let evolution = self
             .evolution
@@ -2083,7 +2089,7 @@ impl RuntimeService {
             .evolution_gate
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        self.ensure_evolution_quiescent(now)?;
+        let _quiescence = self.ensure_evolution_quiescent(now)?;
         let backup = self.snapshot_evolution_state(now)?;
         let evolution = self
             .evolution

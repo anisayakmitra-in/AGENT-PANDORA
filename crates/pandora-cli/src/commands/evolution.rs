@@ -10,7 +10,7 @@ use pandora_provider::{
 use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::{
     ArtifactCatalog, EvaluationEngine, EvolutionEngine, EvolutionError, EvolutionRecord,
-    ExecutionController, FleetEngine, FleetLeaseState, HoldoutCase, HoldoutSetReport,
+    ExecutionController, FleetEngine, FleetQuiescenceGuard, HoldoutCase, HoldoutSetReport,
     MAX_HOLDOUT_CASES, MemoryEngine, PackageStore, ReplacementEngine, ReplacementError,
     ResearchArtifactError, ResearchArtifactStore,
 };
@@ -380,7 +380,7 @@ fn activate(args: &[String]) -> Result<CommandResult, CliError> {
     let proposal_id = required_proposal_id(parsed.value("id"), "activate")?;
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
-    ensure_evolution_quiescent(&config)?;
+    let _quiescence = ensure_evolution_quiescent(&config)?;
     let backup = snapshot_evolution_state(&config, timestamp())?;
     let engine = open_engine(&config)?;
     let catalog = open_artifact_catalog(&config)?;
@@ -470,7 +470,7 @@ fn rollback(args: &[String]) -> Result<CommandResult, CliError> {
         .ok_or_else(|| CliError::usage("evolution rollback requires '--reason <text>'"))?;
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
-    ensure_evolution_quiescent(&config)?;
+    let _quiescence = ensure_evolution_quiescent(&config)?;
     let backup = snapshot_evolution_state(&config, timestamp())?;
     let engine = open_engine(&config)?;
     let catalog = open_artifact_catalog(&config)?;
@@ -716,33 +716,17 @@ fn sqlite_backup(source: &Path, destination: &Path) -> Result<(), CliError> {
 
 fn ensure_evolution_quiescent(
     config: &pandora_runtime::config::RuntimeConfig,
-) -> Result<(), CliError> {
+) -> Result<FleetQuiescenceGuard, CliError> {
     let fleet = FleetEngine::open(config.data_dir().join("fleet.sqlite3"))
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let owner = format!(
+        "evolution-cli:{}-{}",
+        std::process::id(),
+        timestamp().as_unix_seconds()
+    );
     fleet
-        .expire_leases(timestamp().as_unix_seconds())
-        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
-    let active = fleet
-        .list_leases()
-        .map_err(|error| CliError::internal(error.to_string(), json!({})))?
-        .into_iter()
-        .filter(|lease| lease.state() == FleetLeaseState::Active)
-        .map(|lease| {
-            json!({
-                "lease_id": lease.id(),
-                "execution_id": lease.execution_id(),
-                "expires_at": lease.expires_at(),
-            })
-        })
-        .collect::<Vec<_>>();
-    if active.is_empty() {
-        Ok(())
-    } else {
-        Err(CliError::execution(
-            "evolution mutation is blocked while executions are active",
-            json!({"active_leases": active}),
-        ))
-    }
+        .acquire_quiescence(owner, timestamp().as_unix_seconds(), 60 * 60)
+        .map_err(|error| CliError::execution(error.to_string(), json!({})))
 }
 
 fn open_engine(

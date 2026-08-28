@@ -2,9 +2,9 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::Path;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
-pub const FLEET_SCHEMA_VERSION: u32 = 2;
+pub const FLEET_SCHEMA_VERSION: u32 = 3;
 pub const MAX_FLEET_NODES: usize = 256;
 pub const MAX_FLEET_LEASES: usize = 4_096;
 pub const MAX_FLEET_CAPABILITIES: usize = 64;
@@ -99,6 +99,28 @@ impl FleetSupervisor {
 
     pub const fn updated_at(&self) -> u64 {
         self.updated_at
+    }
+}
+
+pub struct FleetQuiescenceGuard {
+    connection: Arc<Mutex<Connection>>,
+    owner: String,
+}
+
+impl FleetQuiescenceGuard {
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+}
+
+impl Drop for FleetQuiescenceGuard {
+    fn drop(&mut self) {
+        if let Ok(connection) = self.connection.lock() {
+            let _ = connection.execute(
+                "DELETE FROM fleet_quiescence WHERE id = 1 AND owner = ?1",
+                params![self.owner],
+            );
+        }
     }
 }
 
@@ -279,6 +301,8 @@ pub enum FleetError {
         action: &'static str,
     },
     InvalidSupervisorStaleness,
+    QuiescenceHeld,
+    QuiescenceActive,
     InvalidLeaseDuration,
     FleetNodeLimitExceeded,
     FleetLeaseLimitExceeded,
@@ -329,6 +353,8 @@ impl fmt::Display for FleetError {
             Self::InvalidSupervisorStaleness => {
                 formatter.write_str("supervisor staleness window is invalid")
             }
+            Self::QuiescenceHeld => formatter.write_str("fleet quiescence is already held"),
+            Self::QuiescenceActive => formatter.write_str("fleet quiescence blocks new work"),
             Self::InvalidLeaseDuration => formatter.write_str("fleet lease duration is invalid"),
             Self::FleetNodeLimitExceeded => formatter.write_str("fleet node limit was exceeded"),
             Self::FleetLeaseLimitExceeded => formatter.write_str("fleet lease limit was exceeded"),
@@ -361,7 +387,7 @@ impl From<serde_json::Error> for FleetError {
 }
 
 pub struct FleetEngine {
-    connection: Mutex<Connection>,
+    connection: Arc<Mutex<Connection>>,
 }
 
 impl FleetEngine {
@@ -399,10 +425,16 @@ impl FleetEngine {
                  generation INTEGER NOT NULL CHECK (generation > 0),
                  reason TEXT,
                  updated_at INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS fleet_quiescence (
+                 id INTEGER PRIMARY KEY CHECK (id = 1),
+                 owner TEXT NOT NULL,
+                 acquired_at INTEGER NOT NULL,
+                 expires_at INTEGER NOT NULL
              );",
         )?;
         Ok(Self {
-            connection: Mutex::new(connection),
+            connection: Arc::new(Mutex::new(connection)),
         })
     }
 
@@ -477,6 +509,60 @@ impl FleetEngine {
         let rows = statement.query_map([], decode_supervisor)?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(FleetError::Database)
+    }
+
+    pub fn acquire_quiescence(
+        &self,
+        owner: impl Into<String>,
+        now: u64,
+        duration_seconds: u64,
+    ) -> Result<FleetQuiescenceGuard, FleetError> {
+        if duration_seconds == 0 {
+            return Err(FleetError::InvalidLeaseDuration);
+        }
+        let owner = validate_text("quiescence owner", owner.into(), 256)?;
+        let expires_at = now
+            .checked_add(duration_seconds)
+            .ok_or(FleetError::InvalidLeaseDuration)?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute(
+            "UPDATE fleet_leases SET state = 'expired'
+             WHERE state = 'active' AND expires_at <= ?1",
+            params![to_i64(now)?],
+        )?;
+        transaction.execute(
+            "DELETE FROM fleet_quiescence WHERE expires_at <= ?1",
+            params![to_i64(now)?],
+        )?;
+        let held = transaction
+            .query_row(
+                "SELECT 1 FROM fleet_quiescence WHERE id = 1 AND expires_at > ?1",
+                params![to_i64(now)?],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        if held.is_some() {
+            return Err(FleetError::QuiescenceHeld);
+        }
+        let active = transaction.query_row(
+            "SELECT COUNT(*) FROM fleet_leases WHERE state = 'active'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+        if active > 0 {
+            return Err(FleetError::ActiveLeasesPresent);
+        }
+        transaction.execute(
+            "INSERT INTO fleet_quiescence (id, owner, acquired_at, expires_at)
+             VALUES (1, ?1, ?2, ?3)",
+            params![owner, to_i64(now)?, to_i64(expires_at)?],
+        )?;
+        transaction.commit()?;
+        Ok(FleetQuiescenceGuard {
+            connection: Arc::clone(&self.connection),
+            owner,
+        })
     }
 
     pub fn heartbeat_supervisor(
@@ -706,6 +792,7 @@ impl FleetEngine {
             .ok_or(FleetError::InvalidLeaseDuration)?;
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        ensure_work_permitted(&transaction, now)?;
         let count = transaction.query_row("SELECT COUNT(*) FROM fleet_leases", [], |row| {
             row.get::<_, i64>(0)
         })?;
@@ -790,6 +877,7 @@ impl FleetEngine {
             .ok_or(FleetError::InvalidLeaseDuration)?;
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        ensure_work_permitted(&transaction, now)?;
         let lease = transaction
             .query_row(
                 "SELECT state, execution_id, expires_at
@@ -980,6 +1068,25 @@ fn save_supervisor(
         ],
     )?;
     Ok(())
+}
+
+fn ensure_work_permitted(connection: &Connection, now: u64) -> Result<(), FleetError> {
+    connection.execute(
+        "DELETE FROM fleet_quiescence WHERE expires_at <= ?1",
+        params![to_i64(now)?],
+    )?;
+    let held = connection
+        .query_row(
+            "SELECT 1 FROM fleet_quiescence WHERE id = 1 AND expires_at > ?1",
+            params![to_i64(now)?],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    if held.is_some() {
+        Err(FleetError::QuiescenceActive)
+    } else {
+        Ok(())
+    }
 }
 
 fn active_lease_count(connection: &Connection, node_id: &str) -> Result<u64, FleetError> {
@@ -1309,6 +1416,50 @@ mod tests {
             fleet.start_supervisor("node-a", 12).unwrap().state(),
             FleetSupervisorState::Running
         );
+    }
+
+    #[test]
+    fn quiescence_guard_blocks_cross_process_work_and_releases_on_drop() {
+        let root = crate::test_support::new_temp_dir("pandora-fleet-quiescence").unwrap();
+        let path = root.join("fleet.sqlite3");
+        let first = FleetEngine::open(&path).unwrap();
+        first.register_node(&node("node-a", &["coding"])).unwrap();
+        let second = FleetEngine::open(&path).unwrap();
+        let guard = first.acquire_quiescence("evolution-a", 10, 30).unwrap();
+        assert_eq!(guard.owner(), "evolution-a");
+        assert!(matches!(
+            second.acquire_quiescence("evolution-b", 11, 30),
+            Err(FleetError::QuiescenceHeld)
+        ));
+        assert!(matches!(
+            second.acquire_lease(
+                "lease-a",
+                "node-a",
+                "execution-a",
+                FleetBudget::new(1, 1, 10, 1),
+                11,
+                10,
+            ),
+            Err(FleetError::QuiescenceActive)
+        ));
+        drop(guard);
+        second
+            .acquire_lease(
+                "lease-a",
+                "node-a",
+                "execution-a",
+                FleetBudget::new(1, 1, 10, 1),
+                11,
+                10,
+            )
+            .unwrap();
+        assert!(matches!(
+            second.acquire_quiescence("evolution-c", 12, 30),
+            Err(FleetError::ActiveLeasesPresent)
+        ));
+        second.expire_leases(21).unwrap();
+        let recovered = second.acquire_quiescence("evolution-c", 21, 30).unwrap();
+        assert_eq!(recovered.owner(), "evolution-c");
     }
 
     #[test]
