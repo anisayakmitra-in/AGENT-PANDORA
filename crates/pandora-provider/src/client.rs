@@ -1585,14 +1585,13 @@ fn parse_response(bytes: &[u8]) -> Result<ModelResponse, ProviderError> {
     let usage = response
         .usage
         .map(|usage| {
-            TokenUsage::new(usage.prompt_tokens, usage.completion_tokens)
-                .with_prompt_cache(
-                    usage
-                        .prompt_tokens_details
-                        .map(|details| details.cached_tokens)
-                        .unwrap_or(0),
-                    0,
-                )
+            TokenUsage::new(usage.prompt_tokens, usage.completion_tokens).with_prompt_cache(
+                usage
+                    .prompt_tokens_details
+                    .map(|details| details.cached_tokens)
+                    .unwrap_or(0),
+                0,
+            )
         })
         .unwrap_or_default();
     Ok(ModelResponse {
