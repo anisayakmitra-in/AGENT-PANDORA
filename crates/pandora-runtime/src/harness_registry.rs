@@ -1,6 +1,6 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use pandora_harnesses::{builtin_genes, builtin_harnesses};
+use pandora_harnesses::{builtin_genes, builtin_harnesses, replaceable_builtin_harness_kind};
 use pandora_types::{
     HarnessId, HarnessKind, PackageId, PackageKind, PackageManifest, TrustLevel, hash_artifact,
 };
@@ -83,6 +83,9 @@ pub enum HarnessRegistryError {
     ReservedHarnessId {
         id: String,
     },
+    BuiltInReplacementRequiresVerifiedSignature {
+        id: String,
+    },
     DuplicateIdentity,
 }
 
@@ -151,6 +154,10 @@ impl fmt::Display for HarnessRegistryError {
             Self::ReservedHarnessId { id } => {
                 write!(formatter, "{id} is reserved by a built-in Harness")
             }
+            Self::BuiltInReplacementRequiresVerifiedSignature { id } => write!(
+                formatter,
+                "optional built-in Harness replacement {id} requires a verified signature"
+            ),
             Self::DuplicateIdentity => {
                 formatter.write_str("package id and version are already installed")
             }
@@ -203,22 +210,31 @@ impl HarnessRegistry {
             TrustLevel::Official => return Err(HarnessRegistryError::OfficialTrustUnsupported),
         }
 
+        if let Some(built_in) = builtin_harnesses()
+            .into_iter()
+            .find(|harness| harness.manifest().id().as_str() == embedded.id().as_str())
+        {
+            let replacement_kind = replaceable_builtin_harness_kind(embedded.id().as_str());
+            if replacement_kind != Some(built_in.manifest().kind())
+                || replacement_kind.map(PackageKind::from) != Some(embedded.kind())
+            {
+                return Err(HarnessRegistryError::ReservedHarnessId {
+                    id: embedded.id().as_str().to_owned(),
+                });
+            }
+            if embedded.trust().level() != TrustLevel::Verified {
+                return Err(
+                    HarnessRegistryError::BuiltInReplacementRequiresVerifiedSignature {
+                        id: embedded.id().as_str().to_owned(),
+                    },
+                );
+            }
+        }
         if !matches!(
             embedded.kind(),
             PackageKind::Gene | PackageKind::DomainHarness | PackageKind::MetaHarness
         ) {
             return Err(HarnessRegistryError::UnsupportedKind(embedded.kind()));
-        }
-        if matches!(
-            embedded.kind(),
-            PackageKind::DomainHarness | PackageKind::MetaHarness
-        ) && builtin_harnesses()
-            .into_iter()
-            .any(|harness| harness.manifest().id().as_str() == embedded.id().as_str())
-        {
-            return Err(HarnessRegistryError::ReservedHarnessId {
-                id: embedded.id().as_str().to_owned(),
-            });
         }
 
         let key = (
@@ -396,8 +412,8 @@ mod tests {
     use base64::engine::general_purpose::STANDARD as BASE64;
     use ed25519_dalek::{Signer, SigningKey};
     use pandora_types::{
-        HarnessId, MetaComposition, PackageCompatibility, PackageDependency, PackageKind,
-        PackageManifest, TrustEvidence, TrustLevel, hash_artifact,
+        DomainRoutingProfile, HarnessId, MetaComposition, PackageCompatibility, PackageDependency,
+        PackageKind, PackageManifest, TrustEvidence, TrustLevel, hash_artifact,
     };
 
     const CURRENT_RUNTIME_REQUIREMENT: &str = concat!("pandora>=", env!("CARGO_PKG_VERSION"));
@@ -454,8 +470,19 @@ mod tests {
         let artifact = b"signed gene artifact";
         let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
         let content_hash = hash_artifact(artifact);
-        let message = format!("publisher/gene:1.0.0:publisher:{content_hash}");
-        let signature = signing_key.sign(message.as_bytes());
+        let unsigned = PackageManifest::new(
+            "publisher/gene",
+            "1.0.0",
+            PackageKind::Gene,
+            "publisher",
+            content_hash.clone(),
+            Vec::new(),
+            PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
+            "MIT",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+        let signature = signing_key.sign(unsigned.signing_message().as_bytes());
         let package = PackageManifest::new(
             "publisher/gene",
             "1.0.0",
@@ -483,8 +510,19 @@ mod tests {
         let artifact = b"signed registry gene artifact";
         let signing_key = SigningKey::from_bytes(&[11_u8; 32]);
         let content_hash = hash_artifact(artifact);
-        let message = format!("publisher/gene:1.0.0:publisher:{content_hash}");
-        let signature = signing_key.sign(message.as_bytes());
+        let unsigned = PackageManifest::new(
+            "publisher/gene",
+            "1.0.0",
+            PackageKind::Gene,
+            "publisher",
+            content_hash.clone(),
+            Vec::new(),
+            PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
+            "MIT",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+        let signature = signing_key.sign(unsigned.signing_message().as_bytes());
         let encoded_signature = BASE64.encode(signature.to_bytes());
         let encoded_key = format!(
             "base64:{}",
@@ -949,7 +987,7 @@ mod tests {
     }
 
     #[test]
-    fn custom_profiles_cannot_shadow_built_in_harness_ids() {
+    fn unsigned_packages_cannot_replace_optional_built_in_harnesses() {
         let domain_artifact = b"domain profile";
         let domain = manifest(
             "coding-domain",
@@ -964,14 +1002,86 @@ mod tests {
 
         assert_eq!(
             registry.install(&domain, &domain, domain_artifact),
-            Err(HarnessRegistryError::ReservedHarnessId {
-                id: "coding-domain".to_owned(),
-            })
+            Err(
+                HarnessRegistryError::BuiltInReplacementRequiresVerifiedSignature {
+                    id: "coding-domain".to_owned(),
+                }
+            )
         );
         assert_eq!(
             registry.install(&meta, &meta, meta_artifact),
+            Err(
+                HarnessRegistryError::BuiltInReplacementRequiresVerifiedSignature {
+                    id: "coordination-meta".to_owned(),
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn signed_optional_domain_replacement_is_admitted_with_bound_routing() {
+        let artifact = b"signed coding replacement";
+        let signing_key = SigningKey::from_bytes(&[17_u8; 32]);
+        let dependencies = vec![PackageDependency::new("workspace.read", "0.1.0", false).unwrap()];
+        let routing = DomainRoutingProfile::new(vec!["firmware development".to_owned()]).unwrap();
+        let unsigned = PackageManifest::new(
+            "coding-domain",
+            "2.0.0",
+            PackageKind::DomainHarness,
+            "publisher",
+            hash_artifact(artifact),
+            dependencies.clone(),
+            PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
+            "MIT",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap()
+        .with_domain_routing(routing.clone())
+        .unwrap();
+        let signature = signing_key.sign(unsigned.signing_message().as_bytes());
+        let package = PackageManifest::new(
+            "coding-domain",
+            "2.0.0",
+            PackageKind::DomainHarness,
+            "publisher",
+            hash_artifact(artifact),
+            dependencies,
+            PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
+            "MIT",
+            TrustEvidence::new(
+                TrustLevel::Verified,
+                Some(hex(&signature.to_bytes())),
+                Some(hex(&signing_key.verifying_key().to_bytes())),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .with_domain_routing(routing)
+        .unwrap();
+        let mut registry = HarnessRegistry::new();
+
+        let record = registry.install(&package, &package, artifact).unwrap();
+
+        assert_eq!(record.state(), PackageState::Admitted);
+        assert!(!record.grants_runtime_authority());
+    }
+
+    #[test]
+    fn constitutional_source_harness_remains_immutable() {
+        let artifact = b"source replacement";
+        let package = manifest(
+            "core-source",
+            "2.0.0",
+            PackageKind::SourceHarness,
+            Vec::new(),
+            artifact,
+        );
+        let mut registry = HarnessRegistry::new();
+
+        assert_eq!(
+            registry.install(&package, &package, artifact),
             Err(HarnessRegistryError::ReservedHarnessId {
-                id: "coordination-meta".to_owned(),
+                id: "core-source".to_owned(),
             })
         );
     }

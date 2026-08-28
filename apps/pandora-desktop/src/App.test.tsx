@@ -1116,6 +1116,8 @@ describe("Pandora desktop run state", () => {
         has_public_key: true,
       },
       meta_composition: null,
+      domain_routing: null,
+      replaces_builtin: false,
       state: "admitted",
       runtime_authority: false,
       activation: {

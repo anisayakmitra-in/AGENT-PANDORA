@@ -88,6 +88,11 @@ export type RuntimePackage = {
     allowed_domains: string[];
     max_handoffs: number;
   } | null;
+  domain_routing: {
+    hints: string[];
+    auto_route: true;
+  } | null;
+  replaces_builtin: boolean;
   state: "installed" | "admitted";
   runtime_authority: boolean;
   activation: {

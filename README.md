@@ -17,7 +17,9 @@ observation surface.
 
 ## Status
 
-The active prerelease is `2.0.0-beta.7` and is CLI-only. Existing legacy
+The active prerelease is `2.0.0-beta.7`. The native CLI is the published
+product boundary; the repository also contains a tested Tauri desktop that
+connects only to Pandora's authenticated loopback service. Existing legacy
 preview tags remain immutable for compatibility. Release tags use plain
 SemVer; prereleases use `alpha`, `beta`, and `rc` suffixes. Older codename tags
 are historical references only. See [RELEASES.md](RELEASES.md),
@@ -29,10 +31,10 @@ recovery archives, local crash records, and stable-release signing gates. See
 [production readiness](docs/PRODUCTION.md).
 Pandora now binds local context caching and provider-native stable-prefix
 caching to the same classification and provenance boundaries as execution. See
-[prompt caching](docs/PROMPT_CACHING.md). For the remaining platform phases,
-including background and parallel agents, evaluation-driven loops, memory
-consolidation, self-healing tests, agent operations, and the OpenDesign-informed
-frontend direction, see [the roadmap](docs/ROADMAP.md).
+[prompt caching](docs/PROMPT_CACHING.md). Background and parallel agents,
+evaluation primitives, scoped memory synthesis, and the desktop foundation are
+also present. For the audited shipped/open split, see
+[the roadmap](docs/ROADMAP.md).
 
 The npm package also exports a typed TypeScript client for the stable JSON CLI
 contract. It forwards an argv array to the verified native binary and does not
@@ -136,8 +138,8 @@ pandora subagent cleanup <subagent-id> --yes
 running child. Cleanup remains local, requires explicit confirmation, and
 preserves dirty or commit-mismatched worktrees.
 
-For a local client such as the future desktop app, start the authenticated
-loopback runtime service:
+For the native desktop development build or another local client, start the
+authenticated loopback runtime service:
 
 ```text
 pandora service start --port 0
@@ -147,7 +149,13 @@ It prints one JSON readiness record with the bound endpoint and protected token
 file path, then remains in the foreground until Ctrl-C. It never prints the
 token or accepts non-loopback connections. See [CLI reference](docs/CLI.md).
 
-The supported product target is the native CLI on Windows, macOS, and Linux. Desktop, remote execution, mobile, and package marketplace integration remain gated until their release tests and security boundaries exist. The CLI can manage profiles for the runtime's governed local stdio MCP preview and execute import-free WebAssembly package Genes through an admitted Domain Harness. See [MCP.md](docs/MCP.md) and [WebAssembly package Genes](docs/WASM.md).
+The published product target is the native CLI on Windows, macOS, and Linux.
+The desktop remains a source-build artifact until native signing, packaging,
+clean-machine, and release checks pass. Remote execution, mobile, and a public
+package marketplace remain outside the shipped boundary. The CLI can manage
+profiles for the runtime's governed local stdio MCP preview and execute
+import-free WebAssembly package Genes through an admitted Domain Harness. See
+[MCP.md](docs/MCP.md) and [WebAssembly package Genes](docs/WASM.md).
 
 For a clean-machine installation, release verification, and cross-platform
 notes, see [Installation](docs/INSTALL.md). Published release artifacts are

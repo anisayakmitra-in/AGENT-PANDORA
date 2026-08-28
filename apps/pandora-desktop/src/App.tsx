@@ -1921,8 +1921,11 @@ function PackageManager({ native }: { native: boolean }) {
             <div><span>Active version</span><strong>{selectedPackage.activation.active_version ?? "none"}</strong></div>
             <div><span>Rollback target</span><strong>{selectedPackage.activation.previous_version ?? "none"}</strong></div>
             <div><span>Signature evidence</span><strong>{selectedPackage.trust.has_signature && selectedPackage.trust.has_public_key ? "present" : "not present"}</strong></div>
+            <div><span>Auto Route</span><strong>{selectedPackage.kind === "domain_harness" ? selectedPackage.domain_routing?.hints.join(", ") || "explicit selection only" : "not applicable"}</strong></div>
+            <div><span>Built-in replacement</span><strong>{selectedPackage.replaces_builtin ? "optional catalog target" : "no"}</strong></div>
             <div><span>Runtime authority</span><strong className="authority-denied">{selectedPackage.runtime_authority || selectedPackage.activation.runtime_authority ? "unexpected" : "none"}</strong></div>
           </div>
+          {selectedPackage.kind === "domain_harness" ? <div className="package-boundary"><Icon name="council" size={14} /><span>{selectedPackage.domain_routing ? "Declared route hints affect Shadow Council selection only; a verified package signature binds their exact values. They cannot select a Gene, approve an effect, or add capabilities." : "This Domain has no route contract. Auto Route ignores it until the user selects it explicitly."}</span></div> : null}
           <div className="package-lifecycle-actions">
             <button className="button button-primary" type="button" disabled={Boolean(busy)} onClick={() => void previewLifecycle(selectedPackage, selectedPackage.activation.state === "enabled" ? "disable" : "enable")}>{busy === "preview-enable" || busy === "preview-disable" ? "Checking…" : selectedPackage.activation.state === "enabled" ? "Preview disable" : selectedPackage.activation.active_version ? "Preview update" : "Preview enable"}</button>
             {selectedPackage.activation.previous_version ? <button className="button button-secondary" type="button" disabled={Boolean(busy)} onClick={() => void previewLifecycle(selectedPackage, "rollback")}>{busy === "preview-rollback" ? "Checking…" : "Preview rollback"}</button> : null}

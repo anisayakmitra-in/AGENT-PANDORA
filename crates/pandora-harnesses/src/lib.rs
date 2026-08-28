@@ -13,7 +13,7 @@ pub mod research;
 pub mod security;
 pub mod slash;
 
-pub use catalog::HarnessCatalog;
+pub use catalog::{HarnessCatalog, HarnessCatalogError, replaceable_builtin_harness_kind};
 
 pub fn canonical_harness_binding_digest(manifest: &pandora_types::HarnessManifest) -> String {
     let mut owned_genes = manifest
@@ -67,9 +67,10 @@ pub fn canonical_harness_binding_digest(manifest: &pandora_types::HarnessManifes
 mod catalog_tests {
     use super::{HarnessCatalog, canonical_harness_binding_digest};
     use pandora_types::{
-        Capability, Gene, GeneError, GeneId, GeneInput, GeneKind, GeneManifest, HarnessId,
-        HarnessKind, HarnessManifest, MetaComposition, OperationRequest, PackageCompatibility,
-        PackageDependency, PackageKind, PackageManifest, TrustEvidence, hash_artifact,
+        Capability, DomainRoutingProfile, Gene, GeneError, GeneId, GeneInput, GeneKind,
+        GeneManifest, HarnessId, HarnessKind, HarnessManifest, MetaComposition, OperationRequest,
+        PackageCompatibility, PackageDependency, PackageKind, PackageManifest, TrustEvidence,
+        hash_artifact,
     };
 
     struct PackageGene {
@@ -222,6 +223,51 @@ mod catalog_tests {
             .expect("coding harness should be in the built-in catalog");
 
         assert_eq!(coding.manifest().id().as_str(), "coding-domain");
+    }
+
+    #[test]
+    fn optional_domain_replacement_keeps_one_identity_and_its_route_contract() {
+        let artifact = b"coding replacement";
+        let package = PackageManifest::new(
+            "coding-domain",
+            "2.0.0",
+            PackageKind::DomainHarness,
+            "publisher",
+            hash_artifact(artifact),
+            vec![PackageDependency::new("workspace.read", "0.1.0", false).unwrap()],
+            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "MIT",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap()
+        .with_domain_routing(
+            DomainRoutingProfile::new(vec!["firmware development".to_owned()]).unwrap(),
+        )
+        .unwrap();
+
+        let catalog = HarnessCatalog::builtins()
+            .replace_declarative_domain_genes(&package, Vec::new())
+            .unwrap();
+
+        assert_eq!(
+            catalog
+                .iter()
+                .filter(|harness| harness.manifest().id().as_str() == "coding-domain")
+                .count(),
+            1
+        );
+        assert_eq!(
+            catalog
+                .find(&HarnessId::new("coding-domain").unwrap())
+                .unwrap()
+                .manifest()
+                .version(),
+            "2.0.0"
+        );
+        assert_eq!(
+            catalog.domain_routing().next().unwrap().1.hints(),
+            &["firmware development"]
+        );
     }
 
     #[test]

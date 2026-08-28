@@ -236,12 +236,18 @@ or expose provider, MCP, package, or remote-execution methods.
 Read-only work can complete without approval. Writes and process effects stop at
 the approval boundary and expose an inspectable, redacted request subject.
 `--harness` selects a built-in Harness or an admitted package profile by ID;
-`coding`, `research`, `design`, `operations`, `security`, `debugging`, and `data` are aliases for
-the built-in `coding-domain`, `research-domain`, `design-domain`,
-`operations-domain`, `security-domain`, `debugging-domain`, and `data-domain` Harnesses. Package-backed Domain
-profiles require the exact
-`--harness-version <version>` value. The runtime rejects an unknown,
-unsupported, or unavailable profile before Gene planning.
+`coding`, `research`, `design`, `operations`, `security`, `debugging`,
+and `data` are aliases for the corresponding built-in Domain IDs. An enabled
+package-backed profile is available by ID from the active catalog.
+`--harness-version <version>` may pin that active version; a mismatch fails
+before Gene planning.
+
+With no explicit Harness, Auto Route reads the same active catalog. Built-in
+routes and declared `domain_routing.hints` compete by longest matching phrase.
+Two Harnesses with the same top score fail closed and require `--harness`.
+Package Domains without route hints remain explicit-selection only. Route
+metadata never selects a Gene or grants a capability.
+For verified packages, the package signature binds the exact route list.
 Direct `run` recognizes the Coding actions `read:`, `search:`, `patch:`,
 `verify`, `test`, `format`, `review:`, `deep-review:`, `audit`, `debt`, `measure`,
 and `guide`.
@@ -263,8 +269,8 @@ are `debugging-inventory`, `debugging-failures`, `debugging-tests`,
 are `data-inventory`, `data-schema`, `data-quality`, `data-lineage`,
 `data-analysis`, and `data-guide`. These actions
 provide bounded local evidence; they do not run scanners, assign vulnerability
-verdicts, or apply remediation. Other natural-language tasks
-require `run --agent`; Pandora does not silently route them to an unregistered
+verdicts, or apply remediation. Other natural-language tasks require
+`run --agent`; Pandora does not route an unclassified task to an unregistered
 default Harness.
 `harness run` accepts the same canonical catalog IDs and only runs a Domain
 Harness with executable Genes. A package-backed profile may bind matching

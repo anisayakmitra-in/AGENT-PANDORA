@@ -1,0 +1,61 @@
+name: Contribution proposal
+description: Propose a scoped change you want to implement
+title: "contrib: "
+body:
+  - type: markdown
+    attributes:
+      value: Search open and closed issues and pull requests first. Do not include credentials, private prompts, or sensitive workspace data.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and current behavior
+      description: Give a safe reproduction or point to the exact source and documented contract.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Proposed scope
+      description: Name the files or subsystem you would change and what you will leave alone.
+    validations:
+      required: true
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Roadmap phase
+      options:
+        - Phase 6 - production readiness
+        - Phase 7 - runtime scale and orchestration
+        - Phase 8 - agent experience and disclosure
+        - Phase 9 - evaluation-driven loops
+        - Phase 10 - memory consolidation
+        - Phase 11 - adversarial resilience
+        - Phase 12 - agent operations
+        - Small maintenance outside a phase
+    validations:
+      required: true
+  - type: textarea
+    id: invariants
+    attributes:
+      label: Authority and invariants
+      description: State which boundary is touched and what must remain impossible.
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Verification
+      description: List focused tests for success, refusal, and recovery plus the full checks you can run.
+    validations:
+      required: true
+  - type: checkboxes
+    id: agreement
+    attributes:
+      label: Contributor agreement
+      options:
+        - label: I searched for duplicate issues and pull requests.
+          required: true
+        - label: I will keep the pull request focused on this agreed scope.
+          required: true
+        - label: I will not include credentials, private data, or generated build output.
+          required: true

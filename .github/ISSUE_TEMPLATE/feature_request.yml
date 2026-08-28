@@ -23,3 +23,29 @@ body:
     attributes:
       label: Alternatives
       description: What existing command or workflow do you use today?
+  - type: dropdown
+    id: authority
+    attributes:
+      label: Authority boundary
+      description: Which boundary would this change touch?
+      options:
+        - No effect or permission boundary
+        - Harness, Gene, package, provider, Skill, or MCP contract
+        - Parliament, Shadow Council, ReferenceMonitor, approval, or permit
+        - Evolution, memory, orchestration, or recovery lifecycle
+        - Public CLI, JSON, service, or desktop contract
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance checks
+      description: List the success, refusal, and recovery behavior that tests should prove.
+    validations:
+      required: true
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to prepare a focused pull request after scope is agreed.

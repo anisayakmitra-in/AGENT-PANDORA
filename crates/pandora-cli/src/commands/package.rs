@@ -1,6 +1,6 @@
 use super::{load_config, parse_options};
 use crate::output::{CliError, CommandResult, success};
-use pandora_harnesses::{builtin_genes, builtin_harnesses};
+use pandora_harnesses::{builtin_genes, builtin_harnesses, replaceable_builtin_harness_kind};
 use pandora_runtime::config::DEFAULT_REGISTRY_TOKEN_ENV;
 use pandora_runtime::{
     ArtifactCatalog, GitHubPackageClient, GitHubPackageError, MAX_STORED_ARTIFACT_BYTES,
@@ -851,6 +851,12 @@ pub(super) fn package_value(record: &PackageRecord) -> serde_json::Value {
             "allowed_domains": composition.allowed_domains().iter().map(|id| id.as_str()).collect::<Vec<_>>(),
             "max_handoffs": composition.max_handoffs(),
         })),
+        "domain_routing": manifest.domain_routing().map(|routing| json!({
+            "hints": routing.hints(),
+            "auto_route": true,
+        })),
+        "replaces_builtin": replaceable_builtin_harness_kind(manifest.id().as_str())
+            .is_some_and(|kind| PackageKind::from(kind) == manifest.kind()),
         "state": record.state().as_str(),
         "runtime_authority": record.grants_runtime_authority(),
     })

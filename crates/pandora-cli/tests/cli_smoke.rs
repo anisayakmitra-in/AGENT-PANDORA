@@ -1,14 +1,15 @@
 use base64::Engine as _;
+use ed25519_dalek::{Signer, SigningKey};
 use pandora_runtime::{
     DeviceKeyStore, DeviceProofRequest, EfficiencyStore, MemoryEngine, SessionStore,
     SubagentPreparation, SubagentScope, SubagentStore,
 };
 use pandora_types::{
-    ContextClassification, EffectOutcome, EffectReceipt, ExecutionId, HarnessId, JobId,
-    JobWorkerId, MemoryKind, MemoryScope, MetaComposition, PackageCompatibility, PackageDependency,
-    PackageKind, PackageManifest, PermitId, PrincipalId, ReceiptId, RequestDigest, Session,
-    SessionId, SubagentBudgets, SubagentId, SubagentRequest, TenantId, Timestamp, TrustEvidence,
-    WorkspaceId, hash_artifact,
+    ContextClassification, DomainRoutingProfile, EffectOutcome, EffectReceipt, ExecutionId,
+    HarnessId, JobId, JobWorkerId, MemoryKind, MemoryScope, MetaComposition, PackageCompatibility,
+    PackageDependency, PackageKind, PackageManifest, PermitId, PrincipalId, ReceiptId,
+    RequestDigest, Session, SessionId, SubagentBudgets, SubagentId, SubagentRequest, TenantId,
+    Timestamp, TrustEvidence, TrustLevel, WorkspaceId, hash_artifact,
 };
 use serde_json::Value;
 use std::fs;
@@ -5312,7 +5313,7 @@ fn package_meta_admission_survives_cli_restart_without_runtime_authority() {
     assert_eq!(output.status.code(), Some(50));
     let response = parse_json(&output);
     assert_eq!(response["code"], "execution_failed");
-    assert_eq!(response["message"], "requested harness is not runnable");
+    assert_eq!(response["message"], "harness 'example/meta' is not runnable");
     assert_eq!(response["details"]["kind"], "meta");
 
     let output = fixture
@@ -5887,6 +5888,8 @@ fn admitted_domain_profile_runs_with_an_explicit_version() {
         "MIT",
         TrustEvidence::unsigned(),
     )
+    .unwrap()
+    .with_domain_routing(DomainRoutingProfile::new(vec!["read:readme.md".to_owned()]).unwrap())
     .unwrap();
     let manifest_path = fixture.root.join("domain.json");
     let artifact_path = fixture.root.join("domain.artifact");
@@ -5913,6 +5916,10 @@ fn admitted_domain_profile_runs_with_an_explicit_version() {
     let response = parse_json(&output);
     assert_eq!(response["package"]["state"], "admitted");
     assert_eq!(response["package"]["activation"]["state"], "disabled");
+    assert_eq!(
+        response["package"]["domain_routing"]["hints"][0],
+        "read:readme.md"
+    );
 
     let output = fixture
         .command(&["harness", "list", "--json"])
@@ -5987,6 +5994,15 @@ fn admitted_domain_profile_runs_with_an_explicit_version() {
     assert_eq!(response["gene_id"], "workspace.read");
 
     let output = fixture
+        .command(&["run", "read:README.md", "--json"])
+        .output()
+        .expect("Auto Route should load the active custom Domain catalog");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["harness_id"], "example/domain");
+    assert_eq!(response["gene_id"], "workspace.read");
+
+    let output = fixture
         .command(&[
             "harness",
             "run",
@@ -6020,6 +6036,124 @@ fn admitted_domain_profile_runs_with_an_explicit_version() {
     assert_eq!(response["status"], "completed");
     assert_eq!(response["harness_id"], "example/domain");
     assert_eq!(response["gene_id"], "workspace.read");
+}
+
+#[test]
+fn signed_optional_builtin_replacement_activates_and_restores_the_compiled_domain() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let artifact = b"signed coding replacement\n";
+    let dependencies = vec![PackageDependency::new("workspace.read", "0.1.0", false).unwrap()];
+    let routing = DomainRoutingProfile::new(vec!["firmware development".to_owned()]).unwrap();
+    let unsigned = PackageManifest::new(
+        "coding-domain",
+        "9.0.0",
+        PackageKind::DomainHarness,
+        "local-publisher",
+        hash_artifact(artifact),
+        dependencies.clone(),
+        PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+        "MIT",
+        TrustEvidence::unsigned(),
+    )
+    .unwrap()
+    .with_domain_routing(routing.clone())
+    .unwrap();
+    let signing_key = SigningKey::from_bytes(&[23_u8; 32]);
+    let signature = signing_key.sign(unsigned.signing_message().as_bytes());
+    let signature = signature
+        .to_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let public_key = signing_key
+        .verifying_key()
+        .to_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let manifest = PackageManifest::new(
+        "coding-domain",
+        "9.0.0",
+        PackageKind::DomainHarness,
+        "local-publisher",
+        hash_artifact(artifact),
+        dependencies,
+        PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+        "MIT",
+        TrustEvidence::new(TrustLevel::Verified, Some(signature), Some(public_key)).unwrap(),
+    )
+    .unwrap()
+    .with_domain_routing(routing)
+    .unwrap();
+    let manifest_path = fixture.root.join("coding-replacement.json");
+    let artifact_path = fixture.root.join("coding-replacement.artifact");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+    fs::write(&artifact_path, artifact).unwrap();
+
+    let admitted = fixture
+        .command(&[
+            "package",
+            "admit",
+            "--manifest",
+            manifest_path.to_str().unwrap(),
+            "--artifact",
+            artifact_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("signed built-in replacement admission should start");
+    assert_success(&admitted);
+    assert_eq!(parse_json(&admitted)["package"]["replaces_builtin"], true);
+
+    let enabled = fixture
+        .command(&[
+            "package",
+            "enable",
+            "coding-domain",
+            "9.0.0",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("signed built-in replacement activation should start");
+    assert_success(&enabled);
+
+    let replacement = fixture
+        .command(&["harness", "inspect", "coding-domain", "--json"])
+        .output()
+        .expect("active replacement should be inspectable");
+    assert_success(&replacement);
+    let replacement = parse_json(&replacement);
+    assert_eq!(replacement["harness"]["version"], "9.0.0");
+    assert_eq!(replacement["harness"]["genes"].as_array().unwrap().len(), 1);
+    assert_eq!(replacement["harness"]["genes"][0]["id"], "workspace.read");
+
+    let disabled = fixture
+        .command(&[
+            "package",
+            "disable",
+            "coding-domain",
+            "9.0.0",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("built-in replacement disable should start");
+    assert_success(&disabled);
+
+    let restored = fixture
+        .command(&["harness", "inspect", "coding-domain", "--json"])
+        .output()
+        .expect("compiled domain should be restored");
+    assert_success(&restored);
+    let restored = parse_json(&restored);
+    assert_ne!(restored["harness"]["version"], "9.0.0");
+    assert!(restored["harness"]["genes"].as_array().unwrap().len() > 1);
 }
 
 #[test]

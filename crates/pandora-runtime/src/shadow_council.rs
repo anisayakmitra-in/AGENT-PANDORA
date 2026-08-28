@@ -1,12 +1,14 @@
 use pandora_harnesses::{
-    CODING_HARNESS_ID, DATA_HARNESS_ID, DEBUGGING_HARNESS_ID, DESIGN_HARNESS_ID,
+    CODING_HARNESS_ID, DATA_HARNESS_ID, DEBUGGING_HARNESS_ID, DESIGN_HARNESS_ID, HarnessCatalog,
     RESEARCH_HARNESS_ID, SECURITY_HARNESS_ID,
 };
 use pandora_types::{GeneId, HarnessId, TaskIntent};
+use std::collections::BTreeMap;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RoutingError {
     NoDefaultHarness,
+    AmbiguousHarnesses { ids: Vec<HarnessId> },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -18,6 +20,7 @@ pub enum RoutingReason {
     SecurityTask,
     DebuggingTask,
     DataTask,
+    DeclaredDomainRoute,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -49,6 +52,14 @@ impl ShadowCouncil {
     }
 
     pub fn select(&self, task: &TaskIntent) -> Result<Selection, RoutingError> {
+        self.select_with_catalog(task, &HarnessCatalog::builtins())
+    }
+
+    pub fn select_with_catalog(
+        &self,
+        task: &TaskIntent,
+        catalog: &HarnessCatalog,
+    ) -> Result<Selection, RoutingError> {
         if let Some(harness_id) = task.requested_harness() {
             return Ok(Selection {
                 harness_id: harness_id.clone(),
@@ -58,109 +69,144 @@ impl ShadowCouncil {
         }
 
         let summary = task.summary().to_ascii_lowercase();
-        let is_design_task = ["design", "accessibility"]
-            .iter()
-            .any(|term| summary.contains(term));
-        if is_design_task {
-            return Ok(Selection {
-                harness_id: HarnessId::new(DESIGN_HARNESS_ID)
-                    .expect("built-in harness ID is valid"),
-                gene_id: task.requested_gene().cloned(),
-                reason: RoutingReason::DesignTask,
+        let mut candidates = BTreeMap::<HarnessId, (usize, RoutingReason)>::new();
+        for (id, reason, hints) in builtin_routes() {
+            record_candidate(&mut candidates, id, reason, hints.copied(), &summary);
+        }
+        for (id, routing) in catalog.domain_routing() {
+            record_candidate(
+                &mut candidates,
+                id.as_str(),
+                RoutingReason::DeclaredDomainRoute,
+                routing.hints().iter().map(String::as_str),
+                &summary,
+            );
+        }
+        let Some(best_score) = candidates.values().map(|(score, _)| *score).max() else {
+            return Err(RoutingError::NoDefaultHarness);
+        };
+        let winners = candidates
+            .into_iter()
+            .filter(|(_, (score, _))| *score == best_score)
+            .collect::<Vec<_>>();
+        if winners.len() > 1 {
+            return Err(RoutingError::AmbiguousHarnesses {
+                ids: winners.into_iter().map(|(id, _)| id).collect(),
             });
         }
-        let is_research_task = [
-            "research",
-            "evidence",
-            "citation",
-            "source-read:",
-            "source-compare:",
-        ]
-        .iter()
-        .any(|term| summary.contains(term));
-        if is_research_task {
-            return Ok(Selection {
-                harness_id: HarnessId::new(RESEARCH_HARNESS_ID)
-                    .expect("built-in harness ID is valid"),
-                gene_id: task.requested_gene().cloned(),
-                reason: RoutingReason::ResearchTask,
-            });
-        }
-        let is_security_task = ["security", "vulnerability", "threat", "cve"]
-            .iter()
-            .any(|term| summary.contains(term));
-        if is_security_task {
-            return Ok(Selection {
-                harness_id: HarnessId::new(SECURITY_HARNESS_ID)
-                    .expect("built-in harness ID is valid"),
-                gene_id: task.requested_gene().cloned(),
-                reason: RoutingReason::SecurityTask,
-            });
-        }
-        let is_debugging_task = [
-            "debugging",
-            "regression",
-            "stack trace",
-            "backtrace",
-            "flaky",
-        ]
-        .iter()
-        .any(|term| summary.contains(term));
-        if is_debugging_task {
-            return Ok(Selection {
-                harness_id: HarnessId::new(DEBUGGING_HARNESS_ID)
-                    .expect("built-in harness ID is valid"),
-                gene_id: task.requested_gene().cloned(),
-                reason: RoutingReason::DebuggingTask,
-            });
-        }
-        let is_data_task = [
-            "data",
-            "dataset",
-            "schema",
-            "lineage",
-            "data quality",
-            "analytics",
-            "etl",
-        ]
-        .iter()
-        .any(|term| summary.contains(term));
-        if is_data_task {
-            return Ok(Selection {
-                harness_id: HarnessId::new(DATA_HARNESS_ID).expect("built-in harness ID is valid"),
-                gene_id: task.requested_gene().cloned(),
-                reason: RoutingReason::DataTask,
-            });
-        }
-        let is_coding_task = [
-            "code",
-            "rust",
-            "bug",
-            "test",
-            "compiler",
-            "read:",
-            "search:",
-            "patch:",
-            "verify",
-            "review:",
-            "audit",
-            "deep-review:",
-            "debt",
-            "measure",
-            "guide",
-        ]
-        .iter()
-        .any(|term| summary.contains(term));
-        if is_coding_task {
-            return Ok(Selection {
-                harness_id: HarnessId::new(CODING_HARNESS_ID)
-                    .expect("built-in harness ID is valid"),
-                gene_id: task.requested_gene().cloned(),
-                reason: RoutingReason::CodingTask,
-            });
-        }
+        let (harness_id, (_, reason)) = winners
+            .into_iter()
+            .next()
+            .expect("a best score has at least one candidate");
+        Ok(Selection {
+            harness_id,
+            gene_id: task.requested_gene().cloned(),
+            reason,
+        })
+    }
+}
 
-        Err(RoutingError::NoDefaultHarness)
+fn builtin_routes() -> impl Iterator<
+    Item = (
+        &'static str,
+        RoutingReason,
+        std::slice::Iter<'static, &'static str>,
+    ),
+> {
+    const ROUTES: &[(&str, RoutingReason, &[&str])] = &[
+        (
+            DESIGN_HARNESS_ID,
+            RoutingReason::DesignTask,
+            &["design", "accessibility"],
+        ),
+        (
+            RESEARCH_HARNESS_ID,
+            RoutingReason::ResearchTask,
+            &[
+                "research",
+                "evidence",
+                "citation",
+                "source-read:",
+                "source-compare:",
+            ],
+        ),
+        (
+            SECURITY_HARNESS_ID,
+            RoutingReason::SecurityTask,
+            &["security", "vulnerability", "threat", "cve"],
+        ),
+        (
+            DEBUGGING_HARNESS_ID,
+            RoutingReason::DebuggingTask,
+            &[
+                "debugging",
+                "regression",
+                "stack trace",
+                "backtrace",
+                "flaky",
+            ],
+        ),
+        (
+            DATA_HARNESS_ID,
+            RoutingReason::DataTask,
+            &[
+                "data",
+                "dataset",
+                "schema",
+                "lineage",
+                "data quality",
+                "analytics",
+                "etl",
+            ],
+        ),
+        (
+            CODING_HARNESS_ID,
+            RoutingReason::CodingTask,
+            &[
+                "code",
+                "rust",
+                "bug",
+                "test",
+                "compiler",
+                "read:",
+                "search:",
+                "patch:",
+                "verify",
+                "review:",
+                "audit",
+                "deep-review:",
+                "debt",
+                "measure",
+                "guide",
+            ],
+        ),
+    ];
+    ROUTES
+        .iter()
+        .map(|(id, reason, hints)| (*id, *reason, hints.iter()))
+}
+
+fn record_candidate<'a>(
+    candidates: &mut BTreeMap<HarnessId, (usize, RoutingReason)>,
+    id: &str,
+    reason: RoutingReason,
+    hints: impl IntoIterator<Item = &'a str>,
+    summary: &str,
+) {
+    let score = hints
+        .into_iter()
+        .filter(|hint| summary.contains(hint))
+        .map(str::len)
+        .max();
+    let Some(score) = score else {
+        return;
+    };
+    let id = HarnessId::new(id).expect("route IDs are validated Harness IDs");
+    match candidates.get(&id) {
+        Some((current, _)) if *current >= score => {}
+        _ => {
+            candidates.insert(id, (score, reason));
+        }
     }
 }
 
@@ -172,9 +218,39 @@ impl Default for ShadowCouncil {
 
 #[cfg(test)]
 mod tests {
-    use pandora_types::TaskIntent;
+    use pandora_harnesses::HarnessCatalog;
+    use pandora_types::{
+        DomainRoutingProfile, HarnessId, PackageCompatibility, PackageDependency, PackageKind,
+        PackageManifest, TaskIntent, TrustEvidence, hash_artifact,
+    };
 
     use super::{RoutingError, ShadowCouncil};
+
+    fn domain_package(id: &str, hints: Option<&[&str]>) -> PackageManifest {
+        let package = PackageManifest::new(
+            id,
+            "1.0.0",
+            PackageKind::DomainHarness,
+            "publisher",
+            hash_artifact(id.as_bytes()),
+            vec![PackageDependency::new("workspace.read", "0.1.0", false).unwrap()],
+            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "MIT",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+        match hints {
+            Some(hints) => package
+                .with_domain_routing(
+                    DomainRoutingProfile::new(
+                        hints.iter().map(|hint| (*hint).to_owned()).collect(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap(),
+            None => package,
+        }
+    }
 
     #[test]
     fn coding_task_selects_the_coding_domain() {
@@ -243,5 +319,94 @@ mod tests {
         let task = TaskIntent::new("summarize the workspace").unwrap();
 
         assert_eq!(council.select(&task), Err(RoutingError::NoDefaultHarness));
+    }
+
+    #[test]
+    fn installed_domain_routes_image_generation_without_a_built_in_category() {
+        let package = domain_package(
+            "creator/image-domain",
+            Some(&["image generation", "diffusion model"]),
+        );
+        let catalog = HarnessCatalog::builtins()
+            .with_declarative_domain(&package)
+            .unwrap();
+        let task = TaskIntent::new("Generate an image with a diffusion model").unwrap();
+
+        let selection = ShadowCouncil::new()
+            .select_with_catalog(&task, &catalog)
+            .unwrap();
+
+        assert_eq!(selection.harness_id().as_str(), "creator/image-domain");
+    }
+
+    #[test]
+    fn specific_vlsi_route_outranks_the_generic_design_route() {
+        let package = domain_package(
+            "silicon/vlsi-domain",
+            Some(&["vlsi design", "verilog", "place and route"]),
+        );
+        let catalog = HarnessCatalog::builtins()
+            .with_declarative_domain(&package)
+            .unwrap();
+        let task = TaskIntent::new("Review this VLSI design and Verilog").unwrap();
+
+        let selection = ShadowCouncil::new()
+            .select_with_catalog(&task, &catalog)
+            .unwrap();
+
+        assert_eq!(selection.harness_id().as_str(), "silicon/vlsi-domain");
+    }
+
+    #[test]
+    fn custom_domain_without_routing_is_explicit_selection_only() {
+        let package = domain_package("creator/video-domain", None);
+        let catalog = HarnessCatalog::builtins()
+            .with_declarative_domain(&package)
+            .unwrap();
+        let task = TaskIntent::new("render a cinematic sequence").unwrap();
+
+        assert_eq!(
+            ShadowCouncil::new().select_with_catalog(&task, &catalog),
+            Err(RoutingError::NoDefaultHarness)
+        );
+    }
+
+    #[test]
+    fn equally_specific_custom_routes_fail_closed() {
+        let first = domain_package("creator/image-domain", Some(&["image generation"]));
+        let second = domain_package("studio/image-domain", Some(&["image generation"]));
+        let catalog = HarnessCatalog::builtins()
+            .with_declarative_domain(&first)
+            .unwrap()
+            .with_declarative_domain(&second)
+            .unwrap();
+        let task = TaskIntent::new("image generation for a product shot").unwrap();
+
+        assert_eq!(
+            ShadowCouncil::new().select_with_catalog(&task, &catalog),
+            Err(RoutingError::AmbiguousHarnesses {
+                ids: vec![
+                    HarnessId::new("creator/image-domain").unwrap(),
+                    HarnessId::new("studio/image-domain").unwrap(),
+                ],
+            })
+        );
+    }
+
+    #[test]
+    fn explicit_harness_selection_overrides_auto_route() {
+        let package = domain_package("creator/image-domain", Some(&["image generation"]));
+        let catalog = HarnessCatalog::builtins()
+            .with_declarative_domain(&package)
+            .unwrap();
+        let task = TaskIntent::new("image generation")
+            .unwrap()
+            .with_harness(HarnessId::new("coding-domain").unwrap());
+
+        let selection = ShadowCouncil::new()
+            .select_with_catalog(&task, &catalog)
+            .unwrap();
+
+        assert_eq!(selection.harness_id().as_str(), "coding-domain");
     }
 }

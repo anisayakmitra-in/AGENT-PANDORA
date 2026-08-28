@@ -12,7 +12,9 @@ Pandora keeps package metadata separate from runtime authority.
 - SHA-256 artifact hash;
 - dependencies and runtime compatibility;
 - license;
-- inline trust evidence.
+- inline trust evidence;
+- optional bounded Auto Route hints for a Domain Harness;
+- composition metadata for a Meta Harness.
 
 Package and dependency versions use strict SemVer, including prerelease and
 build metadata. The exact version is part of package identity; `1.0` and
@@ -98,17 +100,26 @@ registry-controlled upstream `artifact_url`. Named registry profiles persist onl
 the validated base URL and an optional secret reference; they do not add authority,
 change admission policy, or store a token in configuration.
 
-Remote admission is Gene-only in this release. It requires an artifact, a canonical
-lowercase SHA-256 digest, no unresolved capability requirements, and one valid
-Pandora runtime requirement. Other recognized registry kinds fail before download
-or durable state change. The signed message is
-`{id}:{version}:{publisher}:{content_hash}`, using the exact manifest strings.
-This proves that the evidence matches the declared package and artifact; it
-does not establish publisher trust. Local `official` claims remain rejected
-until a publisher trust root is configured. Registry moderation levels are not
-promoted into local `Official` trust. Admission still records metadata only: it
-does not load code, enable a Harness, issue a permit, or grant runtime
-authority.
+Remote registry admission is Gene-only in this release. It requires an artifact,
+a canonical lowercase SHA-256 digest, no unresolved capability requirements,
+and one valid Pandora runtime requirement. Other recognized registry kinds fail
+before download or durable state change. Pinned GitHub and local admission use
+the same package checks and may admit the Domain and Meta profile kinds
+described below.
+
+The signed payload starts with `pandora-package-signature-v2` and binds the
+package ID, version, kind, publisher, artifact hash, runtime compatibility,
+license, exact dependencies, Meta composition, and Domain route hints through a
+deterministic length-prefixed encoding. Trust evidence is excluded from the
+payload because it contains the signature itself. Changing a route, dependency,
+composition member, package kind, or artifact invalidates the signature.
+
+A valid package signature proves that the declared public key signed those
+exact fields. It does not establish publisher trust. Local `official` claims
+remain rejected until a publisher root is configured. Registry moderation
+levels are not promoted into local `Official` trust. Admission still records
+metadata only: it does not load code, enable a Harness, issue a permit, or grant
+runtime authority.
 
 Every admitted package starts disabled. `package enable` is the separate local
 lifecycle boundary: it requires an exact ID and version, verifies that required
@@ -438,10 +449,19 @@ resolve to exactly one admitted Domain Harness profile, or to a built-in Domain
 Harness. Missing members, non-Domain members, and multiple admitted versions
 of the same custom ID are rejected during admission.
 
-Built-in Harness IDs are reserved. A package can add a new Domain or Meta
-profile but cannot shadow `core-source`, `coordination-meta`, `coding-domain`,
-`research-domain`, `design-domain`, `operations-domain`, `security-domain`,
-`debugging-domain`, `data-domain`, or another built-in identity.
+The constitutional `core-source` ID is reserved. The optional built-in Domain
+IDs and `coordination-meta` may be replaced by an exact package of the same
+kind only when its trust level is `verified` and its Ed25519 signature passes.
+Unsigned packages cannot replace a built-in entry. The replaceable Domain IDs
+are `coding-domain`, `research-domain`, `design-domain`,
+`operations-domain`, `security-domain`, `debugging-domain`, and
+`data-domain`.
+
+Replacement changes one entry in the active catalog snapshot; it does not add a
+second entry with the same ID. Disabling the package restores the compiled
+built-in on the next snapshot. Parliament, Shadow Council, ReferenceMonitor,
+the constitutional Source binding, and permit issuance are not replacement
+targets.
 
 The built-in Coding, Research, Design, Operations, Security, Debugging, and Data
 Genes and installed WebAssembly Genes are the executable Gene implementations available to
@@ -467,6 +487,20 @@ catalog that can execute. Enabling, disabling, updating, or rolling back a
 package changes the persisted binding but does not mutate a running controller;
 the desktop therefore requires a local-service restart before the new snapshot
 is active.
+
+An enabled custom Domain may include a `domain_routing.hints` list with 1-32
+unique canonical strings, each 3-64 bytes. Auto Route compares those declared
+hints with the lowercase task summary and selects the longest match across the
+active custom and built-in routes. Two different Harnesses with the same top
+score produce an ambiguity error and require explicit selection. A custom
+Domain without route hints is explicit-selection only.
+
+Image, video, VLSI, EDA, or another specialist Domain therefore needs no
+compiled Pandora category. Its package can declare phrases such as "image
+generation," "video generation," "vlsi design," or "verilog." Route metadata
+selects only a Harness. It cannot select a Gene, enable a package, grant a
+capability, approve an effect, or issue a permit. An explicit user Harness
+selection always takes precedence.
 
 In agent mode, each loaded WebAssembly Gene receives a deterministic,
 provider-safe tool alias. That alias is presentation only: invocation binds

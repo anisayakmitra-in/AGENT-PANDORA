@@ -1,7 +1,7 @@
 use super::{parse_options, run};
 use crate::output::{CliError, CommandResult, success};
 use pandora_harnesses::{
-    CODING_HARNESS_ID, DATA_HARNESS_ID, DEBUGGING_HARNESS_ID, DESIGN_HARNESS_ID, HarnessCatalog,
+    CODING_HARNESS_ID, DATA_HARNESS_ID, DEBUGGING_HARNESS_ID, DESIGN_HARNESS_ID,
     OPERATIONS_HARNESS_ID, RESEARCH_HARNESS_ID, SECURITY_HARNESS_ID,
 };
 use pandora_runtime::{PackageRecord, PackageState};
@@ -29,7 +29,8 @@ fn list(args: &[String]) -> Result<CommandResult, CliError> {
             "harness list does not accept positional arguments",
         ));
     }
-    let harnesses = HarnessCatalog::builtins();
+    let config = super::load_config(&parsed)?;
+    let harnesses = super::run::configured_harnesses(&config, None, None)?;
     let values = harnesses.iter().map(harness_value).collect::<Vec<_>>();
     let harness_count = values.len();
     let store = super::package::store(&parsed)?;
@@ -58,7 +59,7 @@ fn list(args: &[String]) -> Result<CommandResult, CliError> {
                 .collect::<Result<Vec<_>, _>>()?,
         }),
         format!(
-            "{harness_count} built-in Harness(es) available; {profile_count} admitted profile(s); {} package record(s)",
+            "{harness_count} active Harness(es) available; {profile_count} admitted profile(s); {} package record(s)",
             package_records.len()
         ),
     ))
@@ -86,27 +87,12 @@ fn inspect(args: &[String]) -> Result<CommandResult, CliError> {
     };
     let harness_id = pandora_types::HarnessId::new(requested_id.to_owned())
         .map_err(|_| CliError::usage(format!("unknown harness '{requested_id}'")))?;
-    let builtins = HarnessCatalog::builtins();
-    let harnesses = if let Some(harness) = builtins.find(&harness_id) {
-        if let Some(version) = parsed.value("harness-version")
-            && version != harness.manifest().version()
-        {
-            return Err(CliError::usage(format!(
-                "built-in Harness '{}' is version {}, not {}",
-                requested_id,
-                harness.manifest().version(),
-                version
-            )));
-        }
-        builtins
-    } else {
-        let config = super::load_config(&parsed)?;
-        super::run::configured_harnesses(
-            &config,
-            Some(requested_id),
-            parsed.value("harness-version"),
-        )?
-    };
+    let config = super::load_config(&parsed)?;
+    let harnesses = super::run::configured_harnesses(
+        &config,
+        Some(requested_id),
+        parsed.value("harness-version"),
+    )?;
     let harness = harnesses.find(&harness_id).ok_or_else(|| {
         CliError::execution(
             "the requested Harness profile is unavailable",
@@ -152,22 +138,27 @@ fn run_harness(args: &[String]) -> Result<CommandResult, CliError> {
         "data" => DATA_HARNESS_ID,
         requested_id => requested_id,
     };
-    let harnesses = HarnessCatalog::builtins();
     let harness_id = pandora_types::HarnessId::new(requested_id.to_owned())
         .map_err(|_| CliError::usage(format!("unknown harness '{requested_id}'")))?;
-    if let Some(harness) = harnesses.find(&harness_id) {
-        if !harness.is_runnable() {
-            return Err(CliError::execution(
-                format!("harness '{requested_id}' is not runnable"),
-                json!({
-                    "harness_id": harness.manifest().id(),
-                    "kind": harness.manifest().kind().as_str(),
-                }),
-            ));
-        }
-    } else if parsed.value("harness-version").is_none() {
-        return Err(CliError::usage(
-            "custom Domain Harnesses require '--harness-version <version>'",
+    let config = super::load_config(&parsed)?;
+    let harnesses = super::run::configured_harnesses(
+        &config,
+        Some(requested_id),
+        parsed.value("harness-version"),
+    )?;
+    let harness = harnesses.find(&harness_id).ok_or_else(|| {
+        CliError::execution(
+            "the requested Harness profile is unavailable",
+            json!({"harness_id": requested_id}),
+        )
+    })?;
+    if !harness.is_runnable() {
+        return Err(CliError::execution(
+            format!("harness '{requested_id}' is not runnable"),
+            json!({
+                "harness_id": harness.manifest().id(),
+                "kind": harness.manifest().kind().as_str(),
+            }),
         ));
     }
     let canonical_id = harness_id.as_str().to_owned();

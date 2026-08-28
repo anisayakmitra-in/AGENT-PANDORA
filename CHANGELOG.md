@@ -1,18 +1,20 @@
 # Changelog
 
 ## Unreleased
+- Added bounded Auto Route hints for admitted Domain Harnesses. Shadow Council
+  selects the most specific active route, rejects equal matches, and preserves
+  explicit operator selection. Route metadata grants no runtime capability.
+- Added verified, signed replacement of optional built-in Domain and Meta
+  Harnesses with exact rollback to the compiled default. The constitutional
+  Source Harness remains immutable.
+- Upgraded package signatures to payload version 2 so package kind, exact
+  dependencies, Meta composition, and Domain routes are bound by the signature.
+  Packages signed with the beta version 1 payload must be signed and admitted
+  again.
+- Reworked the roadmap from a live implementation audit and added issue forms
+  for bounded feature proposals and first-time contribution work.
 
-- Added production identity and recovery boundaries: tenant/workspace-scoped
-  service identities with viewer, operator, and administrator roles,
-  Ed25519-bound device credentials with freshness and replay checks, encrypted
-  provider secret vaults, authenticated encrypted backup/restore with SQLite
-  integrity validation, and local redacted crash and operational records.
-- Added explicit stable and beta update-channel validation. Stable release tags
-  now fail closed without an explicit release approval plus Windows signing
-  and Apple signing/notarization credentials; existing checksum, Cosign, SBOM,
-  provenance, and cross-platform lifecycle gates remain required.
 
-- Added production identity and recovery boundaries: tenant/workspace-scoped
   service identities with viewer, operator, and administrator roles,
   Ed25519-bound device credentials with freshness and replay checks, encrypted
   provider secret vaults, authenticated encrypted backup/restore with SQLite

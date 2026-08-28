@@ -519,6 +519,10 @@ impl AgentLoop {
         )
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "keeps the bounded agent run inputs explicit"
+    )]
     fn run_with_context(
         &self,
         provider: &dyn Provider,
@@ -959,6 +963,10 @@ impl AgentLoop {
         Ok(ToolExecution::Output(output))
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "keeps each context authority boundary explicit"
+    )]
     fn assemble_system_context(
         &self,
         provider: &dyn Provider,

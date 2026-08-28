@@ -6,6 +6,8 @@ use sha2::{Digest, Sha256};
 use std::fmt;
 
 const MAX_PACKAGE_TEXT_BYTES: usize = 4096;
+pub const MAX_DOMAIN_ROUTE_HINTS: usize = 32;
+pub const MAX_DOMAIN_ROUTE_HINT_BYTES: usize = 64;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -70,6 +72,8 @@ pub enum PackageManifestError {
     MissingMetaComposition,
     UnexpectedMetaComposition,
     InvalidMetaComposition,
+    InvalidDomainRouting,
+    UnexpectedDomainRouting,
 }
 
 impl fmt::Display for PackageManifestError {
@@ -98,6 +102,12 @@ impl fmt::Display for PackageManifestError {
             }
             Self::InvalidMetaComposition => {
                 formatter.write_str("Meta Harness composition is invalid")
+            }
+            Self::InvalidDomainRouting => formatter.write_str(
+                "Domain Harness routing must contain 1-32 unique canonical hints of 3-64 bytes",
+            ),
+            Self::UnexpectedDomainRouting => {
+                formatter.write_str("only Domain Harness packages may declare routing hints")
             }
         }
     }
@@ -248,6 +258,56 @@ impl TrustEvidence {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DomainRoutingProfile {
+    hints: Vec<String>,
+}
+
+impl DomainRoutingProfile {
+    pub fn new(hints: Vec<String>) -> Result<Self, PackageManifestError> {
+        let mut canonical = hints
+            .into_iter()
+            .map(|hint| hint.trim().to_ascii_lowercase())
+            .collect::<Vec<_>>();
+        canonical.sort();
+        canonical.dedup();
+        let profile = Self { hints: canonical };
+        profile.validate()?;
+        Ok(profile)
+    }
+
+    pub fn hints(&self) -> &[String] {
+        &self.hints
+    }
+
+    fn validate(&self) -> Result<(), PackageManifestError> {
+        if self.hints.is_empty() || self.hints.len() > MAX_DOMAIN_ROUTE_HINTS {
+            return Err(PackageManifestError::InvalidDomainRouting);
+        }
+        let mut previous: Option<&str> = None;
+        for hint in &self.hints {
+            let valid_length = (3..=MAX_DOMAIN_ROUTE_HINT_BYTES).contains(&hint.len());
+            let valid_characters = hint.bytes().all(|byte| {
+                byte.is_ascii_lowercase()
+                    || byte.is_ascii_digit()
+                    || matches!(byte, b' ' | b'-' | b'_' | b'.' | b'+' | b'/' | b':')
+            });
+            let canonical_spacing = hint.trim() == hint
+                && !hint.contains("  ")
+                && !hint.starts_with(['-', '_', '.', '+', '/'])
+                && !hint.ends_with(['-', '_', '.', '+', '/']);
+            if !valid_length || !valid_characters || !canonical_spacing {
+                return Err(PackageManifestError::InvalidDomainRouting);
+            }
+            if previous.is_some_and(|previous| previous >= hint.as_str()) {
+                return Err(PackageManifestError::InvalidDomainRouting);
+            }
+            previous = Some(hint);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PackageManifest {
     id: PackageId,
     version: String,
@@ -260,6 +320,8 @@ pub struct PackageManifest {
     trust: TrustEvidence,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     meta_composition: Option<MetaComposition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    domain_routing: Option<DomainRoutingProfile>,
 }
 
 impl PackageManifest {
@@ -285,6 +347,7 @@ impl PackageManifest {
             compatibility,
             validate_text("license", license.into())?,
             trust,
+            None,
             None,
         )
     }
@@ -312,6 +375,7 @@ impl PackageManifest {
             validate_text("license", license.into())?,
             trust,
             Some(composition),
+            None,
         )
     }
 
@@ -327,6 +391,7 @@ impl PackageManifest {
         license: String,
         trust: TrustEvidence,
         meta_composition: Option<MetaComposition>,
+        domain_routing: Option<DomainRoutingProfile>,
     ) -> Result<Self, PackageManifestError> {
         let package = Self {
             id,
@@ -339,6 +404,7 @@ impl PackageManifest {
             license,
             trust,
             meta_composition,
+            domain_routing,
         };
         package.validate()?;
         Ok(package)
@@ -420,14 +486,70 @@ impl PackageManifest {
         self.meta_composition.as_ref()
     }
 
+    pub fn domain_routing(&self) -> Option<&DomainRoutingProfile> {
+        self.domain_routing.as_ref()
+    }
+
+    pub fn with_domain_routing(
+        mut self,
+        routing: DomainRoutingProfile,
+    ) -> Result<Self, PackageManifestError> {
+        self.domain_routing = Some(routing);
+        self.validate()?;
+        Ok(self)
+    }
+
     pub fn signing_message(&self) -> String {
-        format!(
-            "{}:{}:{}:{}",
-            self.id.as_str(),
-            self.version,
-            self.publisher,
-            self.content_hash
-        )
+        let mut message = String::from("pandora-package-signature-v2");
+        push_signing_field(&mut message, "id", self.id.as_str());
+        push_signing_field(&mut message, "version", &self.version);
+        push_signing_field(&mut message, "kind", self.kind.as_str());
+        push_signing_field(&mut message, "publisher", &self.publisher);
+        push_signing_field(&mut message, "content_hash", &self.content_hash);
+        push_signing_field(
+            &mut message,
+            "runtime_compatibility",
+            self.compatibility.runtime(),
+        );
+        push_signing_field(&mut message, "license", &self.license);
+
+        let mut dependencies = self.dependencies.iter().collect::<Vec<_>>();
+        dependencies.sort_by(|left, right| {
+            left.id()
+                .as_str()
+                .cmp(right.id().as_str())
+                .then_with(|| left.version().cmp(right.version()))
+                .then_with(|| left.optional().cmp(&right.optional()))
+        });
+        for dependency in dependencies {
+            push_signing_field(&mut message, "dependency_id", dependency.id().as_str());
+            push_signing_field(&mut message, "dependency_version", dependency.version());
+            push_signing_field(
+                &mut message,
+                "dependency_optional",
+                if dependency.optional() {
+                    "true"
+                } else {
+                    "false"
+                },
+            );
+        }
+        if let Some(composition) = &self.meta_composition {
+            push_signing_field(
+                &mut message,
+                "meta_max_handoffs",
+                &composition.max_handoffs().to_string(),
+            );
+            for domain in composition.allowed_domains() {
+                push_signing_field(&mut message, "meta_domain", domain.as_str());
+            }
+        }
+        if let Some(routing) = &self.domain_routing {
+            for hint in routing.hints() {
+                push_signing_field(&mut message, "route_hint", hint);
+            }
+        }
+        message
     }
 
     pub fn validate(&self) -> Result<(), PackageManifestError> {
@@ -450,12 +572,24 @@ impl PackageManifest {
                 .map_err(|_| PackageManifestError::InvalidMetaComposition),
             (_, Some(_)) => Err(PackageManifestError::UnexpectedMetaComposition),
             _ => Ok(()),
+        }?;
+        match (self.kind, self.domain_routing.as_ref()) {
+            (PackageKind::DomainHarness, Some(routing)) => routing.validate(),
+            (PackageKind::DomainHarness, None) => Ok(()),
+            (_, Some(_)) => Err(PackageManifestError::UnexpectedDomainRouting),
+            (_, None) => Ok(()),
         }
     }
 
     pub fn identity_matches(&self, other: &Self) -> bool {
         self.id == other.id && self.version == other.version && self.kind == other.kind
     }
+}
+
+fn push_signing_field(message: &mut String, label: &str, value: &str) {
+    use std::fmt::Write as _;
+
+    write!(message, "\n{}:{label}:{value}", value.len()).expect("writing to a String cannot fail");
 }
 
 pub const PACKAGE_LOCK_FORMAT_VERSION: u32 = 1;
@@ -673,6 +807,135 @@ mod tests {
 
         assert_eq!(decoded.kind(), PackageKind::MetaHarness);
         assert_eq!(decoded.meta_composition(), Some(&composition));
+    }
+
+    #[test]
+    fn domain_routing_is_bounded_canonical_and_round_trips() {
+        let routing = DomainRoutingProfile::new(vec![
+            " VLSI Design ".to_owned(),
+            "verilog".to_owned(),
+            "image generation".to_owned(),
+        ])
+        .unwrap();
+        let package = PackageManifest::new(
+            "publisher/specialist",
+            "1.0.0",
+            PackageKind::DomainHarness,
+            "publisher",
+            hash_artifact(b"specialist"),
+            vec![PackageDependency::new("workspace.read", "0.1.0", false).unwrap()],
+            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "MIT",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap()
+        .with_domain_routing(routing)
+        .unwrap();
+
+        let encoded = serde_json::to_vec(&package).unwrap();
+        let decoded: PackageManifest = serde_json::from_slice(&encoded).unwrap();
+
+        assert_eq!(
+            decoded.domain_routing().unwrap().hints(),
+            &["image generation", "verilog", "vlsi design"]
+        );
+        assert!(decoded.validate().is_ok());
+    }
+
+    #[test]
+    fn deserialized_domain_routing_cannot_bypass_canonical_validation() {
+        let package = PackageManifest::new(
+            "publisher/specialist",
+            "1.0.0",
+            PackageKind::DomainHarness,
+            "publisher",
+            hash_artifact(b"specialist"),
+            vec![PackageDependency::new("workspace.read", "0.1.0", false).unwrap()],
+            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "MIT",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap()
+        .with_domain_routing(
+            DomainRoutingProfile::new(vec!["image generation".to_owned()]).unwrap(),
+        )
+        .unwrap();
+        let mut encoded = serde_json::to_value(package).unwrap();
+        encoded["domain_routing"]["hints"] = serde_json::json!(["Image Generation"]);
+        let decoded: PackageManifest = serde_json::from_value(encoded).unwrap();
+
+        assert_eq!(
+            decoded.validate(),
+            Err(PackageManifestError::InvalidDomainRouting)
+        );
+    }
+
+    #[test]
+    fn only_domain_packages_can_declare_routing() {
+        let package = PackageManifest::new(
+            "publisher/gene",
+            "1.0.0",
+            PackageKind::Gene,
+            "publisher",
+            hash_artifact(b"gene"),
+            Vec::new(),
+            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "MIT",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            package.with_domain_routing(
+                DomainRoutingProfile::new(vec!["image generation".to_owned()]).unwrap()
+            ),
+            Err(PackageManifestError::UnexpectedDomainRouting)
+        );
+    }
+
+    #[test]
+    fn signature_payload_binds_routing_dependencies_and_kind() {
+        let plain = PackageManifest::new(
+            "publisher/specialist",
+            "1.0.0",
+            PackageKind::DomainHarness,
+            "publisher",
+            hash_artifact(b"specialist"),
+            vec![PackageDependency::new("workspace.read", "0.1.0", false).unwrap()],
+            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "MIT",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+        let routed = plain
+            .clone()
+            .with_domain_routing(
+                DomainRoutingProfile::new(vec!["image generation".to_owned()]).unwrap(),
+            )
+            .unwrap();
+        let different_dependency = PackageManifest::new(
+            "publisher/specialist",
+            "1.0.0",
+            PackageKind::DomainHarness,
+            "publisher",
+            hash_artifact(b"specialist"),
+            vec![PackageDependency::new("workspace.search", "0.1.0", false).unwrap()],
+            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "MIT",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+
+        assert_ne!(plain.signing_message(), routed.signing_message());
+        assert_ne!(
+            plain.signing_message(),
+            different_dependency.signing_message()
+        );
+        assert!(
+            plain
+                .signing_message()
+                .starts_with("pandora-package-signature-v2")
+        );
     }
 
     #[test]

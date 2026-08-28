@@ -402,7 +402,7 @@ mod tests {
     use pandora_types::{
         ExecutionId, GeneId, OperationRequest, PolicyContext, PrincipalId, SessionId,
     };
-    use std::io::{Read as _, Write};
+    use std::io::Write;
     use std::net::TcpListener;
     use std::thread;
 

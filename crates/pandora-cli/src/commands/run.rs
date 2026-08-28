@@ -9,6 +9,7 @@ use crate::output::{CliError, CommandResult, success};
 use pandora_harnesses::{
     CODING_HARNESS_ID, DATA_HARNESS_ID, DEBUGGING_HARNESS_ID, DESIGN_HARNESS_ID, HarnessCatalog,
     OPERATIONS_HARNESS_ID, RESEARCH_HARNESS_ID, SECURITY_HARNESS_ID,
+    replaceable_builtin_harness_kind,
 };
 use pandora_provider::{
     ChatMessage, FallbackPolicy, ModelRequest, TraceMetadata, parse_and_validate,
@@ -31,9 +32,9 @@ use pandora_types::{
     AdaptationCandidate, AdaptationRequest, AdaptationTarget, ArtifactId, Capability,
     ContextClassification, ContextManifest, EfficiencyObjective, EfficiencySample,
     EvaluationReceipt, EvaluationRequest, EvaluationResult, EventPayload, EventType, ExecutionId,
-    Gene, HarnessId, MemoryKind, MemoryRecord, MemoryScope, Operation, PackageId, PackageKind,
-    PackageManifest, PolicyContext, RequestDigest, ResearchArtifactKind, Session, SessionId,
-    TaskIntent, Usage, WorkspaceId,
+    Gene, GeneId, HarnessId, HarnessKind, MemoryKind, MemoryRecord, MemoryScope, Operation,
+    PackageId, PackageKind, PackageManifest, PolicyContext, RequestDigest, ResearchArtifactKind,
+    Session, SessionId, TaskIntent, Usage, WorkspaceId,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -65,7 +66,8 @@ struct WasmGeneResolution {
     approval_subject: String,
 }
 
-type PackageWasmGenes = (Vec<Box<dyn Gene>>, BTreeMap<String, WasmGeneResolution>);
+type WasmGeneResolutions = BTreeMap<(String, String), WasmGeneResolution>;
+type PackageWasmGenes = (Vec<Box<dyn Gene>>, WasmGeneResolutions);
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
@@ -326,9 +328,12 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let memory_evidence_recorded = record_execution_evidence(&store, &session, "local", &summary);
     let efficiency_recorded =
         record_execution_efficiency(&config, task_class, &summary, elapsed_millis(started));
-    let wasm_resolution = wasm_gene_resolutions
-        .get(summary.selected_gene().as_str())
-        .map(wasm_resolution_json);
+    let wasm_resolution = wasm_gene_resolution(
+        &wasm_gene_resolutions,
+        summary.selected_harness(),
+        summary.selected_gene(),
+    )
+    .map(wasm_resolution_json);
     let details = add_detail(
         add_optimization(
             run_details(
@@ -395,9 +400,12 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                 session.id(),
                 session.principal_id(),
                 &task,
-                wasm_gene_resolutions
-                    .get(summary.selected_gene().as_str())
-                    .map(|resolution| resolution.approval_subject.as_str()),
+                wasm_gene_resolution(
+                    &wasm_gene_resolutions,
+                    summary.selected_harness(),
+                    summary.selected_gene(),
+                )
+                .map(|resolution| resolution.approval_subject.as_str()),
             )?;
             let details = add_detail(details, "approval_id", approval.id());
             Err(CliError::approval(reason.clone(), details))
@@ -417,6 +425,12 @@ pub(super) fn configured_harnesses(
 pub(super) fn configured_service_runtime(
     config: &RuntimeConfig,
 ) -> Result<(HarnessCatalog, WasmExecutor), CliError> {
+    configured_active_runtime(config).map(|(harnesses, wasm, _)| (harnesses, wasm))
+}
+
+fn configured_active_runtime(
+    config: &RuntimeConfig,
+) -> Result<(HarnessCatalog, WasmExecutor, WasmGeneResolutions), CliError> {
     let store = PackageStore::open(config.data_dir().join("packages.sqlite3"))
         .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
     let artifact_catalog =
@@ -465,15 +479,35 @@ pub(super) fn configured_service_runtime(
 
     let mut harnesses = HarnessCatalog::builtins();
     let mut wasm = WasmExecutor::new();
+    let mut wasm_gene_resolutions = BTreeMap::new();
     for record in active_harnesses
         .iter()
         .filter(|record| record.manifest().kind() == PackageKind::DomainHarness)
     {
-        let (genes, _) =
+        let (genes, resolutions) =
             package_wasm_genes(&store, &artifact_catalog, record.manifest(), &mut wasm)?;
-        harnesses = harnesses
-            .with_declarative_domain_genes(record.manifest(), genes)
-            .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+        for (key, resolution) in resolutions {
+            if wasm_gene_resolutions
+                .insert(key.clone(), resolution)
+                .is_some()
+            {
+                return Err(CliError::execution(
+                    "active Harness catalog contains a duplicate Gene resolution",
+                    json!({"harness_id": key.0, "gene_id": key.1}),
+                ));
+            }
+        }
+        harnesses = if replaceable_builtin_harness_kind(record.manifest().id().as_str())
+            == Some(HarnessKind::Domain)
+        {
+            harnesses
+                .replace_declarative_domain_genes(record.manifest(), genes)
+                .map_err(|error| CliError::execution(error.to_string(), json!({})))?
+        } else {
+            harnesses
+                .with_declarative_domain_genes(record.manifest(), genes)
+                .map_err(|error| CliError::execution(error.to_string(), json!({})))?
+        };
     }
     for record in active_harnesses
         .iter()
@@ -495,28 +529,29 @@ pub(super) fn configured_service_runtime(
                 ));
             }
         }
-        harnesses = harnesses
-            .with_declarative_meta(record.manifest())
-            .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+        harnesses = if replaceable_builtin_harness_kind(record.manifest().id().as_str())
+            == Some(HarnessKind::Meta)
+        {
+            harnesses
+                .replace_declarative_meta(record.manifest())
+                .map_err(|error| CliError::execution(error.to_string(), json!({})))?
+        } else {
+            harnesses
+                .with_declarative_meta(record.manifest())
+                .map_err(|error| CliError::execution(error.to_string(), json!({})))?
+        };
     }
-    Ok((harnesses, wasm))
+    Ok((harnesses, wasm, wasm_gene_resolutions))
 }
 
 fn configured_runtime(
     config: &RuntimeConfig,
     requested: Option<&str>,
     version: Option<&str>,
-) -> Result<
-    (
-        HarnessCatalog,
-        WasmExecutor,
-        BTreeMap<String, WasmGeneResolution>,
-    ),
-    CliError,
-> {
-    let harnesses = HarnessCatalog::builtins();
+) -> Result<(HarnessCatalog, WasmExecutor, WasmGeneResolutions), CliError> {
+    let (harnesses, wasm, resolutions) = configured_active_runtime(config)?;
     let Some(requested) = requested else {
-        return Ok((harnesses, WasmExecutor::new(), BTreeMap::new()));
+        return Ok((harnesses, wasm, resolutions));
     };
     let requested = canonical_harness_id(requested);
     let harness_id = HarnessId::new(requested.to_owned())
@@ -526,79 +561,23 @@ fn configured_runtime(
             && version != harness.manifest().version()
         {
             return Err(CliError::usage(format!(
-                "built-in Harness '{}' is version {}, not {}",
+                "active Harness '{}' is version {}, not {}",
                 requested,
                 harness.manifest().version(),
                 version
             )));
         }
-        return Ok((harnesses, WasmExecutor::new(), BTreeMap::new()));
+        return Ok((harnesses, wasm, resolutions));
     }
 
-    let version = version.ok_or_else(|| {
-        CliError::usage("custom Domain Harnesses require '--harness-version <version>'")
-    })?;
-    let package_id = PackageId::new(requested.to_owned())
-        .map_err(|_| CliError::usage("package Harness ID is invalid"))?;
-    let store = PackageStore::open(config.data_dir().join("packages.sqlite3"))
-        .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
-    let record = store
-        .get(&package_id, version)
-        .map_err(|error| CliError::execution(error.to_string(), json!({})))?
-        .ok_or_else(|| {
-            CliError::execution(
-                "the requested Domain Harness profile is not admitted",
-                json!({"id": package_id, "version": version}),
-            )
-        })?;
-    if record.state() != PackageState::Admitted
-        || !matches!(
-            record.manifest().kind(),
-            PackageKind::DomainHarness | PackageKind::MetaHarness
-        )
-    {
-        return Err(CliError::execution(
-            "the requested package is not an admitted Harness profile",
-            json!({
-                "id": record.manifest().id(),
-                "version": record.manifest().version(),
-                "kind": record.manifest().kind().as_str(),
-                "state": record.state().as_str(),
-            }),
-        ));
-    }
-    if !store
-        .is_enabled(&package_id, version)
-        .map_err(|error| CliError::execution(error.to_string(), json!({})))?
-    {
-        return Err(CliError::policy(
-            "the requested Harness profile is installed but disabled",
-            json!({
-                "id": record.manifest().id(),
-                "version": record.manifest().version(),
-                "hint": "run package enable <id> <version> --yes first",
-            }),
-        ));
-    }
-    let mut wasm = WasmExecutor::new();
-    let artifact_catalog =
-        ArtifactCatalog::open(config.data_dir().join("artifact-catalog.sqlite3"))
-            .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
-    match record.manifest().kind() {
-        PackageKind::DomainHarness => {
-            let (genes, approval_subjects) =
-                package_wasm_genes(&store, &artifact_catalog, record.manifest(), &mut wasm)?;
-            let harnesses = harnesses
-                .with_declarative_domain_genes(record.manifest(), genes)
-                .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
-            Ok((harnesses, wasm, approval_subjects))
-        }
-        PackageKind::MetaHarness => harnesses
-            .with_declarative_meta(record.manifest())
-            .map(|harnesses| (harnesses, wasm, BTreeMap::new()))
-            .map_err(|error| CliError::execution(error.to_string(), json!({}))),
-        _ => unreachable!("admitted Harness profile kind was validated"),
-    }
+    Err(CliError::policy(
+        "the requested Harness is not active",
+        json!({
+            "id": requested,
+            "version": version,
+            "hint": "admit and enable an exact Domain or Meta Harness package first",
+        }),
+    ))
 }
 
 fn package_wasm_genes(
@@ -684,7 +663,10 @@ fn package_wasm_genes(
                 .map_err(|error| CliError::execution(error.to_string(), json!({})))?,
         }
         approval_subjects.insert(
-            record.manifest().id().as_str().to_owned(),
+            (
+                harness.id().as_str().to_owned(),
+                record.manifest().id().as_str().to_owned(),
+            ),
             WasmGeneResolution {
                 base_artifact: base_artifact.clone(),
                 resolved_artifact: resolved_artifact.clone(),
@@ -701,6 +683,14 @@ fn package_wasm_genes(
         ));
     }
     Ok((genes, approval_subjects))
+}
+
+fn wasm_gene_resolution<'a>(
+    resolutions: &'a WasmGeneResolutions,
+    harness_id: &HarnessId,
+    gene_id: &GeneId,
+) -> Option<&'a WasmGeneResolution> {
+    resolutions.get(&(harness_id.as_str().to_owned(), gene_id.as_str().to_owned()))
 }
 
 fn wasm_resolution_json(resolution: &WasmGeneResolution) -> Value {
@@ -2123,6 +2113,13 @@ fn runtime_error(error: RuntimeError) -> CliError {
         RuntimeError::NoDefaultHarness => CliError::execution(
             "no default harness is available",
             json!({"hint": "use --agent for natural-language tasks or a coding action prefix"}),
+        ),
+        RuntimeError::AmbiguousHarnessRoute(ids) => CliError::execution(
+            "more than one Domain Harness matched the task",
+            json!({
+                "harness_ids": ids,
+                "hint": "select a Harness explicitly",
+            }),
         ),
         RuntimeError::Denied(reason) => CliError::policy(reason, json!({})),
         RuntimeError::ApprovalRequired(reason) => CliError::approval(reason, json!({})),

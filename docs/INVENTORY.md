@@ -41,6 +41,11 @@ Parliament and Shadow Council remain separate constitutional authorities:
   compositions.
 - ReferenceMonitor alone issues exact one-shot effect permits.
 
+Auto Route can read declared route hints from enabled Domain packages. That
+metadata affects Harness selection only. Explicit selection wins, equal top
+matches fail closed, and a package cannot use route metadata to select a Gene,
+add capabilities, approve an effect, or issue a permit.
+
 No inspected component can grant itself capabilities, change policy roots,
 activate an evolution candidate, or bypass ReferenceMonitor.
 

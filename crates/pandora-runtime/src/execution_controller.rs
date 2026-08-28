@@ -37,6 +37,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub enum RuntimeError {
     InvalidIntent(&'static str),
     NoDefaultHarness,
+    AmbiguousHarnessRoute(Vec<HarnessId>),
     UnsupportedHarness(HarnessId),
     NonExecutableHarness { id: HarnessId, kind: HarnessKind },
     UnknownGene,
@@ -886,9 +887,12 @@ impl ExecutionController {
         let execution_id = execution_id_override.unwrap_or(execution_id);
         let selection = self
             .shadow_council
-            .select(&intent)
+            .select_with_catalog(&intent, &self.harnesses)
             .map_err(|error| match error {
                 RoutingError::NoDefaultHarness => RuntimeError::NoDefaultHarness,
+                RoutingError::AmbiguousHarnesses { ids } => {
+                    RuntimeError::AmbiguousHarnessRoute(ids)
+                }
             })?;
         let harness = self.find_harness(selection.harness_id())?;
         if !harness.is_runnable() {
@@ -1732,6 +1736,7 @@ fn runtime_error_code(error: &RuntimeError) -> &'static str {
     match error {
         RuntimeError::InvalidIntent(_) => "invalid_intent",
         RuntimeError::NoDefaultHarness => "no_default_harness",
+        RuntimeError::AmbiguousHarnessRoute(_) => "ambiguous_harness_route",
         RuntimeError::UnsupportedHarness(_) => "unsupported_harness",
         RuntimeError::NonExecutableHarness { .. } => "non_executable_harness",
         RuntimeError::UnknownGene => "unknown_gene",
