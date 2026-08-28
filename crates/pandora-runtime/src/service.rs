@@ -24,12 +24,12 @@ use pandora_types::{
     ServiceAgentRunRequest, ServiceAgentRunResult, ServiceApprovalSummary,
     ServiceArtifactActivation, ServiceContextAttachment, ServiceContractError,
     ServiceEngineSummary, ServiceEventPage, ServiceEvolutionApproval, ServiceEvolutionCanary,
-    ServiceEvolutionCandidate, ServiceEvolutionEvaluation, ServiceEvolutionSummary,
-    ServiceHarnessSummary, ServiceHealth, ServiceMemoryPage, ServiceMemoryRecord,
-    ServiceOrchestrationRoleSummary, ServiceOrchestrationRunSummary, ServiceProviderSummary,
-    ServiceRequest, ServiceResponse, ServiceRunRequest, ServiceRunResult, ServiceRunResumeRequest,
-    ServiceSessionDetail, ServiceSessionSummary, ServiceToolSummary, Session, SessionId,
-    TaskIntent, TenantId, Timestamp, WorkspaceId,
+    ServiceEvolutionCandidate, ServiceEvolutionEvaluation, ServiceEvolutionPreview,
+    ServiceEvolutionSummary, ServiceHarnessSummary, ServiceHealth, ServiceMemoryPage,
+    ServiceMemoryRecord, ServiceOrchestrationRoleSummary, ServiceOrchestrationRunSummary,
+    ServiceProviderSummary, ServiceRequest, ServiceResponse, ServiceRunRequest, ServiceRunResult,
+    ServiceRunResumeRequest, ServiceSessionDetail, ServiceSessionSummary, ServiceToolSummary,
+    Session, SessionId, TaskIntent, TenantId, Timestamp, WorkspaceId,
 };
 use rusqlite::Connection;
 use std::fmt;
@@ -1055,7 +1055,7 @@ impl RuntimeService {
                     )?
                     .ok_or(ResearchArtifactError::ProposalNotFound)?;
                 let (changed, added, removed, unit) = artifact_delta(&base, &artifact);
-                return Ok(Some(ServiceEvolutionCandidate::new(
+                let mut details = ServiceEvolutionCandidate::new(
                     candidate.kind().as_str(),
                     candidate.target_id(),
                     candidate.provider_id(),
@@ -1066,7 +1066,11 @@ impl RuntimeService {
                     added,
                     removed,
                     unit,
-                )));
+                );
+                if let Some(preview) = evolution_artifact_preview(&base, &artifact) {
+                    details = details.with_preview(preview);
+                }
+                return Ok(Some(details));
             }
         }
 
@@ -1084,7 +1088,7 @@ impl RuntimeService {
             return Ok(None);
         };
         let (changed, added, removed, unit) = artifact_delta(&base, &artifact);
-        Ok(Some(ServiceEvolutionCandidate::new(
+        let mut details = ServiceEvolutionCandidate::new(
             candidate.manifest().kind().as_str(),
             format!(
                 "{}@{}",
@@ -1099,7 +1103,11 @@ impl RuntimeService {
             added,
             removed,
             unit,
-        )))
+        );
+        if let Some(preview) = evolution_artifact_preview(&base, &artifact) {
+            details = details.with_preview(preview);
+        }
+        Ok(Some(details))
     }
 
     fn list_artifact_activations(
@@ -1947,6 +1955,34 @@ fn artifact_delta(base: &[u8], candidate: &[u8]) -> (u64, u64, u64, &'static str
     )
 }
 
+const MAX_EVOLUTION_ARTIFACT_PREVIEW_BYTES: usize = 32 * 1024;
+
+fn evolution_artifact_preview(base: &[u8], candidate: &[u8]) -> Option<ServiceEvolutionPreview> {
+    let (base, base_truncated) = bounded_text_artifact(base)?;
+    let (candidate, candidate_truncated) = bounded_text_artifact(candidate)?;
+    Some(ServiceEvolutionPreview::new(
+        "text",
+        base,
+        candidate,
+        base_truncated || candidate_truncated,
+    ))
+}
+
+fn bounded_text_artifact(bytes: &[u8]) -> Option<(String, bool)> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    if text
+        .chars()
+        .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+    {
+        return None;
+    }
+    let mut end = text.len().min(MAX_EVOLUTION_ARTIFACT_PREVIEW_BYTES);
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    Some((text[..end].to_owned(), end < text.len()))
+}
+
 fn service_evolution_summary(record: EvolutionRecord) -> ServiceEvolutionSummary {
     let proposal = record.proposal();
     let evaluation = record.evaluation().map(|evaluation| {
@@ -2343,6 +2379,11 @@ mod tests {
             candidate_details.candidate_bytes(),
             bounded_len(candidate_bytes.len())
         );
+        let preview = candidate_details.preview().expect("text artifact preview");
+        assert_eq!(preview.format(), "text");
+        assert_eq!(preview.base(), "base service gene");
+        assert_eq!(preview.candidate(), "candidate service gene");
+        assert!(!preview.truncated());
 
         let fleet_control = FleetEngine::open(root.join("fleet.sqlite3")).unwrap();
         fleet_control

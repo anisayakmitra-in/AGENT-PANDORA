@@ -168,6 +168,18 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .evolution-lineage p .mono { color: var(--text-secondary); }
 .lineage-inspect { width: fit-content; margin-top: 2px; }
 .evolution-lineage .connection-error { color: var(--amber); }
+.artifact-inspector { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border-subtle); }
+.artifact-inspector-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.artifact-inspector-heading > div { display: grid; gap: 5px; }
+.artifact-inspector-heading strong { color: var(--text-secondary); font-size: 10px; }
+.artifact-preview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.artifact-preview-grid section { min-width: 0; overflow: hidden; border: 1px solid var(--border-subtle); border-radius: 9px; background: color-mix(in srgb, var(--canvas) 88%, #000 12%); }
+.artifact-preview-grid section > div { display: grid; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--border-subtle); }
+.artifact-preview-grid section > div span { color: var(--text-muted); font-size: 7px; font-weight: 700; letter-spacing: .12em; }
+.artifact-preview-grid section > div small { overflow: hidden; color: var(--text-muted); font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-preview-grid pre { min-height: 120px; max-height: 320px; overflow: auto; margin: 0; padding: 10px; color: var(--text-secondary); font: 8px/1.55 var(--font-mono); tab-size: 2; white-space: pre-wrap; overflow-wrap: anywhere; }
+.artifact-preview-note, .artifact-preview-boundary { margin: 9px 0 0; color: var(--text-muted); font-size: 8px; line-height: 1.5; }
+.artifact-preview-boundary { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); }
 .evolution-actions { display: flex; justify-content: flex-end; padding-top: 3px; border-top: 1px solid var(--border-subtle); }
 .evolution-gate-note { display: flex; min-height: 0 !important; align-items: flex-start; gap: 7px; margin: 0 !important; padding-top: 12px; border-top: 1px solid var(--border-subtle); color: var(--text-muted) !important; }
 .evolution-gate-note svg { flex-shrink: 0; color: var(--gold); }

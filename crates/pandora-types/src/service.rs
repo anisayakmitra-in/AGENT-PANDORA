@@ -603,6 +603,43 @@ impl ServiceEvolutionCanary {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServiceEvolutionPreview {
+    format: String,
+    base: String,
+    candidate: String,
+    truncated: bool,
+}
+
+impl ServiceEvolutionPreview {
+    pub fn new(
+        format: impl Into<String>,
+        base: impl Into<String>,
+        candidate: impl Into<String>,
+        truncated: bool,
+    ) -> Self {
+        Self {
+            format: format.into(),
+            base: base.into(),
+            candidate: candidate.into(),
+            truncated,
+        }
+    }
+
+    pub fn format(&self) -> &str {
+        &self.format
+    }
+    pub fn base(&self) -> &str {
+        &self.base
+    }
+    pub fn candidate(&self) -> &str {
+        &self.candidate
+    }
+    pub const fn truncated(&self) -> bool {
+        self.truncated
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ServiceEvolutionCandidate {
     kind: String,
     target_id: String,
@@ -614,6 +651,8 @@ pub struct ServiceEvolutionCandidate {
     added_units: u64,
     removed_units: u64,
     unit: String,
+    #[serde(default)]
+    preview: Option<ServiceEvolutionPreview>,
 }
 
 impl ServiceEvolutionCandidate {
@@ -641,7 +680,13 @@ impl ServiceEvolutionCandidate {
             added_units,
             removed_units,
             unit: unit.into(),
+            preview: None,
         }
+    }
+
+    pub fn with_preview(mut self, preview: ServiceEvolutionPreview) -> Self {
+        self.preview = Some(preview);
+        self
     }
 
     pub fn kind(&self) -> &str {
@@ -673,6 +718,9 @@ impl ServiceEvolutionCandidate {
     }
     pub fn unit(&self) -> &str {
         &self.unit
+    }
+    pub const fn preview(&self) -> Option<&ServiceEvolutionPreview> {
+        self.preview.as_ref()
     }
 }
 

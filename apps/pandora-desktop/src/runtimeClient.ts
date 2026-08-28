@@ -172,6 +172,12 @@ export type RuntimeEvolutionProposal = {
     added_units: number;
     removed_units: number;
     unit: string;
+    preview?: {
+      format: string;
+      base: string;
+      candidate: string;
+      truncated: boolean;
+    } | null;
   } | null;
 };
 

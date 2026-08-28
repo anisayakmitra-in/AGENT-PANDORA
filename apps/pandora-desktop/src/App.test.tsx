@@ -315,6 +315,12 @@ describe("Pandora desktop run state", () => {
         added_units: 0,
         removed_units: 0,
         unit: "lines",
+        preview: {
+          format: "text",
+          base: "base service gene",
+          candidate: "candidate service gene",
+          truncated: false,
+        },
       },
     }));
 
@@ -330,6 +336,8 @@ describe("Pandora desktop run state", () => {
     await waitFor(() => {
       expect(runtime.inspectEvolution).toHaveBeenCalledWith("proposal-a");
       expect(screen.getByText("1 changed · +0 / −0 lines · 17 → 22 bytes")).toBeInTheDocument();
+      expect(screen.getByLabelText("Base artifact proposal-a")).toHaveTextContent("base service gene");
+      expect(screen.getByLabelText("Candidate artifact proposal-a")).toHaveTextContent("candidate service gene");
     });
     fireEvent.click(screen.getByRole("button", { name: /Rollback binding/ }));
     fireEvent.change(screen.getByLabelText("Confirm rollback proposal-a"), { target: { value: "proposal-a" } });
