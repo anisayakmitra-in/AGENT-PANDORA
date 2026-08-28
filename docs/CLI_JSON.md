@@ -25,6 +25,11 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora --version --json` | `version` | `pandora_version` |
 | `pandora setup --json` | `setup` | `config_path`, `data_dir`, `workspace`, `provider_configured`, `provider_profiles`, `active_provider`, `provider_model`, `api_key_env`, `interactive` |
 | `pandora provider test --json` | `provider test` | `provider`, `model`, `status`, `output`, `usage`, `metrics` |
+| `pandora auth enroll ... --json` | `auth enroll` | `identity`, `token_path`, `device_key_path`, `token_exposed`, `private_key_exposed` |
+| `pandora secret list --json` | `secret list` | `secrets`, `count`, `values_exposed` |
+| `pandora backup create ... --json` | `backup create` | `output`, `entries`, `encrypted`, `format_version` |
+| `pandora backup inspect ... --json` | `backup inspect` | `input`, `created_at`, `entries`, `authenticated`, `paths_exposed` |
+| `pandora backup restore ... --json` | `backup restore` | `input`, `restored_entries`, `pre_restore_backup`, `authenticated` |
 | `pandora run <task> --json` | `run` | `session_id`, `execution_id`, `harness_id`, `gene_id`, `status`, `elapsed_ms`, `provider_metrics`, `evaluation` |
 | `pandora doctor --json` | `doctor` | `healthy`, `version`, `platform`, `config_path`, `storage_path`, `workspace_path`, `provider`, `policy`, `containment`, `checks` |
 | `pandora fleet list --json` | `fleet list` | `nodes`, `leases` |
@@ -47,7 +52,7 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora evaluation inspect --session <id> --json` | `evaluation inspect` | `session_id`, `execution_id`, `count`, `result_counts`, `receipts`, `durability` |
 | `pandora graph <kind> --input <path> [--store <path>] --json` | `graph build` | `kind`, `scope`, `source_count`, `nodes`, `edges`, `digest`, optional `persisted` |
 | `pandora update --artifact ... --json` | `update` | `verified`, `artifact`, `target`, `signature_verified`, `dry_run` |
-| `pandora update --release ... --json` | `update` | `verified`, `release`, `artifact`, `signature_verified`, `dry_run`; non-dry-run responses also contain `target` |
+| `pandora update --release ... --json` | `update` | `verified`, `release`, `channel`, `artifact`, `signature_verified`, `dry_run`; non-dry-run responses also contain `target` |
 | `pandora update --rollback --json` | `update rollback` | `target`, `dry_run`; a dry run contains `previous`, while a completed rollback contains `restored` |
 | `pandora uninstall --dry-run --json` | `uninstall` | `dry_run`, `would_remove`, `preserved` |
 | `pandora uninstall --yes --json` | `uninstall` | `dry_run`, `removed`, `preserved` |

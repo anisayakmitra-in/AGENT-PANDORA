@@ -29,6 +29,7 @@ enum UpdateError {
     InvalidChecksumManifest,
     MissingReleaseChecksum,
     ReleaseDownload,
+    InvalidChannel,
 }
 
 #[derive(Debug)]
@@ -60,6 +61,7 @@ impl UpdateError {
             Self::InvalidChecksumManifest => "invalid_checksum_manifest",
             Self::MissingReleaseChecksum => "missing_release_checksum",
             Self::ReleaseDownload => "release_download_failed",
+            Self::InvalidChannel => "invalid_update_channel",
         }
     }
 }
@@ -79,6 +81,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "dry-run",
             "rollback",
             "release",
+            "channel",
         ],
     )?;
     if !parsed.positionals.is_empty() {
@@ -93,6 +96,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             || parsed.value("public-key").is_some()
             || parsed.value("signature").is_some()
             || parsed.value("release").is_some()
+            || parsed.value("channel").is_some()
         {
             return Err(CliError::usage(
                 "update --rollback cannot be combined with artifact verification options",
@@ -114,6 +118,8 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                 "update --release cannot be combined with local artifact verification options",
             ));
         }
+        let channel = validate_release_channel(release, parsed.value("channel"))
+            .map_err(|error| update_error(error, Path::new(release)))?;
         let downloaded = download_release_artifact(
             OFFICIAL_RELEASE_BASE_URL,
             release,
@@ -128,6 +134,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                 json!({
                     "verified": true,
                     "release": release,
+                    "channel": channel,
                     "artifact": downloaded.artifact_name,
                     "signature_verified": downloaded.verified.signature_verified,
                     "dry_run": true,
@@ -145,12 +152,19 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             json!({
                 "verified": true,
                 "release": release,
+                "channel": channel,
                 "artifact": downloaded.artifact_name,
                 "target": target,
                 "signature_verified": downloaded.verified.signature_verified,
                 "dry_run": false,
             }),
             format!("Verified release update staged at {}", target.display()),
+        ));
+    }
+
+    if parsed.value("channel").is_some() {
+        return Err(CliError::usage(
+            "update --channel requires '--release <tag>'",
         ));
     }
 
@@ -194,6 +208,25 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         }),
         format!("Verified update staged at {}", target.display()),
     ))
+}
+
+fn validate_release_channel(
+    release: &str,
+    requested: Option<&str>,
+) -> Result<&'static str, UpdateError> {
+    let version = release
+        .strip_prefix('v')
+        .and_then(|value| semver::Version::parse(value).ok())
+        .ok_or(UpdateError::InvalidRelease)?;
+    let inferred = if version.pre.is_empty() {
+        "stable"
+    } else {
+        "beta"
+    };
+    if requested.is_some_and(|channel| channel != inferred) {
+        return Err(UpdateError::InvalidChannel);
+    }
+    Ok(inferred)
 }
 
 fn verify_artifact(
@@ -509,6 +542,9 @@ fn update_error(error: UpdateError, path: &Path) -> CliError {
             UpdateError::InvalidChecksumManifest => "release checksum manifest is invalid",
             UpdateError::MissingReleaseChecksum => "release checksum is missing for this platform",
             UpdateError::ReleaseDownload => "official release download failed",
+            UpdateError::InvalidChannel => {
+                "release tag does not belong to the requested update channel"
+            }
         },
         json!({"reason": error.reason(), "path": path}),
     )
@@ -516,7 +552,9 @@ fn update_error(error: UpdateError, path: &Path) -> CliError {
 
 #[cfg(test)]
 mod tests {
-    use super::{UpdateError, download_release_artifact, verify_artifact};
+    use super::{
+        UpdateError, download_release_artifact, validate_release_channel, verify_artifact,
+    };
     use ed25519_dalek::{Signer, SigningKey};
     use std::fs;
 
@@ -544,6 +582,22 @@ mod tests {
         assert_eq!(verified.bytes, artifact);
         assert!(verified.signature_verified);
         let _ = fs::remove_file(artifact_path);
+    }
+
+    #[test]
+    fn release_channels_reject_cross_channel_tags() {
+        assert_eq!(
+            validate_release_channel("v2.0.0", Some("stable")).unwrap(),
+            "stable"
+        );
+        assert_eq!(
+            validate_release_channel("v2.0.0-beta.8", Some("beta")).unwrap(),
+            "beta"
+        );
+        assert!(matches!(
+            validate_release_channel("v2.0.0-beta.8", Some("stable")),
+            Err(UpdateError::InvalidChannel)
+        ));
     }
 
     #[test]

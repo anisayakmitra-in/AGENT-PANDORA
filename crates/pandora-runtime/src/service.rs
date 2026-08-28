@@ -7,6 +7,7 @@ use crate::evaluation_engine::EvaluationEngine;
 use crate::evolution::{EvolutionEngine, EvolutionError, EvolutionRecord};
 use crate::execution_controller::{ExecutionController, RunStatus, RunSummary, RuntimeError};
 use crate::fleet::{FleetBudget, FleetEngine, FleetError, FleetLeaseState, FleetNode};
+use crate::identity::{AccessRole, ServiceIdentity};
 use crate::package_store::{PackageStore, PackageStoreError};
 use crate::replacement::{ReplacementEngine, ReplacementError};
 use crate::research_artifact::{ResearchArtifactError, ResearchArtifactStore};
@@ -38,6 +39,7 @@ pub struct RuntimeServiceScope {
     principal_id: PrincipalId,
     tenant_id: TenantId,
     workspace_id: WorkspaceId,
+    role: AccessRole,
 }
 
 impl RuntimeServiceScope {
@@ -46,7 +48,22 @@ impl RuntimeServiceScope {
             principal_id,
             tenant_id,
             workspace_id,
+            role: AccessRole::Administrator,
         }
+    }
+
+    pub fn from_identity(identity: &ServiceIdentity) -> Self {
+        Self {
+            principal_id: identity.principal_id().clone(),
+            tenant_id: identity.tenant_id().clone(),
+            workspace_id: identity.workspace_id().clone(),
+            role: identity.role(),
+        }
+    }
+
+    pub fn with_role(mut self, role: AccessRole) -> Self {
+        self.role = role;
+        self
     }
 
     pub fn principal_id(&self) -> &PrincipalId {
@@ -59,6 +76,10 @@ impl RuntimeServiceScope {
 
     pub fn workspace_id(&self) -> &WorkspaceId {
         &self.workspace_id
+    }
+
+    pub const fn role(&self) -> AccessRole {
+        self.role
     }
 }
 
@@ -84,6 +105,7 @@ pub enum RuntimeServiceError {
     Approval(ApprovalError),
     Session(SessionError),
     Fleet(FleetError),
+    Forbidden,
 }
 
 impl RuntimeServiceError {
@@ -124,6 +146,7 @@ impl RuntimeServiceError {
             Self::Fleet(_) => "fleet_registry_failed",
             Self::Session(SessionError::ScopeViolation) => "session_scope_violation",
             Self::Session(_) => "session_store_failed",
+            Self::Forbidden => "forbidden",
         }
     }
 }
@@ -164,6 +187,7 @@ impl fmt::Display for RuntimeServiceError {
             Self::Approval(error) => error.fmt(formatter),
             Self::Session(error) => error.fmt(formatter),
             Self::Fleet(error) => error.fmt(formatter),
+            Self::Forbidden => formatter.write_str("identity is not authorized for this operation"),
         }
     }
 }
@@ -392,12 +416,22 @@ impl RuntimeService {
         request: &ServiceRequest,
         now: Timestamp,
     ) -> Result<ServiceResponse, RuntimeServiceError> {
+        self.handle_scoped(&self.scope, request, now)
+    }
+
+    pub fn handle_scoped(
+        &self,
+        scope: &RuntimeServiceScope,
+        request: &ServiceRequest,
+        now: Timestamp,
+    ) -> Result<ServiceResponse, RuntimeServiceError> {
         if !request.is_supported_protocol() {
             return Err(RuntimeServiceError::UnsupportedProtocol {
                 actual: request.protocol_version(),
             });
         }
         request.validate()?;
+        authorize_role(scope.role(), request)?;
 
         match request {
             ServiceRequest::Health { .. } => Ok(ServiceResponse::health(ServiceHealth::ready())),
@@ -407,38 +441,52 @@ impl RuntimeService {
             }
             ServiceRequest::Engines { .. } => self.engines(),
             ServiceRequest::Tools { .. } => self.tools(),
-            ServiceRequest::SessionList { limit, .. } => self.list_sessions(*limit),
-            ServiceRequest::SessionInspect { session_id, .. } => self.inspect_session(session_id),
-            ServiceRequest::SessionEvents { request, .. } => self.session_events(request),
+            ServiceRequest::SessionList { limit, .. } => self.list_sessions(scope, *limit),
+            ServiceRequest::SessionInspect { session_id, .. } => {
+                self.inspect_session(scope, session_id)
+            }
+            ServiceRequest::SessionEvents { request, .. } => self.session_events(scope, request),
             ServiceRequest::SessionMemory {
                 session_id, limit, ..
-            } => self.session_memory(session_id, *limit),
-            ServiceRequest::ApprovalList { limit, .. } => self.list_approvals(*limit, now),
+            } => self.session_memory(scope, session_id, *limit),
+            ServiceRequest::ApprovalList { limit, .. } => self.list_approvals(scope, *limit, now),
             ServiceRequest::ApprovalInspect { approval_id, .. } => {
-                self.inspect_approval(approval_id, now)
+                self.inspect_approval(scope, approval_id, now)
             }
             ServiceRequest::ApprovalResolve {
                 approval_id, allow, ..
-            } => self.resolve_approval(approval_id, *allow, now),
-            ServiceRequest::EvolutionList { limit, .. } => self.list_evolution(*limit),
+            } => self.resolve_approval(scope, approval_id, *allow, now),
+            ServiceRequest::EvolutionList { limit, .. } => self.list_evolution(scope, *limit),
             ServiceRequest::EvolutionInspect { proposal_id, .. } => {
-                self.inspect_evolution(proposal_id)
+                self.inspect_evolution(scope, proposal_id)
             }
             ServiceRequest::EvolutionActivations { limit, .. } => {
-                self.list_artifact_activations(*limit)
+                self.list_artifact_activations(scope, *limit)
             }
             ServiceRequest::EvolutionActivate { proposal_id, .. } => {
-                self.activate_evolution(proposal_id, now)
+                self.activate_evolution(scope, proposal_id, now)
             }
             ServiceRequest::EvolutionRollback {
                 proposal_id,
                 reason,
                 ..
-            } => self.rollback_evolution(proposal_id, reason, now),
-            ServiceRequest::Run { request, .. } => self.run(request, now),
-            ServiceRequest::RunResume { request, .. } => self.resume_run(request, now),
-            ServiceRequest::AgentRun { request, .. } => self.run_agent(request, now),
-            ServiceRequest::AgentResume { request, .. } => self.resume_agent(request, now),
+            } => self.rollback_evolution(scope, proposal_id, reason, now),
+            ServiceRequest::Run { request, .. } => {
+                self.ensure_execution_owner(scope)?;
+                self.run(scope, request, now)
+            }
+            ServiceRequest::RunResume { request, .. } => {
+                self.ensure_execution_owner(scope)?;
+                self.resume_run(scope, request, now)
+            }
+            ServiceRequest::AgentRun { request, .. } => {
+                self.ensure_execution_owner(scope)?;
+                self.run_agent(scope, request, now)
+            }
+            ServiceRequest::AgentResume { request, .. } => {
+                self.ensure_execution_owner(scope)?;
+                self.resume_agent(scope, request, now)
+            }
         }
     }
 
@@ -610,13 +658,17 @@ impl RuntimeService {
         ))
     }
 
-    fn list_sessions(&self, limit: u16) -> Result<ServiceResponse, RuntimeServiceError> {
+    fn list_sessions(
+        &self,
+        scope: &RuntimeServiceScope,
+        limit: u16,
+    ) -> Result<ServiceResponse, RuntimeServiceError> {
         let sessions = self
             .sessions
             .list(
-                self.scope.principal_id(),
-                self.scope.tenant_id(),
-                self.scope.workspace_id(),
+                scope.principal_id(),
+                scope.tenant_id(),
+                scope.workspace_id(),
             )?
             .into_iter()
             .take(usize::from(limit))
@@ -627,13 +679,14 @@ impl RuntimeService {
 
     fn inspect_session(
         &self,
+        scope: &RuntimeServiceScope,
         session_id: &SessionId,
     ) -> Result<ServiceResponse, RuntimeServiceError> {
         let snapshot = self.sessions.resume(
             session_id,
-            self.scope.principal_id(),
-            self.scope.tenant_id(),
-            self.scope.workspace_id(),
+            scope.principal_id(),
+            scope.tenant_id(),
+            scope.workspace_id(),
         )?;
         Ok(ServiceResponse::session_inspect(ServiceSessionDetail::new(
             service_session_summary(snapshot.session().clone()),
@@ -643,13 +696,14 @@ impl RuntimeService {
 
     fn session_events(
         &self,
+        scope: &RuntimeServiceScope,
         request: &pandora_types::ServiceEventPageRequest,
     ) -> Result<ServiceResponse, RuntimeServiceError> {
         let page = self.sessions.event_page(
             request.session_id(),
-            self.scope.principal_id(),
-            self.scope.tenant_id(),
-            self.scope.workspace_id(),
+            scope.principal_id(),
+            scope.tenant_id(),
+            scope.workspace_id(),
             request.after_sequence(),
             request.limit(),
         )?;
@@ -663,6 +717,7 @@ impl RuntimeService {
 
     fn session_memory(
         &self,
+        scope: &RuntimeServiceScope,
         session_id: &SessionId,
         limit: u16,
     ) -> Result<ServiceResponse, RuntimeServiceError> {
@@ -676,9 +731,9 @@ impl RuntimeService {
                 self.sessions
                     .recall_memory(
                         session_id,
-                        self.scope.principal_id(),
-                        self.scope.tenant_id(),
-                        self.scope.workspace_id(),
+                        scope.principal_id(),
+                        scope.tenant_id(),
+                        scope.workspace_id(),
                         "local",
                         tier,
                         remaining,
@@ -707,18 +762,19 @@ impl RuntimeService {
 
     fn list_approvals(
         &self,
+        scope: &RuntimeServiceScope,
         limit: u16,
         now: Timestamp,
     ) -> Result<ServiceResponse, RuntimeServiceError> {
         let mut approvals = Vec::new();
-        let mut available = self.approvals.list(self.scope.principal_id())?;
+        let mut available = self.approvals.list(scope.principal_id())?;
         available.reverse();
         for approval in available {
             match self.sessions.resume(
                 approval.session_id(),
-                self.scope.principal_id(),
-                self.scope.tenant_id(),
-                self.scope.workspace_id(),
+                scope.principal_id(),
+                scope.tenant_id(),
+                scope.workspace_id(),
             ) {
                 Ok(_) => approvals.push(service_approval_summary(&approval, now)?),
                 Err(SessionError::SessionNotFound | SessionError::ScopeViolation) => {}
@@ -733,10 +789,11 @@ impl RuntimeService {
 
     fn inspect_approval(
         &self,
+        scope: &RuntimeServiceScope,
         approval_id: &str,
         now: Timestamp,
     ) -> Result<ServiceResponse, RuntimeServiceError> {
-        let approval = self.scoped_approval(approval_id)?;
+        let approval = self.scoped_approval(scope, approval_id)?;
         Ok(ServiceResponse::approval_inspect(service_approval_summary(
             &approval, now,
         )?))
@@ -744,15 +801,16 @@ impl RuntimeService {
 
     fn resolve_approval(
         &self,
+        scope: &RuntimeServiceScope,
         approval_id: &str,
         allow: bool,
         now: Timestamp,
     ) -> Result<ServiceResponse, RuntimeServiceError> {
-        self.scoped_approval(approval_id)?;
+        self.scoped_approval(scope, approval_id)?;
         let approval = self.approvals.resolve(
             approval_id,
-            self.scope.principal_id(),
-            self.scope.principal_id(),
+            scope.principal_id(),
+            scope.principal_id(),
             allow,
             now,
         )?;
@@ -761,20 +819,47 @@ impl RuntimeService {
         )?))
     }
 
-    fn scoped_approval(&self, approval_id: &str) -> Result<PendingApproval, RuntimeServiceError> {
-        let approval = self
-            .approvals
-            .inspect(approval_id, self.scope.principal_id())?;
+    fn scoped_approval(
+        &self,
+        scope: &RuntimeServiceScope,
+        approval_id: &str,
+    ) -> Result<PendingApproval, RuntimeServiceError> {
+        let approval = self.approvals.inspect(approval_id, scope.principal_id())?;
         self.sessions.resume(
             approval.session_id(),
-            self.scope.principal_id(),
-            self.scope.tenant_id(),
-            self.scope.workspace_id(),
+            scope.principal_id(),
+            scope.tenant_id(),
+            scope.workspace_id(),
         )?;
         Ok(approval)
     }
 
-    fn list_evolution(&self, limit: u16) -> Result<ServiceResponse, RuntimeServiceError> {
+    fn ensure_evolution_owner(
+        &self,
+        scope: &RuntimeServiceScope,
+    ) -> Result<(), RuntimeServiceError> {
+        self.ensure_execution_owner(scope)
+    }
+
+    fn ensure_execution_owner(
+        &self,
+        scope: &RuntimeServiceScope,
+    ) -> Result<(), RuntimeServiceError> {
+        if scope.tenant_id() == self.scope.tenant_id()
+            && scope.workspace_id() == self.scope.workspace_id()
+        {
+            Ok(())
+        } else {
+            Err(RuntimeServiceError::Forbidden)
+        }
+    }
+
+    fn list_evolution(
+        &self,
+        scope: &RuntimeServiceScope,
+        limit: u16,
+    ) -> Result<ServiceResponse, RuntimeServiceError> {
+        self.ensure_evolution_owner(scope)?;
         let engine = self
             .evolution
             .as_ref()
@@ -790,8 +875,10 @@ impl RuntimeService {
 
     fn inspect_evolution(
         &self,
+        scope: &RuntimeServiceScope,
         proposal_id: &ProposalId,
     ) -> Result<ServiceResponse, RuntimeServiceError> {
+        self.ensure_evolution_owner(scope)?;
         let engine = self
             .evolution
             .as_ref()
@@ -889,8 +976,10 @@ impl RuntimeService {
 
     fn list_artifact_activations(
         &self,
+        scope: &RuntimeServiceScope,
         limit: u16,
     ) -> Result<ServiceResponse, RuntimeServiceError> {
+        self.ensure_evolution_owner(scope)?;
         let catalog = self
             .artifact_catalog
             .as_ref()
@@ -958,9 +1047,11 @@ impl RuntimeService {
 
     fn activate_evolution(
         &self,
+        scope: &RuntimeServiceScope,
         proposal_id: &ProposalId,
         now: Timestamp,
     ) -> Result<ServiceResponse, RuntimeServiceError> {
+        self.ensure_evolution_owner(scope)?;
         let _gate = self
             .evolution_gate
             .write()
@@ -1016,10 +1107,12 @@ impl RuntimeService {
 
     fn rollback_evolution(
         &self,
+        scope: &RuntimeServiceScope,
         proposal_id: &ProposalId,
         reason: &str,
         now: Timestamp,
     ) -> Result<ServiceResponse, RuntimeServiceError> {
+        self.ensure_evolution_owner(scope)?;
         let _gate = self
             .evolution_gate
             .write()
@@ -1051,10 +1144,11 @@ impl RuntimeService {
 
     fn run(
         &self,
+        scope: &RuntimeServiceScope,
         request: &ServiceRunRequest,
         now: Timestamp,
     ) -> Result<ServiceResponse, RuntimeServiceError> {
-        let session = self.allocate_session(now)?;
+        let session = self.allocate_session(scope, now)?;
         let intent = service_task_intent(request)?;
 
         let _active_lease = self.acquire_execution_lease(&session, now, 0)?;
@@ -1078,15 +1172,16 @@ impl RuntimeService {
 
     fn resume_run(
         &self,
+        scope: &RuntimeServiceScope,
         request: &ServiceRunResumeRequest,
         now: Timestamp,
     ) -> Result<ServiceResponse, RuntimeServiceError> {
-        let approval = self.scoped_approval(request.approval_id())?;
+        let approval = self.scoped_approval(scope, request.approval_id())?;
         let snapshot = self.sessions.resume(
             approval.session_id(),
-            self.scope.principal_id(),
-            self.scope.tenant_id(),
-            self.scope.workspace_id(),
+            scope.principal_id(),
+            scope.tenant_id(),
+            scope.workspace_id(),
         )?;
         let session = snapshot.session().clone();
         let intent = service_task_intent(request.request())?;
@@ -1110,6 +1205,7 @@ impl RuntimeService {
 
     fn run_agent(
         &self,
+        scope: &RuntimeServiceScope,
         request: &ServiceAgentRunRequest,
         now: Timestamp,
     ) -> Result<ServiceResponse, RuntimeServiceError> {
@@ -1121,9 +1217,9 @@ impl RuntimeService {
             Some(session_id) => {
                 let snapshot = self.sessions.resume(
                     session_id,
-                    self.scope.principal_id(),
-                    self.scope.tenant_id(),
-                    self.scope.workspace_id(),
+                    scope.principal_id(),
+                    scope.tenant_id(),
+                    scope.workspace_id(),
                 )?;
                 (
                     snapshot.session().clone(),
@@ -1131,7 +1227,7 @@ impl RuntimeService {
                 )
             }
             None => {
-                let session = self.allocate_session(now)?;
+                let session = self.allocate_session(scope, now)?;
                 self.sessions.create(&session)?;
                 (session, Vec::new())
             }
@@ -1186,6 +1282,7 @@ impl RuntimeService {
 
     fn resume_agent(
         &self,
+        scope: &RuntimeServiceScope,
         request: &ServiceAgentResumeRequest,
         now: Timestamp,
     ) -> Result<ServiceResponse, RuntimeServiceError> {
@@ -1193,12 +1290,12 @@ impl RuntimeService {
             .agent
             .as_ref()
             .ok_or(RuntimeServiceError::AgentUnavailable)?;
-        let approval = self.scoped_approval(request.approval_id())?;
+        let approval = self.scoped_approval(scope, request.approval_id())?;
         let snapshot = self.sessions.resume(
             approval.session_id(),
-            self.scope.principal_id(),
-            self.scope.tenant_id(),
-            self.scope.workspace_id(),
+            scope.principal_id(),
+            scope.tenant_id(),
+            scope.workspace_id(),
         )?;
         let session = snapshot.session().clone();
         let _active_lease =
@@ -1360,7 +1457,11 @@ impl RuntimeService {
         }))
     }
 
-    fn allocate_session(&self, now: Timestamp) -> Result<Session, RuntimeServiceError> {
+    fn allocate_session(
+        &self,
+        scope: &RuntimeServiceScope,
+        now: Timestamp,
+    ) -> Result<Session, RuntimeServiceError> {
         let sequence = self.next_session.fetch_add(1, Ordering::Relaxed);
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1369,9 +1470,9 @@ impl RuntimeService {
         let session_id = SessionId::new(format!("service-session-{timestamp}-{sequence}"))?;
         Ok(Session::new(
             session_id,
-            self.scope.principal_id().clone(),
-            self.scope.tenant_id().clone(),
-            self.scope.workspace_id().clone(),
+            scope.principal_id().clone(),
+            scope.tenant_id().clone(),
+            scope.workspace_id().clone(),
             now,
         ))
     }
@@ -1430,6 +1531,27 @@ impl RuntimeService {
             &receipt,
         );
         Ok(receipt)
+    }
+}
+
+fn authorize_role(role: AccessRole, request: &ServiceRequest) -> Result<(), RuntimeServiceError> {
+    let allowed = match request {
+        ServiceRequest::EvolutionActivate { .. } | ServiceRequest::EvolutionRollback { .. } => {
+            matches!(role, AccessRole::Administrator)
+        }
+        ServiceRequest::ApprovalResolve { .. }
+        | ServiceRequest::Run { .. }
+        | ServiceRequest::RunResume { .. }
+        | ServiceRequest::AgentRun { .. }
+        | ServiceRequest::AgentResume { .. } => {
+            matches!(role, AccessRole::Operator | AccessRole::Administrator)
+        }
+        _ => true,
+    };
+    if allowed {
+        Ok(())
+    } else {
+        Err(RuntimeServiceError::Forbidden)
     }
 }
 

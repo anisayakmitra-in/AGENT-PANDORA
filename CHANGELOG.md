@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- Added production identity and recovery boundaries: tenant/workspace-scoped
+  service identities with viewer, operator, and administrator roles,
+  Ed25519-bound device credentials with freshness and replay checks, encrypted
+  provider secret vaults, authenticated encrypted backup/restore with SQLite
+  integrity validation, and local redacted crash and operational records.
+- Added explicit stable and beta update-channel validation. Stable release tags
+  now fail closed without an explicit release approval plus Windows signing
+  and Apple signing/notarization credentials; existing checksum, Cosign, SBOM,
+  provenance, and cross-platform lifecycle gates remain required.
+
+- Added production identity and recovery boundaries: tenant/workspace-scoped
+  service identities with viewer, operator, and administrator roles,
+  Ed25519-bound device credentials with freshness and replay checks, encrypted
+  provider secret vaults, authenticated encrypted backup/restore with SQLite
+  integrity validation, and local redacted crash and operational records.
+- Added explicit stable and beta update-channel validation. Stable release tags
+  now fail closed without an explicit release approval plus Windows signing
+  and Apple signing/notarization credentials; existing checksum, Cosign, SBOM,
+  provenance, and cross-platform lifecycle gates remain required.
+
 - Added governed admitted-artifact evolution activation. The durable artifact
   catalog resolves bounded replacement chains, rejects cycles and out-of-order
   rollback, and exposes active bindings read-only through the local service and

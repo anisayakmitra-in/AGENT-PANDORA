@@ -1,15 +1,15 @@
-use super::{load_config, parse_options, timestamp, write_config};
+use super::{load_config, parse_options, session_scope, timestamp, write_config};
 use crate::output::{CliError, CommandResult, success};
 use pandora_provider::{
     ChatMessage, FailoverProvider, HttpProvider, ModelRequest, Provider, ProviderManifest,
     ProviderProtocol,
 };
-use pandora_runtime::ExecutionController;
 use pandora_runtime::config::{
     DEFAULT_PROVIDER_API_KEY_ENV, DEFAULT_PROVIDER_NAME, ProviderPricing, ProviderProfile,
     RuntimeConfig,
 };
 use pandora_runtime::executors::WorkspaceRoot;
+use pandora_runtime::{ExecutionController, SecretVault};
 use pandora_types::{Capability, PolicyContext, Session, SessionId};
 use serde_json::json;
 
@@ -88,7 +88,9 @@ fn configured_provider_for_with_failover(
         api_key_env,
     )
     .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
-    let primary = HttpProvider::from_environment(manifest)
+    let primary_secret = provider_credential(config, api_key_env)?
+        .ok_or_else(|| CliError::provider("provider credential unavailable", json!({})))?;
+    let primary = HttpProvider::new(manifest, primary_secret)
         .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
 
     if !allow_fallback {
@@ -113,12 +115,45 @@ fn configured_provider_for_with_failover(
         fallback_profile.api_key_env(),
     )
     .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
-    let fallback = HttpProvider::from_environment(fallback_manifest)
+    let fallback_secret = provider_credential(config, fallback_profile.api_key_env())?
+        .ok_or_else(|| CliError::provider("provider credential unavailable", json!({})))?;
+    let fallback = HttpProvider::new(fallback_manifest, fallback_secret)
         .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
     Ok(Box::new(FailoverProvider::new(
         Box::new(primary),
         Box::new(fallback),
     )))
+}
+
+pub(crate) fn provider_credential_available(
+    config: &RuntimeConfig,
+    name: &str,
+) -> Result<bool, CliError> {
+    Ok(provider_credential(config, name)?.is_some())
+}
+
+fn provider_credential(config: &RuntimeConfig, name: &str) -> Result<Option<String>, CliError> {
+    if let Ok(value) = std::env::var(name)
+        && !value.trim().is_empty()
+    {
+        return Ok(Some(value));
+    }
+    let Some(passphrase) = std::env::var_os("PANDORA_MASTER_KEY") else {
+        return Ok(None);
+    };
+    let passphrase = passphrase.into_string().map_err(|_| {
+        CliError::configuration(
+            "PANDORA_MASTER_KEY must contain valid text",
+            json!({"environment": "PANDORA_MASTER_KEY"}),
+        )
+    })?;
+    let (_, tenant, workspace) = session_scope();
+    let vault = SecretVault::open(config.data_dir(), tenant, workspace, passphrase)
+        .map_err(|error| CliError::configuration(error.to_string(), json!({})))?;
+    vault
+        .get(name)
+        .map(|secret| secret.map(|secret| secret.into_string()))
+        .map_err(|error| CliError::configuration(error.to_string(), json!({})))
 }
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {

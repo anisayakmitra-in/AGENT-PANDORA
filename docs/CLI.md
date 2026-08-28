@@ -97,6 +97,26 @@ If every configured provider attempt fails, JSON errors include the ordered
 receipt IDs and safe outcomes for each call. Credentials, prompts, and request
 payloads are excluded from that audit summary.
 
+## Identity, secrets, and recovery
+
+    pandora auth enroll --principal alice --tenant team-a --workspace-id product-a --role operator
+    pandora auth list
+    pandora auth revoke <identity-id> --yes
+    pandora secret set OPENAI_API_KEY --value-stdin
+    pandora backup create --output pandora-recovery.json
+    pandora backup restore --input pandora-recovery.json --yes
+
+Service identities bind a principal, tenant, workspace, role, bearer-token
+digest, and Ed25519 device public key. The private token and device key stay in
+separate private files. Device proofs are fresh and replay-protected.
+
+Encrypted secret vaults use the PANDORA_MASTER_KEY environment value and are
+bound to the local tenant and workspace. Encrypted recovery archives use the
+separate PANDORA_BACKUP_KEY value. Stop the service before backup or restore.
+Restore authenticates paths and content, validates SQLite databases, preserves
+the prior files, and does not alter the configured workspace. See
+[production readiness](PRODUCTION.md).
+
 ## Sessions and execution
 
 ```text
@@ -797,6 +817,8 @@ untouched, and migration is one-way.
 
 ```text
 pandora update --release v<version>
+pandora update --release v<version> --channel stable
+pandora update --release v<version>-beta.<n> --channel beta
 pandora update --release v<version> --dry-run
 pandora update --artifact <path> --sha256 sha256:<64-hex-digits>
 pandora update --artifact <path> --sha256 sha256:<64-hex-digits> --dry-run
@@ -810,6 +832,10 @@ Windows, macOS, or Linux asset from Pandora's official GitHub release, and
 verifies it against that release's `checksums.txt` before staging it. It never
 resolves an ambiguous latest release. Use `--dry-run` to verify a tag without
 changing files.
+
+The optional channel must match the explicit tag: stable accepts a plain
+SemVer version and beta accepts a prerelease. Pandora still does not choose a
+latest release implicitly.
 
 `update --artifact` verifies a local artifact before staging it under the
 Pandora data directory. A detached Ed25519 signature can be checked with

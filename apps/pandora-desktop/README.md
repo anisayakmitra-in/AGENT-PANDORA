@@ -13,11 +13,11 @@ npm run dev
 
 Without a connection, the screen uses clearly marked preview data. In the
 desktop app, open Connections and choose Start local service. The shell starts
-the existing `pandora service start` process and keeps its bearer token in the
-native layer. For browser development, start that command manually and enter
-the endpoint plus the bearer token read from the token path in its readiness
-output. Live sessions and run results come from the authenticated service. The
-UI cannot issue permits or execute tools by itself.
+the existing Pandora service process and keeps its bearer token and Ed25519
+device key in the native layer. Every native RPC uses a fresh signed device
+proof; the webview never receives either credential. Live sessions and run
+results come from the authenticated service. The UI cannot issue permits or
+execute tools by itself.
 
 Use `Ctrl/Cmd-K` to switch between Pandora surfaces. The Command Center
 profile selector routes a run to Auto, Coding, Research, Design, or Security;
@@ -38,7 +38,9 @@ npm run tauri:dev
 npm run tauri:build
 ```
 
-Platform signing and installer verification remain release-environment work.
+Prerelease packages may be unsigned. Stable release tags fail closed until the
+release environment provides Windows signing and Apple signing/notarization
+credentials.
 
 ## Interface direction
 

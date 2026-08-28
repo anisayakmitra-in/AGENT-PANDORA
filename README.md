@@ -23,6 +23,14 @@ SemVer; prereleases use `alpha`, `beta`, and `rc` suffixes. Older codename tags
 are historical references only. See [RELEASES.md](RELEASES.md),
 [CHANGELOG.md](CHANGELOG.md), and [platform support](docs/PLATFORMS.md) for the
 shipped scope and release gates.
+The source tree also contains the production-readiness controls for the next
+release: scoped identities, cryptographic device trust, encrypted secrets,
+recovery archives, local crash records, and stable-release signing gates. See
+[production readiness](docs/PRODUCTION.md).
+The source tree also contains the production-readiness controls for the next
+release: scoped identities, cryptographic device trust, encrypted secrets,
+recovery archives, local crash records, and stable-release signing gates. See
+[production readiness](docs/PRODUCTION.md).
 
 The npm package also exports a typed TypeScript client for the stable JSON CLI
 contract. It forwards an argv array to the verified native binary and does not

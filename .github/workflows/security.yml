@@ -33,6 +33,13 @@ jobs:
       - name: Audit Rust dependencies
         run: cargo audit --deny warnings
 
+      - name: Audit desktop Rust dependencies
+        run: >-
+          cargo audit
+          --file apps/pandora-desktop/src-tauri/Cargo.lock
+          --deny yanked
+          --ignore RUSTSEC-2024-0429
+
       - name: Validate repository contents
         run: python scripts/validate_repo.py
 

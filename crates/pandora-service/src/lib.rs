@@ -2,32 +2,47 @@
 
 use axum::{
     Json, Router,
-    body::Bytes,
-    extract::{DefaultBodyLimit, Request, State},
+    body::{Body, Bytes, to_bytes},
+    extract::{DefaultBodyLimit, Extension, Request, State},
     http::{HeaderMap, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::post,
 };
-use pandora_runtime::{RuntimeService, RuntimeServiceError, ServiceTokenStore};
+use pandora_runtime::{
+    DeviceProofRequest, IdentityStore, RuntimeService, RuntimeServiceError, RuntimeServiceScope,
+    ServiceTokenStore, verify_device_proof,
+};
 use pandora_types::{
     ServiceAgentResumeRequest, ServiceAgentRunRequest, ServiceEventPageRequest, ServiceRequest,
     ServiceResponse, ServiceRunRequest, ServiceRunResumeRequest, Timestamp,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::future::Future;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_RPC_BODY_BYTES: usize = 1_048_576;
+const DEVICE_ID_HEADER: &str = "x-pandora-device-id";
+const DEVICE_TIMESTAMP_HEADER: &str = "x-pandora-timestamp";
+const DEVICE_NONCE_HEADER: &str = "x-pandora-nonce";
+const DEVICE_SIGNATURE_HEADER: &str = "x-pandora-signature";
+const DEVICE_PROOF_WINDOW_SECONDS: u64 = 60;
+const MAX_REPLAY_ENTRIES: usize = 4_096;
 
 pub struct LocalServiceConfig {
     bind_addr: SocketAddr,
     runtime: RuntimeService,
-    token_store: ServiceTokenStore,
+    authentication: AuthenticationConfig,
+}
+
+enum AuthenticationConfig {
+    Legacy(ServiceTokenStore),
+    Identities(IdentityStore),
 }
 
 impl LocalServiceConfig {
@@ -43,7 +58,22 @@ impl LocalServiceConfig {
         Ok(Self {
             bind_addr,
             runtime,
-            token_store,
+            authentication: AuthenticationConfig::Legacy(token_store),
+        })
+    }
+
+    pub fn with_identities(
+        bind_addr: SocketAddr,
+        runtime: RuntimeService,
+        identities: IdentityStore,
+    ) -> Result<Self, ServiceTransportError> {
+        if !bind_addr.ip().is_loopback() {
+            return Err(ServiceTransportError::NonLoopbackBindAddress);
+        }
+        Ok(Self {
+            bind_addr,
+            runtime,
+            authentication: AuthenticationConfig::Identities(identities),
         })
     }
 }
@@ -59,7 +89,8 @@ impl LocalService {
             bind_addr: config.bind_addr,
             state: Arc::new(TransportState {
                 runtime: Arc::new(config.runtime),
-                token_store: Arc::new(config.token_store),
+                authentication: config.authentication,
+                replay_nonces: Mutex::new(BTreeMap::new()),
             }),
         }
     }
@@ -141,22 +172,108 @@ impl std::error::Error for ServiceTransportError {
 
 struct TransportState {
     runtime: Arc<RuntimeService>,
-    token_store: Arc<ServiceTokenStore>,
+    authentication: AuthenticationConfig,
+    replay_nonces: Mutex<BTreeMap<String, u64>>,
 }
 
 async fn require_bearer(
     State(state): State<Arc<TransportState>>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
-    let authorized = bearer_token(request.headers())
-        .is_some_and(|candidate| state.token_store.token().matches(candidate));
+    let Some(candidate) = bearer_token(request.headers()).map(str::to_owned) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    let scope = match &state.authentication {
+        AuthenticationConfig::Legacy(token_store) => token_store
+            .token()
+            .matches(&candidate)
+            .then(|| state.runtime.scope().clone()),
+        AuthenticationConfig::Identities(identities) => {
+            let Some(device_id) = request
+                .headers()
+                .get(DEVICE_ID_HEADER)
+                .and_then(|value| value.to_str().ok())
+            else {
+                return StatusCode::UNAUTHORIZED.into_response();
+            };
+            let device_id = device_id.to_owned();
+            let Some(timestamp) = proof_header(request.headers(), DEVICE_TIMESTAMP_HEADER)
+                .and_then(|value| value.parse::<u64>().ok())
+            else {
+                return StatusCode::UNAUTHORIZED.into_response();
+            };
+            let Some(nonce) = proof_header(request.headers(), DEVICE_NONCE_HEADER) else {
+                return StatusCode::UNAUTHORIZED.into_response();
+            };
+            let nonce = nonce.to_owned();
+            let Some(signature) = proof_header(request.headers(), DEVICE_SIGNATURE_HEADER) else {
+                return StatusCode::UNAUTHORIZED.into_response();
+            };
+            let signature = signature.to_owned();
+            let request_body = std::mem::replace(request.body_mut(), Body::empty());
+            let Ok(request_body) = to_bytes(request_body, MAX_RPC_BODY_BYTES).await else {
+                return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+            };
+            *request.body_mut() = Body::from(request_body.clone());
+            let now = now_timestamp().as_unix_seconds();
+            if now.abs_diff(timestamp) > DEVICE_PROOF_WINDOW_SECONDS {
+                return StatusCode::UNAUTHORIZED.into_response();
+            }
+            let Some(identity) = identities
+                .authenticate(&candidate, &device_id)
+                .ok()
+                .flatten()
+            else {
+                return StatusCode::UNAUTHORIZED.into_response();
+            };
+            let proof = DeviceProofRequest::new(
+                &candidate,
+                timestamp,
+                &nonce,
+                request.method().as_str(),
+                request.uri().path(),
+                &request_body,
+            );
+            if !verify_device_proof(identity.device_public_key(), &proof, &signature)
+                || !record_nonce(&state, identity.id(), &nonce, timestamp, now)
+            {
+                return StatusCode::UNAUTHORIZED.into_response();
+            }
+            Some(RuntimeServiceScope::from_identity(&identity))
+        }
+    };
+    let Some(scope) = scope else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    request.extensions_mut().insert(scope);
+    next.run(request).await
+}
 
-    if authorized {
-        next.run(request).await
-    } else {
-        StatusCode::UNAUTHORIZED.into_response()
+fn proof_header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers
+        .get(name)?
+        .to_str()
+        .ok()
+        .filter(|value| !value.is_empty())
+}
+
+fn record_nonce(
+    state: &TransportState,
+    identity_id: &str,
+    nonce: &str,
+    timestamp: u64,
+    now: u64,
+) -> bool {
+    let Ok(mut seen) = state.replay_nonces.lock() else {
+        return false;
+    };
+    seen.retain(|_, recorded| now.abs_diff(*recorded) <= DEVICE_PROOF_WINDOW_SECONDS);
+    if seen.len() >= MAX_REPLAY_ENTRIES {
+        return false;
     }
+    seen.insert(format!("{identity_id}:{nonce}"), timestamp)
+        .is_none()
 }
 
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {
@@ -170,6 +287,7 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
 
 async fn handle_rpc(
     State(state): State<Arc<TransportState>>,
+    Extension(scope): Extension<RuntimeServiceScope>,
     body: Bytes,
 ) -> Json<JsonRpcResponse> {
     let request = match serde_json::from_slice::<JsonRpcRequest>(&body) {
@@ -179,7 +297,10 @@ async fn handle_rpc(
     let id = request.id.clone();
 
     let response = match service_request(&request) {
-        Ok(Some(request)) => match state.runtime.handle(&request, now_timestamp()) {
+        Ok(Some(request)) => match state
+            .runtime
+            .handle_scoped(&scope, &request, now_timestamp())
+        {
             Ok(response) => JsonRpcResponse::success(id, response),
             Err(error) => JsonRpcResponse::runtime_error(id, error),
         },
@@ -466,8 +587,9 @@ mod tests {
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode, header};
     use pandora_runtime::{
-        ApprovalStore, ArtifactCatalog, EvolutionEngine, ExecutionController, RuntimeService,
-        RuntimeServiceScope, ServiceTokenStore,
+        AccessRole, ApprovalStore, ArtifactCatalog, DeviceKeyStore, DeviceProofRequest,
+        EvolutionEngine, ExecutionController, IdentityEnrollmentRequest, IdentityStore,
+        RuntimeService, RuntimeServiceScope, ServiceTokenStore,
     };
     use pandora_runtime::{executors::WorkspaceRoot, sessions::SessionStore};
     use pandora_types::{
@@ -492,6 +614,208 @@ mod tests {
 
         let wrong = post(&fixture, Some("wrong"), health_request()).await;
         assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn identity_transport_enforces_device_role_and_tenant_scope() {
+        let root = FixtureRoot::new();
+        let identities = IdentityStore::open(root.root.join("identities.sqlite3")).unwrap();
+        let operator_device =
+            DeviceKeyStore::load_or_create(root.root.join("operator-device.key")).unwrap();
+        let viewer_device =
+            DeviceKeyStore::load_or_create(root.root.join("viewer-device.key")).unwrap();
+        let cross_operator_device =
+            DeviceKeyStore::load_or_create(root.root.join("cross-operator-device.key")).unwrap();
+        let operator = identities
+            .enroll(
+                IdentityEnrollmentRequest::new(
+                    PrincipalId::new("operator-a").unwrap(),
+                    TenantId::new("tenant-a").unwrap(),
+                    WorkspaceId::new("workspace-a").unwrap(),
+                    AccessRole::Operator,
+                    1,
+                ),
+                operator_device.device_id(),
+                operator_device.public_key(),
+            )
+            .unwrap();
+        let viewer = identities
+            .enroll(
+                IdentityEnrollmentRequest::new(
+                    PrincipalId::new("viewer-b").unwrap(),
+                    TenantId::new("tenant-b").unwrap(),
+                    WorkspaceId::new("workspace-b").unwrap(),
+                    AccessRole::Viewer,
+                    1,
+                ),
+                viewer_device.device_id(),
+                viewer_device.public_key(),
+            )
+            .unwrap();
+        let cross_operator = identities
+            .enroll(
+                IdentityEnrollmentRequest::new(
+                    PrincipalId::new("operator-b").unwrap(),
+                    TenantId::new("tenant-b").unwrap(),
+                    WorkspaceId::new("workspace-b").unwrap(),
+                    AccessRole::Operator,
+                    1,
+                ),
+                cross_operator_device.device_id(),
+                cross_operator_device.public_key(),
+            )
+            .unwrap();
+        let service = LocalService::new(
+            LocalServiceConfig::with_identities(
+                "127.0.0.1:0".parse().unwrap(),
+                runtime(&root.root),
+                identities,
+            )
+            .unwrap(),
+        );
+
+        let wrong_device = post_identity(
+            &service,
+            operator.token(),
+            &viewer_device.device_id(),
+            &operator_device,
+            health_request(),
+        )
+        .await;
+        assert_eq!(wrong_device.status(), StatusCode::UNAUTHORIZED);
+
+        let run = post_identity(
+            &service,
+            operator.token(),
+            &operator_device.device_id(),
+            &operator_device,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "run.execute",
+                "params": {"task": "guide"}
+            }),
+        )
+        .await;
+        let body = to_bytes(run.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        let session_id = body["result"]["run"]["session_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let cross_tenant = post_identity(
+            &service,
+            viewer.token(),
+            &viewer_device.device_id(),
+            &viewer_device,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "session.inspect",
+                "params": {"session_id": session_id}
+            }),
+        )
+        .await;
+        let body = to_bytes(cross_tenant.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"]["data"]["code"], "session_scope_violation");
+
+        let cross_tenant_execution = post_identity(
+            &service,
+            cross_operator.token(),
+            &cross_operator_device.device_id(),
+            &cross_operator_device,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 30,
+                "method": "run.execute",
+                "params": {"task": "guide"}
+            }),
+        )
+        .await;
+        let body = to_bytes(cross_tenant_execution.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"]["data"]["code"], "forbidden");
+
+        let global_evolution = post_identity(
+            &service,
+            viewer.token(),
+            &viewer_device.device_id(),
+            &viewer_device,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 31,
+                "method": "evolution.list",
+                "params": {"limit": 16}
+            }),
+        )
+        .await;
+        let body = to_bytes(global_evolution.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"]["data"]["code"], "forbidden");
+
+        let forbidden = post_identity(
+            &service,
+            viewer.token(),
+            &viewer_device.device_id(),
+            &viewer_device,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "run.execute",
+                "params": {"task": "guide"}
+            }),
+        )
+        .await;
+        let body = to_bytes(forbidden.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"]["data"]["code"], "forbidden");
+
+        let nonce = "f".repeat(32);
+        let first = post_identity_with_nonce(
+            &service,
+            operator.token(),
+            &operator_device.device_id(),
+            &operator_device,
+            &nonce,
+            health_request(),
+        )
+        .await;
+        assert_eq!(first.status(), StatusCode::OK);
+        let replay = post_identity_with_nonce(
+            &service,
+            operator.token(),
+            &operator_device.device_id(),
+            &operator_device,
+            &nonce,
+            health_request(),
+        )
+        .await;
+        assert_eq!(replay.status(), StatusCode::UNAUTHORIZED);
+
+        let tampered = post_identity_with_mismatched_body(
+            &service,
+            operator.token(),
+            &operator_device.device_id(),
+            &operator_device,
+            &"e".repeat(32),
+            health_request(),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "run.execute",
+                "params": {"task": "tampered"}
+            }),
+        )
+        .await;
+        assert_eq!(tampered.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -928,6 +1252,95 @@ mod tests {
             .service
             .router()
             .oneshot(request.body(Body::from(body)).unwrap())
+            .await
+            .unwrap()
+    }
+
+    async fn post_identity(
+        service: &LocalService,
+        token: &str,
+        device_id: &str,
+        device_key: &DeviceKeyStore,
+        body: Value,
+    ) -> axum::response::Response {
+        let sequence = NEXT_FIXTURE_ROOT.fetch_add(1, Ordering::Relaxed);
+        post_identity_with_nonce(
+            service,
+            token,
+            device_id,
+            device_key,
+            &format!("{sequence:032x}"),
+            body,
+        )
+        .await
+    }
+
+    async fn post_identity_with_nonce(
+        service: &LocalService,
+        token: &str,
+        device_id: &str,
+        device_key: &DeviceKeyStore,
+        nonce: &str,
+        body: Value,
+    ) -> axum::response::Response {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let body = serde_json::to_vec(&body).unwrap();
+        let proof = DeviceProofRequest::new(token, timestamp, nonce, "POST", "/v1/rpc", &body);
+        let signature = device_key.sign(&proof).unwrap();
+        service
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/rpc")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header(super::DEVICE_ID_HEADER, device_id)
+                    .header(super::DEVICE_TIMESTAMP_HEADER, timestamp.to_string())
+                    .header(super::DEVICE_NONCE_HEADER, nonce)
+                    .header(super::DEVICE_SIGNATURE_HEADER, signature)
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    async fn post_identity_with_mismatched_body(
+        service: &LocalService,
+        token: &str,
+        device_id: &str,
+        device_key: &DeviceKeyStore,
+        nonce: &str,
+        signed_body: Value,
+        sent_body: Value,
+    ) -> axum::response::Response {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let signed_body = serde_json::to_vec(&signed_body).unwrap();
+        let proof =
+            DeviceProofRequest::new(token, timestamp, nonce, "POST", "/v1/rpc", &signed_body);
+        let signature = device_key.sign(&proof).unwrap();
+        service
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/rpc")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header(super::DEVICE_ID_HEADER, device_id)
+                    .header(super::DEVICE_TIMESTAMP_HEADER, timestamp.to_string())
+                    .header(super::DEVICE_NONCE_HEADER, nonce)
+                    .header(super::DEVICE_SIGNATURE_HEADER, signature)
+                    .body(Body::from(serde_json::to_vec(&sent_body).unwrap()))
+                    .unwrap(),
+            )
             .await
             .unwrap()
     }

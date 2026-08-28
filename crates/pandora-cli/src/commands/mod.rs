@@ -13,6 +13,8 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod approval;
+mod auth;
+mod backup;
 mod chat;
 mod completions;
 mod doctor;
@@ -31,6 +33,7 @@ mod package;
 mod provider;
 mod rollout;
 mod run;
+mod secret;
 mod service;
 mod session;
 mod setup;
@@ -77,6 +80,8 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
     }
     match command {
         "approval" => approval::execute(&args[1..]),
+        "auth" => auth::execute(&args[1..]),
+        "backup" => backup::execute(&args[1..]),
         "chat" if json_requested => Err(CliError::usage("chat does not support --json")),
         "chat" => chat::execute(&args[1..]),
         "completions" => completions::execute(&args[1..]),
@@ -89,6 +94,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "setup" => setup::execute(&args[1..]),
         "run" => run::execute(&args[1..]),
         "service" => service::execute(&args[1..]),
+        "secret" => secret::execute(&args[1..]),
         "session" => session::execute(&args[1..]),
         "slash" => slash::execute(&args[1..]),
         "skill" => skill::execute(&args[1..]),
@@ -206,6 +212,7 @@ fn is_flag(name: &str) -> bool {
             | "rollback"
             | "yes"
             | "retryable"
+            | "value-stdin"
     )
 }
 
@@ -314,13 +321,16 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|service|chat|tui|harness|slash|session|job|subagent|skill|package|memory|approval|provider|mcp|tool|orchestration|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor> [options]
+    r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|tui|harness|slash|session|job|subagent|skill|package|memory|approval|provider|mcp|tool|orchestration|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor> [options]
 
 commands:
   help (or --help)
   setup [--interactive] [--provider-url <url>] [--model <model>] [--api-key-env <name>]
   run [--provider <name>] [--session <id>] [--agent] [--max-turns <n>] [--max-tools <n>] [--harness <id>] [--harness-version <version>] [--gene <id>] [--plan] [--model <model>] [--task-class <name>] [--approval <id>] [--optimize <cost|latency|tokens|certainty>] <task>
   service start [--port <port>]
+  auth enroll --principal <id> --tenant <id> --workspace-id <id> --role <viewer|operator|administrator> [--device-key-file <path>] [--token-file <path>] | list | revoke <identity-id> --yes
+  secret set <ENV_NAME> --value-stdin | list | status <ENV_NAME> | remove <ENV_NAME> --yes
+  backup create --output <path> [--passphrase-env <name>] | inspect --input <path> [--passphrase-env <name>] | restore --input <path> [--passphrase-env <name>] --yes
   chat [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>]
   tui [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>]
   harness list|inspect|run [--harness-version <version>]
@@ -349,7 +359,7 @@ commands:
   graph code|knowledge|review|architecture --input <path> [--store <path>] [--tenant <id>] [--workspace <id>]
   completions <powershell|bash|zsh|fish>
   migrate config
-  update [--artifact <path> --sha256 <digest> | --rollback]
+  update [--release <tag> [--channel <stable|beta>] | --artifact <path> --sha256 <digest> | --rollback]
   uninstall [--dry-run|--yes]
   doctor"#
 }

@@ -16,6 +16,18 @@ Irreversible actions remain pending until explicitly approved. Each review expos
 
 Telemetry has no raw prompt or output field. Debug exports must be redacted before they enter the projection. Runtime events remain the authoritative event stream; observability is a derived view and cannot authorize execution, approve memory promotion, or change policy.
 
+CLI operational telemetry is a separate local-only health record under
+data/operations/telemetry.jsonl. Its schema accepts only a closed event kind,
+success/failure status, component, version, and timestamp. It rotates at 4 MiB
+and retains one previous file. Crash reports omit panic payloads and retain
+only a digest of the source location. Pandora does not upload either record.
+
+CLI operational telemetry is a separate local-only health record under
+data/operations/telemetry.jsonl. Its schema accepts only a closed event kind,
+success/failure status, component, version, and timestamp. It rotates at 4 MiB
+and retains one previous file. Crash reports omit panic payloads and retain
+only a digest of the source location. Pandora does not upload either record.
+
 ## Execution profiles
 
 Pandora assembles a versioned `ExecutionProfile` before an effect request reaches Parliament. The profile records the Pandora version, operating system, architecture, policy version, a digest of the canonical workspace root, the shipped containment snapshot digest, and sorted bindings for the selected executor and runtime components. Coding runs bind their Harness and Gene; MCP runs bind the server configuration or immutable catalog revision; provider calls bind the provider and model.

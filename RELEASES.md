@@ -138,3 +138,27 @@ AgentLoop, session, approval, and governed effect path.
 - Prereleases use `-alpha.N`, `-beta.N`, or `-rc.N` suffixes.
 - Release tags are immutable. Each release must publish notes, checksums, an SBOM, supported-platform results, and rollback instructions.
 - A release is not considered stable until local and GitHub checks pass on Windows, macOS, and Linux.
+
+## Stable release credentials
+
+Prerelease tags may publish unsigned platform packages and are marked as
+prereleases. A plain SemVer stable tag fails before compilation unless all of
+these encrypted GitHub secrets are present:
+
+- PANDORA_STABLE_RELEASE_APPROVED with the exact value 1;
+- PANDORA_WINDOWS_CERTIFICATE_BASE64 and
+  PANDORA_WINDOWS_CERTIFICATE_PASSWORD;
+- PANDORA_APPLE_CERTIFICATE_BASE64 and
+  PANDORA_APPLE_CERTIFICATE_PASSWORD;
+- APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD, and APPLE_TEAM_ID.
+
+The release jobs keep certificate material in runner-temporary files, sign
+native Windows and macOS executables, sign Windows desktop installers, and
+provide the Apple identity and notarization credentials to the Tauri bundler.
+Certificate values and account credentials must never be committed, printed,
+placed in an artifact, or copied into recovery archives.
+
+All channels continue to require the signed checksum manifest, SPDX SBOM,
+GitHub provenance, release notes, cross-platform tests, and published
+install/update/rollback smoke tests described in
+[production readiness](docs/PRODUCTION.md).

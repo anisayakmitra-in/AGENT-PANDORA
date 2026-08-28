@@ -41,6 +41,33 @@ jobs:
       - name: Check release identity
         run: python scripts/release_identity.py "$GITHUB_REF_NAME"
 
+      - name: Enforce stable release signing policy
+        shell: bash
+        env:
+          PANDORA_STABLE_RELEASE_APPROVED: ${{ secrets.PANDORA_STABLE_RELEASE_APPROVED }}
+          PANDORA_WINDOWS_CERTIFICATE_BASE64: ${{ secrets.PANDORA_WINDOWS_CERTIFICATE_BASE64 }}
+          PANDORA_WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.PANDORA_WINDOWS_CERTIFICATE_PASSWORD }}
+          PANDORA_APPLE_CERTIFICATE_BASE64: ${{ secrets.PANDORA_APPLE_CERTIFICATE_BASE64 }}
+          PANDORA_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.PANDORA_APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if [[ "$version" != *-* ]]; then
+            test "$PANDORA_STABLE_RELEASE_APPROVED" = "1"
+            test -n "$PANDORA_WINDOWS_CERTIFICATE_BASE64"
+            test -n "$PANDORA_WINDOWS_CERTIFICATE_PASSWORD"
+            test -n "$PANDORA_APPLE_CERTIFICATE_BASE64"
+            test -n "$PANDORA_APPLE_CERTIFICATE_PASSWORD"
+            test -n "$APPLE_SIGNING_IDENTITY"
+            test -n "$APPLE_ID"
+            test -n "$APPLE_PASSWORD"
+            test -n "$APPLE_TEAM_ID"
+          fi
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -96,6 +123,12 @@ jobs:
             binary: pandora.exe
             artifact: pandora-x86_64-pc-windows-msvc.exe
     runs-on: ${{ matrix.os }}
+    env:
+      PANDORA_WINDOWS_CERTIFICATE_BASE64: ${{ secrets.PANDORA_WINDOWS_CERTIFICATE_BASE64 }}
+      PANDORA_WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.PANDORA_WINDOWS_CERTIFICATE_PASSWORD }}
+      PANDORA_APPLE_CERTIFICATE_BASE64: ${{ secrets.PANDORA_APPLE_CERTIFICATE_BASE64 }}
+      PANDORA_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.PANDORA_APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
     permissions:
       contents: read
     steps:
@@ -112,6 +145,33 @@ jobs:
 
       - name: Build native CLI
         run: cargo build --locked --release -p pandora-cli --target ${{ matrix.target }}
+
+      - name: Sign native CLI (macOS)
+        if: runner.os == 'macOS' && env.PANDORA_APPLE_CERTIFICATE_BASE64 != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          certificate="$RUNNER_TEMP/pandora-signing.p12"
+          keychain="$RUNNER_TEMP/pandora-signing.keychain-db"
+          printf '%s' "$PANDORA_APPLE_CERTIFICATE_BASE64" | base64 --decode > "$certificate"
+          security create-keychain -p "$GITHUB_RUN_ID" "$keychain"
+          security unlock-keychain -p "$GITHUB_RUN_ID" "$keychain"
+          security import "$certificate" -k "$keychain" -P "$PANDORA_APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$GITHUB_RUN_ID" "$keychain"
+          security list-keychains -d user -s "$keychain"
+          codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "target/${{ matrix.target }}/release/${{ matrix.binary }}"
+          codesign --verify --strict --verbose=2 "target/${{ matrix.target }}/release/${{ matrix.binary }}"
+          rm -f "$certificate"
+
+      - name: Sign native CLI (Windows)
+        if: runner.os == 'Windows' && env.PANDORA_WINDOWS_CERTIFICATE_BASE64 != ''
+        shell: pwsh
+        run: |
+          $certificate = Join-Path $env:RUNNER_TEMP "pandora-signing.pfx"
+          [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:PANDORA_WINDOWS_CERTIFICATE_BASE64))
+          & signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f $certificate /p $env:PANDORA_WINDOWS_CERTIFICATE_PASSWORD "target/${{ matrix.target }}/release/${{ matrix.binary }}"
+          if ($LASTEXITCODE -ne 0) { throw "Windows CLI signing failed" }
+          Remove-Item -LiteralPath $certificate -Force
 
       - name: Smoke test native CLI (Unix)
         if: runner.os != 'Windows'
@@ -174,6 +234,15 @@ jobs:
             platform: windows-x64
             artifact: windows-x64
     runs-on: ${{ matrix.os }}
+    env:
+      PANDORA_WINDOWS_CERTIFICATE_BASE64: ${{ secrets.PANDORA_WINDOWS_CERTIFICATE_BASE64 }}
+      PANDORA_WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.PANDORA_WINDOWS_CERTIFICATE_PASSWORD }}
+      PANDORA_APPLE_CERTIFICATE_BASE64: ${{ secrets.PANDORA_APPLE_CERTIFICATE_BASE64 }}
+      PANDORA_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.PANDORA_APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     permissions:
       contents: read
     steps:
@@ -202,6 +271,21 @@ jobs:
         working-directory: apps/pandora-desktop
         run: npm ci --ignore-scripts
 
+      - name: Import Apple signing identity
+        if: runner.os == 'macOS' && env.PANDORA_APPLE_CERTIFICATE_BASE64 != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          certificate="$RUNNER_TEMP/pandora-desktop-signing.p12"
+          keychain="$RUNNER_TEMP/pandora-desktop-signing.keychain-db"
+          printf '%s' "$PANDORA_APPLE_CERTIFICATE_BASE64" | base64 --decode > "$certificate"
+          security create-keychain -p "$GITHUB_RUN_ID" "$keychain"
+          security unlock-keychain -p "$GITHUB_RUN_ID" "$keychain"
+          security import "$certificate" -k "$keychain" -P "$PANDORA_APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$GITHUB_RUN_ID" "$keychain"
+          security list-keychains -d user -s "$keychain"
+          rm -f "$certificate"
+
       - name: Run desktop tests
         working-directory: apps/pandora-desktop
         run: npm test
@@ -209,6 +293,20 @@ jobs:
       - name: Build desktop bundle
         working-directory: apps/pandora-desktop
         run: npm run tauri:build
+
+      - name: Sign desktop bundles (Windows)
+        if: runner.os == 'Windows' && env.PANDORA_WINDOWS_CERTIFICATE_BASE64 != ''
+        shell: pwsh
+        run: |
+          $certificate = Join-Path $env:RUNNER_TEMP "pandora-desktop-signing.pfx"
+          [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:PANDORA_WINDOWS_CERTIFICATE_BASE64))
+          $artifacts = Get-ChildItem -Path "apps/pandora-desktop/src-tauri/target/release/bundle" -File -Recurse | Where-Object { $_.Extension -in @(".exe", ".msi") }
+          if ($artifacts.Count -eq 0) { throw "no Windows desktop bundles found to sign" }
+          foreach ($artifact in $artifacts) {
+            & signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f $certificate /p $env:PANDORA_WINDOWS_CERTIFICATE_PASSWORD $artifact.FullName
+            if ($LASTEXITCODE -ne 0) { throw "Windows desktop signing failed" }
+          }
+          Remove-Item -LiteralPath $certificate -Force
 
       - name: Stage desktop artifacts (Unix)
         if: runner.os != 'Windows'
@@ -219,14 +317,14 @@ jobs:
           while IFS= read -r -d '' file; do
             name="$(basename "$file")"
             cp "$file" "dist/desktop-${{ matrix.artifact }}-${name}"
-          done < <(find target/release/bundle -type f -print0)
+          done < <(find apps/pandora-desktop/src-tauri/target/release/bundle -type f -print0)
 
       - name: Stage desktop artifacts (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Get-ChildItem -Path target/release/bundle -File -Recurse | ForEach-Object {
+          Get-ChildItem -Path apps/pandora-desktop/src-tauri/target/release/bundle -File -Recurse | ForEach-Object {
             Copy-Item $_.FullName (Join-Path dist ("desktop-${{ matrix.artifact }}-" + $_.Name))
           }
 

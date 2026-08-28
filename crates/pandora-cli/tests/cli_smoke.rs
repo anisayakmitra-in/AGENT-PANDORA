@@ -1,6 +1,7 @@
 use base64::Engine as _;
 use pandora_runtime::{
-    EfficiencyStore, MemoryEngine, SessionStore, SubagentPreparation, SubagentScope, SubagentStore,
+    DeviceKeyStore, DeviceProofRequest, EfficiencyStore, MemoryEngine, SessionStore,
+    SubagentPreparation, SubagentScope, SubagentStore,
 };
 use pandora_types::{
     ContextClassification, EffectOutcome, EffectReceipt, ExecutionId, HarnessId, JobId,
@@ -1131,6 +1132,15 @@ fn service_start_reports_a_loopback_endpoint_and_token_path() {
         fixture.data.join("service-token").to_string_lossy(),
     );
     assert!(fixture.data.join("service-token").is_file());
+    assert_eq!(
+        readiness["device_key_path"]
+            .as_str()
+            .expect("readiness should include a device key path"),
+        fixture.data.join("service-device.key").to_string_lossy(),
+    );
+    let device_key =
+        DeviceKeyStore::load_or_create(fixture.data.join("service-device.key")).unwrap();
+    assert_eq!(readiness["device_id"], device_key.device_id());
     let address = readiness["endpoint"]
         .as_str()
         .unwrap()
@@ -1141,12 +1151,27 @@ fn service_start_reports_a_loopback_endpoint_and_token_path() {
     let token = fs::read_to_string(fixture.data.join("service-token"))
         .expect("service token should be readable from its declared path");
     let body = r#"{"jsonrpc":"2.0","id":1,"method":"runtime.health"}"#;
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let nonce = "a".repeat(32);
+    let proof = DeviceProofRequest::new(
+        &token,
+        timestamp,
+        &nonce,
+        "POST",
+        "/v1/rpc",
+        body.as_bytes(),
+    );
+    let signature = device_key.sign(&proof).unwrap();
     let mut stream =
         TcpStream::connect(address).expect("service endpoint should accept loopback RPC");
     stream
         .write_all(
             format!(
-                "POST /v1/rpc HTTP/1.1\r\nHost: {address}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                "POST /v1/rpc HTTP/1.1\r\nHost: {address}\r\nAuthorization: Bearer {token}\r\nX-Pandora-Device-Id: {}\r\nX-Pandora-Timestamp: {timestamp}\r\nX-Pandora-Nonce: {nonce}\r\nX-Pandora-Signature: {signature}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                device_key.device_id(),
                 body.len(),
             )
             .as_bytes(),

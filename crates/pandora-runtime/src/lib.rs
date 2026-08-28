@@ -10,6 +10,7 @@ pub mod config;
 pub mod containment;
 pub mod context_engine;
 pub mod context_recovery;
+pub mod device_trust;
 pub mod efficiency_engine;
 pub mod efficiency_store;
 pub mod evaluation_engine;
@@ -22,23 +23,27 @@ pub mod graph_intelligence;
 pub mod harness_registry;
 pub mod hooks;
 pub mod human_review;
+pub mod identity;
 pub mod job_store;
 pub mod mcp;
 pub mod mcp_catalog;
 pub mod memory_engine;
 pub mod mutation;
 pub mod observability;
+pub mod operations;
 pub mod orchestration_engine;
 pub mod package_admission;
 pub mod package_store;
 pub mod parliament;
 pub mod permit_store;
+pub mod recovery_archive;
 pub mod reference_monitor;
 pub mod registry_client;
 pub mod replacement;
 pub mod research_artifact;
 pub mod rollout_reducer;
 pub mod run_loop;
+pub mod secret_vault;
 pub mod self_healing;
 pub mod service;
 pub mod service_token;
@@ -74,6 +79,9 @@ pub use composition_ledger::{
 pub use containment::shipped_executor_containment;
 pub use context_engine::{ContextCacheStats, ContextEngine, ContextError};
 pub use context_recovery::{ContextRecovery, RecoveryDecision, RecoveryInput, RecoveryStep};
+pub use device_trust::{
+    DeviceKeyError, DeviceKeyStore, DeviceProofRequest, device_proof_message, verify_device_proof,
+};
 pub use efficiency_engine::{DEFAULT_MAX_SAMPLES_PER_TARGET, EfficiencyEngine, EfficiencyError};
 pub use efficiency_store::{EfficiencyStore, EfficiencyStoreError};
 pub use evaluation_engine::{
@@ -106,6 +114,10 @@ pub use human_review::{
     HumanMode, HumanReviewEngine, ReviewDecision, ReviewError, ReviewReceipt, ReviewRecord,
     ReviewState, ReviewSubject,
 };
+pub use identity::{
+    AccessRole, IdentityEnrollment, IdentityEnrollmentRequest, IdentityStore, IdentityStoreError,
+    ServiceIdentity,
+};
 pub use job_store::{JobRecord, JobStore, JobStoreError, MAX_JOB_RESULT_BYTES};
 pub use mcp::{
     MCP_LEGACY_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION, McpError, McpFailure, McpInvocation,
@@ -120,12 +132,14 @@ pub use mutation::{MutationEngine, MutationError};
 pub use observability::{
     DEFAULT_MAX_OBSERVABILITY_SAMPLES, ObservabilityEngine, ObservabilityError,
 };
+pub use operations::{OperationalEvent, OperationalRecorder, OperationalStatus};
 pub use orchestration_engine::{
     DomainProfileRun, OrchestrationEngine, OrchestrationError, OrchestrationRun,
 };
 pub use package_store::{MAX_STORED_ARTIFACT_BYTES, PackageStore, PackageStoreError};
 pub use parliament::Parliament;
 pub use permit_store::{ConsumedPermit, PermitError, PermitStore};
+pub use recovery_archive::{RecoveryArchive, RecoveryArchiveError, RecoveryBundle, RecoveryEntry};
 pub use reference_monitor::{AuthorizationError, ReferenceMonitor};
 pub use registry_client::{PackageRegistryClient, PackageRegistryError};
 pub use replacement::{ReplacementEngine, ReplacementError};
@@ -135,6 +149,7 @@ pub use research_artifact::{
 };
 pub use rollout_reducer::{RolloutReducer, RolloutReducerError};
 pub use run_loop::{RunLoop, RunLoopError};
+pub use secret_vault::{SecretVault, SecretVaultEntry, SecretVaultError, VaultSecret};
 pub use self_healing::{SelfHealingEngine, SelfHealingError};
 pub use service::{RuntimeService, RuntimeServiceError, RuntimeServiceScope};
 pub use service_token::{ServiceToken, ServiceTokenError, ServiceTokenStore};
