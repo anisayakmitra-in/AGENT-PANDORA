@@ -25,6 +25,27 @@ export type RuntimeProvider = {
   fallback_provider: string | null;
 };
 
+export type ProviderConfiguration = {
+  name: string;
+  protocol: "open_ai_compatible" | "anthropic_messages" | "gemini_generate_content";
+  baseUrl: string;
+  model: string;
+  apiKeyEnvironment: string;
+  apiKey: string;
+};
+
+export type McpConfiguration = {
+  serverId: string;
+  program: string;
+  argumentsJson: string;
+  mode: "auto" | "modern-only" | "legacy-only";
+};
+
+export type NativeConfigurationResult = {
+  message: string;
+  restartRequired: boolean;
+};
+
 export type RuntimeEngine = {
   id: string;
   name: string;
@@ -330,6 +351,20 @@ export async function stopLocalService(): Promise<void> {
   if (isNativeRuntime()) {
     await invoke("stop_local_service");
   }
+}
+
+export async function configureProvider(input: ProviderConfiguration): Promise<NativeConfigurationResult> {
+  if (!isNativeRuntime()) {
+    throw new Error("Provider configuration is available only in the Pandora desktop app");
+  }
+  return invoke<NativeConfigurationResult>("configure_provider", { input });
+}
+
+export async function configureMcp(input: McpConfiguration): Promise<NativeConfigurationResult> {
+  if (!isNativeRuntime()) {
+    throw new Error("MCP configuration is available only in the Pandora desktop app");
+  }
+  return invoke<NativeConfigurationResult>("configure_mcp", { input });
 }
 
 export function loadRuntimeEndpoint(): string {

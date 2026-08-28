@@ -4,13 +4,13 @@ use ed25519_dalek::{Signer, SigningKey};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use tauri::{Manager, State, WindowEvent};
-use url::Url;
-use zeroize::Zeroize;
+use url::{Host, Url};
+use zeroize::{Zeroize, Zeroizing};
 
 const NATIVE_ENDPOINT: &str = "tauri://pandora";
 const TOKEN_LENGTH: usize = 64;
@@ -136,6 +136,275 @@ fn stop_local_service(state: State<'_, ServiceState>) -> Result<(), String> {
         let _ = service.child.wait();
     }
     Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderConfiguration {
+    name: String,
+    protocol: String,
+    base_url: String,
+    model: String,
+    api_key_environment: String,
+    api_key: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct McpConfiguration {
+    server_id: String,
+    program: String,
+    arguments_json: String,
+    mode: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeConfigurationResult {
+    message: String,
+    restart_required: bool,
+}
+
+#[tauri::command]
+fn configure_provider(
+    mut input: ProviderConfiguration,
+) -> Result<NativeConfigurationResult, String> {
+    let mut api_key = Zeroizing::new(std::mem::take(&mut input.api_key));
+    validate_identifier(&input.name, "provider profile")?;
+    if !matches!(
+        input.protocol.as_str(),
+        "open_ai_compatible" | "anthropic_messages" | "gemini_generate_content"
+    ) {
+        return Err("provider protocol is unsupported".to_owned());
+    }
+    validate_provider_url(&input.base_url)?;
+    validate_text_field(&input.model, "provider model", 256)?;
+    validate_environment_name(&input.api_key_environment)?;
+    if api_key.len() >= 64 * 1024 {
+        return Err("API key exceeds Pandora's secret size limit".to_owned());
+    }
+
+    if !api_key.is_empty() {
+        let secret_args = vec![
+            "secret".to_owned(),
+            "set".to_owned(),
+            input.api_key_environment.clone(),
+            "--value-stdin".to_owned(),
+            "--json".to_owned(),
+        ];
+        run_cli_with_secret(&secret_args, &mut api_key, "storing the encrypted API key")?;
+    }
+
+    let provider_args = vec![
+        "provider".to_owned(),
+        "set".to_owned(),
+        "--name".to_owned(),
+        input.name.clone(),
+        "--protocol".to_owned(),
+        input.protocol,
+        "--provider-url".to_owned(),
+        input.base_url,
+        "--model".to_owned(),
+        input.model,
+        "--api-key-env".to_owned(),
+        input.api_key_environment,
+        "--json".to_owned(),
+    ];
+    run_cli(&provider_args, "saving the provider profile")?;
+    Ok(NativeConfigurationResult {
+        message: format!("Provider {} configured.", input.name),
+        restart_required: true,
+    })
+}
+
+#[tauri::command]
+fn configure_mcp(input: McpConfiguration) -> Result<NativeConfigurationResult, String> {
+    validate_identifier(&input.server_id, "MCP server")?;
+    if !matches!(input.mode.as_str(), "auto" | "modern-only" | "legacy-only") {
+        return Err("MCP protocol mode is unsupported".to_owned());
+    }
+    let program = Path::new(&input.program);
+    if !program.is_absolute() {
+        return Err("MCP program path must be absolute".to_owned());
+    }
+    let metadata = std::fs::symlink_metadata(program)
+        .map_err(|_| "MCP program path does not exist or is not readable".to_owned())?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("MCP program path must identify a regular file, not a symlink".to_owned());
+    }
+    let arguments: Vec<String> = serde_json::from_str(&input.arguments_json)
+        .map_err(|_| "MCP arguments must be a JSON array of strings".to_owned())?;
+    if arguments.len() > 64 || arguments.iter().any(|argument| argument.len() > 4096) {
+        return Err("MCP arguments exceed the local configuration limit".to_owned());
+    }
+
+    let mcp_args = vec![
+        "mcp".to_owned(),
+        "set".to_owned(),
+        input.server_id.clone(),
+        "--program".to_owned(),
+        input.program,
+        "--arguments-json".to_owned(),
+        serde_json::to_string(&arguments)
+            .map_err(|_| "could not encode MCP arguments".to_owned())?,
+        "--mode".to_owned(),
+        input.mode,
+        "--json".to_owned(),
+    ];
+    run_cli(&mcp_args, "saving the MCP server")?;
+    Ok(NativeConfigurationResult {
+        message: format!("MCP server {} configured.", input.server_id),
+        restart_required: true,
+    })
+}
+
+fn validate_identifier(value: &str, label: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+        || !value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+    {
+        return Err(format!(
+            "{label} ID must start with a letter or number and contain only letters, numbers, dots, underscores, or hyphens"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_text_field(value: &str, label: &str, maximum: usize) -> Result<(), String> {
+    if value.is_empty() || value.len() > maximum || value.chars().any(char::is_control) {
+        return Err(format!("{label} is empty or invalid"));
+    }
+    Ok(())
+}
+
+fn validate_environment_name(value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 128
+        || !value
+            .as_bytes()
+            .first()
+            .is_some_and(|byte| byte.is_ascii_uppercase() || *byte == b'_')
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+    {
+        return Err(
+            "secret reference must be an uppercase environment name such as PANDORA_CUSTOM_API_KEY"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_provider_url(value: &str) -> Result<(), String> {
+    if value.len() > 2048 {
+        return Err("provider URL exceeds the local configuration limit".to_owned());
+    }
+    let url = Url::parse(value).map_err(|_| "provider URL is invalid".to_owned())?;
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(
+            "provider URL must not contain credentials, query data, or a fragment".to_owned(),
+        );
+    }
+    let loopback = match url.host() {
+        Some(Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(Host::Ipv4(address)) => address.is_loopback(),
+        Some(Host::Ipv6(address)) => address.is_loopback(),
+        None => false,
+    };
+    if url.scheme() != "https" && !(url.scheme() == "http" && loopback) {
+        return Err(
+            "provider URL must use HTTPS; HTTP is allowed only for loopback providers".to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn cli_program() -> std::ffi::OsString {
+    std::env::var_os("PANDORA_CLI_PATH").unwrap_or_else(|| "pandora".into())
+}
+
+fn run_cli(args: &[String], action: &str) -> Result<(), String> {
+    let output = Command::new(cli_program())
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|_| format!("could not launch the Pandora CLI while {action}"))?;
+    validate_cli_output(output, action)
+}
+
+fn run_cli_with_secret(args: &[String], secret: &mut String, action: &str) -> Result<(), String> {
+    let child = Command::new(cli_program())
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn();
+    let mut child = match child {
+        Ok(child) => child,
+        Err(_) => {
+            secret.zeroize();
+            return Err(format!("could not launch the Pandora CLI while {action}"));
+        }
+    };
+    let write_result = child
+        .stdin
+        .take()
+        .ok_or_else(|| "Pandora CLI did not open secret input".to_owned())
+        .and_then(|mut stdin| {
+            stdin
+                .write_all(secret.as_bytes())
+                .map_err(|_| "could not send the API key to Pandora's encrypted vault".to_owned())
+        });
+    secret.zeroize();
+    if let Err(error) = write_result {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|_| format!("Pandora CLI did not finish while {action}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!("Pandora CLI failed while {action}"))
+    }
+}
+
+fn validate_cli_output(output: std::process::Output, action: &str) -> Result<(), String> {
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let detail = if stderr.trim().is_empty() {
+        stdout.trim()
+    } else {
+        stderr.trim()
+    };
+    let detail: String = detail
+        .chars()
+        .filter(|character| !character.is_control() || *character == '\n')
+        .take(600)
+        .collect();
+    if detail.is_empty() {
+        Err(format!("Pandora CLI failed while {action}"))
+    } else {
+        Err(format!("Pandora CLI failed while {action}: {detail}"))
+    }
 }
 
 #[tauri::command]
@@ -356,6 +625,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             start_local_service,
             stop_local_service,
+            configure_provider,
+            configure_mcp,
             pandora_rpc
         ])
         .on_window_event(|window, event| {
@@ -444,4 +715,27 @@ fn install_desktop_crash_reporter() {
         }
         let _ = std::io::Write::write_all(&mut options, &bytes);
     }));
+}
+
+#[cfg(test)]
+mod configuration_tests {
+    use super::{validate_environment_name, validate_identifier, validate_provider_url};
+
+    #[test]
+    fn provider_urls_require_https_except_for_loopback() {
+        assert!(validate_provider_url("https://models.example.test/v1").is_ok());
+        assert!(validate_provider_url("http://127.0.0.1:11434/v1").is_ok());
+        assert!(validate_provider_url("http://[::1]:11434/v1").is_ok());
+        assert!(validate_provider_url("http://models.example.test/v1").is_err());
+        assert!(validate_provider_url("https://token@models.example.test/v1").is_err());
+        assert!(validate_provider_url("https://models.example.test/v1?key=secret").is_err());
+    }
+
+    #[test]
+    fn configuration_identifiers_and_secret_references_are_bounded() {
+        assert!(validate_identifier("local-tools.v2", "MCP server").is_ok());
+        assert!(validate_identifier("../escape", "MCP server").is_err());
+        assert!(validate_environment_name("PANDORA_CUSTOM_API_KEY").is_ok());
+        assert!(validate_environment_name("Pandora-Key").is_err());
+    }
 }

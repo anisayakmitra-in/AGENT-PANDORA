@@ -7,6 +7,8 @@ const runtime = vi.hoisted(() => ({
   agentResume: vi.fn(),
   agentRun: vi.fn(),
   capabilities: vi.fn(),
+  configureMcp: vi.fn(),
+  configureProvider: vi.fn(),
   engines: vi.fn(),
   evolution: vi.fn(),
   evolutionActivations: vi.fn(),
@@ -33,6 +35,8 @@ vi.mock("./runtimeClient", () => ({
   isNativeRuntime: () => true,
   loadRuntimeEndpoint: () => "tauri://pandora",
   saveRuntimeEndpoint: vi.fn(),
+  configureMcp: runtime.configureMcp,
+  configureProvider: runtime.configureProvider,
   startLocalService: vi.fn(),
   stopLocalService: vi.fn(),
   RuntimeClient: class {
@@ -81,6 +85,8 @@ beforeEach(() => {
   runtime.evolutionActivations.mockResolvedValue([]);
   runtime.tools.mockResolvedValue([]);
   runtime.providers.mockResolvedValue([]);
+  runtime.configureProvider.mockResolvedValue({ message: "Provider custom configured.", restartRequired: true });
+  runtime.configureMcp.mockResolvedValue({ message: "MCP server local-tools configured.", restartRequired: true });
   runtime.inspectSession.mockResolvedValue({ session, event_count: 0 });
   runtime.events.mockResolvedValue([]);
   runtime.memory.mockResolvedValue([]);
@@ -415,6 +421,48 @@ describe("Pandora desktop run state", () => {
     expect(screen.queryByLabelText("Development token")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Connect preview/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /local service/ })).toBeInTheDocument();
+  });
+
+
+  it("configures a custom provider without persisting the API key in browser storage", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Connections" }));
+
+    fireEvent.change(screen.getByLabelText("Provider base URL"), { target: { value: "https://models.example.test/v1" } });
+    fireEvent.change(screen.getByLabelText("Provider model"), { target: { value: "pandora-model" } });
+    fireEvent.change(screen.getByLabelText("Provider API key"), { target: { value: "secret-test-key" } });
+    fireEvent.click(screen.getByRole("button", { name: /Save provider/ }));
+
+    await waitFor(() => expect(runtime.configureProvider).toHaveBeenCalledWith({
+      name: "custom",
+      protocol: "open_ai_compatible",
+      baseUrl: "https://models.example.test/v1",
+      model: "pandora-model",
+      apiKeyEnvironment: "PANDORA_CUSTOM_API_KEY",
+      apiKey: "secret-test-key",
+    }));
+    expect(screen.getByLabelText("Provider API key")).toHaveValue("");
+    expect(screen.getByRole("status")).toHaveTextContent("Restart the local service to apply it");
+    expect(Object.values(window.localStorage)).not.toContain("secret-test-key");
+  });
+
+  it("configures an absolute local MCP server with explicit arguments", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Connections" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Local MCP server" }));
+
+    fireEvent.change(screen.getByLabelText("MCP server ID"), { target: { value: "local-tools" } });
+    fireEvent.change(screen.getByLabelText("MCP program path"), { target: { value: "C:\\tools\\mcp-server.exe" } });
+    fireEvent.change(screen.getByLabelText("MCP arguments JSON"), { target: { value: "[\"--stdio\"]" } });
+    fireEvent.click(screen.getByRole("button", { name: /Save MCP server/ }));
+
+    await waitFor(() => expect(runtime.configureMcp).toHaveBeenCalledWith({
+      serverId: "local-tools",
+      program: "C:\\tools\\mcp-server.exe",
+      argumentsJson: "[\"--stdio\"]",
+      mode: "auto",
+    }));
+    expect(screen.getByRole("status")).toHaveTextContent("Restart the local service to apply it");
   });
 
   it("inspects and exactly cancels a queued background orchestration", async () => {
