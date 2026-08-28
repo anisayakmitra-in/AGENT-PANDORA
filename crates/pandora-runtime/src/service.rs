@@ -650,120 +650,885 @@ impl RuntimeService {
                 "ExecutionController",
                 "Fixed runtime pipeline",
                 "Runtime authority",
+            )
+            .with_contract(
+                "Core authority",
+                "constitutional_core",
+                &[
+                    "Exact execution request",
+                    "Selected execution profile",
+                    "Policy and evaluation decisions",
+                ],
+                &[
+                    "Governed execution outcome",
+                    "Ordered receipts",
+                    "Canonical runtime events",
+                ],
+                &[
+                    "The execution order is fixed",
+                    "Every effect requires a fresh exact permit",
+                    "Consumed permits are never reused",
+                ],
+                &[
+                    "Policy decisions",
+                    "Evaluation results",
+                    "Permit and effect receipts",
+                ],
+                &[
+                    "crates/pandora-runtime/src/execution_controller.rs",
+                    "crates/pandora-runtime/src/execution_profile.rs",
+                ],
+                &[
+                    "Parliament",
+                    "Shadow Council",
+                    "ReferenceMonitor",
+                    "ObservabilityEngine",
+                ],
+                &[
+                    "docs/WHY_PANDORA.md",
+                    "docs/HARNESSES.md",
+                    "docs/OBSERVABILITY.md",
+                ],
             ),
             ServiceEngineSummary::new(
                 "reference-monitor",
                 "ReferenceMonitor",
                 "Authorization",
                 "Sole permit issuer",
+            )
+            .with_contract(
+                "Core authority",
+                "constitutional_core",
+                &[
+                    "Exact request digest",
+                    "Parliament decision",
+                    "Evaluation evidence",
+                    "Bound execution profile",
+                ],
+                &["One-shot effect permit", "Fail-closed denial"],
+                &[
+                    "It is the sole permit issuer",
+                    "Permits bind one exact effect and profile",
+                    "Policy, evaluation, or binding drift denies authorization",
+                ],
+                &[
+                    "Permit issuance record",
+                    "Permit consumption record",
+                    "Authorization denial",
+                ],
+                &[
+                    "crates/pandora-runtime/src/reference_monitor.rs",
+                    "crates/pandora-runtime/src/permit_store.rs",
+                ],
+                &[
+                    "Parliament",
+                    "ExecutionController",
+                    "EvaluationEngine",
+                    "ObservabilityEngine",
+                ],
+                &[
+                    "docs/WHY_PANDORA.md",
+                    "docs/HARNESSES.md",
+                    "docs/OBSERVABILITY.md",
+                ],
             ),
             ServiceEngineSummary::new(
                 "tool-engine",
                 "ToolEngine",
                 "Tool contracts",
                 "Request boundary",
+            )
+            .with_contract(
+                "Tools and context",
+                "runtime_engine",
+                &[
+                    "Registered Gene tool contract",
+                    "Validated arguments",
+                    "Exact effect permit",
+                ],
+                &[
+                    "Typed tool result",
+                    "Bounded executor error",
+                    "Effect evidence",
+                ],
+                &[
+                    "Only registered contracts may execute",
+                    "Tool output is untrusted data",
+                    "Executor access remains within the permit",
+                ],
+                &[
+                    "Tool invocation receipt",
+                    "Executor result metadata",
+                    "Bounded error classification",
+                ],
+                &[
+                    "crates/pandora-runtime/src/tool_engine.rs",
+                    "crates/pandora-runtime/src/executors",
+                ],
+                &[
+                    "ExecutionController",
+                    "ReferenceMonitor",
+                    "SkillEngine",
+                    "MCP adapter",
+                ],
+                &["docs/HARNESSES.md", "docs/MCP.md", "docs/WASM.md"],
             ),
             ServiceEngineSummary::new(
                 "context-engine",
                 "ContextEngine",
                 "Context assembly",
                 "Scoped evidence",
+            )
+            .with_contract(
+                "Tools and context",
+                "runtime_engine",
+                &[
+                    "Task and session scope",
+                    "Typed context fragments",
+                    "Token and classification budgets",
+                ],
+                &[
+                    "Context assembly",
+                    "Context manifest",
+                    "Context receipt and cache key",
+                ],
+                &[
+                    "Trust, provenance, and classification are preserved",
+                    "Assembly is budget bounded",
+                    "Context never grants authority",
+                ],
+                &[
+                    "Context manifest digest",
+                    "Fragment provenance",
+                    "Cache disposition",
+                ],
+                &[
+                    "crates/pandora-runtime/src/context_engine.rs",
+                    "crates/pandora-types/src/context.rs",
+                ],
+                &[
+                    "ContextRecovery",
+                    "MemoryEngine",
+                    "GraphIntelligenceEngine",
+                    "ExecutionController",
+                ],
+                &[
+                    "docs/MEMORY.md",
+                    "docs/PROMPT_CACHING.md",
+                    "docs/OBSERVABILITY.md",
+                ],
+            ),
+            ServiceEngineSummary::new(
+                "context-recovery",
+                "ContextRecovery",
+                "Context rot recovery",
+                "Embedded recovery plan only",
+            )
+            .with_contract(
+                "Resilience",
+                "embedded_component",
+                &[
+                    "Verified L1 availability",
+                    "Fresh evidence trust",
+                    "Scope-reduction availability",
+                ],
+                &[
+                    "Ordered recovery decision",
+                    "Pause decision when recovery is unsafe",
+                ],
+                &[
+                    "Recovery follows a fixed reduction sequence",
+                    "Fresh evidence must be trusted",
+                    "Failure to recover pauses instead of fabricating context",
+                ],
+                &[
+                    "RecoveryDecision",
+                    "Selected recovery steps",
+                    "Paused state",
+                ],
+                &[
+                    "crates/pandora-runtime/src/context_recovery.rs",
+                    "crates/pandora-runtime/src/context_engine.rs",
+                ],
+                &["ContextEngine", "MemoryEngine", "SelfHealingEngine"],
+                &["docs/MEMORY.md", "docs/OBSERVABILITY.md"],
             ),
             ServiceEngineSummary::new(
                 "memory-engine",
                 "MemoryEngine",
                 "Evidence lifecycle",
                 "Scoped persistence",
+            )
+            .with_contract(
+                "Tools and context",
+                "runtime_engine",
+                &[
+                    "Scoped evidence records",
+                    "Evaluation feedback",
+                    "Retrieval query",
+                ],
+                &[
+                    "L0, L1, and L2 memory records",
+                    "Scoped retrieval",
+                    "Compaction and tombstone state",
+                ],
+                &[
+                    "Tenant, workspace, and session scopes do not bleed",
+                    "Every durable record keeps provenance",
+                    "Revocation survives compaction",
+                ],
+                &[
+                    "Memory record lineage",
+                    "Evaluation provenance",
+                    "Compaction state",
+                ],
+                &[
+                    "crates/pandora-runtime/src/memory_engine.rs",
+                    "crates/pandora-types/src/memory.rs",
+                ],
+                &[
+                    "ContextEngine",
+                    "ContextRecovery",
+                    "EvaluationEngine",
+                    "GraphIntelligenceEngine",
+                ],
+                &["docs/MEMORY.md", "docs/OBSERVABILITY.md"],
             ),
             ServiceEngineSummary::new(
                 "evaluation-engine",
                 "EvaluationEngine",
                 "Evaluation evidence",
                 "Policy and outcome checks",
+            )
+            .with_contract(
+                "Self-improvement",
+                "runtime_engine",
+                &[
+                    "Evaluation request",
+                    "Effect outcome",
+                    "Golden or holdout cases",
+                ],
+                &[
+                    "Evaluation result",
+                    "Golden-set report",
+                    "Holdout comparison digest",
+                ],
+                &[
+                    "Case counts and payloads are bounded",
+                    "Duplicate cases fail closed",
+                    "Evaluation supplies evidence, never capability",
+                ],
+                &[
+                    "Evaluation status",
+                    "Case-level results",
+                    "Deterministic report digests",
+                ],
+                &[
+                    "crates/pandora-runtime/src/evaluation_engine.rs",
+                    "crates/pandora-types/src/evaluation.rs",
+                ],
+                &[
+                    "ReferenceMonitor",
+                    "EvolutionEngine",
+                    "AdaptiveEngine",
+                    "MemoryEngine",
+                ],
+                &["docs/EVALUATION.md", "docs/EVOLUTION.md"],
             ),
             ServiceEngineSummary::new(
                 "evolution-engine",
                 "EvolutionEngine",
                 "Governed improvement",
                 "Proposal only",
+            )
+            .with_contract(
+                "Self-improvement",
+                "runtime_engine",
+                &[
+                    "Admitted base and candidate artifacts",
+                    "Evaluation evidence",
+                    "Operator approval",
+                ],
+                &[
+                    "Versioned proposal",
+                    "Lineage state",
+                    "Governed stage transition",
+                ],
+                &[
+                    "Evolution cannot grant capability",
+                    "Candidate lineage is immutable",
+                    "Activation requires the replacement path",
+                ],
+                &[
+                    "Proposal record",
+                    "Evaluation bindings",
+                    "Approval and lineage history",
+                ],
+                &[
+                    "crates/pandora-runtime/src/evolution.rs",
+                    "crates/pandora-types/src/evolution.rs",
+                ],
+                &[
+                    "MutationEngine",
+                    "EvaluationEngine",
+                    "ReplacementEngine",
+                    "PopulationStrategy",
+                ],
+                &["docs/EVOLUTION.md", "docs/EVALUATION.md"],
             ),
             ServiceEngineSummary::new(
                 "mcp-adapter",
                 "MCP adapter",
                 "Local tool bridge",
                 "Configured stdio boundary",
+            )
+            .with_contract(
+                "Tools and context",
+                "runtime_adapter",
+                &[
+                    "Admitted MCP server configuration",
+                    "Protocol request",
+                    "Configured process boundary",
+                ],
+                &[
+                    "Discovered tool contracts",
+                    "Protocol response",
+                    "Structured failure evidence",
+                ],
+                &[
+                    "Only configured local stdio servers are spawned",
+                    "MCP output is untrusted",
+                    "Discovered tools still require normal admission and permits",
+                ],
+                &[
+                    "Handshake metadata",
+                    "Tool catalog record",
+                    "Protocol error evidence",
+                ],
+                &[
+                    "crates/pandora-runtime/src/mcp.rs",
+                    "crates/pandora-runtime/src/mcp_catalog.rs",
+                ],
+                &["ToolEngine", "SkillEngine", "ReferenceMonitor"],
+                &["docs/MCP.md", "docs/HARNESSES.md"],
+            ),
+            ServiceEngineSummary::new(
+                "provider-failover",
+                "FailoverProvider",
+                "Governed provider fallback",
+                "Retryable transition only",
+            )
+            .with_contract(
+                "Resilience",
+                "embedded_component",
+                &[
+                    "Primary provider failure",
+                    "Configured single fallback profile",
+                    "Retryability classification",
+                ],
+                &[
+                    "Fallback provider request",
+                    "Ordered primary and fallback receipts",
+                    "Final provider outcome",
+                ],
+                &[
+                    "Non-retryable failures never fall back",
+                    "Nested fallback is rejected",
+                    "Fallback receives a fresh policy decision and permit",
+                ],
+                &[
+                    "Primary attempt receipt",
+                    "Fallback attempt receipt",
+                    "Provider metrics in execution order",
+                ],
+                &[
+                    "crates/pandora-provider/src/failover.rs",
+                    "crates/pandora-runtime/src/execution_controller.rs",
+                    "crates/pandora-runtime/src/config.rs",
+                ],
+                &[
+                    "ExecutionController",
+                    "ReferenceMonitor",
+                    "AdaptiveEngine",
+                    "EfficiencyEngine",
+                ],
+                &["docs/CLI.md", "docs/CLI_JSON.md", "docs/EFFICIENCY.md"],
             ),
             ServiceEngineSummary::new(
                 "adaptive-engine",
                 "AdaptiveEngine",
                 "Bounded selection",
                 "Approved options only",
+            )
+            .with_contract(
+                "Self-improvement",
+                "runtime_engine",
+                &[
+                    "Approved candidate set",
+                    "Adaptation policy ceilings",
+                    "Optional efficiency ranking",
+                ],
+                &[
+                    "Adaptation decision",
+                    "Adaptation receipt",
+                    "Degraded no-change decision",
+                ],
+                &[
+                    "Unapproved candidates are never selected",
+                    "Cost and latency ceilings are enforced",
+                    "Selection cannot mint new options",
+                ],
+                &[
+                    "Candidate ranking",
+                    "Selection reason",
+                    "Adaptation receipt",
+                ],
+                &[
+                    "crates/pandora-runtime/src/adaptive_engine.rs",
+                    "crates/pandora-types/src/adaptation.rs",
+                ],
+                &[
+                    "EvaluationEngine",
+                    "EfficiencyEngine",
+                    "SelfHealingEngine",
+                    "FailoverProvider",
+                ],
+                &["docs/EFFICIENCY.md", "docs/EVOLUTION.md"],
             ),
             ServiceEngineSummary::new(
                 "coding-feedback-loop",
                 "CodingFeedbackLoop",
                 "Coding verification",
                 "Evidence-driven iteration",
+            )
+            .with_contract(
+                "Self-improvement",
+                "governed_loop",
+                &[
+                    "Expected and actual output",
+                    "Terminal failure",
+                    "Retryability claim",
+                ],
+                &[
+                    "Reflexion artifact",
+                    "Loop decision",
+                    "Approved recovery selection",
+                ],
+                &[
+                    "Policy failure cannot be reclassified as coding failure",
+                    "Retries require fresh verification",
+                    "The loop reports; the governed run path executes",
+                ],
+                &[
+                    "Trajectory",
+                    "Evaluation outcome",
+                    "Reflexion and adaptation receipt",
+                ],
+                &[
+                    "crates/pandora-runtime/src/coding_feedback.rs",
+                    "crates/pandora-runtime/src/run_loop.rs",
+                ],
+                &[
+                    "EvaluationEngine",
+                    "MutationEngine",
+                    "SelfHealingEngine",
+                    "AdaptiveEngine",
+                ],
+                &["docs/HARNESSES.md", "docs/EVALUATION.md"],
             ),
             ServiceEngineSummary::new(
                 "efficiency-engine",
                 "EfficiencyEngine",
                 "Cost and latency evidence",
                 "Selection guidance",
+            )
+            .with_contract(
+                "Self-improvement",
+                "runtime_engine",
+                &[
+                    "Task-class samples",
+                    "Provider token, latency, and cost evidence",
+                    "Optimization objective",
+                ],
+                &[
+                    "Bounded efficiency summary",
+                    "Deterministic candidate ranking",
+                ],
+                &[
+                    "Unknown costs stay unknown",
+                    "Evidence windows are bounded",
+                    "Rankings advise approved selection only",
+                ],
+                &[
+                    "Usage samples",
+                    "Cost and latency aggregates",
+                    "Ranking evidence",
+                ],
+                &[
+                    "crates/pandora-runtime/src/efficiency_engine.rs",
+                    "crates/pandora-runtime/src/efficiency_store.rs",
+                ],
+                &["AdaptiveEngine", "FailoverProvider", "ObservabilityEngine"],
+                &["docs/EFFICIENCY.md", "docs/OBSERVABILITY.md"],
             ),
             ServiceEngineSummary::new(
                 "graph-intelligence-engine",
                 "GraphIntelligenceEngine",
                 "Code and knowledge graphs",
                 "Provenance-aware evidence",
+            )
+            .with_contract(
+                "Self-improvement",
+                "runtime_engine",
+                &[
+                    "Repository symbols and relationships",
+                    "Knowledge evidence",
+                    "Scoped graph query",
+                ],
+                &[
+                    "Code graph",
+                    "Knowledge graph",
+                    "Provenance-aware graph results",
+                ],
+                &[
+                    "Graph edges retain source provenance",
+                    "Queries remain workspace scoped",
+                    "Graph evidence does not authorize effects",
+                ],
+                &[
+                    "Node and edge provenance",
+                    "Graph snapshot digest",
+                    "Query result evidence",
+                ],
+                &[
+                    "crates/pandora-runtime/src/graph_intelligence.rs",
+                    "crates/pandora-types/src/graph.rs",
+                ],
+                &["ContextEngine", "MemoryEngine", "EvaluationEngine"],
+                &["docs/GRAPHS.md", "docs/MEMORY.md"],
             ),
             ServiceEngineSummary::new(
                 "orchestration-engine",
                 "OrchestrationEngine",
                 "Role composition",
                 "Governed coordination",
+            )
+            .with_contract(
+                "Multi-agent execution",
+                "runtime_engine",
+                &[
+                    "Pinned repository roles",
+                    "Harness bindings",
+                    "Run budgets and dependencies",
+                ],
+                &[
+                    "Bounded orchestration plan",
+                    "Role state transitions",
+                    "Pause, cancel, and resume records",
+                ],
+                &[
+                    "Every role is pinned to exact repository state",
+                    "Budgets are enforced per role",
+                    "Coordination never bypasses per-effect authorization",
+                ],
+                &[
+                    "Plan digest",
+                    "Role transition history",
+                    "Orchestration run record",
+                ],
+                &[
+                    "crates/pandora-runtime/src/orchestration_engine.rs",
+                    "crates/pandora-runtime/src/orchestration_store.rs",
+                ],
+                &[
+                    "FleetEngine",
+                    "ExecutionController",
+                    "ReferenceMonitor",
+                    "ObservabilityEngine",
+                ],
+                &["docs/ORCHESTRATION.md", "docs/FLEET.md"],
             ),
             ServiceEngineSummary::new(
                 "self-healing-engine",
                 "SelfHealingEngine",
                 "Safe recovery",
                 "Allowlisted reductions",
+            )
+            .with_contract(
+                "Self-improvement",
+                "runtime_engine",
+                &[
+                    "Approved recovery candidates",
+                    "Capability-reduction candidates",
+                    "Adaptation policy",
+                ],
+                &["Bounded recovery selection", "Degraded no-change decision"],
+                &[
+                    "Only recovery and capability-reduction targets are eligible",
+                    "Candidates must already be approved",
+                    "Recovery cannot add capability",
+                ],
+                &[
+                    "Recovery selection receipt",
+                    "Degraded-mode reason",
+                    "Candidate evidence",
+                ],
+                &[
+                    "crates/pandora-runtime/src/self_healing.rs",
+                    "crates/pandora-runtime/src/adaptive_engine.rs",
+                ],
+                &[
+                    "AdaptiveEngine",
+                    "CodingFeedbackLoop",
+                    "ContextRecovery",
+                    "EvaluationEngine",
+                ],
+                &["docs/EVOLUTION.md", "docs/EVALUATION.md"],
             ),
             ServiceEngineSummary::new(
                 "skill-engine",
                 "SkillEngine",
                 "Skill admission",
                 "Provenance and activation",
+            )
+            .with_contract(
+                "Tools and context",
+                "runtime_engine",
+                &[
+                    "Skill manifest",
+                    "Pinned source and content hash",
+                    "Activation request",
+                ],
+                &[
+                    "Admitted skill record",
+                    "Activation binding",
+                    "Dependency and provenance evidence",
+                ],
+                &[
+                    "Admission never grants runtime authority",
+                    "Activation is version pinned",
+                    "Dependencies and source provenance must resolve",
+                ],
+                &[
+                    "Admission receipt",
+                    "Content digest",
+                    "Activation generation",
+                ],
+                &[
+                    "crates/pandora-runtime/src/skill_engine.rs",
+                    "crates/pandora-runtime/src/package_admission.rs",
+                    "crates/pandora-runtime/src/package_store.rs",
+                ],
+                &[
+                    "ToolEngine",
+                    "MCP adapter",
+                    "ExecutionController",
+                    "ReplacementEngine",
+                ],
+                &["docs/SKILLS.md", "docs/HARNESSES.md", "docs/WASM.md"],
             ),
             ServiceEngineSummary::new(
                 "observability-engine",
                 "ObservabilityEngine",
                 "Trace projection",
                 "Canonical runtime events",
+            )
+            .with_contract(
+                "Evidence",
+                "runtime_engine",
+                &[
+                    "Ordered runtime events",
+                    "Provider usage metrics",
+                    "Error and drift samples",
+                ],
+                &[
+                    "Trace and span views",
+                    "Reliability and drift snapshots",
+                    "Bounded evidence projection",
+                ],
+                &[
+                    "Duplicate and out-of-order events fail closed",
+                    "Sample capacity is bounded",
+                    "Projection does not alter runtime decisions",
+                ],
+                &[
+                    "Canonical event IDs",
+                    "Trace spans",
+                    "Token, cost, latency, reliability, and drift aggregates",
+                ],
+                &[
+                    "crates/pandora-runtime/src/observability.rs",
+                    "crates/pandora-types/src/observability.rs",
+                ],
+                &[
+                    "ExecutionController",
+                    "EvaluationEngine",
+                    "EfficiencyEngine",
+                    "FleetEngine",
+                ],
+                &["docs/OBSERVABILITY.md", "docs/EFFICIENCY.md"],
             ),
             ServiceEngineSummary::new(
                 "fleet-engine",
                 "FleetEngine",
                 "Worker coordination",
                 "Leases and quarantine",
+            )
+            .with_contract(
+                "Multi-agent execution",
+                "runtime_engine",
+                &[
+                    "Registered worker node",
+                    "Capability requirement",
+                    "Execution budget and lease request",
+                ],
+                &[
+                    "Capability-matched dispatch",
+                    "Bounded lease",
+                    "Worker quarantine state",
+                ],
+                &[
+                    "Only ready matching nodes dispatch",
+                    "Leases expire and remain budget bounded",
+                    "Quarantined workers cannot receive work",
+                ],
+                &[
+                    "Worker registration",
+                    "Lease lifecycle",
+                    "Quarantine record",
+                ],
+                &[
+                    "crates/pandora-runtime/src/fleet.rs",
+                    "crates/pandora-types/src/fleet.rs",
+                ],
+                &[
+                    "OrchestrationEngine",
+                    "ExecutionController",
+                    "ObservabilityEngine",
+                ],
+                &["docs/FLEET.md", "docs/ORCHESTRATION.md"],
             ),
             ServiceEngineSummary::new(
                 "mutation-engine",
                 "MutationEngine",
                 "Improvement proposals",
                 "Research-scoped generation",
+            )
+            .with_contract(
+                "Self-improvement",
+                "research_engine",
+                &[
+                    "Research evolution policy",
+                    "Reflexion or mutation request",
+                    "Passed precheck evidence",
+                ],
+                &[
+                    "Research-only mutation proposal",
+                    "Recorded reflexion artifact",
+                ],
+                &[
+                    "Production mutation is disabled",
+                    "Proposal source and artifacts must match",
+                    "Mutation never activates its own candidate",
+                ],
+                &[
+                    "Mutation precheck receipt",
+                    "Proposal evidence digest",
+                    "Research source binding",
+                ],
+                &[
+                    "crates/pandora-runtime/src/mutation.rs",
+                    "crates/pandora-types/src/evolution.rs",
+                ],
+                &[
+                    "EvolutionEngine",
+                    "PopulationStrategy",
+                    "EvaluationEngine",
+                    "ReplacementEngine",
+                ],
+                &["docs/EVOLUTION.md", "docs/EVALUATION.md"],
             ),
             ServiceEngineSummary::new(
                 "replacement-engine",
                 "ReplacementEngine",
                 "Staged replacement",
                 "Canary and rollback",
+            )
+            .with_contract(
+                "Self-improvement",
+                "runtime_engine",
+                &[
+                    "Approved evolution proposal",
+                    "Admitted artifacts",
+                    "Canary and rollback evidence",
+                ],
+                &[
+                    "Stage transition",
+                    "Replacement receipt",
+                    "Rollback receipt",
+                ],
+                &[
+                    "Activation waits for quiescence",
+                    "Both artifacts must be admitted",
+                    "Reconciliation mismatch fails closed",
+                ],
+                &[
+                    "Canary result",
+                    "Replacement receipt",
+                    "Rollback and reconciliation record",
+                ],
+                &[
+                    "crates/pandora-runtime/src/replacement.rs",
+                    "crates/pandora-runtime/src/artifact_catalog.rs",
+                ],
+                &[
+                    "EvolutionEngine",
+                    "EvaluationEngine",
+                    "SkillEngine",
+                    "ExecutionController",
+                ],
+                &["docs/EVOLUTION.md", "docs/RELEASES.md"],
             ),
             ServiceEngineSummary::new(
                 "population-strategy",
                 "PopulationStrategy",
                 "Research candidate populations",
                 "Proposal only",
+            )
+            .with_contract(
+                "Self-improvement",
+                "research_strategy",
+                &[
+                    "Bounded research population",
+                    "Candidate failures and scores",
+                    "Mutation budget",
+                ],
+                &[
+                    "Ranked candidate population",
+                    "Research trajectory",
+                    "Mutation precheck request",
+                ],
+                &[
+                    "Population and context budgets are bounded",
+                    "Candidates remain research artifacts",
+                    "Ranking cannot approve or activate a candidate",
+                ],
+                &[
+                    "Generation history",
+                    "Candidate score evidence",
+                    "Context and mutation budget usage",
+                ],
+                &[
+                    "crates/pandora-runtime/src/strategies/population.rs",
+                    "crates/pandora-types/src/population.rs",
+                ],
+                &[
+                    "MutationEngine",
+                    "EvaluationEngine",
+                    "EvolutionEngine",
+                    "ReplacementEngine",
+                ],
+                &["docs/EVOLUTION.md", "docs/EVALUATION.md"],
             ),
         ]))
     }
@@ -2689,7 +3454,7 @@ mod tests {
     }
 
     #[test]
-    fn engine_inventory_exposes_research_population_strategy() {
+    fn component_inventory_exposes_deep_contracts_and_embedded_resilience() {
         let root = crate::test_support::new_temp_dir("pandora-runtime-service-engines").unwrap();
         let scope = RuntimeServiceScope::new(
             PrincipalId::new("principal-a").unwrap(),
@@ -2710,12 +3475,59 @@ mod tests {
             panic!("expected an engine response");
         };
 
+        assert_eq!(engines.len(), 22);
+
         let population = engines
             .iter()
             .find(|engine| engine.id() == "population-strategy")
             .expect("population strategy should be discoverable");
         assert_eq!(population.name(), "PopulationStrategy");
         assert_eq!(population.authority(), "Proposal only");
+        assert_eq!(population.category(), "Self-improvement");
+        assert_eq!(population.component_kind(), "research_strategy");
+        assert!(!population.inputs().is_empty());
+        assert!(!population.outputs().is_empty());
+        assert!(!population.invariants().is_empty());
+        assert!(!population.evidence().is_empty());
+        assert!(!population.source_modules().is_empty());
+        assert!(!population.related_components().is_empty());
+        assert!(!population.documentation().is_empty());
+
+        let context_recovery = engines
+            .iter()
+            .find(|engine| engine.id() == "context-recovery")
+            .expect("context recovery should be discoverable");
+        assert_eq!(context_recovery.name(), "ContextRecovery");
+        assert_eq!(context_recovery.category(), "Resilience");
+        assert!(
+            context_recovery
+                .invariants()
+                .iter()
+                .any(|value| value.contains("pauses"))
+        );
+
+        let failover = engines
+            .iter()
+            .find(|engine| engine.id() == "provider-failover")
+            .expect("provider failover should be discoverable");
+        assert_eq!(failover.name(), "FailoverProvider");
+        assert!(
+            failover
+                .invariants()
+                .iter()
+                .any(|value| value.contains("fresh policy decision and permit"))
+        );
+
+        let reference_monitor = engines
+            .iter()
+            .find(|engine| engine.id() == "reference-monitor")
+            .expect("reference monitor should be discoverable");
+        assert_eq!(reference_monitor.component_kind(), "constitutional_core");
+        assert!(
+            engines
+                .iter()
+                .all(|engine| !["parliament", "shadow-council"].contains(&engine.id()))
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }

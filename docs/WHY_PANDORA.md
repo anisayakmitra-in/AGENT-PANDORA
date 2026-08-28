@@ -45,6 +45,7 @@ keeping policy outside the model and outside self-improvement loops.
 
 ## Evidence
 
+- [Runtime inventory](INVENTORY.md)
 - [Harness model](HARNESSES.md)
 - [CLI reference](CLI.md)
 - [Evaluation model](EVALUATION.md)

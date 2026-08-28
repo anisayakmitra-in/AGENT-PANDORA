@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
@@ -103,6 +103,23 @@ const session = {
   workspace_id: "workspace-1",
   created_at_unix_seconds: 1,
 };
+
+const runtimeComponent = (overrides: Record<string, unknown>) => ({
+  id: "component",
+  name: "Component",
+  role: "Bounded role",
+  authority: "No independent authority",
+  category: "Tools and context",
+  component_kind: "runtime_engine",
+  inputs: ["Validated input"],
+  outputs: ["Bounded output"],
+  invariants: ["Cannot bypass ReferenceMonitor"],
+  evidence: ["Runtime receipt"],
+  source_modules: ["crates/pandora-runtime/src/component.rs"],
+  related_components: ["ReferenceMonitor"],
+  documentation: ["docs/WHY_PANDORA.md"],
+  ...overrides,
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -812,27 +829,81 @@ describe("Pandora desktop run state", () => {
     expect(screen.queryByRole("button", { name: "Inspector options" })).not.toBeInTheDocument();
   });
 
-  it("inspects runtime-reported engine contracts without changing authority", async () => {
+  it("inspects deep runtime component contracts from one inventory", async () => {
     runtime.engines.mockResolvedValue([
-      { id: "execution-controller", name: "ExecutionController", role: "Fixed runtime pipeline", authority: "Runtime authority" },
-      { id: "reference-monitor", name: "ReferenceMonitor", role: "Authorization", authority: "Sole permit issuer" },
+      runtimeComponent({
+        id: "execution-controller",
+        name: "ExecutionController",
+        role: "Fixed runtime pipeline",
+        authority: "Runtime authority",
+        category: "Core authority",
+        component_kind: "constitutional_core",
+        inputs: ["Exact execution request"],
+        outputs: ["Governed execution outcome"],
+        invariants: ["Every effect requires a fresh exact permit"],
+        evidence: ["Permit and effect receipts"],
+        source_modules: ["crates/pandora-runtime/src/execution_controller.rs"],
+        related_components: ["Parliament", "Shadow Council", "ReferenceMonitor"],
+      }),
+      runtimeComponent({
+        id: "context-recovery",
+        name: "ContextRecovery",
+        role: "Context rot recovery",
+        authority: "Embedded recovery plan only",
+        category: "Resilience",
+        component_kind: "embedded_component",
+        inputs: ["Verified L1 availability"],
+        outputs: ["Ordered recovery decision"],
+        invariants: ["Failure to recover pauses instead of fabricating context"],
+        source_modules: ["crates/pandora-runtime/src/context_recovery.rs"],
+      }),
+      runtimeComponent({
+        id: "provider-failover",
+        name: "FailoverProvider",
+        role: "Governed provider fallback",
+        authority: "Retryable transition only",
+        category: "Resilience",
+        component_kind: "embedded_component",
+        invariants: ["Fallback receives a fresh policy decision and permit"],
+        source_modules: ["crates/pandora-provider/src/failover.rs"],
+      }),
     ]);
 
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Engines" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Runtime Inventory" }));
 
     expect(await screen.findByRole("heading", { name: "ExecutionController" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Engine contract JSON")).toHaveTextContent('"id": "execution-controller"');
-    expect(screen.getByText("Runtime authority")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: /ReferenceMonitor/ }));
-    expect(screen.getByRole("heading", { name: "ReferenceMonitor" })).toBeInTheDocument();
-    expect(screen.getByText("Sole permit issuer")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Runtime components/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Harnesses & Genes/ })).toBeInTheDocument();
+    expect(screen.getAllByText("Runtime authority").length).toBeGreaterThan(0);
+    expect(screen.getByText("Parliament")).toBeInTheDocument();
+    expect(screen.getByText("Shadow Council")).toBeInTheDocument();
     expect(screen.getByText("CONSTITUTIONAL RUNTIME BOUNDARY")).toBeInTheDocument();
-    expect(screen.getByText(/Selecting an engine never changes the active Harness or Gene/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /Inspect runtime evidence/ }));
-    expect(screen.getByRole("heading", { name: "Audit" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Contract" }));
+    expect(screen.getByText("Exact execution request")).toBeInTheDocument();
+    expect(screen.getByText("Governed execution outcome")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Boundaries" }));
+    expect(screen.getByText("Every effect requires a fresh exact permit")).toBeInTheDocument();
+    expect(screen.getByText(/cannot grant itself capabilities or bypass those boundaries/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Evidence & source" }));
+    expect(screen.getByText("crates/pandora-runtime/src/execution_controller.rs")).toBeInTheDocument();
+    expect(screen.getByLabelText("Component contract JSON")).toHaveTextContent('"id": "execution-controller"');
+
+    fireEvent.click(within(screen.getByRole("group", { name: "Component category" })).getByRole("button", { name: /Resilience/ }));
+    expect(screen.getByRole("heading", { name: "ContextRecovery" })).toBeInTheDocument();
+    expect(screen.getByText("EMBEDDED RESILIENCE COMPONENT")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /FailoverProvider/ }));
+    expect(screen.getByRole("heading", { name: "FailoverProvider" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Boundaries" }));
+    expect(screen.getByText("Fallback receives a fresh policy decision and permit")).toBeInTheDocument();
+    expect(screen.getByText(/Selecting or filtering inventory records never changes/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Inspect connections/ }));
+    expect(screen.getByRole("heading", { name: "Connections" })).toBeInTheDocument();
   });
 
   it("inspects runtime-reported tool contracts without granting execution authority", async () => {

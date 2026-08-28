@@ -65,6 +65,7 @@ type ThemeMode = "dark" | "light";
 type InspectorTab = "flow" | "evidence" | "work" | "browser";
 type WorkSurface = "files" | "changes" | "terminal" | "artifacts";
 type HarnessTab = "genes" | "extensions" | "packages" | "authority" | "receipts";
+type InventoryTab = "overview" | "contract" | "boundaries" | "evidence";
 
 type PendingRunRequest = {
   task: string;
@@ -215,7 +216,7 @@ const navigation: Array<{ label: string; items: Array<{ id: ViewId; label: strin
     label: "Configure",
     items: [
       { id: "capabilities", label: "Harness Lab", icon: "box" },
-      { id: "engines", label: "Engines", icon: "stack" },
+      { id: "engines", label: "Runtime Inventory", icon: "stack" },
       { id: "tools", label: "Tools", icon: "terminal" },
       { id: "connections", label: "Connections", icon: "grid" },
       { id: "audit", label: "Audit", icon: "archive" },
@@ -971,7 +972,7 @@ function App() {
         ) : activeView === "capabilities" ? (
           <CapabilitiesView harnesses={harnesses} tools={tools} runtimeStatus={runtimeStatus} native={native} />
         ) : activeView === "engines" ? (
-          <EnginesView engines={engines} runtimeStatus={runtimeStatus} onOpenView={setActiveView} />
+          <RuntimeInventoryView engines={engines} runtimeStatus={runtimeStatus} onOpenView={setActiveView} />
         ) : activeView === "tools" ? (
           <ToolsView tools={tools} runtimeStatus={runtimeStatus} onOpenView={setActiveView} />
         ) : activeView === "evolution" ? (
@@ -1931,37 +1932,66 @@ function ToolsView({ tools, runtimeStatus, onOpenView }: { tools: RuntimeTool[];
 
 function relatedEngineView(engineId: string): { view: ViewId; label: string } | null {
   if (engineId === "tool-engine") return { view: "tools", label: "Inspect tools" };
-  if (["memory-engine", "context-engine", "graph-intelligence-engine"].includes(engineId)) return { view: "memory", label: "Inspect memory evidence" };
+  if (["memory-engine", "context-engine", "context-recovery", "graph-intelligence-engine"].includes(engineId)) return { view: "memory", label: "Inspect memory evidence" };
   if (["evolution-engine", "adaptive-engine", "coding-feedback-loop", "evaluation-engine", "efficiency-engine", "self-healing-engine", "mutation-engine", "replacement-engine", "population-strategy"].includes(engineId)) return { view: "evolution", label: "Inspect evolution" };
   if (["orchestration-engine", "fleet-engine"].includes(engineId)) return { view: "runs", label: "Inspect background runs" };
   if (engineId === "skill-engine") return { view: "capabilities", label: "Inspect Harnesses" };
-  if (engineId === "mcp-adapter") return { view: "connections", label: "Inspect connections" };
+  if (["mcp-adapter", "provider-failover"].includes(engineId)) return { view: "connections", label: "Inspect connections" };
   if (["execution-controller", "reference-monitor", "observability-engine"].includes(engineId)) return { view: "audit", label: "Inspect runtime evidence" };
   return null;
 }
 
-function EnginesView({ engines, runtimeStatus, onOpenView }: { engines: RuntimeEngine[]; runtimeStatus: RuntimeStatus; onOpenView: (view: ViewId) => void }) {
-  const [selectedEngineId, setSelectedEngineId] = useState("");
-  const connected = runtimeStatus === "connected";
-  const selected = engines.find((engine) => engine.id === selectedEngineId) ?? engines[0] ?? null;
-  const related = selected ? relatedEngineView(selected.id) : null;
-  const constitutional = selected ? ["execution-controller", "reference-monitor"].includes(selected.id) : false;
+function inventoryLabel(value: string) {
+  if (!value) return "Not reported";
+  return value.split("_").map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`).join(" ");
+}
 
-  return <div className="full-view engines-view">
-    <PageHeader eyebrow="Architecture" title="Engines" description="Inspect runtime-reported engine contracts without changing routing, activation, or authority." actions={<Chip tone={connected ? "green" : "neutral"} icon="stack">{connected ? `${engines.length} reported` : "Unavailable"}</Chip>} />
-    <div className="engine-notice"><Icon name="lock" size={16} /><span>{connected ? "This inventory is reported by the local runtime. Inspection proves identity, role, and declared authority—not health or permission to execute." : "Connect the local runtime to inspect Pandora’s engine inventory."}</span></div>
+function InventoryItems({ items, empty }: { items: string[] | undefined; empty: string }) {
+  return items?.length ? <ul>{items.map((item) => <li key={item}>{item}</li>)}</ul> : <p className="inventory-empty-value">{empty}</p>;
+}
+
+function RuntimeInventoryView({ engines, runtimeStatus, onOpenView }: { engines: RuntimeEngine[]; runtimeStatus: RuntimeStatus; onOpenView: (view: ViewId) => void }) {
+  const [selectedEngineId, setSelectedEngineId] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("All");
+  const [inventoryTab, setInventoryTab] = useState<InventoryTab>("overview");
+  const connected = runtimeStatus === "connected";
+  const categories = ["All", ...Array.from(new Set(engines.map((engine) => engine.category).filter(Boolean)))];
+  const visibleEngines = selectedCategory === "All" ? engines : engines.filter((engine) => engine.category === selectedCategory);
+  const selected = visibleEngines.find((engine) => engine.id === selectedEngineId) ?? visibleEngines[0] ?? null;
+  const related = selected ? relatedEngineView(selected.id) : null;
+  const constitutional = selected?.component_kind === "constitutional_core" || (selected ? ["execution-controller", "reference-monitor"].includes(selected.id) : false);
+  const embedded = selected?.component_kind === "embedded_component";
+  const selectCategory = (category: string) => {
+    setSelectedCategory(category);
+    setSelectedEngineId("");
+    setInventoryTab("overview");
+  };
+
+  return <div className="full-view inventory-view">
+    <PageHeader eyebrow="Architecture" title="Runtime Inventory" description="Inspect every runtime engine, adapter, strategy, and embedded resilience component from one evidence-backed surface." actions={<Chip tone={connected ? "green" : "neutral"} icon="stack">{connected ? `${engines.length} components` : "Unavailable"}</Chip>} />
+    <div className="engine-notice"><Icon name="lock" size={16} /><span>{connected ? "This inventory is reported by the local runtime. It proves declared contracts and source locations—not health, activation, or permission to execute." : "Connect the local runtime to inspect Pandora’s component inventory."}</span></div>
+    <div className="inventory-scope-links" aria-label="Inventory surfaces">
+      <button type="button" className="is-current" aria-pressed="true"><Icon name="stack" size={14} /><span>Runtime components<small>{engines.length} reported</small></span></button>
+      <button type="button" onClick={() => onOpenView("capabilities")}><Icon name="box" size={14} /><span>Harnesses & Genes<small>Composition inventory</small></span></button>
+      <button type="button" onClick={() => onOpenView("tools")}><Icon name="terminal" size={14} /><span>Tools<small>Effect contracts</small></span></button>
+      <button type="button" onClick={() => onOpenView("connections")}><Icon name="grid" size={14} /><span>Connections<small>Providers, MCP, registries</small></span></button>
+    </div>
+    <div className="inventory-category-bar" role="group" aria-label="Component category">{categories.map((category) => <button type="button" className={selectedCategory === category ? "is-selected" : ""} aria-pressed={selectedCategory === category} onClick={() => selectCategory(category)} key={category}>{category}{category === "All" ? <span>{engines.length}</span> : <span>{engines.filter((engine) => engine.category === category).length}</span>}</button>)}</div>
     <div className="engine-workbench">
       <Panel className="engine-browser">
-        <div className="panel-heading"><div><span className="eyebrow">ENGINE INVENTORY</span><h3>{engines.length} runtime modules</h3></div><Chip tone={connected ? "blue" : "neutral"}>{connected ? "Evidence" : "Offline"}</Chip></div>
-        <div className="engine-list">{connected && engines.length ? engines.map((engine) => <button type="button" className={`engine-browser-row ${selected?.id === engine.id ? "is-selected" : ""}`} aria-pressed={selected?.id === engine.id} onClick={() => setSelectedEngineId(engine.id)} key={engine.id}><span className={`engine-state-mark ${["execution-controller", "reference-monitor"].includes(engine.id) ? "is-core" : ""}`}><Icon name={engine.id === "reference-monitor" ? "shield" : "stack"} size={13} /></span><span><strong>{engine.name}</strong><small>{engine.role}</small><small className="mono">{engine.id}</small></span><Icon name="chevron" size={12} /></button>) : <div className="runs-empty"><Icon name="lock" size={24} /><h3>{connected ? "No engines reported" : "Runtime connection required"}</h3><p>{connected ? "The local service returned an empty engine inventory." : "This surface does not fabricate engine state."}</p></div>}</div>
+        <div className="panel-heading"><div><span className="eyebrow">COMPONENT INVENTORY</span><h3>{visibleEngines.length} in {selectedCategory === "All" ? "runtime" : selectedCategory}</h3></div><Chip tone={connected ? "blue" : "neutral"}>{connected ? "Reported" : "Offline"}</Chip></div>
+        <div className="engine-list">{connected && visibleEngines.length ? visibleEngines.map((engine) => <button type="button" className={`engine-browser-row ${selected?.id === engine.id ? "is-selected" : ""}`} aria-pressed={selected?.id === engine.id} onClick={() => { setSelectedEngineId(engine.id); setInventoryTab("overview"); }} key={engine.id}><span className={`engine-state-mark ${engine.component_kind === "constitutional_core" || ["execution-controller", "reference-monitor"].includes(engine.id) ? "is-core" : engine.component_kind === "embedded_component" ? "is-embedded" : ""}`}><Icon name={engine.id === "reference-monitor" ? "shield" : engine.component_kind === "embedded_component" ? "activity" : "stack"} size={13} /></span><span><strong>{engine.name}</strong><small>{engine.role}</small><small>{engine.category || "Unclassified"} · {inventoryLabel(engine.component_kind)}</small></span><Icon name="chevron" size={12} /></button>) : <div className="runs-empty"><Icon name="lock" size={24} /><h3>{connected ? "No components reported" : "Runtime connection required"}</h3><p>{connected ? "The local service returned no components in this category." : "This surface does not fabricate component state."}</p></div>}</div>
       </Panel>
       <Panel className="engine-inspection">{selected ? <>
-        <div className="engine-inspection-hero"><span className={`engine-hero-icon ${constitutional ? "is-core" : ""}`}><Icon name={selected.id === "reference-monitor" ? "shield" : "stack"} size={22} /></span><div><span className="eyebrow">{constitutional ? "CONSTITUTIONAL RUNTIME BOUNDARY" : "BOUNDED RUNTIME MODULE"}</span><h2>{selected.name}</h2><p className="mono">{selected.id}</p></div><Chip tone={constitutional ? "gold" : "blue"}>{constitutional ? "Core" : "Reported"}</Chip></div>
-        <div className="engine-contract-grid"><div><span>Owned role</span><strong>{selected.role}</strong></div><div><span>Authority boundary</span><strong>{selected.authority}</strong></div><div><span>Contract source</span><strong className="mono">runtime.engines</strong></div><div><span>Inspection mode</span><strong>Read-only evidence</strong></div></div>
-        <div className="engine-proof-grid"><section><span className="eyebrow">WHAT THIS PROVES</span><p>The connected runtime reports this exact engine identity, ownership role, and authority summary.</p></section><section><span className="eyebrow">WHAT THIS DOES NOT PROVE</span><p>Inventory metadata is not a health check, execution permit, activation receipt, or proof that a replaceable package is trusted.</p></section></div>
-        <pre className="engine-contract-json" aria-label="Engine contract JSON">{JSON.stringify(selected, null, 2)}</pre>
-        <div className="engine-inspection-actions"><p><Icon name="lock" size={13} /> Only ReferenceMonitor may issue permits. Selecting an engine never changes the active Harness or Gene.</p>{related ? <button className="button button-secondary" type="button" onClick={() => onOpenView(related.view)}>{related.label} <Icon name="arrow" size={13} /></button> : null}</div>
-      </> : <div className="runs-empty"><Icon name="stack" size={27} /><h3>No engine selected</h3><p>Choose a runtime-reported engine to inspect its bounded contract.</p></div>}</Panel>
+        <div className="engine-inspection-hero"><span className={`engine-hero-icon ${constitutional ? "is-core" : embedded ? "is-embedded" : ""}`}><Icon name={selected.id === "reference-monitor" ? "shield" : embedded ? "activity" : "stack"} size={22} /></span><div><span className="eyebrow">{constitutional ? "CONSTITUTIONAL RUNTIME BOUNDARY" : embedded ? "EMBEDDED RESILIENCE COMPONENT" : inventoryLabel(selected.component_kind).toUpperCase()}</span><h2>{selected.name}</h2><p className="mono">{selected.id}</p></div><Chip tone={constitutional ? "gold" : embedded ? "amber" : "blue"}>{selected.category || "Reported"}</Chip></div>
+        <div className="inventory-tabs" role="tablist" aria-label="Component inspection"><button role="tab" aria-selected={inventoryTab === "overview"} className={inventoryTab === "overview" ? "is-active" : ""} onClick={() => setInventoryTab("overview")}>Overview</button><button role="tab" aria-selected={inventoryTab === "contract"} className={inventoryTab === "contract" ? "is-active" : ""} onClick={() => setInventoryTab("contract")}>Contract</button><button role="tab" aria-selected={inventoryTab === "boundaries"} className={inventoryTab === "boundaries" ? "is-active" : ""} onClick={() => setInventoryTab("boundaries")}>Boundaries</button><button role="tab" aria-selected={inventoryTab === "evidence"} className={inventoryTab === "evidence" ? "is-active" : ""} onClick={() => setInventoryTab("evidence")}>Evidence & source</button></div>
+        {inventoryTab === "overview" ? <div className="inventory-tab-panel">
+          <div className="engine-contract-grid"><div><span>Owned role</span><strong>{selected.role}</strong></div><div><span>Authority boundary</span><strong>{selected.authority}</strong></div><div><span>Category</span><strong>{selected.category || "Not reported"}</strong></div><div><span>Component kind</span><strong>{inventoryLabel(selected.component_kind)}</strong></div></div>
+          <div className="engine-proof-grid"><section><span className="eyebrow">WHAT THIS PROVES</span><p>The connected runtime reports this component’s identity, contract, relationships, evidence classes, and source locations.</p></section><section><span className="eyebrow">WHAT THIS DOES NOT PROVE</span><p>Inventory metadata is not a health check, execution permit, activation receipt, or proof that a replaceable package is trusted.</p></section></div>
+          <div className="inventory-authority-map"><article><small>POLICY</small><strong>Parliament</strong><span>Decides policy outside the component inventory.</span></article><article><small>COMPOSITION</small><strong>Shadow Council</strong><span>Selects approved Harness, Gene, and provider compositions.</span></article><article><small>AUTHORIZATION</small><strong>ReferenceMonitor</strong><span>Alone issues exact one-shot effect permits.</span></article><article className={constitutional ? "is-core" : ""}><small>INSPECTED</small><strong>{selected.name}</strong><span>{selected.authority}</span></article></div>
+        </div> : inventoryTab === "contract" ? <div className="inventory-tab-panel inventory-contract-sections"><section><span className="eyebrow">INPUTS</span><InventoryItems items={selected.inputs} empty="No inputs reported by this runtime version." /></section><section><span className="eyebrow">OUTPUTS</span><InventoryItems items={selected.outputs} empty="No outputs reported by this runtime version." /></section><section className="inventory-wide"><span className="eyebrow">RELATED COMPONENTS AND AUTHORITIES</span><div className="inventory-token-list">{selected.related_components?.length ? selected.related_components.map((component) => <span key={component}>{component}</span>) : <span>None reported</span>}</div></section></div> : inventoryTab === "boundaries" ? <div className="inventory-tab-panel inventory-boundaries"><section><span className="eyebrow">NON-NEGOTIABLE INVARIANTS</span><InventoryItems items={selected.invariants} empty="No invariants reported by this runtime version." /></section><section className="inventory-boundary-callout"><Icon name="lock" size={18} /><div><strong>Authority never transfers through inspection</strong><p>Parliament decides policy. Shadow Council selects only approved compositions. ReferenceMonitor alone issues exact one-shot permits. {selected.name} cannot grant itself capabilities or bypass those boundaries.</p></div></section></div> : <div className="inventory-tab-panel inventory-evidence-grid"><section><span className="eyebrow">EVIDENCE PRODUCED OR CONSUMED</span><InventoryItems items={selected.evidence} empty="No evidence classes reported by this runtime version." /></section><section><span className="eyebrow">SOURCE MODULES</span><InventoryItems items={selected.source_modules} empty="No source locations reported by this runtime version." /></section><section><span className="eyebrow">DOCUMENTATION</span><InventoryItems items={selected.documentation} empty="No documentation paths reported by this runtime version." /></section><pre className="engine-contract-json" aria-label="Component contract JSON">{JSON.stringify(selected, null, 2)}</pre></div>}
+        <div className="engine-inspection-actions"><p><Icon name="lock" size={13} /> Selecting or filtering inventory records never changes the active Harness, Gene, provider, or permit state.</p>{related ? <button className="button button-secondary" type="button" onClick={() => onOpenView(related.view)}>{related.label} <Icon name="arrow" size={13} /></button> : null}</div>
+      </> : <div className="runs-empty"><Icon name="stack" size={27} /><h3>No component selected</h3><p>Choose a runtime-reported component to inspect its bounded contract.</p></div>}</Panel>
     </div>
   </div>;
 }

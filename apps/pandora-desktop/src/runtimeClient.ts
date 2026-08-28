@@ -159,6 +159,15 @@ export type RuntimeEngine = {
   name: string;
   role: string;
   authority: string;
+  category: string;
+  component_kind: string;
+  inputs: string[];
+  outputs: string[];
+  invariants: string[];
+  evidence: string[];
+  source_modules: string[];
+  related_components: string[];
+  documentation: string[];
 };
 
 export type RuntimeTool = {

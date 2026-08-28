@@ -34,8 +34,11 @@ a Harness Lab for runtime-reported Genes, plugins and tools, authority, and
 receipt posture, plus a scoped Background Runs surface for durable orchestration
 inspection, exact queued cancellation, safely reconciled resume, native BYOK
 provider and MCP configuration, persistent registry profiles, and governed
-registry, pinned-GitHub, and local package admission. Replaceable packaged
-Harness execution and the remaining ecosystem lifecycle still remain.
+registry, pinned-GitHub, and local package admission. A runtime-reported
+inventory now exposes deep contracts for 22 engines, adapters, strategies, and
+embedded resilience components, including context-rot recovery and governed
+provider failover. Replaceable packaged Harness execution and the remaining
+ecosystem lifecycle still remain.
 
 - Progressive disclosure for plans, evidence, receipts, approvals, and tool
   state.

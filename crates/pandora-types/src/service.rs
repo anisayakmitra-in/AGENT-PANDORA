@@ -423,6 +423,24 @@ pub struct ServiceEngineSummary {
     name: String,
     role: String,
     authority: String,
+    #[serde(default)]
+    category: String,
+    #[serde(default)]
+    component_kind: String,
+    #[serde(default)]
+    inputs: Vec<String>,
+    #[serde(default)]
+    outputs: Vec<String>,
+    #[serde(default)]
+    invariants: Vec<String>,
+    #[serde(default)]
+    evidence: Vec<String>,
+    #[serde(default)]
+    source_modules: Vec<String>,
+    #[serde(default)]
+    related_components: Vec<String>,
+    #[serde(default)]
+    documentation: Vec<String>,
 }
 
 impl ServiceEngineSummary {
@@ -437,7 +455,41 @@ impl ServiceEngineSummary {
             name: name.into(),
             role: role.into(),
             authority: authority.into(),
+            category: String::new(),
+            component_kind: String::new(),
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            invariants: Vec::new(),
+            evidence: Vec::new(),
+            source_modules: Vec::new(),
+            related_components: Vec::new(),
+            documentation: Vec::new(),
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_contract(
+        mut self,
+        category: impl Into<String>,
+        component_kind: impl Into<String>,
+        inputs: &[&str],
+        outputs: &[&str],
+        invariants: &[&str],
+        evidence: &[&str],
+        source_modules: &[&str],
+        related_components: &[&str],
+        documentation: &[&str],
+    ) -> Self {
+        self.category = category.into();
+        self.component_kind = component_kind.into();
+        self.inputs = strings(inputs);
+        self.outputs = strings(outputs);
+        self.invariants = strings(invariants);
+        self.evidence = strings(evidence);
+        self.source_modules = strings(source_modules);
+        self.related_components = strings(related_components);
+        self.documentation = strings(documentation);
+        self
     }
 
     pub fn id(&self) -> &str {
@@ -455,6 +507,46 @@ impl ServiceEngineSummary {
     pub fn authority(&self) -> &str {
         &self.authority
     }
+
+    pub fn category(&self) -> &str {
+        &self.category
+    }
+
+    pub fn component_kind(&self) -> &str {
+        &self.component_kind
+    }
+
+    pub fn inputs(&self) -> &[String] {
+        &self.inputs
+    }
+
+    pub fn outputs(&self) -> &[String] {
+        &self.outputs
+    }
+
+    pub fn invariants(&self) -> &[String] {
+        &self.invariants
+    }
+
+    pub fn evidence(&self) -> &[String] {
+        &self.evidence
+    }
+
+    pub fn source_modules(&self) -> &[String] {
+        &self.source_modules
+    }
+
+    pub fn related_components(&self) -> &[String] {
+        &self.related_components
+    }
+
+    pub fn documentation(&self) -> &[String] {
+        &self.documentation
+    }
+}
+
+fn strings(values: &[&str]) -> Vec<String> {
+    values.iter().map(|value| (*value).to_owned()).collect()
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

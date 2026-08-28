@@ -968,6 +968,53 @@ input:focus, textarea:focus, select:focus { border-color: var(--signal); box-sha
 .secondary-icon-1 { color: var(--blue); }
 .secondary-icon-2 { color: var(--green); }
 .engine-role { color: var(--signal); font-family: var(--font-mono); font-size: 8px; font-weight: 550; text-transform: uppercase; }
+.inventory-scope-links {
+  display: grid;
+  max-width: 1240px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 auto 10px;
+}
+.inventory-scope-links button {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface-1);
+  color: var(--text-muted);
+  text-align: left;
+}
+.inventory-scope-links button:hover, .inventory-scope-links button.is-current { border-color: var(--line-strong); background: var(--surface-2); color: var(--signal); }
+.inventory-scope-links button.is-current { box-shadow: inset 2px 0 0 var(--signal); }
+.inventory-scope-links button > svg { justify-self: center; }
+.inventory-scope-links button > span { display: grid; min-width: 0; gap: 2px; color: var(--text-secondary); font-size: 8px; }
+.inventory-scope-links button small { overflow: hidden; color: var(--text-muted); font-family: var(--font-mono); font-size: 6px; text-overflow: ellipsis; white-space: nowrap; }
+.inventory-category-bar {
+  display: flex;
+  max-width: 1240px;
+  gap: 5px;
+  margin: 0 auto 12px;
+  overflow-x: auto;
+  padding: 1px 0 3px;
+}
+.inventory-category-bar button {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  background: var(--canvas);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 7px;
+}
+.inventory-category-bar button:hover, .inventory-category-bar button.is-selected { border-color: var(--line-strong); background: var(--surface-2); color: var(--text-primary); }
+.inventory-category-bar button.is-selected { box-shadow: inset 0 -2px 0 var(--signal); }
+.inventory-category-bar button span { min-width: 16px; padding: 1px 4px; background: var(--surface-3); color: var(--signal); text-align: center; }
 .engine-workbench, .tool-workbench {
   display: grid;
   max-width: 1240px;
@@ -1000,11 +1047,17 @@ input:focus, textarea:focus, select:focus { border-color: var(--signal); box-sha
 .engine-state-mark, .engine-hero-icon, .tool-state-mark, .tool-hero-icon { display: grid; border: 1px solid var(--line-strong); background: var(--canvas); color: var(--blue); place-items: center; }
 .engine-state-mark, .tool-state-mark { width: 27px; height: 27px; }
 .engine-state-mark.is-core, .engine-hero-icon.is-core { border-color: color-mix(in srgb, var(--gold) 48%, var(--line)); background: var(--gold-soft); color: var(--gold-light); }
+.engine-state-mark.is-embedded, .engine-hero-icon.is-embedded { border-color: color-mix(in srgb, var(--green) 45%, var(--line)); background: color-mix(in srgb, var(--green) 10%, var(--canvas)); color: var(--green); }
 .engine-inspection, .tool-inspection { align-content: start; }
 .engine-inspection-hero, .tool-inspection-hero { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding-bottom: 15px; border-bottom: 1px solid var(--line); }
 .engine-hero-icon, .tool-hero-icon { width: 48px; height: 48px; }
 .engine-inspection-hero h2, .tool-inspection-hero h2 { margin: 4px 0; font-family: var(--font-display); font-size: 19px; font-weight: 560; }
 .engine-inspection-hero p, .tool-inspection-hero p { margin: 0; color: var(--text-muted); font-size: 7px; }
+.inventory-tabs { display: flex; gap: 1px; margin-top: 12px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.inventory-tabs button { flex: 0 0 auto; padding: 8px 10px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-muted); font-family: var(--font-mono); font-size: 7px; }
+.inventory-tabs button:hover { color: var(--text-secondary); }
+.inventory-tabs button.is-active { border-bottom-color: var(--signal); color: var(--text-primary); }
+.inventory-tab-panel { min-height: 330px; padding-top: 1px; }
 .engine-contract-grid, .tool-contract-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 12px; border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
 .engine-contract-grid > div, .tool-contract-grid > div { display: grid; min-width: 0; gap: 5px; padding: 11px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .engine-contract-grid span, .tool-contract-grid span { color: var(--text-muted); font-family: var(--font-mono); font-size: 6px; letter-spacing: .08em; text-transform: uppercase; }
@@ -1012,6 +1065,29 @@ input:focus, textarea:focus, select:focus { border-color: var(--signal); box-sha
 .engine-proof-grid, .tool-proof-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
 .engine-proof-grid section, .tool-proof-grid section { min-width: 0; padding: 11px; border: 1px solid var(--line); background: var(--canvas); }
 .engine-proof-grid p, .tool-proof-grid p { margin: 7px 0 0; color: var(--text-muted); font-size: 8px; line-height: 1.55; }
+.inventory-authority-map { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 12px; border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+.inventory-authority-map article { display: grid; min-width: 0; align-content: start; gap: 5px; padding: 10px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--surface-1); }
+.inventory-authority-map article.is-core { background: var(--gold-soft); }
+.inventory-authority-map small, .inventory-contract-sections .eyebrow, .inventory-boundaries .eyebrow, .inventory-evidence-grid .eyebrow { color: var(--signal); font-family: var(--font-mono); font-size: 6px; letter-spacing: .08em; }
+.inventory-authority-map strong { color: var(--text-primary); font-size: 8px; }
+.inventory-authority-map span { color: var(--text-muted); font-size: 7px; line-height: 1.45; }
+.inventory-contract-sections, .inventory-evidence-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding-top: 12px; }
+.inventory-contract-sections section, .inventory-evidence-grid section, .inventory-boundaries > section:first-child { min-width: 0; padding: 12px; border: 1px solid var(--line); background: var(--canvas); }
+.inventory-contract-sections section.inventory-wide { grid-column: 1 / -1; }
+.inventory-contract-sections ul, .inventory-evidence-grid ul, .inventory-boundaries ul { display: grid; gap: 7px; margin: 10px 0 0; padding: 0; list-style: none; }
+.inventory-contract-sections li, .inventory-evidence-grid li, .inventory-boundaries li { position: relative; padding-left: 13px; color: var(--text-secondary); font-size: 8px; line-height: 1.5; }
+.inventory-contract-sections li::before, .inventory-evidence-grid li::before, .inventory-boundaries li::before { position: absolute; top: .58em; left: 0; width: 4px; height: 4px; background: var(--signal); content: ""; }
+.inventory-evidence-grid section:nth-child(2) li, .inventory-evidence-grid section:nth-child(3) li { color: var(--text-muted); font-family: var(--font-mono); font-size: 7px; overflow-wrap: anywhere; }
+.inventory-evidence-grid .engine-contract-json { grid-column: 1 / -1; max-height: 290px; margin-top: 0; }
+.inventory-token-list { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+.inventory-token-list span { padding: 5px 7px; border: 1px solid var(--line); background: var(--surface-1); color: var(--text-secondary); font-family: var(--font-mono); font-size: 7px; }
+.inventory-empty-value { margin: 10px 0 0; color: var(--text-muted); font-size: 8px; }
+.inventory-boundaries { display: grid; gap: 10px; padding-top: 12px; }
+.inventory-boundary-callout { display: flex; align-items: flex-start; gap: 10px; padding: 13px; border: 1px solid var(--line); border-left: 3px solid var(--signal); background: var(--surface-1); }
+.inventory-boundary-callout > svg { flex: 0 0 auto; color: var(--signal); }
+.inventory-boundary-callout > div { display: grid; gap: 5px; }
+.inventory-boundary-callout strong { color: var(--text-primary); font-size: 9px; }
+.inventory-boundary-callout p { margin: 0; color: var(--text-muted); font-size: 8px; line-height: 1.55; }
 .engine-contract-json, .tool-contract-json { max-height: 240px; margin: 12px 0 0; overflow: auto; padding: 11px; border: 1px solid var(--line); background: #080a09; color: #cbd2c8; font-family: var(--font-mono); font-size: 8px; line-height: 1.6; }
 :root[data-theme="light"] .engine-contract-json, :root[data-theme="light"] .tool-contract-json { background: #f0ede5; color: #313530; }
 .engine-inspection-actions, .tool-inspection-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
@@ -1440,6 +1516,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--signal); box-sha
   .council-chambers { grid-template-columns: 1fr; }
   .council-chamber { min-height: 0; }
   .council-chamber > p { min-height: 0; }
+  .inventory-scope-links { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
   :root { --sidebar-width: 72px; }
@@ -1475,7 +1552,9 @@ input:focus, textarea:focus, select:focus { border-color: var(--signal); box-sha
   .composer-recovery > div:last-child { grid-column: 2; justify-content: flex-start; }
   .run-result-actions { align-items: stretch; flex-direction: column; }
   .secondary-grid, .settings-grid, .evolution-grid, .evolution-explanation { grid-template-columns: 1fr; }
-  .engine-contract-grid, .engine-proof-grid { grid-template-columns: 1fr; }
+  .engine-contract-grid, .engine-proof-grid, .inventory-contract-sections, .inventory-evidence-grid, .inventory-authority-map { grid-template-columns: 1fr; }
+  .inventory-scope-links { grid-template-columns: 1fr; }
+  .inventory-contract-sections section.inventory-wide { grid-column: auto; }
   .engine-inspection-actions { align-items: stretch; flex-direction: column; }
   .council-ledger-grid, .package-manager-grid { grid-template-columns: 1fr; }
   .package-manager-heading, .package-form-footer, .config-form-footer { align-items: stretch; flex-direction: column; }
