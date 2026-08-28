@@ -27,10 +27,12 @@ The source tree also contains the production-readiness controls for the next
 release: scoped identities, cryptographic device trust, encrypted secrets,
 recovery archives, local crash records, and stable-release signing gates. See
 [production readiness](docs/PRODUCTION.md).
-For the remaining platform phases, including prompt caching, background and
-parallel agents, evaluation-driven loops, memory consolidation, self-healing
-tests, agent operations, and the OpenDesign-informed frontend direction, see
-[the roadmap](docs/ROADMAP.md).
+Pandora now binds local context caching and provider-native stable-prefix
+caching to the same classification and provenance boundaries as execution. See
+[prompt caching](docs/PROMPT_CACHING.md). For the remaining platform phases,
+including background and parallel agents, evaluation-driven loops, memory
+consolidation, self-healing tests, agent operations, and the OpenDesign-informed
+frontend direction, see [the roadmap](docs/ROADMAP.md).
 
 The npm package also exports a typed TypeScript client for the stable JSON CLI
 contract. It forwards an argv array to the verified native binary and does not

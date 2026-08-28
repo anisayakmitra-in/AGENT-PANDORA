@@ -1598,6 +1598,10 @@ pub struct ServiceAgentRunResult {
     provider_calls: u32,
     prompt_tokens: u64,
     completion_tokens: u64,
+    #[serde(default)]
+    cached_prompt_tokens: u64,
+    #[serde(default)]
+    cache_write_prompt_tokens: u64,
     run_count: u32,
     receipt_count: u64,
     event_count: u64,
@@ -1621,6 +1625,8 @@ impl ServiceAgentRunResult {
         provider_calls: u32,
         prompt_tokens: u64,
         completion_tokens: u64,
+        cached_prompt_tokens: u64,
+        cache_write_prompt_tokens: u64,
         run_count: u32,
         receipt_count: u64,
         event_count: u64,
@@ -1637,6 +1643,8 @@ impl ServiceAgentRunResult {
             provider_calls,
             prompt_tokens,
             completion_tokens,
+            cached_prompt_tokens,
+            cache_write_prompt_tokens,
             run_count,
             receipt_count,
             event_count,
@@ -1687,6 +1695,12 @@ impl ServiceAgentRunResult {
     }
     pub const fn completion_tokens(&self) -> u64 {
         self.completion_tokens
+    }
+    pub const fn cached_prompt_tokens(&self) -> u64 {
+        self.cached_prompt_tokens
+    }
+    pub const fn cache_write_prompt_tokens(&self) -> u64 {
+        self.cache_write_prompt_tokens
     }
     pub const fn run_count(&self) -> u32 {
         self.run_count

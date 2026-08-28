@@ -7,8 +7,8 @@ pub mod manifest;
 pub mod structured_output;
 
 pub use client::{
-    ChatMessage, HttpProvider, MessageRole, ModelRequest, ModelResponse, Provider, ProviderError,
-    TokenUsage, ToolCall, ToolSchema, TraceMetadata,
+    ChatMessage, HttpProvider, MessageRole, ModelRequest, ModelResponse, PromptCacheTtl, Provider,
+    ProviderError, TokenUsage, ToolCall, ToolSchema, TraceMetadata,
 };
 pub use failover::FailoverProvider;
 pub use inference_policy::{

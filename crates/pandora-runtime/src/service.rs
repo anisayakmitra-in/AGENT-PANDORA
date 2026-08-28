@@ -1651,6 +1651,8 @@ fn service_agent_run_result(
         u32::try_from(summary.provider_receipts().len()).unwrap_or(u32::MAX),
         u64::from(summary.usage().prompt_tokens()),
         u64::from(summary.usage().completion_tokens()),
+        u64::from(summary.usage().cached_prompt_tokens()),
+        u64::from(summary.usage().cache_write_prompt_tokens()),
         u32::try_from(summary.runs().len()).unwrap_or(u32::MAX),
         receipt_count,
         event_count,

@@ -1503,6 +1503,8 @@ fn usage_json(usage: &pandora_provider::TokenUsage) -> Value {
     json!({
         "prompt_tokens": usage.prompt_tokens(),
         "completion_tokens": usage.completion_tokens(),
+        "cached_prompt_tokens": usage.cached_prompt_tokens(),
+        "cache_write_prompt_tokens": usage.cache_write_prompt_tokens(),
         "total_tokens": usage.total_tokens(),
     })
 }
@@ -1518,6 +1520,8 @@ fn provider_metrics_json(metrics: &[pandora_runtime::executors::ProviderCallMetr
                     "elapsed_ms": metric.elapsed_ms(),
                     "input_tokens": metric.input_tokens(),
                     "output_tokens": metric.output_tokens(),
+                    "cached_input_tokens": metric.cached_input_tokens(),
+                    "cache_write_input_tokens": metric.cache_write_input_tokens(),
                     "succeeded": metric.succeeded(),
                 })
             })

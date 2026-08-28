@@ -6,8 +6,8 @@ use crate::{
     ToolEngine,
 };
 use pandora_provider::{
-    ChatMessage, MessageRole, ModelRequest, Provider, ProviderError, TokenUsage, ToolCall,
-    ToolSchema, TraceMetadata,
+    ChatMessage, MessageRole, ModelRequest, PromptCacheTtl, Provider, ProviderError, TokenUsage,
+    ToolCall, ToolSchema, TraceMetadata,
 };
 use pandora_types::{
     ContextAssembly, ContextClassification, ContextFragment, ContextOrigin, ContextReceipt,
@@ -650,7 +650,7 @@ impl AgentLoop {
                 &context_receipt,
                 &messages,
             )?;
-            let request = ModelRequest::new(
+            let mut request = ModelRequest::new(
                 provider.manifest().id().clone(),
                 provider.manifest().default_model().clone(),
                 messages.clone(),
@@ -658,6 +658,9 @@ impl AgentLoop {
             .with_tools(schemas.clone())?
             .with_max_output_tokens(1_024)?
             .with_trace_metadata(TraceMetadata::new().with_session_id(session.id().clone()));
+            if context_receipt.cacheable() && context_receipt.provenance_complete() {
+                request = request.with_prompt_cache(PromptCacheTtl::FiveMinutes);
+            }
             check_control(
                 control,
                 AgentCheckpointKind::BeforeProvider,
@@ -1028,6 +1031,14 @@ fn add_usage(total: &TokenUsage, next: &TokenUsage) -> TokenUsage {
         total
             .completion_tokens()
             .saturating_add(next.completion_tokens()),
+    )
+    .with_prompt_cache(
+        total
+            .cached_prompt_tokens()
+            .saturating_add(next.cached_prompt_tokens()),
+        total
+            .cache_write_prompt_tokens()
+            .saturating_add(next.cache_write_prompt_tokens()),
     )
 }
 

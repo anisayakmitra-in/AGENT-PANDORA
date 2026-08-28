@@ -22,6 +22,8 @@ pub struct ProviderCallMetrics {
     elapsed_ms: u64,
     input_tokens: u32,
     output_tokens: u32,
+    cached_input_tokens: u32,
+    cache_write_input_tokens: u32,
     succeeded: bool,
 }
 
@@ -44,6 +46,14 @@ impl ProviderCallMetrics {
 
     pub const fn output_tokens(&self) -> u32 {
         self.output_tokens
+    }
+
+    pub const fn cached_input_tokens(&self) -> u32 {
+        self.cached_input_tokens
+    }
+
+    pub const fn cache_write_input_tokens(&self) -> u32 {
+        self.cache_write_input_tokens
     }
 
     pub const fn succeeded(&self) -> bool {
@@ -119,15 +129,17 @@ impl ProviderExecutor {
                 code: error_code(error).to_owned(),
             },
         };
-        let (input_tokens, output_tokens) = result
+        let (input_tokens, output_tokens, cached_input_tokens, cache_write_input_tokens) = result
             .as_ref()
             .map(|response| {
                 (
                     response.usage().prompt_tokens(),
                     response.usage().completion_tokens(),
+                    response.usage().cached_prompt_tokens(),
+                    response.usage().cache_write_prompt_tokens(),
                 )
             })
-            .unwrap_or((0, 0));
+            .unwrap_or((0, 0, 0, 0));
         let succeeded = result.is_ok();
         ProviderResult {
             result,
@@ -138,6 +150,8 @@ impl ProviderExecutor {
                 elapsed_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
                 input_tokens,
                 output_tokens,
+                cached_input_tokens,
+                cache_write_input_tokens,
                 succeeded,
             }],
         }
@@ -249,7 +263,7 @@ mod tests {
             Ok(ModelResponse::new(
                 "ready",
                 Vec::new(),
-                pandora_provider::TokenUsage::new(1, 1),
+                pandora_provider::TokenUsage::new(3, 1).with_prompt_cache(2, 1),
             ))
         }
     }
@@ -313,8 +327,10 @@ mod tests {
         assert_eq!(result.result().unwrap().text(), "ready");
         assert_eq!(result.metrics().provider_id(), "provider-a");
         assert_eq!(result.metrics().model_id(), "model-a");
-        assert_eq!(result.metrics().input_tokens(), 1);
+        assert_eq!(result.metrics().input_tokens(), 3);
         assert_eq!(result.metrics().output_tokens(), 1);
+        assert_eq!(result.metrics().cached_input_tokens(), 2);
+        assert_eq!(result.metrics().cache_write_input_tokens(), 1);
         assert!(result.metrics().succeeded());
         assert!(matches!(
             result.receipt().outcome(),

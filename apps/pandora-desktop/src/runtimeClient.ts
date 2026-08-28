@@ -158,6 +158,8 @@ export type RuntimeRun = {
   provider_calls?: number;
   prompt_tokens?: number;
   completion_tokens?: number;
+  cached_prompt_tokens?: number;
+  cache_write_prompt_tokens?: number;
   run_count?: number;
 };
 

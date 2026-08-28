@@ -323,6 +323,24 @@ pub struct ModelRequest {
     max_output_tokens: u32,
     timeout: Duration,
     trace: TraceMetadata,
+    prompt_cache_ttl: Option<PromptCacheTtl>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub enum PromptCacheTtl {
+    #[serde(rename = "5m")]
+    FiveMinutes,
+    #[serde(rename = "1h")]
+    OneHour,
+}
+
+impl PromptCacheTtl {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::FiveMinutes => "5m",
+            Self::OneHour => "1h",
+        }
+    }
 }
 
 impl ModelRequest {
@@ -339,6 +357,7 @@ impl ModelRequest {
             max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
             timeout: DEFAULT_TIMEOUT,
             trace: TraceMetadata::default(),
+            prompt_cache_ttl: None,
         };
         request.validate()?;
         Ok(request)
@@ -364,6 +383,11 @@ impl ModelRequest {
 
     pub fn with_trace_metadata(mut self, trace: TraceMetadata) -> Self {
         self.trace = trace;
+        self
+    }
+
+    pub fn with_prompt_cache(mut self, ttl: PromptCacheTtl) -> Self {
+        self.prompt_cache_ttl = Some(ttl);
         self
     }
 
@@ -443,6 +467,10 @@ impl ModelRequest {
         &self.trace
     }
 
+    pub const fn prompt_cache_ttl(&self) -> Option<PromptCacheTtl> {
+        self.prompt_cache_ttl
+    }
+
     pub fn authorization_payload(&self) -> Result<Vec<u8>, ProviderError> {
         Self::encode_authorization_payload(&self.canonical_authorization_request())
     }
@@ -475,6 +503,7 @@ impl ModelRequest {
             timeout_millis: self.timeout.as_millis(),
             trace_execution_id: self.trace.execution_id().map(|id| id.as_str()),
             trace_session_id: self.trace.session_id().map(|id| id.as_str()),
+            prompt_cache_ttl: self.prompt_cache_ttl,
         }
     }
 
@@ -497,6 +526,7 @@ struct CanonicalModelRequest<'a> {
     timeout_millis: u128,
     trace_execution_id: Option<&'a str>,
     trace_session_id: Option<&'a str>,
+    prompt_cache_ttl: Option<PromptCacheTtl>,
 }
 
 #[derive(Serialize)]
@@ -556,6 +586,8 @@ impl ToolCall {
 pub struct TokenUsage {
     prompt_tokens: u32,
     completion_tokens: u32,
+    cached_prompt_tokens: u32,
+    cache_write_prompt_tokens: u32,
 }
 
 impl TokenUsage {
@@ -563,7 +595,19 @@ impl TokenUsage {
         Self {
             prompt_tokens,
             completion_tokens,
+            cached_prompt_tokens: 0,
+            cache_write_prompt_tokens: 0,
         }
+    }
+
+    pub fn with_prompt_cache(
+        mut self,
+        cached_prompt_tokens: u32,
+        cache_write_prompt_tokens: u32,
+    ) -> Self {
+        self.cached_prompt_tokens = cached_prompt_tokens;
+        self.cache_write_prompt_tokens = cache_write_prompt_tokens;
+        self
     }
 
     pub fn prompt_tokens(&self) -> u32 {
@@ -572,6 +616,14 @@ impl TokenUsage {
 
     pub fn completion_tokens(&self) -> u32 {
         self.completion_tokens
+    }
+
+    pub fn cached_prompt_tokens(&self) -> u32 {
+        self.cached_prompt_tokens
+    }
+
+    pub fn cache_write_prompt_tokens(&self) -> u32 {
+        self.cache_write_prompt_tokens
     }
 
     pub fn total_tokens(&self) -> u32 {
@@ -933,13 +985,21 @@ struct OpenAiFunctionCall {
 struct OpenAiUsage {
     prompt_tokens: u32,
     completion_tokens: u32,
+    #[serde(default)]
+    prompt_tokens_details: Option<OpenAiPromptTokenDetails>,
+}
+
+#[derive(Default, Deserialize)]
+struct OpenAiPromptTokenDetails {
+    #[serde(default)]
+    cached_tokens: u32,
 }
 
 #[derive(Serialize)]
 struct AnthropicRequest {
     model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    system: Option<String>,
+    system: Option<AnthropicSystem>,
     messages: Vec<AnthropicMessage>,
     tools: Vec<AnthropicTool>,
     max_tokens: u32,
@@ -964,9 +1024,21 @@ impl AnthropicRequest {
                 "Anthropic requests require at least one conversation message".to_owned(),
             ));
         }
+        let system = (!system.is_empty()).then(|| system.join("\n\n"));
+        let system = system.map(|text| match request.prompt_cache_ttl() {
+            Some(ttl) => AnthropicSystem::Blocks(vec![AnthropicSystemBlock {
+                kind: "text",
+                text,
+                cache_control: AnthropicCacheControl {
+                    kind: "ephemeral",
+                    ttl: ttl.as_str(),
+                },
+            }]),
+            None => AnthropicSystem::Text(text),
+        });
         Ok(Self {
             model: request.model_id().as_str().to_owned(),
-            system: (!system.is_empty()).then(|| system.join("\n\n")),
+            system,
             messages,
             tools: request
                 .tools()
@@ -976,6 +1048,28 @@ impl AnthropicRequest {
             max_tokens: request.max_output_tokens(),
         })
     }
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum AnthropicSystem {
+    Text(String),
+    Blocks(Vec<AnthropicSystemBlock>),
+}
+
+#[derive(Serialize)]
+struct AnthropicSystemBlock {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    text: String,
+    cache_control: AnthropicCacheControl,
+}
+
+#[derive(Serialize)]
+struct AnthropicCacheControl {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    ttl: &'static str,
 }
 
 #[derive(Serialize)]
@@ -1111,6 +1205,10 @@ enum AnthropicResponseBlock {
 struct AnthropicUsage {
     input_tokens: u32,
     output_tokens: u32,
+    #[serde(default)]
+    cache_creation_input_tokens: u32,
+    #[serde(default)]
+    cache_read_input_tokens: u32,
 }
 
 #[derive(Serialize)]
@@ -1345,6 +1443,8 @@ struct GeminiUsage {
     prompt_tokens: u32,
     #[serde(rename = "candidatesTokenCount")]
     completion_tokens: u32,
+    #[serde(rename = "cachedContentTokenCount", default)]
+    cached_prompt_tokens: u32,
 }
 
 fn parse_gemini_response(bytes: &[u8]) -> Result<ModelResponse, ProviderError> {
@@ -1386,7 +1486,10 @@ fn parse_gemini_response(bytes: &[u8]) -> Result<ModelResponse, ProviderError> {
     }
     let usage = response
         .usage
-        .map(|usage| TokenUsage::new(usage.prompt_tokens, usage.completion_tokens))
+        .map(|usage| {
+            TokenUsage::new(usage.prompt_tokens, usage.completion_tokens)
+                .with_prompt_cache(usage.cached_prompt_tokens, 0)
+        })
         .unwrap_or_default();
     Ok(ModelResponse::new(text, tool_calls, usage))
 }
@@ -1427,7 +1530,16 @@ fn parse_anthropic_response(bytes: &[u8]) -> Result<ModelResponse, ProviderError
     }
     let usage = response
         .usage
-        .map(|usage| TokenUsage::new(usage.input_tokens, usage.output_tokens))
+        .map(|usage| {
+            let prompt_tokens = usage
+                .input_tokens
+                .saturating_add(usage.cache_creation_input_tokens)
+                .saturating_add(usage.cache_read_input_tokens);
+            TokenUsage::new(prompt_tokens, usage.output_tokens).with_prompt_cache(
+                usage.cache_read_input_tokens,
+                usage.cache_creation_input_tokens,
+            )
+        })
         .unwrap_or_default();
     Ok(ModelResponse::new(text, tool_calls, usage))
 }
@@ -1472,7 +1584,16 @@ fn parse_response(bytes: &[u8]) -> Result<ModelResponse, ProviderError> {
     }
     let usage = response
         .usage
-        .map(|usage| TokenUsage::new(usage.prompt_tokens, usage.completion_tokens))
+        .map(|usage| {
+            TokenUsage::new(usage.prompt_tokens, usage.completion_tokens)
+                .with_prompt_cache(
+                    usage
+                        .prompt_tokens_details
+                        .map(|details| details.cached_tokens)
+                        .unwrap_or(0),
+                    0,
+                )
+        })
         .unwrap_or_default();
     Ok(ModelResponse {
         text,
@@ -1724,6 +1845,45 @@ mod tests {
     }
 
     #[test]
+    fn anthropic_prompt_cache_marks_only_the_stable_system_prefix() {
+        let manifest = ProviderManifest::new_with_protocol(
+            "anthropic",
+            "Anthropic",
+            ProviderProtocol::AnthropicMessages,
+            "https://api.anthropic.com/v1",
+            "claude-sonnet-4-20250514",
+            "PANDORA_ANTHROPIC_API_KEY",
+        )
+        .unwrap();
+        let request = ModelRequest::new(
+            manifest.id().clone(),
+            manifest.default_model().clone(),
+            vec![
+                ChatMessage::system("Stable governed context.").unwrap(),
+                ChatMessage::user("Dynamic task.").unwrap(),
+            ],
+        )
+        .unwrap()
+        .with_prompt_cache(PromptCacheTtl::FiveMinutes);
+
+        let body = serde_json::to_value(AnthropicRequest::from_request(&request).unwrap()).unwrap();
+
+        assert_eq!(
+            body["system"],
+            json!([{
+                "type": "text",
+                "text": "Stable governed context.",
+                "cache_control": {"type": "ephemeral", "ttl": "5m"}
+            }])
+        );
+        assert_eq!(
+            body["messages"][0],
+            json!({"role": "user", "content": "Dynamic task."})
+        );
+        assert!(body["messages"][0].get("cache_control").is_none());
+    }
+
+    #[test]
     fn anthropic_response_normalizes_text_tools_and_usage() {
         let response = parse_anthropic_response(
             br#"{
@@ -1731,7 +1891,12 @@ mod tests {
                     {"type":"text","text":"Checking."},
                     {"type":"tool_use","id":"toolu-1","name":"workspace.read","input":{"path":"README.md"}}
                 ],
-                "usage":{"input_tokens":7,"output_tokens":3}
+                "usage":{
+                    "input_tokens":7,
+                    "output_tokens":3,
+                    "cache_creation_input_tokens":11,
+                    "cache_read_input_tokens":13
+                }
             }"#,
         )
         .unwrap();
@@ -1740,8 +1905,10 @@ mod tests {
         assert_eq!(response.tool_calls().len(), 1);
         assert_eq!(response.tool_calls()[0].id(), "toolu-1");
         assert_eq!(response.tool_calls()[0].name(), "workspace.read");
-        assert_eq!(response.usage().prompt_tokens(), 7);
+        assert_eq!(response.usage().prompt_tokens(), 31);
         assert_eq!(response.usage().completion_tokens(), 3);
+        assert_eq!(response.usage().cached_prompt_tokens(), 13);
+        assert_eq!(response.usage().cache_write_prompt_tokens(), 11);
     }
 
     #[test]

@@ -429,12 +429,16 @@ fn test(args: &[String]) -> Result<CommandResult, CliError> {
             "usage": {
                 "prompt_tokens": response.usage().prompt_tokens(),
                 "completion_tokens": response.usage().completion_tokens(),
+                "cached_prompt_tokens": response.usage().cached_prompt_tokens(),
+                "cache_write_prompt_tokens": response.usage().cache_write_prompt_tokens(),
                 "total_tokens": response.usage().total_tokens(),
             },
             "metrics": {
                 "elapsed_ms": metrics.elapsed_ms(),
                 "input_tokens": metrics.input_tokens(),
                 "output_tokens": metrics.output_tokens(),
+                "cached_input_tokens": metrics.cached_input_tokens(),
+                "cache_write_input_tokens": metrics.cache_write_input_tokens(),
                 "succeeded": metrics.succeeded(),
             },
         }),
