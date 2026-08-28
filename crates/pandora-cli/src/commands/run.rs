@@ -23,16 +23,16 @@ use pandora_runtime::{
 };
 use pandora_runtime::{
     ArtifactCatalog, DEFAULT_MAX_SAMPLES_PER_TARGET, EfficiencyEngine, EfficiencyStore,
-    ExecutionController, PackageState, PackageStore, RolloutReducer, SkillEngine, SkillError,
-    WasmExecutor, WasmGene,
+    ExecutionController, PackageState, PackageStore, ResearchArtifactStore, RolloutReducer,
+    SkillEngine, SkillError, WasmExecutor, WasmGene,
 };
 use pandora_types::{
     AdaptationCandidate, AdaptationRequest, AdaptationTarget, ArtifactId, Capability,
     ContextClassification, ContextManifest, EfficiencyObjective, EfficiencySample,
     EvaluationReceipt, EvaluationRequest, EvaluationResult, EventPayload, EventType, ExecutionId,
     Gene, HarnessId, MemoryKind, MemoryRecord, MemoryScope, Operation, PackageId, PackageKind,
-    PackageManifest, PolicyContext, RequestDigest, Session, SessionId, TaskIntent, Usage,
-    WorkspaceId,
+    PackageManifest, PolicyContext, RequestDigest, ResearchArtifactKind, Session, SessionId,
+    TaskIntent, Usage, WorkspaceId,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -145,19 +145,23 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     )?;
     let task_class = parsed.value("task-class").unwrap_or("general");
     validate_task_class(task_class)?;
-    let optimization = parsed.value("optimize").map(parse_objective).transpose()?;
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
-    let (harnesses, wasm, wasm_gene_resolutions) = configured_runtime(
-        &config,
-        parsed.value("harness"),
-        parsed.value("harness-version"),
-    )?;
-    require_runnable_harness(&harnesses, parsed.value("harness"))?;
+    let (routed_harness, routed_objective) = governed_routing(&config, task_class)?;
+    let requested_harness = parsed.value("harness").or(routed_harness.as_deref());
+    let optimization = parsed
+        .value("optimize")
+        .map(parse_objective)
+        .transpose()?
+        .or(routed_objective);
+    let (harnesses, wasm, wasm_gene_resolutions) =
+        configured_runtime(&config, requested_harness, parsed.value("harness-version"))?;
+    require_runnable_harness(&harnesses, requested_harness)?;
     let optimized_provider = optimization
         .map(|objective| select_provider(&config, task_class, objective))
         .transpose()?
         .flatten();
+    let selected_provider = parsed.value("provider").or(optimized_provider.as_deref());
     let store = session_store(&config)?;
     let approval_store = ApprovalStore::open(config.data_dir().join("sessions.sqlite3"))
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
@@ -225,7 +229,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             &session,
             &parsed.positionals[0],
             parsed.value("model"),
-            optimized_provider.as_deref(),
+            selected_provider,
         )?
     } else {
         (parsed.positionals[0].clone(), None)
@@ -243,7 +247,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                 history: agent_history,
                 approval_id: parsed.value("approval"),
                 model_override: parsed.value("model"),
-                provider_name: optimized_provider.as_deref(),
+                provider_name: selected_provider,
                 optimization,
                 max_turns,
                 max_tool_calls,
@@ -254,7 +258,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     }
     let mut intent =
         TaskIntent::new(task.clone()).map_err(|error| CliError::usage(error.to_string()))?;
-    if let Some(harness) = parsed.value("harness") {
+    if let Some(harness) = requested_harness {
         let harness = canonical_harness_id(harness);
         let harness = HarnessId::new(harness.to_owned())
             .map_err(|_| CliError::usage("Harness ID is invalid"))?;
@@ -317,7 +321,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                 evaluation_value.clone(),
             ),
             optimization,
-            optimized_provider.as_deref(),
+            selected_provider,
         ),
         "feedback_recorded",
         feedback_recorded,
@@ -933,6 +937,112 @@ fn effect_receipts_json(receipts: &[pandora_types::EffectReceipt]) -> Value {
     )
 }
 
+const PLANNER_TEMPLATE_TARGET: &str = "planner.system";
+const ACTIVE_SKILLS_TARGET: &str = "skills.active_context";
+
+fn governed_text(
+    config: &RuntimeConfig,
+    kind: ResearchArtifactKind,
+    target_id: &str,
+    base: &str,
+) -> Result<String, CliError> {
+    let base_artifact = ArtifactId::new(pandora_types::hash_artifact(base.as_bytes()))
+        .map_err(|_| CliError::internal("governed artifact identity is invalid", json!({})))?;
+    let catalog = ArtifactCatalog::open(config.data_dir().join("artifact-catalog.sqlite3"))
+        .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+    let resolved = catalog
+        .resolve(&base_artifact)
+        .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+    if resolved == base_artifact {
+        return Ok(base.to_owned());
+    }
+    let research =
+        ResearchArtifactStore::open(config.data_dir().join("research-artifacts.sqlite3"))
+            .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+    let bytes = research.load_artifact(&resolved, kind, target_id)
+        .map_err(|error| CliError::execution(error.to_string(), json!({})))?
+        .ok_or_else(|| CliError::execution("active governed artifact is unavailable", json!({"kind": kind.as_str(), "target_id": target_id, "base_artifact": base_artifact, "resolved_artifact": resolved})))?;
+    String::from_utf8(bytes).map_err(|_| {
+        CliError::execution(
+            "active governed text artifact is not UTF-8",
+            json!({"kind": kind.as_str(), "target_id": target_id}),
+        )
+    })
+}
+
+fn planner_template(config: &RuntimeConfig) -> Result<String, CliError> {
+    governed_text(
+        config,
+        ResearchArtifactKind::Prompt,
+        PLANNER_TEMPLATE_TARGET,
+        "You are Pandora's planning layer. Return only JSON with one string field named task. The task must use exactly one bounded format: read:<path>, search:<query>, review:<path>, patch:<path>:<content>, or verify. Do not return shell commands, credentials, additional fields, or paths outside the workspace.",
+    )
+}
+
+fn governed_routing(
+    config: &RuntimeConfig,
+    task_class: &str,
+) -> Result<(Option<String>, Option<EfficiencyObjective>), CliError> {
+    let base =
+        json!({"task_class": task_class, "preferred_harness": null, "provider_objective": null})
+            .to_string();
+    let text = governed_text(
+        config,
+        ResearchArtifactKind::Workflow,
+        &format!("routing.{task_class}"),
+        &base,
+    )?;
+    let value: Value = serde_json::from_str(&text)
+        .map_err(|_| CliError::execution("active workflow is not valid JSON", json!({})))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| CliError::execution("active workflow is not an object", json!({})))?;
+    if object.len() != 3
+        || !object.contains_key("preferred_harness")
+        || !object.contains_key("provider_objective")
+        || object.get("task_class").and_then(Value::as_str) != Some(task_class)
+    {
+        return Err(CliError::execution(
+            "active workflow exceeds the governed routing surface",
+            json!({"task_class": task_class}),
+        ));
+    }
+    let harness = match object.get("preferred_harness") {
+        Some(Value::Null) | None => None,
+        Some(Value::String(value)) if is_builtin_harness(value) => Some(value.clone()),
+        _ => {
+            return Err(CliError::execution(
+                "workflow requested a non-built-in harness",
+                json!({}),
+            ));
+        }
+    };
+    let objective = match object.get("provider_objective") {
+        Some(Value::Null) | None => None,
+        Some(Value::String(value)) => Some(parse_objective(value)?),
+        _ => {
+            return Err(CliError::execution(
+                "workflow provider objective is invalid",
+                json!({}),
+            ));
+        }
+    };
+    Ok((harness, objective))
+}
+
+fn is_builtin_harness(value: &str) -> bool {
+    matches!(
+        canonical_harness_id(value),
+        CODING_HARNESS_ID
+            | RESEARCH_HARNESS_ID
+            | DESIGN_HARNESS_ID
+            | OPERATIONS_HARNESS_ID
+            | SECURITY_HARNESS_ID
+            | DEBUGGING_HARNESS_ID
+            | DATA_HARNESS_ID
+    )
+}
+
 pub(super) fn active_skill_context(config: &RuntimeConfig) -> Result<Option<String>, CliError> {
     let root = config.data_dir().join("skills");
     let metadata = match fs::symlink_metadata(&root) {
@@ -951,14 +1061,24 @@ pub(super) fn active_skill_context(config: &RuntimeConfig) -> Result<Option<Stri
             json!({"root": root}),
         ));
     }
-    SkillEngine::discover(root)
+    let context = SkillEngine::discover(root)
         .and_then(|engine| engine.active_context())
         .map_err(|error: SkillError| {
             CliError::execution(
                 "enabled Skill context is unavailable",
                 json!({"error": error.to_string()}),
             )
+        })?;
+    context
+        .map(|base| {
+            governed_text(
+                config,
+                ResearchArtifactKind::Skill,
+                ACTIVE_SKILLS_TARGET,
+                &base,
+            )
         })
+        .transpose()
 }
 
 pub(super) struct AgentOptions<'a> {
@@ -1644,14 +1764,8 @@ fn plan_task(
     let provider = configured_provider_for(config, model, "planning", provider_name)?;
     let manifest = provider.manifest().clone();
     let messages = vec![
-        ChatMessage::system(
-            "You are Pandora's planning layer. Return only JSON with one string field named task. "
-                .to_owned()
-                + "The task must use exactly one bounded format: read:<path>, search:<query>, "
-                + "review:<path>, patch:<path>:<content>, or verify. Do not return shell commands, "
-                + "credentials, additional fields, or paths outside the workspace.",
-        )
-        .map_err(|error| CliError::provider(error.to_string(), json!({})))?,
+        ChatMessage::system(planner_template(config)?)
+            .map_err(|error| CliError::provider(error.to_string(), json!({})))?,
         ChatMessage::user(request.to_owned())
             .map_err(|error| CliError::provider(error.to_string(), json!({})))?,
     ];

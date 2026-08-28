@@ -312,6 +312,33 @@ impl ResearchArtifactStore {
         Ok(candidate)
     }
 
+    /// Loads an exact, previously validated artifact for a governed runtime
+    /// consumer. This does not resolve replacements or grant activation
+    /// authority; callers must obtain the selected artifact from the catalog.
+    pub fn load_artifact(
+        &self,
+        artifact_id: &ArtifactId,
+        kind: ResearchArtifactKind,
+        target_id: &str,
+    ) -> Result<Option<Vec<u8>>, ResearchArtifactError> {
+        validate_target(target_id)?;
+        let connection = self.lock()?;
+        let artifact = connection
+            .query_row(
+                "SELECT artifact FROM research_artifacts WHERE artifact_id = ?1 AND kind = ?2 AND target_id = ?3",
+                params![artifact_id.as_str(), kind.as_str(), target_id],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional()
+            .map_err(|_| ResearchArtifactError::StoreUnavailable)?;
+        if let Some(artifact) = artifact.as_ref() {
+            if hash_artifact(artifact) != artifact_id.as_str() {
+                return Err(ResearchArtifactError::CorruptRecord);
+            }
+            validate_artifact(kind, artifact)?;
+        }
+        Ok(artifact)
+    }
     fn lock(&self) -> Result<MutexGuard<'_, Connection>, ResearchArtifactError> {
         self.connection
             .lock()
