@@ -5,6 +5,11 @@ Parliament and the Reference Monitor remain the only authorization path, while
 self-improvement can propose, evaluate, admit, activate, and roll back
 candidates only through the existing evidence gates.
 
+Production readiness is Phase 6. Higher-level agent-platform work such as
+prompt caching, background agents, parallel orchestration, evaluation-driven
+loops, memory consolidation, self-healing tests, agent CI/CD, and the
+OpenDesign-informed frontend direction is tracked in [the roadmap](ROADMAP.md).
+
 ## Identity and tenant isolation
 
 The local service supports persisted identities with viewer, operator, and

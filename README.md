@@ -27,10 +27,10 @@ The source tree also contains the production-readiness controls for the next
 release: scoped identities, cryptographic device trust, encrypted secrets,
 recovery archives, local crash records, and stable-release signing gates. See
 [production readiness](docs/PRODUCTION.md).
-The source tree also contains the production-readiness controls for the next
-release: scoped identities, cryptographic device trust, encrypted secrets,
-recovery archives, local crash records, and stable-release signing gates. See
-[production readiness](docs/PRODUCTION.md).
+For the remaining platform phases, including prompt caching, background and
+parallel agents, evaluation-driven loops, memory consolidation, self-healing
+tests, agent operations, and the OpenDesign-informed frontend direction, see
+[the roadmap](docs/ROADMAP.md).
 
 The npm package also exports a typed TypeScript client for the stable JSON CLI
 contract. It forwards an argv array to the verified native binary and does not
