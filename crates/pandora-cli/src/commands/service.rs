@@ -6,8 +6,8 @@ use pandora_harnesses::HarnessCatalog;
 use pandora_runtime::config::RuntimeConfig;
 use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::{
-    ApprovalStore, ArtifactCatalog, EvolutionEngine, ExecutionController, RuntimeService,
-    RuntimeServiceScope, ServiceTokenStore,
+    ApprovalStore, ArtifactCatalog, EvolutionEngine, ExecutionController, FleetEngine,
+    RuntimeService, RuntimeServiceScope, ServiceTokenStore,
 };
 use pandora_service::{LocalService, LocalServiceConfig};
 use pandora_types::{
@@ -128,6 +128,12 @@ fn build_runtime_service(config: &RuntimeConfig) -> Result<RuntimeService, CliEr
         RuntimeServiceScope::new(principal, tenant, workspace),
         providers,
     )
+    .with_fleet(
+        FleetEngine::open(config.data_dir().join("fleet.sqlite3"))
+            .map_err(|error| CliError::internal(error.to_string(), json!({})))?,
+        "pandora-service",
+    )
+    .map_err(|error| CliError::internal(error.to_string(), json!({})))?
     .with_evolution(Arc::new(evolution))
     .with_artifact_catalog(Arc::new(artifact_catalog));
     let Some(model) = config.provider_model() else {

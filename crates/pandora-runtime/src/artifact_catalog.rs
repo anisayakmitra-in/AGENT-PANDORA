@@ -252,7 +252,7 @@ impl ArtifactCatalog {
         artifact: &ArtifactId,
     ) -> Result<Vec<ArtifactActivation>, ArtifactCatalogError> {
         Ok(self
-            .list(usize::MAX)?
+            .list(i64::MAX as usize)?
             .into_iter()
             .filter(|binding| {
                 binding.base_artifact() == artifact || binding.candidate_artifact() == artifact

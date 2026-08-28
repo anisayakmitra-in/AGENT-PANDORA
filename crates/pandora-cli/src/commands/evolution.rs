@@ -10,9 +10,9 @@ use pandora_provider::{
 use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::{
     ArtifactCatalog, EvaluationEngine, EvolutionEngine, EvolutionError, EvolutionRecord,
-    ExecutionController, HoldoutCase, HoldoutSetReport, MAX_HOLDOUT_CASES, MemoryEngine,
-    PackageStore, ReplacementEngine, ReplacementError, ResearchArtifactError,
-    ResearchArtifactStore,
+    ExecutionController, FleetEngine, FleetLeaseState, HoldoutCase, HoldoutSetReport,
+    MAX_HOLDOUT_CASES, MemoryEngine, PackageStore, ReplacementEngine, ReplacementError,
+    ResearchArtifactError, ResearchArtifactStore,
 };
 use pandora_types::{
     ArtifactId, ArtifactSignature, CanaryResult, Capability, ContextClassification,
@@ -379,6 +379,7 @@ fn activate(args: &[String]) -> Result<CommandResult, CliError> {
     let proposal_id = required_proposal_id(parsed.value("id"), "activate")?;
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
+    ensure_evolution_quiescent(&config)?;
     let engine = open_engine(&config)?;
     let catalog = open_artifact_catalog(&config)?;
     let record = engine.inspect(&proposal_id).map_err(evolution_error)?;
@@ -461,6 +462,7 @@ fn rollback(args: &[String]) -> Result<CommandResult, CliError> {
         .ok_or_else(|| CliError::usage("evolution rollback requires '--reason <text>'"))?;
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
+    ensure_evolution_quiescent(&config)?;
     let engine = open_engine(&config)?;
     let catalog = open_artifact_catalog(&config)?;
     let receipt = ReplacementEngine::new()
@@ -632,6 +634,37 @@ fn inspect(args: &[String]) -> Result<CommandResult, CliError> {
         data,
         format!("Inspected evolution proposal {proposal_id}"),
     ))
+}
+
+fn ensure_evolution_quiescent(
+    config: &pandora_runtime::config::RuntimeConfig,
+) -> Result<(), CliError> {
+    let fleet = FleetEngine::open(config.data_dir().join("fleet.sqlite3"))
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    fleet
+        .expire_leases(timestamp().as_unix_seconds())
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let active = fleet
+        .list_leases()
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?
+        .into_iter()
+        .filter(|lease| lease.state() == FleetLeaseState::Active)
+        .map(|lease| {
+            json!({
+                "lease_id": lease.id(),
+                "execution_id": lease.execution_id(),
+                "expires_at": lease.expires_at(),
+            })
+        })
+        .collect::<Vec<_>>();
+    if active.is_empty() {
+        Ok(())
+    } else {
+        Err(CliError::execution(
+            "evolution mutation is blocked while executions are active",
+            json!({"active_leases": active}),
+        ))
+    }
 }
 
 fn open_engine(

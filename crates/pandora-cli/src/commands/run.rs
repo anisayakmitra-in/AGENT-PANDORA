@@ -23,8 +23,9 @@ use pandora_runtime::{
 };
 use pandora_runtime::{
     ArtifactCatalog, DEFAULT_MAX_SAMPLES_PER_TARGET, EfficiencyEngine, EfficiencyStore,
-    ExecutionController, PackageState, PackageStore, ResearchArtifactStore, RolloutReducer,
-    SkillEngine, SkillError, WasmExecutor, WasmGene,
+    ExecutionController, FleetBudget, FleetEngine, FleetError, FleetNode, PackageState,
+    PackageStore, ResearchArtifactStore, RolloutReducer, SkillEngine, SkillError, WasmExecutor,
+    WasmGene,
 };
 use pandora_types::{
     AdaptationCandidate, AdaptationRequest, AdaptationTarget, ArtifactId, Capability,
@@ -37,11 +38,26 @@ use pandora_types::{
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const MAX_PLANNED_TASK_BYTES: usize = 8 * 1024;
 const DEFAULT_AGENT_MAX_TURNS: u32 = 8;
 const DEFAULT_AGENT_MAX_TOOL_CALLS: u32 = 16;
+const AGENT_LEASE_DURATION_SECONDS: u64 = 60 * 60;
+const AGENT_FLEET_NODE_ID: &str = "pandora-cli";
+static NEXT_AGENT_LEASE: AtomicU64 = AtomicU64::new(1);
+
+struct ActiveAgentLease {
+    fleet: FleetEngine,
+    lease_id: String,
+}
+
+impl Drop for ActiveAgentLease {
+    fn drop(&mut self) {
+        let _ = self.fleet.release_lease(&self.lease_id);
+    }
+}
 
 struct WasmGeneResolution {
     base_artifact: ArtifactId,
@@ -642,6 +658,57 @@ pub(super) fn require_runnable_harness(
     ))
 }
 
+fn acquire_agent_lease(
+    config: &RuntimeConfig,
+    session: &Session,
+    max_tool_calls: u32,
+) -> Result<ActiveAgentLease, CliError> {
+    let now = timestamp().as_unix_seconds();
+    let fleet =
+        FleetEngine::open(config.data_dir().join("fleet.sqlite3")).map_err(fleet_runtime_error)?;
+    fleet.expire_leases(now).map_err(fleet_runtime_error)?;
+    let node = FleetNode::new(
+        AGENT_FLEET_NODE_ID,
+        env!("CARGO_PKG_VERSION"),
+        "cli",
+        vec!["agent.execute".to_owned()],
+        now,
+    )
+    .map_err(fleet_runtime_error)?;
+    match fleet.register_node(&node) {
+        Ok(_) | Err(FleetError::NodeAlreadyRegistered) => {}
+        Err(error) => return Err(fleet_runtime_error(error)),
+    }
+    let sequence = NEXT_AGENT_LEASE.fetch_add(1, Ordering::Relaxed);
+    let lease_id = format!(
+        "agent-{}-{}-{}-{}",
+        session.id(),
+        std::process::id(),
+        now,
+        sequence
+    );
+    fleet
+        .acquire_lease(
+            lease_id.clone(),
+            AGENT_FLEET_NODE_ID,
+            format!("agent:{}", session.id()),
+            FleetBudget::new(
+                0,
+                u64::from(max_tool_calls),
+                AGENT_LEASE_DURATION_SECONDS,
+                0,
+            ),
+            now,
+            AGENT_LEASE_DURATION_SECONDS,
+        )
+        .map_err(fleet_runtime_error)?;
+    Ok(ActiveAgentLease { fleet, lease_id })
+}
+
+fn fleet_runtime_error(error: FleetError) -> CliError {
+    CliError::internal(error.to_string(), json!({}))
+}
+
 pub(super) fn execute_agent_core(
     config: &RuntimeConfig,
     controller: &ExecutionController,
@@ -673,6 +740,7 @@ pub(super) fn execute_agent_core(
     let loop_engine = AgentLoop::new(options.max_turns, options.max_tool_calls)
         .and_then(|engine| engine.with_context_cache(config.data_dir().join("context-cache.json")))
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let _active_lease = acquire_agent_lease(config, session, options.max_tool_calls)?;
     let started = Instant::now();
     let result = match options.approval_id {
         Some(approval_id) => loop_engine.run_with_history_and_approval_and_skill_context(

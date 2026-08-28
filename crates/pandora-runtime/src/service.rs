@@ -6,6 +6,7 @@ use crate::artifact_catalog::{ArtifactCatalog, ArtifactCatalogError};
 use crate::evaluation_engine::EvaluationEngine;
 use crate::evolution::{EvolutionEngine, EvolutionError, EvolutionRecord};
 use crate::execution_controller::{ExecutionController, RunStatus, RunSummary, RuntimeError};
+use crate::fleet::{FleetBudget, FleetEngine, FleetError, FleetNode};
 use crate::sessions::{SessionError, SessionStore};
 use crate::tool_engine::ToolEngine;
 use pandora_provider::Provider;
@@ -71,6 +72,7 @@ pub enum RuntimeServiceError {
     ArtifactCatalogUnavailable,
     Approval(ApprovalError),
     Session(SessionError),
+    Fleet(FleetError),
 }
 
 impl RuntimeServiceError {
@@ -102,6 +104,7 @@ impl RuntimeServiceError {
             }
             Self::Approval(_) => "approval_store_failed",
             Self::Session(SessionError::SessionNotFound) => "session_not_found",
+            Self::Fleet(_) => "fleet_registry_failed",
             Self::Session(SessionError::ScopeViolation) => "session_scope_violation",
             Self::Session(_) => "session_store_failed",
         }
@@ -133,6 +136,7 @@ impl fmt::Display for RuntimeServiceError {
             }
             Self::Approval(error) => error.fmt(formatter),
             Self::Session(error) => error.fmt(formatter),
+            Self::Fleet(error) => error.fmt(formatter),
         }
     }
 }
@@ -193,6 +197,12 @@ impl From<SessionError> for RuntimeServiceError {
     }
 }
 
+impl From<FleetError> for RuntimeServiceError {
+    fn from(error: FleetError) -> Self {
+        Self::Fleet(error)
+    }
+}
+
 pub struct RuntimeService {
     controller: ExecutionController,
     sessions: SessionStore,
@@ -202,12 +212,31 @@ pub struct RuntimeService {
     agent: Option<RuntimeServiceAgent>,
     evolution: Option<Arc<EvolutionEngine>>,
     artifact_catalog: Option<Arc<ArtifactCatalog>>,
+    fleet: Option<RuntimeServiceFleet>,
     next_session: AtomicU64,
+    next_lease: AtomicU64,
+}
+
+struct RuntimeServiceFleet {
+    engine: Arc<FleetEngine>,
+    node_id: String,
+}
+
+struct ActiveServiceLease {
+    engine: Arc<FleetEngine>,
+    lease_id: String,
+}
+
+impl Drop for ActiveServiceLease {
+    fn drop(&mut self) {
+        let _ = self.engine.release_lease(&self.lease_id);
+    }
 }
 
 struct RuntimeServiceAgent {
     provider: Arc<dyn Provider>,
     loop_engine: AgentLoop,
+    max_tool_calls: u32,
     skill_context: Option<String>,
 }
 
@@ -237,8 +266,36 @@ impl RuntimeService {
             agent: None,
             evolution: None,
             artifact_catalog: None,
+            fleet: None,
             next_session: AtomicU64::new(1),
+            next_lease: AtomicU64::new(1),
         }
+    }
+
+    pub fn with_fleet(
+        mut self,
+        engine: FleetEngine,
+        node_id: impl Into<String>,
+    ) -> Result<Self, RuntimeServiceError> {
+        let node_id = node_id.into();
+        let now = current_timestamp().as_unix_seconds();
+        engine.expire_leases(now)?;
+        let node = FleetNode::new(
+            node_id.clone(),
+            env!("CARGO_PKG_VERSION"),
+            "service",
+            vec!["agent.execute".to_owned(), "runtime.execute".to_owned()],
+            now,
+        )?;
+        match engine.register_node(&node) {
+            Ok(_) | Err(FleetError::NodeAlreadyRegistered) => {}
+            Err(error) => return Err(error.into()),
+        }
+        self.fleet = Some(RuntimeServiceFleet {
+            engine: Arc::new(engine),
+            node_id,
+        });
+        Ok(self)
     }
 
     pub fn with_agent(
@@ -254,6 +311,7 @@ impl RuntimeService {
         self.agent = Some(RuntimeServiceAgent {
             provider,
             loop_engine,
+            max_tool_calls,
             skill_context,
         });
         Ok(self)
@@ -710,6 +768,7 @@ impl RuntimeService {
         let session = self.allocate_session(now)?;
         let intent = service_task_intent(request)?;
 
+        let _active_lease = self.acquire_execution_lease(&session, now, 0)?;
         let summary = self.controller.run_at(intent, session.clone(), now)?;
         self.sessions.create(&session)?;
         self.persist_execution(&session, &summary, "local", now)?;
@@ -742,6 +801,7 @@ impl RuntimeService {
         )?;
         let session = snapshot.session().clone();
         let intent = service_task_intent(request.request())?;
+        let _active_lease = self.acquire_execution_lease(&session, now, 0)?;
         let summary = self.controller.run_with_approval(
             intent,
             session.clone(),
@@ -787,6 +847,8 @@ impl RuntimeService {
                 (session, Vec::new())
             }
         };
+        let _active_lease =
+            self.acquire_execution_lease(&session, now, u64::from(agent.max_tool_calls))?;
         let provider_id = agent.provider.manifest().id().as_str();
         let l1_evidence = self.sessions.l1_evidence_context(
             session.id(),
@@ -850,6 +912,8 @@ impl RuntimeService {
             self.scope.workspace_id(),
         )?;
         let session = snapshot.session().clone();
+        let _active_lease =
+            self.acquire_execution_lease(&session, now, u64::from(agent.max_tool_calls))?;
         let provider_id = agent.provider.manifest().id().as_str();
         let l1_evidence = self.sessions.l1_evidence_context(
             session.id(),
@@ -976,6 +1040,33 @@ impl RuntimeService {
         Ok(self.approvals.create(approval)?)
     }
 
+    fn acquire_execution_lease(
+        &self,
+        session: &Session,
+        now: Timestamp,
+        max_tools: u64,
+    ) -> Result<Option<ActiveServiceLease>, RuntimeServiceError> {
+        let Some(fleet) = &self.fleet else {
+            return Ok(None);
+        };
+        let now = now.as_unix_seconds();
+        fleet.engine.expire_leases(now)?;
+        let sequence = self.next_lease.fetch_add(1, Ordering::Relaxed);
+        let lease_id = format!("service-{}-{}-{}", session.id(), now, sequence);
+        fleet.engine.acquire_lease(
+            lease_id.clone(),
+            fleet.node_id.clone(),
+            format!("service:{}", session.id()),
+            FleetBudget::new(0, max_tools, 60 * 60, 0),
+            now,
+            60 * 60,
+        )?;
+        Ok(Some(ActiveServiceLease {
+            engine: Arc::clone(&fleet.engine),
+            lease_id,
+        }))
+    }
+
     fn allocate_session(&self, now: Timestamp) -> Result<Session, RuntimeServiceError> {
         let sequence = self.next_session.fetch_add(1, Ordering::Relaxed);
         let timestamp = SystemTime::now()
@@ -1047,6 +1138,14 @@ impl RuntimeService {
         );
         Ok(receipt)
     }
+}
+
+fn current_timestamp() -> Timestamp {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    Timestamp::from_unix_seconds(seconds)
 }
 
 fn service_task_intent(request: &ServiceRunRequest) -> Result<TaskIntent, RuntimeServiceError> {
