@@ -784,7 +784,7 @@ fn expect_controlled_stop(error: AgentLoopError) -> (AgentControlStop, AgentRunS
     let AgentLoopError::ControlledStop { reason, summary } = error else {
         panic!("expected controlled stop, got {error:?}");
     };
-    (reason, summary)
+    (reason, *summary)
 }
 
 fn unique_temp_dir(prefix: &str) -> PathBuf {

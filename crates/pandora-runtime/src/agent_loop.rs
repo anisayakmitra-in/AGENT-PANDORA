@@ -161,11 +161,11 @@ pub enum AgentLoopError {
     TurnBudgetExceeded,
     ApprovalRequired {
         reason: String,
-        summary: AgentRunSummary,
+        summary: Box<AgentRunSummary>,
     },
     ControlledStop {
         reason: AgentControlStop,
-        summary: AgentRunSummary,
+        summary: Box<AgentRunSummary>,
     },
     Execution(RuntimeError),
 }
@@ -618,7 +618,7 @@ impl AgentLoop {
                         runs.push(summary);
                         return Err(AgentLoopError::ApprovalRequired {
                             reason,
-                            summary: AgentRunSummary {
+                            summary: Box::new(AgentRunSummary {
                                 final_text: String::new(),
                                 turns: 0,
                                 tool_calls,
@@ -630,7 +630,7 @@ impl AgentLoop {
                                     context_receipt: Box::new(context_receipt.clone()),
                                 }),
                                 messages: persisted_messages(&messages),
-                            },
+                            }),
                         });
                     }
                 }
@@ -772,7 +772,7 @@ impl AgentLoop {
                         runs.push(summary);
                         return Err(AgentLoopError::ApprovalRequired {
                             reason,
-                            summary: AgentRunSummary {
+                            summary: Box::new(AgentRunSummary {
                                 final_text: String::new(),
                                 turns: turn,
                                 tool_calls,
@@ -784,7 +784,7 @@ impl AgentLoop {
                                     context_receipt: Box::new(context_receipt.clone()),
                                 }),
                                 messages: persisted_messages(&messages),
-                            },
+                            }),
                         });
                     }
                 }
@@ -970,7 +970,7 @@ fn check_control(
         .checkpoint(AgentCheckpoint::new(kind, turns, tool_calls, usage))
         .map_err(|reason| AgentLoopError::ControlledStop {
             reason,
-            summary: AgentRunSummary {
+            summary: Box::new(AgentRunSummary {
                 final_text: String::new(),
                 turns,
                 tool_calls,
@@ -982,7 +982,7 @@ fn check_control(
                     context_receipt: Box::new(context_receipt.clone()),
                 }),
                 messages: persisted_messages(messages),
-            },
+            }),
         })
 }
 
