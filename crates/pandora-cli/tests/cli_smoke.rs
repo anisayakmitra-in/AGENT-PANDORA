@@ -5313,7 +5313,10 @@ fn package_meta_admission_survives_cli_restart_without_runtime_authority() {
     assert_eq!(output.status.code(), Some(50));
     let response = parse_json(&output);
     assert_eq!(response["code"], "execution_failed");
-    assert_eq!(response["message"], "harness 'example/meta' is not runnable");
+    assert_eq!(
+        response["message"],
+        "harness 'example/meta' is not runnable"
+    );
     assert_eq!(response["details"]["kind"], "meta");
 
     let output = fixture

@@ -419,6 +419,18 @@ jobs:
             --output-certificate dist/checksums.txt.pem \
             dist/checksums.txt
 
+      - name: Verify checksum signature
+        shell: bash
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cosign verify-blob \
+            --certificate dist/checksums.txt.pem \
+            --signature dist/checksums.txt.sig \
+            --certificate-identity-regexp "^https://github.com/anisayakmitra-in/PANDORA-AGENT/.github/workflows/release.yml@refs/tags/${GITHUB_REF_NAME}$" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            dist/checksums.txt
+
       - name: Attest native artifacts
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
@@ -428,6 +440,10 @@ jobs:
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: "dist/desktop-*"
+
+      - name: Generate release evidence index
+        shell: bash
+        run: python scripts/release_evidence.py "$GITHUB_REF_NAME" --dist dist --output dist/release-evidence.json
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2

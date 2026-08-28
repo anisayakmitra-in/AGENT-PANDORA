@@ -16,7 +16,7 @@ operations, and signed native releases.
 
 | Phase | Estimate | Shipped in the source tree | Work still open |
 | --- | ---: | --- | --- |
-| 6. Production readiness | 80-85% | scoped identity, automatic local device trust, encrypted secrets, local telemetry and crash records, encrypted backup and restore, update channels, release workflows, CodeQL, dependency audits | signed stable artifacts, clean-machine release proof on every platform, restore drills, installer rollback exercises |
+| 6. Production readiness | 80-85% | scoped identity, automatic local device trust, encrypted secrets, local telemetry and crash records, encrypted backup and restore, update channels, release workflows, checksum signature verification, release evidence index, CodeQL, dependency audits | signed stable artifacts, clean-machine release proof on every platform, restore drills, installer rollback exercises |
 | 7. Runtime scale and orchestration | 75-85% | persistent prompt-context cache, headless jobs, bounded parallel subagents, exact-commit worktrees, durable orchestration claims and receipts, interruption and resume rules, multi-repository plans, fleet leases and budgets | long-running worker supervision, cross-process quiescence, load and soak tests, operator recovery for abandoned leases |
 | 8. Agent experience and disclosure | 70-80% | native desktop source, Command and Council inspection, background runs, runtime inventory, Harness Lab, package lifecycle, BYOK providers and models, MCP configuration, pinned GitHub packages, active custom Domain and Meta Harnesses, WebAssembly Genes, custom Auto Route contracts, optional built-in Domain and Meta replacement | package-authoring UI, route-conflict preview before enable, broader Skill and provider package lifecycles, desktop accessibility pass, native installer release proof |
 | 9. Evaluation-driven loops | 50-60% | trajectory, outcome, policy, regression, adversarial, golden, and holdout evaluation; coding feedback; research-only mutation and population strategies; durable evolution state; canary activation and rollback | scheduled evaluation loops, self-healing test generation, automatic canary policy, operator scorecards, quality gates for every artifact class |
@@ -42,8 +42,8 @@ Next work:
   workflow;
 - test recovery after interruption during update, restore, and catalog
   activation;
-- publish a release evidence index that links checksums, signatures, SBOM,
-  provenance, test runs, and known exceptions.
+- review the generated release evidence index before publishing and retain
+  it with the release record.
 
 ## Phase 7: finish worker operations
 

@@ -105,6 +105,8 @@ tags. The downloaded binary must match the release checksum manifest before
 staging. Local artifacts can additionally require a detached Ed25519
 signature. Release assets include a keyless Cosign signature for the checksum
 manifest, an SPDX SBOM, and GitHub build provenance.
+The publish job also generates release-evidence.json, tying every
+checksum-verified artifact to its signature, SBOM, and provenance subjects.
 
 ## Release boundary
 

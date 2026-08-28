@@ -20,9 +20,10 @@ The canonical prerelease tags for this line are `v2.0.0-alpha.1` through
 
 This beta groups bounded self-healing feedback, composition provenance,
 verified memory synthesis, persisted graph snapshots, holdout evaluation, and
-evidence-only evolution proposal intake. It remains a CLI-only prerelease.
-These additions do not grant effect authority or claim desktop,
-remote-execution, or marketplace support.
+evidence-only evolution proposal intake. It is a CLI-first prerelease with a
+tested Tauri desktop source, not a stable distribution claim.
+The release workflow publishes release-evidence.json, linking checksums,
+signatures, SBOM, provenance subjects, and platform artifacts.
 
 ## v2.0.0-beta.6
 
@@ -136,7 +137,7 @@ AgentLoop, session, approval, and governed effect path.
 - Minor releases (`v2.x.0`) add compatible capabilities within the current release line.
 - Stable major releases change the public contract and increment the major version.
 - Prereleases use `-alpha.N`, `-beta.N`, or `-rc.N` suffixes.
-- Release tags are immutable. Each release must publish notes, checksums, an SBOM, supported-platform results, and rollback instructions.
+- Release tags are immutable. Each release must publish notes, checksums, a signature, an SBOM, a release evidence index, supported-platform results, and rollback instructions.
 - A release is not considered stable until local and GitHub checks pass on Windows, macOS, and Linux.
 
 ## Stable release credentials

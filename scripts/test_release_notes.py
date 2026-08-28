@@ -41,6 +41,20 @@ Older notes.
         with self.assertRaisesRegex(ValueError, "empty"):
             extract_release_notes("# Changelog\n\n## v2.0.0-alpha.2\n", "v2.0.0-alpha.2")
 
+    def test_release_workflow_verifies_and_publishes_release_evidence(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+
+        verify = workflow.index("- name: Verify checksum signature")
+        evidence = workflow.index("- name: Generate release evidence index")
+        publish = workflow.index("- name: Publish GitHub release")
+        self.assertLess(verify, evidence)
+        self.assertLess(evidence, publish)
+        self.assertIn("cosign verify-blob", workflow)
+        self.assertIn('release_evidence.py "$GITHUB_REF_NAME"', workflow)
+        self.assertIn("release-evidence.json", workflow)
+
     def test_release_workflow_publishes_tag_scoped_notes(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
             encoding="utf-8"
