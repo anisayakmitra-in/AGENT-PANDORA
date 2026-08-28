@@ -3,6 +3,8 @@ import {
   admitLocalPackage,
   configureMcp,
   configureProvider,
+  disableLocalPackage,
+  enableLocalPackage,
   installRegistryPackage,
   listLocalPackages,
   loadRuntimeEndpoint,
@@ -10,7 +12,11 @@ import {
   lockLocalPackages,
   nativeEndpoint,
   previewPackageRemoval,
+  previewPackageDisable,
+  previewPackageEnable,
+  previewPackageRollback,
   removeLocalPackage,
+  rollbackLocalPackage,
   RuntimeClient,
   saveRuntimeEndpoint,
   startLocalService,
@@ -26,6 +32,7 @@ import {
   type RuntimeHarness,
   type RuntimeHealth,
   type RuntimeMemoryRecord,
+  type NativePackageResult,
   type RuntimeOrchestrationRun,
   type RuntimePackage,
   type RuntimeProvider,
@@ -1407,10 +1414,21 @@ function PackageManager({ native }: { native: boolean }) {
   const [artifactPath, setArtifactPath] = useState("");
   const [removeTarget, setRemoveTarget] = useState<RuntimePackage | null>(null);
   const [removeConfirmation, setRemoveConfirmation] = useState("");
+  const [lifecycleTarget, setLifecycleTarget] = useState<{ operation: "enable" | "disable" | "rollback"; package: RuntimePackage } | null>(null);
+  const [lifecycleConfirmation, setLifecycleConfirmation] = useState("");
+  const [lifecyclePreview, setLifecyclePreview] = useState<NativePackageResult["data"] | null>(null);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const selectedPackage = packages.find((item) => `${item.id}@${item.version}` === selectedIdentity) ?? packages[0] ?? null;
+
+  useEffect(() => {
+    setRemoveTarget(null);
+    setRemoveConfirmation("");
+    setLifecycleTarget(null);
+    setLifecycleConfirmation("");
+    setLifecyclePreview(null);
+  }, [selectedIdentity]);
 
   const refreshPackages = async () => {
     if (!native) {
@@ -1498,11 +1516,54 @@ function PackageManager({ native }: { native: boolean }) {
     await completeOperation(lockLocalPackages);
   };
 
+  const previewLifecycle = async (target: RuntimePackage, operation: "enable" | "disable" | "rollback") => {
+    if (busy) return;
+    setBusy(`preview-${operation}`);
+    setError("");
+    setMessage("");
+    setRemoveTarget(null);
+    try {
+      const result = operation === "enable"
+        ? await previewPackageEnable(target.id, target.version)
+        : operation === "disable"
+          ? await previewPackageDisable(target.id, target.version)
+          : await previewPackageRollback(target.id);
+      setLifecycleTarget({ operation, package: target });
+      setLifecycleConfirmation("");
+      setLifecyclePreview(result.data);
+      setMessage(result.message);
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : `Package ${operation} preview failed`);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const confirmLifecycle = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!lifecycleTarget || busy) return;
+    const { operation, package: target } = lifecycleTarget;
+    setBusy(operation);
+    await completeOperation(async () => {
+      const result = operation === "enable"
+        ? await enableLocalPackage(target.id, target.version, lifecycleConfirmation)
+        : operation === "disable"
+          ? await disableLocalPackage(target.id, target.version, lifecycleConfirmation)
+          : await rollbackLocalPackage(target.id, lifecycleConfirmation);
+      setLifecycleTarget(null);
+      setLifecycleConfirmation("");
+      setLifecyclePreview(null);
+      return result;
+    });
+  };
+
   const previewRemoval = async (target: RuntimePackage) => {
     if (busy) return;
     setBusy("preview-remove");
     setError("");
     setMessage("");
+    setLifecycleTarget(null);
+    setLifecyclePreview(null);
     try {
       const result = await previewPackageRemoval(target.id, target.version);
       setRemoveTarget(target);
@@ -1539,7 +1600,39 @@ function PackageManager({ native }: { native: boolean }) {
     <div className="package-manager-grid">
       <div className="package-catalog"><div className="package-section-heading"><div><span className="eyebrow">LOCAL CATALOG</span><h4>{busy === "refresh" ? "Refreshing…" : `${packages.length} exact package${packages.length === 1 ? "" : "s"}`}</h4></div><Chip tone={packages.length ? "green" : "neutral"}>{packages.length ? "verified records" : "empty"}</Chip></div><div className="package-list">{packages.length ? packages.map((item) => <button type="button" className={`package-row ${selectedPackage?.id === item.id && selectedPackage.version === item.version ? "is-selected" : ""}`} onClick={() => { setSelectedIdentity(`${item.id}@${item.version}`); setRemoveTarget(null); }} key={`${item.id}@${item.version}`}><span className="package-kind-icon"><Icon name={item.kind === "gene" ? "code" : "box"} size={15} /></span><span><strong>{item.id}</strong><small>{item.kind.replaceAll("_", " ")} · v{item.version}</small></span><Chip tone={item.trust.level === "verified" ? "green" : "gold"}>{item.trust.level}</Chip></button>) : <div className="package-empty"><Icon name="box" size={22} /><p>No local package records. Built-in Harnesses remain core catalog entries.</p></div>}</div></div>
       <div className="package-console">
-        {selectedPackage ? <div className="package-inspection"><div className="package-section-heading"><div><span className="eyebrow">SELECTED PACKAGE</span><h4>{selectedPackage.id}@{selectedPackage.version}</h4></div><Chip tone={selectedPackage.state === "admitted" ? "green" : "blue"}>{selectedPackage.state}</Chip></div><div className="package-facts"><div><span>Publisher</span><strong>{selectedPackage.publisher}</strong></div><div><span>Artifact</span><strong className="mono">{selectedPackage.content_hash}</strong></div><div><span>Compatibility</span><strong>{selectedPackage.compatibility}</strong></div><div><span>Dependencies</span><strong>{selectedPackage.dependencies.length}</strong></div><div><span>Signature evidence</span><strong>{selectedPackage.trust.has_signature && selectedPackage.trust.has_public_key ? "present" : "not present"}</strong></div><div><span>Runtime authority</span><strong className="authority-denied">{selectedPackage.runtime_authority ? "unexpected" : "none"}</strong></div></div><button className="button button-deny package-remove-button" type="button" disabled={Boolean(busy)} onClick={() => void previewRemoval(selectedPackage)}>Preview removal</button>{removeTarget ? <form className="package-remove-confirm" onSubmit={confirmRemoval}><p>Dependency and active-binding checks passed. Type <span className="mono">{removeTarget.id}@{removeTarget.version}</span> to remove this exact record.</p><input aria-label={`Confirm removal ${removeTarget.id}@${removeTarget.version}`} value={removeConfirmation} onChange={(event) => setRemoveConfirmation(event.target.value)} autoComplete="off" spellCheck={false} /><div><button className="button button-secondary" type="button" onClick={() => setRemoveTarget(null)}>Close</button><button className="button button-deny" type="submit" disabled={busy === "remove" || removeConfirmation !== `${removeTarget.id}@${removeTarget.version}`}>{busy === "remove" ? "Removing…" : "Remove package"}</button></div></form> : null}</div> : null}
+        {selectedPackage ? <div className="package-inspection">
+          <div className="package-section-heading">
+            <div><span className="eyebrow">SELECTED PACKAGE</span><h4>{selectedPackage.id}@{selectedPackage.version}</h4></div>
+            <div className="package-heading-chips"><Chip tone={selectedPackage.activation.state === "enabled" ? "green" : "neutral"}>{selectedPackage.activation.state}</Chip><Chip tone={selectedPackage.state === "admitted" ? "green" : "blue"}>{selectedPackage.state}</Chip></div>
+          </div>
+          <div className="package-facts">
+            <div><span>Publisher</span><strong>{selectedPackage.publisher}</strong></div>
+            <div><span>Artifact</span><strong className="mono">{selectedPackage.content_hash}</strong></div>
+            <div><span>Compatibility</span><strong>{selectedPackage.compatibility}</strong></div>
+            <div><span>Dependencies</span><strong>{selectedPackage.dependencies.length}</strong></div>
+            <div><span>Active version</span><strong>{selectedPackage.activation.active_version ?? "none"}</strong></div>
+            <div><span>Rollback target</span><strong>{selectedPackage.activation.previous_version ?? "none"}</strong></div>
+            <div><span>Signature evidence</span><strong>{selectedPackage.trust.has_signature && selectedPackage.trust.has_public_key ? "present" : "not present"}</strong></div>
+            <div><span>Runtime authority</span><strong className="authority-denied">{selectedPackage.runtime_authority || selectedPackage.activation.runtime_authority ? "unexpected" : "none"}</strong></div>
+          </div>
+          <div className="package-lifecycle-actions">
+            <button className="button button-primary" type="button" disabled={Boolean(busy)} onClick={() => void previewLifecycle(selectedPackage, selectedPackage.activation.state === "enabled" ? "disable" : "enable")}>{busy === "preview-enable" || busy === "preview-disable" ? "Checking…" : selectedPackage.activation.state === "enabled" ? "Preview disable" : selectedPackage.activation.active_version ? "Preview update" : "Preview enable"}</button>
+            {selectedPackage.activation.previous_version ? <button className="button button-secondary" type="button" disabled={Boolean(busy)} onClick={() => void previewLifecycle(selectedPackage, "rollback")}>{busy === "preview-rollback" ? "Checking…" : "Preview rollback"}</button> : null}
+            <button className="button button-deny" type="button" disabled={Boolean(busy) || selectedPackage.activation.state === "enabled"} title={selectedPackage.activation.state === "enabled" ? "Disable this exact version before removal" : undefined} onClick={() => void previewRemoval(selectedPackage)}>Preview removal</button>
+          </div>
+          {lifecycleTarget && lifecycleTarget.package.id === selectedPackage.id && lifecycleTarget.package.version === selectedPackage.version ? <form className="package-lifecycle-confirm" onSubmit={confirmLifecycle}>
+            <div className="package-lifecycle-preview">
+              <div><span className="eyebrow">{lifecycleTarget.operation.toUpperCase()} PREVIEW</span><strong>{lifecyclePreview?.ready === false ? "Blocked by current bindings" : "Exact transition is ready"}</strong></div>
+              <Chip tone={lifecyclePreview?.ready === false ? "gold" : "green"}>{lifecyclePreview?.ready === false ? "blocked" : "ready"}</Chip>
+            </div>
+            {lifecyclePreview?.dependencies?.length ? <div className="package-dependency-preview">{lifecyclePreview.dependencies.map((dependency) => <div key={`${dependency.id}@${dependency.version ?? "active"}`}><span>{dependency.id}<small>{dependency.version ?? "active version"} · {dependency.source.replaceAll("_", " ")}</small></span><Chip tone={dependency.enabled ? "green" : dependency.optional ? "neutral" : "gold"}>{dependency.enabled ? "ready" : dependency.optional ? "optional" : "missing"}</Chip></div>)}</div> : null}
+            {lifecyclePreview?.enabled_dependents?.length ? <p className="package-lifecycle-blockers">Enabled dependents: <span className="mono">{lifecyclePreview.enabled_dependents.join(", ")}</span></p> : null}
+            <p>Type <span className="mono">{lifecycleTarget.operation === "rollback" ? selectedPackage.id : `${selectedPackage.id}@${selectedPackage.version}`}</span> to confirm this exact {lifecycleTarget.operation}. The binding changes; runtime authority does not.</p>
+            <input aria-label={`Confirm ${lifecycleTarget.operation} ${selectedPackage.id}@${selectedPackage.version}`} value={lifecycleConfirmation} onChange={(event) => setLifecycleConfirmation(event.target.value)} autoComplete="off" spellCheck={false} />
+            <div><button className="button button-secondary" type="button" onClick={() => { setLifecycleTarget(null); setLifecyclePreview(null); }}>Close</button><button className="button button-primary" type="submit" disabled={Boolean(busy) || lifecyclePreview?.ready === false || lifecycleConfirmation !== (lifecycleTarget.operation === "rollback" ? selectedPackage.id : `${selectedPackage.id}@${selectedPackage.version}`)}>{busy === lifecycleTarget.operation ? "Applying…" : `Confirm ${lifecycleTarget.operation}`}</button></div>
+          </form> : null}
+          {removeTarget ? <form className="package-remove-confirm" onSubmit={confirmRemoval}><p>Dependency and lifecycle-binding checks passed. Type <span className="mono">{removeTarget.id}@{removeTarget.version}</span> to remove this exact record.</p><input aria-label={`Confirm removal ${removeTarget.id}@${removeTarget.version}`} value={removeConfirmation} onChange={(event) => setRemoveConfirmation(event.target.value)} autoComplete="off" spellCheck={false} /><div><button className="button button-secondary" type="button" onClick={() => setRemoveTarget(null)}>Close</button><button className="button button-deny" type="submit" disabled={busy === "remove" || removeConfirmation !== `${removeTarget.id}@${removeTarget.version}`}>{busy === "remove" ? "Removing…" : "Remove package"}</button></div></form> : null}
+        </div> : null}
         <div className="package-source-tabs" role="tablist" aria-label="Package source"><button type="button" role="tab" aria-selected={sourceTab === "registry"} className={sourceTab === "registry" ? "is-selected" : ""} onClick={() => setSourceTab("registry")}>Registry URL</button><button type="button" role="tab" aria-selected={sourceTab === "local"} className={sourceTab === "local" ? "is-selected" : ""} onClick={() => setSourceTab("local")}>Local artifact</button></div>
         {sourceTab === "registry" ? <form className="package-form" onSubmit={submitRegistry}><label><span>Package ID</span><input aria-label="Registry package ID" value={packageId} onChange={(event) => setPackageId(event.target.value)} placeholder="publisher/gene" maxLength={256} autoComplete="off" spellCheck={false} /></label><label><span>Exact version <small>optional current release</small></span><input aria-label="Registry package version" value={version} onChange={(event) => setVersion(event.target.value)} placeholder="1.0.0" maxLength={128} autoComplete="off" spellCheck={false} /></label><label className="package-form-wide"><span>M-Place registry URL</span><input aria-label="Package registry URL" value={registryUrl} onChange={(event) => setRegistryUrl(event.target.value)} placeholder="https://registry.example.com" maxLength={2048} autoComplete="url" spellCheck={false} /></label><label className="package-form-wide"><span>Registry token <small>optional · process-scoped only</small></span><input aria-label="Package registry token" type="password" value={registryToken} onChange={(event) => setRegistryToken(event.target.value)} autoComplete="new-password" /></label><div className="package-form-footer"><p>HTTPS only outside loopback. Redirects and registry-controlled artifact URLs are refused by the existing client.</p><button className="button button-primary" type="submit" disabled={Boolean(busy) || !packageId.trim() || !registryUrl.trim()}>{busy === "install" ? "Installing…" : "Fetch and admit"}</button></div></form> : <form className="package-form" onSubmit={submitLocal}><label className="package-form-wide"><span>Absolute manifest path</span><input aria-label="Local package manifest path" value={manifestPath} onChange={(event) => setManifestPath(event.target.value)} placeholder="C:\path\to\manifest.json" maxLength={4096} autoComplete="off" spellCheck={false} /></label><label className="package-form-wide"><span>Absolute artifact path</span><input aria-label="Local package artifact path" value={artifactPath} onChange={(event) => setArtifactPath(event.target.value)} placeholder="C:\path\to\gene.wasm" maxLength={4096} autoComplete="off" spellCheck={false} /></label><div className="package-form-footer"><p>Both paths must be regular local files, not symlinks. Admission remains metadata-only until an exact governed run selects the package.</p><button className="button button-primary" type="submit" disabled={Boolean(busy) || !manifestPath.trim() || !artifactPath.trim()}>{busy === "admit" ? "Admitting…" : "Validate and admit"}</button></div></form>}
       </div>

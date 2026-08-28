@@ -223,8 +223,8 @@ mod tests {
                 "filesystem",
                 "git_worktree",
                 "mcp_stdio",
-                "process",
                 "network",
+                "process",
                 "provider",
                 "wasm"
             ]

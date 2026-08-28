@@ -325,10 +325,9 @@ impl CliSubagentFixture {
                 TrustEvidence::unsigned(),
             )
             .unwrap();
-            PackageStore::open(data_dir.join("packages.sqlite3"))
-                .unwrap()
-                .admit(&package, &package, artifact)
-                .unwrap();
+            let packages = PackageStore::open(data_dir.join("packages.sqlite3")).unwrap();
+            packages.admit(&package, &package, artifact).unwrap();
+            packages.enable(package.id(), package.version()).unwrap();
             let catalog = HarnessCatalog::builtins()
                 .with_declarative_domain(&package)
                 .unwrap();

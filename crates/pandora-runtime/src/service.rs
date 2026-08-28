@@ -2570,10 +2570,17 @@ mod tests {
         let requests = provider.requests();
         assert_eq!(requests.len(), 2);
         assert!(
-            requests[0][0]
+            !requests[0][0]
                 .content()
                 .contains("Keep the existing heading.")
         );
+        assert!(
+            requests[0][1]
+                .content()
+                .contains("Keep the existing heading.")
+        );
+        assert_eq!(requests[0][1].role(), MessageRole::User);
+        assert_eq!(requests[0][2].content(), "Update the README");
         assert!(
             requests[1][0]
                 .content()

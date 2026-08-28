@@ -141,7 +141,9 @@ pub use orchestration_engine::{
 pub use orchestration_store::{
     OrchestrationRunRecord, OrchestrationRunStatus, OrchestrationStore, OrchestrationStoreError,
 };
-pub use package_store::{MAX_STORED_ARTIFACT_BYTES, PackageStore, PackageStoreError};
+pub use package_store::{
+    MAX_STORED_ARTIFACT_BYTES, PackageBinding, PackageStore, PackageStoreError,
+};
 pub use parliament::Parliament;
 pub use permit_store::{ConsumedPermit, PermitError, PermitStore};
 pub use recovery_archive::{RecoveryArchive, RecoveryArchiveError, RecoveryBundle, RecoveryEntry};

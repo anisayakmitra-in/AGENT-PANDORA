@@ -703,7 +703,7 @@ impl AgentLoop {
             let mut request = ModelRequest::new(
                 provider.manifest().id().clone(),
                 provider.manifest().default_model().clone(),
-                messages.clone(),
+                provider_messages(&messages, persistent_context.as_ref(), context_insert_index),
             )?
             .with_tools(schemas.clone())?
             .with_max_output_tokens(1_024)?
@@ -1036,6 +1036,19 @@ fn persisted_messages(
         persisted.insert(context_insert_index.min(persisted.len()), context.clone());
     }
     Arc::from(persisted.into_boxed_slice())
+}
+
+fn provider_messages(
+    messages: &[ChatMessage],
+    persistent_context: Option<&ChatMessage>,
+    context_insert_index: usize,
+) -> Vec<ChatMessage> {
+    let mut provider = messages.to_vec();
+    if let Some(context) = persistent_context {
+        let provider_index = context_insert_index.saturating_add(1).min(provider.len());
+        provider.insert(provider_index, context.clone());
+    }
+    provider
 }
 
 fn persistent_context_message(
@@ -1862,9 +1875,12 @@ mod tests {
 
         let requests = provider.requests();
         assert!(requests[0][0].content().contains(USER_CONTEXT_BOUNDARY));
-        assert!(requests[0][0].content().contains("fixture context"));
-        assert_eq!(requests[0][1].content(), "Use the selected context");
-        assert!(!requests[0][1].content().contains("fixture context"));
+        assert!(!requests[0][0].content().contains("fixture context"));
+        assert_eq!(requests[0][1].role(), MessageRole::User);
+        assert!(requests[0][1].content().contains("fixture context"));
+        assert!(is_persistent_context_message(&requests[0][1]));
+        assert_eq!(requests[0][2].content(), "Use the selected context");
+        assert!(!requests[0][2].content().contains("fixture context"));
         assert_eq!(result.messages()[0].role(), MessageRole::User);
         assert!(result.messages()[0].content().contains("fixture context"));
         assert!(is_persistent_context_message(&result.messages()[0]));
@@ -1885,7 +1901,7 @@ mod tests {
         assert!(
             result
                 .context_receipt()
-                .included_ids()
+                .dropped_ids()
                 .iter()
                 .any(|id| id == "agent.user-attachment-0")
         );

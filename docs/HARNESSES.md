@@ -75,6 +75,12 @@ pandora package admit --manifest <manifest.json> --artifact <artifact>
 pandora package install <id> [version] --registry <url>
 pandora package list
 pandora package inspect <id> <version>
+pandora package enable <id> <version> --dry-run
+pandora package enable <id> <version> --yes
+pandora package disable <id> <version> --dry-run
+pandora package disable <id> <version> --yes
+pandora package rollback <id> --dry-run
+pandora package rollback <id> --yes
 pandora package lock
 pandora package verify-lock
 pandora package remove <id> <version> --dry-run
@@ -99,6 +105,23 @@ until a publisher trust root is configured. Registry moderation levels are not
 promoted into local `Official` trust. Admission still records metadata only: it
 does not load code, enable a Harness, issue a permit, or grant runtime
 authority.
+
+Every admitted package starts disabled. `package enable` is the separate local
+lifecycle boundary: it requires an exact ID and version, verifies that required
+package dependencies and composed custom Domain Harnesses are already enabled,
+and binds at most one active version for a package ID. Switching to another
+admitted version retains the former exact version as a one-step rollback target.
+`package disable` keeps the verified bytes but removes them from runtime and
+slash-command selection. Enable, disable, and rollback all support `--dry-run`;
+mutations require `--yes` and refuse to break an enabled dependent. These
+bindings do not grant effect authority and cannot alter Parliament, Shadow
+Council, ReferenceMonitor, permits, or the constitutional service.
+
+Multiple exact versions may coexist so an update can be staged before its
+binding changes. An active version cannot be removed. A retained rollback
+version cannot be removed while another version is active; once a package is
+disabled, confirmed removal clears its inactive rollback marker together with
+the package record.
 Removal uses the exact package ID and version. A dry run changes nothing;
 confirmed removal is transactional and refuses to remove a package required by
 another admitted package or named by an admitted Meta Harness composition.
@@ -114,8 +137,9 @@ or stale locks. Writing the lockfile uses an atomic replacement.
 reports the admitted Domain and Meta subset under `admitted_profiles`, and keeps
 all local package records under `package_records`. Admitted profiles are
 discoverable metadata; discovery does not enable them or grant runtime
-authority. A Domain profile remains selectable only through an explicit,
-exact-version governed run.
+authority. A custom profile becomes selectable only after its exact package
+version is enabled, and every run still passes through the governed execution
+path.
 
 Meta Harnesses coordinate existing Domain Harnesses. They do not augment a
 constitutional service, execute effects, install packages, or grant permits.

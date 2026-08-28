@@ -311,20 +311,24 @@ impl HarnessRegistry {
             .map(|harness| harness.manifest().kind() == HarnessKind::Domain)
             .unwrap_or(false);
 
-        match (built_in, installed.as_slice()) {
-            (true, []) => Ok(()),
-            (true, _) | (false, [_, _, ..]) => Err(HarnessRegistryError::AmbiguousMetaDomain {
+        if built_in {
+            return Ok(());
+        }
+        if installed.is_empty() {
+            return Err(HarnessRegistryError::MetaDomainMissing {
                 id: domain.as_str().to_owned(),
-            }),
-            (false, []) => Err(HarnessRegistryError::MetaDomainMissing {
-                id: domain.as_str().to_owned(),
-            }),
-            (false, [record]) if record.manifest().kind() == PackageKind::DomainHarness => Ok(()),
-            (false, [record]) => Err(HarnessRegistryError::MetaDomainNotDomain {
+            });
+        }
+        if let Some(record) = installed
+            .iter()
+            .find(|record| record.manifest().kind() != PackageKind::DomainHarness)
+        {
+            return Err(HarnessRegistryError::MetaDomainNotDomain {
                 id: domain.as_str().to_owned(),
                 kind: record.manifest().kind(),
-            }),
+            });
         }
+        Ok(())
     }
 }
 
@@ -912,7 +916,7 @@ mod tests {
     }
 
     #[test]
-    fn custom_meta_profile_rejects_an_ambiguous_domain_id() {
+    fn custom_meta_profile_allows_side_by_side_domain_versions_for_lifecycle_binding() {
         let first_artifact = b"first domain profile";
         let first = manifest(
             "publisher/domain",
@@ -939,12 +943,9 @@ mod tests {
         registry.install(&first, &first, first_artifact).unwrap();
         registry.install(&second, &second, second_artifact).unwrap();
 
-        assert_eq!(
-            registry.install(&meta, &meta, meta_artifact),
-            Err(HarnessRegistryError::AmbiguousMetaDomain {
-                id: "publisher/domain".to_owned(),
-            })
-        );
+        let record = registry.install(&meta, &meta, meta_artifact).unwrap();
+        assert_eq!(record.state(), PackageState::Admitted);
+        assert!(!record.grants_runtime_authority());
     }
 
     #[test]

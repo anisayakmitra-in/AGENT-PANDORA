@@ -36,6 +36,11 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora fleet dispatch <capability> --json` | `fleet dispatch` | `capability`, `node` |
 | `pandora fleet lease <id> ... --json` | `fleet lease` | `lease` |
 | `pandora package validate --manifest <path> --artifact <path> --json` | `package validate` | `valid`, `package`, `execution_boundary`, `persisted` |
+| `pandora package enable <id> <version> --dry-run --json` | `package enable` | `dry_run`, `changed`, `ready`, `package`, `dependencies`, `enabled_dependents` |
+| `pandora package enable <id> <version> --yes --json` | `package enable` | `dry_run`, `changed`, `package`, `binding` |
+| `pandora package disable <id> <version> --dry-run --json` | `package disable` | `dry_run`, `changed`, `ready`, `package`, `enabled_dependents` |
+| `pandora package disable <id> <version> --yes --json` | `package disable` | `dry_run`, `changed`, `package`, `binding` |
+| `pandora package rollback <id> [--dry-run|--yes] --json` | `package rollback` | `dry_run`, `changed`, target or active version, `binding`, dependency and dependent preview fields for dry runs |
 | `pandora memory recall ... --json` | `memory recall` | `scope`, `tier`, `records`, `count`, `limit`, `durability` |
 | `pandora memory audit ... --json` | `memory audit` | `scope`, `entries`, `count`, `durability` |
 | `pandora memory forget ... --json` | `memory forget` | `dry_run`, `memory_id`, `scope`, `revoked` or `would_revoke` |

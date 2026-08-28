@@ -10,6 +10,8 @@ const runtime = vi.hoisted(() => ({
   capabilities: vi.fn(),
   configureMcp: vi.fn(),
   configureProvider: vi.fn(),
+  disableLocalPackage: vi.fn(),
+  enableLocalPackage: vi.fn(),
   engines: vi.fn(),
   evolution: vi.fn(),
   evolutionActivations: vi.fn(),
@@ -25,7 +27,11 @@ const runtime = vi.hoisted(() => ({
   orchestrations: vi.fn(),
   providers: vi.fn(),
   previewPackageRemoval: vi.fn(),
+  previewPackageDisable: vi.fn(),
+  previewPackageEnable: vi.fn(),
+  previewPackageRollback: vi.fn(),
   removeLocalPackage: vi.fn(),
+  rollbackLocalPackage: vi.fn(),
   resolveApproval: vi.fn(),
   rollbackEvolution: vi.fn(),
   cancelOrchestration: vi.fn(),
@@ -43,12 +49,18 @@ vi.mock("./runtimeClient", () => ({
   saveRuntimeEndpoint: vi.fn(),
   configureMcp: runtime.configureMcp,
   configureProvider: runtime.configureProvider,
+  disableLocalPackage: runtime.disableLocalPackage,
+  enableLocalPackage: runtime.enableLocalPackage,
   admitLocalPackage: runtime.admitLocalPackage,
   installRegistryPackage: runtime.installRegistryPackage,
   listLocalPackages: runtime.listLocalPackages,
   lockLocalPackages: runtime.lockLocalPackages,
   previewPackageRemoval: runtime.previewPackageRemoval,
+  previewPackageDisable: runtime.previewPackageDisable,
+  previewPackageEnable: runtime.previewPackageEnable,
+  previewPackageRollback: runtime.previewPackageRollback,
   removeLocalPackage: runtime.removeLocalPackage,
+  rollbackLocalPackage: runtime.rollbackLocalPackage,
   startLocalService: vi.fn(),
   stopLocalService: vi.fn(),
   RuntimeClient: class {
@@ -710,6 +722,13 @@ describe("Pandora desktop run state", () => {
       meta_composition: null,
       state: "admitted",
       runtime_authority: false,
+      activation: {
+        state: "disabled",
+        active_version: null,
+        previous_version: null,
+        generation: 0,
+        runtime_authority: false,
+      },
     };
     runtime.capabilities.mockResolvedValue([{
       id: "coding-domain",
@@ -740,6 +759,21 @@ describe("Pandora desktop run state", () => {
       restartRequired: true,
       data: { dry_run: false, removed: true },
     });
+    runtime.previewPackageEnable.mockResolvedValue({
+      message: "Activation preview recorded for example/refactor@1.2.3; no lifecycle binding changed.",
+      restartRequired: false,
+      data: {
+        dry_run: true,
+        ready: true,
+        dependencies: [{ id: "workspace.read", version: "0.1.0", optional: false, source: "built_in", enabled: true }],
+        enabled_dependents: [],
+      },
+    });
+    runtime.enableLocalPackage.mockResolvedValue({
+      message: "Package example/refactor@1.2.3 enabled without changing Pandora's constitutional authority.",
+      restartRequired: true,
+      data: { changed: true },
+    });
 
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Harness Lab" }));
@@ -764,6 +798,18 @@ describe("Pandora desktop run state", () => {
     }));
     expect(screen.getByLabelText("Package registry token")).toHaveValue("");
     expect(await screen.findByRole("status")).toHaveTextContent("Restart the local service");
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview enable" }));
+    expect(await screen.findByText("workspace.read")).toBeInTheDocument();
+    expect(runtime.previewPackageEnable).toHaveBeenCalledWith("example/refactor", "1.2.3");
+    const lifecycleConfirmation = screen.getByLabelText("Confirm enable example/refactor@1.2.3");
+    fireEvent.change(lifecycleConfirmation, { target: { value: "example/refactor@1.2.3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm enable" }));
+    await waitFor(() => expect(runtime.enableLocalPackage).toHaveBeenCalledWith(
+      "example/refactor",
+      "1.2.3",
+      "example/refactor@1.2.3",
+    ));
 
     fireEvent.click(screen.getByRole("button", { name: "Preview removal" }));
     expect(await screen.findByLabelText("Confirm removal example/refactor@1.2.3")).toBeInTheDocument();

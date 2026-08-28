@@ -479,6 +479,19 @@ fn configured_runtime(
             }),
         ));
     }
+    if !store
+        .is_enabled(&package_id, version)
+        .map_err(|error| CliError::execution(error.to_string(), json!({})))?
+    {
+        return Err(CliError::policy(
+            "the requested Harness profile is installed but disabled",
+            json!({
+                "id": record.manifest().id(),
+                "version": record.manifest().version(),
+                "hint": "run package enable <id> <version> --yes first",
+            }),
+        ));
+    }
     let mut wasm = WasmExecutor::new();
     let artifact_catalog =
         ArtifactCatalog::open(config.data_dir().join("artifact-catalog.sqlite3"))
@@ -517,9 +530,12 @@ fn package_wasm_genes(
         };
         if record.state() != PackageState::Installed
             || record.manifest().kind() != PackageKind::Gene
+            || !store
+                .is_enabled(dependency.id(), dependency.version())
+                .map_err(|error| CliError::execution(error.to_string(), json!({})))?
         {
             return Err(CliError::execution(
-                "Domain Harness dependency is not an installed Gene package",
+                "Domain Harness dependency is not an enabled Gene package",
                 json!({
                     "id": dependency.id(),
                     "version": dependency.version(),
@@ -545,9 +561,15 @@ fn package_wasm_genes(
             })?;
         if resolved_record.state() != PackageState::Installed
             || resolved_record.manifest().kind() != PackageKind::Gene
+            || !store
+                .is_enabled(
+                    resolved_record.manifest().id(),
+                    resolved_record.manifest().version(),
+                )
+                .map_err(|error| CliError::execution(error.to_string(), json!({})))?
         {
             return Err(CliError::execution(
-                "resolved artifact is not an installed Gene package",
+                "resolved artifact is not an enabled Gene package",
                 json!({
                     "base_artifact": base_artifact,
                     "resolved_artifact": resolved_artifact,
@@ -2025,6 +2047,10 @@ fn runtime_error(error: RuntimeError) -> CliError {
         RuntimeError::Filesystem(_) => {
             CliError::execution("filesystem execution failed", json!({}))
         }
+        RuntimeError::Network(error) => CliError::execution(
+            "network execution failed",
+            json!({"reason": error.to_string()}),
+        ),
         RuntimeError::Process(error) => {
             CliError::execution("process execution failed", json!({"reason": error.code()}))
         }

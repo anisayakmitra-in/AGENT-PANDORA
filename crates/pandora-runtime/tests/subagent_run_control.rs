@@ -94,6 +94,7 @@ fn ordinary_run_advertises_the_complete_default_tool_catalog() {
             "accessibility.evidence".to_owned(),
             "argus.review".to_owned(),
             "ariadne.debt".to_owned(),
+            "browser.fetch".to_owned(),
             "citation.inventory".to_owned(),
             "daedalus.audit".to_owned(),
             "design.compare".to_owned(),

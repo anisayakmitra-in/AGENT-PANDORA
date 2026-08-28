@@ -795,6 +795,24 @@ or grant runtime authority. A later exact-version run may execute an import-free
 WebAssembly Gene only through an admitted Domain Harness and the normal approval,
 permit, executor, and receipt path.
 
+Admitted records start disabled. Preview or apply the exact lifecycle separately:
+
+```text
+pandora package enable <id> <version> --dry-run
+pandora package enable <id> <version> --yes
+pandora package disable <id> <version> --dry-run
+pandora package disable <id> <version> --yes
+pandora package rollback <id> --dry-run
+pandora package rollback <id> --yes
+```
+
+Only one version of a package ID can be enabled. Enabling another admitted
+version is the update operation and retains the former exact version for
+rollback. Required package dependencies must already be enabled; disabling or
+switching a version fails while enabled dependents still bind it. This lifecycle
+changes package availability only. It does not issue a permit, alter policy, or
+grant runtime authority.
+
 `package lock` writes the revalidated local package set to
 `<workspace>/pandora.lock`; `--output <path>` selects another file. The lock keeps
 the canonical manifests, exact versions, artifact hashes, dependencies, and trust
@@ -806,7 +824,9 @@ an atomic sibling replacement.
 `package remove --dry-run` reports the admitted record without changing the local store;
 `package remove --yes` removes it transactionally. Removal is refused when
 another admitted package has a required dependency on the target, while
-optional dependencies do not block removal. Package artifacts are local
+optional dependencies do not block removal. Active and retained rollback
+versions also fail closed; disabling the only active version permits a later
+confirmed removal to clear that inactive lifecycle marker. Package artifacts are local
 admission evidence and are not executable authority. A signed manifest must include
 an Ed25519 public key and signature over
 `{id}:{version}:{publisher}:{content_hash}`. Local hexadecimal evidence remains

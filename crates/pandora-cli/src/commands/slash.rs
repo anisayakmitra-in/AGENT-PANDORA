@@ -166,15 +166,17 @@ fn catalog(parsed: &ParsedArgs) -> Result<SlashCommandCatalog, CliError> {
     let mut catalog = SlashCommandCatalog::from_harnesses(harnesses.iter())
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
     let config = super::load_config(parsed)?;
-    let records = package::store(parsed)?
-        .list()
-        .map_err(package::store_error)?;
+    let store = package::store(parsed)?;
+    let records = store.list().map_err(package::store_error)?;
     for record in records {
         if record.state() == PackageState::Admitted
             && matches!(
                 record.manifest().kind(),
                 PackageKind::DomainHarness | PackageKind::MetaHarness
             )
+            && store
+                .is_enabled(record.manifest().id(), record.manifest().version())
+                .map_err(package::store_error)?
         {
             let harnesses = run::configured_harnesses(
                 &config,

@@ -839,6 +839,18 @@ fn evolution_cli_activates_only_admitted_artifacts_and_rolls_back() {
         assert_success_with_context(&admitted, "evolution package admission");
     }
 
+    for (id, version) in [
+        ("evolution/base-gene", "1.0.0"),
+        ("evolution/candidate-gene", "1.0.0"),
+        ("evolution/domain", "1.0.0"),
+    ] {
+        let enabled = fixture
+            .command(&["package", "enable", id, version, "--yes", "--json"])
+            .output()
+            .expect("evolution package enable should start");
+        assert_success_with_context(&enabled, "evolution package enable");
+    }
+
     let proposal_path = fixture.root.join("admitted-proposal.json");
     fs::write(
         &proposal_path,
@@ -1598,6 +1610,18 @@ fn subagent_binding_harness_drift_stops_before_provider_call() {
         b"subagent Harness original\n",
         &["workspace.read"],
     );
+    let enabled = fixture
+        .command(&[
+            "package",
+            "enable",
+            "example/subagent-domain",
+            "1.0.0",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("domain Harness enable should start");
+    assert_success(&enabled);
     let parent = fixture
         .command(&["run", "read:README.md", "--json"])
         .output()
@@ -1637,6 +1661,18 @@ fn subagent_binding_harness_drift_stops_before_provider_call() {
         .output()
         .expect("subagent spawn should start");
     assert_success(&spawned);
+    let disabled = fixture
+        .command(&[
+            "package",
+            "disable",
+            "example/subagent-domain",
+            "1.0.0",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("domain Harness disable should start");
+    assert_success(&disabled);
     let removed = fixture
         .command(&[
             "package",
@@ -1654,6 +1690,18 @@ fn subagent_binding_harness_drift_stops_before_provider_call() {
         b"subagent Harness changed\n",
         &["workspace.read", "workspace.search"],
     );
+    let enabled = fixture
+        .command(&[
+            "package",
+            "enable",
+            "example/subagent-domain",
+            "1.0.0",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("changed domain Harness enable should start");
+    assert_success(&enabled);
 
     let worked = fixture
         .command(&["subagent", "work", "--json"])
@@ -4105,7 +4153,7 @@ fn doctor_reports_missing_configuration_with_stable_error() {
             .as_array()
             .expect("doctor should report containment even when unhealthy")
             .len(),
-        6
+        7
     );
 }
 
@@ -4157,6 +4205,7 @@ fn doctor_accepts_a_valid_local_only_setup_without_a_provider() {
             "filesystem",
             "git_worktree",
             "mcp_stdio",
+            "network",
             "process",
             "provider",
             "wasm"
@@ -5162,6 +5211,7 @@ fn package_meta_admission_survives_cli_restart_without_runtime_authority() {
     let response = parse_json(&output);
     assert_eq!(response["package"]["kind"], "meta_harness");
     assert_eq!(response["package"]["state"], "admitted");
+    assert_eq!(response["package"]["activation"]["state"], "disabled");
     assert_eq!(response["package"]["runtime_authority"], false);
 
     let output = fixture
@@ -5209,6 +5259,23 @@ fn package_meta_admission_survives_cli_restart_without_runtime_authority() {
     assert_success(&output);
     let response = parse_json(&output);
     assert_eq!(response["package"]["state"], "admitted");
+
+    let output = fixture
+        .command(&[
+            "package",
+            "enable",
+            "example/meta",
+            "1.0.0",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("Meta profile activation should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["package"]["activation"]["state"], "enabled");
+    assert_eq!(response["binding"]["active_version"], "1.0.0");
+    assert_eq!(response["binding"]["runtime_authority"], false);
 
     let output = fixture
         .command(&[
@@ -5260,6 +5327,20 @@ fn package_meta_admission_survives_cli_restart_without_runtime_authority() {
             .is_empty(),
         "a non-runnable Harness must not create a session"
     );
+
+    let output = fixture
+        .command(&[
+            "package",
+            "disable",
+            "example/meta",
+            "1.0.0",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("Meta profile disable should start");
+    assert_success(&output);
+    assert_eq!(parse_json(&output)["binding"]["state"], "disabled");
 
     let output = fixture
         .command(&["package", "remove", "example/meta", "1.0.0", "--json"])
@@ -5584,6 +5665,138 @@ fn package_lock_is_written_and_verified_against_the_local_store() {
 }
 
 #[test]
+fn package_lifecycle_updates_and_rolls_back_one_exact_version() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    for (version, artifact) in [
+        ("1.0.0", b"version one".as_slice()),
+        ("2.0.0", b"version two".as_slice()),
+    ] {
+        let manifest = PackageManifest::new(
+            "example/versioned",
+            version,
+            PackageKind::Gene,
+            "local-publisher",
+            hash_artifact(artifact),
+            Vec::new(),
+            PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+            "MIT",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+        let manifest_path = fixture.root.join(format!("versioned-{version}.json"));
+        let artifact_path = fixture.root.join(format!("versioned-{version}.wasm"));
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        fs::write(&artifact_path, artifact).unwrap();
+        let output = fixture
+            .command(&[
+                "package",
+                "admit",
+                "--manifest",
+                manifest_path.to_str().unwrap(),
+                "--artifact",
+                artifact_path.to_str().unwrap(),
+                "--json",
+            ])
+            .output()
+            .expect("versioned package admission should start");
+        assert_success(&output);
+        assert_eq!(
+            parse_json(&output)["package"]["activation"]["state"],
+            "disabled"
+        );
+    }
+
+    let output = fixture
+        .command(&[
+            "package",
+            "enable",
+            "example/versioned",
+            "1.0.0",
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("activation preview should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["ready"], true);
+    assert_eq!(response["changed"], false);
+
+    for version in ["1.0.0", "2.0.0"] {
+        let output = fixture
+            .command(&[
+                "package",
+                "enable",
+                "example/versioned",
+                version,
+                "--yes",
+                "--json",
+            ])
+            .output()
+            .expect("exact activation should start");
+        assert_success(&output);
+    }
+    let response = parse_json(
+        &fixture
+            .command(&["package", "inspect", "example/versioned", "2.0.0", "--json"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(response["package"]["activation"]["active_version"], "2.0.0");
+    assert_eq!(
+        response["package"]["activation"]["previous_version"],
+        "1.0.0"
+    );
+
+    let output = fixture
+        .command(&[
+            "package",
+            "rollback",
+            "example/versioned",
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("rollback preview should start");
+    assert_success(&output);
+    assert_eq!(parse_json(&output)["target_version"], "1.0.0");
+
+    let output = fixture
+        .command(&[
+            "package",
+            "rollback",
+            "example/versioned",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("rollback should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["active_version"], "1.0.0");
+    assert_eq!(response["binding"]["previous_version"], "2.0.0");
+
+    let output = fixture
+        .command(&[
+            "package",
+            "disable",
+            "example/versioned",
+            "1.0.0",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("disable should start");
+    assert_success(&output);
+    assert_eq!(parse_json(&output)["binding"]["state"], "disabled");
+}
+
+#[test]
 fn admitted_domain_profile_runs_with_an_explicit_version() {
     let fixture = Fixture::new();
     fixture.setup();
@@ -5622,7 +5835,9 @@ fn admitted_domain_profile_runs_with_an_explicit_version() {
         .output()
         .expect("domain profile admission should start");
     assert_success(&output);
-    assert_eq!(parse_json(&output)["package"]["state"], "admitted");
+    let response = parse_json(&output);
+    assert_eq!(response["package"]["state"], "admitted");
+    assert_eq!(response["package"]["activation"]["state"], "disabled");
 
     let output = fixture
         .command(&["harness", "list", "--json"])
@@ -5640,6 +5855,23 @@ fn admitted_domain_profile_runs_with_an_explicit_version() {
     assert_eq!(profiles[0]["execution"]["runnable"], true);
     assert_eq!(profiles[0]["execution"]["mode"], "domain_execution");
     assert_eq!(profiles[0]["runtime_authority"], false);
+
+    let output = fixture
+        .command(&[
+            "package",
+            "enable",
+            "example/domain",
+            "1.0.0",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("Domain profile activation should start");
+    assert_success(&output);
+    assert_eq!(
+        parse_json(&output)["package"]["activation"]["state"],
+        "enabled"
+    );
 
     let output = fixture
         .command(&[
@@ -5851,6 +6083,14 @@ fn admitted_wasm_gene_is_versioned_approved_and_receipted() {
             .output()
             .expect("package admission should start");
         assert_success(&output);
+    }
+
+    for id in ["example/echo", "example/wasm-domain"] {
+        let output = fixture
+            .command(&["package", "enable", id, "1.0.0", "--yes", "--json"])
+            .output()
+            .expect("Wasm package enable should start");
+        assert_success_with_context(&output, "enable Wasm package");
     }
 
     let output = fixture

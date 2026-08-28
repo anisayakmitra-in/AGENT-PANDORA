@@ -32,13 +32,20 @@ fn list(args: &[String]) -> Result<CommandResult, CliError> {
     let harnesses = HarnessCatalog::builtins();
     let values = harnesses.iter().map(harness_value).collect::<Vec<_>>();
     let harness_count = values.len();
-    let package_records = super::package::store(&parsed)?
-        .list()
-        .map_err(super::package::store_error)?;
-    let admitted_profiles = package_records
-        .iter()
-        .filter_map(admitted_profile_value)
-        .collect::<Vec<_>>();
+    let store = super::package::store(&parsed)?;
+    let package_records = store.list().map_err(super::package::store_error)?;
+    let mut admitted_profiles = Vec::new();
+    for record in &package_records {
+        if let Some(mut value) = admitted_profile_value(record) {
+            let enabled = store
+                .is_enabled(record.manifest().id(), record.manifest().version())
+                .map_err(super::package::store_error)?;
+            value["activation"] = json!({
+                "state": if enabled { "enabled" } else { "disabled" },
+            });
+            admitted_profiles.push(value);
+        }
+    }
     let profile_count = admitted_profiles.len();
     Ok(success(
         "harness list",
@@ -47,8 +54,8 @@ fn list(args: &[String]) -> Result<CommandResult, CliError> {
             "admitted_profiles": admitted_profiles,
             "package_records": package_records
                 .iter()
-                .map(super::package::package_value)
-                .collect::<Vec<_>>(),
+                .map(|record| super::package::managed_package_value(&store, record))
+                .collect::<Result<Vec<_>, _>>()?,
         }),
         format!(
             "{harness_count} built-in Harness(es) available; {profile_count} admitted profile(s); {} package record(s)",

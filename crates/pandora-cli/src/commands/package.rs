@@ -1,11 +1,12 @@
 use super::{load_config, parse_options};
 use crate::output::{CliError, CommandResult, success};
+use pandora_harnesses::{builtin_genes, builtin_harnesses};
 use pandora_runtime::{
-    ArtifactCatalog, MAX_STORED_ARTIFACT_BYTES, PackageRecord, PackageRegistryClient,
-    PackageRegistryError, PackageStore, PackageStoreError, WasmExecutor,
+    ArtifactCatalog, MAX_STORED_ARTIFACT_BYTES, PackageBinding, PackageRecord,
+    PackageRegistryClient, PackageRegistryError, PackageStore, PackageStoreError, WasmExecutor,
 };
 use pandora_types::{ArtifactId, PackageId, PackageKind, PackageManifest, hash_artifact};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -15,7 +16,7 @@ const DEFAULT_REGISTRY_TOKEN_ENV: &str = "PANDORA_REGISTRY_TOKEN";
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "package requires 'admit', 'validate', 'install', 'list', 'inspect', 'lock', 'verify-lock', or 'remove'",
+            "package requires 'admit', 'validate', 'install', 'list', 'inspect', 'enable', 'disable', 'rollback', 'lock', 'verify-lock', or 'remove'",
         )
     })?;
     match subcommand.as_str() {
@@ -24,6 +25,9 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "install" => install(&args[1..]),
         "list" => list(&args[1..]),
         "inspect" => inspect(&args[1..]),
+        "enable" => enable(&args[1..]),
+        "disable" => disable(&args[1..]),
+        "rollback" => rollback(&args[1..]),
         "lock" => lock(&args[1..]),
         "verify-lock" => verify_lock(&args[1..]),
         "remove" => remove(&args[1..]),
@@ -72,14 +76,15 @@ fn install(args: &[String]) -> Result<CommandResult, CliError> {
         Err(_) => None,
     };
     let client = PackageRegistryClient::new(&registry, token).map_err(registry_error)?;
+    let store = store(&parsed)?;
     let record = client
-        .install(&store(&parsed)?, &id, version)
+        .install(&store, &id, version)
         .map_err(registry_error)?;
     Ok(success(
         "package install",
         json!({
             "registry": registry,
-            "package": package_value(&record),
+            "package": managed_package_value(&store, &record)?,
         }),
         format!(
             "Package {}@{} installed from the registry",
@@ -236,7 +241,7 @@ fn admit(args: &[String]) -> Result<CommandResult, CliError> {
     let id = record.manifest().id().as_str().to_owned();
     Ok(success(
         "package admit",
-        json!({"package": package_value(&record)}),
+        json!({"package": managed_package_value(&store, &record)?}),
         format!("Package {id}@{} admitted", record.manifest().version()),
     ))
 }
@@ -259,12 +264,17 @@ fn list(args: &[String]) -> Result<CommandResult, CliError> {
             "package list does not accept positional arguments",
         ));
     }
-    let records = store(&parsed)?.list().map_err(store_error)?;
+    let store = store(&parsed)?;
+    let records = store.list().map_err(store_error)?;
     let count = records.len();
+    let packages = records
+        .iter()
+        .map(|record| managed_package_value(&store, record))
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(success(
         "package list",
         json!({
-            "packages": records.iter().map(package_value).collect::<Vec<_>>()
+            "packages": packages
         }),
         format!("{count} package(s) admitted locally"),
     ))
@@ -280,7 +290,8 @@ fn inspect(args: &[String]) -> Result<CommandResult, CliError> {
     let id = PackageId::new(parsed.positionals[0].clone())
         .map_err(|_| CliError::usage("package ID is invalid"))?;
     let version = &parsed.positionals[1];
-    let record = store(&parsed)?
+    let store = store(&parsed)?;
+    let record = store
         .get(&id, version)
         .map_err(store_error)?
         .ok_or_else(|| {
@@ -291,8 +302,175 @@ fn inspect(args: &[String]) -> Result<CommandResult, CliError> {
         })?;
     Ok(success(
         "package inspect",
-        json!({"package": package_value(&record)}),
+        json!({"package": managed_package_value(&store, &record)?}),
         format!("{}@{}", id.as_str(), version),
+    ))
+}
+
+fn enable(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "dry-run", "yes"])?;
+    if parsed.positionals.len() != 2 {
+        return Err(CliError::usage(
+            "package enable requires an ID and an exact version",
+        ));
+    }
+    let dry_run = lifecycle_mode(&parsed, "package enable")?;
+    let id = PackageId::new(parsed.positionals[0].clone())
+        .map_err(|_| CliError::usage("package ID is invalid"))?;
+    let version = &parsed.positionals[1];
+    let store = store(&parsed)?;
+    let record = required_record(&store, &id, version)?;
+    let before = store.binding(&id).map_err(store_error)?;
+    let dependencies = dependency_preview(&store, &record)?;
+    let blockers = before
+        .as_ref()
+        .and_then(|binding| binding.active_version())
+        .filter(|active| *active != version)
+        .map(|active| store.enabled_dependents(&id, active).map_err(store_error))
+        .transpose()?
+        .unwrap_or_default();
+    if dry_run {
+        let ready = dependencies
+            .iter()
+            .all(|dependency| dependency["optional"] == true || dependency["enabled"] == true)
+            && blockers.is_empty();
+        return Ok(success(
+            "package enable",
+            json!({
+                "dry_run": true,
+                "changed": false,
+                "ready": ready,
+                "package": managed_package_value(&store, &record)?,
+                "dependencies": dependencies,
+                "enabled_dependents": blockers,
+            }),
+            format!("Previewed activation for {}@{}", id.as_str(), version),
+        ));
+    }
+    let binding = store.enable(&id, version).map_err(lifecycle_error)?;
+    Ok(success(
+        "package enable",
+        json!({
+            "dry_run": false,
+            "changed": before.as_ref() != Some(&binding),
+            "package": managed_package_value(&store, &record)?,
+            "binding": binding_value(Some(&binding), version),
+        }),
+        format!(
+            "Enabled {}@{} as the exact active version",
+            id.as_str(),
+            version
+        ),
+    ))
+}
+
+fn disable(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "dry-run", "yes"])?;
+    if parsed.positionals.len() != 2 {
+        return Err(CliError::usage(
+            "package disable requires an ID and an exact version",
+        ));
+    }
+    let dry_run = lifecycle_mode(&parsed, "package disable")?;
+    let id = PackageId::new(parsed.positionals[0].clone())
+        .map_err(|_| CliError::usage("package ID is invalid"))?;
+    let version = &parsed.positionals[1];
+    let store = store(&parsed)?;
+    let record = required_record(&store, &id, version)?;
+    let before = store.binding(&id).map_err(store_error)?;
+    let dependents = store
+        .enabled_dependents(&id, version)
+        .map_err(store_error)?;
+    if dry_run {
+        return Ok(success(
+            "package disable",
+            json!({
+                "dry_run": true,
+                "changed": false,
+                "ready": before.as_ref().is_some_and(|binding| binding.enables(version)) && dependents.is_empty(),
+                "package": managed_package_value(&store, &record)?,
+                "enabled_dependents": dependents,
+            }),
+            format!("Previewed disable for {}@{}", id.as_str(), version),
+        ));
+    }
+    let binding = store.disable(&id, version).map_err(lifecycle_error)?;
+    Ok(success(
+        "package disable",
+        json!({
+            "dry_run": false,
+            "changed": true,
+            "package": managed_package_value(&store, &record)?,
+            "binding": binding_value(Some(&binding), version),
+        }),
+        format!(
+            "Disabled {}@{} without removing its verified bytes",
+            id.as_str(),
+            version
+        ),
+    ))
+}
+
+fn rollback(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "dry-run", "yes"])?;
+    if parsed.positionals.len() != 1 {
+        return Err(CliError::usage(
+            "package rollback requires exactly one package ID",
+        ));
+    }
+    let dry_run = lifecycle_mode(&parsed, "package rollback")?;
+    let id = PackageId::new(parsed.positionals[0].clone())
+        .map_err(|_| CliError::usage("package ID is invalid"))?;
+    let store = store(&parsed)?;
+    let before = store.binding(&id).map_err(store_error)?.ok_or_else(|| {
+        lifecycle_error(PackageStoreError::NoRollbackBinding {
+            id: id.as_str().to_owned(),
+        })
+    })?;
+    let target = before.previous_version().ok_or_else(|| {
+        lifecycle_error(PackageStoreError::NoRollbackBinding {
+            id: id.as_str().to_owned(),
+        })
+    })?;
+    let record = required_record(&store, &id, target)?;
+    let dependencies = dependency_preview(&store, &record)?;
+    let dependents = before
+        .active_version()
+        .map(|active| store.enabled_dependents(&id, active).map_err(store_error))
+        .transpose()?
+        .unwrap_or_default();
+    if dry_run {
+        let ready = dependencies
+            .iter()
+            .all(|dependency| dependency["optional"] == true || dependency["enabled"] == true)
+            && dependents.is_empty();
+        return Ok(success(
+            "package rollback",
+            json!({
+                "dry_run": true,
+                "changed": false,
+                "ready": ready,
+                "target_version": target,
+                "dependencies": dependencies,
+                "enabled_dependents": dependents,
+                "binding": binding_value(Some(&before), target),
+            }),
+            format!("Previewed rollback of {} to {}", id.as_str(), target),
+        ));
+    }
+    let binding = store.rollback(&id).map_err(lifecycle_error)?;
+    let active = binding
+        .active_version()
+        .expect("rollback always restores an active version");
+    Ok(success(
+        "package rollback",
+        json!({
+            "dry_run": false,
+            "changed": true,
+            "active_version": active,
+            "binding": binding_value(Some(&binding), active),
+        }),
+        format!("Rolled {} back to exact version {}", id.as_str(), active),
     ))
 }
 
@@ -432,6 +610,113 @@ pub(super) fn store(parsed: &super::ParsedArgs) -> Result<PackageStore, CliError
     PackageStore::open(config.data_dir().join("packages.sqlite3")).map_err(store_error)
 }
 
+fn lifecycle_mode(parsed: &super::ParsedArgs, command: &str) -> Result<bool, CliError> {
+    let dry_run = parsed.value("dry-run").is_some();
+    let confirmed = parsed.value("yes").is_some();
+    if dry_run && confirmed {
+        return Err(CliError::usage(format!(
+            "{command} accepts only one of '--dry-run' or '--yes'"
+        )));
+    }
+    if !dry_run && !confirmed {
+        return Err(CliError::usage(format!(
+            "{command} requires '--dry-run' or '--yes'"
+        )));
+    }
+    Ok(dry_run)
+}
+
+fn required_record(
+    store: &PackageStore,
+    id: &PackageId,
+    version: &str,
+) -> Result<PackageRecord, CliError> {
+    store.get(id, version).map_err(store_error)?.ok_or_else(|| {
+        CliError::execution(
+            "package was not admitted locally",
+            json!({"id": id.as_str(), "version": version}),
+        )
+    })
+}
+
+fn dependency_preview(
+    store: &PackageStore,
+    record: &PackageRecord,
+) -> Result<Vec<Value>, CliError> {
+    let mut dependencies = Vec::new();
+    for dependency in record.manifest().dependencies() {
+        let installed = store
+            .get(dependency.id(), dependency.version())
+            .map_err(store_error)?;
+        let built_in = builtin_genes().into_iter().any(|gene| {
+            gene.manifest().id().as_str() == dependency.id().as_str()
+                && gene.manifest().version() == dependency.version()
+        });
+        let enabled = if installed.is_some() {
+            store
+                .is_enabled(dependency.id(), dependency.version())
+                .map_err(store_error)?
+        } else {
+            built_in
+        };
+        dependencies.push(json!({
+            "id": dependency.id().as_str(),
+            "version": dependency.version(),
+            "optional": dependency.optional(),
+            "source": if built_in { "built_in" } else if installed.is_some() { "package" } else { "unresolved" },
+            "enabled": enabled,
+        }));
+    }
+    if let Some(composition) = record.manifest().meta_composition() {
+        let records = store.list().map_err(store_error)?;
+        for domain in composition.allowed_domains() {
+            let built_in = builtin_harnesses().into_iter().find(|harness| {
+                harness.manifest().id() == domain
+                    && harness.manifest().kind() == pandora_types::HarnessKind::Domain
+            });
+            let package_id = PackageId::new(domain.as_str().to_owned())
+                .map_err(|_| CliError::internal("Domain package identity is invalid", json!({})))?;
+            let binding = store.binding(&package_id).map_err(store_error)?;
+            let active_version = binding.as_ref().and_then(PackageBinding::active_version);
+            let packaged = active_version.is_some_and(|version| {
+                records.iter().any(|candidate| {
+                    candidate.manifest().id().as_str() == domain.as_str()
+                        && candidate.manifest().version() == version
+                        && candidate.manifest().kind() == PackageKind::DomainHarness
+                })
+            });
+            dependencies.push(json!({
+                "id": domain.as_str(),
+                "version": built_in.as_ref().map(|harness| harness.manifest().version()).or(active_version),
+                "optional": false,
+                "source": if built_in.is_some() { "built_in" } else if packaged { "package" } else { "unresolved" },
+                "enabled": built_in.is_some() || packaged,
+            }));
+        }
+    }
+    Ok(dependencies)
+}
+
+pub(super) fn managed_package_value(
+    store: &PackageStore,
+    record: &PackageRecord,
+) -> Result<Value, CliError> {
+    let binding = store.binding(record.manifest().id()).map_err(store_error)?;
+    let mut value = package_value(record);
+    value["activation"] = binding_value(binding.as_ref(), record.manifest().version());
+    Ok(value)
+}
+
+fn binding_value(binding: Option<&PackageBinding>, version: &str) -> Value {
+    json!({
+        "state": if binding.is_some_and(|binding| binding.enables(version)) { "enabled" } else { "disabled" },
+        "active_version": binding.and_then(PackageBinding::active_version),
+        "previous_version": binding.and_then(PackageBinding::previous_version),
+        "generation": binding.map_or(0, PackageBinding::generation),
+        "runtime_authority": false,
+    })
+}
+
 pub(super) fn package_value(record: &PackageRecord) -> serde_json::Value {
     let manifest = record.manifest();
     json!({
@@ -474,6 +759,38 @@ fn removal_error(error: PackageStoreError) -> CliError {
         } => CliError::policy(
             format!("cannot remove package {id}@{version} because required dependents exist"),
             json!({"id": id, "version": version, "dependents": dependents}),
+        ),
+        PackageStoreError::PackageBound { id, version, role } => CliError::policy(
+            format!(
+                "cannot remove package {id}@{version} while it is the {role} lifecycle binding"
+            ),
+            json!({"id": id, "version": version, "role": role}),
+        ),
+        other => store_error(other),
+    }
+}
+
+fn lifecycle_error(error: PackageStoreError) -> CliError {
+    match error {
+        PackageStoreError::HasEnabledDependents {
+            id,
+            version,
+            dependents,
+        } => CliError::policy(
+            format!("cannot change package {id}@{version} while enabled dependents exist"),
+            json!({"id": id, "version": version, "enabled_dependents": dependents}),
+        ),
+        PackageStoreError::MissingEnabledDependency { id, version } => CliError::policy(
+            format!("required package dependency {id}@{version} must be enabled first"),
+            json!({"id": id, "version": version}),
+        ),
+        PackageStoreError::MissingEnabledDomain { id } => CliError::policy(
+            format!("required Domain Harness {id} must be enabled first"),
+            json!({"id": id}),
+        ),
+        PackageStoreError::PackageBound { id, version, role } => CliError::policy(
+            format!("package {id}@{version} is retained as the {role} lifecycle binding"),
+            json!({"id": id, "version": version, "role": role}),
         ),
         other => store_error(other),
     }

@@ -196,6 +196,13 @@ struct PackageRemoval {
     confirmation: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PackageRollback {
+    package_id: String,
+    confirmation: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct NativePackageResult {
@@ -417,6 +424,140 @@ fn remove_local_package(input: PackageRemoval) -> Result<NativePackageResult, St
     let data = run_cli_json(&args, "removing the local package")?;
     Ok(NativePackageResult {
         message: format!("Package {expected} removed after dependency and binding checks."),
+        restart_required: true,
+        data,
+    })
+}
+
+fn package_lifecycle_command(
+    operation: &str,
+    input: PackageIdentity,
+    confirmed: bool,
+) -> Result<NativePackageResult, String> {
+    validate_package_identity(&input.package_id, &input.version)?;
+    let mut args = vec![
+        "package".to_owned(),
+        operation.to_owned(),
+        input.package_id.clone(),
+        input.version.clone(),
+    ];
+    args.push(if confirmed { "--yes" } else { "--dry-run" }.to_owned());
+    args.push("--json".to_owned());
+    let data = run_cli_json(&args, &format!("{operation} package lifecycle"))?;
+    Ok(NativePackageResult {
+        message: if confirmed {
+            format!(
+                "Package {}@{} {} without changing Pandora's constitutional authority.",
+                input.package_id,
+                input.version,
+                if operation == "enable" {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            )
+        } else {
+            format!(
+                "{} preview recorded for {}@{}; no lifecycle binding changed.",
+                if operation == "enable" {
+                    "Activation"
+                } else {
+                    "Disable"
+                },
+                input.package_id,
+                input.version
+            )
+        },
+        restart_required: confirmed,
+        data,
+    })
+}
+
+#[tauri::command]
+fn preview_package_enable(input: PackageIdentity) -> Result<NativePackageResult, String> {
+    package_lifecycle_command("enable", input, false)
+}
+
+#[tauri::command]
+fn enable_local_package(input: PackageRemoval) -> Result<NativePackageResult, String> {
+    let expected = format!("{}@{}", input.package_id, input.version);
+    if input.confirmation != expected {
+        return Err(format!("type {expected} to confirm this exact activation"));
+    }
+    package_lifecycle_command(
+        "enable",
+        PackageIdentity {
+            package_id: input.package_id,
+            version: input.version,
+        },
+        true,
+    )
+}
+
+#[tauri::command]
+fn preview_package_disable(input: PackageIdentity) -> Result<NativePackageResult, String> {
+    package_lifecycle_command("disable", input, false)
+}
+
+#[tauri::command]
+fn disable_local_package(input: PackageRemoval) -> Result<NativePackageResult, String> {
+    let expected = format!("{}@{}", input.package_id, input.version);
+    if input.confirmation != expected {
+        return Err(format!("type {expected} to confirm this exact disable"));
+    }
+    package_lifecycle_command(
+        "disable",
+        PackageIdentity {
+            package_id: input.package_id,
+            version: input.version,
+        },
+        true,
+    )
+}
+
+#[tauri::command]
+fn preview_package_rollback(input: PackageRollback) -> Result<NativePackageResult, String> {
+    validate_package_id(&input.package_id)?;
+    let args = vec![
+        "package".to_owned(),
+        "rollback".to_owned(),
+        input.package_id.clone(),
+        "--dry-run".to_owned(),
+        "--json".to_owned(),
+    ];
+    let data = run_cli_json(&args, "previewing the package rollback")?;
+    Ok(NativePackageResult {
+        message: format!(
+            "Rollback preview recorded for {}; no lifecycle binding changed.",
+            input.package_id
+        ),
+        restart_required: false,
+        data,
+    })
+}
+
+#[tauri::command]
+fn rollback_local_package(input: PackageRollback) -> Result<NativePackageResult, String> {
+    validate_package_id(&input.package_id)?;
+    if input.confirmation != input.package_id {
+        return Err(format!(
+            "type {} to confirm rollback to the retained exact version",
+            input.package_id
+        ));
+    }
+    let args = vec![
+        "package".to_owned(),
+        "rollback".to_owned(),
+        input.package_id.clone(),
+        "--yes".to_owned(),
+        "--json".to_owned(),
+    ];
+    let data = run_cli_json(&args, "rolling back the package binding")?;
+    Ok(NativePackageResult {
+        message: format!(
+            "Package {} restored to its retained exact version.",
+            input.package_id
+        ),
         restart_required: true,
         data,
     })
@@ -922,6 +1063,12 @@ fn main() {
             list_local_packages,
             install_registry_package,
             admit_local_package,
+            preview_package_enable,
+            enable_local_package,
+            preview_package_disable,
+            disable_local_package,
+            preview_package_rollback,
+            rollback_local_package,
             preview_package_removal,
             remove_local_package,
             lock_local_packages,

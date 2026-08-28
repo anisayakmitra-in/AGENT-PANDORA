@@ -76,6 +76,13 @@ export type RuntimePackage = {
   } | null;
   state: "installed" | "admitted";
   runtime_authority: boolean;
+  activation: {
+    state: "enabled" | "disabled";
+    active_version: string | null;
+    previous_version: string | null;
+    generation: number;
+    runtime_authority: boolean;
+  };
 };
 
 export type NativePackageResult = {
@@ -89,6 +96,19 @@ export type NativePackageResult = {
     format_version?: number;
     dry_run?: boolean;
     removed?: boolean;
+    changed?: boolean;
+    ready?: boolean;
+    target_version?: string;
+    active_version?: string;
+    enabled_dependents?: string[];
+    dependencies?: Array<{
+      id: string;
+      version: string | null;
+      optional: boolean;
+      source: "built_in" | "package" | "unresolved";
+      enabled: boolean;
+    }>;
+    binding?: RuntimePackage["activation"];
   };
 };
 
@@ -463,6 +483,36 @@ export async function previewPackageRemoval(packageId: string, version: string):
   return invoke<NativePackageResult>("preview_package_removal", {
     input: { packageId, version },
   });
+}
+
+export async function previewPackageEnable(packageId: string, version: string): Promise<NativePackageResult> {
+  if (!isNativeRuntime()) throw new Error("Package activation is available only in the Pandora desktop app");
+  return invoke<NativePackageResult>("preview_package_enable", { input: { packageId, version } });
+}
+
+export async function enableLocalPackage(packageId: string, version: string, confirmation: string): Promise<NativePackageResult> {
+  if (!isNativeRuntime()) throw new Error("Package activation is available only in the Pandora desktop app");
+  return invoke<NativePackageResult>("enable_local_package", { input: { packageId, version, confirmation } });
+}
+
+export async function previewPackageDisable(packageId: string, version: string): Promise<NativePackageResult> {
+  if (!isNativeRuntime()) throw new Error("Package disable is available only in the Pandora desktop app");
+  return invoke<NativePackageResult>("preview_package_disable", { input: { packageId, version } });
+}
+
+export async function disableLocalPackage(packageId: string, version: string, confirmation: string): Promise<NativePackageResult> {
+  if (!isNativeRuntime()) throw new Error("Package disable is available only in the Pandora desktop app");
+  return invoke<NativePackageResult>("disable_local_package", { input: { packageId, version, confirmation } });
+}
+
+export async function previewPackageRollback(packageId: string): Promise<NativePackageResult> {
+  if (!isNativeRuntime()) throw new Error("Package rollback is available only in the Pandora desktop app");
+  return invoke<NativePackageResult>("preview_package_rollback", { input: { packageId, confirmation: "" } });
+}
+
+export async function rollbackLocalPackage(packageId: string, confirmation: string): Promise<NativePackageResult> {
+  if (!isNativeRuntime()) throw new Error("Package rollback is available only in the Pandora desktop app");
+  return invoke<NativePackageResult>("rollback_local_package", { input: { packageId, confirmation } });
 }
 
 export async function removeLocalPackage(packageId: string, version: string, confirmation: string): Promise<NativePackageResult> {

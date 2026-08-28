@@ -1,8 +1,10 @@
 use crate::harness_registry::{HarnessRegistry, HarnessRegistryError, PackageRecord};
+use pandora_harnesses::{builtin_genes, builtin_harnesses};
 use pandora_types::{
     ArtifactId, PackageId, PackageKind, PackageLock, PackageManifest, hash_artifact,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::io::{Read, Write};
@@ -28,6 +30,34 @@ pub enum PackageStoreError {
         id: String,
         version: String,
         dependents: Vec<String>,
+    },
+    PackageNotFound {
+        id: String,
+        version: String,
+    },
+    MissingEnabledDependency {
+        id: String,
+        version: String,
+    },
+    MissingEnabledDomain {
+        id: String,
+    },
+    HasEnabledDependents {
+        id: String,
+        version: String,
+        dependents: Vec<String>,
+    },
+    PackageNotEnabled {
+        id: String,
+        version: String,
+    },
+    NoRollbackBinding {
+        id: String,
+    },
+    PackageBound {
+        id: String,
+        version: String,
+        role: &'static str,
     },
     Admission(HarnessRegistryError),
 }
@@ -58,6 +88,35 @@ impl fmt::Display for PackageStoreError {
                 "cannot remove {id}@{version}; required by {}",
                 dependents.join(", ")
             ),
+            Self::PackageNotFound { id, version } => {
+                write!(formatter, "package {id}@{version} is not installed")
+            }
+            Self::MissingEnabledDependency { id, version } => write!(
+                formatter,
+                "required package dependency {id}@{version} is not enabled"
+            ),
+            Self::MissingEnabledDomain { id } => {
+                write!(formatter, "required Domain Harness {id} is not enabled")
+            }
+            Self::HasEnabledDependents {
+                id,
+                version,
+                dependents,
+            } => write!(
+                formatter,
+                "package {id}@{version} is required by enabled package(s): {}",
+                dependents.join(", ")
+            ),
+            Self::PackageNotEnabled { id, version } => {
+                write!(formatter, "package {id}@{version} is not enabled")
+            }
+            Self::NoRollbackBinding { id } => {
+                write!(formatter, "package {id} has no previous enabled version")
+            }
+            Self::PackageBound { id, version, role } => write!(
+                formatter,
+                "package {id}@{version} is retained as the {role} lifecycle binding"
+            ),
             Self::Admission(error) => error.fmt(formatter),
         }
     }
@@ -76,7 +135,14 @@ impl std::error::Error for PackageStoreError {
             | Self::InvalidLockfile
             | Self::LockfileTooLarge
             | Self::LockfileMismatch
-            | Self::HasDependents { .. } => None,
+            | Self::HasDependents { .. }
+            | Self::PackageNotFound { .. }
+            | Self::MissingEnabledDependency { .. }
+            | Self::MissingEnabledDomain { .. }
+            | Self::HasEnabledDependents { .. }
+            | Self::PackageNotEnabled { .. }
+            | Self::NoRollbackBinding { .. }
+            | Self::PackageBound { .. } => None,
         }
     }
 }
@@ -96,6 +162,36 @@ impl From<std::io::Error> for PackageStoreError {
 impl From<serde_json::Error> for PackageStoreError {
     fn from(error: serde_json::Error) -> Self {
         Self::Serialization(error)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PackageBinding {
+    id: String,
+    active_version: Option<String>,
+    previous_version: Option<String>,
+    generation: u64,
+}
+
+impl PackageBinding {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn active_version(&self) -> Option<&str> {
+        self.active_version.as_deref()
+    }
+
+    pub fn previous_version(&self) -> Option<&str> {
+        self.previous_version.as_deref()
+    }
+
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn enables(&self, version: &str) -> bool {
+        self.active_version.as_deref() == Some(version)
     }
 }
 
@@ -122,6 +218,13 @@ impl PackageStore {
                  artifact BLOB NOT NULL,
                  state TEXT NOT NULL,
                  PRIMARY KEY (id, version)
+             );
+             CREATE TABLE IF NOT EXISTS package_bindings (
+                 id TEXT PRIMARY KEY,
+                 active_version TEXT,
+                 previous_version TEXT,
+                 generation INTEGER NOT NULL,
+                 CHECK (active_version IS NOT NULL OR previous_version IS NOT NULL)
              );",
         )?;
         Ok(Self {
@@ -172,6 +275,166 @@ impl PackageStore {
     ) -> Result<Option<PackageRecord>, PackageStoreError> {
         let connection = self.lock()?;
         Ok(load_registry(&connection)?.get(id, version).cloned())
+    }
+
+    pub fn binding(&self, id: &PackageId) -> Result<Option<PackageBinding>, PackageStoreError> {
+        let connection = self.lock()?;
+        load_binding(&connection, id.as_str())
+    }
+
+    pub fn bindings(&self) -> Result<Vec<PackageBinding>, PackageStoreError> {
+        let connection = self.lock()?;
+        Ok(load_bindings(&connection)?.into_values().collect())
+    }
+
+    pub fn is_enabled(&self, id: &PackageId, version: &str) -> Result<bool, PackageStoreError> {
+        Ok(self
+            .binding(id)?
+            .is_some_and(|binding| binding.enables(version)))
+    }
+
+    pub fn enabled_dependents(
+        &self,
+        id: &PackageId,
+        version: &str,
+    ) -> Result<Vec<String>, PackageStoreError> {
+        let connection = self.lock()?;
+        let registry = load_registry(&connection)?;
+        let bindings = active_bindings(&connection)?;
+        Ok(enabled_dependents(
+            &registry,
+            &bindings,
+            id.as_str(),
+            version,
+        ))
+    }
+
+    pub fn enable(
+        &self,
+        id: &PackageId,
+        version: &str,
+    ) -> Result<PackageBinding, PackageStoreError> {
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let registry = load_registry(&transaction)?;
+        let record = registry.get(id, version).cloned().ok_or_else(|| {
+            PackageStoreError::PackageNotFound {
+                id: id.as_str().to_owned(),
+                version: version.to_owned(),
+            }
+        })?;
+        let existing = load_binding(&transaction, id.as_str())?;
+        if existing
+            .as_ref()
+            .is_some_and(|binding| binding.enables(version))
+        {
+            transaction.commit()?;
+            return Ok(existing.expect("enabled binding exists"));
+        }
+        let active = active_bindings(&transaction)?;
+        if let Some(current) = existing
+            .as_ref()
+            .and_then(|binding| binding.active_version())
+        {
+            reject_enabled_dependents(&registry, &active, id.as_str(), current)?;
+        }
+        ensure_enableable(&registry, &active, &record)?;
+        let previous_version = existing.as_ref().and_then(|binding| {
+            binding
+                .active_version()
+                .or_else(|| binding.previous_version())
+                .filter(|previous| *previous != version)
+                .map(str::to_owned)
+        });
+        let binding = PackageBinding {
+            id: id.as_str().to_owned(),
+            active_version: Some(version.to_owned()),
+            previous_version,
+            generation: existing
+                .as_ref()
+                .map_or(1, |binding| binding.generation().saturating_add(1)),
+        };
+        persist_binding(&transaction, &binding)?;
+        transaction.commit()?;
+        Ok(binding)
+    }
+
+    pub fn disable(
+        &self,
+        id: &PackageId,
+        version: &str,
+    ) -> Result<PackageBinding, PackageStoreError> {
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let registry = load_registry(&transaction)?;
+        if registry.get(id, version).is_none() {
+            return Err(PackageStoreError::PackageNotFound {
+                id: id.as_str().to_owned(),
+                version: version.to_owned(),
+            });
+        }
+        let existing = load_binding(&transaction, id.as_str())?.ok_or_else(|| {
+            PackageStoreError::PackageNotEnabled {
+                id: id.as_str().to_owned(),
+                version: version.to_owned(),
+            }
+        })?;
+        if !existing.enables(version) {
+            return Err(PackageStoreError::PackageNotEnabled {
+                id: id.as_str().to_owned(),
+                version: version.to_owned(),
+            });
+        }
+        let active = active_bindings(&transaction)?;
+        reject_enabled_dependents(&registry, &active, id.as_str(), version)?;
+        let binding = PackageBinding {
+            id: id.as_str().to_owned(),
+            active_version: None,
+            previous_version: Some(version.to_owned()),
+            generation: existing.generation().saturating_add(1),
+        };
+        persist_binding(&transaction, &binding)?;
+        transaction.commit()?;
+        Ok(binding)
+    }
+
+    pub fn rollback(&self, id: &PackageId) -> Result<PackageBinding, PackageStoreError> {
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let registry = load_registry(&transaction)?;
+        let existing = load_binding(&transaction, id.as_str())?.ok_or_else(|| {
+            PackageStoreError::NoRollbackBinding {
+                id: id.as_str().to_owned(),
+            }
+        })?;
+        let target =
+            existing
+                .previous_version()
+                .ok_or_else(|| PackageStoreError::NoRollbackBinding {
+                    id: id.as_str().to_owned(),
+                })?;
+        let target_record = registry.get(id, target).cloned().ok_or_else(|| {
+            PackageStoreError::PackageNotFound {
+                id: id.as_str().to_owned(),
+                version: target.to_owned(),
+            }
+        })?;
+        let active = active_bindings(&transaction)?;
+        if let Some(current) = existing.active_version() {
+            reject_enabled_dependents(&registry, &active, id.as_str(), current)?;
+        }
+        let mut target_bindings = active;
+        target_bindings.insert(id.as_str().to_owned(), target.to_owned());
+        ensure_enableable(&registry, &target_bindings, &target_record)?;
+        let binding = PackageBinding {
+            id: id.as_str().to_owned(),
+            active_version: Some(target.to_owned()),
+            previous_version: existing.active_version().map(str::to_owned),
+            generation: existing.generation().saturating_add(1),
+        };
+        persist_binding(&transaction, &binding)?;
+        transaction.commit()?;
+        Ok(binding)
     }
 
     pub fn load_artifact(
@@ -291,6 +554,26 @@ impl PackageStore {
             return Ok(None);
         };
 
+        if let Some(binding) = load_binding(&transaction, id.as_str())? {
+            if binding.active_version() == Some(version) {
+                return Err(PackageStoreError::PackageBound {
+                    id: id.as_str().to_owned(),
+                    version: version.to_owned(),
+                    role: "active",
+                });
+            }
+            if binding.previous_version() == Some(version) {
+                if binding.active_version().is_some() {
+                    return Err(PackageStoreError::PackageBound {
+                        id: id.as_str().to_owned(),
+                        version: version.to_owned(),
+                        role: "rollback",
+                    });
+                }
+                transaction.execute("DELETE FROM package_bindings WHERE id = ?1", [id.as_str()])?;
+            }
+        }
+
         let dependents = registry
             .list()
             .into_iter()
@@ -349,6 +632,203 @@ impl PackageStore {
         self.connection
             .lock()
             .map_err(|_| PackageStoreError::LockPoisoned)
+    }
+}
+
+fn load_binding(
+    connection: &Connection,
+    id: &str,
+) -> Result<Option<PackageBinding>, PackageStoreError> {
+    connection
+        .query_row(
+            "SELECT active_version, previous_version, generation
+             FROM package_bindings WHERE id = ?1",
+            [id],
+            |row| {
+                let generation = row.get::<_, i64>(2)?;
+                if generation < 0 {
+                    return Err(rusqlite::Error::IntegralValueOutOfRange(2, generation));
+                }
+                Ok(PackageBinding {
+                    id: id.to_owned(),
+                    active_version: row.get(0)?,
+                    previous_version: row.get(1)?,
+                    generation: generation as u64,
+                })
+            },
+        )
+        .optional()
+        .map_err(PackageStoreError::from)
+}
+
+fn load_bindings(
+    connection: &Connection,
+) -> Result<BTreeMap<String, PackageBinding>, PackageStoreError> {
+    let mut statement = connection.prepare(
+        "SELECT id, active_version, previous_version, generation
+         FROM package_bindings ORDER BY id",
+    )?;
+    let rows = statement.query_map([], |row| {
+        let generation = row.get::<_, i64>(3)?;
+        if generation < 0 {
+            return Err(rusqlite::Error::IntegralValueOutOfRange(3, generation));
+        }
+        Ok(PackageBinding {
+            id: row.get(0)?,
+            active_version: row.get(1)?,
+            previous_version: row.get(2)?,
+            generation: generation as u64,
+        })
+    })?;
+    let mut bindings = BTreeMap::new();
+    for row in rows {
+        let binding = row?;
+        if binding.active_version.is_none() && binding.previous_version.is_none() {
+            return Err(PackageStoreError::CorruptRecord);
+        }
+        bindings.insert(binding.id.clone(), binding);
+    }
+    Ok(bindings)
+}
+
+fn active_bindings(connection: &Connection) -> Result<BTreeMap<String, String>, PackageStoreError> {
+    Ok(load_bindings(connection)?
+        .into_iter()
+        .filter_map(|(id, binding)| binding.active_version.map(|version| (id, version)))
+        .collect())
+}
+
+fn persist_binding(
+    connection: &Connection,
+    binding: &PackageBinding,
+) -> Result<(), PackageStoreError> {
+    let generation =
+        i64::try_from(binding.generation).map_err(|_| PackageStoreError::CorruptRecord)?;
+    connection.execute(
+        "INSERT INTO package_bindings (id, active_version, previous_version, generation)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(id) DO UPDATE SET
+             active_version = excluded.active_version,
+             previous_version = excluded.previous_version,
+             generation = excluded.generation",
+        params![
+            binding.id,
+            binding.active_version,
+            binding.previous_version,
+            generation,
+        ],
+    )?;
+    Ok(())
+}
+
+fn ensure_enableable(
+    registry: &HarnessRegistry,
+    bindings: &BTreeMap<String, String>,
+    record: &PackageRecord,
+) -> Result<(), PackageStoreError> {
+    for dependency in record
+        .manifest()
+        .dependencies()
+        .iter()
+        .filter(|dependency| !dependency.optional())
+    {
+        let built_in = builtin_genes().into_iter().any(|gene| {
+            gene.manifest().id().as_str() == dependency.id().as_str()
+                && gene.manifest().version() == dependency.version()
+        });
+        if !built_in
+            && bindings.get(dependency.id().as_str()).map(String::as_str)
+                != Some(dependency.version())
+        {
+            return Err(PackageStoreError::MissingEnabledDependency {
+                id: dependency.id().as_str().to_owned(),
+                version: dependency.version().to_owned(),
+            });
+        }
+    }
+
+    if record.manifest().kind() == PackageKind::MetaHarness {
+        for domain in record
+            .manifest()
+            .meta_composition()
+            .expect("admitted Meta Harness has a composition")
+            .allowed_domains()
+        {
+            let built_in = builtin_harnesses().into_iter().any(|harness| {
+                harness.manifest().id() == domain
+                    && harness.manifest().kind() == pandora_types::HarnessKind::Domain
+            });
+            if built_in {
+                continue;
+            }
+            let Some(version) = bindings.get(domain.as_str()) else {
+                return Err(PackageStoreError::MissingEnabledDomain {
+                    id: domain.as_str().to_owned(),
+                });
+            };
+            let package_id = PackageId::new(domain.as_str().to_owned())
+                .map_err(|_| PackageStoreError::CorruptRecord)?;
+            if !registry
+                .get(&package_id, version)
+                .is_some_and(|candidate| candidate.manifest().kind() == PackageKind::DomainHarness)
+            {
+                return Err(PackageStoreError::MissingEnabledDomain {
+                    id: domain.as_str().to_owned(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn enabled_dependents(
+    registry: &HarnessRegistry,
+    bindings: &BTreeMap<String, String>,
+    id: &str,
+    version: &str,
+) -> Vec<String> {
+    let mut dependents = BTreeSet::new();
+    for candidate in registry.list() {
+        let manifest = candidate.manifest();
+        if bindings.get(manifest.id().as_str()).map(String::as_str) != Some(manifest.version())
+            || (manifest.id().as_str() == id && manifest.version() == version)
+        {
+            continue;
+        }
+        let dependency_match = manifest.dependencies().iter().any(|dependency| {
+            !dependency.optional()
+                && dependency.id().as_str() == id
+                && dependency.version() == version
+        });
+        let composition_match = manifest.kind() == PackageKind::MetaHarness
+            && manifest.meta_composition().is_some_and(|composition| {
+                composition
+                    .allowed_domains()
+                    .iter()
+                    .any(|domain| domain.as_str() == id)
+            });
+        if dependency_match || composition_match {
+            dependents.insert(format!("{}@{}", manifest.id().as_str(), manifest.version()));
+        }
+    }
+    dependents.into_iter().collect()
+}
+
+fn reject_enabled_dependents(
+    registry: &HarnessRegistry,
+    bindings: &BTreeMap<String, String>,
+    id: &str,
+    version: &str,
+) -> Result<(), PackageStoreError> {
+    let dependents = enabled_dependents(registry, bindings, id, version);
+    if dependents.is_empty() {
+        Ok(())
+    } else {
+        Err(PackageStoreError::HasEnabledDependents {
+            id: id.to_owned(),
+            version: version.to_owned(),
+            dependents,
+        })
     }
 }
 
@@ -464,9 +944,13 @@ mod tests {
     }
 
     fn gene_manifest(id: &str, artifact: &[u8]) -> PackageManifest {
+        versioned_gene_manifest(id, "1.0.0", artifact)
+    }
+
+    fn versioned_gene_manifest(id: &str, version: &str, artifact: &[u8]) -> PackageManifest {
         PackageManifest::new(
             id,
-            "1.0.0",
+            version,
             PackageKind::Gene,
             "publisher",
             hash_artifact(artifact),
@@ -524,6 +1008,101 @@ mod tests {
                 ],
             )
             .unwrap();
+    }
+
+    #[test]
+    fn admitted_package_stays_inert_until_explicitly_enabled() {
+        let artifact = b"inert gene";
+        let manifest = gene_manifest("example/inert", artifact);
+        let (store, root) = store();
+
+        store.admit(&manifest, &manifest, artifact).unwrap();
+        assert!(!store.is_enabled(manifest.id(), manifest.version()).unwrap());
+
+        let binding = store.enable(manifest.id(), manifest.version()).unwrap();
+        assert_eq!(binding.active_version(), Some("1.0.0"));
+        assert_eq!(binding.previous_version(), None);
+        assert_eq!(binding.generation(), 1);
+        assert!(store.is_enabled(manifest.id(), manifest.version()).unwrap());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn enabled_dependencies_fail_closed_during_activation_and_disable() {
+        let gene_artifact = b"bounded gene";
+        let gene = gene_manifest("example/bounded", gene_artifact);
+        let domain_artifact = b"bounded domain";
+        let domain = domain_manifest(
+            "example/bounded-domain",
+            vec![PackageDependency::new("example/bounded", "1.0.0", false).unwrap()],
+            domain_artifact,
+        );
+        let (store, root) = store();
+        store.admit(&gene, &gene, gene_artifact).unwrap();
+        store.admit(&domain, &domain, domain_artifact).unwrap();
+
+        assert!(matches!(
+            store.enable(domain.id(), domain.version()),
+            Err(PackageStoreError::MissingEnabledDependency { .. })
+        ));
+        store.enable(gene.id(), gene.version()).unwrap();
+        store.enable(domain.id(), domain.version()).unwrap();
+        assert!(matches!(
+            store.disable(gene.id(), gene.version()),
+            Err(PackageStoreError::HasEnabledDependents { .. })
+        ));
+        store.disable(domain.id(), domain.version()).unwrap();
+        store.disable(gene.id(), gene.version()).unwrap();
+        assert!(!store.is_enabled(gene.id(), gene.version()).unwrap());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn exact_version_switches_retain_a_reversible_binding() {
+        let first_artifact = b"gene v1";
+        let first = versioned_gene_manifest("example/versioned", "1.0.0", first_artifact);
+        let second_artifact = b"gene v2";
+        let second = versioned_gene_manifest("example/versioned", "2.0.0", second_artifact);
+        let (store, root) = store();
+        store.admit(&first, &first, first_artifact).unwrap();
+        store.admit(&second, &second, second_artifact).unwrap();
+
+        store.enable(first.id(), first.version()).unwrap();
+        let updated = store.enable(second.id(), second.version()).unwrap();
+        assert_eq!(updated.active_version(), Some("2.0.0"));
+        assert_eq!(updated.previous_version(), Some("1.0.0"));
+
+        let rolled_back = store.rollback(first.id()).unwrap();
+        assert_eq!(rolled_back.active_version(), Some("1.0.0"));
+        assert_eq!(rolled_back.previous_version(), Some("2.0.0"));
+        assert_eq!(rolled_back.generation(), 3);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn active_and_rollback_versions_cannot_be_removed() {
+        let first_artifact = b"retained v1";
+        let first = versioned_gene_manifest("example/retained", "1.0.0", first_artifact);
+        let second_artifact = b"retained v2";
+        let second = versioned_gene_manifest("example/retained", "2.0.0", second_artifact);
+        let (store, root) = store();
+        store.admit(&first, &first, first_artifact).unwrap();
+        store.admit(&second, &second, second_artifact).unwrap();
+        store.enable(first.id(), first.version()).unwrap();
+        store.enable(second.id(), second.version()).unwrap();
+
+        assert!(matches!(
+            store.remove(second.id(), second.version()),
+            Err(PackageStoreError::PackageBound { role: "active", .. })
+        ));
+        assert!(matches!(
+            store.remove(first.id(), first.version()),
+            Err(PackageStoreError::PackageBound {
+                role: "rollback",
+                ..
+            })
+        ));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
