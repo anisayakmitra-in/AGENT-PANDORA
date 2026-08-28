@@ -383,7 +383,7 @@ fn activate(args: &[String]) -> Result<CommandResult, CliError> {
     let engine = open_engine(&config)?;
     let catalog = open_artifact_catalog(&config)?;
     let replacement = ReplacementEngine::new();
-    replacement
+    let reconciled_bindings = replacement
         .reconcile_cataloged(&engine, &catalog, timestamp())
         .map_err(replacement_error)?;
     let record = engine.inspect(&proposal_id).map_err(evolution_error)?;
@@ -448,6 +448,7 @@ fn activate(args: &[String]) -> Result<CommandResult, CliError> {
             "activation_scope": activation_scope,
             "runtime_authority_changed": false,
             "durability": "sqlite",
+            "reconciled_bindings": reconciled_bindings,
         }),
         format!("Activated admitted artifact for evolution proposal {proposal_id}"),
     ))
@@ -470,7 +471,7 @@ fn rollback(args: &[String]) -> Result<CommandResult, CliError> {
     let engine = open_engine(&config)?;
     let catalog = open_artifact_catalog(&config)?;
     let replacement = ReplacementEngine::new();
-    replacement
+    let reconciled_bindings = replacement
         .reconcile_cataloged(&engine, &catalog, timestamp())
         .map_err(replacement_error)?;
     let receipt = replacement
@@ -485,6 +486,7 @@ fn rollback(args: &[String]) -> Result<CommandResult, CliError> {
             "rolled_back_at": receipt.rolled_back_at(),
             "reason": receipt.reason(),
             "durability": "sqlite",
+            "reconciled_bindings": reconciled_bindings,
         }),
         format!("Rolled back evolution proposal {proposal_id}"),
     ))
