@@ -292,7 +292,7 @@ describe("Pandora desktop run state", () => {
     });
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("tab", { name: "workspace" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "work" }));
     fireEvent.change(screen.getByLabelText("Workspace file path"), { target: { value: "docs/architecture.md" } });
     fireEvent.click(screen.getByRole("button", { name: "Read file" }));
 
@@ -342,7 +342,8 @@ describe("Pandora desktop run state", () => {
     });
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("tab", { name: "workspace" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "work" }));
+    fireEvent.click(screen.getByRole("tab", { name: /changes/i }));
     fireEvent.click(screen.getByRole("button", { name: /Working diff/ }));
     expect(await screen.findByText("Execute workspace.diff once")).toBeInTheDocument();
     expect(screen.getByText("sha256:diff")).toBeInTheDocument();
@@ -353,6 +354,57 @@ describe("Pandora desktop run state", () => {
       expect(runtime.resume).toHaveBeenCalledWith("approval-diff", "diff", "coding-domain");
     });
     expect(await screen.findByLabelText("Workspace inspection output")).toHaveTextContent("diff --git");
+  });
+
+  it("runs bounded terminal checks through registered Genes", async () => {
+    runtime.run.mockResolvedValue({
+      mode: "direct",
+      session_id: "session-test",
+      execution_id: "execution-test",
+      selected_harness: "coding-domain",
+      selected_gene: "workspace.test",
+      status: "completed",
+      output: "all tests passed",
+      receipt_count: 1,
+      event_count: 5,
+    });
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "work" }));
+    fireEvent.click(screen.getByRole("tab", { name: /terminal/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Tests workspace\.test/ }));
+
+    await waitFor(() => expect(runtime.run).toHaveBeenCalledWith("test", "coding-domain"));
+    expect(await screen.findByLabelText("Workspace inspection output")).toHaveTextContent("all tests passed");
+    expect(screen.getByText("registered Gene output")).toBeInTheDocument();
+    expect(screen.getByText(/No arbitrary shell/)).toBeInTheDocument();
+  });
+
+  it("shows the latest bounded run output as an inspectable artifact", async () => {
+    runtime.agentRun.mockResolvedValue({
+      mode: "agent",
+      session_id: session.session_id,
+      execution_id: "execution-artifact",
+      selected_harness: "coding-domain",
+      selected_gene: null,
+      status: "completed",
+      output: "runtime-backed artifact output",
+      receipt_count: 2,
+      event_count: 6,
+    });
+    render(<App />);
+
+    const composer = await screen.findByLabelText("Pandora task");
+    fireEvent.change(composer, { target: { value: "Produce a bounded artifact" } });
+    fireEvent.submit(composer.closest("form")!);
+    await screen.findByText("runtime-backed artifact output");
+
+    fireEvent.click(screen.getByRole("tab", { name: "work" }));
+    fireEvent.click(screen.getByRole("tab", { name: /artifacts/i }));
+
+    expect(screen.getByLabelText("Run artifact output")).toHaveTextContent("runtime-backed artifact output");
+    expect(screen.getAllByText("execution-artifact").length).toBeGreaterThan(0);
+    expect(screen.getByText("Latest bounded output")).toBeInTheDocument();
   });
 
   it("fetches browser source only after exact network approval and renders it inertly", async () => {
@@ -665,10 +717,10 @@ describe("Pandora desktop run state", () => {
     expect(screen.getByText("No run selected")).toBeInTheDocument();
     expect(screen.getByText("policy approved")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("tab", { name: "workspace" }));
+    fireEvent.click(screen.getByRole("tab", { name: "work" }));
     expect(screen.getByRole("heading", { name: "workspace-1" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Inspection is evidence, not authority" })).toBeInTheDocument();
-    expect(screen.getByText("Governed")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Work surfaces expose evidence, not authority" })).toBeInTheDocument();
+    expect(screen.getByText("Read only")).toBeInTheDocument();
     expect(screen.getByText("Exact permit path")).toBeInTheDocument();
   });
 

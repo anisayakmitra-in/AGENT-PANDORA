@@ -58,7 +58,8 @@ type ViewId =
 
 type RunProfile = string;
 type ThemeMode = "dark" | "light";
-type InspectorTab = "flow" | "evidence" | "workspace" | "browser";
+type InspectorTab = "flow" | "evidence" | "work" | "browser";
+type WorkSurface = "files" | "changes" | "terminal" | "artifacts";
 type HarnessTab = "genes" | "extensions" | "packages" | "authority" | "receipts";
 
 type PendingRunRequest = {
@@ -1151,9 +1152,116 @@ function CommandPalette({ onClose, onSelectView }: { onClose: () => void; onSele
   return <div className="palette-backdrop" role="presentation" onMouseDown={onClose}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Open Pandora surface" onMouseDown={(event) => event.stopPropagation()}><div className="palette-search"><Icon name="search" size={16} /><input autoFocus value={query} onChange={(event) => { setQuery(event.target.value); setSelectedIndex(0); }} onKeyDown={handleKeyDown} placeholder="Search Pandora surfaces…" aria-label="Search Pandora surfaces" /><kbd>ESC</kbd></div><div className="palette-list">{filtered.length ? filtered.map((action, index) => <button type="button" className={`palette-item ${index === selectedIndex ? "is-active" : ""}`} aria-selected={index === selectedIndex} key={action.id} onMouseEnter={() => setSelectedIndex(index)} onClick={() => choose(index)}><Icon name={action.icon} size={16} /><span><strong>{action.label}</strong><small>{action.group}</small></span><kbd>↵</kbd></button>) : <p className="palette-empty">No matching Pandora surface.</p>}</div><div className="palette-footer"><span>Use ↑ ↓ and Enter</span><span className="mono">⌘ K</span></div></section></div>;
 }
 
+function workSurfaceForTask(task: string): WorkSurface {
+  if (task.startsWith("read:")) return "files";
+  if (["status", "diff", "log", "refs"].includes(task)) return "changes";
+  return "terminal";
+}
+
+function WorkspaceEvidenceOutput({ task, output }: { task: string; output: string }) {
+  if (task.startsWith("read:")) {
+    const path = task.slice("read:".length);
+    const lines = output.split("\n");
+    if (lines.at(-1) === "") lines.pop();
+    return <div className="file-viewer" aria-label="Workspace inspection output"><div className="work-output-toolbar"><span className="mono">{path}</span><span>{lines.length} line{lines.length === 1 ? "" : "s"}</span></div><div className="file-viewer-code">{lines.map((line, index) => <div className="file-line" key={`${index}-${line}`}><span>{index + 1}</span><code>{line || " "}</code></div>)}</div></div>;
+  }
+  if (task === "diff") {
+    const lines = output.split("\n");
+    if (lines.at(-1) === "") lines.pop();
+    return <div className="diff-viewer" aria-label="Workspace inspection output"><div className="work-output-toolbar"><span>Working tree changes</span><span>{lines.length} lines</span></div><div className="diff-viewer-code">{lines.map((line, index) => {
+      const tone = line.startsWith("+++") || line.startsWith("---") || line.startsWith("diff ") || line.startsWith("index ")
+        ? "meta"
+        : line.startsWith("@@")
+          ? "hunk"
+          : line.startsWith("+")
+            ? "added"
+            : line.startsWith("-")
+              ? "removed"
+              : "context";
+      return <div className={`diff-line is-${tone}`} key={`${index}-${line}`}><span>{index + 1}</span><code>{line || " "}</code></div>;
+    })}</div></div>;
+  }
+  return <div className="terminal-viewer" aria-label="Workspace inspection output"><div className="work-output-toolbar"><span className="mono">{task}</span><span>registered Gene output</span></div><pre>{output}</pre></div>;
+}
+
+function WorkSurfacePanel({
+  surface,
+  runtimeStatus,
+  workspacePath,
+  workspaceInspectionInFlight,
+  lastRun,
+  onPathChange,
+  onReadFile,
+  onInspect,
+}: {
+  surface: WorkSurface;
+  runtimeStatus: RuntimeStatus;
+  workspacePath: string;
+  workspaceInspectionInFlight: boolean;
+  lastRun: RuntimeRun | null;
+  onPathChange: (path: string) => void;
+  onReadFile: (event: FormEvent) => Promise<void>;
+  onInspect: (task: string) => Promise<void>;
+}) {
+  const connected = runtimeStatus === "connected";
+
+  if (surface === "files") {
+    return <Panel className="workspace-browser-panel work-surface-panel">
+      <div className="panel-heading">
+        <div><span className="eyebrow">FILE VIEWER</span><h3>Read workspace evidence</h3></div>
+        <Chip tone="blue" icon="book">Read only</Chip>
+      </div>
+      <form className="workspace-read-form" onSubmit={(event) => void onReadFile(event)}>
+        <label><span>Workspace-relative path</span><input aria-label="Workspace file path" value={workspacePath} onChange={(event) => onPathChange(event.target.value)} maxLength={1024} spellCheck={false} autoComplete="off" /></label>
+        <button className="button button-secondary" type="submit" disabled={!connected || workspaceInspectionInFlight || !workspacePath.trim()}>{workspaceInspectionInFlight ? "Reading…" : "Read file"}</button>
+      </form>
+      <p className="work-surface-note">Text is returned with line numbers through the symlink-safe filesystem Gene.</p>
+    </Panel>;
+  }
+
+  if (surface === "changes") {
+    const commands: Array<{ task: string; label: string; gene: string; icon: IconName }> = [
+      { task: "status", label: "Git status", gene: "workspace.status", icon: "terminal" },
+      { task: "diff", label: "Working diff", gene: "workspace.diff", icon: "code" },
+      { task: "log", label: "Recent log", gene: "workspace.log", icon: "archive" },
+      { task: "refs", label: "Branches & refs", gene: "workspace.refs", icon: "stack" },
+    ];
+    return <Panel className="work-surface-panel">
+      <div className="panel-heading"><div><span className="eyebrow">CHANGES</span><h3>Inspect repository state</h3></div><Chip tone="blue">Inert diff</Chip></div>
+      <div className="work-command-grid">{commands.map((command) => <button type="button" key={command.task} disabled={!connected || workspaceInspectionInFlight} onClick={() => void onInspect(command.task)}><Icon name={command.icon} size={15} /><span><strong>{command.label}</strong><small>{command.gene}</small></span><Icon name="chevron" size={12} /></button>)}</div>
+      <p className="work-surface-note">Repository evidence is rendered as text. No patch content is executed.</p>
+    </Panel>;
+  }
+
+  if (surface === "terminal") {
+    const commands: Array<{ task: string; label: string; gene: string }> = [
+      { task: "test", label: "Tests", gene: "workspace.test" },
+      { task: "lint", label: "Lint", gene: "workspace.lint" },
+      { task: "build", label: "Build", gene: "workspace.build" },
+      { task: "verify", label: "Verify", gene: "workspace.verify" },
+      { task: "format", label: "Format check", gene: "workspace.format" },
+    ];
+    return <Panel className="work-surface-panel">
+      <div className="panel-heading"><div><span className="eyebrow">BOUNDED TERMINAL</span><h3>Run registered checks</h3></div><Chip tone="amber" icon="lock">No arbitrary shell</Chip></div>
+      <div className="work-command-grid">{commands.map((command) => <button type="button" key={command.task} disabled={!connected || workspaceInspectionInFlight} onClick={() => void onInspect(command.task)}><Icon name="terminal" size={15} /><span><strong>{command.label}</strong><small>{command.gene}</small></span><Icon name="chevron" size={12} /></button>)}</div>
+      <p className="work-surface-note">Every action resolves to a registered Gene and follows the exact permit and receipt path.</p>
+    </Panel>;
+  }
+
+  return <Panel className="work-surface-panel artifact-work-panel">
+    <div className="panel-heading"><div><span className="eyebrow">ARTIFACTS</span><h3>Latest bounded output</h3></div><Chip tone={lastRun?.status === "completed" ? "green" : "neutral"} icon="archive">{lastRun?.status ?? "empty"}</Chip></div>
+    {lastRun ? <>
+      <div className="artifact-work-meta"><div><span>Execution</span><strong className="mono">{lastRun.execution_id ?? "provider-only"}</strong></div><div><span>Receipts</span><strong>{lastRun.receipt_count}</strong></div><div><span>Harness</span><strong>{lastRun.selected_harness ?? "unselected"}</strong></div></div>
+      {lastRun.output ? <pre className="artifact-work-output" aria-label="Run artifact output">{lastRun.output}</pre> : <p className="inspector-empty">This run did not return a text artifact.</p>}
+    </> : <div className="connection-empty"><Icon name="archive" size={21} /><p>Complete a run to inspect its latest bounded output.</p></div>}
+  </Panel>;
+}
+
 function Inspector({ steps, lastRun, events, selectedSession, runtimeStatus, approval, approvalDetail, approvalInFlight, workspaceInspection, workspaceInspectionInFlight, browserInspection, browserInspectionInFlight, selectedStep, onResolveApproval, onInspectWorkspace, onResolveWorkspaceInspection, onInspectBrowser, onResolveBrowserInspection, onSelectStep }: { steps: typeof authoritySteps; lastRun: RuntimeRun | null; events: RuntimeEvent[]; selectedSession: RuntimeSessionDetail | null; runtimeStatus: RuntimeStatus; approval?: RuntimeApproval; approvalDetail?: string; approvalInFlight: boolean; workspaceInspection: RuntimeRun | null; workspaceInspectionInFlight: boolean; browserInspection: RuntimeRun | null; browserInspectionInFlight: boolean; selectedStep: string; onResolveApproval: (allow: boolean) => Promise<void>; onInspectWorkspace: (task: string) => Promise<void>; onResolveWorkspaceInspection: (allow: boolean) => Promise<void>; onInspectBrowser: (url: string) => Promise<void>; onResolveBrowserInspection: (allow: boolean) => Promise<void>; onSelectStep: (id: string) => void }) {
   const [approvalError, setApprovalError] = useState("");
   const [tab, setTab] = useState<InspectorTab>("flow");
+  const [workSurface, setWorkSurface] = useState<WorkSurface>("files");
+  const [workspaceTask, setWorkspaceTask] = useState("");
   const [workspacePath, setWorkspacePath] = useState("README.md");
   const [workspaceError, setWorkspaceError] = useState("");
   const [browserUrl, setBrowserUrl] = useState("https://example.com/");
@@ -1170,6 +1278,8 @@ function Inspector({ steps, lastRun, events, selectedSession, runtimeStatus, app
   };
   const inspectWorkspace = async (task: string) => {
     setWorkspaceError("");
+    setWorkspaceTask(task);
+    setWorkSurface(workSurfaceForTask(task));
     try {
       await onInspectWorkspace(task);
     } catch (error: unknown) {
@@ -1197,6 +1307,7 @@ function Inspector({ steps, lastRun, events, selectedSession, runtimeStatus, app
     ? `${workspaceInspection.output.slice(0, 120_000)}\n[output truncated in desktop inspector]`
     : workspaceInspection?.output ?? "";
   const workspaceApproval = workspaceInspection?.approval;
+  const workspaceResultVisible = Boolean(workspaceInspection && workspaceTask && workSurfaceForTask(workspaceTask) === workSurface);
   const fetchBrowser = async (event: FormEvent) => {
     event.preventDefault();
     setBrowserError("");
@@ -1227,21 +1338,18 @@ function Inspector({ steps, lastRun, events, selectedSession, runtimeStatus, app
   return <aside className="inspector">
     <div className="inspector-header"><div><span className="eyebrow">{hasLiveRun ? "LIVE RUN SUMMARY" : "AUTHORITY CONTRACT"}</span><h2>{hasLiveRun ? "Execution recorded" : "Waiting for a run"}</h2></div><button className="icon-button" type="button" aria-label="Inspector options" disabled><Icon name="dots" size={17} /></button></div>
     <div className="inspector-tabs" role="tablist" aria-label="Run inspector">
-      {(["flow", "evidence", "workspace", "browser"] as InspectorTab[]).map((item) => <button type="button" role="tab" aria-selected={tab === item} className={tab === item ? "is-active" : ""} key={item} onClick={() => setTab(item)}>{item}</button>)}
+      {(["flow", "evidence", "work", "browser"] as InspectorTab[]).map((item) => <button type="button" role="tab" aria-selected={tab === item} className={tab === item ? "is-active" : ""} key={item} onClick={() => setTab(item)}>{item}</button>)}
     </div>
     {tab === "evidence" ? <div className="inspector-pane" role="tabpanel">
       <Panel className="evidence-summary"><div className="panel-heading"><div><span className="eyebrow">RUN EVIDENCE</span><h3>{lastRun ? `${lastRun.receipt_count} receipts · ${lastRun.event_count} events` : "No run selected"}</h3></div><Chip tone={lastRun?.status === "completed" ? "green" : "neutral"} icon="archive">{lastRun?.status ?? "waiting"}</Chip></div>{lastRun ? <div className="evidence-facts"><div><span>Execution</span><strong className="mono">{lastRun.execution_id ?? "provider-only"}</strong></div><div><span>Harness</span><strong>{lastRun.selected_harness ?? "unselected"}</strong></div><div><span>Gene</span><strong>{lastRun.selected_gene ?? "unselected"}</strong></div><div><span>Prompt cache</span><strong>{lastRun.cached_prompt_tokens ?? 0} reused · {lastRun.cache_write_prompt_tokens ?? 0} written</strong></div></div> : <p className="task-copy">Run or select a session to inspect its immutable evidence summary.</p>}</Panel>
       <div className="inspector-section"><div className="section-heading"><span>Redacted activity</span><span className="mono section-count">{events.length}</span></div>{events.length ? <div className="compact-event-list">{events.map((event) => <div className="compact-event" key={event.event_id}><span className="event-dot" /><span>{event.event_type.replaceAll("_", " ")}</span><small className="mono">{event.event_id}</small></div>)}</div> : <p className="inspector-empty">No runtime events loaded.</p>}</div>
-    </div> : tab === "workspace" ? <div className="inspector-pane" role="tabpanel">
+    </div> : tab === "work" ? <div className="inspector-pane" role="tabpanel">
       <Panel className="context-panel"><div className="panel-heading"><div><span className="eyebrow">SCOPED WORKSPACE</span><h3>{selectedSession?.session.workspace_id ?? "Local runtime workspace"}</h3></div><Icon name="lock" size={17} /></div><div className="evidence-facts"><div><span>Session</span><strong className="mono">{workspaceInspection?.session_id ?? selectedSession?.session.session_id ?? "new inspection"}</strong></div><div><span>Runtime scope</span><strong>Local device</strong></div><div><span>Reads</span><strong>Filesystem Gene</strong></div><div><span>Commands</span><strong>Exact permit path</strong></div></div></Panel>
-      <Panel className="workspace-browser-panel">
-        <div className="panel-heading"><div><span className="eyebrow">WORKSPACE EXPLORER</span><h3>Inspect real evidence</h3></div><Chip tone={runtimeStatus === "connected" ? "green" : "neutral"} icon="code">{runtimeStatus === "connected" ? "Governed" : "Offline"}</Chip></div>
-        <form className="workspace-file-form" onSubmit={(event) => void readWorkspaceFile(event)}><label><span>Workspace-relative file</span><input aria-label="Workspace file path" value={workspacePath} onChange={(event) => setWorkspacePath(event.target.value)} maxLength={1024} spellCheck={false} autoComplete="off" placeholder="README.md" /></label><button className="button button-secondary" type="submit" disabled={runtimeStatus !== "connected" || workspaceInspectionInFlight || !workspacePath.trim()}>{workspaceInspectionInFlight ? "Inspecting…" : "Read file"}</button></form>
-        <div className="workspace-command-section"><div><span className="eyebrow">BOUNDED TERMINAL</span><small>No arbitrary shell input. Every command uses a registered Gene.</small></div><div className="workspace-command-grid"><button type="button" disabled={runtimeStatus !== "connected" || workspaceInspectionInFlight} onClick={() => void inspectWorkspace("status")}><Icon name="terminal" size={14} /><span><strong>Git status</strong><small>workspace.status</small></span></button><button type="button" disabled={runtimeStatus !== "connected" || workspaceInspectionInFlight} onClick={() => void inspectWorkspace("diff")}><Icon name="code" size={14} /><span><strong>Working diff</strong><small>workspace.diff</small></span></button><button type="button" disabled={runtimeStatus !== "connected" || workspaceInspectionInFlight} onClick={() => void inspectWorkspace("log")}><Icon name="archive" size={14} /><span><strong>Recent log</strong><small>workspace.log</small></span></button></div></div>
-        {workspaceError ? <p className="workspace-inspection-error" role="alert">{workspaceError}</p> : null}
-      </Panel>
-      {workspaceInspection ? <Panel className="workspace-result-panel"><div className="panel-heading"><div><span className="eyebrow">GOVERNED RESULT</span><h3>{workspaceInspection.selected_gene ?? "Workspace inspection"}</h3></div><Chip tone={workspaceInspection.status === "completed" ? "green" : workspaceInspection.status === "approval_required" ? "amber" : "neutral"}>{workspaceInspection.status}</Chip></div><div className="workspace-result-meta"><span className="mono">{workspaceInspection.execution_id ?? workspaceInspection.session_id}</span><span>{workspaceInspection.receipt_count} receipt{workspaceInspection.receipt_count === 1 ? "" : "s"}</span></div>{workspaceApproval ? <div className="workspace-approval"><div><span className="eyebrow">EXACT APPROVAL</span><strong>{workspaceApproval.request_summary}</strong><small className="mono">{workspaceApproval.request_digest}</small></div><div className="workspace-approval-actions">{workspaceApproval.status === "pending" ? <><button className="button button-deny" type="button" disabled={workspaceInspectionInFlight} onClick={() => void resolveWorkspace(false)}>Deny</button><button className="button button-primary" type="button" disabled={workspaceInspectionInFlight} onClick={() => void resolveWorkspace(true)}>Allow once</button></> : workspaceApproval.status === "approved" ? <button className="button button-primary" type="button" disabled={workspaceInspectionInFlight} onClick={() => void resolveWorkspace(true)}>Resume approved inspection</button> : <Chip tone="neutral">{workspaceApproval.status}</Chip>}</div></div> : null}{workspaceOutput ? <pre className="workspace-output" aria-label="Workspace inspection output">{workspaceOutput}</pre> : <p className="inspector-empty">{workspaceInspection.status_detail ?? (workspaceInspectionInFlight ? "Waiting for runtime evidence…" : "No output returned.")}</p>}</Panel> : null}
-      <Panel className="context-boundary"><span className="eyebrow">BOUNDARY</span><h3>Inspection is evidence, not authority</h3><p>File reads, status, diff, and log stay on Pandora’s existing Harness → Gene → ReferenceMonitor → receipt path. This panel cannot execute arbitrary shell commands or mint permits.</p></Panel>
+      <div className="work-surface-tabs" role="tablist" aria-label="Workspace surfaces">{(["files", "changes", "terminal", "artifacts"] as WorkSurface[]).map((surface) => <button type="button" role="tab" aria-selected={workSurface === surface} className={workSurface === surface ? "is-active" : ""} key={surface} onClick={() => setWorkSurface(surface)}><Icon name={surface === "files" ? "book" : surface === "changes" ? "code" : surface === "terminal" ? "terminal" : "archive"} size={13} />{surface}</button>)}</div>
+      <WorkSurfacePanel surface={workSurface} runtimeStatus={runtimeStatus} workspacePath={workspacePath} workspaceInspectionInFlight={workspaceInspectionInFlight} lastRun={lastRun} onPathChange={setWorkspacePath} onReadFile={readWorkspaceFile} onInspect={inspectWorkspace} />
+      {workspaceError ? <p className="workspace-inspection-error" role="alert">{workspaceError}</p> : null}
+      {workspaceResultVisible && workspaceInspection ? <Panel className="workspace-result-panel"><div className="panel-heading"><div><span className="eyebrow">GOVERNED RESULT</span><h3>{workspaceInspection.selected_gene ?? "Workspace inspection"}</h3></div><Chip tone={workspaceInspection.status === "completed" ? "green" : workspaceInspection.status === "approval_required" ? "amber" : "neutral"}>{workspaceInspection.status}</Chip></div><div className="workspace-result-meta"><span className="mono">{workspaceInspection.execution_id ?? workspaceInspection.session_id}</span><span>{workspaceInspection.receipt_count} receipt{workspaceInspection.receipt_count === 1 ? "" : "s"}</span></div>{workspaceApproval ? <div className="workspace-approval"><div><span className="eyebrow">EXACT APPROVAL</span><strong>{workspaceApproval.request_summary}</strong><small className="mono">{workspaceApproval.request_digest}</small></div><div className="workspace-approval-actions">{workspaceApproval.status === "pending" ? <><button className="button button-deny" type="button" disabled={workspaceInspectionInFlight} onClick={() => void resolveWorkspace(false)}>Deny</button><button className="button button-primary" type="button" disabled={workspaceInspectionInFlight} onClick={() => void resolveWorkspace(true)}>Allow once</button></> : workspaceApproval.status === "approved" ? <button className="button button-primary" type="button" disabled={workspaceInspectionInFlight} onClick={() => void resolveWorkspace(true)}>Resume approved inspection</button> : <Chip tone="neutral">{workspaceApproval.status}</Chip>}</div></div> : null}{workspaceOutput ? <WorkspaceEvidenceOutput task={workspaceTask} output={workspaceOutput} /> : <p className="inspector-empty">{workspaceInspection.status_detail ?? (workspaceInspectionInFlight ? "Waiting for runtime evidence…" : "No output returned.")}</p>}</Panel> : null}
+      <Panel className="context-boundary"><span className="eyebrow">BOUNDARY</span><h3>Work surfaces expose evidence, not authority</h3><p>Files, changes, checks, and artifacts stay on Pandora’s existing Harness → Gene → ReferenceMonitor → receipt path. The desktop cannot issue permits, run arbitrary commands, or mutate repository state outside a registered Gene.</p></Panel>
     </div> : tab === "browser" ? <div className="inspector-pane" role="tabpanel">
       <Panel className="browser-control-panel"><div className="panel-heading"><div><span className="eyebrow">GOVERNED BROWSER</span><h3>Fetch inert source evidence</h3></div><Chip tone={runtimeStatus === "connected" ? "green" : "neutral"} icon="shield">{runtimeStatus === "connected" ? "Exact approval" : "Offline"}</Chip></div><form className="browser-fetch-form" onSubmit={(event) => void fetchBrowser(event)}><label><span>Exact URL</span><input aria-label="Browser URL" value={browserUrl} onChange={(event) => setBrowserUrl(event.target.value)} maxLength={2048} spellCheck={false} autoComplete="off" /></label><button className="button button-primary" type="submit" disabled={runtimeStatus !== "connected" || browserInspectionInFlight || !browserUrl.trim()}>{browserInspectionInFlight ? "Fetching…" : "Fetch source"}</button></form><div className="browser-rules"><span><Icon name="check" size={11} /> HTTPS, or loopback HTTP</span><span><Icon name="check" size={11} /> No redirects</span><span><Icon name="check" size={11} /> Text only · 128 KiB</span></div>{browserError ? <p className="workspace-inspection-error" role="alert">{browserError}</p> : null}</Panel>
       {browserInspection ? <Panel className="browser-result-panel"><div className="panel-heading"><div><span className="eyebrow">NETWORK RECEIPT PATH</span><h3>{browserInspection.selected_gene ?? "browser.fetch"}</h3></div><Chip tone={browserInspection.status === "completed" ? "green" : browserInspection.status === "approval_required" ? "amber" : "neutral"}>{browserInspection.status}</Chip></div><div className="workspace-result-meta"><span className="mono">{browserInspection.execution_id ?? browserInspection.session_id}</span><span>{browserInspection.receipt_count} receipt{browserInspection.receipt_count === 1 ? "" : "s"}</span></div>{browserApproval ? <div className="workspace-approval"><div><span className="eyebrow">EXACT NETWORK APPROVAL</span><strong>{browserApproval.request_summary}</strong><small className="mono">{browserApproval.request_digest}</small></div><div className="workspace-approval-actions">{browserApproval.status === "pending" ? <><button className="button button-deny" type="button" disabled={browserInspectionInFlight} onClick={() => void resolveBrowser(false)}>Deny</button><button className="button button-primary" type="button" disabled={browserInspectionInFlight} onClick={() => void resolveBrowser(true)}>Allow once</button></> : browserApproval.status === "approved" ? <button className="button button-primary" type="button" disabled={browserInspectionInFlight} onClick={() => void resolveBrowser(true)}>Resume approved fetch</button> : <Chip tone="neutral">{browserApproval.status}</Chip>}</div></div> : null}{browserEvidence ? <div className="browser-evidence"><div className="browser-evidence-meta"><div><span>Status</span><strong>{browserEvidence.status}</strong></div><div><span>Media</span><strong>{browserEvidence.content_type ?? "UTF-8 text"}</strong></div><div><span>Boundary</span><strong>{browserEvidence.truncated ? "Truncated" : "Complete"}{browserEvidence.lossy ? " · normalized" : ""}</strong></div></div><div className="browser-address mono">{browserEvidence.url}</div><pre aria-label="Browser evidence body">{browserEvidence.body}</pre></div> : browserInspection.output ? <pre className="workspace-output" aria-label="Browser inspection output">{browserInspection.output}</pre> : <p className="inspector-empty">{browserInspection.status_detail ?? (browserInspectionInFlight ? "Waiting for network evidence…" : "No source returned.")}</p>}</Panel> : null}
