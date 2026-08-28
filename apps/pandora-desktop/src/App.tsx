@@ -12,6 +12,7 @@ import {
   type RuntimeRun,
   type RuntimeEvent,
   type RuntimeEngine,
+  type RuntimeEvolutionMutation,
   type RuntimeEvolutionProposal,
   type RuntimeHarness,
   type RuntimeHealth,
@@ -143,13 +144,14 @@ const authoritySteps: Array<{
   status: "complete" | "bound" | "waiting" | "idle";
   icon: IconName;
 }> = [
-  { id: "parliament", label: "Parliament", detail: "Policy decision recorded", status: "complete", icon: "council" },
-  { id: "shadow", label: "Shadow Council", detail: "Route selected · 2 signals", status: "complete", icon: "users" },
-  { id: "harness", label: "Coding Domain Harness", detail: "v2.0.0-beta.7 · bound", status: "bound", icon: "box" },
-  { id: "gene", label: "workspace.diff", detail: "Read-only capability", status: "bound", icon: "code" },
-  { id: "monitor", label: "ReferenceMonitor", detail: "Allow-once decision required", status: "waiting", icon: "shield" },
-  { id: "executor", label: "EffectExecutor", detail: "Awaiting permit", status: "idle", icon: "terminal" },
-  { id: "receipt", label: "Receipt", detail: "Created after execution", status: "idle", icon: "archive" }
+  { id: "parliament", label: "Plan · Parliament", detail: "Intent and policy posture recorded", status: "complete", icon: "council" },
+  { id: "shadow", label: "Route · Shadow Council", detail: "Harness route selected from evidence", status: "complete", icon: "users" },
+  { id: "harness", label: "Harness binding", detail: "Awaiting runtime selection", status: "bound", icon: "box" },
+  { id: "gene", label: "Gene binding", detail: "Exact capability selected", status: "bound", icon: "code" },
+  { id: "monitor", label: "Approval · ReferenceMonitor", detail: "Exact permit decision", status: "waiting", icon: "shield" },
+  { id: "executor", label: "Effects · EffectExecutor", detail: "Awaiting permit", status: "idle", icon: "terminal" },
+  { id: "receipt", label: "Receipts", detail: "Created after execution", status: "idle", icon: "archive" },
+  { id: "evaluation", label: "Evaluation", detail: "Outcome feedback follows receipts", status: "idle", icon: "graph" }
 ];
 
 function authorityStepsForRun(lastRun: RuntimeRun | null, events: RuntimeEvent[], runProfile: RunProfile) {
@@ -164,13 +166,14 @@ function authorityStepsForRun(lastRun: RuntimeRun | null, events: RuntimeEvent[]
   const completed = lastRun.status === "completed";
   const approvalRequired = lastRun.status === "approval_required";
   return [
-    { id: "parliament", label: "Parliament", detail: denied ? "Policy denied" : "Policy decision recorded", status: policyResolved ? "complete" : "bound", icon: "council" },
-    { id: "shadow", label: "Shadow Council", detail: "Routing evidence recorded", status: "complete", icon: "users" },
-    { id: "harness", label: lastRun.selected_harness ?? "Harness", detail: "Selected by the runtime", status: "bound", icon: "box" },
-    { id: "gene", label: lastRun.selected_gene ?? "Gene", detail: "Bound capability", status: "bound", icon: "code" },
-    { id: "monitor", label: "ReferenceMonitor", detail: approvalRequired ? "Approval required" : denied ? "Permit not issued" : "Permit issued and consumed", status: approvalRequired ? "waiting" : denied ? "idle" : "complete", icon: "shield" },
-    { id: "executor", label: "EffectExecutor", detail: completed ? "Execution completed" : denied ? "Execution not started" : "Awaiting permit", status: completed ? "complete" : "idle", icon: "terminal" },
-    { id: "receipt", label: "Receipt", detail: lastRun.receipt_count ? `${lastRun.receipt_count} receipt${lastRun.receipt_count === 1 ? "" : "s"} recorded` : "No receipt created", status: lastRun.receipt_count ? "complete" : "idle", icon: "archive" }
+    { id: "parliament", label: "Plan · Parliament", detail: denied ? "Policy denied the plan" : "Intent and policy decision recorded", status: policyResolved ? "complete" : "bound", icon: "council" },
+    { id: "shadow", label: "Route · Shadow Council", detail: "Routing evidence recorded", status: "complete", icon: "users" },
+    { id: "harness", label: `Harness · ${lastRun.selected_harness ?? "unselected"}`, detail: "Selected by the runtime", status: "bound", icon: "box" },
+    { id: "gene", label: `Gene · ${lastRun.selected_gene ?? "unselected"}`, detail: "Exact capability binding", status: "bound", icon: "code" },
+    { id: "monitor", label: "Approval · ReferenceMonitor", detail: approvalRequired ? "Exact approval required" : denied ? "Permit not issued" : "Permit issued and consumed", status: approvalRequired ? "waiting" : denied ? "idle" : "complete", icon: "shield" },
+    { id: "executor", label: "Effects · EffectExecutor", detail: completed ? "Bound effects completed" : denied ? "Effects never started" : "Awaiting permit", status: completed ? "complete" : "idle", icon: "terminal" },
+    { id: "receipt", label: "Receipts", detail: lastRun.receipt_count ? `${lastRun.receipt_count} receipt${lastRun.receipt_count === 1 ? "" : "s"} recorded` : "No receipt created", status: lastRun.receipt_count ? "complete" : "idle", icon: "archive" },
+    { id: "evaluation", label: "Evaluation", detail: completed ? "Outcome feedback committed to durable memory" : denied ? "Failure evidence retained" : "Waiting for terminal outcome", status: completed || denied ? "complete" : "idle", icon: "graph" }
   ] as typeof authoritySteps;
 }
 
@@ -627,6 +630,24 @@ function App() {
     }
   };
 
+  const mutateEvolution = async (
+    operation: "activate" | "rollback",
+    proposalId: string,
+    confirmation: string,
+    reason: string,
+  ): Promise<RuntimeEvolutionMutation> => {
+    if (!client) {
+      throw new Error("Connect to the local Pandora service first");
+    }
+    const mutation = operation === "activate"
+      ? await client.activateEvolution(proposalId, confirmation)
+      : await client.rollbackEvolution(proposalId, confirmation, reason);
+    const [proposals, activations] = await Promise.all([client.evolution(), client.evolutionActivations()]);
+    setEvolutionProposals(proposals);
+    setArtifactActivations(activations);
+    return mutation;
+  };
+
   const createWorkflow = (name: string, task: string, profile: RunProfile) => {
     const recipe = { id: crypto.randomUUID(), name, task, profile };
     setWorkflows((current) => [recipe, ...current].slice(0, 24));
@@ -680,7 +701,7 @@ function App() {
         ) : activeView === "tools" ? (
           <ToolsView tools={tools} runtimeStatus={runtimeStatus} />
         ) : activeView === "evolution" ? (
-          <EvolutionView proposals={evolutionProposals} activations={artifactActivations} runtimeStatus={runtimeStatus} />
+          <EvolutionView proposals={evolutionProposals} activations={artifactActivations} runtimeStatus={runtimeStatus} onMutate={mutateEvolution} />
         ) : activeView === "settings" ? (
           <SettingsView theme={theme} onThemeChange={setTheme} runtimeStatus={runtimeStatus} health={runtimeHealth} native={native} endpoint={endpoint} />
         ) : (
@@ -939,9 +960,57 @@ function ConnectionView({ endpoint, runtimeStatus, runtimeError, health, provide
   return <div className="full-view"><PageHeader eyebrow="Runtime surface" title="Connections" description="Connect this desktop shell to the authenticated loopback Pandora service." actions={<Chip tone={runtimeStatus === "connected" ? "green" : runtimeStatus === "offline" ? "amber" : "blue"} icon="lock">{runtimeStatusLabel(runtimeStatus)}</Chip>} /><div className="connection-grid"><Panel className="connection-panel"><div className="panel-heading"><div><span className="eyebrow">LOCAL RPC</span><h3>Pandora service</h3></div><Icon name="terminal" size={19} /></div><div className="settings-facts connection-health"><div><span>Service health</span><strong>{health?.status ?? "Unavailable"}</strong></div><div><span>Transport</span><strong>{native ? "Native bridge" : "Loopback RPC"}</strong></div></div>{native ? <button className={`button ${serviceActive ? "button-secondary" : "button-primary"} connection-start`} type="button" onClick={() => void (serviceActive ? onStopService() : onStartService())}>{serviceActive ? "Stop local service" : "Start local service"} <Icon name={serviceActive ? "lock" : "arrow"} size={14} /></button> : null}<form className="connection-form" onSubmit={submit}><label><span>Endpoint</span><input value={draftEndpoint} onChange={(event) => setDraftEndpoint(event.target.value)} placeholder="http://127.0.0.1:PORT/v1/rpc" spellCheck={false} /></label><label><span>Bearer token</span><input value={draftToken} onChange={(event) => setDraftToken(event.target.value)} type="password" placeholder="Paste the service token for this session" autoComplete="off" /></label><button className="button button-secondary" type="submit" disabled={!draftEndpoint.trim() || !draftToken.trim()}>Connect manually <Icon name="arrow" size={14} /> </button></form><p className="connection-note">Desktop startup keeps the bearer token native-side. Manual browser connections keep it in memory and never write it to storage. Endpoints must be loopback-only.</p>{runtimeError ? <p className="connection-error" role="alert">{runtimeError}</p> : null}</Panel><Panel className="connection-panel"><div className="panel-heading"><div><span className="eyebrow">PROVIDER PROFILES</span><h3>{providers.length} configured</h3></div><Chip tone={providers.some((provider) => provider.active) ? "blue" : "neutral"} icon="spark">Redacted</Chip></div>{providers.length ? <div className="provider-list">{providers.map((provider) => <div className="provider-row" key={provider.name}><span className={`provider-dot ${provider.active ? "is-active" : ""}`} /><span><strong>{provider.name}</strong><small>{provider.model} · {provider.protocol}</small></span><span className={`provider-state ${provider.credential_configured ? "is-ready" : ""}`}>{provider.credential_configured ? "Ready" : "Credential needed"}</span></div>)}</div> : <div className="connection-empty"><Icon name="lock" size={21} /><p>Provider profiles are not configured.</p></div>}</Panel><Panel className="connection-panel"><div className="panel-heading"><div><span className="eyebrow">SCOPED SESSIONS</span><h3>{sessions.length} available</h3></div><Chip tone="green" icon="shield">Tenant scoped</Chip></div>{sessions.length ? <div className="session-list">{sessions.map((session) => <button className={`session-row ${selectedSessionId === session.session_id ? "is-selected" : ""}`} key={session.session_id} type="button" onClick={() => void onSelectSession(session.session_id)}><span className="session-dot" /><span><strong>{session.session_id}</strong><small>{session.workspace_id} · {session.tenant_id}</small></span><Icon name="chevron" size={13} /></button>)}</div> : <div className="connection-empty"><Icon name="archive" size={21} /><p>Connect to load scoped sessions.</p></div>}{selectedSession ? <div className="selected-session"><span className="eyebrow">SELECTED SESSION</span><strong>{selectedSession.session.session_id}</strong><small>{selectedSession.event_count} recorded events · ready to inspect</small></div> : null}</Panel></div></div>;
 }
 
-function EvolutionView({ proposals, activations, runtimeStatus }: { proposals: RuntimeEvolutionProposal[]; activations: RuntimeArtifactActivation[]; runtimeStatus: RuntimeStatus }) {
+function EvolutionView({ proposals, activations, runtimeStatus, onMutate }: { proposals: RuntimeEvolutionProposal[]; activations: RuntimeArtifactActivation[]; runtimeStatus: RuntimeStatus; onMutate: (operation: "activate" | "rollback", proposalId: string, confirmation: string, reason: string) => Promise<RuntimeEvolutionMutation> }) {
+  const [pending, setPending] = useState<{ operation: "activate" | "rollback"; proposalId: string } | null>(null);
+  const [confirmation, setConfirmation] = useState("");
+  const [reason, setReason] = useState("");
+  const [mutationError, setMutationError] = useState("");
+  const [mutationInFlight, setMutationInFlight] = useState(false);
+  const [receipt, setReceipt] = useState<RuntimeEvolutionMutation | null>(null);
   const stateTone = (state: string): "neutral" | "green" | "amber" | "blue" | "gold" => state === "active" ? "green" : state.includes("failed") || state === "rolled_back" ? "amber" : state === "approved" || state === "staged" || state === "canary_passed" ? "gold" : state === "evaluated" ? "blue" : "neutral";
-  return <div className="full-view"><PageHeader eyebrow="Governed improvement" title="Evolution" description="Inspect durable proposal evidence, release gates, and admitted artifact bindings. This surface cannot create, approve, or activate mutations." actions={<Chip tone={activations.length ? "green" : proposals.length ? "gold" : runtimeStatus === "connected" ? "neutral" : "amber"} icon="shield">{activations.length ? `${activations.length} active binding${activations.length === 1 ? "" : "s"}` : proposals.length ? `${proposals.length} proposal${proposals.length === 1 ? "" : "s"}` : "No proposals"}</Chip>} />{proposals.length || activations.length ? <div className="secondary-grid">{activations.map((activation) => <Panel className="secondary-card" key={`active-${activation.proposal_id}`}><div className="panel-heading"><div><span className="eyebrow">ACTIVE ARTIFACT · {activation.proposal_id}</span><h3>Admitted artifact binding</h3></div><Chip tone="green">catalog active</Chip></div><div className="secondary-icon secondary-icon-0"><Icon name="stack" size={20} /></div><div className="settings-facts"><div><span>Base artifact</span><strong className="mono">{activation.base_artifact}</strong></div><div><span>Resolved artifact</span><strong className="mono">{activation.candidate_artifact}</strong></div><div><span>Activated</span><strong>{new Date(activation.activated_at_unix_seconds * 1000).toLocaleString()}</strong></div><div><span>Runtime authority</span><strong>Unchanged</strong></div></div></Panel>)}{proposals.map((proposal, index) => <Panel className="secondary-card" key={proposal.proposal_id}><div className="panel-heading"><div><span className="eyebrow">{proposal.source} · {proposal.proposal_id}</span><h3>{proposal.expected_outcome}</h3></div><Chip tone={stateTone(proposal.state)}>{proposal.state.replaceAll("_", " ")}</Chip></div><div className={`secondary-icon secondary-icon-${index % 3}`}><Icon name="evolution" size={20} /></div><div className="settings-facts"><div><span>Artifact transition</span><strong>{proposal.base_artifact} → {proposal.candidate_artifact}</strong></div><div><span>Evidence digest</span><strong className="mono">{proposal.evidence_digest}</strong></div><div><span>Holdout gate</span><strong>{proposal.evaluation ? `${proposal.evaluation.holdout_passed ? "Passed" : "Failed"} · ${proposal.evaluation.trajectory_score}/${proposal.evaluation.outcome_score}` : "Not evaluated"}</strong></div><div><span>Policy / regression</span><strong>{proposal.evaluation ? `${proposal.evaluation.policy_passed ? "Pass" : "Fail"} / ${proposal.evaluation.regression_passed ? "Pass" : "Fail"}` : "Pending"}</strong></div><div><span>Parliament</span><strong>{proposal.approval ? `${proposal.approval.approver_id} · policy v${proposal.approval.policy_version}` : "Not approved"}</strong></div><div><span>Signed artifact</span><strong>{proposal.approval?.signature_present ? `Verified · ${proposal.approval.signer_id}` : "Absent"}</strong></div><div><span>Canary</span><strong>{proposal.canary ? `${proposal.canary.passed ? "Passed" : "Failed"} · ${proposal.canary.failure_count} failures` : "Not run"}</strong></div></div></Panel>)}</div> : <div className="workflow-empty"><div className="empty-orbit"><Icon name="evolution" size={25} /></div><h2>No evolution proposals</h2><p>{runtimeStatus === "connected" ? "The durable evolution and artifact catalogs are available. Proposal generation remains separate from permission and activation." : "Connect the authenticated Pandora service to inspect the durable evolution store."}</p></div>}</div>;
+
+  const beginMutation = (operation: "activate" | "rollback", proposalId: string) => {
+    setPending({ operation, proposalId });
+    setConfirmation("");
+    setReason("");
+    setMutationError("");
+    setReceipt(null);
+  };
+
+  const submitMutation = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!pending || confirmation !== pending.proposalId || (pending.operation === "rollback" && !reason.trim())) {
+      return;
+    }
+    setMutationInFlight(true);
+    setMutationError("");
+    try {
+      const nextReceipt = await onMutate(pending.operation, pending.proposalId, confirmation, reason.trim());
+      setReceipt(nextReceipt);
+      setPending(null);
+      setConfirmation("");
+      setReason("");
+    } catch (error: unknown) {
+      setMutationError(error instanceof Error ? error.message : "Evolution mutation failed");
+    } finally {
+      setMutationInFlight(false);
+    }
+  };
+
+  return <div className="full-view"><PageHeader eyebrow="Governed improvement" title="Evolution" description="Inspect evidence, release gates, admitted bindings, and guarded activation or rollback receipts." actions={<Chip tone={activations.length ? "green" : proposals.length ? "gold" : runtimeStatus === "connected" ? "neutral" : "amber"} icon="shield">{activations.length ? `${activations.length} active binding${activations.length === 1 ? "" : "s"}` : proposals.length ? `${proposals.length} proposal${proposals.length === 1 ? "" : "s"}` : "No proposals"}</Chip>} />
+    <div className="engine-notice evolution-boundary"><Icon name="lock" size={16} /><span>Activation never grants new authority. Pandora blocks mutation while executions are active, validates admitted artifacts, snapshots every evolution database, and requires the exact proposal ID.</span></div>
+    {receipt ? <Panel className="evolution-receipt"><div className="panel-heading"><div><span className="eyebrow">MUTATION RECEIPT</span><h3>{receipt.operation === "activate" ? "Candidate activated" : "Binding rolled back"}</h3></div><Chip tone="green">recorded</Chip></div><div className="evolution-explanation"><div><span>What changed</span><strong>{receipt.proposal_id} → {receipt.artifact}</strong></div><div><span>Result</span><strong>{receipt.state.replaceAll("_", " ")} · {receipt.reconciled_bindings} reconciled binding{receipt.reconciled_bindings === 1 ? "" : "s"}</strong></div><div><span>Recovery point</span><strong className="mono">{receipt.backup_directory}</strong></div><div><span>When</span><strong>{new Date(receipt.occurred_at_unix_seconds * 1000).toLocaleString()}</strong></div></div></Panel> : null}
+    {proposals.length || activations.length ? <div className="secondary-grid evolution-grid">{activations.map((activation) => <Panel className="secondary-card evolution-card" key={`active-${activation.proposal_id}`}><div className="panel-heading"><div><span className="eyebrow">ACTIVE ARTIFACT · {activation.proposal_id}</span><h3>Admitted artifact binding</h3></div><Chip tone="green">catalog active</Chip></div><div className="secondary-icon secondary-icon-0"><Icon name="stack" size={20} /></div><div className="settings-facts"><div><span>Base artifact</span><strong className="mono">{activation.base_artifact}</strong></div><div><span>Resolved artifact</span><strong className="mono">{activation.candidate_artifact}</strong></div><div><span>Activated</span><strong>{new Date(activation.activated_at_unix_seconds * 1000).toLocaleString()}</strong></div><div><span>Runtime authority</span><strong>Unchanged</strong></div></div></Panel>)}
+      {proposals.map((proposal, index) => {
+        const activation = activations.find((candidate) => candidate.proposal_id === proposal.proposal_id);
+        const canActivate = !activation && proposal.state === "canary_passed";
+        const isPending = pending?.proposalId === proposal.proposal_id;
+        return <Panel className="secondary-card evolution-card" key={proposal.proposal_id}><div className="panel-heading"><div><span className="eyebrow">{proposal.source} · {proposal.proposal_id}</span><h3>{proposal.expected_outcome}</h3></div><Chip tone={stateTone(proposal.state)}>{proposal.state.replaceAll("_", " ")}</Chip></div><div className={`secondary-icon secondary-icon-${index % 3}`}><Icon name="evolution" size={20} /></div><div className="settings-facts"><div><span>Artifact transition</span><strong>{proposal.base_artifact} → {proposal.candidate_artifact}</strong></div><div><span>Evidence digest</span><strong className="mono">{proposal.evidence_digest}</strong></div><div><span>Why proposed</span><strong>{proposal.expected_outcome}</strong></div><div><span>Holdout gate</span><strong>{proposal.evaluation ? `${proposal.evaluation.holdout_passed ? "Passed" : "Failed"} · ${proposal.evaluation.trajectory_score}/${proposal.evaluation.outcome_score}` : "Not evaluated"}</strong></div><div><span>Policy / regression</span><strong>{proposal.evaluation ? `${proposal.evaluation.policy_passed ? "Pass" : "Fail"} / ${proposal.evaluation.regression_passed ? "Pass" : "Fail"}` : "Pending"}</strong></div><div><span>Who approved</span><strong>{proposal.approval ? `${proposal.approval.approver_id} · policy v${proposal.approval.policy_version}` : "Not approved"}</strong></div><div><span>Signed artifact</span><strong>{proposal.approval?.signature_present ? `Verified · ${proposal.approval.signer_id}` : "Absent"}</strong></div><div><span>Canary</span><strong>{proposal.canary ? `${proposal.canary.passed ? "Passed" : "Failed"} · ${proposal.canary.failure_count} failures` : "Not run"}</strong></div></div>
+          {canActivate || activation ? <div className="evolution-actions"><button className={activation ? "button button-secondary" : "button button-primary"} type="button" disabled={mutationInFlight} onClick={() => beginMutation(activation ? "rollback" : "activate", proposal.proposal_id)}>{activation ? "Rollback binding" : "Activate candidate"} <Icon name={activation ? "archive" : "arrow"} size={14} /></button></div> : <p className="evolution-gate-note"><Icon name="shield" size={13} /> Activation stays unavailable until evaluation, approval, signature, admission, and canary gates pass.</p>}
+          {isPending ? <form className="evolution-confirm" onSubmit={submitMutation}><div><span className="eyebrow">EXACT CONFIRMATION</span><strong>{pending.operation === "activate" ? "Activate admitted candidate" : "Restore previous binding"}</strong><p>Type <span className="mono">{proposal.proposal_id}</span> to confirm this exact mutation. A verified backup is created first.</p></div><label><span>Proposal ID</span><input aria-label={`Confirm ${pending.operation} ${proposal.proposal_id}`} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="off" spellCheck={false} /></label>{pending.operation === "rollback" ? <label><span>Rollback reason</span><textarea aria-label={`Rollback reason ${proposal.proposal_id}`} value={reason} onChange={(event) => setReason(event.target.value)} rows={2} maxLength={500} /></label> : null}<div className="evolution-confirm-actions"><button className="button button-secondary" type="button" onClick={() => setPending(null)} disabled={mutationInFlight}>Cancel</button><button className="button button-primary" type="submit" disabled={mutationInFlight || confirmation !== proposal.proposal_id || (pending.operation === "rollback" && !reason.trim())}>{mutationInFlight ? "Applying…" : pending.operation === "activate" ? "Confirm activation" : "Confirm rollback"}</button></div>{mutationError ? <p className="connection-error" role="alert">{mutationError}</p> : null}</form> : null}
+        </Panel>;
+      })}</div> : <div className="workflow-empty"><div className="empty-orbit"><Icon name="evolution" size={25} /></div><h2>No evolution proposals</h2><p>{runtimeStatus === "connected" ? "The durable evolution and artifact catalogs are available. Self-improvement begins with measured evidence; permission remains separate." : "Connect the authenticated Pandora service to inspect the durable evolution store."}</p></div>}
+  </div>;
 }
 
 function SecondaryView({ view, runtimeStatus }: { view: Exclude<ViewId, "command" | "memory" | "workflows" | "engines">; runtimeStatus: RuntimeStatus }) {

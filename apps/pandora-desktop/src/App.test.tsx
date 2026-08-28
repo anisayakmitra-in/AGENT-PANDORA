@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
 const runtime = vi.hoisted(() => ({
+  activateEvolution: vi.fn(),
   agentResume: vi.fn(),
   agentRun: vi.fn(),
   capabilities: vi.fn(),
@@ -15,6 +16,7 @@ const runtime = vi.hoisted(() => ({
   memory: vi.fn(),
   providers: vi.fn(),
   resolveApproval: vi.fn(),
+  rollbackEvolution: vi.fn(),
   resume: vi.fn(),
   run: vi.fn(),
   sessions: vi.fn(),
@@ -29,6 +31,7 @@ vi.mock("./runtimeClient", () => ({
   startLocalService: vi.fn(),
   stopLocalService: vi.fn(),
   RuntimeClient: class {
+    activateEvolution = runtime.activateEvolution;
     agentResume = runtime.agentResume;
     agentRun = runtime.agentRun;
     capabilities = runtime.capabilities;
@@ -41,6 +44,7 @@ vi.mock("./runtimeClient", () => ({
     memory = runtime.memory;
     providers = runtime.providers;
     resolveApproval = runtime.resolveApproval;
+    rollbackEvolution = runtime.rollbackEvolution;
     resume = runtime.resume;
     run = runtime.run;
     sessions = runtime.sessions;
@@ -126,7 +130,7 @@ describe("Pandora desktop run state", () => {
     expect(screen.getByLabelText("Pandora task")).toBeEnabled();
   });
 
-  it("renders real governed evolution evidence without mutation controls", async () => {
+  it("requires exact confirmation and a reason before rolling back an active binding", async () => {
     runtime.evolution.mockResolvedValue([{
       proposal_id: "proposal-a",
       source: "gepa",
@@ -160,17 +164,92 @@ describe("Pandora desktop run state", () => {
       candidate_artifact: "sha256:candidate-a",
       activated_at_unix_seconds: 13,
     }]);
+    runtime.rollbackEvolution.mockResolvedValue({
+      operation: "rollback",
+      proposal_id: "proposal-a",
+      state: "rolled_back",
+      artifact: "base-a",
+      occurred_at_unix_seconds: 14,
+      backup_directory: "backups/evolution-14",
+      reconciled_bindings: 0,
+    });
 
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: /Evolution/ }));
 
-    expect(await screen.findByText("Improve verification reliability")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Improve verification reliability" })).toBeInTheDocument();
     expect(screen.getByText("Passed · 95/96")).toBeInTheDocument();
     expect(screen.getByText("parliament-a · policy v1")).toBeInTheDocument();
     expect(screen.getByText("catalog active")).toBeInTheDocument();
     expect(screen.getByText("Runtime authority").nextSibling).toHaveTextContent("Unchanged");
-    expect(screen.queryByRole("button", { name: /approve|activate|mutate/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Rollback binding/ }));
+    fireEvent.change(screen.getByLabelText("Confirm rollback proposal-a"), { target: { value: "proposal-a" } });
+    fireEvent.change(screen.getByLabelText("Rollback reason proposal-a"), { target: { value: "Canary regression" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm rollback" }));
+
+    await waitFor(() => {
+      expect(runtime.rollbackEvolution).toHaveBeenCalledWith("proposal-a", "proposal-a", "Canary regression");
+      expect(screen.getByText("Binding rolled back")).toBeInTheDocument();
+      expect(screen.getByText("backups/evolution-14")).toBeInTheDocument();
+    });
   });
+  it("activates only a canary-passed proposal after exact confirmation", async () => {
+    runtime.evolution.mockResolvedValue([{
+      proposal_id: "proposal-canary",
+      source: "research",
+      base_artifact: "base-canary",
+      candidate_artifact: "candidate-canary",
+      evidence_digest: "evidence-canary",
+      expected_outcome: "Improve bounded planning",
+      created_at_unix_seconds: 20,
+      state: "canary_passed",
+      evaluation: {
+        trajectory_score: 98,
+        outcome_score: 99,
+        holdout_passed: true,
+        policy_passed: true,
+        regression_passed: true,
+        evaluated_at_unix_seconds: 21,
+        holdout_digest: "holdout-canary",
+      },
+      approval: {
+        approver_id: "parliament-canary",
+        policy_version: 1,
+        approved_at_unix_seconds: 22,
+        signer_id: "signer-canary",
+        signature_present: true,
+      },
+      canary: {
+        passed: true,
+        failure_count: 0,
+        note: "passed",
+        evaluated_at_unix_seconds: 23,
+      },
+    }]);
+    runtime.activateEvolution.mockResolvedValue({
+      operation: "activate",
+      proposal_id: "proposal-canary",
+      state: "active",
+      artifact: "candidate-canary",
+      occurred_at_unix_seconds: 24,
+      backup_directory: "backups/evolution-24",
+      reconciled_bindings: 0,
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Evolution/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Activate candidate" }));
+    const confirm = screen.getByRole("button", { name: "Confirm activation" });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Confirm activate proposal-canary"), { target: { value: "proposal-canary" } });
+    fireEvent.click(confirm);
+
+    await waitFor(() => {
+      expect(runtime.activateEvolution).toHaveBeenCalledWith("proposal-canary", "proposal-canary");
+      expect(screen.getByText("Candidate activated")).toBeInTheDocument();
+    });
+  });
+
 
   it("resolves and resumes an exact runtime approval", async () => {
     const approval = {

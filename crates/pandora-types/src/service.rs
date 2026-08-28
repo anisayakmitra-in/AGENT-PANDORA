@@ -18,6 +18,8 @@ pub enum ServiceContractError {
     InvalidIdentifier(IdError),
     InvalidApprovalIdentifier,
     InvalidApprovalSummary,
+    InvalidEvolutionConfirmation,
+    InvalidEvolutionReason,
     InvalidPageLimit { limit: u16, maximum: u16 },
 }
 
@@ -30,6 +32,11 @@ impl fmt::Display for ServiceContractError {
                 formatter.write_str("approval identifier is invalid")
             }
             Self::InvalidApprovalSummary => formatter.write_str("approval summary is invalid"),
+            Self::InvalidEvolutionConfirmation => formatter
+                .write_str("evolution confirmation must match the exact proposal identifier"),
+            Self::InvalidEvolutionReason => {
+                formatter.write_str("evolution rollback reason is invalid")
+            }
             Self::InvalidPageLimit { limit, maximum } => {
                 write!(
                     formatter,
@@ -765,6 +772,17 @@ pub enum ServiceRequest {
         protocol_version: u16,
         limit: u16,
     },
+    EvolutionActivate {
+        protocol_version: u16,
+        proposal_id: ProposalId,
+        confirmation: String,
+    },
+    EvolutionRollback {
+        protocol_version: u16,
+        proposal_id: ProposalId,
+        confirmation: String,
+        reason: String,
+    },
     Run {
         protocol_version: u16,
         request: ServiceRunRequest,
@@ -908,6 +926,34 @@ impl ServiceRequest {
         })
     }
 
+    pub fn evolution_activate(
+        proposal_id: impl Into<String>,
+        confirmation: impl Into<String>,
+    ) -> Result<Self, ServiceContractError> {
+        let request = Self::EvolutionActivate {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            proposal_id: ProposalId::new(proposal_id)?,
+            confirmation: confirmation.into(),
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
+    pub fn evolution_rollback(
+        proposal_id: impl Into<String>,
+        confirmation: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Result<Self, ServiceContractError> {
+        let request = Self::EvolutionRollback {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            proposal_id: ProposalId::new(proposal_id)?,
+            confirmation: confirmation.into(),
+            reason: reason.into(),
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
     pub const fn run_resume(request: ServiceRunResumeRequest) -> Self {
         Self::RunResume {
             protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
@@ -966,6 +1012,12 @@ impl ServiceRequest {
             | Self::EvolutionActivations {
                 protocol_version, ..
             }
+            | Self::EvolutionActivate {
+                protocol_version, ..
+            }
+            | Self::EvolutionRollback {
+                protocol_version, ..
+            }
             | Self::Run {
                 protocol_version, ..
             }
@@ -1021,6 +1073,17 @@ impl ServiceRequest {
             Self::EvolutionActivations { limit, .. } => {
                 validate_page_limit(*limit, MAX_SERVICE_SESSION_PAGE)
             }
+            Self::EvolutionActivate {
+                proposal_id,
+                confirmation,
+                ..
+            } => validate_evolution_confirmation(proposal_id, confirmation, None),
+            Self::EvolutionRollback {
+                proposal_id,
+                confirmation,
+                reason,
+                ..
+            } => validate_evolution_confirmation(proposal_id, confirmation, Some(reason)),
             Self::Run { request, .. } => request.validate(),
             Self::RunResume { request, .. } => request.validate(),
             Self::AgentRun { request, .. } => request.validate(),
@@ -1620,6 +1683,16 @@ pub enum ServiceResponse {
         protocol_version: u16,
         activations: Vec<ServiceArtifactActivation>,
     },
+    EvolutionMutation {
+        protocol_version: u16,
+        operation: String,
+        proposal_id: ProposalId,
+        state: String,
+        artifact: ArtifactId,
+        occurred_at_unix_seconds: u64,
+        backup_directory: String,
+        reconciled_bindings: usize,
+    },
     Run {
         protocol_version: u16,
         run: ServiceRunResult,
@@ -1736,6 +1809,27 @@ impl ServiceResponse {
         }
     }
 
+    pub fn evolution_mutation(
+        operation: impl Into<String>,
+        proposal_id: ProposalId,
+        state: impl Into<String>,
+        artifact: ArtifactId,
+        occurred_at: Timestamp,
+        backup_directory: impl Into<String>,
+        reconciled_bindings: usize,
+    ) -> Self {
+        Self::EvolutionMutation {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            operation: operation.into(),
+            proposal_id,
+            state: state.into(),
+            artifact,
+            occurred_at_unix_seconds: occurred_at.as_unix_seconds(),
+            backup_directory: backup_directory.into(),
+            reconciled_bindings,
+        }
+    }
+
     pub const fn run(run: ServiceRunResult) -> Self {
         Self::Run {
             protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
@@ -1797,6 +1891,9 @@ impl ServiceResponse {
             | Self::EvolutionActivations {
                 protocol_version, ..
             }
+            | Self::EvolutionMutation {
+                protocol_version, ..
+            }
             | Self::Run {
                 protocol_version, ..
             }
@@ -1820,4 +1917,19 @@ fn validate_approval_id(approval_id: &str) -> Result<(), ServiceContractError> {
     } else {
         Ok(())
     }
+}
+
+fn validate_evolution_confirmation(
+    proposal_id: &ProposalId,
+    confirmation: &str,
+    reason: Option<&String>,
+) -> Result<(), ServiceContractError> {
+    ProposalId::new(proposal_id.as_str())?;
+    if confirmation != proposal_id.as_str() {
+        return Err(ServiceContractError::InvalidEvolutionConfirmation);
+    }
+    if reason.is_some_and(|value| value.trim().is_empty() || value.len() > 4096) {
+        return Err(ServiceContractError::InvalidEvolutionReason);
+    }
+    Ok(())
 }

@@ -135,7 +135,8 @@ fn build_runtime_service(config: &RuntimeConfig) -> Result<RuntimeService, CliEr
     )
     .map_err(|error| CliError::internal(error.to_string(), json!({})))?
     .with_evolution(Arc::new(evolution))
-    .with_artifact_catalog(Arc::new(artifact_catalog));
+    .with_artifact_catalog(Arc::new(artifact_catalog))
+    .with_evolution_control(config.data_dir());
     let Some(model) = config.provider_model() else {
         return Ok(runtime);
     };

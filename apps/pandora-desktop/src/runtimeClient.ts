@@ -119,6 +119,16 @@ export type RuntimeArtifactActivation = {
   activated_at_unix_seconds: number;
 };
 
+export type RuntimeEvolutionMutation = {
+  operation: "activate" | "rollback";
+  proposal_id: string;
+  state: string;
+  artifact: string;
+  occurred_at_unix_seconds: number;
+  backup_directory: string;
+  reconciled_bindings: number;
+};
+
 export type RuntimeRun = {
   mode: "direct" | "agent";
   session_id: string;
@@ -240,6 +250,11 @@ type EvolutionInspectResponse = {
 type EvolutionActivationsResponse = {
   kind: "evolution_activations";
   activations: RuntimeArtifactActivation[];
+};
+
+type EvolutionMutationResponse = {
+  kind: "evolution_mutation";
+  mutation: RuntimeEvolutionMutation;
 };
 
 const endpointStorageKey = "pandora.runtime.endpoint";
@@ -436,6 +451,23 @@ export class RuntimeClient {
       }
       throw error;
     }
+  }
+
+  async activateEvolution(proposalId: string, confirmation: string): Promise<RuntimeEvolutionMutation> {
+    const response = await this.call<EvolutionMutationResponse>("evolution.activate", {
+      proposal_id: proposalId,
+      confirmation,
+    });
+    return response.mutation;
+  }
+
+  async rollbackEvolution(proposalId: string, confirmation: string, reason: string): Promise<RuntimeEvolutionMutation> {
+    const response = await this.call<EvolutionMutationResponse>("evolution.rollback", {
+      proposal_id: proposalId,
+      confirmation,
+      reason,
+    });
+    return response.mutation;
   }
 
   async events(sessionId: string, limit = 256): Promise<RuntimeEvent[]> {

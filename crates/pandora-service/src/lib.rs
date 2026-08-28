@@ -268,6 +268,20 @@ fn service_request(request: &JsonRpcRequest) -> Result<Option<ServiceRequest>, (
             let params: EvolutionListParams = deserialize_params(params)?;
             ServiceRequest::evolution_activations(params.limit).map_err(|_| ())?
         }
+        "evolution.activate" => {
+            let params: EvolutionActivateParams = deserialize_params(params)?;
+            ServiceRequest::evolution_activate(params.proposal_id, params.confirmation)
+                .map_err(|_| ())?
+        }
+        "evolution.rollback" => {
+            let params: EvolutionRollbackParams = deserialize_params(params)?;
+            ServiceRequest::evolution_rollback(
+                params.proposal_id,
+                params.confirmation,
+                params.reason,
+            )
+            .map_err(|_| ())?
+        }
         "run.execute" => {
             let params: ServiceRunRequest = deserialize_params(params)?;
             ServiceRequest::run(params)
@@ -350,6 +364,19 @@ struct ApprovalListParams {
 }
 
 #[derive(Deserialize)]
+struct EvolutionActivateParams {
+    proposal_id: String,
+    confirmation: String,
+}
+
+#[derive(Clone, Deserialize)]
+struct EvolutionRollbackParams {
+    proposal_id: String,
+    confirmation: String,
+    reason: String,
+}
+
+#[derive(Clone, Deserialize)]
 struct ApprovalResolveParams {
     approval_id: String,
     allow: bool,
@@ -546,6 +573,64 @@ mod tests {
         let body: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(body["result"]["kind"], "evolution_activations");
         assert_eq!(body["result"]["activations"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn rpc_requires_exact_confirmation_for_evolution_mutations() {
+        let fixture = Fixture::new();
+        let invalid = post(
+            &fixture,
+            Some(&fixture.token),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "evolution.activate",
+                "params": {"proposal_id": "proposal-a", "confirmation": "proposal-b"}
+            }),
+        )
+        .await;
+        let body = to_bytes(invalid.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"]["code"], -32602);
+
+        let guarded = post(
+            &fixture,
+            Some(&fixture.token),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "evolution.activate",
+                "params": {"proposal_id": "proposal-a", "confirmation": "proposal-a"}
+            }),
+        )
+        .await;
+        let body = to_bytes(guarded.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            body["error"]["data"]["code"],
+            "evolution_control_unavailable"
+        );
+
+        let rollback_without_reason = post(
+            &fixture,
+            Some(&fixture.token),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "evolution.rollback",
+                "params": {
+                    "proposal_id": "proposal-a",
+                    "confirmation": "proposal-a",
+                    "reason": ""
+                }
+            }),
+        )
+        .await;
+        let body = to_bytes(rollback_without_reason.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"]["code"], -32602);
     }
 
     #[tokio::test]

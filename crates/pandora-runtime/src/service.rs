@@ -6,13 +6,16 @@ use crate::artifact_catalog::{ArtifactCatalog, ArtifactCatalogError};
 use crate::evaluation_engine::EvaluationEngine;
 use crate::evolution::{EvolutionEngine, EvolutionError, EvolutionRecord};
 use crate::execution_controller::{ExecutionController, RunStatus, RunSummary, RuntimeError};
-use crate::fleet::{FleetBudget, FleetEngine, FleetError, FleetNode};
+use crate::fleet::{FleetBudget, FleetEngine, FleetError, FleetLeaseState, FleetNode};
+use crate::package_store::{PackageStore, PackageStoreError};
+use crate::replacement::{ReplacementEngine, ReplacementError};
+use crate::research_artifact::{ResearchArtifactError, ResearchArtifactStore};
 use crate::sessions::{SessionError, SessionStore};
 use crate::tool_engine::ToolEngine;
 use pandora_provider::Provider;
 use pandora_types::{
     EvaluationContractError, EvaluationReceipt, EvaluationRequest, EventPayload, EventType,
-    IdError, MemoryTier, PrincipalId, ProposalId, ServiceAgentResumeRequest,
+    IdError, MemoryTier, PrincipalId, ProposalId, ResearchArtifactKind, ServiceAgentResumeRequest,
     ServiceAgentRunRequest, ServiceAgentRunResult, ServiceApprovalSummary,
     ServiceArtifactActivation, ServiceContractError, ServiceEngineSummary, ServiceEventPage,
     ServiceEvolutionApproval, ServiceEvolutionCanary, ServiceEvolutionEvaluation,
@@ -22,10 +25,12 @@ use pandora_types::{
     ServiceSessionSummary, ServiceToolSummary, Session, SessionId, TaskIntent, TenantId, Timestamp,
     WorkspaceId,
 };
+use rusqlite::Connection;
 use std::fmt;
-use std::path::Path;
-use std::sync::Arc;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -70,6 +75,12 @@ pub enum RuntimeServiceError {
     EvolutionUnavailable,
     ArtifactCatalog(ArtifactCatalogError),
     ArtifactCatalogUnavailable,
+    EvolutionControlUnavailable,
+    EvolutionExecutionActive,
+    Replacement(ReplacementError),
+    ResearchArtifact(ResearchArtifactError),
+    PackageStore(PackageStoreError),
+    Backup,
     Approval(ApprovalError),
     Session(SessionError),
     Fleet(FleetError),
@@ -96,6 +107,12 @@ impl RuntimeServiceError {
             Self::EvolutionUnavailable => "evolution_unavailable",
             Self::ArtifactCatalog(_) => "artifact_catalog_failed",
             Self::ArtifactCatalogUnavailable => "artifact_catalog_unavailable",
+            Self::EvolutionControlUnavailable => "evolution_control_unavailable",
+            Self::EvolutionExecutionActive => "evolution_execution_active",
+            Self::Replacement(_) => "evolution_replacement_failed",
+            Self::ResearchArtifact(_) => "research_artifact_failed",
+            Self::PackageStore(_) => "package_store_failed",
+            Self::Backup => "evolution_backup_failed",
             Self::Approval(ApprovalError::NotFound) => "approval_not_found",
             Self::Approval(ApprovalError::Expired) => "approval_expired",
             Self::Approval(ApprovalError::Terminal) => "approval_terminal",
@@ -134,6 +151,16 @@ impl fmt::Display for RuntimeServiceError {
             Self::ArtifactCatalogUnavailable => {
                 formatter.write_str("artifact activation catalog is not configured")
             }
+            Self::EvolutionControlUnavailable => {
+                formatter.write_str("evolution mutation control is not configured")
+            }
+            Self::EvolutionExecutionActive => {
+                formatter.write_str("evolution mutation is blocked while executions are active")
+            }
+            Self::Replacement(error) => error.fmt(formatter),
+            Self::ResearchArtifact(error) => error.fmt(formatter),
+            Self::PackageStore(error) => error.fmt(formatter),
+            Self::Backup => formatter.write_str("could not create a verified evolution backup"),
             Self::Approval(error) => error.fmt(formatter),
             Self::Session(error) => error.fmt(formatter),
             Self::Fleet(error) => error.fmt(formatter),
@@ -185,6 +212,24 @@ impl From<ArtifactCatalogError> for RuntimeServiceError {
     }
 }
 
+impl From<ReplacementError> for RuntimeServiceError {
+    fn from(error: ReplacementError) -> Self {
+        Self::Replacement(error)
+    }
+}
+
+impl From<ResearchArtifactError> for RuntimeServiceError {
+    fn from(error: ResearchArtifactError) -> Self {
+        Self::ResearchArtifact(error)
+    }
+}
+
+impl From<PackageStoreError> for RuntimeServiceError {
+    fn from(error: PackageStoreError) -> Self {
+        Self::PackageStore(error)
+    }
+}
+
 impl From<ApprovalError> for RuntimeServiceError {
     fn from(error: ApprovalError) -> Self {
         Self::Approval(error)
@@ -212,9 +257,12 @@ pub struct RuntimeService {
     agent: Option<RuntimeServiceAgent>,
     evolution: Option<Arc<EvolutionEngine>>,
     artifact_catalog: Option<Arc<ArtifactCatalog>>,
+    evolution_data_dir: Option<PathBuf>,
     fleet: Option<RuntimeServiceFleet>,
+    evolution_gate: RwLock<()>,
     next_session: AtomicU64,
     next_lease: AtomicU64,
+    next_mutation: AtomicU64,
 }
 
 struct RuntimeServiceFleet {
@@ -266,9 +314,12 @@ impl RuntimeService {
             agent: None,
             evolution: None,
             artifact_catalog: None,
+            evolution_data_dir: None,
             fleet: None,
+            evolution_gate: RwLock::new(()),
             next_session: AtomicU64::new(1),
             next_lease: AtomicU64::new(1),
+            next_mutation: AtomicU64::new(1),
         }
     }
 
@@ -327,6 +378,11 @@ impl RuntimeService {
         self
     }
 
+    pub fn with_evolution_control(mut self, data_dir: impl Into<PathBuf>) -> Self {
+        self.evolution_data_dir = Some(data_dir.into());
+        self
+    }
+
     pub fn scope(&self) -> &RuntimeServiceScope {
         &self.scope
     }
@@ -371,6 +427,14 @@ impl RuntimeService {
             ServiceRequest::EvolutionActivations { limit, .. } => {
                 self.list_artifact_activations(*limit)
             }
+            ServiceRequest::EvolutionActivate { proposal_id, .. } => {
+                self.activate_evolution(proposal_id, now)
+            }
+            ServiceRequest::EvolutionRollback {
+                proposal_id,
+                reason,
+                ..
+            } => self.rollback_evolution(proposal_id, reason, now),
             ServiceRequest::Run { request, .. } => self.run(request, now),
             ServiceRequest::RunResume { request, .. } => self.resume_run(request, now),
             ServiceRequest::AgentRun { request, .. } => self.run_agent(request, now),
@@ -760,6 +824,145 @@ impl RuntimeService {
         Ok(ServiceResponse::evolution_activations(activations))
     }
 
+    fn ensure_evolution_quiescent(&self, now: Timestamp) -> Result<(), RuntimeServiceError> {
+        let fleet = self
+            .fleet
+            .as_ref()
+            .ok_or(RuntimeServiceError::EvolutionControlUnavailable)?;
+        fleet.engine.expire_leases(now.as_unix_seconds())?;
+        let active = fleet
+            .engine
+            .list_leases()?
+            .into_iter()
+            .any(|lease| lease.state() == FleetLeaseState::Active);
+        if active {
+            Err(RuntimeServiceError::EvolutionExecutionActive)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn snapshot_evolution_state(&self, now: Timestamp) -> Result<PathBuf, RuntimeServiceError> {
+        let data_dir = self
+            .evolution_data_dir
+            .as_ref()
+            .ok_or(RuntimeServiceError::EvolutionControlUnavailable)?;
+        let sequence = self.next_mutation.fetch_add(1, Ordering::Relaxed);
+        let directory = data_dir.join("backups").join(format!(
+            "evolution-{}-{}-{}",
+            now.as_unix_seconds(),
+            std::process::id(),
+            sequence
+        ));
+        fs::create_dir_all(&directory).map_err(|_| RuntimeServiceError::Backup)?;
+        for name in [
+            "evolution.sqlite3",
+            "artifact-catalog.sqlite3",
+            "packages.sqlite3",
+            "research-artifacts.sqlite3",
+            "fleet.sqlite3",
+        ] {
+            let source = data_dir.join(name);
+            if source.is_file() {
+                sqlite_backup(&source, &directory.join(name))?;
+            }
+        }
+        Ok(directory)
+    }
+
+    fn activate_evolution(
+        &self,
+        proposal_id: &ProposalId,
+        now: Timestamp,
+    ) -> Result<ServiceResponse, RuntimeServiceError> {
+        let _gate = self
+            .evolution_gate
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.ensure_evolution_quiescent(now)?;
+        let backup = self.snapshot_evolution_state(now)?;
+        let evolution = self
+            .evolution
+            .as_ref()
+            .ok_or(RuntimeServiceError::EvolutionUnavailable)?;
+        let catalog = self
+            .artifact_catalog
+            .as_ref()
+            .ok_or(RuntimeServiceError::ArtifactCatalogUnavailable)?;
+        let data_dir = self
+            .evolution_data_dir
+            .as_ref()
+            .ok_or(RuntimeServiceError::EvolutionControlUnavailable)?;
+        let replacement = ReplacementEngine::new();
+        let reconciled = replacement.reconcile_cataloged(evolution, catalog, now)?;
+        let record = evolution.inspect(proposal_id)?;
+        let research = ResearchArtifactStore::open(data_dir.join("research-artifacts.sqlite3"))?;
+        let receipt = if research.inspect(proposal_id)?.is_some() {
+            let candidate = research.validate_proposal(record.proposal())?;
+            if candidate.kind() == ResearchArtifactKind::WasmGene {
+                let packages = PackageStore::open(data_dir.join("packages.sqlite3"))?;
+                if !packages.contains_artifact(record.proposal().base_artifact())? {
+                    return Err(RuntimeServiceError::Replacement(
+                        ReplacementError::BaseArtifactNotAdmitted,
+                    ));
+                }
+                if !packages.contains_artifact(record.proposal().candidate_artifact())? {
+                    return Err(RuntimeServiceError::Replacement(
+                        ReplacementError::CandidateArtifactNotAdmitted,
+                    ));
+                }
+            }
+            replacement.activate_cataloged(evolution, catalog, proposal_id, now)?
+        } else {
+            let packages = PackageStore::open(data_dir.join("packages.sqlite3"))?;
+            replacement.activate_admitted(evolution, &packages, catalog, proposal_id, now)?
+        };
+        Ok(ServiceResponse::evolution_mutation(
+            "activate",
+            proposal_id.clone(),
+            "active",
+            receipt.candidate_artifact().clone(),
+            receipt.activated_at(),
+            backup.to_string_lossy(),
+            reconciled,
+        ))
+    }
+
+    fn rollback_evolution(
+        &self,
+        proposal_id: &ProposalId,
+        reason: &str,
+        now: Timestamp,
+    ) -> Result<ServiceResponse, RuntimeServiceError> {
+        let _gate = self
+            .evolution_gate
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.ensure_evolution_quiescent(now)?;
+        let backup = self.snapshot_evolution_state(now)?;
+        let evolution = self
+            .evolution
+            .as_ref()
+            .ok_or(RuntimeServiceError::EvolutionUnavailable)?;
+        let catalog = self
+            .artifact_catalog
+            .as_ref()
+            .ok_or(RuntimeServiceError::ArtifactCatalogUnavailable)?;
+        let replacement = ReplacementEngine::new();
+        let reconciled = replacement.reconcile_cataloged(evolution, catalog, now)?;
+        let receipt =
+            replacement.rollback_admitted(evolution, catalog, proposal_id, now, reason)?;
+        Ok(ServiceResponse::evolution_mutation(
+            "rollback",
+            proposal_id.clone(),
+            "rolled_back",
+            receipt.restored_artifact().clone(),
+            receipt.rolled_back_at(),
+            backup.to_string_lossy(),
+            reconciled,
+        ))
+    }
+
     fn run(
         &self,
         request: &ServiceRunRequest,
@@ -1049,6 +1252,10 @@ impl RuntimeService {
         let Some(fleet) = &self.fleet else {
             return Ok(None);
         };
+        let _gate = self
+            .evolution_gate
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let now = now.as_unix_seconds();
         fleet.engine.expire_leases(now)?;
         let sequence = self.next_lease.fetch_add(1, Ordering::Relaxed);
@@ -1137,6 +1344,27 @@ impl RuntimeService {
             &receipt,
         );
         Ok(receipt)
+    }
+}
+
+fn sqlite_backup(source: &Path, destination: &Path) -> Result<(), RuntimeServiceError> {
+    let connection = Connection::open(source).map_err(|_| RuntimeServiceError::Backup)?;
+    connection
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .map_err(|_| RuntimeServiceError::Backup)?;
+    let destination = destination.to_string_lossy().replace(char::from(39), "''");
+    let quote = char::from(39);
+    connection
+        .execute_batch(&format!("VACUUM INTO {quote}{destination}{quote}"))
+        .map_err(|_| RuntimeServiceError::Backup)?;
+    let backup = Connection::open(destination).map_err(|_| RuntimeServiceError::Backup)?;
+    let integrity = backup
+        .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
+        .map_err(|_| RuntimeServiceError::Backup)?;
+    if integrity == "ok" {
+        Ok(())
+    } else {
+        Err(RuntimeServiceError::Backup)
     }
 }
 
@@ -1331,10 +1559,11 @@ mod tests {
         ToolCall,
     };
     use pandora_types::{
-        ArtifactId, ArtifactSignature, Capability, ContextClassification, EvolutionPolicy,
-        EvolutionSource, HoldoutEvaluation, MemoryApproval, MemoryKind, MemoryRecord, MemoryScope,
-        MutationProposal, Operation, ParliamentApproval, PolicyContext, ReplacementReceipt,
-        RequestDigest,
+        ArtifactId, ArtifactSignature, CanaryResult, Capability, ContextClassification,
+        EvolutionPolicy, EvolutionSource, HoldoutEvaluation, MemoryApproval, MemoryKind,
+        MemoryRecord, MemoryScope, MutationProposal, Operation, PackageCompatibility, PackageKind,
+        PackageManifest, ParliamentApproval, PolicyContext, ReplacementReceipt, RequestDigest,
+        TrustEvidence, hash_artifact,
     };
     use std::sync::Mutex;
 
@@ -1381,6 +1610,21 @@ mod tests {
                 .pop()
                 .ok_or(ProviderError::InvalidResponse)
         }
+    }
+
+    fn admitted_manifest(id: &str, artifact: &[u8]) -> PackageManifest {
+        PackageManifest::new(
+            id,
+            "1.0.0",
+            PackageKind::Gene,
+            "publisher",
+            hash_artifact(artifact),
+            Vec::new(),
+            PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+            "MIT",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -1496,6 +1740,187 @@ mod tests {
         assert_eq!(activations[0].proposal_id(), &proposal_id);
         assert_eq!(activations[0].base_artifact().as_str(), "base-a");
         assert_eq!(activations[0].candidate_artifact().as_str(), "candidate-a");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn evolution_service_activates_and_rolls_back_admitted_artifacts_with_backups() {
+        let root = crate::test_support::new_temp_dir("pandora-runtime-service-mutation").unwrap();
+        let scope = RuntimeServiceScope::new(
+            PrincipalId::new("principal-a").unwrap(),
+            TenantId::new("tenant-a").unwrap(),
+            WorkspaceId::new("workspace-a").unwrap(),
+        );
+        let packages = PackageStore::open(root.join("packages.sqlite3")).unwrap();
+        let base_bytes = b"base service gene";
+        let candidate_bytes = b"candidate service gene";
+        let base_manifest = admitted_manifest("publisher/service-base", base_bytes);
+        let candidate_manifest = admitted_manifest("publisher/service-candidate", candidate_bytes);
+        packages
+            .admit(&base_manifest, &base_manifest, base_bytes)
+            .unwrap();
+        packages
+            .admit(&candidate_manifest, &candidate_manifest, candidate_bytes)
+            .unwrap();
+        let base = ArtifactId::new(base_manifest.content_hash()).unwrap();
+        let candidate = ArtifactId::new(candidate_manifest.content_hash()).unwrap();
+        let proposal_id = ProposalId::new("proposal-service-mutation").unwrap();
+        let evolution = Arc::new(
+            EvolutionEngine::open(
+                root.join("evolution.sqlite3"),
+                EvolutionPolicy::production(1),
+            )
+            .unwrap(),
+        );
+        evolution
+            .submit(
+                MutationProposal::new(
+                    proposal_id.as_str(),
+                    EvolutionSource::Gepa,
+                    base.clone(),
+                    candidate.clone(),
+                    RequestDigest::new("evidence-service-mutation").unwrap(),
+                    "improve guarded service reliability",
+                    Timestamp::from_unix_seconds(10),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        evolution
+            .record_evaluation(HoldoutEvaluation::new(
+                proposal_id.clone(),
+                99,
+                99,
+                true,
+                true,
+                true,
+                Timestamp::from_unix_seconds(11),
+            ))
+            .unwrap();
+        evolution
+            .approve(
+                &proposal_id,
+                ParliamentApproval::new(
+                    proposal_id.clone(),
+                    PrincipalId::new("parliament-a").unwrap(),
+                    1,
+                    Timestamp::from_unix_seconds(12),
+                ),
+                ArtifactSignature::new(
+                    candidate.clone(),
+                    PrincipalId::new("signer-a").unwrap(),
+                    "signed-candidate",
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let replacement = ReplacementEngine::new();
+        replacement.stage(&evolution, &proposal_id).unwrap();
+        replacement
+            .record_canary(
+                &evolution,
+                CanaryResult::new(
+                    proposal_id.clone(),
+                    true,
+                    0,
+                    "service canary passed",
+                    Timestamp::from_unix_seconds(13),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let catalog =
+            Arc::new(ArtifactCatalog::open(root.join("artifact-catalog.sqlite3")).unwrap());
+        let service = RuntimeService::new(
+            ExecutionController::new(WorkspaceRoot::new(&root).unwrap()),
+            SessionStore::open(root.join("sessions.sqlite3")).unwrap(),
+            ApprovalStore::open(root.join("sessions.sqlite3")).unwrap(),
+            scope,
+        )
+        .with_fleet(
+            FleetEngine::open(root.join("fleet.sqlite3")).unwrap(),
+            "service-test",
+        )
+        .unwrap()
+        .with_evolution(Arc::clone(&evolution))
+        .with_artifact_catalog(Arc::clone(&catalog))
+        .with_evolution_control(&root);
+
+        let fleet_control = FleetEngine::open(root.join("fleet.sqlite3")).unwrap();
+        fleet_control
+            .acquire_lease(
+                "active-execution",
+                "service-test",
+                "service:another-session",
+                FleetBudget::new(0, 1, 60, 0),
+                14,
+                60,
+            )
+            .unwrap();
+        assert!(matches!(
+            service.handle(
+                &ServiceRequest::evolution_activate(proposal_id.as_str(), proposal_id.as_str(),)
+                    .unwrap(),
+                Timestamp::from_unix_seconds(14),
+            ),
+            Err(RuntimeServiceError::EvolutionExecutionActive)
+        ));
+        fleet_control.release_lease("active-execution").unwrap();
+
+        let activated = service
+            .handle(
+                &ServiceRequest::evolution_activate(proposal_id.as_str(), proposal_id.as_str())
+                    .unwrap(),
+                Timestamp::from_unix_seconds(14),
+            )
+            .unwrap();
+        let ServiceResponse::EvolutionMutation {
+            operation,
+            artifact,
+            backup_directory,
+            ..
+        } = activated
+        else {
+            panic!("expected an evolution mutation response");
+        };
+        assert_eq!(operation, "activate");
+        assert_eq!(artifact, candidate);
+        assert!(
+            Path::new(&backup_directory)
+                .join("evolution.sqlite3")
+                .is_file()
+        );
+        assert_eq!(catalog.resolve(&base).unwrap(), candidate);
+
+        let rolled_back = service
+            .handle(
+                &ServiceRequest::evolution_rollback(
+                    proposal_id.as_str(),
+                    proposal_id.as_str(),
+                    "post-activation regression",
+                )
+                .unwrap(),
+                Timestamp::from_unix_seconds(15),
+            )
+            .unwrap();
+        let ServiceResponse::EvolutionMutation {
+            operation,
+            artifact,
+            backup_directory,
+            ..
+        } = rolled_back
+        else {
+            panic!("expected a rollback mutation response");
+        };
+        assert_eq!(operation, "rollback");
+        assert_eq!(artifact, base);
+        assert!(
+            Path::new(&backup_directory)
+                .join("artifact-catalog.sqlite3")
+                .is_file()
+        );
+        assert_eq!(catalog.resolve(&base).unwrap(), base);
 
         let _ = std::fs::remove_dir_all(root);
     }

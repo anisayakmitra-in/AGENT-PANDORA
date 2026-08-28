@@ -143,3 +143,26 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 .workflow-card-actions .button { padding: 8px 10px; }
 .workflow-list-panel > .panel-heading { margin-bottom: 15px; }
 .workflow-list-panel .workflow-empty { min-height: 390px; padding: 30px; }
+
+.evolution-boundary { border-color: rgba(215,181,109,.2); background: linear-gradient(90deg, rgba(215,181,109,.07), rgba(86,141,255,.035)); }
+.evolution-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+.evolution-card { min-height: 0; }
+.evolution-card .secondary-icon { margin-bottom: 15px; }
+.evolution-card .settings-facts strong { max-width: 330px; }
+.evolution-actions { display: flex; justify-content: flex-end; padding-top: 3px; border-top: 1px solid var(--border-subtle); }
+.evolution-gate-note { display: flex; min-height: 0 !important; align-items: flex-start; gap: 7px; margin: 0 !important; padding-top: 12px; border-top: 1px solid var(--border-subtle); color: var(--text-muted) !important; }
+.evolution-gate-note svg { flex-shrink: 0; color: var(--gold); }
+.evolution-confirm { display: grid; gap: 13px; margin-top: 14px; padding: 15px; border: 1px solid var(--border-strong); border-radius: 11px; background: rgba(215,181,109,.055); }
+.evolution-confirm > div:first-child { display: grid; gap: 6px; }
+.evolution-confirm strong { font-size: 11px; }
+.evolution-confirm p { min-height: 0; margin: 0; color: var(--text-secondary); font-size: 10px; line-height: 1.5; }
+.evolution-confirm label { display: grid; gap: 6px; color: var(--text-secondary); font-size: 9px; }
+.evolution-confirm input, .evolution-confirm textarea { width: 100%; padding: 9px 10px; resize: vertical; border: 1px solid var(--border-subtle); border-radius: 8px; outline: 0; background: var(--canvas); color: var(--text-primary); font: inherit; font-size: 10px; }
+.evolution-confirm input:focus-visible, .evolution-confirm textarea:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.evolution-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.evolution-receipt { max-width: 1120px; margin: 0 auto 17px; padding: 17px; border-color: rgba(73,201,135,.3); background: linear-gradient(130deg, rgba(73,201,135,.08), var(--surface-1) 55%); }
+.evolution-explanation { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 22px; }
+.evolution-explanation > div { display: grid; gap: 5px; padding: 10px 0; border-top: 1px solid var(--border-subtle); }
+.evolution-explanation span { color: var(--text-muted); font-size: 9px; }
+.evolution-explanation strong { overflow: hidden; color: var(--text-secondary); font-size: 10px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 1160px) { .evolution-grid { grid-template-columns: 1fr; }.evolution-explanation { grid-template-columns: 1fr; } }
