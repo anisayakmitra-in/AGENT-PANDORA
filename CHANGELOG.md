@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Fixed a process-output polling race that could report a completed child
+  reader as an I/O failure after its bounded output had already been received.
+  This stabilizes governed process execution across runner timing differences.
+
+- Fixed desktop run-state transitions so active runs prevent duplicate
+  submission while inspecting an existing session leaves the composer usable.
+  Added rendered desktop regression tests and made them release gates.
+
 - Hardened local Skill admission with exclusive staging and atomic destination
   commit. Existing Skills are never overwritten by a collision, concurrent
   installs fail closed, and newly admitted Skills remain disabled.

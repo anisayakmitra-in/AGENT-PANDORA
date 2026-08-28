@@ -119,6 +119,10 @@ jobs:
         working-directory: apps/pandora-desktop
         run: npm ci --ignore-scripts
 
+      - name: Run desktop tests
+        working-directory: apps/pandora-desktop
+        run: npm test
+
       - name: Build desktop bundle
         working-directory: apps/pandora-desktop
         run: npm run tauri:build

@@ -531,6 +531,9 @@ fn poll_reader(
     receiver: &mpsc::Receiver<Result<Vec<u8>, ProcessError>>,
     output: &mut Option<Vec<u8>>,
 ) -> Result<(), ProcessError> {
+    if output.is_some() {
+        return Ok(());
+    }
     match receiver.try_recv() {
         Ok(Ok(bytes)) => {
             *output = Some(bytes);
@@ -934,6 +937,18 @@ mod tests {
             read_bounded_output(&mut output, 4),
             Err(ProcessError::OutputLimitExceeded)
         );
+    }
+
+    #[test]
+    fn completed_reader_remains_successful_after_its_channel_disconnects() {
+        let (sender, receiver) = mpsc::channel();
+        sender.send(Ok(b"complete".to_vec())).unwrap();
+        drop(sender);
+        let mut output = None;
+
+        poll_reader(&receiver, &mut output).unwrap();
+        assert_eq!(output.as_deref(), Some(b"complete".as_slice()));
+        poll_reader(&receiver, &mut output).unwrap();
     }
 
     struct Workspace {

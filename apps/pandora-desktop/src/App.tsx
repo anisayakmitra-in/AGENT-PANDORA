@@ -485,7 +485,6 @@ function App() {
     }
     setRuntimeStatus("checking");
     setRuntimeError("");
-    setRunInFlight(true);
     try {
       const [detail, nextEvents, nextMemory] = await Promise.all([
         client.inspectSession(sessionId),
@@ -508,6 +507,7 @@ function App() {
     if (!client) {
       throw new Error("Connect to the local Pandora service first");
     }
+    setRunInFlight(true);
     setRuntimeStatus("checking");
     setRuntimeError("");
     try {
