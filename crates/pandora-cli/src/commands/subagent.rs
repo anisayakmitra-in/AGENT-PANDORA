@@ -6,9 +6,10 @@ use crate::output::{CliError, CommandResult, success};
 use pandora_harnesses::{CODING_HARNESS_ID, canonical_harness_binding_digest};
 use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::{
-    ApprovalStore, ExecutionController, FleetEngine, FleetError, FleetNode, GitWorktreeExecutor,
-    SubagentCleanupContext, SubagentCoordinator, SubagentCoordinatorError, SubagentRecord,
-    SubagentRunControl, SubagentScope, SubagentSpawnContext, SubagentStore, SubagentStoreError,
+    ApprovalStore, ExecutionController, FleetBudget, FleetEngine, FleetError, FleetNode,
+    GitWorktreeExecutor, SubagentCleanupContext, SubagentCoordinator, SubagentCoordinatorError,
+    SubagentRecord, SubagentRunControl, SubagentScope, SubagentSpawnContext, SubagentStore,
+    SubagentStoreError,
 };
 use pandora_types::{
     Capability, EffectOutcome, EffectReceipt, ExecutionId, HarnessId, JobId, JobWorkerId,
@@ -30,17 +31,20 @@ const DEFAULT_MAX_DURATION_SECONDS: u64 = 300;
 const DEFAULT_MAX_DELEGATION_DEPTH: u8 = 1;
 const DEFAULT_MAX_RESULT_BYTES: usize = 8_192;
 const SUBAGENT_FLEET_WORKER_CLASS: &str = "local-subagent-worker";
+const SUBAGENT_WORKER_LEASE_DURATION_SECONDS: u64 = 3_600;
 
 static NEXT_SUBAGENT_ID: AtomicU64 = AtomicU64::new(1);
 
 struct ActiveSubagentSupervisor {
     fleet: Arc<FleetEngine>,
     node_id: String,
+    lease_id: String,
 }
 
 impl Drop for ActiveSubagentSupervisor {
     fn drop(&mut self) {
         let now = timestamp().as_unix_seconds();
+        let _ = self.fleet.release_lease(&self.lease_id);
         let _ = self.fleet.drain_supervisor(&self.node_id, now);
         let _ = self.fleet.stop_supervisor(&self.node_id, now);
     }
@@ -67,7 +71,24 @@ fn start_subagent_supervisor(config: &RuntimeConfig) -> Result<ActiveSubagentSup
     fleet
         .start_supervisor_for_process(&node_id, process_id, now)
         .map_err(fleet_error)?;
-    Ok(ActiveSubagentSupervisor { fleet, node_id })
+    let lease_id = format!("subagent-process-lease-{process_id}-{now}");
+    if let Err(error) = fleet.acquire_lease(
+        lease_id.clone(),
+        node_id.clone(),
+        format!("subagent-process:{process_id}"),
+        FleetBudget::new(0, 0, SUBAGENT_WORKER_LEASE_DURATION_SECONDS, 0),
+        now,
+        SUBAGENT_WORKER_LEASE_DURATION_SECONDS,
+    ) {
+        let _ = fleet.drain_supervisor(&node_id, now);
+        let _ = fleet.stop_supervisor(&node_id, now);
+        return Err(fleet_error(error));
+    }
+    Ok(ActiveSubagentSupervisor {
+        fleet,
+        node_id,
+        lease_id,
+    })
 }
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {

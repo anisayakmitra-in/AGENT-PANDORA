@@ -1,7 +1,7 @@
 use base64::Engine as _;
 use ed25519_dalek::{Signer, SigningKey};
 use pandora_runtime::{
-    DeviceKeyStore, DeviceProofRequest, EfficiencyStore, MemoryEngine, SessionStore,
+    DeviceKeyStore, DeviceProofRequest, EfficiencyStore, FleetEngine, MemoryEngine, SessionStore,
     SubagentPreparation, SubagentScope, SubagentStore,
 };
 use pandora_types::{
@@ -1357,6 +1357,18 @@ fn subagent_work_returns_multiple_records_in_id_order() {
     assert_eq!(worked["subagents"][0]["subagent_id"], "subagent-order-a");
     assert_eq!(worked["subagents"][1]["subagent_id"], "subagent-order-z");
     assert_eq!(worked["subagents"][0]["lifecycle"]["status"], "failed");
+    let fleet = FleetEngine::open(fixture.data.join("fleet.sqlite3")).unwrap();
+    let supervisors = fleet.list_supervisors().unwrap();
+    assert_eq!(supervisors.len(), 1);
+    assert_eq!(supervisors[0].state().as_str(), "stopped");
+    assert!(supervisors[0].process_id().is_some());
+    assert!(
+        fleet
+            .list_leases()
+            .unwrap()
+            .iter()
+            .all(|lease| lease.state().as_str() != "active")
+    );
     assert_eq!(worked["subagents"][1]["lifecycle"]["status"], "failed");
 }
 
