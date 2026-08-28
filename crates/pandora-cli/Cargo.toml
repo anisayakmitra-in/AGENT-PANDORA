@@ -19,6 +19,7 @@ pandora-runtime = { path = "../pandora-runtime" }
 pandora-service = { path = "../pandora-service" }
 pandora-types = { path = "../pandora-types" }
 reqwest.workspace = true
+rusqlite = { version = "0.32", features = ["bundled"] }
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true

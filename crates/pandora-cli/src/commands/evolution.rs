@@ -21,6 +21,7 @@ use pandora_types::{
     PrincipalId, ProposalId, RequestDigest, ResearchArtifactKind, SessionId, Timestamp,
     hash_artifact,
 };
+use rusqlite::Connection;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::fs;
@@ -380,6 +381,7 @@ fn activate(args: &[String]) -> Result<CommandResult, CliError> {
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
     ensure_evolution_quiescent(&config)?;
+    let backup = snapshot_evolution_state(&config, timestamp())?;
     let engine = open_engine(&config)?;
     let catalog = open_artifact_catalog(&config)?;
     let replacement = ReplacementEngine::new();
@@ -449,6 +451,7 @@ fn activate(args: &[String]) -> Result<CommandResult, CliError> {
             "runtime_authority_changed": false,
             "durability": "sqlite",
             "reconciled_bindings": reconciled_bindings,
+            "backup": backup,
         }),
         format!("Activated admitted artifact for evolution proposal {proposal_id}"),
     ))
@@ -468,6 +471,7 @@ fn rollback(args: &[String]) -> Result<CommandResult, CliError> {
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
     ensure_evolution_quiescent(&config)?;
+    let backup = snapshot_evolution_state(&config, timestamp())?;
     let engine = open_engine(&config)?;
     let catalog = open_artifact_catalog(&config)?;
     let replacement = ReplacementEngine::new();
@@ -487,6 +491,7 @@ fn rollback(args: &[String]) -> Result<CommandResult, CliError> {
             "reason": receipt.reason(),
             "durability": "sqlite",
             "reconciled_bindings": reconciled_bindings,
+            "backup": backup,
         }),
         format!("Rolled back evolution proposal {proposal_id}"),
     ))
@@ -644,6 +649,56 @@ fn inspect(args: &[String]) -> Result<CommandResult, CliError> {
         data,
         format!("Inspected evolution proposal {proposal_id}"),
     ))
+}
+
+fn snapshot_evolution_state(
+    config: &pandora_runtime::config::RuntimeConfig,
+    now: Timestamp,
+) -> Result<Value, CliError> {
+    let directory = config.data_dir().join("backups").join(format!(
+        "evolution-{}-{}",
+        now.as_unix_seconds(),
+        std::process::id()
+    ));
+    fs::create_dir_all(&directory).map_err(|_| {
+        CliError::internal("could not create evolution backup directory", json!({}))
+    })?;
+    let mut files = Vec::new();
+    for name in [
+        "evolution.sqlite3",
+        "artifact-catalog.sqlite3",
+        "packages.sqlite3",
+        "research-artifacts.sqlite3",
+        "fleet.sqlite3",
+    ] {
+        let source = config.data_dir().join(name);
+        if !source.is_file() {
+            continue;
+        }
+        let destination = directory.join(name);
+        sqlite_backup(&source, &destination)?;
+        files.push(destination);
+    }
+    Ok(json!({
+        "directory": directory,
+        "files": files,
+        "created_at": now,
+    }))
+}
+
+fn sqlite_backup(source: &Path, destination: &Path) -> Result<(), CliError> {
+    let connection = Connection::open(source)
+        .map_err(|_| CliError::internal("could not open runtime state for backup", json!({})))?;
+    connection
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .map_err(|_| {
+            CliError::internal("could not checkpoint runtime state for backup", json!({}))
+        })?;
+    let destination = destination.to_string_lossy().replace(char::from(39), "''");
+    let quote = char::from(39);
+    connection
+        .execute_batch(&format!("VACUUM INTO {quote}{destination}{quote}"))
+        .map_err(|_| CliError::internal("could not create consistent runtime backup", json!({})))
 }
 
 fn ensure_evolution_quiescent(
