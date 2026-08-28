@@ -1,13 +1,14 @@
 use super::{
-    load_config, parse_options, require_config_file, session_scope, session_store, timestamp,
+    RuntimeConfig, load_config, parse_options, require_config_file, session_scope, session_store,
+    timestamp,
 };
 use crate::output::{CliError, CommandResult, success};
 use pandora_harnesses::{CODING_HARNESS_ID, canonical_harness_binding_digest};
 use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::{
-    ApprovalStore, ExecutionController, GitWorktreeExecutor, SubagentCleanupContext,
-    SubagentCoordinator, SubagentCoordinatorError, SubagentRecord, SubagentRunControl,
-    SubagentScope, SubagentSpawnContext, SubagentStore, SubagentStoreError,
+    ApprovalStore, ExecutionController, FleetEngine, FleetError, FleetNode, GitWorktreeExecutor,
+    SubagentCleanupContext, SubagentCoordinator, SubagentCoordinatorError, SubagentRecord,
+    SubagentRunControl, SubagentScope, SubagentSpawnContext, SubagentStore, SubagentStoreError,
 };
 use pandora_types::{
     Capability, EffectOutcome, EffectReceipt, ExecutionId, HarnessId, JobId, JobWorkerId,
@@ -17,10 +18,10 @@ use pandora_types::{
 use serde_json::{Value, json};
 use std::fs;
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Barrier, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const DEFAULT_MAX_TURNS: u32 = 8;
 const DEFAULT_MAX_TOOLS: u32 = 16;
@@ -28,8 +29,46 @@ const DEFAULT_MAX_TOKENS: u32 = 32_000;
 const DEFAULT_MAX_DURATION_SECONDS: u64 = 300;
 const DEFAULT_MAX_DELEGATION_DEPTH: u8 = 1;
 const DEFAULT_MAX_RESULT_BYTES: usize = 8_192;
+const SUBAGENT_FLEET_WORKER_CLASS: &str = "local-subagent-worker";
 
 static NEXT_SUBAGENT_ID: AtomicU64 = AtomicU64::new(1);
+
+struct ActiveSubagentSupervisor {
+    fleet: Arc<FleetEngine>,
+    node_id: String,
+}
+
+impl Drop for ActiveSubagentSupervisor {
+    fn drop(&mut self) {
+        let now = timestamp().as_unix_seconds();
+        let _ = self.fleet.drain_supervisor(&self.node_id, now);
+        let _ = self.fleet.stop_supervisor(&self.node_id, now);
+    }
+}
+
+fn start_subagent_supervisor(config: &RuntimeConfig) -> Result<ActiveSubagentSupervisor, CliError> {
+    let fleet =
+        Arc::new(FleetEngine::open(config.data_dir().join("fleet.sqlite3")).map_err(fleet_error)?);
+    let process_id = std::process::id();
+    let node_id = format!("subagent-process-{process_id}");
+    let now = timestamp().as_unix_seconds();
+    let node = FleetNode::new(
+        node_id.clone(),
+        env!("CARGO_PKG_VERSION"),
+        SUBAGENT_FLEET_WORKER_CLASS,
+        ["subagent.work".to_owned()],
+        now,
+    )
+    .map_err(fleet_error)?;
+    match fleet.register_node(&node) {
+        Ok(_) | Err(FleetError::NodeAlreadyRegistered) => {}
+        Err(error) => return Err(fleet_error(error)),
+    }
+    fleet
+        .start_supervisor_for_process(&node_id, process_id, now)
+        .map_err(fleet_error)?;
+    Ok(ActiveSubagentSupervisor { fleet, node_id })
+}
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args
@@ -59,6 +98,7 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
     let max_agents = parse_max_agents(parsed.value("max-agents"))?;
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
+    let supervisor = start_subagent_supervisor(&config)?;
     let store = SubagentStore::open(config.data_dir().join("jobs.sqlite3"))
         .map_err(subagent_store_error)?;
     let sessions = session_store(&config)?;
@@ -69,10 +109,47 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
     let results = Mutex::new(Vec::new());
     let failures = Mutex::new(None);
     let barrier = Barrier::new(max_agents);
+    let worker_process_id = std::process::id();
+    let heartbeat_active = Arc::new(AtomicBool::new(true));
+    let heartbeat_failed = Arc::new(AtomicBool::new(false));
+    let heartbeat = Arc::clone(&heartbeat_active);
+    let heartbeat_failed_for_thread = Arc::clone(&heartbeat_failed);
+    let heartbeat_fleet = Arc::clone(&supervisor.fleet);
+    let heartbeat_node = supervisor.node_id.clone();
+    let heartbeat_thread = thread::spawn(move || {
+        while heartbeat.load(Ordering::Acquire) {
+            thread::sleep(Duration::from_secs(10));
+            if !heartbeat.load(Ordering::Acquire) {
+                break;
+            }
+            if heartbeat_fleet
+                .heartbeat_supervisor_for_process(
+                    &heartbeat_node,
+                    worker_process_id,
+                    timestamp().as_unix_seconds(),
+                )
+                .is_err()
+            {
+                heartbeat_failed_for_thread.store(true, Ordering::Release);
+                break;
+            }
+        }
+    });
     thread::scope(|threads| {
         for _ in 0..max_agents {
             threads.spawn(|| {
                 barrier.wait();
+                if let Err(error) = supervisor.fleet.heartbeat_supervisor_for_process(
+                    &supervisor.node_id,
+                    worker_process_id,
+                    timestamp().as_unix_seconds(),
+                ) {
+                    *failures
+                        .lock()
+                        .expect("worker failure mutex should not poison") =
+                        Some(fleet_error(error));
+                    return;
+                }
                 let worker = match allocate_worker_id() {
                     Ok(worker) => worker,
                     Err(error) => {
@@ -139,10 +216,29 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
                         .lock()
                         .expect("worker result mutex should not poison")
                         .push(finished);
+                    if let Err(error) = supervisor.fleet.heartbeat_supervisor_for_process(
+                        &supervisor.node_id,
+                        worker_process_id,
+                        timestamp().as_unix_seconds(),
+                    ) {
+                        *failures
+                            .lock()
+                            .expect("worker failure mutex should not poison") =
+                            Some(fleet_error(error));
+                        return;
+                    }
                 }
             });
         }
     });
+    heartbeat_active.store(false, Ordering::Release);
+    let _ = heartbeat_thread.join();
+    if heartbeat_failed.load(Ordering::Acquire) {
+        return Err(CliError::execution(
+            "subagent worker supervisor heartbeat failed",
+            json!({"code": "worker_supervisor_heartbeat_failed"}),
+        ));
+    }
     if let Some(error) = failures
         .into_inner()
         .expect("worker failure mutex should not poison")
@@ -798,6 +894,10 @@ fn subagent_contract_error(error: pandora_types::SubagentContractError) -> CliEr
 }
 
 fn subagent_coordinator_error(error: SubagentCoordinatorError) -> CliError {
+    CliError::execution(error.to_string(), json!({}))
+}
+
+fn fleet_error(error: FleetError) -> CliError {
     CliError::execution(error.to_string(), json!({}))
 }
 

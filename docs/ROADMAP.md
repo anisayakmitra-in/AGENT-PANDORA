@@ -53,7 +53,7 @@ not one command invocation.
 
 Next work:
 
-- connect the durable supervisor records to actual long-running worker processes;
+- connect the durable supervisor records to actual long-running worker processes; (the local `subagent work` process now binds a PID and heartbeats around claims; external daemon supervision remains open);
 - add cross-process quiescence and crash recovery evidence around those workers;
 - persist a process-wide execution lease so replacement can prove quiescence
   across workers;

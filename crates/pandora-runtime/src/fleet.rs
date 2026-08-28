@@ -76,6 +76,7 @@ pub struct FleetSupervisor {
     node_id: String,
     state: FleetSupervisorState,
     generation: u64,
+    process_id: Option<u32>,
     reason: Option<String>,
     updated_at: u64,
 }
@@ -91,6 +92,10 @@ impl FleetSupervisor {
 
     pub const fn generation(&self) -> u64 {
         self.generation
+    }
+
+    pub const fn process_id(&self) -> Option<u32> {
+        self.process_id
     }
 
     pub fn reason(&self) -> Option<&str> {
@@ -295,6 +300,7 @@ pub enum FleetError {
     SupervisorNotFound,
     SupervisorAlreadyRunning,
     SupervisorNotAcceptingWork(FleetSupervisorState),
+    SupervisorProcessMismatch,
     ActiveLeasesPresent,
     InvalidSupervisorTransition {
         state: FleetSupervisorState,
@@ -339,6 +345,9 @@ impl fmt::Display for FleetError {
             }
             Self::SupervisorNotAcceptingWork(state) => {
                 write!(formatter, "fleet supervisor is {}", state.as_str())
+            }
+            Self::SupervisorProcessMismatch => {
+                formatter.write_str("fleet supervisor belongs to another process")
             }
             Self::ActiveLeasesPresent => {
                 formatter.write_str("fleet supervisor still has active leases")
@@ -423,6 +432,7 @@ impl FleetEngine {
                  node_id TEXT PRIMARY KEY,
                  state TEXT NOT NULL CHECK (state IN ('stopped', 'running', 'draining', 'recovering')),
                  generation INTEGER NOT NULL CHECK (generation > 0),
+                 process_id INTEGER,
                  reason TEXT,
                  updated_at INTEGER NOT NULL
              );
@@ -433,6 +443,20 @@ impl FleetEngine {
                  expires_at INTEGER NOT NULL
              );",
         )?;
+        let has_process_id = connection
+            .query_row(
+                "SELECT 1 FROM pragma_table_info('fleet_supervisors') WHERE name = 'process_id'",
+                [],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !has_process_id {
+            connection.execute(
+                "ALTER TABLE fleet_supervisors ADD COLUMN process_id INTEGER",
+                [],
+            )?;
+        }
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
         })
@@ -503,7 +527,7 @@ impl FleetEngine {
     pub fn list_supervisors(&self) -> Result<Vec<FleetSupervisor>, FleetError> {
         let connection = self.lock()?;
         let mut statement = connection.prepare(
-            "SELECT node_id, state, generation, reason, updated_at
+            "SELECT node_id, state, generation, process_id, reason, updated_at
              FROM fleet_supervisors ORDER BY node_id ASC",
         )?;
         let rows = statement.query_map([], decode_supervisor)?;
@@ -570,6 +594,24 @@ impl FleetEngine {
         node_id: &str,
         now: u64,
     ) -> Result<FleetSupervisor, FleetError> {
+        self.heartbeat_supervisor_with_process(node_id, None, now)
+    }
+
+    pub fn heartbeat_supervisor_for_process(
+        &self,
+        node_id: &str,
+        process_id: u32,
+        now: u64,
+    ) -> Result<FleetSupervisor, FleetError> {
+        self.heartbeat_supervisor_with_process(node_id, Some(process_id), now)
+    }
+
+    fn heartbeat_supervisor_with_process(
+        &self,
+        node_id: &str,
+        process_id: Option<u32>,
+        now: u64,
+    ) -> Result<FleetSupervisor, FleetError> {
         let node_id = validate_text("node ID", node_id.to_owned(), 256)?;
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -580,6 +622,11 @@ impl FleetEngine {
                 state: current.state,
                 action: "heartbeat",
             });
+        }
+        if let Some(process_id) = process_id
+            && current.process_id != Some(process_id)
+        {
+            return Err(FleetError::SupervisorProcessMismatch);
         }
         let supervisor = FleetSupervisor {
             reason: Some("worker_heartbeat".to_owned()),
@@ -633,6 +680,24 @@ impl FleetEngine {
     }
 
     pub fn start_supervisor(&self, node_id: &str, now: u64) -> Result<FleetSupervisor, FleetError> {
+        self.start_supervisor_with_process(node_id, None, now)
+    }
+
+    pub fn start_supervisor_for_process(
+        &self,
+        node_id: &str,
+        process_id: u32,
+        now: u64,
+    ) -> Result<FleetSupervisor, FleetError> {
+        self.start_supervisor_with_process(node_id, Some(process_id), now)
+    }
+
+    fn start_supervisor_with_process(
+        &self,
+        node_id: &str,
+        process_id: Option<u32>,
+        now: u64,
+    ) -> Result<FleetSupervisor, FleetError> {
         let node_id = validate_text("node ID", node_id.to_owned(), 256)?;
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -654,6 +719,7 @@ impl FleetEngine {
                 node_id,
                 state: FleetSupervisorState::Running,
                 generation: 1,
+                process_id,
                 reason: None,
                 updated_at: now,
             },
@@ -678,6 +744,7 @@ impl FleetEngine {
                             .generation
                             .checked_add(1)
                             .ok_or(FleetError::CorruptRecord)?,
+                        process_id,
                         reason: None,
                         updated_at: now,
                     }
@@ -1040,7 +1107,7 @@ fn load_supervisor(
 ) -> Result<Option<FleetSupervisor>, FleetError> {
     connection
         .query_row(
-            "SELECT node_id, state, generation, reason, updated_at
+            "SELECT node_id, state, generation, process_id, reason, updated_at
              FROM fleet_supervisors WHERE node_id = ?1",
             params![node_id],
             decode_supervisor,
@@ -1054,15 +1121,20 @@ fn save_supervisor(
     supervisor: &FleetSupervisor,
 ) -> Result<(), FleetError> {
     connection.execute(
-        "INSERT INTO fleet_supervisors (node_id, state, generation, reason, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5)
+        "INSERT INTO fleet_supervisors (node_id, state, generation, process_id, reason, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
          ON CONFLICT(node_id) DO UPDATE SET state = excluded.state,
-             generation = excluded.generation, reason = excluded.reason,
-             updated_at = excluded.updated_at",
+             generation = excluded.generation, process_id = excluded.process_id,
+             reason = excluded.reason, updated_at = excluded.updated_at",
         params![
             supervisor.node_id,
             supervisor.state.as_str(),
             to_i64(supervisor.generation)?,
+            supervisor
+                .process_id
+                .map(u64::from)
+                .map(to_i64)
+                .transpose()?,
             supervisor.reason,
             to_i64(supervisor.updated_at)?,
         ],
@@ -1104,8 +1176,9 @@ fn decode_supervisor(row: &rusqlite::Row<'_>) -> rusqlite::Result<FleetSuperviso
         state: decode_supervisor_state(&row.get::<_, String>(1)?)
             .map_err(|_| rusqlite::Error::InvalidQuery)?,
         generation: decode_u64(row.get(2)?)?,
-        reason: row.get(3)?,
-        updated_at: decode_u64(row.get(4)?)?,
+        process_id: row.get::<_, Option<i64>>(3)?.map(decode_u32).transpose()?,
+        reason: row.get(4)?,
+        updated_at: decode_u64(row.get(5)?)?,
     })
 }
 
@@ -1186,6 +1259,10 @@ fn to_i64(value: u64) -> Result<i64, FleetError> {
 
 fn decode_u64(value: i64) -> rusqlite::Result<u64> {
     u64::try_from(value).map_err(|_| rusqlite::Error::InvalidQuery)
+}
+
+fn decode_u32(value: i64) -> rusqlite::Result<u32> {
+    u32::try_from(value).map_err(|_| rusqlite::Error::InvalidQuery)
 }
 
 #[cfg(test)]
@@ -1468,7 +1545,14 @@ mod tests {
         let path = root.join("fleet.sqlite3");
         let fleet = FleetEngine::open(&path).unwrap();
         fleet.register_node(&node("node-a", &["coding"])).unwrap();
-        fleet.start_supervisor("node-a", 10).unwrap();
+        fleet
+            .start_supervisor_for_process("node-a", 41, 10)
+            .unwrap();
+        assert_eq!(fleet.list_supervisors().unwrap()[0].process_id(), Some(41));
+        assert!(matches!(
+            fleet.heartbeat_supervisor_for_process("node-a", 42, 20),
+            Err(FleetError::SupervisorProcessMismatch)
+        ));
         fleet
             .acquire_lease(
                 "lease-a",
@@ -1479,7 +1563,9 @@ mod tests {
                 40,
             )
             .unwrap();
-        let heartbeat = fleet.heartbeat_supervisor("node-a", 20).unwrap();
+        let heartbeat = fleet
+            .heartbeat_supervisor_for_process("node-a", 41, 20)
+            .unwrap();
         assert_eq!(heartbeat.updated_at(), 20);
         drop(fleet);
 

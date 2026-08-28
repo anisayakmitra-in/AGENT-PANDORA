@@ -37,7 +37,7 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora fleet lease <id> ... --json` | `fleet lease` | `lease` |
 | `pandora fleet renew <id> ... --json` | `fleet renew` | `lease` |
 | `pandora fleet supervisor list --json` | `fleet supervisor list` | `supervisors` |
-| `pandora fleet supervisor <start|drain|stop|recover|heartbeat> <node-id> --json` | `fleet supervisor` | `supervisor` |
+| `pandora fleet supervisor <start|drain|stop|recover|heartbeat> <node-id> --json` | `fleet supervisor` | `supervisor` (includes `process_id` when process-bound) |
 | `pandora fleet supervisor reconcile <node-id> --stale-after <seconds> --json` | `fleet supervisor` | `supervisor` |
 | `pandora registry list --json` | `registry list` | `registries` |
 | `pandora registry set ... --json` | `registry set` | `registry` |

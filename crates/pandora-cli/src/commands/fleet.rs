@@ -426,6 +426,7 @@ fn supervisor_value(supervisor: &FleetSupervisor) -> Value {
         "node_id": supervisor.node_id(),
         "state": supervisor.state().as_str(),
         "generation": supervisor.generation(),
+        "process_id": supervisor.process_id(),
         "reason": supervisor.reason(),
         "updated_at": supervisor.updated_at(),
     })
