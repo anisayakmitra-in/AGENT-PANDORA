@@ -18,6 +18,7 @@ pub mod jobs;
 pub mod memory;
 pub mod observability;
 pub mod orchestration;
+pub mod workspace_orchestration;
 pub mod package;
 pub mod population;
 pub mod rollout;
@@ -68,8 +69,9 @@ pub use governance::{ParliamentDecision, PolicyContext};
 pub use harness::{Harness, HarnessKind, HarnessManifest, MetaComposition};
 pub use ids::{
     ArtifactId, EventId, ExecutionId, FailureId, GeneId, HarnessId, IdError, JobId, JobWorkerId,
-    MemoryId, PackageId, PermitId, PlanId, PopulationId, PrincipalId, ProposalId, ReceiptId,
-    RequestDigest, RoleId, RunLoopId, SessionId, SubagentId, TenantId, WorkspaceId,
+    MemoryId, OrchestrationRunId, PackageId, PermitId, PlanId, PopulationId, PrincipalId,
+    ProposalId, ReceiptId, RepositoryId, RequestDigest, RoleId, RunLoopId, SessionId, SubagentId,
+    TenantId, WorkspaceId,
 };
 pub use jobs::{JobCommand, JobContractError, JobRequest, JobStatus, MAX_JOB_ARGUMENT_BYTES};
 pub use memory::{
@@ -83,6 +85,10 @@ pub use orchestration::{
     DomainAgentProfile, DomainProfileMode, Handoff, IterationOutcome, LoopDecision,
     LoopTermination, OrchestrationContractError, OrchestrationPlan, OrchestrationRole,
     RoleAssignment, RunLoopConfig, RunLoopSnapshot, RunLoopState, Usage,
+};
+pub use workspace_orchestration::{
+    GovernedOrchestrationPlan, OrchestrationRoleReceipt, RepositoryBinding,
+    RoleRepositoryBinding, WorkspaceOrchestrationError,
 };
 pub use package::{
     PACKAGE_LOCK_FORMAT_VERSION, PackageCompatibility, PackageDependency, PackageKind, PackageLock,

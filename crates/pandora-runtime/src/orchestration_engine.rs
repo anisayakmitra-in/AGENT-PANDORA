@@ -177,7 +177,7 @@ impl DomainProfileRun {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct OrchestrationRunSnapshot {
     plan: OrchestrationPlan,
     completed: Vec<RoleId>,
@@ -204,7 +204,7 @@ impl OrchestrationRunSnapshot {
 }
 
 impl OrchestrationRun {
-    fn new(plan: OrchestrationPlan) -> Self {
+    pub(crate) fn new(plan: OrchestrationPlan) -> Self {
         Self {
             plan,
             completed: BTreeSet::new(),

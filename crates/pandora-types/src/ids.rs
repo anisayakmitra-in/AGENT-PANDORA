@@ -110,3 +110,5 @@ define_id!(PopulationId);
 define_id!(JobId);
 define_id!(JobWorkerId);
 define_id!(SubagentId, validated_deserialize);
+define_id!(RepositoryId, validated_deserialize);
+define_id!(OrchestrationRunId, validated_deserialize);

@@ -61,7 +61,7 @@ fn powershell() -> &'static str {
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'tool') {
         'list','inspect'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'orchestration') {
-        'roles'
+        'roles','submit','claim','complete','list','inspect','cancel','mark-interrupted','resume'
     } elseif ($elements.Count -gt 3 -and $elements[1] -eq 'strategies' -and $elements[2] -eq 'population' -and $elements[3] -eq 'list') {
         '--state'
     } elseif ($elements.Count -gt 3 -and $elements[1] -eq 'strategies' -and $elements[2] -eq 'population' -and $elements[3] -eq 'inspect') {
@@ -124,7 +124,7 @@ fn bash() -> &'static str {
     elif [[ "$previous" == "tool" ]]; then
         COMPREPLY=( $(compgen -W 'list inspect' -- "$current") )
     elif [[ "$previous" == "orchestration" ]]; then
-        COMPREPLY=( $(compgen -W 'roles' -- "$current") )
+        COMPREPLY=( $(compgen -W 'roles submit claim complete list inspect cancel mark-interrupted resume' -- "$current") )
     elif [[ "${COMP_WORDS[1]}" == "strategies" && "${COMP_WORDS[2]}" == "population" && "$previous" == "population" ]]; then
         COMPREPLY=( $(compgen -W 'list inspect' -- "$current") )
     elif [[ "${COMP_WORDS[1]}" == "strategies" && "${COMP_WORDS[2]}" == "population" && "$previous" == "list" ]]; then
@@ -187,7 +187,7 @@ elif [[ ${words[2]} == mcp ]]; then
 elif [[ ${words[2]} == tool ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:tool command:(list inspect)'
 elif [[ ${words[2]} == orchestration ]]; then
-    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:orchestration command:(roles)'
+    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:orchestration command:(roles submit claim complete list inspect cancel mark-interrupted resume)'
 elif [[ ${words[2]} == strategies && ${words[3]} == population && ${words[4]} == list ]]; then
     _arguments '--state=[population state path]:path:_files'
 elif [[ ${words[2]} == strategies && ${words[3]} == population && ${words[4]} == inspect ]]; then
@@ -229,7 +229,7 @@ complete -c pandora -f -n '__fish_seen_subcommand_from approval' -a 'list inspec
 complete -c pandora -f -n '__fish_seen_subcommand_from provider' -a 'list set use test'
 complete -c pandora -f -n '__fish_seen_subcommand_from mcp' -a 'list inspect set remove catalog call'
 complete -c pandora -f -n '__fish_seen_subcommand_from tool' -a 'list inspect'
-complete -c pandora -f -n '__fish_seen_subcommand_from orchestration' -a 'roles'
+complete -c pandora -f -n '__fish_seen_subcommand_from orchestration' -a 'roles submit claim complete list inspect cancel mark-interrupted resume'
 complete -c pandora -f -n '__fish_seen_subcommand_from strategies; and not __fish_seen_subcommand_from population' -a 'list population'
 complete -c pandora -f -n '__fish_seen_subcommand_from strategies; and __fish_seen_subcommand_from population; and not __fish_seen_subcommand_from list; and not __fish_seen_subcommand_from inspect' -a 'list inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from strategies; and __fish_seen_subcommand_from population; and __fish_seen_subcommand_from list' -l state -r

@@ -109,6 +109,18 @@ record `pandora job mark-interrupted <job-id> --reason "..." --yes`.
 Run it from an existing service manager or scheduler when continuous polling
 is needed.
 
+Durable Meta-Harness orchestration workers can coordinate bounded roles across
+explicit repository and workspace identities:
+
+```text
+pandora orchestration submit --input plan.json
+pandora orchestration claim --worker worker-a --json
+pandora orchestration complete <run-id> --worker worker-a --role <role-id> --receipt receipt.json
+```
+
+Assignments remain coordination evidence; workers execute them through the
+existing governed run or subagent path. See [durable orchestration workers](docs/ORCHESTRATION.md).
+
 Local isolated subagents use the same governed runtime path with durable,
 scoped records and exact-commit Git worktrees:
 

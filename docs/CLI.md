@@ -663,6 +663,20 @@ pandora mcp list
 pandora mcp inspect <id>
 pandora mcp remove <id> --yes
 pandora orchestration roles
+pandora orchestration submit --input <plan.json> [--id <run-id>]
+pandora orchestration claim --worker <worker-id>
+pandora orchestration complete <run-id> --worker <worker-id> --role <role-id> --receipt <receipt.json>
+pandora orchestration list
+pandora orchestration inspect <run-id>
+pandora orchestration cancel <run-id>
+pandora orchestration mark-interrupted <run-id> --reason <text> --yes
+pandora orchestration resume <run-id>
+
+Orchestration commands use the durable, tenant-scoped coordination store
+described in [ORCHESTRATION.md](ORCHESTRATION.md). `claim` returns only ready
+role assignments and never executes them. Workers must use the normal governed
+run or subagent path and then submit a repository-bound role receipt.
+
 pandora strategies list
 pandora evaluation golden --input <path> [--fail-on-failure]
 pandora evaluation inspect --session <id> [--execution <id>]

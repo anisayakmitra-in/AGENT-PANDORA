@@ -32,6 +32,7 @@ pub mod mutation;
 pub mod observability;
 pub mod operations;
 pub mod orchestration_engine;
+pub mod orchestration_store;
 pub mod package_admission;
 pub mod package_store;
 pub mod parliament;
@@ -135,6 +136,10 @@ pub use observability::{
 pub use operations::{OperationalEvent, OperationalRecorder, OperationalStatus};
 pub use orchestration_engine::{
     DomainProfileRun, OrchestrationEngine, OrchestrationError, OrchestrationRun,
+    OrchestrationRunSnapshot,
+};
+pub use orchestration_store::{
+    OrchestrationRunRecord, OrchestrationRunStatus, OrchestrationStore, OrchestrationStoreError,
 };
 pub use package_store::{MAX_STORED_ARTIFACT_BYTES, PackageStore, PackageStoreError};
 pub use parliament::Parliament;

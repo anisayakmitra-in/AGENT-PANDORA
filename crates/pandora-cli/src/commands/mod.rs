@@ -3,7 +3,7 @@ use pandora_runtime::config::{ConfigError, ConfigOverrides, RuntimeConfig};
 use pandora_runtime::sessions::{SessionError, SessionStore};
 use pandora_runtime::{PopulationStrategy, PopulationStrategyError, StrategyProfile};
 use pandora_types::{
-    LineageLimits, MutationLimits, OrchestrationRole, PopulationId, PopulationPolicy, PrincipalId,
+    LineageLimits, MutationLimits, PopulationId, PopulationPolicy, PrincipalId,
     Session, SessionId, TenantId, Timestamp, Usage, WorkspaceId,
 };
 use serde_json::json;
@@ -27,6 +27,7 @@ mod graph;
 mod harness;
 mod job;
 mod mcp;
+mod orchestration;
 mod memory;
 mod migration;
 mod package;
@@ -106,7 +107,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "tui" => tui::execute(&args[1..]),
         "uninstall" => uninstall::execute(&args[1..]),
         "update" => update::execute(&args[1..]),
-        "orchestration" => orchestration(&args[1..]),
+        "orchestration" => orchestration::execute(&args[1..]),
         "doctor" => doctor::execute(&args[1..]),
         "evaluation" => evaluation::execute(&args[1..]),
         "evolution" => evolution::execute(&args[1..]),
@@ -346,7 +347,7 @@ commands:
   approval list|inspect|resolve
   provider list|set|use|test
   mcp list|inspect|set|remove|catalog <server> --allow|call <server> <tool> --arguments-json <object> --idempotency-key <key> --allow
-  orchestration roles
+  orchestration roles|submit|claim|complete|list|inspect|cancel|mark-interrupted|resume
   strategies list | population list --state <path> | population inspect --state <path> --id <id>
   evaluation golden --input <path> [--fail-on-failure]
   evaluation inspect --session <id> [--execution <id>]
@@ -362,24 +363,6 @@ commands:
   update [--release <tag> [--channel <stable|beta>] | --artifact <path> --sha256 <digest> | --rollback]
   uninstall [--dry-run|--yes]
   doctor"#
-}
-
-fn orchestration(args: &[String]) -> Result<CommandResult, CliError> {
-    let subcommand = args
-        .first()
-        .ok_or_else(|| CliError::usage("orchestration requires 'roles'"))?;
-    if subcommand != "roles" || args.len() != 1 {
-        return Err(CliError::usage("orchestration supports only 'roles'"));
-    }
-    let roles = OrchestrationRole::standard()
-        .into_iter()
-        .map(|role| role.as_str().to_owned())
-        .collect::<Vec<_>>();
-    Ok(crate::output::success(
-        "orchestration roles",
-        json!({"roles": roles}),
-        "planner, maker, critic, verifier",
-    ))
 }
 
 fn strategies(args: &[String]) -> Result<CommandResult, CliError> {
