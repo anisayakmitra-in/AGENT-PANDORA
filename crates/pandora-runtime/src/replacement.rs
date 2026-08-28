@@ -2,8 +2,8 @@ use crate::artifact_catalog::{ArtifactCatalog, ArtifactCatalogError};
 use crate::evolution::{EvolutionEngine, EvolutionError};
 use crate::package_store::{PackageStore, PackageStoreError};
 use pandora_types::{
-    CanaryResult, EvolutionContractError, ExecutionId, ProposalId, ReplacementReceipt,
-    RollbackReceipt,
+    CanaryResult, EvolutionContractError, EvolutionState, ExecutionId, ProposalId,
+    ReplacementReceipt, RollbackReceipt,
 };
 use std::collections::BTreeSet;
 use std::fmt;
@@ -20,6 +20,7 @@ pub enum ReplacementError {
     ArtifactCatalog(ArtifactCatalogError),
     BaseArtifactNotAdmitted,
     CandidateArtifactNotAdmitted,
+    ReconciliationMismatch,
 }
 
 impl fmt::Display for ReplacementError {
@@ -37,6 +38,9 @@ impl fmt::Display for ReplacementError {
             }
             Self::CandidateArtifactNotAdmitted => formatter
                 .write_str("candidate artifact is not present in the admitted package store"),
+            Self::ReconciliationMismatch => {
+                formatter.write_str("evolution and artifact catalog records cannot be reconciled")
+            }
         }
     }
 }
@@ -188,6 +192,59 @@ impl ReplacementEngine {
         Ok(receipt)
     }
 
+    pub fn reconcile_cataloged(
+        &self,
+        evolution: &EvolutionEngine,
+        catalog: &ArtifactCatalog,
+        reconciled_at: pandora_types::Timestamp,
+    ) -> Result<usize, ReplacementError> {
+        let _executions = self.quiescent()?;
+        let mut repaired = 0;
+        for activation in catalog.list(i64::MAX as usize)? {
+            let record = evolution.inspect(activation.proposal_id())?;
+            if record.proposal().base_artifact() != activation.base_artifact()
+                || record.proposal().candidate_artifact() != activation.candidate_artifact()
+            {
+                return Err(ReplacementError::ReconciliationMismatch);
+            }
+            match record.state() {
+                EvolutionState::Active => {}
+                EvolutionState::RolledBack => {
+                    catalog.rollback(&RollbackReceipt::new(
+                        activation.proposal_id().clone(),
+                        activation.base_artifact().clone(),
+                        reconciled_at,
+                        "recover interrupted evolution rollback",
+                    )?)?;
+                    repaired += 1;
+                }
+                _ => return Err(ReplacementError::ReconciliationMismatch),
+            }
+        }
+        for record in evolution.list()? {
+            if record.state() != EvolutionState::Active {
+                continue;
+            }
+            match catalog.inspect(record.proposal().proposal_id())? {
+                Some(activation)
+                    if activation.base_artifact() == record.proposal().base_artifact()
+                        && activation.candidate_artifact()
+                            == record.proposal().candidate_artifact() => {}
+                Some(_) => return Err(ReplacementError::ReconciliationMismatch),
+                None => {
+                    catalog.activate(&ReplacementReceipt::new(
+                        record.proposal().proposal_id().clone(),
+                        record.proposal().base_artifact().clone(),
+                        record.proposal().candidate_artifact().clone(),
+                        reconciled_at,
+                    ))?;
+                    repaired += 1;
+                }
+            }
+        }
+        Ok(repaired)
+    }
+
     pub fn rollback_admitted(
         &self,
         evolution: &EvolutionEngine,
@@ -201,30 +258,19 @@ impl ReplacementEngine {
         let activation = catalog
             .inspect(proposal_id)?
             .ok_or(ArtifactCatalogError::ProposalNotActive)?;
-        let catalog_receipt = RollbackReceipt::new(
+        let proposal = evolution.rollback(proposal_id)?;
+        catalog.rollback(&RollbackReceipt::new(
             proposal_id.clone(),
             activation.base_artifact().clone(),
             rolled_back_at,
             reason.clone(),
-        )?;
-        catalog.rollback(&catalog_receipt)?;
-        match evolution.rollback(proposal_id) {
-            Ok(proposal) => Ok(RollbackReceipt::new(
-                proposal.proposal_id().clone(),
-                proposal.base_artifact().clone(),
-                rolled_back_at,
-                reason,
-            )?),
-            Err(error) => {
-                let _ = catalog.activate(&ReplacementReceipt::new(
-                    activation.proposal_id().clone(),
-                    activation.base_artifact().clone(),
-                    activation.candidate_artifact().clone(),
-                    activation.activated_at(),
-                ));
-                Err(error.into())
-            }
-        }
+        )?)?;
+        Ok(RollbackReceipt::new(
+            proposal.proposal_id().clone(),
+            proposal.base_artifact().clone(),
+            rolled_back_at,
+            reason,
+        )?)
     }
 
     fn quiescent(
@@ -491,15 +537,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(catalog.resolve(&base).unwrap(), candidate);
-        replacement
-            .rollback_admitted(
-                &evolution,
-                &catalog,
-                &proposal_id,
-                Timestamp::from_unix_seconds(15),
-                "post-activation regression",
-            )
-            .unwrap();
+        evolution.rollback(&proposal_id).unwrap();
+        assert_eq!(catalog.resolve(&base).unwrap(), candidate);
+        assert_eq!(
+            replacement
+                .reconcile_cataloged(&evolution, &catalog, Timestamp::from_unix_seconds(15))
+                .unwrap(),
+            1
+        );
         assert_eq!(catalog.resolve(&base).unwrap(), base);
         assert_eq!(
             evolution.state(&proposal_id).unwrap(),

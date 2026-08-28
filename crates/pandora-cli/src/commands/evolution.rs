@@ -382,6 +382,10 @@ fn activate(args: &[String]) -> Result<CommandResult, CliError> {
     ensure_evolution_quiescent(&config)?;
     let engine = open_engine(&config)?;
     let catalog = open_artifact_catalog(&config)?;
+    let replacement = ReplacementEngine::new();
+    replacement
+        .reconcile_cataloged(&engine, &catalog, timestamp())
+        .map_err(replacement_error)?;
     let record = engine.inspect(&proposal_id).map_err(evolution_error)?;
     let research =
         ResearchArtifactStore::open(config.data_dir().join("research-artifacts.sqlite3"))
@@ -411,7 +415,7 @@ fn activate(args: &[String]) -> Result<CommandResult, CliError> {
                 }
             }
             (
-                ReplacementEngine::new()
+                replacement
                     .activate_cataloged(&engine, &catalog, &proposal_id, timestamp())
                     .map_err(replacement_error)?,
                 json!({
@@ -426,7 +430,7 @@ fn activate(args: &[String]) -> Result<CommandResult, CliError> {
             let packages = PackageStore::open(config.data_dir().join("packages.sqlite3"))
                 .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
             (
-                ReplacementEngine::new()
+                replacement
                     .activate_admitted(&engine, &packages, &catalog, &proposal_id, timestamp())
                     .map_err(replacement_error)?,
                 json!({"kind": "package", "research_only": false}),
@@ -465,7 +469,11 @@ fn rollback(args: &[String]) -> Result<CommandResult, CliError> {
     ensure_evolution_quiescent(&config)?;
     let engine = open_engine(&config)?;
     let catalog = open_artifact_catalog(&config)?;
-    let receipt = ReplacementEngine::new()
+    let replacement = ReplacementEngine::new();
+    replacement
+        .reconcile_cataloged(&engine, &catalog, timestamp())
+        .map_err(replacement_error)?;
+    let receipt = replacement
         .rollback_admitted(&engine, &catalog, &proposal_id, timestamp(), reason)
         .map_err(replacement_error)?;
     Ok(success(
