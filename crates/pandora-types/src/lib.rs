@@ -18,7 +18,6 @@ pub mod jobs;
 pub mod memory;
 pub mod observability;
 pub mod orchestration;
-pub mod workspace_orchestration;
 pub mod package;
 pub mod population;
 pub mod rollout;
@@ -26,6 +25,7 @@ pub mod service;
 pub mod session;
 pub mod skill;
 pub mod subagent;
+pub mod workspace_orchestration;
 
 pub use adaptation::{
     AdaptationCandidate, AdaptationContractError, AdaptationDecision, AdaptationPolicy,
@@ -86,10 +86,6 @@ pub use orchestration::{
     LoopTermination, OrchestrationContractError, OrchestrationPlan, OrchestrationRole,
     RoleAssignment, RunLoopConfig, RunLoopSnapshot, RunLoopState, Usage,
 };
-pub use workspace_orchestration::{
-    GovernedOrchestrationPlan, OrchestrationRoleReceipt, RepositoryBinding,
-    RoleRepositoryBinding, WorkspaceOrchestrationError,
-};
 pub use package::{
     PACKAGE_LOCK_FORMAT_VERSION, PackageCompatibility, PackageDependency, PackageKind, PackageLock,
     PackageLockError, PackageManifest, PackageManifestError, TrustEvidence, TrustLevel,
@@ -125,4 +121,8 @@ pub use subagent::{
     MAX_SUBAGENT_TASK_BYTES, MAX_SUBAGENT_TOKENS, MAX_SUBAGENT_TOOL_CALLS, MAX_SUBAGENT_TURNS,
     SubagentBudgets, SubagentContractError, SubagentHarnessBinding, SubagentRequest,
     SubagentStatus, SubagentWorktreeState,
+};
+pub use workspace_orchestration::{
+    GovernedOrchestrationPlan, OrchestrationRoleReceipt, RepositoryBinding, RoleRepositoryBinding,
+    WorkspaceOrchestrationError,
 };

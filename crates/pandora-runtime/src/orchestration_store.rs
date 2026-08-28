@@ -128,17 +128,29 @@ impl fmt::Display for OrchestrationStoreError {
             Self::Serialization(_) => formatter.write_str("orchestration record is invalid"),
             Self::Contract(error) => error.fmt(formatter),
             Self::Orchestration(error) => error.fmt(formatter),
-            Self::InvalidIdentifier => formatter.write_str("orchestration record identifier is invalid"),
-            Self::CorruptRecord => formatter.write_str("orchestration database contains an invalid record"),
+            Self::InvalidIdentifier => {
+                formatter.write_str("orchestration record identifier is invalid")
+            }
+            Self::CorruptRecord => {
+                formatter.write_str("orchestration database contains an invalid record")
+            }
             Self::RunAlreadyExists => formatter.write_str("orchestration run already exists"),
             Self::RunNotFound => formatter.write_str("orchestration run was not found"),
-            Self::RunOwnedByAnotherWorker => formatter.write_str("orchestration run is owned by another worker"),
-            Self::DuplicateReceipt => formatter.write_str("orchestration role receipt is duplicated"),
+            Self::RunOwnedByAnotherWorker => {
+                formatter.write_str("orchestration run is owned by another worker")
+            }
+            Self::DuplicateReceipt => {
+                formatter.write_str("orchestration role receipt is duplicated")
+            }
             Self::ActiveRolesRequireReconciliation => formatter.write_str(
                 "interrupted orchestration has active roles that require receipt reconciliation",
             ),
             Self::InvalidTransition { status, action } => {
-                write!(formatter, "cannot {action} a {} orchestration run", status.as_str())
+                write!(
+                    formatter,
+                    "cannot {action} a {} orchestration run",
+                    status.as_str()
+                )
             }
             Self::LockPoisoned => formatter.write_str("orchestration database lock is unavailable"),
         }
@@ -712,11 +724,7 @@ fn load_scoped(
 
 fn decode_record(row: &rusqlite::Row<'_>) -> Result<OrchestrationRunRecord, rusqlite::Error> {
     decode_record_inner(row).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(
-            0,
-            rusqlite::types::Type::Text,
-            Box::new(error),
-        )
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
     })
 }
 
@@ -843,7 +851,6 @@ fn set_private_permissions(path: &Path) -> Result<(), OrchestrationStoreError> {
     let _ = path;
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1045,13 +1052,8 @@ mod tests {
             ))
         ));
 
-        let planner_receipt = fixture.receipt(
-            &run_id,
-            "planner",
-            "api",
-            "workspace-api",
-            "commit-api",
-        );
+        let planner_receipt =
+            fixture.receipt(&run_id, "planner", "api", "workspace-api", "commit-api");
         fixture
             .store
             .complete_role(
@@ -1101,7 +1103,8 @@ mod tests {
         assert_eq!(completed.status(), OrchestrationRunStatus::Completed);
         assert_eq!(completed.role_receipts().len(), 2);
 
-        let reopened = OrchestrationStore::open(fixture.root.join("orchestration.sqlite3")).unwrap();
+        let reopened =
+            OrchestrationStore::open(fixture.root.join("orchestration.sqlite3")).unwrap();
         let persisted = reopened
             .inspect(
                 &run_id,

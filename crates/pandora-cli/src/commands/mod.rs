@@ -3,8 +3,8 @@ use pandora_runtime::config::{ConfigError, ConfigOverrides, RuntimeConfig};
 use pandora_runtime::sessions::{SessionError, SessionStore};
 use pandora_runtime::{PopulationStrategy, PopulationStrategyError, StrategyProfile};
 use pandora_types::{
-    LineageLimits, MutationLimits, PopulationId, PopulationPolicy, PrincipalId,
-    Session, SessionId, TenantId, Timestamp, Usage, WorkspaceId,
+    LineageLimits, MutationLimits, PopulationId, PopulationPolicy, PrincipalId, Session, SessionId,
+    TenantId, Timestamp, Usage, WorkspaceId,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -27,9 +27,9 @@ mod graph;
 mod harness;
 mod job;
 mod mcp;
-mod orchestration;
 mod memory;
 mod migration;
+mod orchestration;
 mod package;
 mod provider;
 mod rollout;

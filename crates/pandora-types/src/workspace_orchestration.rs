@@ -40,7 +40,9 @@ impl fmt::Display for WorkspaceOrchestrationError {
             Self::UnknownRepository(id) => {
                 write!(formatter, "repository binding {id} is unknown")
             }
-            Self::MissingRoleBinding(id) => write!(formatter, "role {id} has no repository binding"),
+            Self::MissingRoleBinding(id) => {
+                write!(formatter, "role {id} has no repository binding")
+            }
             Self::DomainNotAllowed(id) => {
                 write!(formatter, "Meta Harness does not allow Domain Harness {id}")
             }
@@ -52,8 +54,9 @@ impl fmt::Display for WorkspaceOrchestrationError {
             Self::EmptyExactCommit => {
                 formatter.write_str("repository exact commit cannot be empty")
             }
-            Self::EmptyReceiptEvidence => formatter
-                .write_str("role receipt requires evidence or governed effect receipts"),
+            Self::EmptyReceiptEvidence => {
+                formatter.write_str("role receipt requires evidence or governed effect receipts")
+            }
             Self::DuplicateGovernedEffectReceipt(id) => {
                 write!(formatter, "governed effect receipt {id} is duplicated")
             }
@@ -69,8 +72,9 @@ impl fmt::Display for WorkspaceOrchestrationError {
             Self::ReceiptWorkspaceMismatch(id) => {
                 write!(formatter, "role receipt does not match workspace {id}")
             }
-            Self::ReceiptCommitMismatch => formatter
-                .write_str("role receipt does not match the exact repository commit"),
+            Self::ReceiptCommitMismatch => {
+                formatter.write_str("role receipt does not match the exact repository commit")
+            }
         }
     }
 }
@@ -210,11 +214,7 @@ impl GovernedOrchestrationPlan {
                 ));
             }
         }
-        if let Some(role) = plan
-            .roles()
-            .iter()
-            .find(|role| !roles.contains(role.id()))
-        {
+        if let Some(role) = plan.roles().iter().find(|role| !roles.contains(role.id())) {
             return Err(WorkspaceOrchestrationError::MissingRoleBinding(
                 role.id().clone(),
             ));
@@ -390,13 +390,10 @@ impl OrchestrationRoleReceipt {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        Handoff, OrchestrationRole, PlanId, RoleAssignment,
-    };
+    use crate::{Handoff, OrchestrationRole, PlanId, RoleAssignment};
 
     fn role(id: &str, harness: &str, dependencies: &[&str]) -> RoleAssignment {
         RoleAssignment::new(
@@ -507,11 +504,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            governed.validate_receipt(
-                &run_id,
-                &RoleId::new("planner").unwrap(),
-                &receipt,
-            ),
+            governed.validate_receipt(&run_id, &RoleId::new("planner").unwrap(), &receipt,),
             Err(WorkspaceOrchestrationError::ReceiptRepositoryMismatch(
                 RepositoryId::new("api").unwrap()
             ))

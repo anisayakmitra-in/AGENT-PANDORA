@@ -71,14 +71,7 @@ fn submit(args: &[String]) -> Result<CommandResult, CliError> {
     let store = store(&config)?;
     let (principal, tenant, workspace) = session_scope();
     let record = store
-        .submit(
-            &run_id,
-            &principal,
-            &tenant,
-            &workspace,
-            &plan,
-            timestamp(),
-        )
+        .submit(&run_id, &principal, &tenant, &workspace, &plan, timestamp())
         .map_err(store_error)?;
     Ok(success(
         "orchestration submit",
@@ -143,7 +136,14 @@ fn claim(args: &[String]) -> Result<CommandResult, CliError> {
 fn complete(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
         args,
-        &["config", "data-dir", "workspace", "worker", "role", "receipt"],
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "worker",
+            "role",
+            "receipt",
+        ],
     )?;
     if parsed.positionals.len() != 1 {
         return Err(CliError::usage(
@@ -285,10 +285,7 @@ fn cancel(args: &[String]) -> Result<CommandResult, CliError> {
 }
 
 fn mark_interrupted(args: &[String]) -> Result<CommandResult, CliError> {
-    let parsed = parse_options(
-        args,
-        &["config", "data-dir", "workspace", "reason", "yes"],
-    )?;
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "reason", "yes"])?;
     if parsed.positionals.len() != 1 {
         return Err(CliError::usage(
             "orchestration mark-interrupted requires exactly one run ID",
@@ -349,11 +346,8 @@ fn resume(args: &[String]) -> Result<CommandResult, CliError> {
     ))
 }
 
-fn store(
-    config: &pandora_runtime::config::RuntimeConfig,
-) -> Result<OrchestrationStore, CliError> {
-    OrchestrationStore::open(config.data_dir().join("orchestration.sqlite3"))
-        .map_err(store_error)
+fn store(config: &pandora_runtime::config::RuntimeConfig) -> Result<OrchestrationStore, CliError> {
+    OrchestrationStore::open(config.data_dir().join("orchestration.sqlite3")).map_err(store_error)
 }
 
 fn parse_run_id(value: &str) -> Result<OrchestrationRunId, CliError> {
@@ -376,18 +370,16 @@ fn allocate_run_id() -> Result<OrchestrationRunId, CliError> {
 }
 
 fn read_json<T: DeserializeOwned>(path: &Path, label: &str) -> Result<T, CliError> {
-    let metadata = std::fs::metadata(path).map_err(|_| {
-        CliError::usage(format!("could not read {label} from {}", path.display()))
-    })?;
+    let metadata = std::fs::metadata(path)
+        .map_err(|_| CliError::usage(format!("could not read {label} from {}", path.display())))?;
     if metadata.len() > MAX_ORCHESTRATION_INPUT_BYTES {
         return Err(CliError::usage(format!(
             "{label} exceeds the {} byte limit",
             MAX_ORCHESTRATION_INPUT_BYTES
         )));
     }
-    let bytes = std::fs::read(path).map_err(|_| {
-        CliError::usage(format!("could not read {label} from {}", path.display()))
-    })?;
+    let bytes = std::fs::read(path)
+        .map_err(|_| CliError::usage(format!("could not read {label} from {}", path.display())))?;
     serde_json::from_slice(&bytes).map_err(|_| CliError::usage(format!("{label} is invalid JSON")))
 }
 
