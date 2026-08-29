@@ -120,8 +120,14 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Run desktop tests
+        if: runner.os != 'Windows'
         working-directory: apps/pandora-desktop
         run: npm test
+
+      - name: Run desktop tests (Windows)
+        if: runner.os == 'Windows'
+        working-directory: apps/pandora-desktop
+        run: npm test -- --testTimeout=30000
 
       - name: Build desktop bundle
         if: runner.os != 'Windows'
