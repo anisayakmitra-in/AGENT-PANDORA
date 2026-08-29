@@ -157,6 +157,9 @@ its bounded content, and persisted quarantined records remain quarantined on
 resume. This marker set is a guardrail, not a complete injection detector.
 The replayable runtime corpus covers each high-confidence marker plus a benign
 control case, so changes to the boundary have an explicit regression oracle.
+User-selected retrieved attachments use the same marker boundary before system
+context assembly and durable attachment persistence, preserving the original
+digest and byte count without forwarding hostile text.
 
 Next work:
 
