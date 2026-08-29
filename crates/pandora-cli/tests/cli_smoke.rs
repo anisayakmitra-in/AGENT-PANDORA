@@ -6,10 +6,12 @@ use pandora_runtime::{
 };
 use pandora_types::{
     ContextClassification, DomainRoutingProfile, EffectOutcome, EffectReceipt, ExecutionId,
-    HarnessId, JobId, JobWorkerId, MemoryKind, MemoryScope, MetaComposition, PackageCompatibility,
-    PackageDependency, PackageKind, PackageManifest, PermitId, PrincipalId, ReceiptId,
-    RequestDigest, Session, SessionId, SubagentBudgets, SubagentId, SubagentRequest, TenantId,
-    Timestamp, TrustEvidence, TrustLevel, WorkspaceId, hash_artifact,
+    GovernedOrchestrationPlan, Handoff, HarnessId, JobId, JobWorkerId, MemoryKind, MemoryScope,
+    MetaComposition, OrchestrationPlan, OrchestrationRole, OrchestrationRoleReceipt,
+    OrchestrationRunId, PackageCompatibility, PackageDependency, PackageKind, PackageManifest,
+    PermitId, PlanId, PrincipalId, ReceiptId, RepositoryBinding, RepositoryId, RequestDigest,
+    RoleAssignment, RoleId, RoleRepositoryBinding, Session, SessionId, SubagentBudgets, SubagentId,
+    SubagentRequest, TenantId, Timestamp, TrustEvidence, TrustLevel, WorkspaceId, hash_artifact,
 };
 use serde_json::Value;
 use std::fs;
@@ -2840,6 +2842,169 @@ fn orchestration_roles_are_discoverable_without_runtime_setup() {
     assert_eq!(response["command"], "orchestration roles");
     assert_eq!(response["roles"][0], "planner");
     assert_eq!(response["roles"][3], "verifier");
+}
+
+#[test]
+fn orchestration_cli_persists_partial_failure_across_processes() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let run_id = "run-process-partial";
+    let plan = OrchestrationPlan::new(
+        PlanId::new("multi-repository-process").unwrap(),
+        vec![
+            RoleAssignment::new(
+                RoleId::new("planner").unwrap(),
+                OrchestrationRole::Planner,
+                HarnessId::new("coding-domain").unwrap(),
+                Vec::new(),
+            )
+            .unwrap(),
+            RoleAssignment::new(
+                RoleId::new("maker").unwrap(),
+                OrchestrationRole::Maker,
+                HarnessId::new("design-domain").unwrap(),
+                vec![RoleId::new("planner").unwrap()],
+            )
+            .unwrap(),
+        ],
+        2,
+        1,
+        vec![Handoff::new(
+            RoleId::new("planner").unwrap(),
+            RoleId::new("maker").unwrap(),
+            Some(HarnessId::new("coordination-meta").unwrap()),
+        )],
+    )
+    .unwrap();
+    let governed = GovernedOrchestrationPlan::new(
+        plan,
+        MetaComposition::new(
+            vec![
+                HarnessId::new("coding-domain").unwrap(),
+                HarnessId::new("design-domain").unwrap(),
+            ],
+            1,
+        )
+        .unwrap(),
+        vec![
+            RepositoryBinding::new(
+                RepositoryId::new("api").unwrap(),
+                WorkspaceId::new("workspace-api").unwrap(),
+                "commit-api",
+            )
+            .unwrap(),
+            RepositoryBinding::new(
+                RepositoryId::new("desktop").unwrap(),
+                WorkspaceId::new("workspace-desktop").unwrap(),
+                "commit-desktop",
+            )
+            .unwrap(),
+        ],
+        vec![
+            RoleRepositoryBinding::new(
+                RoleId::new("planner").unwrap(),
+                RepositoryId::new("api").unwrap(),
+            ),
+            RoleRepositoryBinding::new(
+                RoleId::new("maker").unwrap(),
+                RepositoryId::new("desktop").unwrap(),
+            ),
+        ],
+    )
+    .unwrap();
+    let plan_path = fixture.root.join("process-plan.json");
+    fs::write(&plan_path, serde_json::to_vec(&governed).unwrap()).unwrap();
+    let plan_path = plan_path.to_str().unwrap();
+
+    let submitted = fixture
+        .command(&[
+            "orchestration",
+            "submit",
+            "--input",
+            plan_path,
+            "--id",
+            run_id,
+            "--json",
+        ])
+        .output()
+        .expect("orchestration submit should start");
+    assert_success(&submitted);
+
+    let claimed = fixture
+        .command(&["orchestration", "claim", "--worker", "worker-a", "--json"])
+        .output()
+        .expect("orchestration claim should start");
+    assert_success(&claimed);
+    assert_eq!(parse_json(&claimed)["assignments"][0]["role_id"], "planner");
+
+    let planner_receipt = OrchestrationRoleReceipt::new(
+        ReceiptId::new("receipt-planner-process").unwrap(),
+        OrchestrationRunId::new(run_id).unwrap(),
+        RoleId::new("planner").unwrap(),
+        RepositoryId::new("api").unwrap(),
+        WorkspaceId::new("workspace-api").unwrap(),
+        "commit-api",
+        Vec::new(),
+        Some(RequestDigest::new("planner-evidence-process").unwrap()),
+    )
+    .unwrap();
+    let receipt_path = fixture.root.join("planner-receipt.json");
+    fs::write(&receipt_path, serde_json::to_vec(&planner_receipt).unwrap()).unwrap();
+    let receipt_path = receipt_path.to_str().unwrap();
+    let completed = fixture
+        .command(&[
+            "orchestration",
+            "complete",
+            run_id,
+            "--worker",
+            "worker-a",
+            "--role",
+            "planner",
+            "--receipt",
+            receipt_path,
+            "--json",
+        ])
+        .output()
+        .expect("orchestration complete should start");
+    assert_success(&completed);
+    assert_eq!(parse_json(&completed)["assignments"][0]["role_id"], "maker");
+
+    let interrupted = fixture
+        .command(&[
+            "orchestration",
+            "mark-interrupted",
+            run_id,
+            "--reason",
+            "maker worker exited after planner completed",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("orchestration interruption should start");
+    assert_success(&interrupted);
+
+    let inspected = fixture
+        .command(&["orchestration", "inspect", run_id, "--json"])
+        .output()
+        .expect("orchestration inspect should start");
+    assert_success(&inspected);
+    let inspected = parse_json(&inspected);
+    assert_eq!(inspected["status"], "interrupted");
+    assert_eq!(inspected["completed_roles"].as_array().unwrap().len(), 1);
+    assert_eq!(inspected["active_roles"].as_array().unwrap().len(), 1);
+    assert_eq!(inspected["role_receipts"].as_array().unwrap().len(), 1);
+
+    let resumed = fixture
+        .command(&["orchestration", "resume", run_id, "--json"])
+        .output()
+        .expect("orchestration resume should start");
+    assert_eq!(resumed.status.code(), Some(50));
+    assert!(
+        parse_json(&resumed)["message"]
+            .as_str()
+            .unwrap()
+            .contains("active roles that require receipt reconciliation")
+    );
 }
 
 #[test]
