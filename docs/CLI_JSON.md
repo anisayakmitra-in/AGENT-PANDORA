@@ -32,6 +32,7 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora backup restore ... --json` | `backup restore` | `input`, `restored_entries`, `pre_restore_backup`, `authenticated` |
 | `pandora run <task> --json` | `run` | `session_id`, `execution_id`, `harness_id`, `gene_id`, `status`, `elapsed_ms`, `provider_metrics`, `evaluation` |
 | `pandora job work --watch --idle-timeout <seconds> --json` | `job work` | `watched`, `processed_count`, `stop_reason`, `idle_timeout_seconds`, `jobs` |
+| `pandora job work --daemon --json` | `job work` | `daemon`, `processed_count`, `stop_reason`, `jobs` |
 | `pandora doctor --json` | `doctor` | `healthy`, `version`, `platform`, `config_path`, `storage_path`, `workspace_path`, `provider`, `policy`, `containment`, `checks` |
 | `pandora fleet list --json` | `fleet list` | `nodes`, `leases` |
 | `pandora fleet dispatch <capability> --json` | `fleet dispatch` | `capability`, `node` |

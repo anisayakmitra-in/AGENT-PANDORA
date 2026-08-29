@@ -2295,6 +2295,74 @@ fn crashed_independent_job_worker_reconciles_and_restarts_without_replay() {
 }
 
 #[test]
+fn long_lived_job_daemon_finishes_current_queue_and_stops_after_external_drain() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let submitted = fixture
+        .command(&["job", "submit", "--", "guide", "--json"])
+        .output()
+        .expect("job submission should start");
+    assert_success(&submitted);
+    let job_id = parse_json(&submitted)["job_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let child = fixture
+        .command(&["job", "work", "--daemon", "--json"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("daemon worker should start as an independent process");
+    let fleet = FleetEngine::open(fixture.data.join("fleet.sqlite3")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let process_id = loop {
+        if let Some(supervisor) = fleet
+            .list_supervisors()
+            .unwrap()
+            .into_iter()
+            .find(|supervisor| {
+                supervisor.node_id() == "job-worker" && supervisor.state().as_str() == "running"
+            })
+        {
+            break supervisor
+                .process_id()
+                .expect("daemon worker should bind its PID");
+        }
+        assert!(
+            Instant::now() < deadline,
+            "daemon worker did not publish a running supervisor"
+        );
+        thread::sleep(Duration::from_millis(25));
+    };
+
+    let drained = fixture
+        .command(&["fleet", "supervisor", "drain", "job-worker", "--json"])
+        .output()
+        .expect("daemon drain request should start");
+    assert_success(&drained);
+    assert_eq!(parse_json(&drained)["supervisor"]["state"], "draining");
+
+    let output = child
+        .wait_with_output()
+        .expect("daemon should finish after external drain");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["daemon"], true);
+    assert_eq!(response["stop_reason"], "external_drain");
+    assert_eq!(response["processed_count"], 1);
+    assert_eq!(response["jobs"][0]["job_id"], job_id);
+
+    let supervisor = fleet
+        .list_supervisors()
+        .unwrap()
+        .into_iter()
+        .find(|supervisor| supervisor.node_id() == "job-worker")
+        .expect("daemon supervisor should remain inspectable after drain");
+    assert_eq!(supervisor.state().as_str(), "stopped");
+    assert_eq!(supervisor.process_id(), Some(process_id));
+}
+
+#[test]
 fn interactive_setup_configures_a_provider_without_echoing_secrets() {
     let fixture = Fixture::new();
     let mut command = fixture.command(&["setup", "--interactive", "--json"]);

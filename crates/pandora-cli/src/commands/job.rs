@@ -1,7 +1,8 @@
 use super::{load_config, parse_options, require_config_file, session_scope, timestamp};
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{
-    FleetBudget, FleetEngine, FleetError, FleetNode, JobRecord, JobStore, JobStoreError,
+    FleetBudget, FleetEngine, FleetError, FleetNode, FleetSupervisorState, JobRecord, JobStore,
+    JobStoreError,
 };
 use pandora_types::{JobCommand, JobId, JobRequest, JobStatus, JobWorkerId};
 use serde_json::{Map, Value, json};
@@ -24,6 +25,16 @@ struct ActiveJobSupervisor {
 }
 
 impl ActiveJobSupervisor {
+    fn shutdown_requested(&self) -> Result<bool, FleetError> {
+        let supervisor = self
+            .fleet
+            .list_supervisors()?
+            .into_iter()
+            .find(|supervisor| supervisor.node_id() == self.node_id)
+            .ok_or(FleetError::SupervisorNotFound)?;
+        Ok(supervisor.state() != FleetSupervisorState::Running)
+    }
+
     fn heartbeat(&self) -> Result<(), FleetError> {
         let now = timestamp().as_unix_seconds();
         self.fleet
@@ -42,14 +53,29 @@ impl ActiveJobSupervisor {
         let failed = Arc::new(AtomicBool::new(false));
         let active_for_thread = Arc::clone(&active);
         let failed_for_thread = Arc::clone(&failed);
+        let stop_requested = Arc::new(AtomicBool::new(false));
+        let stop_requested_for_thread = Arc::clone(&stop_requested);
         let fleet = Arc::clone(&self.fleet);
         let node_id = self.node_id.clone();
         let lease_id = self.lease_id.clone();
         let execution_id = self.execution_id.clone();
         let handle = thread::spawn(move || {
             while active_for_thread.load(Ordering::Acquire) {
-                thread::sleep(Duration::from_secs(JOB_WORKER_HEARTBEAT_SECONDS));
-                if !active_for_thread.load(Ordering::Acquire) {
+                for _ in 0..JOB_WORKER_HEARTBEAT_SECONDS {
+                    thread::sleep(Duration::from_secs(1));
+                    if !active_for_thread.load(Ordering::Acquire) {
+                        return;
+                    }
+                }
+                let state = fleet.list_supervisors().and_then(|supervisors| {
+                    supervisors
+                        .into_iter()
+                        .find(|supervisor| supervisor.node_id() == node_id)
+                        .map(|supervisor| supervisor.state())
+                        .ok_or(FleetError::SupervisorNotFound)
+                });
+                if matches!(state, Ok(state) if state != FleetSupervisorState::Running) {
+                    stop_requested_for_thread.store(true, Ordering::Release);
                     break;
                 }
                 let now = timestamp().as_unix_seconds();
@@ -73,6 +99,7 @@ impl ActiveJobSupervisor {
         JobWorkerHeartbeat {
             active,
             failed,
+            stop_requested,
             handle: Some(handle),
         }
     }
@@ -90,12 +117,17 @@ impl Drop for ActiveJobSupervisor {
 struct JobWorkerHeartbeat {
     active: Arc<AtomicBool>,
     failed: Arc<AtomicBool>,
+    stop_requested: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
 }
 
 impl JobWorkerHeartbeat {
     fn failed(&self) -> bool {
         self.failed.load(Ordering::Acquire)
+    }
+
+    fn stop_requested(&self) -> bool {
+        self.stop_requested.load(Ordering::Acquire)
     }
 }
 
@@ -171,6 +203,15 @@ struct CompletedJob {
     id: JobId,
     status: JobStatus,
     result: Value,
+}
+
+struct JobExecutionContext<'a> {
+    store: &'a JobStore,
+    principal: &'a pandora_types::PrincipalId,
+    tenant: &'a pandora_types::TenantId,
+    workspace: &'a pandora_types::WorkspaceId,
+    worker_id: &'a JobWorkerId,
+    supervisor: &'a ActiveJobSupervisor,
 }
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
@@ -297,6 +338,7 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
             "max-jobs",
             "watch",
             "idle-timeout",
+            "daemon",
         ],
     )?;
     if !parsed.positionals.is_empty() {
@@ -306,7 +348,13 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
     }
     let max_jobs = parse_max_jobs(parsed.value("max-jobs"))?;
     let watching = parsed.value("watch").is_some();
+    let daemon = parsed.value("daemon").is_some();
     let idle_timeout = parse_idle_timeout(parsed.value("idle-timeout"))?;
+    if watching && daemon {
+        return Err(CliError::usage(
+            "job work --watch and --daemon are mutually exclusive",
+        ));
+    }
     if !watching && idle_timeout.is_some() {
         return Err(CliError::usage(
             "job work --idle-timeout requires '--watch'",
@@ -317,6 +365,11 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
             "job work --watch requires '--idle-timeout <1-3600>'",
         ));
     }
+    if daemon && idle_timeout.is_some() {
+        return Err(CliError::usage(
+            "job work --daemon does not accept '--idle-timeout'",
+        ));
+    }
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
     let supervisor = start_job_supervisor(&config)?;
@@ -325,13 +378,19 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
     let store = JobStore::open(config.data_dir().join("jobs.sqlite3")).map_err(job_store_error)?;
     let (principal, tenant, workspace) = session_scope();
     let worker_id = allocate_worker_id()?;
-    let result = if watching {
+    let context = JobExecutionContext {
+        store: &store,
+        principal: &principal,
+        tenant: &tenant,
+        workspace: &workspace,
+        worker_id: &worker_id,
+        supervisor: &supervisor,
+    };
+    let result = if daemon {
+        daemon_jobs(&context, max_jobs)
+    } else if watching {
         watch_jobs(
-            &store,
-            &principal,
-            &tenant,
-            &workspace,
-            &worker_id,
+            &context,
             max_jobs,
             idle_timeout.expect("watch mode validates an idle timeout"),
         )
@@ -357,7 +416,7 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
             )),
         }
     };
-    let heartbeat_failed = heartbeat.failed();
+    let heartbeat_failed = heartbeat.failed() && !heartbeat.stop_requested();
     drop(heartbeat);
     if heartbeat_failed {
         return Err(CliError::execution(
@@ -395,11 +454,7 @@ fn parse_idle_timeout(value: Option<&str>) -> Result<Option<u64>, CliError> {
 }
 
 fn watch_jobs(
-    store: &JobStore,
-    principal: &pandora_types::PrincipalId,
-    tenant: &pandora_types::TenantId,
-    workspace: &pandora_types::WorkspaceId,
-    worker_id: &JobWorkerId,
+    context: &JobExecutionContext<'_>,
     max_jobs: Option<usize>,
     idle_timeout_seconds: u64,
 ) -> Result<CommandResult, CliError> {
@@ -409,7 +464,20 @@ fn watch_jobs(
         if max_jobs.is_some_and(|limit| jobs.len() >= limit) {
             break "limit_reached";
         }
-        match execute_one_job(store, principal, tenant, workspace, worker_id) {
+        if context
+            .supervisor
+            .shutdown_requested()
+            .map_err(fleet_error)?
+        {
+            break "external_drain";
+        }
+        match execute_one_job(
+            context.store,
+            context.principal,
+            context.tenant,
+            context.workspace,
+            context.worker_id,
+        ) {
             Ok(Some(completed)) => {
                 jobs.push(job_summary(&completed));
                 idle_deadline = Instant::now() + Duration::from_secs(idle_timeout_seconds);
@@ -433,6 +501,50 @@ fn watch_jobs(
             "jobs": jobs,
         }),
         format!("Watched the job queue and processed {processed_count} job(s)"),
+    ))
+}
+
+fn daemon_jobs(
+    context: &JobExecutionContext<'_>,
+    max_jobs: Option<usize>,
+) -> Result<CommandResult, CliError> {
+    let mut jobs = Vec::new();
+    let stop_reason = loop {
+        if max_jobs.is_some_and(|limit| jobs.len() >= limit) {
+            break "limit_reached";
+        }
+        if context
+            .supervisor
+            .shutdown_requested()
+            .map_err(fleet_error)?
+        {
+            break "external_drain";
+        }
+        match execute_one_job(
+            context.store,
+            context.principal,
+            context.tenant,
+            context.workspace,
+            context.worker_id,
+        ) {
+            Ok(Some(completed)) => jobs.push(job_summary(&completed)),
+            Ok(None) => thread::sleep(Duration::from_millis(250)),
+            Err(mut error) => {
+                add_drain_error_details(&mut error, jobs);
+                return Err(error);
+            }
+        }
+    };
+    let processed_count = jobs.len();
+    Ok(success(
+        "job work",
+        json!({
+            "daemon": true,
+            "processed_count": processed_count,
+            "stop_reason": stop_reason,
+            "jobs": jobs,
+        }),
+        format!("Daemon worker stopped after processing {processed_count} job(s)"),
     ))
 }
 

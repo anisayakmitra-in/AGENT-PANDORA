@@ -157,6 +157,7 @@ pandora job submit -- --agent "Review this workspace"
 pandora job work
 pandora job work --max-jobs 8
 pandora job work --watch --idle-timeout 30
+pandora job work --daemon
 pandora job list
 pandora job inspect <job-id>
 pandora job cancel <job-id>
@@ -195,6 +196,15 @@ supervisor, renewable lease, and no-replay behavior while polling for newly
 queued work. It exits after the idle window or an optional `--max-jobs` limit,
 then records a stopped supervisor state. It is not a remote daemon and does
 not spawn child processes.
+
+`job work --daemon` is the long-lived local worker mode. It remains idle while
+the queue is empty and exits only after an optional `--max-jobs` cap or an
+external graceful-stop request: run `pandora fleet supervisor drain job-worker`.
+The worker finishes its current claim, releases its lease, and transitions the
+durable supervisor to `stopped`. The drain command does not grant effects,
+launch children, or bypass the ReferenceMonitor. A killed daemon remains
+recoverable through the existing heartbeat reconciliation path and never
+replays a claimed effect.
 
 A batch stops at the first approval pause or failed run. Its error response
 includes the jobs processed during that invocation, and later jobs remain

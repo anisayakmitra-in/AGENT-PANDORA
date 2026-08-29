@@ -217,6 +217,7 @@ fn is_flag(name: &str) -> bool {
             | "retryable"
             | "value-stdin"
             | "watch"
+            | "daemon"
     )
 }
 
@@ -340,7 +341,7 @@ commands:
   harness list|inspect|run [--harness-version <version>]
   slash list|resolve <command>
   session list|resume|inspect <id>
-  job submit|work|list|inspect|cancel|mark-interrupted (work accepts --max-jobs <1-64> or bounded --watch --idle-timeout <1-3600>)
+  job submit|work|list|inspect|cancel|mark-interrupted (work accepts --max-jobs <1-64>, bounded --watch --idle-timeout <1-3600>, or --daemon)
   subagent spawn --session <id> --execution <id> [--commit <sha>] [--provider <name>] [--harness <id> --harness-version <version>] [--max-turns <n>] [--max-tools <n>] [--max-tokens <n>] [--max-duration <seconds>] [--max-depth <n>] [--max-result-bytes <n>] <task>
   subagent list|inspect|cancel|mark-interrupted|cleanup <id> | work [--max-agents <1-8>]
   skill list|inspect|install|enable|disable|suspend|remove|restore <id-or-path>
