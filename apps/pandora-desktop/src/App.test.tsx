@@ -1261,6 +1261,36 @@ describe("Pandora desktop run state", () => {
     expect(runtime.previewPackageEnable).not.toHaveBeenCalled();
   });
 
+  it("previews an admission-safe Domain manifest without mutating runtime state", async () => {
+    runtime.capabilities.mockResolvedValue([{
+      id: "coding-domain",
+      version: "1.2.0",
+      name: "Coding Domain",
+      kind: "domain",
+      gene_count: 0,
+      runnable: true,
+      gene_ids: [],
+    }]);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Harness Lab" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "packages" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Author manifest" }));
+
+    expect(await screen.findByRole("heading", { name: "Author a package envelope" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy JSON" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Authoring package ID"), { target: { value: "owner/image-domain" } });
+    fireEvent.change(screen.getByLabelText("Authoring content hash"), { target: { value: `sha256:${"a".repeat(64)}` } });
+    fireEvent.change(screen.getByLabelText("Authoring route hints"), { target: { value: "image generation, text to image" } });
+
+    expect(await screen.findByText("manifest ready")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy JSON" })).toBeEnabled();
+    expect(screen.getByLabelText("Package manifest JSON")).toHaveTextContent('"kind": "domain_harness"');
+    expect(screen.getByLabelText("Package manifest JSON")).toHaveTextContent('"hints": [');
+    expect(screen.getByText(/never signs, admits, enables, publishes, stores keys/i)).toBeInTheDocument();
+    expect(runtime.admitLocalPackage).not.toHaveBeenCalled();
+    expect(runtime.enableLocalPackage).not.toHaveBeenCalled();
+  });
+
   it("clears a registry token when package installation fails", async () => {
     runtime.capabilities.mockResolvedValue([{
       id: "coding-domain",

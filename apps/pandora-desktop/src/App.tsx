@@ -67,6 +67,8 @@ type WorkSurface = "files" | "changes" | "terminal" | "artifacts";
 type HarnessTab = "genes" | "extensions" | "packages" | "authority" | "receipts";
 type InventoryTab = "overview" | "contract" | "boundaries" | "evidence";
 
+type AuthoringKind = "gene" | "domain_harness" | "meta_harness";
+
 type PendingRunRequest = {
   task: string;
   requestedHarness: string | null;
@@ -1657,12 +1659,101 @@ function CapabilitiesView({ harnesses, tools, runtimeStatus, native }: { harness
   </div>;
 }
 
+function PackageAuthoring() {
+  const [kind, setKind] = useState<AuthoringKind>("domain_harness");
+  const [id, setId] = useState("");
+  const [version, setVersion] = useState("0.1.0");
+  const [publisher, setPublisher] = useState("local");
+  const [contentHash, setContentHash] = useState("");
+  const [compatibility, setCompatibility] = useState("pandora>=2.0.0");
+  const [license, setLicense] = useState("MIT");
+  const [dependencies, setDependencies] = useState("");
+  const [routeHints, setRouteHints] = useState("");
+  const [allowedDomains, setAllowedDomains] = useState("");
+  const [maxHandoffs, setMaxHandoffs] = useState("3");
+  const [copied, setCopied] = useState(false);
+
+  const preview = useMemo(() => {
+    const errors: string[] = [];
+    const cleanId = id.trim();
+    const cleanVersion = version.trim();
+    const cleanPublisher = publisher.trim();
+    const cleanHash = contentHash.trim();
+    const cleanCompatibility = compatibility.trim();
+    const cleanLicense = license.trim();
+    const dependencyRecords = dependencies.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+      const optional = line.endsWith("?");
+      const token = optional ? line.slice(0, -1).trim() : line;
+      const separator = token.lastIndexOf("@");
+      return { id: separator > 0 ? token.slice(0, separator).trim() : token, version: separator > 0 ? token.slice(separator + 1).trim() : "", optional };
+    });
+    const hints = Array.from(new Set(routeHints.split(/[\n,]/).map((hint) => hint.trim().toLowerCase()).filter(Boolean))).sort();
+    const domains = Array.from(new Set(allowedDomains.split(/[\n,]/).map((domain) => domain.trim()).filter(Boolean))).sort();
+
+    if (!cleanId || cleanId.split("/").some((part) => !part || part === "." || part === ".." || part.includes("\\"))) errors.push("Package ID needs safe non-empty path components.");
+    if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(cleanVersion)) errors.push("Version must be SemVer, for example 0.1.0.");
+    if (!cleanPublisher) errors.push("Publisher is required.");
+    if (!/^sha256:[0-9a-fA-F]{64}$/.test(cleanHash)) errors.push("Content hash must be a sha256: digest with 64 hexadecimal characters.");
+    if (!cleanCompatibility.startsWith("pandora") || cleanCompatibility === "pandora*") errors.push("Compatibility must be a bounded Pandora requirement, not a wildcard.");
+    if (!cleanLicense) errors.push("License is required.");
+    dependencyRecords.forEach((dependency) => {
+      if (!dependency.id || !dependency.version) errors.push(`Dependency '${dependency.id || "?"}' needs id@version.`);
+    });
+    if (kind === "domain_harness" && hints.some((hint) => hint.length < 3 || hint.length > 64)) errors.push("Route hints must be 3–64 characters.");
+    if (kind === "meta_harness" && !domains.length) errors.push("Meta Harnesses need at least one allowed Domain Harness.");
+    const handoffLimit = Number.parseInt(maxHandoffs.trim(), 10);
+    if (kind === "meta_harness" && (!Number.isInteger(handoffLimit) || handoffLimit < 1)) errors.push("Meta handoff limit must be a positive integer.");
+
+    const manifest: Record<string, unknown> = {
+      id: cleanId || "publisher/example",
+      version: cleanVersion || "0.1.0",
+      kind,
+      publisher: cleanPublisher || "local",
+      content_hash: cleanHash || "sha256:" + "0".repeat(64),
+      dependencies: dependencyRecords,
+      compatibility: { runtime: cleanCompatibility || "pandora>=2.0.0" },
+      license: cleanLicense || "MIT",
+      trust: { level: "unverified", signature: null, public_key: null },
+    };
+    if (kind === "domain_harness" && hints.length) manifest.domain_routing = { hints };
+    if (kind === "meta_harness") manifest.meta_composition = { allowed_domains: domains.length ? domains : ["coding-domain"], max_handoffs: Number.isInteger(handoffLimit) && handoffLimit > 0 ? handoffLimit : 3 };
+    return { errors, json: JSON.stringify(manifest, null, 2) };
+  }, [allowedDomains, compatibility, contentHash, dependencies, id, kind, license, maxHandoffs, publisher, routeHints, version]);
+
+  const copyManifest = async () => {
+    if (preview.errors.length || !navigator.clipboard) return;
+    await navigator.clipboard.writeText(preview.json);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  };
+
+  return <div className="package-authoring">
+    <div className="package-authoring-heading"><div><span className="eyebrow">MANIFEST WORKBENCH</span><h4>Author a package envelope</h4><p>Shape a Domain, Meta, or Gene manifest before it enters the normal admission boundary.</p></div><Chip tone={preview.errors.length ? "gold" : "green"}>{preview.errors.length ? `${preview.errors.length} checks` : "manifest ready"}</Chip></div>
+    <div className="package-boundary"><Icon name="shield" size={14} /><span>This is a local preview only. It never signs, admits, enables, publishes, stores keys, or grants authority. Trust starts unverified; package admission re-validates the exact JSON.</span></div>
+    <div className="package-authoring-grid">
+      <form className="package-form" onSubmit={(event) => event.preventDefault()}>
+        <label><span>Package kind</span><select aria-label="Authoring package kind" value={kind} onChange={(event) => setKind(event.target.value as AuthoringKind)}><option value="domain_harness">Domain Harness</option><option value="meta_harness">Meta Harness</option><option value="gene">Gene</option></select></label>
+        <label><span>Package ID</span><input aria-label="Authoring package ID" value={id} onChange={(event) => setId(event.target.value)} placeholder="publisher/image-domain" maxLength={256} autoComplete="off" spellCheck={false} /></label>
+        <label><span>Version</span><input aria-label="Authoring package version" value={version} onChange={(event) => setVersion(event.target.value)} maxLength={128} autoComplete="off" spellCheck={false} /></label>
+        <label><span>Publisher</span><input aria-label="Authoring publisher" value={publisher} onChange={(event) => setPublisher(event.target.value)} maxLength={4096} autoComplete="off" spellCheck={false} /></label>
+        <label className="package-form-wide"><span>Artifact content hash <small>sha256:…</small></span><input aria-label="Authoring content hash" value={contentHash} onChange={(event) => setContentHash(event.target.value)} placeholder="sha256:0123456789abcdef…" maxLength={71} autoComplete="off" spellCheck={false} /></label>
+        <label><span>Runtime compatibility</span><input aria-label="Authoring compatibility" value={compatibility} onChange={(event) => setCompatibility(event.target.value)} maxLength={256} autoComplete="off" spellCheck={false} /></label>
+        <label><span>License</span><input aria-label="Authoring license" value={license} onChange={(event) => setLicense(event.target.value)} maxLength={4096} autoComplete="off" spellCheck={false} /></label>
+        <label className="package-form-wide"><span>Dependencies <small>one id@version per line; append ? for optional</small></span><textarea aria-label="Authoring dependencies" value={dependencies} onChange={(event) => setDependencies(event.target.value)} rows={2} placeholder="workspace.read@0.1.0" spellCheck={false} /></label>
+        {kind === "domain_harness" ? <label className="package-form-wide"><span>Auto-route hints <small>comma or newline separated · optional</small></span><textarea aria-label="Authoring route hints" value={routeHints} onChange={(event) => setRouteHints(event.target.value)} rows={2} placeholder="image generation, text to image" spellCheck={false} /></label> : null}
+        {kind === "meta_harness" ? <><label className="package-form-wide"><span>Allowed Domain Harness IDs</span><textarea aria-label="Authoring allowed domains" value={allowedDomains} onChange={(event) => setAllowedDomains(event.target.value)} rows={2} placeholder="coding-domain, image-domain" spellCheck={false} /></label><label><span>Maximum handoffs</span><input aria-label="Authoring max handoffs" value={maxHandoffs} onChange={(event) => setMaxHandoffs(event.target.value)} inputMode="numeric" /></label></> : null}
+      </form>
+      <div className="package-manifest-preview"><div className="package-preview-heading"><div><span className="eyebrow">EXACT JSON PREVIEW</span><strong>Admission-ready shape</strong></div><button className="button button-secondary" type="button" disabled={Boolean(preview.errors.length)} onClick={() => void copyManifest()}>{copied ? "Copied" : "Copy JSON"}</button></div>{preview.errors.length ? <div className="package-authoring-errors" role="status">{preview.errors.map((error) => <p key={error}><Icon name="shield" size={12} /> {error}</p>)}</div> : <p className="package-authoring-ready"><Icon name="check" size={12} /> Shape checks pass. Artifact bytes and trust evidence are still verified by admission.</p>}<pre aria-label="Package manifest JSON"><code>{preview.json}</code></pre></div>
+    </div>
+  </div>;
+}
+
 function PackageManager({ native }: { native: boolean }) {
   const [packages, setPackages] = useState<RuntimePackage[]>([]);
   const [registryProfiles, setRegistryProfiles] = useState<RegistryProfile[]>([]);
   const [registryProfile, setRegistryProfile] = useState("");
   const [selectedIdentity, setSelectedIdentity] = useState("");
-  const [sourceTab, setSourceTab] = useState<"registry" | "github" | "local">("registry");
+  const [sourceTab, setSourceTab] = useState<"registry" | "github" | "local" | "author">("registry");
   const [packageId, setPackageId] = useState("");
   const [version, setVersion] = useState("");
   const [registryUrl, setRegistryUrl] = useState("");
@@ -1956,7 +2047,7 @@ function PackageManager({ native }: { native: boolean }) {
           </form> : null}
           {removeTarget ? <form className="package-remove-confirm" onSubmit={confirmRemoval}><p>Dependency and lifecycle-binding checks passed. Type <span className="mono">{removeTarget.id}@{removeTarget.version}</span> to remove this exact record.</p><input aria-label={`Confirm removal ${removeTarget.id}@${removeTarget.version}`} value={removeConfirmation} onChange={(event) => setRemoveConfirmation(event.target.value)} autoComplete="off" spellCheck={false} /><div><button className="button button-secondary" type="button" onClick={() => setRemoveTarget(null)}>Close</button><button className="button button-deny" type="submit" disabled={busy === "remove" || removeConfirmation !== `${removeTarget.id}@${removeTarget.version}`}>{busy === "remove" ? "Removing…" : "Remove package"}</button></div></form> : null}
         </div> : null}
-        <div className="package-source-tabs" role="tablist" aria-label="Package source"><button type="button" role="tab" aria-selected={sourceTab === "registry"} className={sourceTab === "registry" ? "is-selected" : ""} onClick={() => setSourceTab("registry")}>Registry URL</button><button type="button" role="tab" aria-selected={sourceTab === "github"} className={sourceTab === "github" ? "is-selected" : ""} onClick={() => setSourceTab("github")}>GitHub commit</button><button type="button" role="tab" aria-selected={sourceTab === "local"} className={sourceTab === "local" ? "is-selected" : ""} onClick={() => setSourceTab("local")}>Local artifact</button></div>
+        <div className="package-source-tabs" role="tablist" aria-label="Package source"><button type="button" role="tab" aria-selected={sourceTab === "registry"} className={sourceTab === "registry" ? "is-selected" : ""} onClick={() => setSourceTab("registry")}>Registry URL</button><button type="button" role="tab" aria-selected={sourceTab === "github"} className={sourceTab === "github" ? "is-selected" : ""} onClick={() => setSourceTab("github")}>GitHub commit</button><button type="button" role="tab" aria-selected={sourceTab === "local"} className={sourceTab === "local" ? "is-selected" : ""} onClick={() => setSourceTab("local")}>Local artifact</button><button type="button" role="tab" aria-selected={sourceTab === "author"} className={sourceTab === "author" ? "is-selected" : ""} onClick={() => setSourceTab("author")}>Author manifest</button></div>
         {sourceTab === "registry" ? (
           <form className="package-form" onSubmit={submitRegistry}>
             <label><span>Package ID</span><input aria-label="Registry package ID" value={packageId} onChange={(event) => setPackageId(event.target.value)} placeholder="publisher/gene" maxLength={256} autoComplete="off" spellCheck={false} /></label>
@@ -1975,13 +2066,13 @@ function PackageManager({ native }: { native: boolean }) {
             <label className="package-form-wide"><span>GitHub token <small>optional · private repositories · process-scoped only</small></span><input aria-label="GitHub package token" type="password" value={githubToken} onChange={(event) => setGithubToken(event.target.value)} autoComplete="new-password" /></label>
             <div className="package-form-footer"><p>Pandora fetches only these two paths at the pinned commit, follows no redirects, and runs the normal signed-admission checks.</p><button className="button button-primary" type="submit" disabled={Boolean(busy) || !githubRepository.trim() || githubCommit.trim().length !== 40 || !githubManifestPath.trim() || !githubArtifactPath.trim()}>{busy === "github" ? "Fetching…" : "Fetch pinned source"}</button></div>
           </form>
-        ) : (
+        ) : sourceTab === "local" ? (
           <form className="package-form" onSubmit={submitLocal}>
             <label className="package-form-wide"><span>Absolute manifest path</span><input aria-label="Local package manifest path" value={manifestPath} onChange={(event) => setManifestPath(event.target.value)} placeholder="C:\path\to\manifest.json" maxLength={4096} autoComplete="off" spellCheck={false} /></label>
             <label className="package-form-wide"><span>Absolute artifact path</span><input aria-label="Local package artifact path" value={artifactPath} onChange={(event) => setArtifactPath(event.target.value)} placeholder="C:\path\to\gene.wasm" maxLength={4096} autoComplete="off" spellCheck={false} /></label>
             <div className="package-form-footer"><p>Both paths must be regular local files, not symlinks. Admission remains metadata-only until an exact governed run selects the package.</p><button className="button button-primary" type="submit" disabled={Boolean(busy) || !manifestPath.trim() || !artifactPath.trim()}>{busy === "admit" ? "Admitting…" : "Validate and admit"}</button></div>
           </form>
-        )}
+        ) : <PackageAuthoring />}
       </div>
     </div>
   </div>;

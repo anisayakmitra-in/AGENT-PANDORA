@@ -18,7 +18,7 @@ operations, and signed native releases.
 | --- | ---: | --- | --- |
 | 6. Production readiness | 85-90% | scoped identity, automatic local device trust, encrypted secrets, local telemetry and crash records, encrypted backup and restore, fresh-runner install/update/rollback/backup/restore/uninstall drills, update channels, release workflows, checksum signature verification, release evidence index, CodeQL, dependency audits | signed stable artifacts, real clean-machine release proof on every advertised platform, installer rollback exercises with the stable artifact |
 | 7. Runtime scale and orchestration | 75-85% | persistent prompt-context cache, headless jobs, bounded parallel subagents, exact-commit worktrees, durable orchestration claims and receipts, interruption and resume rules, multi-repository plans, fleet leases, budgets, execution-bound lease renewal, and durable supervisor state with PID-bound worker heartbeats, process-wide execution leases for headless jobs and subagents, lease gating, stale-supervisor reconciliation without replay, bounded stale reaping, atomic PID-bound restart handoff, and atomic cross-process quiescence guards | independent daemon restart supervision, load and soak tests, crash and cancellation races, multi-repository partial failure |
-| 8. Agent experience and disclosure | 70-80% | native desktop source, Command and Council inspection, background runs, runtime inventory, Harness Lab, package lifecycle, BYOK providers and models, MCP configuration, pinned GitHub packages, active custom Domain and Meta Harnesses, WebAssembly Genes, custom Auto Route contracts, optional built-in Domain and Meta replacement | package-authoring UI, route-conflict preview before enable, broader Skill and provider package lifecycles, desktop accessibility pass, native installer release proof |
+| 8. Agent experience and disclosure | 75-85% | native desktop source, Command and Council inspection, background runs, runtime inventory, Harness Lab, package lifecycle, package manifest workbench, BYOK providers and models, MCP configuration, pinned GitHub packages, active custom Domain and Meta Harnesses, WebAssembly Genes, custom Auto Route contracts, optional built-in Domain and Meta replacement | local signing support with an explicit key boundary, broader Skill and provider package lifecycles, desktop accessibility pass, native installer release proof |
 | 9. Evaluation-driven loops | 50-60% | trajectory, outcome, policy, regression, adversarial, golden, and holdout evaluation; coding feedback; research-only mutation and population strategies; durable evolution state; canary activation and rollback | scheduled evaluation loops, self-healing test generation, automatic canary policy, operator scorecards, quality gates for every artifact class |
 | 10. Memory consolidation | 50-60% | scoped L0, L1, and L2 records; durable recall; approval-gated promotion; revocation, audit, and compaction; deterministic evidence-bound synthesis | cross-session and cross-project consolidation policy, scheduled synthesis, desktop removal and provenance views, source graph for consolidated lessons |
 | 11. Adversarial resilience | 45-55% | path confinement, symlink checks, secret redaction, replay protection, exact signatures and hashes, fail-closed package and permit checks, adversarial evaluation primitives | tool-poisoning detection and quarantine, prompt-injection corpus across every input source, publisher trust roots and revocation, fuzzing and hostile multi-agent handoff suites |
@@ -84,10 +84,21 @@ core-source, Parliament, Shadow Council, ReferenceMonitor, and the permit path
 remain immutable. Disable or roll back the package to restore the compiled
 entry on the next runtime snapshot.
 
+The desktop package manager now includes a manifest workbench. It previews the
+closed package vocabulary, exact JSON shape, bounded Domain route hints, Meta
+composition, dependency declarations, and unverified trust posture. Copying
+the JSON is the only mutation it performs; it does not sign, admit, enable,
+publish, store private keys, or grant authority. The existing admission and
+lifecycle boundaries remain the only path to durable package state.
+
+It also previews exact route-hint overlaps across the local catalog before a
+Domain is enabled. This is advisory evidence only; runtime routing still uses
+active admitted bindings, explicit user selection wins, and ambiguous ties
+fail closed.
+
 Next work:
 
-- add a package-authoring form with manifest preview and local signing support;
-- preview route matches and conflicts before a Domain is enabled;
+- add local signing support only with an explicit, non-exporting key boundary;
 - show replacement lineage and rollback evidence beside the active Harness;
 - complete keyboard, screen-reader, reduced-motion, scaling, and high-contrast
   checks in the native desktop;

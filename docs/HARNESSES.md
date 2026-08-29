@@ -91,6 +91,17 @@ pandora package remove <id> <version> --dry-run
 pandora package remove <id> <version> --yes
 ```
 
+The native desktop Package Manager includes a Manifest Workbench for Domain,
+Meta, and Gene envelopes. It produces a copyable, deterministic JSON preview
+with the package kind, exact version, content hash, dependencies, runtime
+compatibility, route hints or Meta composition, and `unverified` trust
+evidence. The workbench is intentionally preview-only: it does not sign,
+write files, admit records, enable bindings, publish packages, or handle
+private keys. Users may pass the copied manifest through the existing local
+`package admit` command, where the normal runtime validation and artifact hash
+checks remain authoritative. Local signing is still a separate future surface
+and must introduce an explicit key boundary before it is added.
+
 `package admit` uses one local manifest as both the declared and embedded record.
 Local hexadecimal trust evidence remains supported. `package install` consumes
 current or exact-version M-Place metadata, requests the direct exact-version bytes
