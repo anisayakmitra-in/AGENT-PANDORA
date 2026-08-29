@@ -710,6 +710,7 @@ pandora memory recall --session <id> --provider <name> --tier <l1|l2> [--id <mem
 pandora memory audit --session <id> --provider <name>
 pandora memory forget --session <id> --provider <name> <memory-id> [--yes]
 pandora memory promote --session <id> --provider <name> <memory-id> [--approval <id>]
+pandora memory synthesize --session <id> --provider <name> --id <memory-id> --summary <text> [--kind <kind>] [--classification <public|internal>] [--yes]
 pandora mcp set <id> --program <absolute-path> --arguments-json <json-array> --mode <auto|modern-only|legacy-only>
 pandora mcp list
 pandora mcp inspect <id>
@@ -859,6 +860,9 @@ promote` creates an inspectable, exact-scope approval request when no approval I
 provided; resolve it with `approval resolve`, then rerun the command with that ID.
 Promotion consumes the approval after the durable L2 record is written, and neither
 memory inspection nor promotion grants effect authority.
+`memory synthesize` takes a fresh, scoped L1 snapshot and previews an evidence-bound
+L1 candidate by default. `--yes` commits it only after the snapshot is checked again;
+it never calls a provider, promotes the candidate, or grants runtime authority.
 
 Remote admission currently accepts Gene records with no unresolved capability
 requirements and one valid Pandora runtime requirement. Other package kinds fail

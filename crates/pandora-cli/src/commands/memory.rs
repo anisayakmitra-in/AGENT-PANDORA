@@ -5,8 +5,8 @@ use pandora_runtime::{
     ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, MemoryEngine, MemoryError,
 };
 use pandora_types::{
-    ExecutionId, GeneId, MemoryApproval, MemoryId, MemoryRecord, MemoryScope, MemoryTier,
-    RequestDigest, Timestamp, hash_artifact,
+    ContextClassification, ExecutionId, GeneId, MemoryApproval, MemoryId, MemoryKind, MemoryRecord,
+    MemoryScope, MemoryTier, RequestDigest, Timestamp, hash_artifact,
 };
 use serde_json::json;
 
@@ -17,13 +17,14 @@ const MEMORY_PROMOTION_GENE: &str = "memory.promote";
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
-        CliError::usage("memory requires 'recall', 'audit', 'forget', or 'promote'")
+        CliError::usage("memory requires 'recall', 'audit', 'forget', 'promote', or 'synthesize'")
     })?;
     match subcommand.as_str() {
         "recall" => recall(&args[1..]),
         "audit" => audit(&args[1..]),
         "forget" => forget(&args[1..]),
         "promote" => promote(&args[1..]),
+        "synthesize" => synthesize(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown memory command '{unknown}'"
         ))),
@@ -107,6 +108,112 @@ fn audit(args: &[String]) -> Result<CommandResult, CliError> {
             "durability": "session-store",
         }),
         format!("Listed {count} memory audit record(s)"),
+    ))
+}
+
+fn synthesize(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "session",
+            "provider",
+            "id",
+            "kind",
+            "summary",
+            "classification",
+            "yes",
+        ],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory synthesize does not accept positional arguments",
+        ));
+    }
+    let memory_id = MemoryId::new(
+        parsed
+            .value("id")
+            .ok_or_else(|| CliError::usage("memory synthesize requires '--id <memory-id>'"))?
+            .to_owned(),
+    )
+    .map_err(|_| CliError::usage("memory ID is invalid"))?;
+    let kind = parse_memory_kind(parsed.value("kind"))?;
+    let summary = parsed
+        .value("summary")
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| CliError::usage("memory synthesize requires a non-empty '--summary'"))?;
+    let classification = parse_memory_classification(parsed.value("classification"))?;
+    if !matches!(
+        classification,
+        ContextClassification::Public | ContextClassification::Internal
+    ) {
+        return Err(CliError::usage(
+            "memory synthesis classification must be 'public' or 'internal'",
+        ));
+    }
+    let (_, scope) = scope(&parsed)?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let principal = session_scope().0;
+    let engine = open_engine(&config, &principal)?;
+    let now = timestamp();
+    let snapshot = engine
+        .synthesis_snapshot(&scope, now)
+        .map_err(memory_error)?;
+    let proposal = engine
+        .propose_synthesis(
+            &snapshot,
+            memory_id.as_str().to_owned(),
+            kind,
+            summary,
+            classification,
+            now,
+        )
+        .map_err(memory_error)?;
+    engine
+        .verify_synthesis(&proposal, timestamp())
+        .map_err(memory_error)?;
+    let evidence_ids = proposal
+        .evidence_ids()
+        .iter()
+        .map(|id| id.as_str())
+        .collect::<Vec<_>>();
+    if parsed.values.contains_key("yes") {
+        let committed = engine
+            .commit_synthesis(&proposal, timestamp())
+            .map_err(memory_error)?;
+        return Ok(success(
+            "memory synthesize",
+            json!({
+                "dry_run": false,
+                "committed": record_value(&committed),
+                "snapshot_digest": proposal.snapshot_digest(),
+                "evidence_ids": evidence_ids,
+                "promotion_required": true,
+            }),
+            format!(
+                "Committed synthesized memory {} as an L1 candidate",
+                committed.id()
+            ),
+        ));
+    }
+    Ok(success(
+        "memory synthesize",
+        json!({
+            "dry_run": true,
+            "candidate": record_value(proposal.candidate()),
+            "snapshot_digest": proposal.snapshot_digest(),
+            "captured_at": snapshot.captured_at().as_unix_seconds(),
+            "evidence_ids": evidence_ids,
+            "would_commit": true,
+            "promotion_required": true,
+        }),
+        format!(
+            "Previewed synthesized memory from {} evidence record(s); rerun with --yes to commit",
+            proposal.evidence_ids().len()
+        ),
     ))
 }
 
@@ -418,6 +525,37 @@ fn parse_tier(value: Option<&str>) -> Result<MemoryTier, CliError> {
         )),
         Some(_) => Err(CliError::usage("memory tier must be 'l1' or 'l2'")),
         None => Err(CliError::usage("memory recall requires '--tier <l1|l2>'")),
+    }
+}
+
+fn parse_memory_kind(value: Option<&str>) -> Result<MemoryKind, CliError> {
+    match value {
+        Some("execution_evidence") => Ok(MemoryKind::ExecutionEvidence),
+        Some("decision") => Ok(MemoryKind::Decision),
+        Some("failure") => Ok(MemoryKind::Failure),
+        Some("benchmark") => Ok(MemoryKind::Benchmark),
+        Some("lesson") => Ok(MemoryKind::Lesson),
+        Some("lineage") => Ok(MemoryKind::Lineage),
+        Some("trace") | Some("policy_decision") | Some("replacement") => {
+            Err(CliError::usage("memory synthesis kind must be an L1 kind"))
+        }
+        Some(_) => Err(CliError::usage(
+            "memory kind must be execution_evidence, decision, failure, benchmark, lesson, or lineage",
+        )),
+        None => Ok(MemoryKind::Lesson),
+    }
+}
+
+fn parse_memory_classification(value: Option<&str>) -> Result<ContextClassification, CliError> {
+    match value {
+        Some("public") => Ok(ContextClassification::Public),
+        Some("internal") | None => Ok(ContextClassification::Internal),
+        Some("sensitive") | Some("secret") => Err(CliError::usage(
+            "memory synthesis classification must be 'public' or 'internal'",
+        )),
+        Some(_) => Err(CliError::usage(
+            "memory classification must be public or internal",
+        )),
     }
 }
 

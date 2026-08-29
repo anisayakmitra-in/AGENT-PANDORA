@@ -3128,6 +3128,62 @@ fn memory_cli_recalls_a_scoped_record_and_requires_confirmation_to_revoke() {
         )
         .unwrap();
 
+    let synthesis_preview = fixture
+        .command(&[
+            "memory",
+            "synthesize",
+            "--session",
+            &session_id,
+            "--provider",
+            "openai-compatible",
+            "--id",
+            "synthesized-memory",
+            "--kind",
+            "lesson",
+            "--summary",
+            "A reviewed lesson from this session",
+            "--json",
+        ])
+        .output()
+        .expect("memory synthesis preview should start");
+    assert_success(&synthesis_preview);
+    let synthesis_preview = parse_json(&synthesis_preview);
+    assert_eq!(synthesis_preview["command"], "memory synthesize");
+    assert_eq!(synthesis_preview["dry_run"], true);
+    assert_eq!(synthesis_preview["candidate"]["origin"], "synthesized");
+    assert!(
+        !synthesis_preview["evidence_ids"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    let synthesized = fixture
+        .command(&[
+            "memory",
+            "synthesize",
+            "--session",
+            &session_id,
+            "--provider",
+            "openai-compatible",
+            "--id",
+            "synthesized-memory",
+            "--kind",
+            "lesson",
+            "--summary",
+            "A reviewed lesson from this session",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("memory synthesis commit should start");
+    assert_success(&synthesized);
+    let synthesized = parse_json(&synthesized);
+    assert_eq!(synthesized["dry_run"], false);
+    assert_eq!(synthesized["promotion_required"], true);
+    assert_eq!(synthesized["committed"]["tier"], "l1");
+    assert_eq!(synthesized["committed"]["origin"], "synthesized");
+
     let recalled = fixture
         .command(&[
             "memory",

@@ -347,7 +347,7 @@ commands:
   skill list|inspect|install|enable|disable|suspend|remove|restore <id-or-path>
   package admit --manifest <path> --artifact <path> | validate --manifest <path> --artifact <path> | install <id> [version] [--registry <url>|--registry-profile <name>] [--token-env <name>] | install-github --repository <url> --commit <sha> --manifest <repo-path> --artifact <repo-path> [--token-env <name>] | list | inspect <id> <version> | enable|disable <id> <version> [--dry-run|--yes] | rollback <id> [--dry-run|--yes] | lock [--output <path>] | verify-lock [--lock <path>] | remove <id> <version> [--dry-run|--yes]
   registry list | set --name <name> --registry-url <url> [--token-env <name>] | use <name> | remove <name> --yes
-  memory recall --session <id> --provider <name> --tier <l1|l2> [--id <memory-id>] [--limit <1-256>] | audit --session <id> --provider <name> | forget --session <id> --provider <name> <memory-id> [--yes] | promote --session <id> --provider <name> <memory-id> [--approval <id>]
+  memory recall --session <id> --provider <name> --tier <l1|l2> [--id <memory-id>] [--limit <1-256>] | audit --session <id> --provider <name> | forget --session <id> --provider <name> <memory-id> [--yes] | promote --session <id> --provider <name> <memory-id> [--approval <id>] | synthesize --session <id> --provider <name> --id <memory-id> --summary <text> [--kind <kind>] [--classification <public|internal>] [--yes]
   tool list|inspect <id>
   approval list|inspect|resolve
   provider list|set|use|test

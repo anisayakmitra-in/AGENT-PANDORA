@@ -53,7 +53,7 @@ fn powershell() -> &'static str {
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'registry') {
         'list','set','use','remove'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'memory') {
-        'recall','audit','forget','promote'
+        'recall','audit','forget','promote','synthesize'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'approval') {
         'list','inspect','resolve'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'provider') {
@@ -120,7 +120,7 @@ fn bash() -> &'static str {
     elif [[ "$previous" == "registry" ]]; then
         COMPREPLY=( $(compgen -W 'list set use remove' -- "$current") )
     elif [[ "$previous" == "memory" ]]; then
-        COMPREPLY=( $(compgen -W 'recall audit forget promote' -- "$current") )
+        COMPREPLY=( $(compgen -W 'recall audit forget promote synthesize' -- "$current") )
     elif [[ "$previous" == "approval" ]]; then
         COMPREPLY=( $(compgen -W 'list inspect resolve' -- "$current") )
     elif [[ "$previous" == "provider" ]]; then
@@ -187,7 +187,7 @@ elif [[ ${words[2]} == package ]]; then
 elif [[ ${words[2]} == registry ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:registry command:(list set use remove)'
 elif [[ ${words[2]} == memory ]]; then
-    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:memory command:(recall audit forget promote)'
+    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:memory command:(recall audit forget promote synthesize)'
 elif [[ ${words[2]} == approval ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:approval command:(list inspect resolve)'
 elif [[ ${words[2]} == provider ]]; then
@@ -237,7 +237,7 @@ complete -c pandora -f -n '__fish_seen_subcommand_from subagent' -a 'spawn work 
 complete -c pandora -f -n '__fish_seen_subcommand_from skill' -a 'list inspect install enable disable suspend remove restore'
 complete -c pandora -f -n '__fish_seen_subcommand_from package' -a 'admit validate install install-github list inspect enable disable rollback lock verify-lock remove'
 complete -c pandora -f -n '__fish_seen_subcommand_from registry' -a 'list set use remove'
-complete -c pandora -f -n '__fish_seen_subcommand_from memory' -a 'recall audit forget promote'
+complete -c pandora -f -n '__fish_seen_subcommand_from memory' -a 'recall audit forget promote synthesize'
 complete -c pandora -f -n '__fish_seen_subcommand_from approval' -a 'list inspect resolve'
 complete -c pandora -f -n '__fish_seen_subcommand_from provider' -a 'list set use test'
 complete -c pandora -f -n '__fish_seen_subcommand_from mcp' -a 'list inspect set remove catalog call'
@@ -282,7 +282,7 @@ mod tests {
             "'list','resolve'",
             "'admit','validate','install','install-github','list','inspect','enable','disable','rollback','lock','verify-lock','remove'",
             "'list','set','use','remove'",
-            "'recall','audit','forget','promote'",
+            "'recall','audit','forget','promote','synthesize'",
             "'list','inspect','resolve'",
             "'list','set','use','test'",
             "'list','inspect','set','remove','catalog','call'",
@@ -302,7 +302,7 @@ mod tests {
                 "list resolve",
                 "admit validate install install-github list inspect enable disable rollback lock verify-lock remove",
                 "list set use remove",
-                "recall audit forget promote",
+                "recall audit forget promote synthesize",
                 "list inspect resolve",
                 "list set use test",
                 "list inspect set remove",
