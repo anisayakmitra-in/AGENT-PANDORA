@@ -3702,6 +3702,69 @@ fn evaluation_suite_registry_drives_a_durable_scheduled_run() {
 }
 
 #[test]
+fn task_backed_suite_runs_a_governed_builtin_workflow() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let direct = fixture
+        .command(&["run", "guide", "--gene", "athena.guide", "--json"])
+        .output()
+        .expect("direct workflow run should start");
+    assert_success_with_context(&direct, "direct workflow run");
+    let direct = parse_json(&direct);
+    let expected = direct["output"]
+        .as_str()
+        .expect("workflow should return bounded output")
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>()
+        .trim()
+        .to_owned();
+    let input = fixture.root.join("task-suite.json");
+    let definition = serde_json::json!({
+        "suite_id": "task-suite",
+        "cases": [{
+            "id": "guide-case",
+            "target": {"kind": "workflow", "id": "athena.guide"},
+            "task": "guide",
+            "expected_output": expected
+        }]
+    });
+    fs::write(&input, serde_json::to_vec(&definition).unwrap())
+        .expect("task suite input should be written");
+
+    let registered = fixture
+        .command(&[
+            "evaluation",
+            "suite",
+            "register",
+            "--id",
+            "task-suite",
+            "--input",
+            input.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("task suite registration should start");
+    assert_success_with_context(&registered, "task suite registration");
+    let run = fixture
+        .command(&["evaluation", "suite", "run", "--id", "task-suite", "--json"])
+        .output()
+        .expect("task suite run should start");
+    assert_success_with_context(&run, "task suite run");
+    let run = parse_json(&run);
+    assert_eq!(run["command"], "evaluation suite run");
+    assert_eq!(run["total"], 1);
+    assert_eq!(run["passed"], 1);
+    assert_eq!(run["cases"][0]["target"]["id"], "athena.guide");
+}
+
+#[test]
 fn evaluation_regression_candidates_require_review_before_suite_registration() {
     let fixture = Fixture::new();
     fixture.setup();

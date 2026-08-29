@@ -449,6 +449,7 @@ call providers, or grant permissions.
 pandora evaluation golden --input golden.json --json
 pandora evaluation golden --input golden.json --fail-on-failure
 pandora evaluation suite register --id golden-default --input golden.json
+pandora evaluation suite run --id golden-default --json
 pandora evaluation suite list --json
 pandora evaluation suite inspect --id golden-default --json
 pandora evaluation regression propose --id candidate-1 --input failed.json --case workflow-smoke --json
@@ -460,11 +461,17 @@ pandora evaluation regression review --id candidate-1 --decision accept --json
 The command accepts at most 256 cases and a 4 MiB input file. It emits a
 stable report digest and per-case outcome results. A case may optionally bind
 to a `target` with kind `prompt`, `skill`, `workflow`, or `wasm_gene`, plus a bounded `task`
-label. Target metadata is validated and reported as evidence; the task is not
-executed or sent to a provider. `evaluation suite register` stores a validated,
-local suite definition by its exact `suite_id`; registration rejects empty or
-duplicate suites, reports `targeted_case_count` and `target_kinds`, and does not
-execute tools or providers. `--fail-on-failure` returns a non-zero command result for CI when any case fails.
+label. Evidence-backed cases provide `execution_id` and `output`. Task-backed
+cases omit those fields and are executed only by `evaluation suite run` through
+the governed `ExecutionController`; the runner creates a local session, loads
+only admitted active Harness packages, binds Workflow and WebAssembly Gene
+cases to their requested Gene IDs, and requires enabled Skills. The evaluator
+receives bounded execution evidence and never grants authority. `evaluation
+suite register` stores a validated local suite definition by its exact
+`suite_id`; registration rejects empty or duplicate suites, reports
+`targeted_case_count` and `target_kinds`, and does not execute tools or
+providers. `--fail-on-failure` returns a non-zero command result for CI when
+any case fails.
 
 Evaluation regression candidates are generated only from a verified failed
 case in a typed target-backed input. The candidate is stored as proposed and

@@ -3,6 +3,7 @@ use pandora_types::{
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
+use std::fmt;
 
 pub const MAX_GOLDEN_CASES: usize = 256;
 pub const MAX_GOLDEN_CASE_ID_BYTES: usize = 256;
@@ -12,6 +13,75 @@ pub const MAX_EVALUATION_TASK_BYTES: usize = 16 * 1024;
 pub const MAX_HOLDOUT_CASES: usize = 256;
 pub const MAX_HOLDOUT_CASE_ID_BYTES: usize = 256;
 pub const MAX_HOLDOUT_OUTPUT_BYTES: usize = 64 * 1024;
+
+/// A bounded execution result returned by a task-backed evaluation adapter.
+///
+/// Adapters own execution authority (for example, the governed controller or
+/// agent loop). The evaluator only accepts the redacted evidence they return;
+/// it never executes a target itself or treats the result as approval.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EvaluationTaskResult {
+    target: EvaluationTarget,
+    task: String,
+    request: EvaluationRequest,
+}
+
+impl EvaluationTaskResult {
+    pub fn new(
+        target: EvaluationTarget,
+        task: impl Into<String>,
+        request: EvaluationRequest,
+    ) -> Result<Self, EvaluationError> {
+        let task = validate_task(task.into())?;
+        Ok(Self {
+            target,
+            task,
+            request,
+        })
+    }
+
+    pub fn target(&self) -> &EvaluationTarget {
+        &self.target
+    }
+
+    pub fn task(&self) -> &str {
+        &self.task
+    }
+
+    pub fn request(&self) -> &EvaluationRequest {
+        &self.request
+    }
+}
+
+/// Execution boundary for Prompt, Skill, Workflow, and WebAssembly Gene
+/// evaluation cases. Implementations must route through an existing governed
+/// adapter and return only redacted, bounded execution evidence.
+pub trait EvaluationTaskAdapter {
+    fn execute(
+        &mut self,
+        target: &EvaluationTarget,
+        task: &str,
+    ) -> Result<EvaluationTaskResult, EvaluationAdapterError>;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EvaluationAdapterError {
+    Rejected,
+    Failed,
+    InvalidResult,
+}
+
+impl fmt::Display for EvaluationAdapterError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Rejected => "evaluation target adapter rejected the task",
+            Self::Failed => "evaluation target adapter failed the task",
+            Self::InvalidResult => "evaluation target adapter returned invalid evidence",
+        })
+    }
+}
+
+impl std::error::Error for EvaluationAdapterError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EvaluationError {
@@ -25,6 +95,9 @@ pub enum EvaluationError {
     EmptyTask,
     TaskTooLong,
     TaskControlCharacter,
+    AdapterRejected,
+    AdapterFailed,
+    InvalidAdapterResult,
     TooManyGoldenCases,
     DuplicateGoldenCase,
     EmptyHoldoutSet,
@@ -83,6 +156,60 @@ impl EvaluationTarget {
 
     pub fn id(&self) -> &str {
         &self.id
+    }
+}
+
+/// A golden case whose output is produced by a governed target adapter at run
+/// time rather than supplied as pre-recorded evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskBackedCase {
+    id: String,
+    target: EvaluationTarget,
+    task: String,
+    expected_output: String,
+}
+
+impl TaskBackedCase {
+    pub fn new(
+        id: impl Into<String>,
+        target: EvaluationTarget,
+        task: impl Into<String>,
+        expected_output: impl Into<String>,
+    ) -> Result<Self, EvaluationError> {
+        let id = id.into();
+        if id.trim().is_empty() {
+            return Err(EvaluationError::EmptyGoldenCaseId);
+        }
+        if id.len() > MAX_GOLDEN_CASE_ID_BYTES {
+            return Err(EvaluationError::GoldenCaseIdTooLong);
+        }
+        let task = validate_task(task.into())?;
+        let expected_output = expected_output.into();
+        if expected_output.len() > MAX_GOLDEN_EXPECTED_OUTPUT_BYTES {
+            return Err(EvaluationError::GoldenExpectedOutputTooLong);
+        }
+        Ok(Self {
+            id: id.trim().to_owned(),
+            target,
+            task,
+            expected_output,
+        })
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn target(&self) -> &EvaluationTarget {
+        &self.target
+    }
+
+    pub fn task(&self) -> &str {
+        &self.task
+    }
+
+    pub fn expected_output(&self) -> &str {
+        &self.expected_output
     }
 }
 
@@ -226,6 +353,10 @@ impl GoldenCaseResult {
 
     pub fn target(&self) -> Option<&EvaluationTarget> {
         self.target.as_ref()
+    }
+
+    pub fn task(&self) -> Option<&str> {
+        self.task.as_deref()
     }
 }
 
@@ -542,6 +673,62 @@ impl EvaluationEngine {
         })
     }
 
+    pub fn evaluate_task_backed_set<I, A>(
+        &self,
+        cases: I,
+        adapter: &mut A,
+    ) -> Result<GoldenSetReport, EvaluationError>
+    where
+        I: IntoIterator<Item = TaskBackedCase>,
+        A: EvaluationTaskAdapter,
+    {
+        let mut cases = cases.into_iter().collect::<Vec<_>>();
+        if cases.len() > MAX_GOLDEN_CASES {
+            return Err(EvaluationError::TooManyGoldenCases);
+        }
+        cases.sort_by(|left, right| left.id.cmp(&right.id));
+        let mut ids = BTreeSet::new();
+        for case in &cases {
+            if !ids.insert(case.id.clone()) {
+                return Err(EvaluationError::DuplicateGoldenCase);
+            }
+        }
+
+        let mut results = Vec::with_capacity(cases.len());
+        for case in cases {
+            let execution =
+                adapter
+                    .execute(&case.target, &case.task)
+                    .map_err(|error| match error {
+                        EvaluationAdapterError::Rejected => EvaluationError::AdapterRejected,
+                        EvaluationAdapterError::Failed => EvaluationError::AdapterFailed,
+                        EvaluationAdapterError::InvalidResult => {
+                            EvaluationError::InvalidAdapterResult
+                        }
+                    })?;
+            if execution.target != case.target || execution.task != case.task {
+                return Err(EvaluationError::InvalidAdapterResult);
+            }
+            results.push(GoldenCaseResult {
+                id: case.id,
+                result: self.evaluate_outcome(&execution.request, &case.expected_output),
+                target: Some(execution.target),
+                task: Some(execution.task),
+            });
+        }
+        let passed = results.iter().filter(|case| case.result.passed()).count();
+        let failed = results.len().saturating_sub(passed);
+        let digest = golden_set_digest(&results);
+
+        Ok(GoldenSetReport {
+            total: results.len(),
+            passed,
+            failed,
+            digest,
+            cases: results,
+        })
+    }
+
     pub fn evaluate_holdout_set<I>(&self, cases: I) -> Result<HoldoutSetReport, EvaluationError>
     where
         I: IntoIterator<Item = HoldoutCase>,
@@ -675,6 +862,19 @@ fn holdout_set_digest(cases: &[HoldoutCaseResult]) -> String {
 fn average_score(cases: &[HoldoutCaseResult], score: impl Fn(&HoldoutCaseResult) -> u8) -> u8 {
     let total = cases.iter().map(|case| u32::from(score(case))).sum::<u32>();
     u8::try_from(total / cases.len() as u32).unwrap_or(0)
+}
+
+fn validate_task(value: String) -> Result<String, EvaluationError> {
+    if value.trim().is_empty() {
+        return Err(EvaluationError::EmptyTask);
+    }
+    if value.len() > MAX_EVALUATION_TASK_BYTES {
+        return Err(EvaluationError::TaskTooLong);
+    }
+    if value.chars().any(char::is_control) {
+        return Err(EvaluationError::TaskControlCharacter);
+    }
+    Ok(value.trim().to_owned())
 }
 
 fn digest_text(hasher: &mut Sha256, value: &str) {
@@ -821,6 +1021,102 @@ mod tests {
         );
         assert_eq!(first.cases()[0].target().unwrap().id(), "prompt-1");
         assert_ne!(first.digest(), second.digest());
+    }
+
+    struct RecordingAdapter {
+        calls: Vec<(EvaluationTarget, String)>,
+    }
+
+    impl EvaluationTaskAdapter for RecordingAdapter {
+        fn execute(
+            &mut self,
+            target: &EvaluationTarget,
+            task: &str,
+        ) -> Result<EvaluationTaskResult, EvaluationAdapterError> {
+            self.calls.push((target.clone(), task.to_owned()));
+            EvaluationTaskResult::new(target.clone(), task, input("done"))
+                .map_err(|_| EvaluationAdapterError::InvalidResult)
+        }
+    }
+
+    #[test]
+    fn task_backed_cases_execute_through_the_adapter_and_bind_evidence() {
+        let cases = [
+            (EvaluationTargetKind::Prompt, "prompt-1"),
+            (EvaluationTargetKind::Skill, "skill-1"),
+            (EvaluationTargetKind::Workflow, "workflow-1"),
+            (EvaluationTargetKind::WasmGene, "gene-1"),
+        ]
+        .into_iter()
+        .map(|(kind, id)| {
+            TaskBackedCase::new(
+                format!("case-{}", kind.as_str()),
+                EvaluationTarget::new(kind, id).unwrap(),
+                format!("run {}", kind.as_str()),
+                "done",
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+        let mut adapter = RecordingAdapter { calls: Vec::new() };
+
+        let report = EvaluationEngine::new()
+            .evaluate_task_backed_set(cases, &mut adapter)
+            .unwrap();
+
+        assert_eq!(report.total(), 4);
+        assert_eq!(report.passed(), 4);
+        assert_eq!(report.failed(), 0);
+        assert_eq!(adapter.calls.len(), 4);
+        assert_eq!(
+            adapter
+                .calls
+                .iter()
+                .map(|(target, _)| target.kind())
+                .collect::<Vec<_>>(),
+            vec![
+                EvaluationTargetKind::Prompt,
+                EvaluationTargetKind::Skill,
+                EvaluationTargetKind::WasmGene,
+                EvaluationTargetKind::Workflow,
+            ]
+        );
+        assert!(report.cases().iter().all(|case| {
+            case.target().is_some() && case.task().is_some() && case.result().passed()
+        }));
+    }
+
+    struct MismatchedAdapter;
+
+    impl EvaluationTaskAdapter for MismatchedAdapter {
+        fn execute(
+            &mut self,
+            _target: &EvaluationTarget,
+            task: &str,
+        ) -> Result<EvaluationTaskResult, EvaluationAdapterError> {
+            EvaluationTaskResult::new(
+                EvaluationTarget::new(EvaluationTargetKind::Prompt, "wrong-target").unwrap(),
+                task,
+                input("done"),
+            )
+            .map_err(|_| EvaluationAdapterError::InvalidResult)
+        }
+    }
+
+    #[test]
+    fn task_backed_cases_reject_adapter_target_substitution() {
+        let case = TaskBackedCase::new(
+            "case-a",
+            EvaluationTarget::new(EvaluationTargetKind::Workflow, "workflow-1").unwrap(),
+            "run workflow",
+            "done",
+        )
+        .unwrap();
+
+        assert_eq!(
+            EvaluationEngine::new().evaluate_task_backed_set([case], &mut MismatchedAdapter,),
+            Err(EvaluationError::InvalidAdapterResult)
+        );
     }
 
     #[test]

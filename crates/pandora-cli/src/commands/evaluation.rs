@@ -1,14 +1,18 @@
-use super::{load_config, parse_options, require_config_file, session_scope, session_store};
-use crate::commands::run::evaluation_receipt_json;
+use super::{
+    LOCAL_WORKSPACE, create_session, load_config, parse_options, require_config_file,
+    session_scope, session_store,
+};
+use crate::commands::run::{configured_service_runtime, evaluation_receipt_json};
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{
     EvaluationEngine, EvaluationScheduleStore, EvaluationSuiteStore, EvaluationTarget,
     EvaluationTargetKind, GoldenCase, GoldenSetReport, MAX_CLAIM_BATCH, MAX_EVALUATION_TASK_BYTES,
-    MAX_GOLDEN_CASES,
+    MAX_GOLDEN_CASES, RunStatus, TaskBackedCase,
 };
 use pandora_types::{
-    EvaluationReceipt, EvaluationRequest, EvaluationStatus, ExecutionId, JobWorkerId, RunLoopId,
-    SessionId, hash_artifact,
+    Capability, EvaluationReceipt, EvaluationRequest, EvaluationStatus, ExecutionId, GeneId,
+    HarnessId, JobWorkerId, Operation, PolicyContext, RunLoopId, Session, SessionId, TaskIntent,
+    WorkspaceId, hash_artifact,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -38,8 +42,10 @@ struct GoldenCaseInput {
     target: Option<EvaluationTargetInput>,
     #[serde(default)]
     task: Option<String>,
-    execution_id: String,
-    output: String,
+    #[serde(default)]
+    execution_id: Option<String>,
+    #[serde(default)]
+    output: Option<String>,
     expected_output: String,
     #[serde(default)]
     policy_violations: Vec<String>,
@@ -67,12 +73,13 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
 
 fn suite(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
-        CliError::usage("evaluation suite requires 'register', 'list', or 'inspect'")
+        CliError::usage("evaluation suite requires 'register', 'list', 'inspect', or 'run'")
     })?;
     match subcommand.as_str() {
         "register" => suite_register(&args[1..]),
         "list" => suite_list(&args[1..]),
         "inspect" => suite_inspect(&args[1..]),
+        "run" => suite_run(&args[1..]),
         _ => Err(CliError::usage(format!(
             "unknown evaluation suite command '{subcommand}'"
         ))),
@@ -114,23 +121,25 @@ fn suite_register(args: &[String]) -> Result<CommandResult, CliError> {
             input_suite_id, id
         )));
     }
-    let cases = parse_cases(&bytes)?;
-    if cases.is_empty() {
+    let suite_definition = parse_suite_definition(&bytes)?;
+    let (case_count, targeted_case_count, target_kinds, evidence_cases) = match suite_definition {
+        ParsedSuite::Evidence(cases) => {
+            let targeted_case_count = cases.iter().filter(|case| case.target().is_some()).count();
+            let target_kinds = target_kind_counts(cases.iter().filter_map(|case| case.target()));
+            (cases.len(), targeted_case_count, target_kinds, Some(cases))
+        }
+        ParsedSuite::Task(cases) => {
+            let targeted_case_count = cases.len();
+            let target_kinds = target_kind_counts(cases.iter().map(TaskBackedCase::target));
+            (cases.len(), targeted_case_count, target_kinds, None)
+        }
+    };
+    if case_count == 0 {
         return Err(CliError::usage(
             "evaluation suite must contain at least one case",
         ));
     }
-    let targeted_case_count = cases.iter().filter(|case| case.target().is_some()).count();
-    let target_kinds = cases.iter().filter_map(|case| case.target()).fold(
-        BTreeMap::<String, usize>::new(),
-        |mut counts, target| {
-            *counts.entry(target.kind().as_str().to_owned()).or_default() += 1;
-            counts
-        },
-    );
-    let report = EvaluationEngine::new()
-        .evaluate_golden_set(cases.clone())
-        .map_err(|error| CliError::usage(format!("invalid evaluation suite: {error:?}")))?;
+    let cases = evidence_cases.as_deref().unwrap_or_default();
     let config = schedule_config(&parsed)?;
     let store = suite_store(&config)?;
     let approved_candidate = if let Some(candidate_id) = parsed.value("candidate") {
@@ -157,7 +166,7 @@ fn suite_register(args: &[String]) -> Result<CommandResult, CliError> {
         .map_err(suite_error)?;
     let mut data = suite_value(&suite);
     if let Value::Object(object) = &mut data {
-        object.insert("case_count".to_owned(), Value::from(report.total()));
+        object.insert("case_count".to_owned(), Value::from(case_count));
         object.insert(
             "targeted_case_count".to_owned(),
             Value::from(targeted_case_count),
@@ -186,6 +195,206 @@ fn suite_register(args: &[String]) -> Result<CommandResult, CliError> {
         data,
         format!("Registered evaluation suite {}", suite.id()),
     ))
+}
+
+fn suite_run(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "id",
+            "harness",
+            "fail-on-failure",
+        ],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evaluation suite run does not accept positional arguments",
+        ));
+    }
+    let id = required_option(&parsed, "id", "evaluation suite run requires '--id <id>'")?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let suite_store = suite_store(&config)?;
+    let bytes = suite_store.load(id).map_err(suite_error)?;
+    let cases = match parse_suite_definition(&bytes)? {
+        ParsedSuite::Task(cases) => cases,
+        ParsedSuite::Evidence(_) => {
+            return Err(CliError::usage(
+                "evaluation suite run requires task-backed cases; use 'evaluation golden' for evidence-backed suites",
+            ));
+        }
+    };
+    let (harnesses, wasm) = configured_service_runtime(&config)?;
+    let requested_harness = parsed
+        .value("harness")
+        .map(|value| HarnessId::new(value.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("evaluation suite run requires a valid Harness ID"))?;
+    if let Some(harness_id) = requested_harness.as_ref()
+        && harnesses.find(harness_id).is_none()
+    {
+        return Err(CliError::policy(
+            "the requested Harness is not active",
+            json!({"harness": harness_id}),
+        ));
+    }
+    let store = session_store(&config)?;
+    let workspace_id = WorkspaceId::new(LOCAL_WORKSPACE).expect("built-in workspace ID is valid");
+    let session = create_session(&store, &workspace_id)?;
+    let workspace = pandora_runtime::executors::WorkspaceRoot::new(config.workspace_dir())
+        .map_err(|_| {
+            CliError::configuration(
+                "workspace path is invalid",
+                json!({"workspace": config.workspace_dir()}),
+            )
+        })?;
+    let policy = PolicyContext::new(
+        1,
+        [
+            Capability::FilesystemRead,
+            Capability::FilesystemWrite,
+            Capability::ProcessExecute,
+            Capability::NetworkConnect,
+            Capability::ProviderInvoke,
+            Capability::WasmExecute,
+        ],
+        [Operation::Write, Operation::Execute, Operation::Connect],
+    );
+    let controller = pandora_runtime::ExecutionController::with_policy_and_harnesses(
+        workspace, policy, harnesses,
+    )
+    .with_wasm_executor(wasm);
+    let mut adapter = GovernedEvaluationAdapter {
+        controller: &controller,
+        session: &session,
+        store: &store,
+        config: &config,
+        harness: requested_harness,
+    };
+    let report = EvaluationEngine::new()
+        .evaluate_task_backed_set(cases, &mut adapter)
+        .map_err(|error| {
+            CliError::execution(
+                "task-backed suite evaluation failed",
+                json!({"error": format!("{error:?}")}),
+            )
+        })?;
+    let data = report_value(&report);
+    if parsed.value("fail-on-failure").is_some() && report.failed() > 0 {
+        return Err(CliError::execution(
+            "task-backed suite evaluation failed",
+            data,
+        ));
+    }
+    Ok(success(
+        "evaluation suite run",
+        data,
+        format!(
+            "Ran evaluation suite {}: {}/{} passed (digest {})",
+            id,
+            report.passed(),
+            report.total(),
+            report.digest()
+        ),
+    ))
+}
+
+struct GovernedEvaluationAdapter<'a> {
+    controller: &'a pandora_runtime::ExecutionController,
+    session: &'a Session,
+    store: &'a pandora_runtime::sessions::SessionStore,
+    config: &'a pandora_runtime::config::RuntimeConfig,
+    harness: Option<HarnessId>,
+}
+
+impl pandora_runtime::EvaluationTaskAdapter for GovernedEvaluationAdapter<'_> {
+    fn execute(
+        &mut self,
+        target: &EvaluationTarget,
+        task: &str,
+    ) -> Result<pandora_runtime::EvaluationTaskResult, pandora_runtime::EvaluationAdapterError>
+    {
+        if target.kind() == EvaluationTargetKind::Skill {
+            let engine =
+                pandora_runtime::SkillEngine::discover(self.config.data_dir().join("skills"))
+                    .map_err(|_| pandora_runtime::EvaluationAdapterError::Rejected)?;
+            let inspection = engine
+                .inspect(target.id())
+                .map_err(|_| pandora_runtime::EvaluationAdapterError::Rejected)?;
+            if inspection.state() != pandora_runtime::skill_engine::SkillState::Enabled {
+                return Err(pandora_runtime::EvaluationAdapterError::Rejected);
+            }
+        }
+        let mut intent =
+            TaskIntent::new(task).map_err(|_| pandora_runtime::EvaluationAdapterError::Rejected)?;
+        if let Some(harness) = self.harness.as_ref() {
+            intent = intent.with_harness(harness.clone());
+        }
+        if matches!(
+            target.kind(),
+            EvaluationTargetKind::Workflow | EvaluationTargetKind::WasmGene
+        ) {
+            let gene = GeneId::new(target.id().to_owned())
+                .map_err(|_| pandora_runtime::EvaluationAdapterError::Rejected)?;
+            intent = intent.with_gene(gene);
+        }
+        let summary = self
+            .controller
+            .run(intent, self.session.clone())
+            .map_err(|_| pandora_runtime::EvaluationAdapterError::Failed)?;
+        let _ = crate::commands::run::evaluate_and_append_execution(
+            self.store,
+            self.session,
+            "evaluation",
+            &summary,
+        )
+        .map_err(|_| pandora_runtime::EvaluationAdapterError::Failed)?;
+        let output = summary
+            .output()
+            .map(String::from_utf8_lossy)
+            .map(|value| {
+                value
+                    .chars()
+                    .map(|character| {
+                        if character.is_control() {
+                            ' '
+                        } else {
+                            character
+                        }
+                    })
+                    .collect::<String>()
+            })
+            .unwrap_or_else(|| match summary.status() {
+                RunStatus::Completed => "completed".to_owned(),
+                RunStatus::Denied { .. } => "denied".to_owned(),
+                RunStatus::ApprovalRequired { .. } => "approval_required".to_owned(),
+                RunStatus::Failed { .. } => "failed".to_owned(),
+            });
+        let output = output.trim().to_owned();
+        let violations = summary
+            .events()
+            .iter()
+            .filter(|event| event.event_type() == pandora_types::EventType::PolicyDenied)
+            .map(|_| "policy_denied".to_owned())
+            .collect();
+        let mut request = EvaluationRequest::new(
+            summary.execution_id().clone(),
+            summary.receipts().to_vec(),
+            output,
+            violations,
+        )
+        .map_err(|_| pandora_runtime::EvaluationAdapterError::InvalidResult)?;
+        if let RunStatus::Failed { code } = summary.status() {
+            request = request
+                .with_terminal_failure(code)
+                .map_err(|_| pandora_runtime::EvaluationAdapterError::InvalidResult)?;
+        }
+        pandora_runtime::EvaluationTaskResult::new(target.clone(), task, request)
+            .map_err(|_| pandora_runtime::EvaluationAdapterError::InvalidResult)
+    }
 }
 
 fn suite_list(args: &[String]) -> Result<CommandResult, CliError> {
@@ -1118,6 +1327,61 @@ fn parse_target(case: &GoldenCaseInput) -> Result<Option<(EvaluationTarget, Stri
     }
 }
 
+enum ParsedSuite {
+    Evidence(Vec<GoldenCase>),
+    Task(Vec<TaskBackedCase>),
+}
+
+fn parse_suite_definition(bytes: &[u8]) -> Result<ParsedSuite, CliError> {
+    let input = serde_json::from_slice::<GoldenSetInput>(bytes)
+        .map_err(|error| CliError::usage(format!("invalid golden-set JSON: {error}")))?;
+    let has_evidence = input
+        .cases
+        .iter()
+        .any(|case| case.execution_id.is_some() || case.output.is_some());
+    if has_evidence {
+        parse_cases(bytes).map(ParsedSuite::Evidence)
+    } else {
+        parse_task_cases(bytes).map(ParsedSuite::Task)
+    }
+}
+
+fn target_kind_counts<'a>(
+    targets: impl IntoIterator<Item = &'a EvaluationTarget>,
+) -> BTreeMap<String, usize> {
+    targets
+        .into_iter()
+        .fold(BTreeMap::<String, usize>::new(), |mut counts, target| {
+            *counts.entry(target.kind().as_str().to_owned()).or_default() += 1;
+            counts
+        })
+}
+
+fn parse_task_cases(bytes: &[u8]) -> Result<Vec<TaskBackedCase>, CliError> {
+    let input = serde_json::from_slice::<GoldenSetInput>(bytes)
+        .map_err(|error| CliError::usage(format!("invalid task-backed suite JSON: {error}")))?;
+    if input.cases.len() > MAX_GOLDEN_CASES {
+        return Err(CliError::usage(format!(
+            "task-backed suite contains more than {MAX_GOLDEN_CASES} cases"
+        )));
+    }
+    input
+        .cases
+        .into_iter()
+        .map(|case| {
+            if case.execution_id.is_some() || case.output.is_some() {
+                return Err(CliError::usage(
+                    "task-backed suite cases must omit execution_id and output",
+                ));
+            }
+            let (target, task) = parse_target(&case)?
+                .ok_or_else(|| CliError::usage("task-backed cases require a typed target"))?;
+            TaskBackedCase::new(case.id, target, task, case.expected_output)
+                .map_err(|error| CliError::usage(format!("invalid task-backed case: {error:?}")))
+        })
+        .collect()
+}
+
 fn parse_cases(bytes: &[u8]) -> Result<Vec<GoldenCase>, CliError> {
     let input = serde_json::from_slice::<GoldenSetInput>(bytes)
         .map_err(|error| CliError::usage(format!("invalid golden-set JSON: {error}")))?;
@@ -1131,12 +1395,16 @@ fn parse_cases(bytes: &[u8]) -> Result<Vec<GoldenCase>, CliError> {
         .into_iter()
         .map(|case| {
             let target = parse_target(&case)?;
-            let execution_id = ExecutionId::new(case.execution_id)
+            let execution_id =
+                ExecutionId::new(case.execution_id.ok_or_else(|| {
+                    CliError::usage("evidence-backed cases require execution_id")
+                })?)
                 .map_err(|error| CliError::usage(format!("invalid execution_id: {error}")))?;
             let mut evaluation = EvaluationRequest::new(
                 execution_id,
                 Vec::new(),
-                case.output,
+                case.output
+                    .ok_or_else(|| CliError::usage("evidence-backed cases require output"))?,
                 case.policy_violations,
             )
             .map_err(|error| CliError::usage(format!("invalid golden case: {error}")))?;
@@ -1175,6 +1443,7 @@ fn report_value(report: &GoldenSetReport) -> Value {
                 "reason": result.reason(),
                 "advisory": result.advisory(),
                 "target": case.target().map(|target| json!({"kind": target.kind().as_str(), "id": target.id()})),
+                "task": case.task(),
             })
         }).collect::<Vec<_>>(),
     })
@@ -1182,7 +1451,10 @@ fn report_value(report: &GoldenSetReport) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_cases, scheduled_suite_id, status_counts};
+    use super::{
+        EvaluationTargetKind, ParsedSuite, parse_cases, parse_suite_definition, scheduled_suite_id,
+        status_counts,
+    };
     use pandora_types::{
         EvaluationKind, EvaluationReceipt, EvaluationResult, EvaluationStatus, ExecutionId,
         SessionId, Timestamp,
@@ -1196,6 +1468,20 @@ mod tests {
         .unwrap();
         assert_eq!(cases.len(), 1);
         assert_eq!(cases[0].id(), "case-a");
+    }
+
+    #[test]
+    fn parses_task_backed_suite_without_prerecorded_output() {
+        let suite = parse_suite_definition(
+            br#"{"suite_id":"task-suite","cases":[{"id":"workflow-case","target":{"kind":"workflow","id":"workflow-1"},"task":"run workflow","expected_output":"done"}]}"#,
+        )
+        .unwrap();
+        let ParsedSuite::Task(cases) = suite else {
+            panic!("expected task-backed suite");
+        };
+        assert_eq!(cases.len(), 1);
+        assert_eq!(cases[0].target().kind(), EvaluationTargetKind::Workflow);
+        assert_eq!(cases[0].task(), "run workflow");
     }
 
     #[test]

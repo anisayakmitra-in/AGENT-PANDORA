@@ -422,7 +422,7 @@ pub(super) fn configured_harnesses(
     configured_runtime(config, requested, version).map(|(harnesses, _, _)| harnesses)
 }
 
-pub(super) fn configured_service_runtime(
+pub(crate) fn configured_service_runtime(
     config: &RuntimeConfig,
 ) -> Result<(HarnessCatalog, WasmExecutor), CliError> {
     configured_active_runtime(config).map(|(harnesses, wasm, _)| (harnesses, wasm))
@@ -1438,7 +1438,7 @@ fn record_coding_feedback(
     Ok((result, feedback_recorded))
 }
 
-fn evaluate_and_append_execution(
+pub(crate) fn evaluate_and_append_execution(
     store: &SessionStore,
     session: &Session,
     provider: &str,
@@ -1550,7 +1550,7 @@ fn evaluations_json(receipts: &[EvaluationReceipt]) -> Value {
     })
 }
 
-pub(super) fn evaluation_receipt_json(receipt: &EvaluationReceipt) -> Value {
+pub(crate) fn evaluation_receipt_json(receipt: &EvaluationReceipt) -> Value {
     json!({
         "session_id": receipt.session_id(),
         "execution_id": receipt.execution_id(),

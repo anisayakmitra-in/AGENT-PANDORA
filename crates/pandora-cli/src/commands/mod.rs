@@ -356,7 +356,7 @@ commands:
   orchestration roles|submit|claim|complete|list|inspect|cancel|mark-interrupted|resume
   strategies list | population list --state <path> | population inspect --state <path> --id <id>
   evaluation golden --input <path> [--fail-on-failure]
-  evaluation suite register --id <id> --input <path> [--candidate <id>] | list | inspect --id <id>
+  evaluation suite register --id <id> --input <path> [--candidate <id>] | list | inspect --id <id> | run --id <id> [--harness <id>] [--fail-on-failure]
   evaluation regression propose --id <id> --input <path> --case <case-id> | list | inspect --id <id> | review --id <id> --decision <accept|reject>
   evaluation inspect --session <id> [--execution <id>]
   evaluation scorecard --session <id> [--fail-on-non-passed]

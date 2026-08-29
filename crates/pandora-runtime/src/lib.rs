@@ -89,11 +89,12 @@ pub use device_trust::{
 pub use efficiency_engine::{DEFAULT_MAX_SAMPLES_PER_TARGET, EfficiencyEngine, EfficiencyError};
 pub use efficiency_store::{EfficiencyStore, EfficiencyStoreError};
 pub use evaluation_engine::{
-    EvaluationEngine, EvaluationError, EvaluationTarget, EvaluationTargetKind, GoldenCase,
+    EvaluationAdapterError, EvaluationEngine, EvaluationError, EvaluationTarget,
+    EvaluationTargetKind, EvaluationTaskAdapter, EvaluationTaskResult, GoldenCase,
     GoldenCaseResult, GoldenSetReport, HoldoutCase, HoldoutCaseResult, HoldoutSetReport,
     MAX_EVALUATION_TARGET_ID_BYTES, MAX_EVALUATION_TASK_BYTES, MAX_GOLDEN_CASE_ID_BYTES,
     MAX_GOLDEN_CASES, MAX_GOLDEN_EXPECTED_OUTPUT_BYTES, MAX_HOLDOUT_CASE_ID_BYTES,
-    MAX_HOLDOUT_CASES, MAX_HOLDOUT_OUTPUT_BYTES,
+    MAX_HOLDOUT_CASES, MAX_HOLDOUT_OUTPUT_BYTES, TaskBackedCase,
 };
 pub use evaluation_schedule::{
     EvaluationSchedule, EvaluationScheduleError, EvaluationScheduleRun,
