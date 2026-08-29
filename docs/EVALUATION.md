@@ -20,6 +20,30 @@ files, or persist results. Callers that need durable release evidence must
 persist the resulting digest through the existing session and receipt
 authority.
 
+A case may also carry a typed target binding and a bounded task label. Supported
+target kinds are prompt, skill, workflow, and wasm_gene. Target IDs are
+trimmed, non-empty, control-character-free, and limited to 256 bytes. Task
+labels are required when a target is present, limited to 16 KiB, and are
+metadata for suite identity and operator inspection; they are not executed,
+sent to a provider, or returned in the report. Legacy cases without target
+metadata remain valid. Suite registration reports the number of targeted cases
+and counts by target kind, while the same deterministic runner continues to
+produce evidence only.
+
+Example case:
+
+    {
+      "id": "workflow-smoke",
+      "target": {
+        "kind": "workflow",
+        "id": "workflow-1"
+      },
+      "task": "run the bounded workflow case",
+      "execution_id": "exec-workflow-smoke",
+      "output": "tests passed",
+      "expected_output": "tests passed"
+    }
+
 This is a regression primitive, not a benchmark claim. A passing golden set
 does not establish safety, general capability, citation quality, or production
 readiness without separate policy, adversarial, holdout, and human evaluation.

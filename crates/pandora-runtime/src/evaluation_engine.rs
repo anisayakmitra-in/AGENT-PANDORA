@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 pub const MAX_GOLDEN_CASES: usize = 256;
 pub const MAX_GOLDEN_CASE_ID_BYTES: usize = 256;
 pub const MAX_GOLDEN_EXPECTED_OUTPUT_BYTES: usize = 64 * 1024;
+pub const MAX_EVALUATION_TARGET_ID_BYTES: usize = 256;
 pub const MAX_HOLDOUT_CASES: usize = 256;
 pub const MAX_HOLDOUT_CASE_ID_BYTES: usize = 256;
 pub const MAX_HOLDOUT_OUTPUT_BYTES: usize = 64 * 1024;
@@ -17,6 +18,9 @@ pub enum EvaluationError {
     EmptyGoldenCaseId,
     GoldenCaseIdTooLong,
     GoldenExpectedOutputTooLong,
+    EmptyTargetId,
+    TargetIdTooLong,
+    TargetIdControlCharacter,
     TooManyGoldenCases,
     DuplicateGoldenCase,
     EmptyHoldoutSet,
@@ -26,11 +30,64 @@ pub enum EvaluationError {
     DuplicateHoldoutCase,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum EvaluationTargetKind {
+    Prompt,
+    Skill,
+    Workflow,
+    WasmGene,
+}
+
+impl EvaluationTargetKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Prompt => "prompt",
+            Self::Skill => "skill",
+            Self::Workflow => "workflow",
+            Self::WasmGene => "wasm_gene",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EvaluationTarget {
+    kind: EvaluationTargetKind,
+    id: String,
+}
+
+impl EvaluationTarget {
+    pub fn new(kind: EvaluationTargetKind, id: impl Into<String>) -> Result<Self, EvaluationError> {
+        let id = id.into();
+        if id.trim().is_empty() {
+            return Err(EvaluationError::EmptyTargetId);
+        }
+        if id.len() > MAX_EVALUATION_TARGET_ID_BYTES {
+            return Err(EvaluationError::TargetIdTooLong);
+        }
+        if id.chars().any(char::is_control) {
+            return Err(EvaluationError::TargetIdControlCharacter);
+        }
+        Ok(Self {
+            kind,
+            id: id.trim().to_owned(),
+        })
+    }
+
+    pub const fn kind(&self) -> EvaluationTargetKind {
+        self.kind
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GoldenCase {
     id: String,
     evaluation: EvaluationRequest,
     expected_output: String,
+    target: Option<EvaluationTarget>,
 }
 
 impl GoldenCase {
@@ -54,6 +111,7 @@ impl GoldenCase {
             id,
             evaluation,
             expected_output,
+            target: None,
         })
     }
 
@@ -63,6 +121,15 @@ impl GoldenCase {
 
     pub fn evaluation(&self) -> &EvaluationRequest {
         &self.evaluation
+    }
+
+    pub fn with_target(mut self, target: EvaluationTarget) -> Self {
+        self.target = Some(target);
+        self
+    }
+
+    pub fn target(&self) -> Option<&EvaluationTarget> {
+        self.target.as_ref()
     }
 }
 
@@ -119,6 +186,7 @@ impl HoldoutCase {
 pub struct GoldenCaseResult {
     id: String,
     result: EvaluationResult,
+    target: Option<EvaluationTarget>,
 }
 
 impl GoldenCaseResult {
@@ -128,6 +196,10 @@ impl GoldenCaseResult {
 
     pub fn result(&self) -> &EvaluationResult {
         &self.result
+    }
+
+    pub fn target(&self) -> Option<&EvaluationTarget> {
+        self.target.as_ref()
     }
 }
 
@@ -427,6 +499,7 @@ impl EvaluationEngine {
             .map(|case| GoldenCaseResult {
                 id: case.id.clone(),
                 result: self.evaluate_outcome(&case.evaluation, &case.expected_output),
+                target: case.target.clone(),
             })
             .collect::<Vec<_>>();
         let passed = results.iter().filter(|case| case.result.passed()).count();
@@ -532,9 +605,15 @@ fn result(
 
 fn golden_set_digest(cases: &[GoldenCaseResult]) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(b"pandora.golden-set.v1");
+    hasher.update(b"pandora.golden-set.v2");
     for case in cases {
         digest_text(&mut hasher, &case.id);
+        if let Some(target) = case.target() {
+            digest_text(&mut hasher, target.kind().as_str());
+            digest_text(&mut hasher, target.id());
+        } else {
+            digest_text(&mut hasher, "legacy");
+        }
         digest_text(&mut hasher, case.result.kind().as_str());
         digest_text(&mut hasher, case.result.status().as_str());
         hasher.update([case.result.score(), u8::from(case.result.advisory())]);
@@ -687,6 +766,48 @@ mod tests {
         assert_eq!(first.passed(), 1);
         assert_eq!(first.failed(), 1);
         assert!(first.cases().iter().all(|case| case.id() != "done"));
+    }
+
+    #[test]
+    fn targeted_golden_cases_are_typed_and_digest_bound() {
+        let engine = EvaluationEngine::new();
+        let prompt = EvaluationTarget::new(EvaluationTargetKind::Prompt, "prompt-1").unwrap();
+        let workflow = EvaluationTarget::new(EvaluationTargetKind::Workflow, "workflow-1").unwrap();
+        let first_case = GoldenCase::new("case-a", input("done"), "done")
+            .unwrap()
+            .with_target(prompt);
+        let second_case = GoldenCase::new("case-a", input("done"), "done")
+            .unwrap()
+            .with_target(workflow);
+
+        let first = engine.evaluate_golden_set([first_case]).unwrap();
+        let second = engine.evaluate_golden_set([second_case]).unwrap();
+
+        assert_eq!(
+            first.cases()[0].target().unwrap().kind(),
+            EvaluationTargetKind::Prompt
+        );
+        assert_eq!(first.cases()[0].target().unwrap().id(), "prompt-1");
+        assert_ne!(first.digest(), second.digest());
+    }
+
+    #[test]
+    fn evaluation_targets_reject_unbounded_or_controlled_ids() {
+        assert_eq!(
+            EvaluationTarget::new(EvaluationTargetKind::Skill, "  "),
+            Err(EvaluationError::EmptyTargetId)
+        );
+        assert_eq!(
+            EvaluationTarget::new(
+                EvaluationTargetKind::Skill,
+                "x".repeat(MAX_EVALUATION_TARGET_ID_BYTES + 1)
+            ),
+            Err(EvaluationError::TargetIdTooLong)
+        );
+        assert_eq!(
+            EvaluationTarget::new(EvaluationTargetKind::Skill, "skill\n-1"),
+            Err(EvaluationError::TargetIdControlCharacter)
+        );
     }
 
     #[test]

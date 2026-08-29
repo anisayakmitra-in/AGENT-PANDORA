@@ -3621,7 +3621,7 @@ fn evaluation_suite_registry_drives_a_durable_scheduled_run() {
     let input = fixture.root.join("golden-suite.json");
     fs::write(
         &input,
-        r#"{"suite_id":"nightly-suite","cases":[{"id":"case-a","execution_id":"exec-a","output":"done","expected_output":"done"}]}"#,
+        r#"{"suite_id":"nightly-suite","cases":[{"id":"case-a","target":{"kind":"workflow","id":"workflow-1"},"task":"run the bounded workflow case","execution_id":"exec-a","output":"done","expected_output":"done"}]}"#,
     )
     .expect("suite input should be written");
 
@@ -3643,6 +3643,8 @@ fn evaluation_suite_registry_drives_a_durable_scheduled_run() {
     assert_eq!(registered["command"], "evaluation suite register");
     assert_eq!(registered["id"], "nightly-suite");
     assert_eq!(registered["case_count"], 1);
+    assert_eq!(registered["targeted_case_count"], 1);
+    assert_eq!(registered["target_kinds"]["workflow"], 1);
 
     let scheduled = fixture
         .command(&[

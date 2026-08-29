@@ -2,8 +2,8 @@ use super::{load_config, parse_options, require_config_file, session_scope, sess
 use crate::commands::run::evaluation_receipt_json;
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{
-    EvaluationEngine, EvaluationScheduleStore, EvaluationSuiteStore, GoldenCase, GoldenSetReport,
-    MAX_CLAIM_BATCH, MAX_GOLDEN_CASES,
+    EvaluationEngine, EvaluationScheduleStore, EvaluationSuiteStore, EvaluationTarget,
+    EvaluationTargetKind, GoldenCase, GoldenSetReport, MAX_CLAIM_BATCH, MAX_GOLDEN_CASES,
 };
 use pandora_types::{
     EvaluationReceipt, EvaluationRequest, EvaluationStatus, ExecutionId, JobWorkerId, RunLoopId,
@@ -17,6 +17,7 @@ use std::io::Read;
 use std::path::Path;
 
 const MAX_EVALUATION_INPUT_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_EVALUATION_TASK_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Deserialize)]
 struct GoldenSetInput {
@@ -26,8 +27,18 @@ struct GoldenSetInput {
 }
 
 #[derive(Debug, Deserialize)]
+struct EvaluationTargetInput {
+    kind: String,
+    id: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct GoldenCaseInput {
     id: String,
+    #[serde(default)]
+    target: Option<EvaluationTargetInput>,
+    #[serde(default)]
+    task: Option<String>,
     execution_id: String,
     output: String,
     expected_output: String,
@@ -99,6 +110,14 @@ fn suite_register(args: &[String]) -> Result<CommandResult, CliError> {
             "evaluation suite must contain at least one case",
         ));
     }
+    let targeted_case_count = cases.iter().filter(|case| case.target().is_some()).count();
+    let target_kinds = cases.iter().filter_map(|case| case.target()).fold(
+        BTreeMap::<String, usize>::new(),
+        |mut counts, target| {
+            *counts.entry(target.kind().as_str().to_owned()).or_default() += 1;
+            counts
+        },
+    );
     let report = EvaluationEngine::new()
         .evaluate_golden_set(cases)
         .map_err(|error| CliError::usage(format!("invalid evaluation suite: {error:?}")))?;
@@ -110,6 +129,11 @@ fn suite_register(args: &[String]) -> Result<CommandResult, CliError> {
     let mut data = suite_value(&suite);
     if let Value::Object(object) = &mut data {
         object.insert("case_count".to_owned(), Value::from(report.total()));
+        object.insert(
+            "targeted_case_count".to_owned(),
+            Value::from(targeted_case_count),
+        );
+        object.insert("target_kinds".to_owned(), json!(target_kinds));
     }
     Ok(success(
         "evaluation suite register",
@@ -822,6 +846,42 @@ fn scheduled_suite_id(bytes: &[u8]) -> Result<String, CliError> {
     Ok(suite_id.trim().to_owned())
 }
 
+fn parse_target(case: &GoldenCaseInput) -> Result<Option<EvaluationTarget>, CliError> {
+    match (&case.target, &case.task) {
+        (None, None) => Ok(None),
+        (Some(_), None) => Err(CliError::usage(
+            "evaluation target metadata requires a bounded 'task' field",
+        )),
+        (None, Some(_)) => Err(CliError::usage(
+            "evaluation task metadata requires a 'target' object",
+        )),
+        (Some(target), Some(task)) => {
+            if task.trim().is_empty()
+                || task.len() > MAX_EVALUATION_TASK_BYTES
+                || task.chars().any(char::is_control)
+            {
+                return Err(CliError::usage(
+                    "evaluation task must be 1-16384 bytes without control characters",
+                ));
+            }
+            let kind = match target.kind.as_str() {
+                "prompt" => EvaluationTargetKind::Prompt,
+                "skill" => EvaluationTargetKind::Skill,
+                "workflow" => EvaluationTargetKind::Workflow,
+                "wasm_gene" => EvaluationTargetKind::WasmGene,
+                _ => {
+                    return Err(CliError::usage(
+                        "evaluation target kind must be prompt, skill, workflow, or wasm_gene",
+                    ));
+                }
+            };
+            EvaluationTarget::new(kind, target.id.clone())
+                .map(Some)
+                .map_err(|error| CliError::usage(format!("invalid evaluation target: {error:?}")))
+        }
+    }
+}
+
 fn parse_cases(bytes: &[u8]) -> Result<Vec<GoldenCase>, CliError> {
     let input = serde_json::from_slice::<GoldenSetInput>(bytes)
         .map_err(|error| CliError::usage(format!("invalid golden-set JSON: {error}")))?;
@@ -834,6 +894,7 @@ fn parse_cases(bytes: &[u8]) -> Result<Vec<GoldenCase>, CliError> {
         .cases
         .into_iter()
         .map(|case| {
+            let target = parse_target(&case)?;
             let execution_id = ExecutionId::new(case.execution_id)
                 .map_err(|error| CliError::usage(format!("invalid execution_id: {error}")))?;
             let mut evaluation = EvaluationRequest::new(
@@ -848,8 +909,13 @@ fn parse_cases(bytes: &[u8]) -> Result<Vec<GoldenCase>, CliError> {
                     .with_terminal_failure(failure)
                     .map_err(|error| CliError::usage(format!("invalid golden case: {error}")))?;
             }
-            GoldenCase::new(case.id, evaluation, case.expected_output)
-                .map_err(|error| CliError::usage(format!("invalid golden case: {error:?}")))
+            let golden = GoldenCase::new(case.id, evaluation, case.expected_output)
+                .map_err(|error| CliError::usage(format!("invalid golden case: {error:?}")))?;
+            Ok(if let Some(target) = target {
+                golden.with_target(target)
+            } else {
+                golden
+            })
         })
         .collect()
 }
@@ -869,6 +935,7 @@ fn report_value(report: &GoldenSetReport) -> Value {
                 "score": result.score(),
                 "reason": result.reason(),
                 "advisory": result.advisory(),
+                "target": case.target().map(|target| json!({"kind": target.kind().as_str(), "id": target.id()})),
             })
         }).collect::<Vec<_>>(),
     })
@@ -890,6 +957,34 @@ mod tests {
         .unwrap();
         assert_eq!(cases.len(), 1);
         assert_eq!(cases[0].id(), "case-a");
+    }
+
+    #[test]
+    fn parses_supported_task_backed_targets() {
+        let cases = parse_cases(
+            br#"{"cases":[
+                {"id":"prompt-case","target":{"kind":"prompt","id":"prompt-1"},"task":"answer safely","execution_id":"exec-prompt","output":"done","expected_output":"done"},
+                {"id":"skill-case","target":{"kind":"skill","id":"skill-1"},"task":"apply skill","execution_id":"exec-skill","output":"done","expected_output":"done"},
+                {"id":"workflow-case","target":{"kind":"workflow","id":"workflow-1"},"task":"run workflow","execution_id":"exec-workflow","output":"done","expected_output":"done"},
+                {"id":"gene-case","target":{"kind":"wasm_gene","id":"gene-1"},"task":"evaluate gene","execution_id":"exec-gene","output":"done","expected_output":"done"}
+            ]}"#,
+        )
+        .unwrap();
+
+        let kinds = cases
+            .iter()
+            .map(|case| case.target().unwrap().kind().as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(kinds, vec!["prompt", "skill", "workflow", "wasm_gene"]);
+    }
+
+    #[test]
+    fn targeted_cases_require_a_task_label() {
+        let error = parse_cases(
+            br#"{"cases":[{"id":"case-a","target":{"kind":"prompt","id":"prompt-1"},"execution_id":"exec-a","output":"done","expected_output":"done"}]}"#,
+        )
+        .unwrap_err();
+        assert!(error.message.contains("bounded"));
     }
 
     #[test]

@@ -428,6 +428,18 @@ call providers, or grant permissions.
       "output": "tests passed",
       "expected_output": "tests passed",
       "policy_violations": []
+    },
+    {
+      "id": "workflow-smoke",
+      "target": {
+        "kind": "workflow",
+        "id": "workflow-1"
+      },
+      "task": "run the bounded workflow case",
+      "execution_id": "exec-workflow-smoke",
+      "output": "tests passed",
+      "expected_output": "tests passed",
+      "policy_violations": []
     }
   ]
 }
@@ -442,10 +454,13 @@ pandora evaluation suite inspect --id golden-default --json
 ```
 
 The command accepts at most 256 cases and a 4 MiB input file. It emits a
-stable report digest and per-case outcome results. `evaluation suite register`
-stores a validated, local suite definition by its exact `suite_id`; registration
-rejects empty or duplicate suites and does not execute tools or providers. `--fail-on-failure` returns
-a non-zero command result for CI when any case fails.
+stable report digest and per-case outcome results. A case may optionally bind
+to a `target` with kind `prompt`, `skill`, `workflow`, or `wasm_gene`, plus a bounded `task`
+label. Target metadata is validated and reported as evidence; the task is not
+executed or sent to a provider. `evaluation suite register` stores a validated,
+local suite definition by its exact `suite_id`; registration rejects empty or
+duplicate suites, reports `targeted_case_count` and `target_kinds`, and does not
+execute tools or providers. `--fail-on-failure` returns a non-zero command result for CI when any case fails.
 
 `evolution evaluate` runs the same deterministic evaluator against a bounded
 holdout JSON file and records the evidence on one existing evolution proposal.
