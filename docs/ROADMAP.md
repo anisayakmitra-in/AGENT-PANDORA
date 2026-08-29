@@ -21,7 +21,7 @@ operations, and signed native releases.
 | 8. Agent experience and disclosure | 75-85% | native desktop source, Command and Council inspection, background runs, runtime inventory, Harness Lab, package lifecycle, package manifest workbench, BYOK providers and models, MCP configuration, pinned GitHub packages, active custom Domain and Meta Harnesses, WebAssembly Genes, custom Auto Route contracts, optional built-in Domain and Meta replacement | local signing support with an explicit key boundary, broader Skill and provider package lifecycles, desktop accessibility pass, native installer release proof |
 | 9. Evaluation-driven loops | 50-60% | trajectory, outcome, policy, regression, adversarial, golden, and holdout evaluation; coding feedback; research-only mutation and population strategies; durable evolution state; canary activation and rollback | scheduled evaluation loops, self-healing test generation, automatic canary policy, operator scorecards, quality gates for every artifact class |
 | 10. Memory consolidation | 55-65% | scoped L0, L1, and L2 records; durable recall; approval-gated promotion; revocation, audit, and compaction; deterministic evidence-bound synthesis; bounded CLI synthesis preview and commit with stale-snapshot checks | cross-session and cross-project consolidation policy, scheduled synthesis, desktop removal and provenance views, source graph for consolidated lessons |
-| 11. Adversarial resilience | 45-55% | path confinement, symlink checks, secret redaction, replay protection, exact signatures and hashes, fail-closed package and permit checks, adversarial evaluation primitives | tool-poisoning detection and quarantine, prompt-injection corpus across every input source, publisher trust roots and revocation, fuzzing and hostile multi-agent handoff suites |
+| 11. Adversarial resilience | 50-60% | path confinement, symlink checks, secret redaction, replay protection, exact signatures and hashes, fail-closed package and permit checks, adversarial evaluation primitives, deterministic quarantine for high-confidence instruction-shaped tool output | prompt-injection corpus across every input source, publisher trust roots and revocation, fuzzing and hostile multi-agent handoff suites |
 | 12. Agent operations | 45-55% | three-platform CI, desktop CI, release and security workflows, bounded agent workers, orchestration receipts, local fleet records | agent CI/CD as a Pandora workflow, supervisor controls, fleet dashboards, multi-repository budget enforcement, stable channel promotion with real signing credentials |
 
 The ranges separate code presence from operating proof. A component can be
@@ -145,6 +145,12 @@ Next work:
 
 Pandora already confines effects and validates identity. Phase 11 adds defenses
 against validly delivered but malicious content.
+
+Tool results remain untrusted by default. A small high-confidence marker set now
+quarantines instruction-shaped output before it reaches provider context, while
+retaining only its digest and byte count for evidence. Ordinary tool output keeps
+its bounded content, and persisted quarantined records remain quarantined on
+resume. This marker set is a guardrail, not a complete injection detector.
 
 Next work:
 
