@@ -87,6 +87,8 @@ pub enum HarnessRegistryError {
         id: String,
     },
     DuplicateIdentity,
+    InvalidPublisherTrustRoot,
+    DuplicatePublisherTrustRoot,
 }
 
 impl fmt::Display for HarnessRegistryError {
@@ -161,11 +163,96 @@ impl fmt::Display for HarnessRegistryError {
             Self::DuplicateIdentity => {
                 formatter.write_str("package id and version are already installed")
             }
+            Self::InvalidPublisherTrustRoot => {
+                formatter.write_str("publisher trust root is invalid")
+            }
+            Self::DuplicatePublisherTrustRoot => {
+                formatter.write_str("publisher trust root is already configured")
+            }
         }
     }
 }
 
 impl std::error::Error for HarnessRegistryError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PublisherTrustRoot {
+    publisher: String,
+    key_id: String,
+    public_key: String,
+}
+
+impl PublisherTrustRoot {
+    pub fn new(
+        publisher: impl Into<String>,
+        key_id: impl Into<String>,
+        public_key: impl Into<String>,
+    ) -> Result<Self, HarnessRegistryError> {
+        let publisher = publisher.into();
+        let key_id = key_id.into();
+        let public_key = public_key.into();
+        if publisher.trim().is_empty() || key_id.trim().is_empty() {
+            return Err(HarnessRegistryError::InvalidPublisherTrustRoot);
+        }
+        decode_signature_bytes::<32>(&public_key)?;
+        Ok(Self {
+            publisher,
+            key_id,
+            public_key,
+        })
+    }
+
+    pub fn publisher(&self) -> &str {
+        &self.publisher
+    }
+
+    pub fn key_id(&self) -> &str {
+        &self.key_id
+    }
+
+    pub fn public_key(&self) -> &str {
+        &self.public_key
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct PublisherTrustRoots {
+    roots: BTreeMap<(String, String), PublisherTrustRoot>,
+}
+
+impl PublisherTrustRoots {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert(&mut self, root: PublisherTrustRoot) -> Result<(), HarnessRegistryError> {
+        let key = (root.publisher.clone(), root.key_id.clone());
+        if self.roots.insert(key, root).is_some() {
+            return Err(HarnessRegistryError::DuplicatePublisherTrustRoot);
+        }
+        Ok(())
+    }
+
+    pub fn list(&self) -> Vec<PublisherTrustRoot> {
+        self.roots.values().cloned().collect()
+    }
+
+    fn verify(&self, manifest: &PackageManifest) -> Result<(), HarnessRegistryError> {
+        if self.roots.is_empty() {
+            return Err(HarnessRegistryError::OfficialTrustUnsupported);
+        }
+        let public_key = manifest
+            .trust()
+            .public_key()
+            .ok_or(HarnessRegistryError::SignatureRequired)?;
+        let root = self
+            .roots
+            .values()
+            .find(|root| root.publisher == manifest.publisher() && root.public_key == public_key)
+            .ok_or(HarnessRegistryError::OfficialTrustUnsupported)?;
+        verify_package_signature_with_key(manifest, root.public_key())
+    }
+}
 
 #[derive(Default)]
 pub struct HarnessRegistry {
@@ -182,6 +269,16 @@ impl HarnessRegistry {
         declared: &PackageManifest,
         embedded: &PackageManifest,
         artifact: &[u8],
+    ) -> Result<PackageRecord, HarnessRegistryError> {
+        self.install_with_trust_roots(declared, embedded, artifact, &PublisherTrustRoots::new())
+    }
+
+    pub fn install_with_trust_roots(
+        &mut self,
+        declared: &PackageManifest,
+        embedded: &PackageManifest,
+        artifact: &[u8],
+        trust_roots: &PublisherTrustRoots,
     ) -> Result<PackageRecord, HarnessRegistryError> {
         if declared.validate().is_err() || embedded.validate().is_err() || declared != embedded {
             return Err(HarnessRegistryError::ManifestMismatch);
@@ -207,7 +304,7 @@ impl HarnessRegistry {
         match embedded.trust().level() {
             TrustLevel::Unverified => {}
             TrustLevel::Verified => verify_package_signature(embedded)?,
-            TrustLevel::Official => return Err(HarnessRegistryError::OfficialTrustUnsupported),
+            TrustLevel::Official => trust_roots.verify(embedded)?,
         }
 
         if let Some(built_in) = builtin_harnesses()
@@ -355,12 +452,21 @@ fn builtin_gene_available(id: &str, version: &str) -> bool {
 }
 
 fn verify_package_signature(manifest: &PackageManifest) -> Result<(), HarnessRegistryError> {
-    let Some(public_key) = manifest.trust().public_key() else {
-        return Err(HarnessRegistryError::SignatureRequired);
-    };
-    let Some(signature) = manifest.trust().signature() else {
-        return Err(HarnessRegistryError::SignatureRequired);
-    };
+    let public_key = manifest
+        .trust()
+        .public_key()
+        .ok_or(HarnessRegistryError::SignatureRequired)?;
+    verify_package_signature_with_key(manifest, public_key)
+}
+
+fn verify_package_signature_with_key(
+    manifest: &PackageManifest,
+    public_key: &str,
+) -> Result<(), HarnessRegistryError> {
+    let signature = manifest
+        .trust()
+        .signature()
+        .ok_or(HarnessRegistryError::SignatureRequired)?;
     let public_key = decode_signature_bytes::<32>(public_key)?;
     let signature = decode_signature_bytes::<64>(signature)?;
     let public_key = VerifyingKey::from_bytes(&public_key)
@@ -503,6 +609,58 @@ mod tests {
         let mut registry = HarnessRegistry::new();
 
         assert!(registry.install(&package, &package, artifact).is_ok());
+    }
+
+    #[test]
+    fn official_package_is_admitted_only_with_a_matching_publisher_root() {
+        let artifact = b"official gene artifact";
+        let signing_key = SigningKey::from_bytes(&[17_u8; 32]);
+        let content_hash = hash_artifact(artifact);
+        let unsigned = PackageManifest::new(
+            "publisher/gene",
+            "1.0.0",
+            PackageKind::Gene,
+            "publisher",
+            content_hash.clone(),
+            Vec::new(),
+            PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
+            "MIT",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+        let signature = signing_key.sign(unsigned.signing_message().as_bytes());
+        let package = PackageManifest::new(
+            "publisher/gene",
+            "1.0.0",
+            PackageKind::Gene,
+            "publisher",
+            content_hash,
+            Vec::new(),
+            PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
+            "MIT",
+            TrustEvidence::new(
+                TrustLevel::Official,
+                Some(hex(&signature.to_bytes())),
+                Some(hex(&signing_key.verifying_key().to_bytes())),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let root = PublisherTrustRoot::new(
+            "publisher",
+            "publisher-key-1",
+            hex(&signing_key.verifying_key().to_bytes()),
+        )
+        .unwrap();
+        let mut roots = PublisherTrustRoots::new();
+        roots.insert(root).unwrap();
+        let mut registry = HarnessRegistry::new();
+
+        assert!(
+            registry
+                .install_with_trust_roots(&package, &package, artifact, &roots)
+                .is_ok()
+        );
     }
 
     #[test]

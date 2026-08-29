@@ -123,7 +123,10 @@ pub use graph_intelligence::{
     GraphNodeKind, GraphScope, GraphSnapshot, GraphStore, GraphStoreError, MAX_GRAPH_EDGES,
     MAX_GRAPH_INPUT_BYTES, MAX_GRAPH_INPUTS, MAX_GRAPH_NODES, MAX_GRAPH_SNAPSHOT_BYTES,
 };
-pub use harness_registry::{HarnessRegistry, HarnessRegistryError, PackageRecord, PackageState};
+pub use harness_registry::{
+    HarnessRegistry, HarnessRegistryError, PackageRecord, PackageState, PublisherTrustRoot,
+    PublisherTrustRoots,
+};
 pub use hooks::{HookPoint, HookSelector, LifecycleHook, LifecycleHooks};
 pub use human_review::{
     HumanMode, HumanReviewEngine, ReviewDecision, ReviewError, ReviewReceipt, ReviewRecord,
@@ -156,7 +159,8 @@ pub use orchestration_store::{
     OrchestrationRunRecord, OrchestrationRunStatus, OrchestrationStore, OrchestrationStoreError,
 };
 pub use package_store::{
-    MAX_STORED_ARTIFACT_BYTES, PackageBinding, PackageStore, PackageStoreError,
+    MAX_PUBLISHER_TRUST_ROOTS, MAX_STORED_ARTIFACT_BYTES, PackageBinding, PackageStore,
+    PackageStoreError, PublisherTrustRootRecord,
 };
 pub use parliament::Parliament;
 pub use permit_store::{ConsumedPermit, PermitError, PermitStore};

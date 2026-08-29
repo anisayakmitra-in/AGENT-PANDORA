@@ -1,4 +1,6 @@
-use crate::harness_registry::{HarnessRegistry, HarnessRegistryError, PackageRecord};
+use crate::harness_registry::{
+    HarnessRegistry, HarnessRegistryError, PackageRecord, PublisherTrustRoot, PublisherTrustRoots,
+};
 use pandora_harnesses::{builtin_genes, builtin_harnesses};
 use pandora_types::{
     ArtifactId, PackageId, PackageKind, PackageLock, PackageManifest, hash_artifact,
@@ -13,6 +15,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 pub const MAX_STORED_ARTIFACT_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_PUBLISHER_TRUST_ROOTS: usize = 64;
 const MAX_PACKAGE_LOCK_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug)]
@@ -59,6 +62,8 @@ pub enum PackageStoreError {
         version: String,
         role: &'static str,
     },
+    TrustRootAlreadyExists,
+    TrustRootNotFound,
     Admission(HarnessRegistryError),
 }
 
@@ -117,6 +122,10 @@ impl fmt::Display for PackageStoreError {
                 formatter,
                 "package {id}@{version} is retained as the {role} lifecycle binding"
             ),
+            Self::TrustRootAlreadyExists => {
+                formatter.write_str("publisher trust root is already configured")
+            }
+            Self::TrustRootNotFound => formatter.write_str("publisher trust root was not found"),
             Self::Admission(error) => error.fmt(formatter),
         }
     }
@@ -142,7 +151,9 @@ impl std::error::Error for PackageStoreError {
             | Self::HasEnabledDependents { .. }
             | Self::PackageNotEnabled { .. }
             | Self::NoRollbackBinding { .. }
-            | Self::PackageBound { .. } => None,
+            | Self::PackageBound { .. }
+            | Self::TrustRootAlreadyExists
+            | Self::TrustRootNotFound => None,
         }
     }
 }
@@ -171,6 +182,39 @@ pub struct PackageBinding {
     active_version: Option<String>,
     previous_version: Option<String>,
     generation: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PublisherTrustRootRecord {
+    root: PublisherTrustRoot,
+    added_at: u64,
+    revoked_at: Option<u64>,
+}
+
+impl PublisherTrustRootRecord {
+    pub fn publisher(&self) -> &str {
+        self.root.publisher()
+    }
+
+    pub fn key_id(&self) -> &str {
+        self.root.key_id()
+    }
+
+    pub fn public_key(&self) -> &str {
+        self.root.public_key()
+    }
+
+    pub const fn added_at(&self) -> u64 {
+        self.added_at
+    }
+
+    pub const fn revoked_at(&self) -> Option<u64> {
+        self.revoked_at
+    }
+
+    pub const fn active(&self) -> bool {
+        self.revoked_at.is_none()
+    }
 }
 
 impl PackageBinding {
@@ -225,6 +269,14 @@ impl PackageStore {
                  previous_version TEXT,
                  generation INTEGER NOT NULL,
                  CHECK (active_version IS NOT NULL OR previous_version IS NOT NULL)
+             );
+             CREATE TABLE IF NOT EXISTS publisher_trust_roots (
+                 publisher TEXT NOT NULL,
+                 key_id TEXT NOT NULL,
+                 public_key TEXT NOT NULL,
+                 added_at INTEGER NOT NULL CHECK (added_at >= 0),
+                 revoked_at INTEGER CHECK (revoked_at IS NULL OR revoked_at >= 0),
+                 PRIMARY KEY (publisher, key_id)
              );",
         )?;
         Ok(Self {
@@ -244,8 +296,9 @@ impl PackageStore {
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut registry = load_registry(&transaction)?;
+        let trust_roots = load_publisher_trust_roots(&transaction)?;
         let record = registry
-            .install(declared, embedded, artifact)
+            .install_with_trust_roots(declared, embedded, artifact, &trust_roots)
             .map_err(PackageStoreError::Admission)?;
         let manifest_json = serde_json::to_string(record.manifest())?;
         transaction.execute(
@@ -259,6 +312,97 @@ impl PackageStore {
                 record.state().as_str(),
             ],
         )?;
+        transaction.commit()?;
+        Ok(record)
+    }
+
+    pub fn add_publisher_trust_root(
+        &self,
+        publisher: impl Into<String>,
+        key_id: impl Into<String>,
+        public_key: impl Into<String>,
+        added_at: u64,
+    ) -> Result<PublisherTrustRootRecord, PackageStoreError> {
+        let root = PublisherTrustRoot::new(publisher, key_id, public_key)
+            .map_err(PackageStoreError::Admission)?;
+        let added_at_i64 = i64::try_from(added_at).map_err(|_| PackageStoreError::CorruptRecord)?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let count =
+            transaction.query_row("SELECT COUNT(*) FROM publisher_trust_roots", [], |row| {
+                row.get::<_, i64>(0)
+            })?;
+        if usize::try_from(count).map_err(|_| PackageStoreError::CorruptRecord)?
+            >= MAX_PUBLISHER_TRUST_ROOTS
+        {
+            return Err(PackageStoreError::CorruptRecord);
+        }
+        let inserted = transaction.execute(
+            "INSERT INTO publisher_trust_roots (publisher, key_id, public_key, added_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                root.publisher(),
+                root.key_id(),
+                root.public_key(),
+                added_at_i64
+            ],
+        );
+        match inserted {
+            Ok(_) => {
+                transaction.commit()?;
+                Ok(PublisherTrustRootRecord {
+                    root,
+                    added_at,
+                    revoked_at: None,
+                })
+            }
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if error.code == rusqlite::ErrorCode::ConstraintViolation =>
+            {
+                Err(PackageStoreError::TrustRootAlreadyExists)
+            }
+            Err(error) => Err(PackageStoreError::Database(error)),
+        }
+    }
+
+    pub fn list_publisher_trust_roots(
+        &self,
+    ) -> Result<Vec<PublisherTrustRootRecord>, PackageStoreError> {
+        let connection = self.lock()?;
+        load_publisher_trust_root_records(&connection)
+    }
+
+    pub fn revoke_publisher_trust_root(
+        &self,
+        publisher: &str,
+        key_id: &str,
+        revoked_at: u64,
+    ) -> Result<PublisherTrustRootRecord, PackageStoreError> {
+        let revoked_at_i64 =
+            i64::try_from(revoked_at).map_err(|_| PackageStoreError::CorruptRecord)?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let row = transaction
+            .query_row(
+                "SELECT publisher, key_id, public_key, added_at, revoked_at
+                 FROM publisher_trust_roots WHERE publisher = ?1 AND key_id = ?2",
+                params![publisher, key_id],
+                decode_trust_root,
+            )
+            .optional()?;
+        let Some(mut record) = row else {
+            return Err(PackageStoreError::TrustRootNotFound);
+        };
+        if record.revoked_at.is_some() {
+            transaction.commit()?;
+            return Ok(record);
+        }
+        transaction.execute(
+            "UPDATE publisher_trust_roots SET revoked_at = ?1
+             WHERE publisher = ?2 AND key_id = ?3 AND revoked_at IS NULL",
+            params![revoked_at_i64, publisher, key_id],
+        )?;
+        record.revoked_at = Some(revoked_at);
         transaction.commit()?;
         Ok(record)
     }
@@ -859,8 +1003,50 @@ fn serialize_lockfile(lock: &PackageLock) -> Result<Vec<u8>, PackageStoreError> 
     Ok(data)
 }
 
+fn load_publisher_trust_roots(
+    connection: &rusqlite::Connection,
+) -> Result<PublisherTrustRoots, PackageStoreError> {
+    let records = load_publisher_trust_root_records(connection)?;
+    let mut roots = PublisherTrustRoots::new();
+    for record in records.into_iter().filter(PublisherTrustRootRecord::active) {
+        roots
+            .insert(record.root)
+            .map_err(|_| PackageStoreError::CorruptRecord)?;
+    }
+    Ok(roots)
+}
+
+fn load_publisher_trust_root_records(
+    connection: &rusqlite::Connection,
+) -> Result<Vec<PublisherTrustRootRecord>, PackageStoreError> {
+    let mut statement = connection.prepare(
+        "SELECT publisher, key_id, public_key, added_at, revoked_at
+         FROM publisher_trust_roots ORDER BY publisher ASC, key_id ASC",
+    )?;
+    let rows = statement.query_map([], decode_trust_root)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+fn decode_trust_root(row: &rusqlite::Row<'_>) -> rusqlite::Result<PublisherTrustRootRecord> {
+    let publisher = row.get::<_, String>(0)?;
+    let key_id = row.get::<_, String>(1)?;
+    let public_key = row.get::<_, String>(2)?;
+    let added_at = row.get::<_, i64>(3)?;
+    let revoked_at = row.get::<_, Option<i64>>(4)?;
+    let root = PublisherTrustRoot::new(publisher, key_id, public_key)
+        .map_err(|_| rusqlite::Error::InvalidQuery)?;
+    Ok(PublisherTrustRootRecord {
+        root,
+        added_at: u64::try_from(added_at).map_err(|_| rusqlite::Error::InvalidQuery)?,
+        revoked_at: revoked_at
+            .map(|value| u64::try_from(value).map_err(|_| rusqlite::Error::InvalidQuery))
+            .transpose()?,
+    })
+}
+
 fn load_registry(connection: &rusqlite::Connection) -> Result<HarnessRegistry, PackageStoreError> {
     let mut registry = HarnessRegistry::new();
+    let trust_roots = load_publisher_trust_roots(connection)?;
     let mut statement =
         connection.prepare("SELECT manifest_json, artifact, state FROM package_records")?;
     let rows = statement.query_map([], |row| {
@@ -882,7 +1068,12 @@ fn load_registry(connection: &rusqlite::Connection) -> Result<HarnessRegistry, P
                 return Err(PackageStoreError::CorruptRecord);
             }
             let manifest: PackageManifest = serde_json::from_str(&manifest_json)?;
-            let record = match registry.install(&manifest, &manifest, &artifact) {
+            let record = match registry.install_with_trust_roots(
+                &manifest,
+                &manifest,
+                &artifact,
+                &trust_roots,
+            ) {
                 Ok(record) => record,
                 Err(
                     HarnessRegistryError::MissingDependency { .. }
@@ -910,6 +1101,7 @@ fn load_registry(connection: &rusqlite::Connection) -> Result<HarnessRegistry, P
 mod tests {
     use super::*;
     use crate::harness_registry::PackageState;
+    use ed25519_dalek::{Signer, SigningKey};
     use pandora_types::{
         MetaComposition, PackageCompatibility, PackageDependency, PackageKind, PackageManifest,
         TrustEvidence, TrustLevel, hash_artifact,
@@ -919,6 +1111,14 @@ mod tests {
 
     fn meta_manifest(artifact: &[u8]) -> PackageManifest {
         custom_meta_manifest(artifact, &["coding-domain"])
+    }
+
+    fn hex_bytes(bytes: &[u8]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    fn hex_key(key: &SigningKey) -> String {
+        hex_bytes(&key.verifying_key().to_bytes())
     }
 
     fn custom_meta_manifest(artifact: &[u8], domains: &[&str]) -> PackageManifest {
@@ -1314,6 +1514,85 @@ mod tests {
         ));
         assert!(store.list().unwrap().is_empty());
         drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn publisher_roots_rotate_and_revoke_durably() {
+        let (store, root) = store();
+        let first_key = SigningKey::from_bytes(&[23_u8; 32]);
+        let second_key = SigningKey::from_bytes(&[29_u8; 32]);
+        let first = store
+            .add_publisher_trust_root("publisher", "publisher-key-1", hex_key(&first_key), 10)
+            .unwrap();
+        assert!(first.active());
+        store
+            .add_publisher_trust_root("publisher", "publisher-key-2", hex_key(&second_key), 11)
+            .unwrap();
+        let revoked = store
+            .revoke_publisher_trust_root("publisher", "publisher-key-1", 12)
+            .unwrap();
+        assert_eq!(revoked.revoked_at(), Some(12));
+        assert!(!revoked.active());
+        let roots = store.list_publisher_trust_roots().unwrap();
+        assert_eq!(roots.len(), 2);
+        assert_eq!(roots[0].key_id(), "publisher-key-1");
+        assert_eq!(roots[1].key_id(), "publisher-key-2");
+        assert!(roots[1].active());
+        drop(store);
+        let reopened = PackageStore::open(root.join("packages.sqlite3")).unwrap();
+        assert_eq!(reopened.list_publisher_trust_roots().unwrap().len(), 2);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn official_package_admission_uses_an_active_publisher_root() {
+        let artifact = b"official gene";
+        let signing_key = SigningKey::from_bytes(&[31_u8; 32]);
+        let content_hash = hash_artifact(artifact);
+        let unsigned = PackageManifest::new(
+            "publisher/gene",
+            "1.0.0",
+            PackageKind::Gene,
+            "publisher",
+            content_hash.clone(),
+            Vec::new(),
+            PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
+            "MIT",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+        let signature = signing_key.sign(unsigned.signing_message().as_bytes());
+        let package = PackageManifest::new(
+            "publisher/gene",
+            "1.0.0",
+            PackageKind::Gene,
+            "publisher",
+            content_hash,
+            Vec::new(),
+            PackageCompatibility::new(CURRENT_RUNTIME_REQUIREMENT).unwrap(),
+            "MIT",
+            TrustEvidence::new(
+                TrustLevel::Official,
+                Some(hex_bytes(&signature.to_bytes())),
+                Some(hex_key(&signing_key)),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let (store, root) = store();
+        store
+            .add_publisher_trust_root("publisher", "publisher-key", hex_key(&signing_key), 10)
+            .unwrap();
+        store.admit(&package, &package, artifact).unwrap();
+        assert_eq!(store.list().unwrap().len(), 1);
+        store
+            .revoke_publisher_trust_root("publisher", "publisher-key", 20)
+            .unwrap();
+        assert!(matches!(
+            store.list(),
+            Err(PackageStoreError::CorruptRecord)
+        ));
         let _ = std::fs::remove_dir_all(root);
     }
 

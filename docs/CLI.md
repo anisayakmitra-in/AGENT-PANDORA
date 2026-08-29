@@ -739,6 +739,9 @@ pandora registry use <name>
 pandora registry remove <name> --yes
 pandora package install <id> [version] [--registry-profile <name>]
 pandora package install-github --repository https://github.com/<owner>/<repo> --commit <full-sha> --manifest <repo-path> --artifact <repo-path>
+pandora package trust-root add --publisher <name> --key-id <id> --public-key <hex-or-base64>
+pandora package trust-root list
+pandora package trust-root revoke --publisher <name> --key-id <id> --yes
 pandora package list
 pandora package inspect <id> <version>
 pandora package lock
@@ -893,6 +896,13 @@ For a private repository, place the token in `PANDORA_GITHUB_TOKEN` or identify 
 different environment variable with `--token-env`; the token is never accepted as a
 command-line value or included in command output. Admission still grants no runtime
 authority and does not enable the package.
+
+`package trust-root add` configures a publisher's fixed-width Ed25519 public key
+for Official package admission. Add a new key before revoking the old key to
+perform a bounded rotation. `trust-root revoke` requires `--yes`; revocation is
+persisted and causes packages relying only on that root to fail closed on reload.
+Trust roots contain public verification material only; they do not grant runtime
+authority or bypass package, Harness, Gene, or Reference Monitor checks.
 
 `memory recall` exposes only the selected, redacted L1 or L2 records from the exact
 tenant, workspace, session, and provider scope. L0 remains process-local and is not

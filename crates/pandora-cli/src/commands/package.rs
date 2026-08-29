@@ -18,7 +18,7 @@ const DEFAULT_GITHUB_TOKEN_ENV: &str = "PANDORA_GITHUB_TOKEN";
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "package requires 'admit', 'validate', 'install', 'install-github', 'list', 'inspect', 'enable', 'disable', 'rollback', 'lock', 'verify-lock', or 'remove'",
+            "package requires 'admit', 'validate', 'install', 'install-github', 'list', 'inspect', 'enable', 'disable', 'rollback', 'lock', 'verify-lock', 'trust-root', or 'remove'",
         )
     })?;
     match subcommand.as_str() {
@@ -33,6 +33,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "rollback" => rollback(&args[1..]),
         "lock" => lock(&args[1..]),
         "verify-lock" => verify_lock(&args[1..]),
+        "trust-root" => trust_root(&args[1..]),
         "remove" => remove(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown package command '{unknown}'"
@@ -582,6 +583,144 @@ fn rollback(args: &[String]) -> Result<CommandResult, CliError> {
         }),
         format!("Rolled {} back to exact version {}", id.as_str(), active),
     ))
+}
+
+fn trust_root(args: &[String]) -> Result<CommandResult, CliError> {
+    let subcommand = args
+        .first()
+        .ok_or_else(|| CliError::usage("package trust-root requires 'add', 'list', or 'revoke'"))?;
+    match subcommand.as_str() {
+        "add" => trust_root_add(&args[1..]),
+        "list" => trust_root_list(&args[1..]),
+        "revoke" => trust_root_revoke(&args[1..]),
+        _ => Err(CliError::usage(format!(
+            "unknown package trust-root command '{subcommand}'"
+        ))),
+    }
+}
+
+fn trust_root_add(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "publisher",
+            "key-id",
+            "public-key",
+        ],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "package trust-root add does not accept positional arguments",
+        ));
+    }
+    let publisher = parsed
+        .value("publisher")
+        .ok_or_else(|| CliError::usage("package trust-root add requires '--publisher <name>'"))?;
+    let key_id = parsed
+        .value("key-id")
+        .ok_or_else(|| CliError::usage("package trust-root add requires '--key-id <id>'"))?;
+    let public_key = parsed.value("public-key").ok_or_else(|| {
+        CliError::usage("package trust-root add requires '--public-key <hex-or-base64>'")
+    })?;
+    let root = store(&parsed)?
+        .add_publisher_trust_root(
+            publisher,
+            key_id,
+            public_key,
+            crate::commands::timestamp().as_unix_seconds(),
+        )
+        .map_err(store_error)?;
+    Ok(success(
+        "package trust-root add",
+        trust_root_value(&root),
+        format!(
+            "Added publisher trust root {} for {}",
+            root.key_id(),
+            root.publisher()
+        ),
+    ))
+}
+
+fn trust_root_list(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "package trust-root list does not accept positional arguments",
+        ));
+    }
+    let roots = store(&parsed)?
+        .list_publisher_trust_roots()
+        .map_err(store_error)?;
+    let count = roots.len();
+    Ok(success(
+        "package trust-root list",
+        json!({
+            "roots": roots.iter().map(trust_root_value).collect::<Vec<_>>(),
+            "count": count,
+            "durability": "package-store",
+        }),
+        format!("Listed {count} publisher trust root(s)"),
+    ))
+}
+
+fn trust_root_revoke(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "publisher",
+            "key-id",
+            "yes",
+        ],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "package trust-root revoke does not accept positional arguments",
+        ));
+    }
+    if parsed.value("yes").is_none() {
+        return Err(CliError::usage(
+            "package trust-root revoke requires '--yes'",
+        ));
+    }
+    let publisher = parsed.value("publisher").ok_or_else(|| {
+        CliError::usage("package trust-root revoke requires '--publisher <name>'")
+    })?;
+    let key_id = parsed
+        .value("key-id")
+        .ok_or_else(|| CliError::usage("package trust-root revoke requires '--key-id <id>'"))?;
+    let root = store(&parsed)?
+        .revoke_publisher_trust_root(
+            publisher,
+            key_id,
+            crate::commands::timestamp().as_unix_seconds(),
+        )
+        .map_err(store_error)?;
+    Ok(success(
+        "package trust-root revoke",
+        trust_root_value(&root),
+        format!(
+            "Revoked publisher trust root {} for {}",
+            root.key_id(),
+            root.publisher()
+        ),
+    ))
+}
+
+fn trust_root_value(root: &pandora_runtime::PublisherTrustRootRecord) -> Value {
+    json!({
+        "publisher": root.publisher(),
+        "key_id": root.key_id(),
+        "public_key": root.public_key(),
+        "added_at": root.added_at(),
+        "revoked_at": root.revoked_at(),
+        "active": root.active(),
+    })
 }
 
 fn remove(args: &[String]) -> Result<CommandResult, CliError> {

@@ -4462,7 +4462,7 @@ fn agent_run_executes_a_bounded_read_then_returns_the_final_answer() {
     assert_eq!(response["context"]["dropped"], serde_json::json!([]));
     assert_eq!(response["context"]["cacheable"], false);
     assert_eq!(response["context"]["cache_disposition"], "bypass");
-    assert_eq!(response["context"]["projection_version"], 1);
+    assert_eq!(response["context"]["projection_version"], 2);
     assert_eq!(response["context"]["provenance_complete"], true);
     assert!(
         response["context"]["manifest_digest"]
@@ -6495,6 +6495,119 @@ fn package_install_fetches_and_admits_one_exact_registry_release() {
     assert_success(&output);
     assert_eq!(parse_json(&output)["package"]["content_hash"], content_hash);
     server.join().expect("registry fixture should finish");
+}
+
+#[test]
+fn package_trust_root_cli_supports_official_admission_and_revocation() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let artifact = b"official gene artifact\n";
+    let signing_key = SigningKey::from_bytes(&[41_u8; 32]);
+    let public_key = signing_key
+        .verifying_key()
+        .to_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let unsigned = PackageManifest::new(
+        "example/official-gene",
+        "1.0.0",
+        PackageKind::Gene,
+        "official-publisher",
+        hash_artifact(artifact),
+        Vec::new(),
+        PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+        "MIT",
+        TrustEvidence::unsigned(),
+    )
+    .unwrap();
+    let signature = signing_key.sign(unsigned.signing_message().as_bytes());
+    let signature = signature
+        .to_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let manifest = PackageManifest::new(
+        "example/official-gene",
+        "1.0.0",
+        PackageKind::Gene,
+        "official-publisher",
+        hash_artifact(artifact),
+        Vec::new(),
+        PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+        "MIT",
+        TrustEvidence::new(
+            TrustLevel::Official,
+            Some(signature),
+            Some(public_key.clone()),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let manifest_path = fixture.root.join("official.json");
+    let artifact_path = fixture.root.join("official.artifact");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+    )
+    .expect("manifest should be written");
+    fs::write(&artifact_path, artifact).expect("artifact should be written");
+
+    let output = fixture
+        .command(&[
+            "package",
+            "trust-root",
+            "add",
+            "--publisher",
+            "official-publisher",
+            "--key-id",
+            "official-key-1",
+            "--public-key",
+            public_key.as_str(),
+            "--json",
+        ])
+        .output()
+        .expect("trust-root add should start");
+    assert_success(&output);
+    assert_eq!(parse_json(&output)["active"], true);
+
+    let output = fixture
+        .command(&[
+            "package",
+            "admit",
+            "--manifest",
+            manifest_path.to_str().unwrap(),
+            "--artifact",
+            artifact_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("official package admission should start");
+    assert_success(&output);
+    assert_eq!(parse_json(&output)["package"]["state"], "installed");
+
+    let output = fixture
+        .command(&[
+            "package",
+            "trust-root",
+            "revoke",
+            "--publisher",
+            "official-publisher",
+            "--key-id",
+            "official-key-1",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("trust-root revoke should start");
+    assert_success(&output);
+    assert_eq!(parse_json(&output)["active"], false);
+
+    let output = fixture
+        .command(&["package", "list", "--json"])
+        .output()
+        .expect("package list after revocation should start");
+    assert_eq!(output.status.code(), Some(50));
 }
 
 #[test]

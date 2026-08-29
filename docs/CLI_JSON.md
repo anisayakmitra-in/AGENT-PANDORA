@@ -46,6 +46,7 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora registry use <name> --json` | `registry use` | `registry` |
 | `pandora registry remove <name> --yes --json` | `registry remove` | `registry`, `active_registry` |
 | `pandora package install <id> [version] --json` | `package install` | `registry`, `registry_profile`, `package` |
+| `pandora package trust-root list --json` | `package trust-root list` | `roots`, `count`, `durability` |
 | `pandora package validate --manifest <path> --artifact <path> --json` | `package validate` | `valid`, `package`, `execution_boundary`, `persisted` |
 | `pandora package enable <id> <version> --dry-run --json` | `package enable` | `dry_run`, `changed`, `ready`, `package`, `dependencies`, `enabled_dependents` |
 | `pandora package enable <id> <version> --yes --json` | `package enable` | `dry_run`, `changed`, `package`, `binding` |

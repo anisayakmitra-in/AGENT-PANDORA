@@ -49,7 +49,7 @@ fn powershell() -> &'static str {
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'skill') {
         'list','inspect','install','enable','disable','suspend','remove','restore'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'package') {
-        'admit','validate','install','install-github','list','inspect','enable','disable','rollback','lock','verify-lock','remove'
+        'admit','validate','install','install-github','list','inspect','enable','disable','rollback','lock','verify-lock','trust-root','remove'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'registry') {
         'list','set','use','remove'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'memory') {
@@ -116,7 +116,7 @@ fn bash() -> &'static str {
     elif [[ "$previous" == "skill" ]]; then
         COMPREPLY=( $(compgen -W 'list inspect install enable disable suspend remove restore' -- "$current") )
     elif [[ "$previous" == "package" ]]; then
-        COMPREPLY=( $(compgen -W 'admit validate install install-github list inspect enable disable rollback lock verify-lock remove' -- "$current") )
+        COMPREPLY=( $(compgen -W 'admit validate install install-github list inspect enable disable rollback lock verify-lock trust-root remove' -- "$current") )
     elif [[ "$previous" == "registry" ]]; then
         COMPREPLY=( $(compgen -W 'list set use remove' -- "$current") )
     elif [[ "$previous" == "memory" ]]; then
@@ -183,7 +183,7 @@ elif [[ ${words[2]} == slash ]]; then
 elif [[ ${words[2]} == skill ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:skill command:(list inspect install enable disable suspend remove restore)'
 elif [[ ${words[2]} == package ]]; then
-    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:package command:(admit validate install install-github list inspect enable disable rollback lock verify-lock remove)'
+    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:package command:(admit validate install install-github list inspect enable disable rollback lock verify-lock trust-root remove)'
 elif [[ ${words[2]} == registry ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:registry command:(list set use remove)'
 elif [[ ${words[2]} == memory ]]; then
@@ -235,7 +235,7 @@ complete -c pandora -f -n '__fish_seen_subcommand_from rollout' -a 'inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from job' -a 'submit work list inspect cancel mark-interrupted'
 complete -c pandora -f -n '__fish_seen_subcommand_from subagent' -a 'spawn work list inspect cancel mark-interrupted cleanup'
 complete -c pandora -f -n '__fish_seen_subcommand_from skill' -a 'list inspect install enable disable suspend remove restore'
-complete -c pandora -f -n '__fish_seen_subcommand_from package' -a 'admit validate install install-github list inspect enable disable rollback lock verify-lock remove'
+complete -c pandora -f -n '__fish_seen_subcommand_from package' -a 'admit validate install install-github list inspect enable disable rollback lock verify-lock trust-root remove'
 complete -c pandora -f -n '__fish_seen_subcommand_from registry' -a 'list set use remove'
 complete -c pandora -f -n '__fish_seen_subcommand_from memory' -a 'recall audit forget promote synthesize consolidate provenance'
 complete -c pandora -f -n '__fish_seen_subcommand_from approval' -a 'list inspect resolve'
@@ -280,7 +280,7 @@ mod tests {
         for expected in [
             "'list','inspect','run'",
             "'list','resolve'",
-            "'admit','validate','install','install-github','list','inspect','enable','disable','rollback','lock','verify-lock','remove'",
+            "'admit','validate','install','install-github','list','inspect','enable','disable','rollback','lock','verify-lock','trust-root','remove'",
             "'list','set','use','remove'",
             "'recall','audit','forget','promote','synthesize'",
             "'list','inspect','resolve'",
@@ -300,7 +300,7 @@ mod tests {
             for expected in [
                 "list inspect run",
                 "list resolve",
-                "admit validate install install-github list inspect enable disable rollback lock verify-lock remove",
+                "admit validate install install-github list inspect enable disable rollback lock verify-lock trust-root remove",
                 "list set use remove",
                 "recall audit forget promote synthesize",
                 "list inspect resolve",

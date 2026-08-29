@@ -9,7 +9,7 @@ The execution and authority core is ahead of the product loops around it.
 Parliament, Shadow Council, ReferenceMonitor, exact Harness and Gene bindings,
 one-shot permits, receipts, package admission, and governed replacement already
 exist. The largest unfinished areas are automatic evaluation loops,
-cross-session memory policy, hostile-input testing, publisher trust, fleet
+cross-session memory policy, hostile-input testing, fleet
 operations, and signed native releases.
 
 ## Status by phase
@@ -21,7 +21,7 @@ operations, and signed native releases.
 | 8. Agent experience and disclosure | 75-85% | native desktop source, Command and Council inspection, background runs, runtime inventory, Harness Lab, package lifecycle, package manifest workbench, BYOK providers and models, MCP configuration, pinned GitHub packages, active custom Domain and Meta Harnesses, WebAssembly Genes, custom Auto Route contracts, optional built-in Domain and Meta replacement | local signing support with an explicit key boundary, broader Skill and provider package lifecycles, desktop accessibility pass, native installer release proof |
 | 9. Evaluation-driven loops | 75-82% | trajectory, outcome, policy, regression, adversarial, golden, and holdout evaluation; coding feedback; research-only mutation and population strategies; durable evolution state; canary activation and rollback; read-only durable per-session evaluation scorecards with a fail-on-non-passed CI gate; durable schedules with a bounded local registry of validated suite definitions, suite-bound targeted golden execution, and terminal run state | task-backed prompt, Skill, workflow, and WebAssembly Gene evaluation suites; self-healing test generation; automatic canary policy; quality gates for every artifact class |
 | 10. Memory consolidation | 70-75% | scoped L0, L1, and L2 records; durable recall; approval-gated promotion; revocation, audit, and compaction; deterministic evidence-bound synthesis; bounded CLI synthesis preview and commit with stale-snapshot checks; bounded read-only CLI provenance graphs; explicit same-tenant/workspace/provider cross-session L1 consolidation with dry-run and hashed source provenance | cross-project consolidation policy, scheduled synthesis, desktop removal views, source graph visualization and retention controls |
-| 11. Adversarial resilience | 55-65% | path confinement, symlink checks, secret redaction, replay protection, exact signatures and hashes, fail-closed package and permit checks, adversarial evaluation primitives, typed context-origin metadata plus source-labelled deterministic quarantine for high-confidence instruction-shaped tool and adapter output, replayable hostile-output corpus coverage | prompt-injection corpus across every input source, publisher trust roots and revocation, fuzzing and hostile multi-agent handoff suites |
+| 11. Adversarial resilience | 65-72% | path confinement, symlink checks, secret redaction, replay protection, exact signatures and hashes, fail-closed package and permit checks, adversarial evaluation primitives, typed context-origin metadata plus source-labelled deterministic quarantine for high-confidence instruction-shaped tool and adapter output, replayable hostile-output corpus coverage, durable publisher trust roots with active-key admission, rotation, revocation, and fail-closed reload behavior | prompt-injection corpus across every input source, transparency evidence for trust changes, fuzzing and hostile multi-agent handoff suites |
 | 12. Agent operations | 45-55% | three-platform CI, desktop CI, release and security workflows, bounded agent workers, orchestration receipts, local fleet records | agent CI/CD as a Pandora workflow, supervisor controls, fleet dashboards, multi-repository budget enforcement, stable channel promotion with real signing credentials |
 
 The ranges separate code presence from operating proof. A component can be
@@ -173,8 +173,7 @@ Next work:
   handoff adapter;
 - expand the replayable injection and poisoning corpora across each source with
   expected policy outcomes and benign controls;
-- configure publisher trust roots, key rotation, revocation, and transparency
-  evidence;
+- add transparency evidence for trust-root changes and package admission decisions;
 - fuzz path, manifest, RPC, handoff, approval, and receipt parsers.
 
 ## Phase 12: operate Pandora as an agent platform
