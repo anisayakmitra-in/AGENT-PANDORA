@@ -744,6 +744,7 @@ pandora memory forget --session <id> --provider <name> <memory-id> [--yes]
 pandora memory promote --session <id> --provider <name> <memory-id> [--approval <id>]
 pandora memory synthesize --session <id> --provider <name> --id <memory-id> --summary <text> [--kind <kind>] [--classification <public|internal>] [--yes]
 pandora memory provenance --session <id> --provider <name> <memory-id>
+pandora memory consolidate --source-session <id> --target-session <id> --provider <name> --source-id <memory-id> --target-id <memory-id> [--yes]
 pandora mcp set <id> --program <absolute-path> --arguments-json <json-array> --mode <auto|modern-only|legacy-only>
 pandora mcp list
 pandora mcp inspect <id>
@@ -899,6 +900,11 @@ memory inspection nor promotion grants effect authority.
 L1 candidate by default. `--yes` commits it only after the snapshot is checked again;
 it never calls a provider, promotes the candidate, or grants runtime authority.
 `memory provenance` builds a bounded, read-only source graph for one L1 or L2 record.
+
+`memory consolidate` is an explicit cross-session L1 copy. It is limited to the
+same tenant, workspace, and provider, rejects sensitive records, preserves a
+hashed source-provenance reference, and requires `--yes` to write. It does not
+promote to L2, approve memory, or grant execution authority.
 It follows only evidence IDs present in the same exact scope, caps traversal at 64
 records, and never promotes, revokes, or changes memory state.
 

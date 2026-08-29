@@ -71,6 +71,13 @@ existing approval store. L0 remains process-local and is not exposed as a
 durable record. These commands do not create a second memory store or bypass
 Pandora's approval, permit, receipt, and event authority.
 
+`memory consolidate` is the explicit cross-session boundary. It copies one
+non-sensitive L1 record only when source and target share the exact tenant,
+workspace, and provider scope; it requires an explicit `--yes` write and gives
+the target a new identity with a hashed source-provenance reference. Cross-
+workspace, cross-provider, sensitive, L2, and automatic global consolidation
+remain denied by policy.
+
 Its approval object is an explicit memory contract; it does not replace Parliament approval or provide execution authority. Memory records do not grant permissions, activate packages, or execute tools.
 
 ## Context assembly cache

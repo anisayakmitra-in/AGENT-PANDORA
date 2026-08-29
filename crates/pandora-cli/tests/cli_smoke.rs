@@ -3299,6 +3299,131 @@ fn memory_cli_recalls_a_scoped_record_and_requires_confirmation_to_revoke() {
 }
 
 #[test]
+fn memory_cli_consolidates_l1_between_scoped_sessions() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let source_run = fixture
+        .command(&["run", "read:README.md", "--json"])
+        .output()
+        .expect("source run should start");
+    assert_success(&source_run);
+    let source_session = parse_json(&source_run)["session_id"]
+        .as_str()
+        .expect("source run should return a session")
+        .to_owned();
+    let target_run = fixture
+        .command(&["run", "read:README.md", "--json"])
+        .output()
+        .expect("target run should start");
+    assert_success(&target_run);
+    let target_session = parse_json(&target_run)["session_id"]
+        .as_str()
+        .expect("target run should return a session")
+        .to_owned();
+
+    let engine = MemoryEngine::open(
+        fixture.data.join("sessions.sqlite3"),
+        64,
+        PrincipalId::new("local-user").unwrap(),
+    )
+    .unwrap();
+    let source_scope = MemoryScope::new(
+        TenantId::new("local-tenant").unwrap(),
+        WorkspaceId::new("local-workspace").unwrap(),
+        SessionId::new(&source_session).unwrap(),
+        "openai-compatible",
+    )
+    .unwrap();
+    engine
+        .distill_l1(
+            source_scope,
+            "cross-session-lesson",
+            MemoryKind::Lesson,
+            "retain the verified plan",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(2),
+            "evaluation:source",
+        )
+        .unwrap();
+
+    let dry_run = fixture
+        .command(&[
+            "memory",
+            "consolidate",
+            "--source-session",
+            &source_session,
+            "--target-session",
+            &target_session,
+            "--provider",
+            "openai-compatible",
+            "--source-id",
+            "cross-session-lesson",
+            "--target-id",
+            "target-lesson",
+            "--json",
+        ])
+        .output()
+        .expect("memory consolidation dry run should start");
+    assert_success(&dry_run);
+    let dry_run = parse_json(&dry_run);
+    assert_eq!(dry_run["dry_run"], true);
+    assert_eq!(dry_run["candidate"]["scope"]["session_id"], target_session);
+    assert_eq!(dry_run["candidate"]["origin"], "explicit");
+
+    let committed = fixture
+        .command(&[
+            "memory",
+            "consolidate",
+            "--source-session",
+            &source_session,
+            "--target-session",
+            &target_session,
+            "--provider",
+            "openai-compatible",
+            "--source-id",
+            "cross-session-lesson",
+            "--target-id",
+            "target-lesson",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("memory consolidation should start");
+    assert_success(&committed);
+    let committed = parse_json(&committed);
+    assert_eq!(committed["dry_run"], false);
+    assert_eq!(
+        committed["consolidated"]["scope"]["session_id"],
+        target_session
+    );
+    assert!(
+        committed["consolidated"]["provenance"]
+            .as_str()
+            .unwrap()
+            .contains("consolidated-from:")
+    );
+
+    let recalled = fixture
+        .command(&[
+            "memory",
+            "recall",
+            "--session",
+            &target_session,
+            "--provider",
+            "openai-compatible",
+            "--tier",
+            "l1",
+            "--id",
+            "target-lesson",
+            "--json",
+        ])
+        .output()
+        .expect("consolidated memory recall should start");
+    assert_success(&recalled);
+    assert_eq!(parse_json(&recalled)["records"][0]["id"], "target-lesson");
+}
+
+#[test]
 fn memory_cli_promotes_only_after_an_exact_approval() {
     let fixture = Fixture::new();
     fixture.setup();

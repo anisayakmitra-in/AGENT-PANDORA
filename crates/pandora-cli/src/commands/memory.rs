@@ -1,6 +1,6 @@
 use super::{load_config, parse_options, require_config_file, session_scope, timestamp};
 use crate::output::{CliError, CommandResult, success};
-use pandora_runtime::sessions::MAX_MEMORY_RECALL_RECORDS;
+use pandora_runtime::sessions::{MAX_MEMORY_RECALL_RECORDS, SessionStore};
 use pandora_runtime::{
     ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, MemoryEngine, MemoryError,
 };
@@ -19,7 +19,7 @@ const MEMORY_PROMOTION_GENE: &str = "memory.promote";
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "memory requires 'recall', 'audit', 'forget', 'promote', 'synthesize', or 'provenance'",
+            "memory requires 'recall', 'audit', 'forget', 'promote', 'synthesize', 'consolidate', or 'provenance'",
         )
     })?;
     match subcommand.as_str() {
@@ -28,11 +28,177 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "forget" => forget(&args[1..]),
         "promote" => promote(&args[1..]),
         "synthesize" => synthesize(&args[1..]),
+        "consolidate" => consolidate(&args[1..]),
         "provenance" => provenance(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown memory command '{unknown}'"
         ))),
     }
+}
+
+fn consolidate(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "provider",
+            "source-session",
+            "target-session",
+            "source-id",
+            "target-id",
+            "yes",
+        ],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory consolidate does not accept positional arguments",
+        ));
+    }
+    let provider = parsed
+        .value("provider")
+        .ok_or_else(|| CliError::usage("memory consolidate requires '--provider <name>'"))?;
+    let source_session = parse_session_option(&parsed, "source-session")?;
+    let target_session = parse_session_option(&parsed, "target-session")?;
+    if source_session == target_session {
+        return Err(CliError::usage(
+            "memory consolidate requires different source and target sessions",
+        ));
+    }
+    let source_id = MemoryId::new(
+        parsed
+            .value("source-id")
+            .ok_or_else(|| {
+                CliError::usage("memory consolidate requires '--source-id <memory-id>'")
+            })?
+            .to_owned(),
+    )
+    .map_err(|_| CliError::usage("source memory ID is invalid"))?;
+    let target_id = MemoryId::new(
+        parsed
+            .value("target-id")
+            .ok_or_else(|| {
+                CliError::usage("memory consolidate requires '--target-id <memory-id>'")
+            })?
+            .to_owned(),
+    )
+    .map_err(|_| CliError::usage("target memory ID is invalid"))?;
+    let (_, tenant, workspace) = session_scope();
+    let source_scope = MemoryScope::new(
+        tenant.clone(),
+        workspace.clone(),
+        source_session.clone(),
+        provider.to_owned(),
+    )
+    .map_err(|error| CliError::usage(error.to_string()))?;
+    let target_scope = MemoryScope::new(
+        tenant,
+        workspace,
+        target_session.clone(),
+        provider.to_owned(),
+    )
+    .map_err(|error| CliError::usage(error.to_string()))?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let principal = session_scope().0;
+    let session_store = SessionStore::open(config.data_dir().join("sessions.sqlite3"))
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    session_store
+        .resume(
+            &target_session,
+            &principal,
+            target_scope.tenant_id(),
+            target_scope.workspace_id(),
+        )
+        .map_err(|error| CliError::policy(error.to_string(), json!({})))?;
+    let engine = open_engine(&config, &principal)?;
+    let source = engine
+        .try_recall(&source_scope, MemoryTier::L1, timestamp())
+        .map_err(memory_error)?
+        .into_iter()
+        .find(|record| record.id() == &source_id)
+        .ok_or_else(|| memory_error(MemoryError::NotFound))?;
+    if source.classification() == ContextClassification::Sensitive {
+        return Err(CliError::policy(
+            "sensitive memory cannot cross session boundaries",
+            json!({}),
+        ));
+    }
+    let provenance = format!(
+        "consolidated-from:tenant={};workspace={};session={};provider={};memory={};source-provenance={}",
+        source_scope.tenant_id(),
+        source_scope.workspace_id(),
+        source_scope.session_id(),
+        source_scope.provider(),
+        source.id(),
+        hash_artifact(source.provenance().as_bytes()),
+    );
+    let now = timestamp();
+    let candidate = MemoryRecord::new_l1(
+        target_id.as_str(),
+        source.kind(),
+        target_scope.clone(),
+        source.summary().to_owned(),
+        source.classification(),
+        now,
+        provenance,
+    )
+    .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+    if !parsed.values.contains_key("yes") {
+        return Ok(success(
+            "memory consolidate",
+            json!({
+                "dry_run": true,
+                "source": record_value(&source),
+                "candidate": record_value(&candidate),
+                "policy": "same-tenant-workspace-provider; L1 non-sensitive only",
+                "durability": "session-store",
+            }),
+            format!(
+                "Dry run: memory {} would be consolidated into {}",
+                source.id(),
+                candidate.id()
+            ),
+        ));
+    }
+    let consolidated = engine
+        .distill_l1(
+            candidate.scope().clone(),
+            candidate.id().as_str(),
+            candidate.kind(),
+            candidate.summary().to_owned(),
+            candidate.classification(),
+            candidate.created_at(),
+            candidate.provenance().to_owned(),
+        )
+        .map_err(memory_error)?;
+    Ok(success(
+        "memory consolidate",
+        json!({
+            "dry_run": false,
+            "source": record_value(&source),
+            "consolidated": record_value(&consolidated),
+            "policy": "same-tenant-workspace-provider; L1 non-sensitive only",
+            "durability": "session-store",
+        }),
+        format!(
+            "Consolidated memory {} into session {}",
+            consolidated.id(),
+            target_session
+        ),
+    ))
+}
+
+fn parse_session_option(
+    parsed: &super::ParsedArgs,
+    name: &'static str,
+) -> Result<pandora_types::SessionId, CliError> {
+    let value = parsed
+        .value(name)
+        .ok_or_else(|| CliError::usage(format!("memory consolidate requires '--{name} <id>'")))?;
+    pandora_types::SessionId::new(value.to_owned())
+        .map_err(|_| CliError::usage(format!("{name} is invalid")))
 }
 
 fn provenance(args: &[String]) -> Result<CommandResult, CliError> {
