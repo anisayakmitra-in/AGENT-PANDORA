@@ -156,6 +156,7 @@ pandora session resume <session-id>
 pandora job submit -- --agent "Review this workspace"
 pandora job work
 pandora job work --max-jobs 8
+pandora job work --watch --idle-timeout 30
 pandora job list
 pandora job inspect <job-id>
 pandora job cancel <job-id>
@@ -187,6 +188,13 @@ response reports processed job IDs, statuses, and whether the worker reached
 its limit or emptied the queue. Multiple worker processes cannot claim the
 same queued record. Each `job work` invocation records one worker ID. Only
 that worker can finish a job it claimed.
+
+`job work --watch --idle-timeout <1-3600>` is an explicit bounded worker
+window for an independently launched local process. It keeps the same PID-bound
+supervisor, renewable lease, and no-replay behavior while polling for newly
+queued work. It exits after the idle window or an optional `--max-jobs` limit,
+then records a stopped supervisor state. It is not a remote daemon and does
+not spawn child processes.
 
 A batch stops at the first approval pause or failed run. Its error response
 includes the jobs processed during that invocation, and later jobs remain

@@ -2166,6 +2166,135 @@ fn headless_job_worker_drains_a_bounded_fifo_batch() {
 }
 
 #[test]
+fn independently_launched_job_worker_watch_window_has_durable_liveness_and_shutdown() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let submitted = fixture
+        .command(&["job", "submit", "--", "guide", "--json"])
+        .output()
+        .expect("job submission should start");
+    assert_success(&submitted);
+    let job_id = parse_json(&submitted)["job_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let child = fixture
+        .command(&["job", "work", "--watch", "--idle-timeout", "1", "--json"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("watched worker should start as an independent process");
+    let fleet = FleetEngine::open(fixture.data.join("fleet.sqlite3")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let process_id = loop {
+        if let Some(supervisor) = fleet
+            .list_supervisors()
+            .unwrap()
+            .into_iter()
+            .find(|supervisor| {
+                supervisor.node_id() == "job-worker" && supervisor.state().as_str() == "running"
+            })
+        {
+            break supervisor
+                .process_id()
+                .expect("watched worker should bind its PID");
+        }
+        assert!(
+            Instant::now() < deadline,
+            "watched worker did not publish a running supervisor"
+        );
+        thread::sleep(Duration::from_millis(25));
+    };
+    assert_ne!(process_id, std::process::id());
+
+    let output = child
+        .wait_with_output()
+        .expect("watched worker should shut down after its idle window");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["watched"], true);
+    assert_eq!(response["stop_reason"], "idle_timeout");
+    assert_eq!(response["processed_count"], 1);
+    assert_eq!(response["jobs"][0]["job_id"], job_id);
+
+    let supervisor = fleet
+        .list_supervisors()
+        .unwrap()
+        .into_iter()
+        .find(|supervisor| supervisor.node_id() == "job-worker")
+        .expect("worker supervisor should remain inspectable after shutdown");
+    assert_eq!(supervisor.state().as_str(), "stopped");
+    assert_eq!(supervisor.process_id(), Some(process_id));
+}
+
+#[test]
+fn crashed_independent_job_worker_reconciles_and_restarts_without_replay() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let mut child = fixture
+        .command(&["job", "work", "--watch", "--idle-timeout", "30", "--json"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("watched worker should start as an independent process");
+    let fleet = FleetEngine::open(fixture.data.join("fleet.sqlite3")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let running = loop {
+        if let Some(supervisor) = fleet
+            .list_supervisors()
+            .unwrap()
+            .into_iter()
+            .find(|supervisor| {
+                supervisor.node_id() == "job-worker" && supervisor.state().as_str() == "running"
+            })
+        {
+            break supervisor;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "crash fixture worker did not publish a running supervisor"
+        );
+        thread::sleep(Duration::from_millis(25));
+    };
+    let process_id = running
+        .process_id()
+        .expect("crash fixture worker should bind its PID");
+    child
+        .kill()
+        .expect("worker process should be killable for the crash fixture");
+    let _ = child.wait().expect("killed worker should terminate");
+
+    let persisted = fleet
+        .list_supervisors()
+        .unwrap()
+        .into_iter()
+        .find(|supervisor| supervisor.node_id() == "job-worker")
+        .expect("crashed worker record should remain durable");
+    assert_eq!(persisted.state().as_str(), "running");
+    assert_eq!(persisted.process_id(), Some(process_id));
+
+    let recovery_now = persisted.updated_at() + 3_601;
+    let recovering = fleet
+        .reconcile_supervisor("job-worker", recovery_now, 30)
+        .expect("stale crashed worker should reconcile");
+    assert_eq!(recovering.state().as_str(), "recovering");
+    assert_eq!(recovering.reason(), Some("heartbeat_expired"));
+    assert!(
+        fleet
+            .list_leases()
+            .unwrap()
+            .iter()
+            .all(|lease| lease.state().as_str() != "active")
+    );
+
+    let restarted = fleet
+        .start_supervisor_for_process("job-worker", process_id.saturating_add(1), recovery_now + 1)
+        .expect("reconciled worker should accept a new process binding");
+    assert_eq!(restarted.state().as_str(), "running");
+    assert_eq!(restarted.generation(), running.generation() + 1);
+    assert_eq!(restarted.process_id(), Some(process_id.saturating_add(1)));
+}
+
+#[test]
 fn interactive_setup_configures_a_provider_without_echoing_secrets() {
     let fixture = Fixture::new();
     let mut command = fixture.command(&["setup", "--interactive", "--json"]);

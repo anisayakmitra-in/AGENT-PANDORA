@@ -8,7 +8,7 @@ use serde_json::{Map, Value, json};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const MAX_DRAIN_JOBS: usize = 64;
 const JOB_WORKER_LEASE_DURATION_SECONDS: u64 = 3_600;
@@ -288,13 +288,35 @@ fn mark_interrupted(args: &[String]) -> Result<CommandResult, CliError> {
 }
 
 fn work(args: &[String]) -> Result<CommandResult, CliError> {
-    let parsed = parse_options(args, &["config", "data-dir", "workspace", "max-jobs"])?;
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "max-jobs",
+            "watch",
+            "idle-timeout",
+        ],
+    )?;
     if !parsed.positionals.is_empty() {
         return Err(CliError::usage(
             "job work does not accept positional arguments",
         ));
     }
     let max_jobs = parse_max_jobs(parsed.value("max-jobs"))?;
+    let watching = parsed.value("watch").is_some();
+    let idle_timeout = parse_idle_timeout(parsed.value("idle-timeout"))?;
+    if !watching && idle_timeout.is_some() {
+        return Err(CliError::usage(
+            "job work --idle-timeout requires '--watch'",
+        ));
+    }
+    if watching && idle_timeout.is_none() {
+        return Err(CliError::usage(
+            "job work --watch requires '--idle-timeout <1-3600>'",
+        ));
+    }
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
     let supervisor = start_job_supervisor(&config)?;
@@ -303,7 +325,17 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
     let store = JobStore::open(config.data_dir().join("jobs.sqlite3")).map_err(job_store_error)?;
     let (principal, tenant, workspace) = session_scope();
     let worker_id = allocate_worker_id()?;
-    let result = if let Some(max_jobs) = max_jobs {
+    let result = if watching {
+        watch_jobs(
+            &store,
+            &principal,
+            &tenant,
+            &workspace,
+            &worker_id,
+            max_jobs,
+            idle_timeout.expect("watch mode validates an idle timeout"),
+        )
+    } else if let Some(max_jobs) = max_jobs {
         drain_jobs(
             &store, &principal, &tenant, &workspace, &worker_id, max_jobs,
         )
@@ -347,6 +379,61 @@ fn parse_max_jobs(value: Option<&str>) -> Result<Option<usize>, CliError> {
         )));
     }
     Ok(count)
+}
+
+fn parse_idle_timeout(value: Option<&str>) -> Result<Option<u64>, CliError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let seconds = value.parse::<u64>().ok();
+    if seconds.is_none_or(|seconds| !(1..=3_600).contains(&seconds)) {
+        return Err(CliError::usage(
+            "job work --idle-timeout must be an integer from 1 to 3600",
+        ));
+    }
+    Ok(seconds)
+}
+
+fn watch_jobs(
+    store: &JobStore,
+    principal: &pandora_types::PrincipalId,
+    tenant: &pandora_types::TenantId,
+    workspace: &pandora_types::WorkspaceId,
+    worker_id: &JobWorkerId,
+    max_jobs: Option<usize>,
+    idle_timeout_seconds: u64,
+) -> Result<CommandResult, CliError> {
+    let mut jobs = Vec::new();
+    let mut idle_deadline = Instant::now() + Duration::from_secs(idle_timeout_seconds);
+    let stop_reason = loop {
+        if max_jobs.is_some_and(|limit| jobs.len() >= limit) {
+            break "limit_reached";
+        }
+        match execute_one_job(store, principal, tenant, workspace, worker_id) {
+            Ok(Some(completed)) => {
+                jobs.push(job_summary(&completed));
+                idle_deadline = Instant::now() + Duration::from_secs(idle_timeout_seconds);
+            }
+            Ok(None) if Instant::now() >= idle_deadline => break "idle_timeout",
+            Ok(None) => thread::sleep(Duration::from_millis(100)),
+            Err(mut error) => {
+                add_drain_error_details(&mut error, jobs);
+                return Err(error);
+            }
+        }
+    };
+    let processed_count = jobs.len();
+    Ok(success(
+        "job work",
+        json!({
+            "processed_count": processed_count,
+            "stop_reason": stop_reason,
+            "idle_timeout_seconds": idle_timeout_seconds,
+            "watched": true,
+            "jobs": jobs,
+        }),
+        format!("Watched the job queue and processed {processed_count} job(s)"),
+    ))
 }
 
 fn drain_jobs(

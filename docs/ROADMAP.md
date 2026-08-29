@@ -17,7 +17,7 @@ operations, and signed native releases.
 | Phase | Estimate | Shipped in the source tree | Work still open |
 | --- | ---: | --- | --- |
 | 6. Production readiness | 85-90% | scoped identity, automatic local device trust, encrypted secrets, local telemetry and crash records, encrypted backup and restore, fresh-runner install/update/rollback/backup/restore/uninstall drills, update channels, release workflows, checksum signature verification, release evidence index, CodeQL, dependency audits | signed stable artifacts, real clean-machine release proof on every advertised platform, installer rollback exercises with the stable artifact |
-| 7. Runtime scale and orchestration | 75-85% | persistent prompt-context cache, headless jobs, bounded parallel subagents, exact-commit worktrees, durable orchestration claims and receipts, interruption and resume rules, multi-repository plans, fleet leases, budgets, execution-bound lease renewal, and durable supervisor state with PID-bound worker heartbeats, process-wide execution leases for headless jobs and subagents, lease gating, stale-supervisor reconciliation without replay, bounded stale reaping, atomic PID-bound restart handoff, and atomic cross-process quiescence guards | independent daemon restart supervision, load and soak tests, crash and cancellation races, multi-repository partial failure |
+| 7. Runtime scale and orchestration | 80-90% | persistent prompt-context cache, headless jobs, bounded parallel subagents, exact-commit worktrees, durable orchestration claims and receipts, interruption and resume rules, multi-repository plans, fleet leases, budgets, execution-bound lease renewal, and durable supervisor state with PID-bound worker heartbeats, process-wide execution leases for headless jobs and subagents, lease gating, stale-supervisor reconciliation without replay, bounded stale reaping, atomic PID-bound restart handoff, atomic cross-process quiescence guards, bounded independently launched job watch windows, and cross-process crash reconciliation/restart evidence | long-lived daemon supervision and graceful external stop, sustained load and soak tests, expanded cancellation races, multi-repository partial failure |
 | 8. Agent experience and disclosure | 75-85% | native desktop source, Command and Council inspection, background runs, runtime inventory, Harness Lab, package lifecycle, package manifest workbench, BYOK providers and models, MCP configuration, pinned GitHub packages, active custom Domain and Meta Harnesses, WebAssembly Genes, custom Auto Route contracts, optional built-in Domain and Meta replacement | local signing support with an explicit key boundary, broader Skill and provider package lifecycles, desktop accessibility pass, native installer release proof |
 | 9. Evaluation-driven loops | 50-60% | trajectory, outcome, policy, regression, adversarial, golden, and holdout evaluation; coding feedback; research-only mutation and population strategies; durable evolution state; canary activation and rollback | scheduled evaluation loops, self-healing test generation, automatic canary policy, operator scorecards, quality gates for every artifact class |
 | 10. Memory consolidation | 50-60% | scoped L0, L1, and L2 records; durable recall; approval-gated promotion; revocation, audit, and compaction; deterministic evidence-bound synthesis | cross-session and cross-project consolidation policy, scheduled synthesis, desktop removal and provenance views, source graph for consolidated lessons |
@@ -53,13 +53,13 @@ request is recorded, a late provider response cannot be stored as success.
 The durable queue also has an 8-worker/64-job claim-pressure regression proving
 that each queued job is claimed once across separate SQLite connections. It
 still needs the operating layer that keeps those workers healthy for days, not
-one command invocation. Operators can now reap all heartbeat-stale supervisors in one bounded pass and perform an atomic PID-bound restart handoff; automatic daemon launch remains an explicit lifecycle decision.
+one command invocation. Operators can now reap all heartbeat-stale supervisors in one bounded pass and perform an atomic PID-bound restart handoff. An independently launched `job work --watch --idle-timeout <1-3600>` window now binds its own PID, heartbeat, and execution lease, exits deterministically on idle timeout or `--max-jobs`, and leaves durable stopped state. A killed worker can be reconciled and rebound to a new PID without replaying a claimed effect. Long-lived daemon launch and graceful external stop remain explicit lifecycle work.
 
 Next work:
 
-- extend PID-bound supervision to independently launched worker daemons and verify
-  their launch, liveness, and shutdown handoff end to end;
-- add cross-process quiescence and crash recovery evidence around those workers;
+- define a long-lived daemon mode with an explicit external stop protocol and
+  verify launch, liveness, and shutdown handoff end to end;
+- extend cross-process quiescence and crash recovery evidence to daemon mode;
 - expand cancellation-race coverage around provider return and worker shutdown;
 - extend queue-pressure coverage into sustained soak runs;
 - test worker crashes and multi-repository partial failure across independently
