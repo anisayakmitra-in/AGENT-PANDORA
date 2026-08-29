@@ -165,12 +165,10 @@ digest and byte count without forwarding hostile text.
 
 Next work:
 
-- classify tool, MCP, package, repository, document, issue, and design output as
-  untrusted input by default;
-- detect instruction-shaped tool output and quarantine it before context
-  assembly;
-- build replayable injection and poisoning corpora with expected policy
-  outcomes;
+- preserve the common untrusted boundary while adding typed origin labels for
+  tool, MCP, package, repository, document, issue, design, and handoff sources;
+- expand the replayable injection and poisoning corpora across each source with
+  expected policy outcomes and benign controls;
 - configure publisher trust roots, key rotation, revocation, and transparency
   evidence;
 - fuzz path, manifest, RPC, handoff, approval, and receipt parsers.
