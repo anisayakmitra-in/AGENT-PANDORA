@@ -549,6 +549,15 @@ pandora evaluation inspect --session <id> --json
 pandora evaluation inspect --session <id> --execution <id> --json
 ```
 
+`evaluation scorecard` summarizes the same durable receipts without rerunning
+an evaluator. It reports aggregate status and score counts, deterministic
+per-kind buckets, and a digest of the receipt projection. The command is
+read-only and remains scoped to the selected session.
+
+```text
+pandora evaluation scorecard --session <id> --json
+```
+
 `rollout inspect` reads the redacted rollout summary persisted with a CLI
 execution. It reports the projection version, record count, context-manifest
 digest, final digest, and recording time. It does not replay effects, expose
@@ -733,6 +742,7 @@ run or subagent path and then submit a repository-bound role receipt.
 pandora strategies list
 pandora evaluation golden --input <path> [--fail-on-failure]
 pandora evaluation inspect --session <id> [--execution <id>]
+pandora evaluation scorecard --session <id>
 pandora evolution generate --session <id> [--provider <name>] [--model <id>] --kind prompt|skill|workflow|wasm_gene --target-id <id> --base <path> --output <path>
 pandora evolution list [--limit <1-256>]
 pandora evolution inspect --id <proposal-id>

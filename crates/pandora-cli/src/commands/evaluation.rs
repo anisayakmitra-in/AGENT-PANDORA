@@ -3,10 +3,11 @@ use crate::commands::run::evaluation_receipt_json;
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{EvaluationEngine, GoldenCase, GoldenSetReport, MAX_GOLDEN_CASES};
 use pandora_types::{
-    EvaluationReceipt, EvaluationRequest, EvaluationStatus, ExecutionId, SessionId,
+    EvaluationReceipt, EvaluationRequest, EvaluationStatus, ExecutionId, SessionId, hash_artifact,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
@@ -30,15 +31,106 @@ struct GoldenCaseInput {
 }
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
-    let subcommand = args
-        .first()
-        .ok_or_else(|| CliError::usage("evaluation requires 'golden' or 'inspect'"))?;
+    let subcommand = args.first().ok_or_else(|| {
+        CliError::usage("evaluation requires 'golden', 'inspect', or 'scorecard'")
+    })?;
     match subcommand.as_str() {
         "golden" => golden(&args[1..]),
         "inspect" => inspect(&args[1..]),
+        "scorecard" => scorecard(&args[1..]),
         _ => Err(CliError::usage(format!(
             "unknown evaluation command '{subcommand}'"
         ))),
+    }
+}
+
+fn scorecard(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "session"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evaluation scorecard does not accept positional arguments",
+        ));
+    }
+    let session_id = parsed
+        .value("session")
+        .ok_or_else(|| CliError::usage("evaluation scorecard requires '--session <id>'"))
+        .and_then(|value| {
+            SessionId::new(value.to_owned()).map_err(|_| CliError::usage("session ID is invalid"))
+        })?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+    let (principal, tenant, workspace) = session_scope();
+    let snapshot = store
+        .resume(&session_id, &principal, &tenant, &workspace)
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let receipts = snapshot.evaluations();
+    let mut by_kind = BTreeMap::<String, ScorecardBucket>::new();
+    let mut result_count = 0usize;
+    let mut score_sum = 0u64;
+    for receipt in receipts {
+        for result in receipt.results() {
+            result_count += 1;
+            score_sum += u64::from(result.score());
+            by_kind
+                .entry(result.kind().as_str().to_owned())
+                .or_default()
+                .record(result);
+        }
+    }
+    let receipt_values = receipts
+        .iter()
+        .map(evaluation_receipt_json)
+        .collect::<Vec<_>>();
+    let digest = hash_artifact(
+        &serde_json::to_vec(&receipt_values)
+            .map_err(|_| CliError::internal("could not digest evaluation scorecard", json!({})))?,
+    );
+    let (passed, failed, review_required) = status_counts(&receipts.iter().collect::<Vec<_>>());
+    let data = json!({
+        "session_id": session_id,
+        "receipt_count": receipts.len(),
+        "result_count": result_count,
+        "result_counts": {
+            "passed": passed,
+            "failed": failed,
+            "human_review_required": review_required,
+        },
+        "score_sum": score_sum,
+        "average_score": (result_count > 0).then(|| score_sum / result_count as u64),
+        "pass_rate_percent": (result_count > 0).then(|| (passed as u64 * 100) / result_count as u64),
+        "by_kind": by_kind,
+        "digest": digest,
+        "durability": "session-store",
+    });
+    Ok(success(
+        "evaluation scorecard",
+        data,
+        format!(
+            "Scored {result_count} evaluation result(s) across {} receipt(s) for {session_id}",
+            receipts.len()
+        ),
+    ))
+}
+
+#[derive(Default, serde::Serialize)]
+struct ScorecardBucket {
+    count: usize,
+    passed: usize,
+    failed: usize,
+    human_review_required: usize,
+    score_sum: u64,
+}
+
+impl ScorecardBucket {
+    fn record(&mut self, result: &pandora_types::EvaluationResult) {
+        self.count += 1;
+        self.score_sum += u64::from(result.score());
+        match result.status() {
+            EvaluationStatus::Passed => self.passed += 1,
+            EvaluationStatus::Failed => self.failed += 1,
+            EvaluationStatus::HumanReviewRequired => self.human_review_required += 1,
+        }
     }
 }
 

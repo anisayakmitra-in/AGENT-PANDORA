@@ -3466,6 +3466,35 @@ fn evaluation_inspect_returns_persisted_receipts_and_supports_execution_filter()
 }
 
 #[test]
+fn evaluation_scorecard_aggregates_persisted_results_without_rerunning() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let run = fixture
+        .command(&["run", "read:README.md", "--json"])
+        .output()
+        .expect("run should start");
+    assert_success(&run);
+    let run = parse_json(&run);
+    let session_id = run["session_id"].as_str().unwrap();
+
+    let output = fixture
+        .command(&["evaluation", "scorecard", "--session", session_id, "--json"])
+        .output()
+        .expect("evaluation scorecard should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["command"], "evaluation scorecard");
+    assert_eq!(response["receipt_count"], 1);
+    assert_eq!(response["result_count"], 2);
+    assert_eq!(response["result_counts"]["passed"], 2);
+    assert_eq!(response["result_counts"]["failed"], 0);
+    assert_eq!(response["pass_rate_percent"], 100);
+    assert_eq!(response["by_kind"]["policy"]["count"], 1);
+    assert_eq!(response["by_kind"]["trajectory"]["count"], 1);
+    assert!(response["digest"].as_str().unwrap().starts_with("sha256:"));
+}
+
+#[test]
 fn rollout_inspect_returns_a_durable_summary_for_an_execution() {
     let fixture = Fixture::new();
     fixture.setup();
