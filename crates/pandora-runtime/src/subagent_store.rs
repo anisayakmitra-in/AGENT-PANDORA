@@ -1433,6 +1433,8 @@ mod tests {
     use rusqlite::{Connection, params};
     use serde_json::json;
     use std::path::PathBuf;
+    use std::sync::{Arc, Barrier};
+    use std::thread;
 
     struct StoreFixture {
         root: PathBuf,
@@ -1750,6 +1752,58 @@ mod tests {
                 "reason": "cancelled",
             }))
         );
+    }
+
+    #[test]
+    fn concurrent_cancellation_and_finish_have_one_durable_winner() {
+        for _ in 0..32 {
+            let fixture = StoreFixture::running();
+            let cancel_store = SubagentStore::open(&fixture.database).unwrap();
+            let finish_store = SubagentStore::open(&fixture.database).unwrap();
+            let barrier = Arc::new(Barrier::new(2));
+            let cancel_barrier = Arc::clone(&barrier);
+            let finish_barrier = Arc::clone(&barrier);
+            let cancel_id = fixture.id.clone();
+            let cancel_scope = fixture.scope.clone();
+            let finish_id = fixture.id.clone();
+            let finish_worker = fixture.worker();
+            let cancel_thread = thread::spawn(move || {
+                cancel_barrier.wait();
+                cancel_store.request_cancel(
+                    &cancel_id,
+                    &cancel_scope,
+                    Timestamp::from_unix_seconds(31),
+                )
+            });
+            let finish_thread = thread::spawn(move || {
+                finish_barrier.wait();
+                finish_store.finish(
+                    &finish_id,
+                    &finish_worker,
+                    SubagentStatus::Completed,
+                    &json!({"status": "completed"}),
+                    Timestamp::from_unix_seconds(31),
+                )
+            });
+            let cancellation = cancel_thread.join().unwrap();
+            let finish = finish_thread.join().unwrap();
+            let record = fixture.store.inspect(&fixture.id, &fixture.scope).unwrap();
+
+            match record.status() {
+                SubagentStatus::Cancelled => {
+                    assert!(cancellation.is_ok());
+                    assert_eq!(finish.unwrap().status(), SubagentStatus::Cancelled);
+                }
+                SubagentStatus::Completed => {
+                    assert!(matches!(
+                        cancellation,
+                        Err(SubagentStoreError::InvalidTransition { .. })
+                    ));
+                    assert_eq!(finish.unwrap().status(), SubagentStatus::Completed);
+                }
+                status => panic!("race produced non-terminal status {status:?}"),
+            }
+        }
     }
 
     #[test]

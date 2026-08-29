@@ -49,7 +49,9 @@ Next work:
 
 Pandora can execute concurrent local subagents and persist orchestration state.
 Subagent cancellation is now terminally race-safe: once a running cancellation
-request is recorded, a late provider response cannot be stored as success.
+request is recorded, a late provider response cannot be stored as success. A
+repeated two-connection SQLite race regression also proves cancellation and
+finish always produce one durable terminal winner.
 The durable queue also has an 8-worker/64-job claim-pressure regression proving
 that each queued job is claimed once across separate SQLite connections. It
 still needs the operating layer that keeps those workers healthy for days, not
