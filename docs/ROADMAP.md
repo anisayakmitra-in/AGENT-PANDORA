@@ -59,11 +59,15 @@ one command invocation. Operators can now reap all heartbeat-stale supervisors i
 
 Next work:
 
+The partial multi-repository failure fixture now reopens the orchestration
+store before inspection and resume. It preserves the completed planner
+receipt and active maker role, and keeps resume blocked until reconciliation.
+
 - extend bounded soak coverage into long-duration load and recovery runs;
 - expand cancellation-race coverage around provider return and worker shutdown;
 - extend queue-pressure coverage into sustained soak runs;
-- test worker crashes and multi-repository partial failure across independently
-  restarted workers.
+- test worker crashes and partial multi-repository failure across independently
+  restarted worker processes, including the reconciliation path.
 
 ## Phase 8: finish the modular product surface
 
