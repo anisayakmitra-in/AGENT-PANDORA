@@ -1232,6 +1232,7 @@ fn untrusted_tool_result(call_id: &str, output: &str) -> Result<ChatMessage, Age
     let payload = if is_instruction_shaped_tool_output(output) {
         serde_json::json!({
             "kind": "pandora.tool_output",
+            "source": "tool_output",
             "trust": "untrusted",
             "status": "quarantined",
             "reason": "instruction-shaped tool output was withheld from context",
@@ -1241,6 +1242,7 @@ fn untrusted_tool_result(call_id: &str, output: &str) -> Result<ChatMessage, Age
     } else {
         serde_json::json!({
             "kind": "pandora.tool_output",
+            "source": "tool_output",
             "trust": "untrusted",
             "content": output,
         })
@@ -1277,11 +1279,14 @@ fn is_untrusted_tool_result(content: &str) -> bool {
     };
     fields.get("kind").and_then(serde_json::Value::as_str) == Some("pandora.tool_output")
         && fields.get("trust").and_then(serde_json::Value::as_str) == Some("untrusted")
-        && ((fields.len() == 3
+        && fields
+            .get("source")
+            .is_none_or(|source| source.as_str() == Some("tool_output"))
+        && ((matches!(fields.len(), 3 | 4)
             && fields
                 .get("content")
                 .is_some_and(serde_json::Value::is_string))
-            || (fields.len() == 6
+            || (matches!(fields.len(), 6 | 7)
                 && fields.get("status").and_then(serde_json::Value::as_str) == Some("quarantined")
                 && fields
                     .get("reason")
@@ -1324,6 +1329,7 @@ fn quarantine_context_fragments(
             }
             let content = serde_json::to_string(&serde_json::json!({
                 "kind": "pandora.context_fragment",
+                "source": "context_fragment",
                 "trust": "untrusted",
                 "status": "quarantined",
                 "reason": "instruction-shaped context was withheld from context",
@@ -1754,6 +1760,7 @@ mod tests {
             .unwrap();
         let payload: serde_json::Value = serde_json::from_str(tool_output.content()).unwrap();
         assert_eq!(payload["kind"], "pandora.tool_output");
+        assert_eq!(payload["source"], "tool_output");
         assert_eq!(payload["trust"], "untrusted");
         assert_eq!(payload["status"], "quarantined");
         assert_eq!(
@@ -1795,6 +1802,7 @@ mod tests {
             .unwrap();
         let payload: serde_json::Value = serde_json::from_str(tool_output.content()).unwrap();
         assert_eq!(payload["kind"], "pandora.tool_output");
+        assert_eq!(payload["source"], "tool_output");
         assert_eq!(payload["trust"], "untrusted");
         assert_eq!(payload["status"], "quarantined");
         assert_eq!(
@@ -1813,6 +1821,7 @@ mod tests {
             payload,
             serde_json::json!({
                 "kind": "pandora.tool_output",
+                "source": "tool_output",
                 "trust": "untrusted",
                 "content": "bounded result",
             })
@@ -1853,6 +1862,7 @@ mod tests {
         assert_eq!(sanitized.len(), 1);
         let payload: serde_json::Value = serde_json::from_str(sanitized[0].content()).unwrap();
         assert_eq!(payload["kind"], "pandora.context_fragment");
+        assert_eq!(payload["source"], "context_fragment");
         assert_eq!(payload["trust"], "untrusted");
         assert_eq!(payload["status"], "quarantined");
         assert_eq!(payload["content_bytes"], fragment.content().len());
@@ -2532,6 +2542,7 @@ mod tests {
             tool_output,
             serde_json::json!({
                 "kind": "pandora.tool_output",
+                "source": "tool_output",
                 "trust": "untrusted",
                 "content": "tool error: invalid arguments: unknown argument 'extra'",
             })
