@@ -143,6 +143,12 @@ mutations require `--yes` and refuse to break an enabled dependent. These
 bindings do not grant effect authority and cannot alter Parliament, Shadow
 Council, ReferenceMonitor, permits, or the constitutional service.
 
+The desktop package inspector exposes the replacement lineage beside the
+selected record: whether it targets a built-in Harness, its lifecycle
+generation, active version, and one-step rollback target. This is read-only
+evidence; changing the binding still requires the existing dry-run, exact
+confirmation, dependency checks, and restart behavior.
+
 Multiple exact versions may coexist so an update can be staged before its
 binding changes. An active version cannot be removed. A retained rollback
 version cannot be removed while another version is active; once a package is

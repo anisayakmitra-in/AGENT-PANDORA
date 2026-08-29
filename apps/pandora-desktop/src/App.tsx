@@ -2016,6 +2016,7 @@ function PackageManager({ native }: { native: boolean }) {
             <div><span className="eyebrow">SELECTED PACKAGE</span><h4>{selectedPackage.id}@{selectedPackage.version}</h4></div>
             <div className="package-heading-chips"><Chip tone={selectedPackage.activation.state === "enabled" ? "green" : "neutral"}>{selectedPackage.activation.state}</Chip><Chip tone={selectedPackage.state === "admitted" ? "green" : "blue"}>{selectedPackage.state}</Chip></div>
           </div>
+          <div className="package-lineage"><div><span className="eyebrow">REPLACEMENT LINEAGE</span><strong>{selectedPackage.replaces_builtin ? "Optional built-in replacement" : "Standalone package record"}</strong></div><div><span>Generation</span><strong className="mono">{selectedPackage.activation.generation}</strong></div><p>{selectedPackage.replaces_builtin ? `This package can replace its matching built-in only while an exact version is enabled. Current rollback target: ${selectedPackage.activation.previous_version ?? "none"}.` : "This package does not replace a built-in Harness. Its lifecycle remains an independent exact-version binding."}</p></div>
           <div className="package-facts">
             <div><span>Publisher</span><strong>{selectedPackage.publisher}</strong></div>
             <div><span>Artifact</span><strong className="mono">{selectedPackage.content_hash}</strong></div>

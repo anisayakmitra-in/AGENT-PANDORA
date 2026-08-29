@@ -99,7 +99,6 @@ fail closed.
 Next work:
 
 - add local signing support only with an explicit, non-exporting key boundary;
-- show replacement lineage and rollback evidence beside the active Harness;
 - complete keyboard, screen-reader, reduced-motion, scaling, and high-contrast
   checks in the native desktop;
 - define separate admission rules before Provider, Skill, Source, or generic
