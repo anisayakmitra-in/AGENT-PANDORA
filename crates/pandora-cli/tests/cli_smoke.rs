@@ -1,8 +1,8 @@
 use base64::Engine as _;
 use ed25519_dalek::{Signer, SigningKey};
 use pandora_runtime::{
-    DeviceKeyStore, DeviceProofRequest, EfficiencyStore, FleetEngine, MemoryEngine, SessionStore,
-    SubagentPreparation, SubagentScope, SubagentStore,
+    DeviceKeyStore, DeviceProofRequest, EfficiencyStore, FleetEngine, FleetNode, MemoryEngine,
+    SessionStore, SubagentPreparation, SubagentScope, SubagentStore,
 };
 use pandora_types::{
     ContextClassification, DomainRoutingProfile, EffectOutcome, EffectReceipt, ExecutionId,
@@ -1370,6 +1370,42 @@ fn subagent_work_returns_multiple_records_in_id_order() {
             .all(|lease| lease.state().as_str() != "active")
     );
     assert_eq!(worked["subagents"][1]["lifecycle"]["status"], "failed");
+}
+
+#[test]
+fn fleet_supervisor_reap_is_exposed_as_a_bounded_cli_operation() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let fleet = FleetEngine::open(fixture.data.join("fleet.sqlite3")).unwrap();
+    let node = FleetNode::new(
+        "node-reap".to_owned(),
+        "2.0.0-beta.7",
+        "local",
+        vec!["subagent.work".to_owned()],
+        1,
+    )
+    .unwrap();
+    fleet.register_node(&node).unwrap();
+    fleet.start_supervisor("node-reap", 1).unwrap();
+
+    let output = fixture
+        .command(&[
+            "fleet",
+            "supervisor",
+            "reap",
+            "--stale-after",
+            "10",
+            "--now",
+            "20",
+            "--json",
+        ])
+        .output()
+        .expect("fleet supervisor reap should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["reaped"], 1);
+    assert_eq!(response["supervisors"][0]["node_id"], "node-reap");
+    assert_eq!(response["supervisors"][0]["state"], "recovering");
 }
 
 #[test]
