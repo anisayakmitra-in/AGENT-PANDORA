@@ -57,6 +57,7 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora memory forget ... --json` | `memory forget` | `dry_run`, `memory_id`, `scope`, `revoked` or `would_revoke` |
 | `pandora memory promote ... --json` | `memory promote` | `promoted`, `approval_id`, `approval_consumed` |
 | `pandora memory synthesize ... --json` | `memory synthesize` | `dry_run`, `candidate` or `committed`, `snapshot_digest`, `evidence_ids`, `promotion_required` |
+| `pandora memory provenance ... --json` | `memory provenance` | `root_id`, `scope`, `nodes`, `edges`, `bounded`, `max_nodes`, `durability` |
 | `pandora evaluation golden --input <path> --json` | `evaluation golden` | `total`, `passed`, `failed`, `digest`, `cases` |
 | `pandora evolution evaluate --id <proposal-id> --input <path> --json` | `evolution evaluate` | `proposal_id`, `total`, `passed`, `failed`, `trajectory_score`, `outcome_score`, `holdout_passed`, `policy_passed`, `regression_passed`, `digest`, `cases`, `durability` |
 | `pandora evolution submit --input <path> --json` | `evolution submit` | `proposal_id`, `state`, `durability` |

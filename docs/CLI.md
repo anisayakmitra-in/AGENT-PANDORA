@@ -720,6 +720,7 @@ pandora memory audit --session <id> --provider <name>
 pandora memory forget --session <id> --provider <name> <memory-id> [--yes]
 pandora memory promote --session <id> --provider <name> <memory-id> [--approval <id>]
 pandora memory synthesize --session <id> --provider <name> --id <memory-id> --summary <text> [--kind <kind>] [--classification <public|internal>] [--yes]
+pandora memory provenance --session <id> --provider <name> <memory-id>
 pandora mcp set <id> --program <absolute-path> --arguments-json <json-array> --mode <auto|modern-only|legacy-only>
 pandora mcp list
 pandora mcp inspect <id>
@@ -873,6 +874,9 @@ memory inspection nor promotion grants effect authority.
 `memory synthesize` takes a fresh, scoped L1 snapshot and previews an evidence-bound
 L1 candidate by default. `--yes` commits it only after the snapshot is checked again;
 it never calls a provider, promotes the candidate, or grants runtime authority.
+`memory provenance` builds a bounded, read-only source graph for one L1 or L2 record.
+It follows only evidence IDs present in the same exact scope, caps traversal at 64
+records, and never promotes, revokes, or changes memory state.
 
 Remote admission currently accepts Gene records with no unresolved capability
 requirements and one valid Pandora runtime requirement. Other package kinds fail

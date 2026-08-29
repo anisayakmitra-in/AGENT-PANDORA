@@ -3187,6 +3187,27 @@ fn memory_cli_recalls_a_scoped_record_and_requires_confirmation_to_revoke() {
     assert_eq!(synthesized["committed"]["tier"], "l1");
     assert_eq!(synthesized["committed"]["origin"], "synthesized");
 
+    let provenance = fixture
+        .command(&[
+            "memory",
+            "provenance",
+            "--session",
+            &session_id,
+            "--provider",
+            "openai-compatible",
+            "synthesized-memory",
+            "--json",
+        ])
+        .output()
+        .expect("memory provenance should start");
+    assert_success(&provenance);
+    let provenance = parse_json(&provenance);
+    assert_eq!(provenance["command"], "memory provenance");
+    assert_eq!(provenance["root_id"], "synthesized-memory");
+    assert_eq!(provenance["bounded"], true);
+    assert!(provenance["nodes"].as_array().unwrap().len() >= 2);
+    assert!(!provenance["edges"].as_array().unwrap().is_empty());
+
     let recalled = fixture
         .command(&[
             "memory",

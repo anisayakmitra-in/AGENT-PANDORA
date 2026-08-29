@@ -9,6 +9,7 @@ use pandora_types::{
     MemoryScope, MemoryTier, RequestDigest, Timestamp, hash_artifact,
 };
 use serde_json::json;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 const MAX_L0_ENTRIES: usize = 64;
 const MEMORY_PROMOTION_POLICY_VERSION: u32 = 1;
@@ -17,7 +18,9 @@ const MEMORY_PROMOTION_GENE: &str = "memory.promote";
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
-        CliError::usage("memory requires 'recall', 'audit', 'forget', 'promote', or 'synthesize'")
+        CliError::usage(
+            "memory requires 'recall', 'audit', 'forget', 'promote', 'synthesize', or 'provenance'",
+        )
     })?;
     match subcommand.as_str() {
         "recall" => recall(&args[1..]),
@@ -25,10 +28,78 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "forget" => forget(&args[1..]),
         "promote" => promote(&args[1..]),
         "synthesize" => synthesize(&args[1..]),
+        "provenance" => provenance(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown memory command '{unknown}'"
         ))),
     }
+}
+
+fn provenance(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "session", "provider"],
+    )?;
+    if parsed.positionals.len() != 1 {
+        return Err(CliError::usage(
+            "memory provenance requires exactly one memory ID",
+        ));
+    }
+    let root_id = MemoryId::new(parsed.positionals[0].clone())
+        .map_err(|_| CliError::usage("memory ID is invalid"))?;
+    let (_, scope) = scope(&parsed)?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let principal = session_scope().0;
+    let engine = open_engine(&config, &principal)?;
+    let mut records = HashMap::new();
+    for tier in [MemoryTier::L1, MemoryTier::L2] {
+        for record in engine
+            .try_recall(&scope, tier, timestamp())
+            .map_err(memory_error)?
+        {
+            records.insert(record.id().clone(), record);
+        }
+    }
+    if !records.contains_key(&root_id) {
+        return Err(memory_error(MemoryError::NotFound));
+    }
+
+    const MAX_NODES: usize = 64;
+    let mut queue = VecDeque::from([root_id.clone()]);
+    let mut visited = HashSet::new();
+    let mut nodes = Vec::new();
+    let mut edges = Vec::new();
+    while let Some(id) = queue.pop_front() {
+        if !visited.insert(id.clone()) || nodes.len() >= MAX_NODES {
+            continue;
+        }
+        let Some(record) = records.get(&id) else {
+            continue;
+        };
+        nodes.push(record_value(record));
+        for evidence_id in record.evidence_ids() {
+            if records.contains_key(evidence_id) {
+                edges.push(json!({ "from": record.id(), "to": evidence_id }));
+                if !visited.contains(evidence_id) {
+                    queue.push_back(evidence_id.clone());
+                }
+            }
+        }
+    }
+    Ok(success(
+        "memory provenance",
+        json!({
+            "root_id": root_id,
+            "scope": scope_value(&scope),
+            "nodes": nodes,
+            "edges": edges,
+            "bounded": true,
+            "max_nodes": MAX_NODES,
+            "durability": "session-store",
+        }),
+        format!("Inspected provenance for {root_id}"),
+    ))
 }
 
 fn recall(args: &[String]) -> Result<CommandResult, CliError> {
