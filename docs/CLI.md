@@ -552,10 +552,12 @@ pandora evaluation inspect --session <id> --execution <id> --json
 `evaluation scorecard` summarizes the same durable receipts without rerunning
 an evaluator. It reports aggregate status and score counts, deterministic
 per-kind buckets, and a digest of the receipt projection. The command is
-read-only and remains scoped to the selected session.
+read-only and remains scoped to the selected session. `--fail-on-non-passed`
+turns the aggregate into a CI quality gate: any failed or human-review result
+returns an execution error with the same scorecard data.
 
 ```text
-pandora evaluation scorecard --session <id> --json
+pandora evaluation scorecard --session <id> [--fail-on-non-passed] --json
 ```
 
 `rollout inspect` reads the redacted rollout summary persisted with a CLI

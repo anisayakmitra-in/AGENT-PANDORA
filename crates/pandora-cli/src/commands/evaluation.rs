@@ -45,7 +45,16 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
 }
 
 fn scorecard(args: &[String]) -> Result<CommandResult, CliError> {
-    let parsed = parse_options(args, &["config", "data-dir", "workspace", "session"])?;
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "session",
+            "fail-on-non-passed",
+        ],
+    )?;
     if !parsed.positionals.is_empty() {
         return Err(CliError::usage(
             "evaluation scorecard does not accept positional arguments",
@@ -103,6 +112,12 @@ fn scorecard(args: &[String]) -> Result<CommandResult, CliError> {
         "digest": digest,
         "durability": "session-store",
     });
+    if parsed.values.contains_key("fail-on-non-passed") && (failed > 0 || review_required > 0) {
+        return Err(CliError::execution(
+            "evaluation scorecard quality gate failed",
+            data,
+        ));
+    }
     Ok(success(
         "evaluation scorecard",
         data,

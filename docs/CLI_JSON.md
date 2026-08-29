@@ -68,7 +68,7 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora evolution activate --id <proposal-id> --json` | `evolution activate` | `proposal_id`, `state`, `base_artifact`, `candidate_artifact`, `activated_at`, `activation_scope`, `runtime_authority_changed`, `durability` |
 | `pandora evolution rollback --id <proposal-id> --reason <text> --json` | `evolution rollback` | `proposal_id`, `state`, `restored_artifact`, `rolled_back_at`, `reason`, `durability` |
 | `pandora evaluation inspect --session <id> --json` | `evaluation inspect` | `session_id`, `execution_id`, `count`, `result_counts`, `receipts`, `durability` |
-| `pandora evaluation scorecard --session <id> --json` | `evaluation scorecard` | `session_id`, `receipt_count`, `result_count`, `result_counts`, `score_sum`, `average_score`, `pass_rate_percent`, `by_kind`, `digest`, `durability` |
+| `pandora evaluation scorecard --session <id> [--fail-on-non-passed] --json` | `evaluation scorecard` | `session_id`, `receipt_count`, `result_count`, `result_counts`, `score_sum`, `average_score`, `pass_rate_percent`, `by_kind`, `digest`, `durability`; with the gate, non-passed results return the same data under an execution error |
 | `pandora graph <kind> --input <path> [--store <path>] --json` | `graph build` | `kind`, `scope`, `source_count`, `nodes`, `edges`, `digest`, optional `persisted` |
 | `pandora update --artifact ... --json` | `update` | `verified`, `artifact`, `target`, `signature_verified`, `dry_run` |
 | `pandora update --release ... --json` | `update` | `verified`, `release`, `channel`, `artifact`, `signature_verified`, `dry_run`; non-dry-run responses also contain `target` |

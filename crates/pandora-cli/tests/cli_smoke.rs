@@ -3516,6 +3516,20 @@ fn evaluation_scorecard_aggregates_persisted_results_without_rerunning() {
     assert_eq!(response["by_kind"]["policy"]["count"], 1);
     assert_eq!(response["by_kind"]["trajectory"]["count"], 1);
     assert!(response["digest"].as_str().unwrap().starts_with("sha256:"));
+
+    let gated = fixture
+        .command(&[
+            "evaluation",
+            "scorecard",
+            "--session",
+            session_id,
+            "--fail-on-non-passed",
+            "--json",
+        ])
+        .output()
+        .expect("evaluation scorecard quality gate should start");
+    assert_success(&gated);
+    assert_eq!(parse_json(&gated)["pass_rate_percent"], 100);
 }
 
 #[test]
