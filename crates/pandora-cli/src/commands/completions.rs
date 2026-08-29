@@ -77,7 +77,7 @@ fn powershell() -> &'static str {
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'efficiency') {
         'rank'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'evaluation') {
-        'golden','inspect'
+        'golden','inspect','scorecard','schedule'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'graph') {
         'code','knowledge','review','architecture'
     } elseif ($elements.Count -gt 2 -and $elements[1] -eq "fleet" -and $elements[2] -eq "supervisor") {
@@ -286,7 +286,7 @@ mod tests {
             "'list','inspect','resolve'",
             "'list','set','use','test'",
             "'list','inspect','set','remove','catalog','call'",
-            "'golden','inspect'",
+            "'golden','inspect','scorecard','schedule'",
             "'list','inspect','submit','evaluate'",
             "'submit','work','list','inspect','cancel','mark-interrupted'",
             "'spawn','work','list','inspect','cancel','mark-interrupted','cleanup'",

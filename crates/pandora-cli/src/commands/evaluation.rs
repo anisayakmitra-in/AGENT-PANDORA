@@ -20,6 +20,8 @@ const MAX_EVALUATION_INPUT_BYTES: u64 = 4 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 struct GoldenSetInput {
+    #[serde(default)]
+    suite_id: Option<String>,
     cases: Vec<GoldenCaseInput>,
 }
 
@@ -51,13 +53,16 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
 
 fn schedule(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
-        CliError::usage("evaluation schedule requires 'create', 'list', 'disable', or 'claim'")
+        CliError::usage(
+            "evaluation schedule requires 'create', 'list', 'disable', 'claim', or 'run'",
+        )
     })?;
     match subcommand.as_str() {
         "create" => schedule_create(&args[1..]),
         "list" => schedule_list(&args[1..]),
         "disable" => schedule_disable(&args[1..]),
         "claim" => schedule_claim(&args[1..]),
+        "run" => schedule_run(&args[1..]),
         _ => Err(CliError::usage(format!(
             "unknown evaluation schedule command '{subcommand}'"
         ))),
@@ -215,6 +220,153 @@ fn schedule_claim(args: &[String]) -> Result<CommandResult, CliError> {
         "evaluation schedule claim",
         json!({"runs": runs.iter().map(schedule_run_value).collect::<Vec<_>>(), "count": count, "worker": worker, "durability": "schedule-store"}),
         format!("Claimed {count} due evaluation schedule run(s)"),
+    ))
+}
+
+fn schedule_run(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "id",
+            "worker",
+            "input",
+            "fail-on-failure",
+        ],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evaluation schedule run does not accept positional arguments",
+        ));
+    }
+    let config = schedule_config(&parsed)?;
+    let id = schedule_id(&parsed)?;
+    let worker = JobWorkerId::new(
+        required_option(
+            &parsed,
+            "worker",
+            "evaluation schedule run requires '--worker <id>'",
+        )?
+        .to_owned(),
+    )
+    .map_err(|_| CliError::usage("worker ID is invalid"))?;
+    let input = required_option(
+        &parsed,
+        "input",
+        "evaluation schedule run requires '--input <path>'",
+    )?;
+    let bytes = read_bounded(Path::new(input))?;
+    let suite_id = scheduled_suite_id(&bytes)?;
+    let cases = parse_cases(&bytes)?;
+    let (principal, tenant, workspace) = session_scope();
+    let store = schedule_store(&config)?;
+    let schedule = store
+        .list(&principal, &tenant, &workspace)
+        .map_err(schedule_error)?
+        .into_iter()
+        .find(|schedule| schedule.id() == &id)
+        .ok_or_else(|| {
+            CliError::execution(
+                "evaluation schedule was not found",
+                json!({
+                    "schedule_id": id,
+                    "durability": "schedule-store",
+                }),
+            )
+        })?;
+    if schedule.suite_id() != suite_id {
+        return Err(CliError::usage(format!(
+            "scheduled input suite '{}' does not match schedule suite '{}'",
+            suite_id,
+            schedule.suite_id()
+        )));
+    }
+    let mut runs = store
+        .claim_due_for(
+            &principal,
+            &tenant,
+            &workspace,
+            Some(&id),
+            &worker,
+            crate::commands::timestamp(),
+            1,
+        )
+        .map_err(schedule_error)?;
+    let run = runs.pop().ok_or_else(|| {
+        CliError::execution(
+            "evaluation schedule has no due run",
+            json!({
+                "schedule_id": id,
+                "worker": worker,
+                "durability": "schedule-store",
+            }),
+        )
+    })?;
+    let report = EvaluationEngine::new()
+        .evaluate_golden_set(cases)
+        .map_err(|error| {
+            let _ = store.complete(
+                run.schedule_id(),
+                &principal,
+                &tenant,
+                &workspace,
+                run.scheduled_for(),
+                &worker,
+                false,
+                crate::commands::timestamp(),
+            );
+            CliError::usage(format!("invalid scheduled golden set: {error:?}"))
+        })?;
+    let passed = report.failed() == 0;
+    let finished_at = crate::commands::timestamp();
+    store
+        .complete(
+            run.schedule_id(),
+            &principal,
+            &tenant,
+            &workspace,
+            run.scheduled_for(),
+            &worker,
+            passed,
+            finished_at,
+        )
+        .map_err(schedule_error)?;
+    let mut completed_run = schedule_run_value(&run);
+    if let Value::Object(object) = &mut completed_run {
+        object.insert(
+            "status".to_owned(),
+            Value::String(if passed { "completed" } else { "failed" }.to_owned()),
+        );
+        object.insert(
+            "finished_at".to_owned(),
+            Value::from(finished_at.as_unix_seconds()),
+        );
+        object.insert("lease_until".to_owned(), Value::Null);
+    }
+    let data = json!({
+        "run": completed_run,
+        "report": report_value(&report),
+        "completed": true,
+        "passed": passed,
+        "durability": "schedule-store",
+    });
+    if parsed.values.contains_key("fail-on-failure") && !passed {
+        return Err(CliError::execution(
+            "scheduled golden-set evaluation failed",
+            data,
+        ));
+    }
+    Ok(success(
+        "evaluation schedule run",
+        data,
+        format!(
+            "Scheduled golden set: {}/{} passed (digest {})",
+            report.passed(),
+            report.total(),
+            report.digest()
+        ),
     ))
 }
 
@@ -523,6 +675,20 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>, CliError> {
     Ok(bytes)
 }
 
+fn scheduled_suite_id(bytes: &[u8]) -> Result<String, CliError> {
+    let suite_id = serde_json::from_slice::<GoldenSetInput>(bytes)
+        .map_err(|error| CliError::usage(format!("invalid scheduled golden-set JSON: {error}")))?
+        .suite_id
+        .ok_or_else(|| CliError::usage("scheduled golden-set input requires 'suite_id'"))?;
+    if suite_id.trim().is_empty()
+        || suite_id.len() > pandora_runtime::MAX_EVALUATION_SUITE_BYTES
+        || suite_id.chars().any(char::is_control)
+    {
+        return Err(CliError::usage("scheduled golden-set suite_id is invalid"));
+    }
+    Ok(suite_id.trim().to_owned())
+}
+
 fn parse_cases(bytes: &[u8]) -> Result<Vec<GoldenCase>, CliError> {
     let input = serde_json::from_slice::<GoldenSetInput>(bytes)
         .map_err(|error| CliError::usage(format!("invalid golden-set JSON: {error}")))?;
@@ -577,7 +743,7 @@ fn report_value(report: &GoldenSetReport) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_cases, status_counts};
+    use super::{parse_cases, scheduled_suite_id, status_counts};
     use pandora_types::{
         EvaluationKind, EvaluationReceipt, EvaluationResult, EvaluationStatus, ExecutionId,
         SessionId, Timestamp,
@@ -591,6 +757,16 @@ mod tests {
         .unwrap();
         assert_eq!(cases.len(), 1);
         assert_eq!(cases[0].id(), "case-a");
+    }
+
+    #[test]
+    fn scheduled_inputs_require_a_bounded_suite_id() {
+        assert_eq!(
+            scheduled_suite_id(br#"{"suite_id":"nightly","cases":[]}"#).unwrap(),
+            "nightly"
+        );
+        let error = scheduled_suite_id(br#"{"cases":[]}"#).unwrap_err();
+        assert!(error.message.contains("requires 'suite_id'"));
     }
 
     #[test]

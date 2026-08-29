@@ -95,8 +95,8 @@ pub use evaluation_engine::{
 };
 pub use evaluation_schedule::{
     EvaluationSchedule, EvaluationScheduleError, EvaluationScheduleRun,
-    EvaluationScheduleRunStatus, EvaluationScheduleStore, MAX_CLAIM_BATCH, MAX_SCHEDULES,
-    SCHEDULE_LEASE_SECONDS,
+    EvaluationScheduleRunStatus, EvaluationScheduleStore, MAX_CLAIM_BATCH,
+    MAX_EVALUATION_SUITE_BYTES, MAX_SCHEDULES, SCHEDULE_LEASE_SECONDS,
 };
 pub use evolution::{EvolutionEngine, EvolutionError, EvolutionRecord};
 pub use execution_controller::{

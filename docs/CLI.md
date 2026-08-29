@@ -419,6 +419,7 @@ call providers, or grant permissions.
 
 ```json
 {
+  "suite_id": "golden-default",
   "cases": [
     {
       "id": "coding-smoke",
@@ -569,13 +570,16 @@ persisted occurrence per claim tick, and advances only inside a SQLite
 transaction. The claim operation returns worker-owned runs with a five-minute
 lease; an expired lease is returned to the bounded queue. Claiming does not
 execute a suite or bypass policy, permits, or the ReferenceMonitor. The
-evaluator worker must run the suite through the normal governed evaluation path
-and record its result separately.
+`run` operation is the bounded local worker for a golden-set JSON input: it
+claims only the requested schedule, evaluates through `EvaluationEngine`, and
+marks the occurrence completed or failed. External workers may keep using
+`claim` and record results through their own governed path.
 
 pandora evaluation schedule create --id nightly --name "Nightly checks" --suite golden-default --interval-seconds 86400
 pandora evaluation schedule list --json
 pandora evaluation schedule disable --id nightly --json
 pandora evaluation schedule claim --worker local-evaluator --limit 4 --json
+pandora evaluation schedule run --id nightly --worker local-evaluator --input golden.json --json
 
 `rollout inspect` reads the redacted rollout summary persisted with a CLI
 execution. It reports the projection version, record count, context-manifest
@@ -763,7 +767,7 @@ pandora strategies list
 pandora evaluation golden --input <path> [--fail-on-failure]
 pandora evaluation inspect --session <id> [--execution <id>]
 pandora evaluation scorecard --session <id>
-pandora evaluation schedule create --id <id> --name <name> --suite <id> --interval-seconds <seconds> | list | disable --id <id> | claim --worker <id> [--limit <1-16>]
+pandora evaluation schedule create --id <id> --name <name> --suite <id> --interval-seconds <seconds> | list | disable --id <id> | claim --worker <id> [--limit <1-16>] | run --id <id> --worker <id> --input <path> [--fail-on-failure]
 pandora evolution generate --session <id> [--provider <name>] [--model <id>] --kind prompt|skill|workflow|wasm_gene --target-id <id> --base <path> --output <path>
 pandora evolution list [--limit <1-256>]
 pandora evolution inspect --id <proposal-id>

@@ -348,6 +348,28 @@ impl EvaluationScheduleStore {
         now: Timestamp,
         limit: usize,
     ) -> Result<Vec<EvaluationScheduleRun>, EvaluationScheduleError> {
+        self.claim_due_for(
+            principal_id,
+            tenant_id,
+            workspace_id,
+            None,
+            worker_id,
+            now,
+            limit,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn claim_due_for(
+        &self,
+        principal_id: &PrincipalId,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        schedule_id: Option<&RunLoopId>,
+        worker_id: &JobWorkerId,
+        now: Timestamp,
+        limit: usize,
+    ) -> Result<Vec<EvaluationScheduleRun>, EvaluationScheduleError> {
         if limit == 0 || limit > MAX_CLAIM_BATCH {
             return Err(EvaluationScheduleError::InvalidLimit);
         }
@@ -361,7 +383,28 @@ impl EvaluationScheduleStore {
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         transaction.execute("UPDATE evaluation_schedule_runs SET status = 'pending', worker_id = NULL, claimed_at = NULL, lease_until = NULL WHERE principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3 AND status = 'claimed' AND lease_until <= ?4", params![principal_id.as_str(), tenant_id.as_str(), workspace_id.as_str(), now_seconds])?;
-        let schedules = {
+        let schedules = if let Some(schedule_id) = schedule_id {
+            let mut due = transaction.prepare("SELECT id, suite_id, interval_seconds, next_run_at FROM evaluation_schedules WHERE principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3 AND enabled = 1 AND next_run_at <= ?4 AND id = ?5 ORDER BY next_run_at ASC, id ASC LIMIT ?6")?;
+            due.query_map(
+                params![
+                    principal_id.as_str(),
+                    tenant_id.as_str(),
+                    workspace_id.as_str(),
+                    now_seconds,
+                    schedule_id.as_str(),
+                    MAX_CLAIM_BATCH as i64
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )?
+            .collect::<Result<Vec<_>, _>>()?
+        } else {
             let mut due = transaction.prepare("SELECT id, suite_id, interval_seconds, next_run_at FROM evaluation_schedules WHERE principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3 AND enabled = 1 AND next_run_at <= ?4 ORDER BY next_run_at ASC, id ASC LIMIT ?5")?;
             due.query_map(
                 params![
@@ -393,13 +436,14 @@ impl EvaluationScheduleStore {
             transaction.execute("UPDATE evaluation_schedules SET next_run_at = ?1, last_claimed_at = ?2, run_count = run_count + 1 WHERE id = ?3 AND principal_id = ?4 AND tenant_id = ?5 AND workspace_id = ?6 AND next_run_at = ?7", params![next, now_seconds, id, principal_id.as_str(), tenant_id.as_str(), workspace_id.as_str(), next_run_at])?;
         }
         let candidates = {
-            let mut pending = transaction.prepare("SELECT schedule_id, suite_id, scheduled_for FROM evaluation_schedule_runs WHERE principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3 AND status = 'pending' ORDER BY scheduled_for ASC, schedule_id ASC LIMIT ?4")?;
+            let mut pending = transaction.prepare("SELECT schedule_id, suite_id, scheduled_for FROM evaluation_schedule_runs WHERE principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3 AND status = 'pending' AND (?4 IS NULL OR schedule_id = ?4) ORDER BY scheduled_for ASC, schedule_id ASC LIMIT ?5")?;
             pending
                 .query_map(
                     params![
                         principal_id.as_str(),
                         tenant_id.as_str(),
                         workspace_id.as_str(),
+                        schedule_id.map(RunLoopId::as_str),
                         limit as i64
                     ],
                     |row| {
@@ -604,6 +648,54 @@ mod tests {
             store.list(&principal, &tenant, &workspace).unwrap()[0].run_count(),
             1
         );
+    }
+
+    #[test]
+    fn targeted_claim_does_not_take_another_schedule() {
+        let (store, _directory) = store();
+        let (principal, tenant, workspace) = scope();
+        let first = RunLoopId::new("first").unwrap();
+        let second = RunLoopId::new("second").unwrap();
+        for id in [&first, &second] {
+            store
+                .create(
+                    id,
+                    &principal,
+                    &tenant,
+                    &workspace,
+                    id.as_str(),
+                    format!("suite-{}", id.as_str()),
+                    60,
+                    Timestamp::from_unix_seconds(10),
+                )
+                .unwrap();
+        }
+        let worker = JobWorkerId::new("worker-a").unwrap();
+        let claims = store
+            .claim_due_for(
+                &principal,
+                &tenant,
+                &workspace,
+                Some(&second),
+                &worker,
+                Timestamp::from_unix_seconds(10),
+                1,
+            )
+            .unwrap();
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].schedule_id(), &second);
+        let remaining = store
+            .claim_due(
+                &principal,
+                &tenant,
+                &workspace,
+                &worker,
+                Timestamp::from_unix_seconds(10),
+                1,
+            )
+            .unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].schedule_id(), &first);
     }
 
     #[test]

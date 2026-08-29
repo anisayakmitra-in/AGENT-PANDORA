@@ -358,7 +358,7 @@ commands:
   evaluation golden --input <path> [--fail-on-failure]
   evaluation inspect --session <id> [--execution <id>]
   evaluation scorecard --session <id> [--fail-on-non-passed]
-  evaluation schedule create --id <id> --name <name> --suite <id> --interval-seconds <seconds> | list | disable --id <id> | claim --worker <id> [--limit <1-16>]
+  evaluation schedule create --id <id> --name <name> --suite <id> --interval-seconds <seconds> | list | disable --id <id> | claim --worker <id> [--limit <1-16>] | run --id <id> --worker <id> --input <path> [--fail-on-failure]
   evolution generate --session <id> [--provider <name>] [--model <id>] --kind prompt|skill|workflow|wasm_gene --target-id <id> --base <path> --output <path> | list [--limit <1-256>] | inspect --id <proposal-id> | submit --input <path> | evaluate --id <proposal-id> --input <path> [--fail-on-failure] | approve --input <path> | stage --id <proposal-id> | canary --input <path> | activate --id <proposal-id> | rollback --id <proposal-id> --reason <text>
   feedback coding --session <id> --execution <id> --request-digest <digest> --expected-output <text> --output <text> [--terminal-failure <text>] [--retryable]
   evolution inspect --id <proposal-id>
@@ -525,6 +525,8 @@ mod tests {
         assert!(usage.contains("job submit|work|list|inspect|cancel|mark-interrupted"));
         assert!(usage.contains("work accepts --max-jobs <1-64>"));
         assert!(usage.contains("evaluation golden --input <path> [--fail-on-failure]"));
+        assert!(usage.contains("evaluation schedule create --id <id>"));
+        assert!(usage.contains("run --id <id> --worker <id> --input <path>"));
         assert!(usage.contains("strategies list | population list --state <path>"));
         assert!(usage.contains("evaluation inspect --session <id> [--execution <id>]"));
         assert!(usage.contains("evolution generate --session <id>"));
