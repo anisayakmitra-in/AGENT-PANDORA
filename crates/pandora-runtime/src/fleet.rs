@@ -679,6 +679,24 @@ impl FleetEngine {
         Ok(supervisor)
     }
 
+    pub fn reap_stale_supervisors(
+        &self,
+        now: u64,
+        stale_after: u64,
+    ) -> Result<Vec<FleetSupervisor>, FleetError> {
+        if stale_after == 0 {
+            return Err(FleetError::InvalidSupervisorStaleness);
+        }
+        self.list_supervisors()?
+            .into_iter()
+            .filter(|supervisor| {
+                supervisor.state == FleetSupervisorState::Running
+                    && now.saturating_sub(supervisor.updated_at) > stale_after
+            })
+            .map(|supervisor| self.reconcile_supervisor(&supervisor.node_id, now, stale_after))
+            .collect()
+    }
+
     pub fn start_supervisor(&self, node_id: &str, now: u64) -> Result<FleetSupervisor, FleetError> {
         self.start_supervisor_with_process(node_id, None, now)
     }
@@ -1602,6 +1620,32 @@ mod tests {
             2
         );
         assert!(reopened.heartbeat_supervisor("node-a", 53).is_ok());
+    }
+
+    #[test]
+    fn reap_stale_supervisors_recovers_only_expired_heartbeats() {
+        let fleet = engine("pandora-fleet-reaper");
+        fleet.register_node(&node("node-a", &["coding"])).unwrap();
+        fleet.register_node(&node("node-b", &["coding"])).unwrap();
+        fleet.start_supervisor("node-a", 1).unwrap();
+        fleet.start_supervisor("node-b", 1).unwrap();
+        fleet.heartbeat_supervisor("node-b", 15).unwrap();
+
+        let reaped = fleet.reap_stale_supervisors(20, 10).unwrap();
+        assert_eq!(reaped.len(), 1);
+        assert_eq!(reaped[0].node_id(), "node-a");
+        assert_eq!(reaped[0].state(), FleetSupervisorState::Recovering);
+        assert_eq!(
+            fleet
+                .list_supervisors()
+                .unwrap()
+                .into_iter()
+                .find(|supervisor| supervisor.node_id() == "node-b")
+                .unwrap()
+                .state(),
+            FleetSupervisorState::Running
+        );
+        assert!(fleet.reap_stale_supervisors(20, 10).unwrap().is_empty());
     }
 
     #[test]

@@ -53,11 +53,12 @@ request is recorded, a late provider response cannot be stored as success.
 The durable queue also has an 8-worker/64-job claim-pressure regression proving
 that each queued job is claimed once across separate SQLite connections. It
 still needs the operating layer that keeps those workers healthy for days, not
-one command invocation.
+one command invocation. Operators can now reap all heartbeat-stale supervisors in one bounded pass, while restart remains an explicit lifecycle decision.
 
 Next work:
 
-- extend PID-bound supervision to independently launched worker daemons and restart reaping;
+- extend PID-bound supervision to independently launched worker daemons and add
+  an explicit, verified restart handoff;
 - add cross-process quiescence and crash recovery evidence around those workers;
 - expand cancellation-race coverage around provider return and worker shutdown;
 - extend queue-pressure coverage into sustained soak runs;
