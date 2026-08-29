@@ -6611,6 +6611,114 @@ fn package_trust_root_cli_supports_official_admission_and_revocation() {
 }
 
 #[test]
+fn package_keygen_and_sign_keep_private_material_in_the_vault() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let artifact = b"locally signed gene artifact
+";
+    let unsigned = PackageManifest::new(
+        "example/local-signed-gene",
+        "1.0.0",
+        PackageKind::Gene,
+        "local-publisher",
+        hash_artifact(artifact),
+        Vec::new(),
+        PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+        "MIT",
+        TrustEvidence::unsigned(),
+    )
+    .unwrap();
+    let manifest_path = fixture.root.join("unsigned.json");
+    let artifact_path = fixture.root.join("signed.artifact");
+    let signed_path = fixture.root.join("signed.json");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&unsigned).expect("manifest should serialize"),
+    )
+    .expect("manifest should be written");
+    fs::write(&artifact_path, artifact).expect("artifact should be written");
+
+    let output = fixture
+        .command(&[
+            "package",
+            "keygen",
+            "--publisher",
+            "local-publisher",
+            "--key-id",
+            "local-key-1",
+            "--secret-name",
+            "PANDORA_PACKAGE_SIGNING_KEY",
+            "--json",
+        ])
+        .env("PANDORA_MASTER_KEY", "test-master-key-1234")
+        .output()
+        .expect("package keygen should start");
+    assert_success_with_context(&output, "package signing test");
+    let keygen = parse_json(&output);
+    assert_eq!(keygen["private_key_exposed"], false);
+    assert_eq!(keygen["stored"], true);
+    let public_key = keygen["public_key"].as_str().unwrap().to_owned();
+    assert!(!String::from_utf8_lossy(&output.stdout).contains(r#""private_key":"#));
+
+    let output = fixture
+        .command(&[
+            "package",
+            "sign",
+            "--manifest",
+            manifest_path.to_str().unwrap(),
+            "--artifact",
+            artifact_path.to_str().unwrap(),
+            "--secret-name",
+            "PANDORA_PACKAGE_SIGNING_KEY",
+            "--output",
+            signed_path.to_str().unwrap(),
+            "--json",
+        ])
+        .env("PANDORA_MASTER_KEY", "test-master-key-1234")
+        .output()
+        .expect("package sign should start");
+    assert_success(&output);
+    let signed = parse_json(&output);
+    assert_eq!(signed["private_key_exposed"], false);
+    assert_eq!(signed["key_id"], "local-key-1");
+    assert_eq!(signed["public_key"], public_key);
+    assert_eq!(signed["signature_present"], true);
+    let signed_manifest: PackageManifest = serde_json::from_slice(
+        &fs::read(&signed_path).expect("signed manifest should be readable"),
+    )
+    .expect("signed manifest should deserialize");
+    assert_eq!(signed_manifest.trust().level(), TrustLevel::Verified);
+    assert_eq!(
+        signed_manifest.trust().public_key(),
+        Some(public_key.as_str())
+    );
+    assert!(signed_manifest.trust().signature().is_some());
+
+    let output = fixture
+        .command(&[
+            "package",
+            "admit",
+            "--manifest",
+            signed_path.to_str().unwrap(),
+            "--artifact",
+            artifact_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("signed package admission should start");
+    assert_success(&output);
+    assert_eq!(parse_json(&output)["package"]["state"], "installed");
+
+    let output = fixture
+        .command(&["secret", "list", "--json"])
+        .env("PANDORA_MASTER_KEY", "test-master-key-1234")
+        .output()
+        .expect("secret listing should start");
+    assert_success(&output);
+    assert_eq!(parse_json(&output)["values_exposed"], false);
+}
+
+#[test]
 fn package_admission_rejects_invalid_signed_trust_evidence() {
     let fixture = Fixture::new();
     let artifact = b"signed gene artifact\n";

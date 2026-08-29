@@ -731,6 +731,8 @@ pandora skill remove <id> --yes
 pandora skill restore <id>
 pandora package admit --manifest <manifest.json> --artifact <artifact>
 pandora package validate --manifest <manifest.json> --artifact <artifact>
+pandora package keygen --publisher <name> --key-id <id> --secret-name <vault-name>
+pandora package sign --manifest <manifest.json> --artifact <artifact> --secret-name <vault-name> --output <signed-manifest.json> [--yes]
 pandora package install <id> [version] --registry <url>
 pandora package install <id> [version] --registry <url> --token-env <name>
 pandora registry set --name <name> --registry-url <url> [--token-env <name>]
@@ -896,6 +898,8 @@ For a private repository, place the token in `PANDORA_GITHUB_TOKEN` or identify 
 different environment variable with `--token-env`; the token is never accepted as a
 command-line value or included in command output. Admission still grants no runtime
 authority and does not enable the package.
+
+`package keygen` creates a publisher-scoped Ed25519 key inside Pandora's encrypted vault and returns only its public key and stable key ID. `package sign` reads that key inside the local signing boundary, validates the artifact hash, and atomically writes a signed manifest. Private key material is never accepted as a command-line value, returned in output, or written to the manifest. The signed manifest is still unverified until its public key is admitted with `package trust-root add`.
 
 `package trust-root add` configures a publisher's fixed-width Ed25519 public key
 for Official package admission. Add a new key before revoking the old key to

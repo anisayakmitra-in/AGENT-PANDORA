@@ -127,7 +127,9 @@ fn remove(args: &[String]) -> Result<CommandResult, CliError> {
     ))
 }
 
-fn open_vault(config: &pandora_runtime::config::RuntimeConfig) -> Result<SecretVault, CliError> {
+pub(crate) fn open_vault(
+    config: &pandora_runtime::config::RuntimeConfig,
+) -> Result<SecretVault, CliError> {
     let passphrase = std::env::var(MASTER_KEY_ENV).map_err(|_| {
         CliError::configuration(
             "encrypted secrets require PANDORA_MASTER_KEY",
@@ -138,6 +140,6 @@ fn open_vault(config: &pandora_runtime::config::RuntimeConfig) -> Result<SecretV
     SecretVault::open(config.data_dir(), tenant, workspace, passphrase).map_err(vault_error)
 }
 
-fn vault_error(error: pandora_runtime::SecretVaultError) -> CliError {
+pub(crate) fn vault_error(error: pandora_runtime::SecretVaultError) -> CliError {
     CliError::configuration(error.to_string(), json!({}))
 }

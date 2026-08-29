@@ -1220,6 +1220,7 @@ dependencies = [
  "base64",
  "crossterm 0.28.1",
  "ed25519-dalek",
+ "getrandom 0.4.3",
  "pandora-harnesses",
  "pandora-provider",
  "pandora-runtime",

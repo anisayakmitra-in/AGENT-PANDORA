@@ -99,8 +99,9 @@ evidence. The workbench is intentionally preview-only: it does not sign,
 write files, admit records, enable bindings, publish packages, or handle
 private keys. Users may pass the copied manifest through the existing local
 `package admit` command, where the normal runtime validation and artifact hash
-checks remain authoritative. Local signing is still a separate future surface
-and must introduce an explicit key boundary before it is added.
+checks remain authoritative. The separate package keygen and package sign
+commands now provide local signing through an encrypted-vault key boundary;
+they never accept, return, or write private key material.
 
 `package admit` uses one local manifest as both the declared and embedded record.
 Local hexadecimal trust evidence remains supported. `package install` consumes

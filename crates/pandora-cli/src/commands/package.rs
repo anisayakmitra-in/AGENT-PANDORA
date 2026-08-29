@@ -1,5 +1,7 @@
 use super::{load_config, parse_options};
 use crate::output::{CliError, CommandResult, success};
+use atomic_write_file::AtomicWriteFile;
+use ed25519_dalek::{Signer, SigningKey};
 use pandora_harnesses::{builtin_genes, builtin_harnesses, replaceable_builtin_harness_kind};
 use pandora_runtime::config::DEFAULT_REGISTRY_TOKEN_ENV;
 use pandora_runtime::{
@@ -8,22 +10,26 @@ use pandora_runtime::{
     PackageStoreError, WasmExecutor,
 };
 use pandora_types::{ArtifactId, PackageId, PackageKind, PackageManifest, hash_artifact};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use zeroize::Zeroize;
 
 const DEFAULT_GITHUB_TOKEN_ENV: &str = "PANDORA_GITHUB_TOKEN";
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "package requires 'admit', 'validate', 'install', 'install-github', 'list', 'inspect', 'enable', 'disable', 'rollback', 'lock', 'verify-lock', 'trust-root', or 'remove'",
+            "package requires 'admit', 'validate', 'sign', 'keygen', 'install', 'install-github', 'list', 'inspect', 'enable', 'disable', 'rollback', 'lock', 'verify-lock', 'trust-root', or 'remove'",
         )
     })?;
     match subcommand.as_str() {
         "admit" => admit(&args[1..]),
         "validate" => validate(&args[1..]),
+        "sign" => sign(&args[1..]),
+        "keygen" => keygen(&args[1..]),
         "install" => install(&args[1..]),
         "install-github" => install_github(&args[1..]),
         "list" => list(&args[1..]),
@@ -203,6 +209,306 @@ fn install(args: &[String]) -> Result<CommandResult, CliError> {
             record.manifest().version()
         ),
     ))
+}
+
+#[derive(Deserialize, Serialize)]
+struct StoredPackageSigningKey {
+    format_version: u32,
+    publisher: String,
+    key_id: String,
+    public_key: String,
+    private_key: String,
+}
+
+fn keygen(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "publisher",
+            "key-id",
+            "secret-name",
+        ],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "package keygen does not accept positional arguments",
+        ));
+    }
+    let publisher = parsed
+        .value("publisher")
+        .ok_or_else(|| CliError::usage("package keygen requires '--publisher <name>'"))?;
+    let key_id = parsed
+        .value("key-id")
+        .ok_or_else(|| CliError::usage("package keygen requires '--key-id <id>'"))?;
+    let secret_name = parsed
+        .value("secret-name")
+        .ok_or_else(|| CliError::usage("package keygen requires '--secret-name <vault-name>'"))?;
+    let config = load_config(&parsed)?;
+    let mut vault = super::secret::open_vault(&config)?;
+    if vault
+        .get(secret_name)
+        .map_err(super::secret::vault_error)?
+        .is_some()
+    {
+        return Err(CliError::configuration(
+            "the package signing secret already exists",
+            json!({"secret_name": secret_name}),
+        ));
+    }
+
+    let mut private_key = [0_u8; 32];
+    getrandom::fill(&mut private_key).map_err(|_| {
+        CliError::configuration("could not generate a package signing key", json!({}))
+    })?;
+    let signing_key = SigningKey::from_bytes(&private_key);
+    let public_key = encode_hex(&signing_key.verifying_key().to_bytes());
+    let private_key_hex = encode_hex(&private_key);
+    private_key.zeroize();
+    let stored = StoredPackageSigningKey {
+        format_version: 1,
+        publisher: publisher.to_owned(),
+        key_id: key_id.to_owned(),
+        public_key: public_key.clone(),
+        private_key: private_key_hex,
+    };
+    let secret = serde_json::to_string(&stored)
+        .map_err(|_| CliError::internal("could not encode package signing key", json!({})))?;
+    let entry = vault
+        .put(secret_name, secret, super::timestamp().as_unix_seconds())
+        .map_err(super::secret::vault_error)?;
+    Ok(success(
+        "package keygen",
+        json!({
+            "publisher": publisher,
+            "key_id": key_id,
+            "secret_name": entry.name(),
+            "public_key": public_key,
+            "private_key_exposed": false,
+            "stored": true,
+            "vault_path": vault.path(),
+        }),
+        format!(
+            "Generated a local package signing key for {publisher}; private material remains in the encrypted vault"
+        ),
+    ))
+}
+
+fn sign(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "manifest",
+            "artifact",
+            "secret-name",
+            "output",
+            "yes",
+        ],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "package sign does not accept positional arguments",
+        ));
+    }
+    let manifest_path = command_path(&parsed, "manifest", "package sign")?;
+    let artifact_path = command_path(&parsed, "artifact", "package sign")?;
+    let output_path = command_path(&parsed, "output", "package sign")?;
+    if manifest_path == output_path {
+        return Err(CliError::usage(
+            "package sign requires an output path different from the input manifest",
+        ));
+    }
+    if let Ok(metadata) = fs::symlink_metadata(&output_path) {
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(CliError::configuration(
+                "package sign output path is unsafe",
+                json!({"path": output_path}),
+            ));
+        }
+        if parsed.value("yes").is_none() {
+            return Err(CliError::usage(
+                "package sign refuses to overwrite an existing output without '--yes'",
+            ));
+        }
+    }
+
+    let manifest = read_manifest(&manifest_path)?;
+    manifest
+        .validate()
+        .map_err(|error| CliError::usage(format!("package manifest is invalid: {error}")))?;
+    let artifact = read_artifact(&artifact_path)?;
+    let actual_hash = hash_artifact(&artifact);
+    if actual_hash != manifest.content_hash() {
+        return Err(CliError::execution(
+            "package artifact hash does not match its manifest",
+            json!({
+                "expected": manifest.content_hash(),
+                "actual": actual_hash,
+            }),
+        ));
+    }
+    let secret_name = parsed
+        .value("secret-name")
+        .ok_or_else(|| CliError::usage("package sign requires '--secret-name <vault-name>'"))?;
+    let config = load_config(&parsed)?;
+    let vault = super::secret::open_vault(&config)?;
+    let secret = vault
+        .get(secret_name)
+        .map_err(super::secret::vault_error)?
+        .ok_or_else(|| {
+            CliError::configuration(
+                "package signing secret is not configured",
+                json!({"secret_name": secret_name}),
+            )
+        })?;
+    let mut stored: StoredPackageSigningKey =
+        serde_json::from_str(secret.expose()).map_err(|_| {
+            CliError::configuration(
+                "package signing secret has an invalid format",
+                json!({"secret_name": secret_name}),
+            )
+        })?;
+    if stored.format_version != 1
+        || stored.publisher != manifest.publisher()
+        || stored.key_id.trim().is_empty()
+    {
+        stored.private_key.zeroize();
+        return Err(CliError::configuration(
+            "package signing key does not match the manifest publisher",
+            json!({
+                "secret_name": secret_name,
+                "manifest_publisher": manifest.publisher(),
+            }),
+        ));
+    }
+    let mut private_key = match decode_private_key(&stored.private_key) {
+        Ok(key) => key,
+        Err(error) => {
+            stored.private_key.zeroize();
+            return Err(error);
+        }
+    };
+    stored.private_key.zeroize();
+    let signing_key = SigningKey::from_bytes(&private_key);
+    private_key.zeroize();
+    let public_key = encode_hex(&signing_key.verifying_key().to_bytes());
+    if public_key != stored.public_key {
+        return Err(CliError::configuration(
+            "package signing key public identity does not match its stored evidence",
+            json!({"secret_name": secret_name}),
+        ));
+    }
+    let signature = signing_key.sign(manifest.signing_message().as_bytes());
+    let mut signed_value = serde_json::to_value(&manifest)
+        .map_err(|_| CliError::internal("could not encode package manifest", json!({})))?;
+    signed_value["trust"] = json!({
+        "level": "verified",
+        "signature": encode_hex(&signature.to_bytes()),
+        "public_key": public_key,
+    });
+    let signed_manifest: PackageManifest = serde_json::from_value(signed_value).map_err(|_| {
+        CliError::internal("could not rebuild the signed package manifest", json!({}))
+    })?;
+    signed_manifest.validate().map_err(|error| {
+        CliError::internal(
+            format!("signed package manifest is invalid: {error}"),
+            json!({}),
+        )
+    })?;
+    let encoded = serde_json::to_vec_pretty(&signed_manifest).map_err(|_| {
+        CliError::internal("could not serialize signed package manifest", json!({}))
+    })?;
+    let mut file = AtomicWriteFile::open(&output_path).map_err(|error| {
+        CliError::configuration(
+            "could not open signed package manifest output",
+            json!({"path": output_path, "error": error.to_string()}),
+        )
+    })?;
+    file.write_all(&encoded).map_err(|error| {
+        CliError::configuration(
+            "could not write signed package manifest output",
+            json!({"path": output_path, "error": error.to_string()}),
+        )
+    })?;
+    file.commit().map_err(|error| {
+        CliError::configuration(
+            "could not commit signed package manifest output",
+            json!({"path": output_path, "error": error.to_string()}),
+        )
+    })?;
+    Ok(success(
+        "package sign",
+        json!({
+            "manifest": output_path,
+            "package": {
+                "id": signed_manifest.id(),
+                "version": signed_manifest.version(),
+                "publisher": signed_manifest.publisher(),
+                "content_hash": signed_manifest.content_hash(),
+            },
+            "key_id": stored.key_id,
+            "public_key": signed_manifest.trust().public_key(),
+            "signature_present": signed_manifest.trust().signature().is_some(),
+            "private_key_exposed": false,
+            "vault_secret": secret_name,
+        }),
+        format!(
+            "Signed {}@{} into {}",
+            signed_manifest.id(),
+            signed_manifest.version(),
+            output_path.display()
+        ),
+    ))
+}
+
+fn decode_private_key(value: &str) -> Result<[u8; 32], CliError> {
+    if value.len() != 64 {
+        return Err(CliError::configuration(
+            "package signing secret must contain a 32-byte hexadecimal private key",
+            json!({}),
+        ));
+    }
+    let mut decoded = [0_u8; 32];
+    for (index, chunk) in value.as_bytes().chunks_exact(2).enumerate() {
+        let high = hex_digit(chunk[0]).ok_or_else(|| {
+            CliError::configuration(
+                "package signing secret contains invalid hexadecimal",
+                json!({}),
+            )
+        })?;
+        let low = hex_digit(chunk[1]).ok_or_else(|| {
+            CliError::configuration(
+                "package signing secret contains invalid hexadecimal",
+                json!({}),
+            )
+        })?;
+        decoded[index] = (high << 4) | low;
+    }
+    Ok(decoded)
+}
+
+fn hex_digit(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
 }
 
 fn validate(args: &[String]) -> Result<CommandResult, CliError> {
@@ -805,6 +1111,17 @@ fn remove(args: &[String]) -> Result<CommandResult, CliError> {
         }),
         format!("Package {}@{} removed", id.as_str(), version),
     ))
+}
+
+fn command_path(
+    parsed: &super::ParsedArgs,
+    name: &str,
+    command: &str,
+) -> Result<PathBuf, CliError> {
+    parsed
+        .value(name)
+        .map(PathBuf::from)
+        .ok_or_else(|| CliError::usage(format!("{command} requires '--{name} <path>'")))
 }
 
 fn required_path(parsed: &super::ParsedArgs, name: &str) -> Result<PathBuf, CliError> {
