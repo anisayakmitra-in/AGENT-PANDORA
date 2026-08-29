@@ -759,6 +759,8 @@ mod tests {
         JobCommand, JobId, JobRequest, JobWorkerId, PrincipalId, TenantId, Timestamp, WorkspaceId,
     };
     use serde_json::json;
+    use std::sync::{Arc, Barrier};
+    use std::thread;
 
     fn scope() -> (PrincipalId, TenantId, WorkspaceId) {
         (
@@ -850,6 +852,75 @@ mod tests {
             store.inspect(&first_id, &principal, &tenant, &foreign_workspace),
             Err(JobStoreError::JobNotFound)
         ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn concurrent_workers_claim_each_queued_job_once() {
+        let root = crate::test_support::new_temp_dir("pandora-job-queue-pressure").unwrap();
+        let database = root.join("jobs.sqlite3");
+        let store = JobStore::open(&database).unwrap();
+        let (principal, tenant, workspace) = scope();
+        const JOB_COUNT: usize = 64;
+        const WORKER_COUNT: usize = 8;
+        for index in 0..JOB_COUNT {
+            let id = JobId::new(format!("job-load-{index:02}")).unwrap();
+            store
+                .submit(
+                    &id,
+                    &principal,
+                    &tenant,
+                    &workspace,
+                    &request("queue pressure"),
+                    Timestamp::from_unix_seconds(index as u64 + 1),
+                )
+                .unwrap();
+        }
+        drop(store);
+
+        let barrier = Arc::new(Barrier::new(WORKER_COUNT));
+        let workers = (0..WORKER_COUNT)
+            .map(|index| {
+                let database = database.clone();
+                let principal = principal.clone();
+                let tenant = tenant.clone();
+                let workspace = workspace.clone();
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    let store = JobStore::open(database).unwrap();
+                    let worker = worker(&format!("worker-load-{index}"));
+                    barrier.wait();
+                    let mut claimed = Vec::new();
+                    while let Some(job) = store
+                        .claim_next(
+                            &principal,
+                            &tenant,
+                            &workspace,
+                            &worker,
+                            Timestamp::from_unix_seconds(100),
+                        )
+                        .unwrap()
+                    {
+                        claimed.push(job.id().as_str().to_owned());
+                    }
+                    claimed
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut claimed = workers
+            .into_iter()
+            .flat_map(|worker| worker.join().unwrap())
+            .collect::<Vec<_>>();
+        claimed.sort();
+        claimed.dedup();
+
+        assert_eq!(claimed.len(), JOB_COUNT);
+        assert_eq!(
+            claimed,
+            (0..JOB_COUNT)
+                .map(|index| format!("job-load-{index:02}"))
+                .collect::<Vec<_>>()
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

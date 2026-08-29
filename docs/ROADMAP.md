@@ -49,7 +49,9 @@ Next work:
 
 Pandora can execute concurrent local subagents and persist orchestration state.
 Subagent cancellation is now terminally race-safe: once a running cancellation
-request is recorded, a late provider response cannot be stored as success. It
+request is recorded, a late provider response cannot be stored as success.
+The durable queue also has an 8-worker/64-job claim-pressure regression proving
+that each queued job is claimed once across separate SQLite connections. It
 still needs the operating layer that keeps those workers healthy for days, not
 one command invocation.
 
@@ -58,8 +60,9 @@ Next work:
 - extend PID-bound supervision to independently launched worker daemons and restart reaping;
 - add cross-process quiescence and crash recovery evidence around those workers;
 - expand cancellation-race coverage around provider return and worker shutdown;
-- test queue pressure, worker crashes, and multi-repository partial failure
-  across independently restarted workers.
+- extend queue-pressure coverage into sustained soak runs;
+- test worker crashes and multi-repository partial failure across independently
+  restarted workers.
 
 ## Phase 8: finish the modular product surface
 
