@@ -124,5 +124,22 @@ jobs:
         run: npm test
 
       - name: Build desktop bundle
+        if: runner.os != 'Windows'
         working-directory: apps/pandora-desktop
         run: npm run tauri:build
+
+      - name: Build desktop bundle (Windows retry)
+        if: runner.os == 'Windows'
+        working-directory: apps/pandora-desktop
+        shell: pwsh
+        run: |
+          $attempts = 3
+          for ($attempt = 1; $attempt -le $attempts; $attempt++) {
+            npm run tauri:build
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            if ($attempt -lt $attempts) {
+              Write-Host "Tauri bundle attempt $attempt failed; retrying after transient tool download/build failure."
+              Start-Sleep -Seconds (10 * $attempt)
+            }
+          }
+          exit $LASTEXITCODE
