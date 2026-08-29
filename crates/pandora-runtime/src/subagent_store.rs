@@ -897,7 +897,6 @@ impl SubagentStore {
                 action: "finish as a non-terminal outcome",
             });
         }
-        let result_json = bounded_result_json(result)?;
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut current =
@@ -911,6 +910,22 @@ impl SubagentStore {
         if current.worker_id.as_ref() != Some(worker) {
             return Err(SubagentStoreError::JobOwnedByAnotherWorker);
         }
+        // A running cancellation request is cooperative while work is executing, but it
+        // must win the terminalization race once it is durably recorded. This keeps a
+        // late provider response from turning an explicitly cancelled child into success.
+        let (status, result) = if current.cancel_requested_at.is_some() {
+            (
+                SubagentStatus::Cancelled,
+                serde_json::json!({
+                    "code": "agent_controlled_stop",
+                    "status": "cancelled",
+                    "reason": "cancelled",
+                }),
+            )
+        } else {
+            (status, result.clone())
+        };
+        let result_json = bounded_result_json(&result)?;
         let changed_job = transaction.execute(
             "UPDATE jobs SET status = ?1, finished_at = ?2, result_json = ?3
              WHERE id = ?4 AND status = 'running' AND worker_id = ?5 AND job_kind = 'subagent'",
@@ -939,7 +954,7 @@ impl SubagentStore {
         transaction.commit()?;
         current.status = status;
         current.finished_at = Some(now);
-        current.result = Some(result.clone());
+        current.result = Some(result);
         Ok(current)
     }
 
@@ -1704,6 +1719,36 @@ mod tests {
                 .store
                 .is_cancel_requested(&running.id, &running.scope)
                 .unwrap()
+        );
+    }
+
+    #[test]
+    fn a_running_cancellation_wins_a_late_terminalization_race() {
+        let fixture = StoreFixture::running();
+        fixture
+            .store
+            .request_cancel(&fixture.id, &fixture.scope, fixture.now())
+            .unwrap();
+
+        let finished = fixture
+            .store
+            .finish(
+                &fixture.id,
+                &fixture.worker(),
+                SubagentStatus::Completed,
+                &json!({"status":"completed"}),
+                fixture.now(),
+            )
+            .unwrap();
+
+        assert_eq!(finished.status(), SubagentStatus::Cancelled);
+        assert_eq!(
+            finished.result(),
+            Some(&json!({
+                "code": "agent_controlled_stop",
+                "status": "cancelled",
+                "reason": "cancelled",
+            }))
         );
     }
 

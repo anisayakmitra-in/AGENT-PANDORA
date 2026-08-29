@@ -135,8 +135,10 @@ pandora subagent cleanup <subagent-id> --yes
 
 `spawn` materializes the active provider and coding Harness when omitted.
 `cancel` terminalizes queued work or requests cooperative cancellation for a
-running child. Cleanup remains local, requires explicit confirmation, and
-preserves dirty or commit-mismatched worktrees.
+running child. If the request lands after the last checkpoint but before
+terminal storage, the durable store still records cancellation; a late provider
+response cannot overwrite it with success. Cleanup remains local, requires
+explicit confirmation, and preserves dirty or commit-mismatched worktrees.
 
 For the native desktop development build or another local client, start the
 authenticated loopback runtime service:
