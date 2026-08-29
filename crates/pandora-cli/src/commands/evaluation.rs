@@ -3,7 +3,8 @@ use crate::commands::run::evaluation_receipt_json;
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{
     EvaluationEngine, EvaluationScheduleStore, EvaluationSuiteStore, EvaluationTarget,
-    EvaluationTargetKind, GoldenCase, GoldenSetReport, MAX_CLAIM_BATCH, MAX_GOLDEN_CASES,
+    EvaluationTargetKind, GoldenCase, GoldenSetReport, MAX_CLAIM_BATCH, MAX_EVALUATION_TASK_BYTES,
+    MAX_GOLDEN_CASES,
 };
 use pandora_types::{
     EvaluationReceipt, EvaluationRequest, EvaluationStatus, ExecutionId, JobWorkerId, RunLoopId,
@@ -17,8 +18,6 @@ use std::io::Read;
 use std::path::Path;
 
 const MAX_EVALUATION_INPUT_BYTES: u64 = 4 * 1024 * 1024;
-const MAX_EVALUATION_TASK_BYTES: usize = 16 * 1024;
-
 #[derive(Debug, Deserialize)]
 struct GoldenSetInput {
     #[serde(default)]
@@ -50,7 +49,7 @@ struct GoldenCaseInput {
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "evaluation requires 'golden', 'inspect', 'scorecard', 'suite', or 'schedule'",
+            "evaluation requires 'golden', 'inspect', 'scorecard', 'suite', 'regression', or 'schedule'",
         )
     })?;
     match subcommand.as_str() {
@@ -58,6 +57,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "inspect" => inspect(&args[1..]),
         "scorecard" => scorecard(&args[1..]),
         "suite" => suite(&args[1..]),
+        "regression" => regression(&args[1..]),
         "schedule" => schedule(&args[1..]),
         _ => Err(CliError::usage(format!(
             "unknown evaluation command '{subcommand}'"
@@ -80,7 +80,17 @@ fn suite(args: &[String]) -> Result<CommandResult, CliError> {
 }
 
 fn suite_register(args: &[String]) -> Result<CommandResult, CliError> {
-    let parsed = parse_options(args, &["config", "data-dir", "workspace", "id", "input"])?;
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "id",
+            "input",
+            "candidate",
+        ],
+    )?;
     if !parsed.positionals.is_empty() {
         return Err(CliError::usage(
             "evaluation suite register does not accept positional arguments",
@@ -119,10 +129,29 @@ fn suite_register(args: &[String]) -> Result<CommandResult, CliError> {
         },
     );
     let report = EvaluationEngine::new()
-        .evaluate_golden_set(cases)
+        .evaluate_golden_set(cases.clone())
         .map_err(|error| CliError::usage(format!("invalid evaluation suite: {error:?}")))?;
     let config = schedule_config(&parsed)?;
     let store = suite_store(&config)?;
+    let approved_candidate = if let Some(candidate_id) = parsed.value("candidate") {
+        let candidate = store
+            .require_approved_regression_candidate(candidate_id)
+            .map_err(suite_error)?;
+        let matching_case = cases.iter().any(|case| {
+            case.id() == candidate.case_id()
+                && case.evaluation().execution_id() == candidate.source_execution_id()
+                && case.target() == Some(candidate.target())
+                && case.task() == Some(candidate.task())
+        });
+        if !matching_case {
+            return Err(CliError::usage(
+                "suite input does not contain the reviewed regression candidate case",
+            ));
+        }
+        Some(candidate)
+    } else {
+        None
+    };
     let suite = store
         .register(id, &bytes, crate::commands::timestamp())
         .map_err(suite_error)?;
@@ -134,6 +163,23 @@ fn suite_register(args: &[String]) -> Result<CommandResult, CliError> {
             Value::from(targeted_case_count),
         );
         object.insert("target_kinds".to_owned(), json!(target_kinds));
+        object.insert(
+            "review_gate".to_owned(),
+            Value::String(
+                if approved_candidate.is_some() {
+                    "accepted-regression-candidate"
+                } else {
+                    "not-applicable"
+                }
+                .to_owned(),
+            ),
+        );
+        if let Some(candidate) = approved_candidate {
+            object.insert(
+                "candidate_id".to_owned(),
+                Value::String(candidate.id().to_owned()),
+            );
+        }
     }
     Ok(success(
         "evaluation suite register",
@@ -181,6 +227,177 @@ fn suite_inspect(args: &[String]) -> Result<CommandResult, CliError> {
         "evaluation suite inspect",
         suite_value(&suite),
         format!("Inspected evaluation suite {}", suite.id()),
+    ))
+}
+
+fn regression(args: &[String]) -> Result<CommandResult, CliError> {
+    let subcommand = args.first().ok_or_else(|| {
+        CliError::usage("evaluation regression requires 'propose', 'list', 'inspect', or 'review'")
+    })?;
+    match subcommand.as_str() {
+        "propose" => regression_propose(&args[1..]),
+        "list" => regression_list(&args[1..]),
+        "inspect" => regression_inspect(&args[1..]),
+        "review" => regression_review(&args[1..]),
+        _ => Err(CliError::usage(format!(
+            "unknown evaluation regression command '{subcommand}'"
+        ))),
+    }
+}
+
+fn regression_propose(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "id", "input", "case"],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evaluation regression propose does not accept positional arguments",
+        ));
+    }
+    let candidate_id = required_option(
+        &parsed,
+        "id",
+        "evaluation regression propose requires '--id <id>'",
+    )?;
+    let input = required_option(
+        &parsed,
+        "input",
+        "evaluation regression propose requires '--input <path>'",
+    )?;
+    let case_id = required_option(
+        &parsed,
+        "case",
+        "evaluation regression propose requires '--case <case-id>'",
+    )?;
+    let bytes = read_bounded(Path::new(input))?;
+    let cases = parse_cases(&bytes)?;
+    let report = EvaluationEngine::new()
+        .evaluate_golden_set(cases.clone())
+        .map_err(|error| CliError::usage(format!("invalid golden set: {error:?}")))?;
+    let case = cases
+        .iter()
+        .find(|case| case.id() == case_id)
+        .ok_or_else(|| CliError::usage("requested regression case was not found"))?;
+    let result = report
+        .cases()
+        .iter()
+        .find(|result| result.id() == case_id)
+        .ok_or_else(|| {
+            CliError::execution("regression case evidence was not produced", json!({}))
+        })?;
+    if result.result().passed() {
+        return Err(CliError::usage(
+            "regression candidates can only be generated from a verified failed case",
+        ));
+    }
+    let target = case
+        .target()
+        .cloned()
+        .ok_or_else(|| CliError::usage("regression candidates require a typed target binding"))?;
+    let task = case
+        .task()
+        .ok_or_else(|| CliError::usage("regression candidates require a bounded task label"))?;
+    let failure_digest = hash_artifact(format!("{}:{}", report.digest(), case.id()).as_bytes());
+    let config = schedule_config(&parsed)?;
+    let candidate = suite_store(&config)?
+        .propose_regression_candidate(
+            candidate_id,
+            case.id(),
+            case.evaluation().execution_id().clone(),
+            target,
+            task,
+            failure_digest,
+            crate::commands::timestamp(),
+        )
+        .map_err(suite_error)?;
+    Ok(success(
+        "evaluation regression propose",
+        candidate_value(&candidate),
+        format!("Proposed regression candidate {}", candidate.id()),
+    ))
+}
+
+fn regression_list(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evaluation regression list does not accept positional arguments",
+        ));
+    }
+    let config = schedule_config(&parsed)?;
+    let candidates = suite_store(&config)?
+        .list_regression_candidates()
+        .map_err(suite_error)?;
+    let count = candidates.len();
+    Ok(success(
+        "evaluation regression list",
+        json!({
+            "candidates": candidates.iter().map(candidate_value).collect::<Vec<_>>(),
+            "count": count,
+            "durability": "evaluation-suite-store",
+        }),
+        format!("Listed {count} regression candidate(s)"),
+    ))
+}
+
+fn regression_inspect(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "id"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evaluation regression inspect does not accept positional arguments",
+        ));
+    }
+    let id = required_option(
+        &parsed,
+        "id",
+        "evaluation regression inspect requires '--id <id>'",
+    )?;
+    let config = schedule_config(&parsed)?;
+    let candidate = suite_store(&config)?
+        .inspect_regression_candidate(id)
+        .map_err(suite_error)?;
+    Ok(success(
+        "evaluation regression inspect",
+        candidate_value(&candidate),
+        format!("Inspected regression candidate {}", candidate.id()),
+    ))
+}
+
+fn regression_review(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "id", "decision"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evaluation regression review does not accept positional arguments",
+        ));
+    }
+    let id = required_option(
+        &parsed,
+        "id",
+        "evaluation regression review requires '--id <id>'",
+    )?;
+    let decision = required_option(
+        &parsed,
+        "decision",
+        "evaluation regression review requires '--decision <accept|reject>'",
+    )?;
+    let accepted = match decision {
+        "accept" => true,
+        "reject" => false,
+        _ => {
+            return Err(CliError::usage(
+                "regression review decision must be accept or reject",
+            ));
+        }
+    };
+    let config = schedule_config(&parsed)?;
+    let candidate = suite_store(&config)?
+        .review_regression_candidate(id, accepted, crate::commands::timestamp())
+        .map_err(suite_error)?;
+    Ok(success(
+        "evaluation regression review",
+        candidate_value(&candidate),
+        format!("Reviewed regression candidate {}", candidate.id()),
     ))
 }
 
@@ -551,6 +768,25 @@ fn parse_u64(value: &str, name: &str) -> Result<u64, CliError> {
         .map_err(|_| CliError::usage(format!("{name} must be an unsigned integer")))
 }
 
+fn candidate_value(candidate: &pandora_runtime::RegressionCandidate) -> Value {
+    json!({
+        "id": candidate.id(),
+        "case_id": candidate.case_id(),
+        "source_execution_id": candidate.source_execution_id().as_str(),
+        "target": {
+            "kind": candidate.target().kind().as_str(),
+            "id": candidate.target().id(),
+        },
+        "task": candidate.task(),
+        "failure_digest": candidate.failure_digest(),
+        "created_at": candidate.created_at().as_unix_seconds(),
+        "status": candidate.status().as_str(),
+        "reviewed_at": candidate.reviewed_at().map(|value| value.as_unix_seconds()),
+        "review_required_before_suite": true,
+        "durability": "evaluation-suite-store",
+    })
+}
+
 fn suite_value(suite: &pandora_runtime::EvaluationSuite) -> Value {
     json!({
         "id": suite.id(),
@@ -846,7 +1082,7 @@ fn scheduled_suite_id(bytes: &[u8]) -> Result<String, CliError> {
     Ok(suite_id.trim().to_owned())
 }
 
-fn parse_target(case: &GoldenCaseInput) -> Result<Option<EvaluationTarget>, CliError> {
+fn parse_target(case: &GoldenCaseInput) -> Result<Option<(EvaluationTarget, String)>, CliError> {
     match (&case.target, &case.task) {
         (None, None) => Ok(None),
         (Some(_), None) => Err(CliError::usage(
@@ -876,7 +1112,7 @@ fn parse_target(case: &GoldenCaseInput) -> Result<Option<EvaluationTarget>, CliE
                 }
             };
             EvaluationTarget::new(kind, target.id.clone())
-                .map(Some)
+                .map(|target| Some((target, task.trim().to_owned())))
                 .map_err(|error| CliError::usage(format!("invalid evaluation target: {error:?}")))
         }
     }
@@ -911,11 +1147,14 @@ fn parse_cases(bytes: &[u8]) -> Result<Vec<GoldenCase>, CliError> {
             }
             let golden = GoldenCase::new(case.id, evaluation, case.expected_output)
                 .map_err(|error| CliError::usage(format!("invalid golden case: {error:?}")))?;
-            Ok(if let Some(target) = target {
-                golden.with_target(target)
-            } else {
+            if let Some((target, task)) = target {
                 golden
-            })
+                    .with_target(target)
+                    .with_task(task)
+                    .map_err(|error| CliError::usage(format!("invalid evaluation task: {error:?}")))
+            } else {
+                Ok(golden)
+            }
         })
         .collect()
 }

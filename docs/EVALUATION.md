@@ -44,6 +44,14 @@ Example case:
       "expected_output": "tests passed"
     }
 
+Failure-derived regression candidates are a separate, review-gated artifact.
+The CLI can generate a durable candidate from a failed typed case. It records
+only bounded metadata and a hash of the failure evidence. Candidates start in
+proposed state; an explicit accept decision is required before suite
+registration can use the candidate. Rejected or unreviewed candidates cannot
+cross that boundary. Candidate generation and review do not execute the
+target, call a provider, invoke a tool, or approve an artifact.
+
 This is a regression primitive, not a benchmark claim. A passing golden set
 does not establish safety, general capability, citation quality, or production
 readiness without separate policy, adversarial, holdout, and human evaluation.

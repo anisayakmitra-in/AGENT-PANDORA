@@ -91,8 +91,9 @@ pub use efficiency_store::{EfficiencyStore, EfficiencyStoreError};
 pub use evaluation_engine::{
     EvaluationEngine, EvaluationError, EvaluationTarget, EvaluationTargetKind, GoldenCase,
     GoldenCaseResult, GoldenSetReport, HoldoutCase, HoldoutCaseResult, HoldoutSetReport,
-    MAX_GOLDEN_CASE_ID_BYTES, MAX_GOLDEN_CASES, MAX_GOLDEN_EXPECTED_OUTPUT_BYTES,
-    MAX_HOLDOUT_CASE_ID_BYTES, MAX_HOLDOUT_CASES, MAX_HOLDOUT_OUTPUT_BYTES,
+    MAX_EVALUATION_TARGET_ID_BYTES, MAX_EVALUATION_TASK_BYTES, MAX_GOLDEN_CASE_ID_BYTES,
+    MAX_GOLDEN_CASES, MAX_GOLDEN_EXPECTED_OUTPUT_BYTES, MAX_HOLDOUT_CASE_ID_BYTES,
+    MAX_HOLDOUT_CASES, MAX_HOLDOUT_OUTPUT_BYTES,
 };
 pub use evaluation_schedule::{
     EvaluationSchedule, EvaluationScheduleError, EvaluationScheduleRun,
@@ -101,7 +102,8 @@ pub use evaluation_schedule::{
 };
 pub use evaluation_suite::{
     EvaluationSuite, EvaluationSuiteError, EvaluationSuiteStore, MAX_EVALUATION_DEFINITION_BYTES,
-    MAX_EVALUATION_SUITE_ID_BYTES, MAX_EVALUATION_SUITES,
+    MAX_EVALUATION_SUITE_ID_BYTES, MAX_EVALUATION_SUITES, MAX_REGRESSION_CANDIDATE_ID_BYTES,
+    MAX_REGRESSION_CANDIDATES, RegressionCandidate, RegressionCandidateStatus,
 };
 pub use evolution::{EvolutionEngine, EvolutionError, EvolutionRecord};
 pub use execution_controller::{

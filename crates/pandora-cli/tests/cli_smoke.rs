@@ -3702,6 +3702,91 @@ fn evaluation_suite_registry_drives_a_durable_scheduled_run() {
 }
 
 #[test]
+fn evaluation_regression_candidates_require_review_before_suite_registration() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let input = fixture.root.join("failed-regression.json");
+    fs::write(
+        &input,
+        r#"{"suite_id":"reviewed-regression","cases":[{"id":"workflow-smoke","target":{"kind":"workflow","id":"workflow-1"},"task":"run the bounded workflow case","execution_id":"exec-workflow-smoke","output":"wrong","expected_output":"done"}]}"#,
+    )
+    .expect("regression input should be written");
+
+    let proposed = fixture
+        .command(&[
+            "evaluation",
+            "regression",
+            "propose",
+            "--id",
+            "candidate-1",
+            "--input",
+            input.to_str().unwrap(),
+            "--case",
+            "workflow-smoke",
+            "--json",
+        ])
+        .output()
+        .expect("candidate proposal should start");
+    assert_success(&proposed);
+    let proposed = parse_json(&proposed);
+    assert_eq!(proposed["status"], "proposed");
+    assert_eq!(proposed["review_required_before_suite"], true);
+
+    let blocked = fixture
+        .command(&[
+            "evaluation",
+            "suite",
+            "register",
+            "--id",
+            "reviewed-regression",
+            "--input",
+            input.to_str().unwrap(),
+            "--candidate",
+            "candidate-1",
+            "--json",
+        ])
+        .output()
+        .expect("blocked registration should start");
+    assert!(!blocked.status.success());
+
+    let reviewed = fixture
+        .command(&[
+            "evaluation",
+            "regression",
+            "review",
+            "--id",
+            "candidate-1",
+            "--decision",
+            "accept",
+            "--json",
+        ])
+        .output()
+        .expect("candidate review should start");
+    assert_success(&reviewed);
+    assert_eq!(parse_json(&reviewed)["status"], "accepted");
+
+    let registered = fixture
+        .command(&[
+            "evaluation",
+            "suite",
+            "register",
+            "--id",
+            "reviewed-regression",
+            "--input",
+            input.to_str().unwrap(),
+            "--candidate",
+            "candidate-1",
+            "--json",
+        ])
+        .output()
+        .expect("reviewed registration should start");
+    assert_success(&registered);
+    let registered = parse_json(&registered);
+    assert_eq!(registered["review_gate"], "accepted-regression-candidate");
+    assert_eq!(registered["candidate_id"], "candidate-1");
+}
+
+#[test]
 fn evaluation_scorecard_aggregates_persisted_results_without_rerunning() {
     let fixture = Fixture::new();
     fixture.setup();

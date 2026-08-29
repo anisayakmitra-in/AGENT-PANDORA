@@ -451,6 +451,10 @@ pandora evaluation golden --input golden.json --fail-on-failure
 pandora evaluation suite register --id golden-default --input golden.json
 pandora evaluation suite list --json
 pandora evaluation suite inspect --id golden-default --json
+pandora evaluation regression propose --id candidate-1 --input failed.json --case workflow-smoke --json
+pandora evaluation regression list --json
+pandora evaluation regression inspect --id candidate-1 --json
+pandora evaluation regression review --id candidate-1 --decision accept --json
 ```
 
 The command accepts at most 256 cases and a 4 MiB input file. It emits a
@@ -461,6 +465,21 @@ executed or sent to a provider. `evaluation suite register` stores a validated,
 local suite definition by its exact `suite_id`; registration rejects empty or
 duplicate suites, reports `targeted_case_count` and `target_kinds`, and does not
 execute tools or providers. `--fail-on-failure` returns a non-zero command result for CI when any case fails.
+
+Evaluation regression candidates are generated only from a verified failed
+case in a typed target-backed input. The candidate is stored as proposed and
+must be explicitly reviewed before it can be used to register a suite:
+
+    pandora evaluation regression propose --id candidate-1 --input failed.json --case workflow-smoke
+    pandora evaluation regression list --json
+    pandora evaluation regression inspect --id candidate-1 --json
+    pandora evaluation regression review --id candidate-1 --decision accept --json
+    pandora evaluation suite register --id reviewed-suite --input failed.json --candidate candidate-1 --json
+
+A candidate binds the source execution, case ID, target identity, bounded task
+label, and a hash of the failure evidence. Rejected or still-proposed
+candidates fail closed at suite registration. Candidate creation and review
+never execute a provider, tool, workflow, Skill, or Gene.
 
 `evolution evaluate` runs the same deterministic evaluator against a bounded
 holdout JSON file and records the evidence on one existing evolution proposal.
@@ -793,6 +812,7 @@ run or subagent path and then submit a repository-bound role receipt.
 
 pandora strategies list
 pandora evaluation golden --input <path> [--fail-on-failure]
+pandora evaluation regression propose --id <id> --input <path> --case <case-id> | list | inspect --id <id> | review --id <id> --decision <accept|reject>
 pandora evaluation inspect --session <id> [--execution <id>]
 pandora evaluation scorecard --session <id>
 pandora evaluation schedule create --id <id> --name <name> --suite <id> --interval-seconds <seconds> | list | disable --id <id> | claim --worker <id> [--limit <1-16>] | run --id <id> --worker <id> [--input <path>] [--fail-on-failure]

@@ -8,6 +8,7 @@ pub const MAX_GOLDEN_CASES: usize = 256;
 pub const MAX_GOLDEN_CASE_ID_BYTES: usize = 256;
 pub const MAX_GOLDEN_EXPECTED_OUTPUT_BYTES: usize = 64 * 1024;
 pub const MAX_EVALUATION_TARGET_ID_BYTES: usize = 256;
+pub const MAX_EVALUATION_TASK_BYTES: usize = 16 * 1024;
 pub const MAX_HOLDOUT_CASES: usize = 256;
 pub const MAX_HOLDOUT_CASE_ID_BYTES: usize = 256;
 pub const MAX_HOLDOUT_OUTPUT_BYTES: usize = 64 * 1024;
@@ -21,6 +22,9 @@ pub enum EvaluationError {
     EmptyTargetId,
     TargetIdTooLong,
     TargetIdControlCharacter,
+    EmptyTask,
+    TaskTooLong,
+    TaskControlCharacter,
     TooManyGoldenCases,
     DuplicateGoldenCase,
     EmptyHoldoutSet,
@@ -88,6 +92,7 @@ pub struct GoldenCase {
     evaluation: EvaluationRequest,
     expected_output: String,
     target: Option<EvaluationTarget>,
+    task: Option<String>,
 }
 
 impl GoldenCase {
@@ -112,6 +117,7 @@ impl GoldenCase {
             evaluation,
             expected_output,
             target: None,
+            task: None,
         })
     }
 
@@ -130,6 +136,25 @@ impl GoldenCase {
 
     pub fn target(&self) -> Option<&EvaluationTarget> {
         self.target.as_ref()
+    }
+
+    pub fn with_task(mut self, task: impl Into<String>) -> Result<Self, EvaluationError> {
+        let task = task.into();
+        if task.trim().is_empty() {
+            return Err(EvaluationError::EmptyTask);
+        }
+        if task.len() > MAX_EVALUATION_TASK_BYTES {
+            return Err(EvaluationError::TaskTooLong);
+        }
+        if task.chars().any(char::is_control) {
+            return Err(EvaluationError::TaskControlCharacter);
+        }
+        self.task = Some(task.trim().to_owned());
+        Ok(self)
+    }
+
+    pub fn task(&self) -> Option<&str> {
+        self.task.as_deref()
     }
 }
 
@@ -187,6 +212,7 @@ pub struct GoldenCaseResult {
     id: String,
     result: EvaluationResult,
     target: Option<EvaluationTarget>,
+    task: Option<String>,
 }
 
 impl GoldenCaseResult {
@@ -500,6 +526,7 @@ impl EvaluationEngine {
                 id: case.id.clone(),
                 result: self.evaluate_outcome(&case.evaluation, &case.expected_output),
                 target: case.target.clone(),
+                task: case.task.clone(),
             })
             .collect::<Vec<_>>();
         let passed = results.iter().filter(|case| case.result.passed()).count();
@@ -613,6 +640,11 @@ fn golden_set_digest(cases: &[GoldenCaseResult]) -> String {
             digest_text(&mut hasher, target.id());
         } else {
             digest_text(&mut hasher, "legacy");
+        }
+        if let Some(task) = &case.task {
+            digest_text(&mut hasher, task);
+        } else {
+            digest_text(&mut hasher, "no-task");
         }
         digest_text(&mut hasher, case.result.kind().as_str());
         digest_text(&mut hasher, case.result.status().as_str());
@@ -807,6 +839,12 @@ mod tests {
         assert_eq!(
             EvaluationTarget::new(EvaluationTargetKind::Skill, "skill\n-1"),
             Err(EvaluationError::TargetIdControlCharacter)
+        );
+        assert_eq!(
+            GoldenCase::new("case-a", input("done"), "done")
+                .unwrap()
+                .with_task("  "),
+            Err(EvaluationError::EmptyTask)
         );
     }
 
