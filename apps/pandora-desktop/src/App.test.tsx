@@ -1224,6 +1224,43 @@ describe("Pandora desktop run state", () => {
     ));
   });
 
+  it("previews Domain auto-route overlap without changing lifecycle state", async () => {
+    const domainPackage = (id: string, hints: string[]) => ({
+      id,
+      version: "1.0.0",
+      kind: "domain_harness",
+      publisher: "example",
+      content_hash: `sha256:${id.replace(/[^a-z]/g, "").padEnd(64, "0")}`,
+      dependencies: [],
+      compatibility: "pandora>=0.1.0",
+      license: "MIT",
+      trust: { level: "verified", has_signature: true, has_public_key: true },
+      meta_composition: null,
+      domain_routing: { hints, auto_route: true },
+      replaces_builtin: false,
+      state: "admitted",
+      runtime_authority: false,
+      activation: { state: "disabled", active_version: null, previous_version: null, generation: 0, runtime_authority: false },
+    });
+    runtime.listLocalPackages.mockResolvedValue({
+      message: "2 local package(s) available.",
+      restartRequired: false,
+      data: { packages: [domainPackage("image-domain", ["image generation", "text to image"]), domainPackage("video-domain", ["text to image", "video generation"])] },
+    });
+
+    runtime.capabilities.mockResolvedValue([{ id: "image-domain", version: "1.0.0", name: "Image Domain", kind: "domain", gene_count: 0, runnable: true, gene_ids: [] }]);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Harness Lab" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "packages" }));
+
+    expect(await screen.findByRole("heading", { name: "Signed package manager" })).toBeInTheDocument();
+    expect(await screen.findByLabelText("Auto route preview")).toHaveTextContent("review overlap");
+    expect(screen.getByLabelText("Auto route preview")).toHaveTextContent("text to image");
+    expect(screen.getByLabelText("Auto route preview")).toHaveTextContent("video-domain@1.0.0");
+    expect(screen.getByLabelText("Auto route preview")).toHaveTextContent("fails closed on an ambiguous tie");
+    expect(runtime.previewPackageEnable).not.toHaveBeenCalled();
+  });
+
   it("clears a registry token when package installation fails", async () => {
     runtime.capabilities.mockResolvedValue([{
       id: "coding-domain",

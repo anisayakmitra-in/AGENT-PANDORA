@@ -1685,6 +1685,18 @@ function PackageManager({ native }: { native: boolean }) {
   const selectedPackage = packages.find((item) => `${item.id}@${item.version}` === selectedIdentity) ?? packages[0] ?? null;
   const selectedRegistryProfile = registryProfiles.find((profile) => profile.name === registryProfile) ?? null;
 
+  const routePreview = useMemo(() => {
+    if (!selectedPackage || selectedPackage.kind !== "domain_harness") return null;
+    const hints = selectedPackage.domain_routing?.hints ?? [];
+    return hints.map((hint) => ({
+      hint,
+      matches: packages
+        .filter((item) => item.id !== selectedPackage.id && item.kind === "domain_harness")
+        .filter((item) => item.domain_routing?.hints.some((candidate) => candidate.trim().toLowerCase() === hint.trim().toLowerCase()))
+        .map((item) => `${item.id}@${item.version}`),
+    }));
+  }, [packages, selectedPackage]);
+
   useEffect(() => {
     setRemoveTarget(null);
     setRemoveConfirmation("");
@@ -1925,7 +1937,7 @@ function PackageManager({ native }: { native: boolean }) {
             <div><span>Built-in replacement</span><strong>{selectedPackage.replaces_builtin ? "optional catalog target" : "no"}</strong></div>
             <div><span>Runtime authority</span><strong className="authority-denied">{selectedPackage.runtime_authority || selectedPackage.activation.runtime_authority ? "unexpected" : "none"}</strong></div>
           </div>
-          {selectedPackage.kind === "domain_harness" ? <div className="package-boundary"><Icon name="council" size={14} /><span>{selectedPackage.domain_routing ? "Declared route hints affect Shadow Council selection only; a verified package signature binds their exact values. They cannot select a Gene, approve an effect, or add capabilities." : "This Domain has no route contract. Auto Route ignores it until the user selects it explicitly."}</span></div> : null}
+          {selectedPackage.kind === "domain_harness" ? <div className="package-route-preview" aria-label="Auto route preview"><div className="package-route-preview-heading"><div><span className="eyebrow">AUTO ROUTE PREVIEW</span><strong>Shadow Council route claims</strong></div><Chip tone={routePreview?.some((route) => route.matches.length) ? "gold" : "green"}>{routePreview?.some((route) => route.matches.length) ? "review overlap" : "no overlap"}</Chip></div>{routePreview?.length ? <div className="package-route-claims">{routePreview.map((route) => <div key={route.hint}><span className="mono">{route.hint}</span>{route.matches.length ? <><Chip tone="gold">{route.matches.length} competing claim{route.matches.length === 1 ? "" : "s"}</Chip><small>{route.matches.join(", ")}</small></> : <small>No other local Domain claims this exact hint.</small>}</div>)}</div> : <p>This Domain declares no auto-route hints. It remains explicit-selection only.</p>}<p className="package-route-note">Preview only: enabling does not change routing. At run time, Shadow Council compares admitted claims and fails closed on an ambiguous tie; Parliament and ReferenceMonitor remain unchanged.</p></div> : null}\n          {selectedPackage.kind === "domain_harness" ? <div className="package-boundary"><Icon name="council" size={14} /><span>{selectedPackage.domain_routing ? "Declared route hints affect Shadow Council selection only; a verified package signature binds their exact values. They cannot select a Gene, approve an effect, or add capabilities." : "This Domain has no route contract. Auto Route ignores it until the user selects it explicitly."}</span></div> : null}
           <div className="package-lifecycle-actions">
             <button className="button button-primary" type="button" disabled={Boolean(busy)} onClick={() => void previewLifecycle(selectedPackage, selectedPackage.activation.state === "enabled" ? "disable" : "enable")}>{busy === "preview-enable" || busy === "preview-disable" ? "Checking…" : selectedPackage.activation.state === "enabled" ? "Preview disable" : selectedPackage.activation.active_version ? "Preview update" : "Preview enable"}</button>
             {selectedPackage.activation.previous_version ? <button className="button button-secondary" type="button" disabled={Boolean(busy)} onClick={() => void previewLifecycle(selectedPackage, "rollback")}>{busy === "preview-rollback" ? "Checking…" : "Preview rollback"}</button> : null}
