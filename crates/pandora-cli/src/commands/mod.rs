@@ -356,6 +356,7 @@ commands:
   orchestration roles|submit|claim|complete|list|inspect|cancel|mark-interrupted|resume
   strategies list | population list --state <path> | population inspect --state <path> --id <id>
   evaluation golden --input <path> [--fail-on-failure]
+  evaluation suite register --id <id> --input <path> | list | inspect --id <id>
   evaluation inspect --session <id> [--execution <id>]
   evaluation scorecard --session <id> [--fail-on-non-passed]
   evaluation schedule create --id <id> --name <name> --suite <id> --interval-seconds <seconds> | list | disable --id <id> | claim --worker <id> [--limit <1-16>] | run --id <id> --worker <id> --input <path> [--fail-on-failure]
@@ -525,6 +526,7 @@ mod tests {
         assert!(usage.contains("job submit|work|list|inspect|cancel|mark-interrupted"));
         assert!(usage.contains("work accepts --max-jobs <1-64>"));
         assert!(usage.contains("evaluation golden --input <path> [--fail-on-failure]"));
+        assert!(usage.contains("evaluation suite register --id <id> --input <path>"));
         assert!(usage.contains("evaluation schedule create --id <id>"));
         assert!(usage.contains("run --id <id> --worker <id> --input <path>"));
         assert!(usage.contains("strategies list | population list --state <path>"));

@@ -68,6 +68,7 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora evolution canary --input <path> --json` | `evolution canary` | `proposal_id`, `state`, `passed`, `failure_count`, `durability` |
 | `pandora evolution activate --id <proposal-id> --json` | `evolution activate` | `proposal_id`, `state`, `base_artifact`, `candidate_artifact`, `activated_at`, `activation_scope`, `runtime_authority_changed`, `durability` |
 | `pandora evolution rollback --id <proposal-id> --reason <text> --json` | `evolution rollback` | `proposal_id`, `state`, `restored_artifact`, `rolled_back_at`, `reason`, `durability` |
+| `pandora evaluation suite ... --json` | `evaluation suite` | register/inspect: `id`, `digest`, `definition_bytes`, `created_at`, `durability`; list: `suites`, `count`, `durability` |
 | `pandora evaluation inspect --session <id> --json` | `evaluation inspect` | `session_id`, `execution_id`, `count`, `result_counts`, `receipts`, `durability` |
 | `pandora evaluation scorecard --session <id> [--fail-on-non-passed] --json` | `evaluation scorecard` | `session_id`, `receipt_count`, `result_count`, `result_counts`, `score_sum`, `average_score`, `pass_rate_percent`, `by_kind`, `digest`, `durability`; with the gate, non-passed results return the same data under an execution error |
 | `pandora evaluation schedule ... --json` | `evaluation schedule` | schedule list: `schedules`, `count`, `durability`; schedule claim: `runs`, `count`, `worker`, `durability`; schedule run: `run`, `report`, `completed`, `passed`, `durability` |

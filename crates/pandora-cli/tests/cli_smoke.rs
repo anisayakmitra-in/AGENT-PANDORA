@@ -3615,6 +3615,91 @@ fn evaluation_inspect_returns_persisted_receipts_and_supports_execution_filter()
 }
 
 #[test]
+fn evaluation_suite_registry_drives_a_durable_scheduled_run() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let input = fixture.root.join("golden-suite.json");
+    fs::write(
+        &input,
+        r#"{"suite_id":"nightly-suite","cases":[{"id":"case-a","execution_id":"exec-a","output":"done","expected_output":"done"}]}"#,
+    )
+    .expect("suite input should be written");
+
+    let registered = fixture
+        .command(&[
+            "evaluation",
+            "suite",
+            "register",
+            "--id",
+            "nightly-suite",
+            "--input",
+            input.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("suite registration should start");
+    assert_success(&registered);
+    let registered = parse_json(&registered);
+    assert_eq!(registered["command"], "evaluation suite register");
+    assert_eq!(registered["id"], "nightly-suite");
+    assert_eq!(registered["case_count"], 1);
+
+    let scheduled = fixture
+        .command(&[
+            "evaluation",
+            "schedule",
+            "create",
+            "--id",
+            "nightly",
+            "--name",
+            "Nightly",
+            "--suite",
+            "nightly-suite",
+            "--interval-seconds",
+            "60",
+            "--json",
+        ])
+        .output()
+        .expect("schedule creation should start");
+    assert_success(&scheduled);
+
+    let run = fixture
+        .command(&[
+            "evaluation",
+            "schedule",
+            "run",
+            "--id",
+            "nightly",
+            "--worker",
+            "local-evaluator",
+            "--json",
+        ])
+        .output()
+        .expect("scheduled run should start");
+    assert_success(&run);
+    let run = parse_json(&run);
+    assert_eq!(run["command"], "evaluation schedule run");
+    assert_eq!(run["passed"], true);
+    assert_eq!(run["run"]["status"], "completed");
+    assert_eq!(run["report"]["passed"], 1);
+
+    let second = fixture
+        .command(&[
+            "evaluation",
+            "schedule",
+            "run",
+            "--id",
+            "nightly",
+            "--worker",
+            "local-evaluator",
+            "--json",
+        ])
+        .output()
+        .expect("second scheduled run should start");
+    assert_eq!(second.status.code(), Some(50));
+}
+
+#[test]
 fn evaluation_scorecard_aggregates_persisted_results_without_rerunning() {
     let fixture = Fixture::new();
     fixture.setup();

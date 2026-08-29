@@ -15,6 +15,7 @@ pub mod efficiency_engine;
 pub mod efficiency_store;
 pub mod evaluation_engine;
 pub mod evaluation_schedule;
+pub mod evaluation_suite;
 pub mod evolution;
 pub mod execution_controller;
 mod execution_profile;
@@ -97,6 +98,10 @@ pub use evaluation_schedule::{
     EvaluationSchedule, EvaluationScheduleError, EvaluationScheduleRun,
     EvaluationScheduleRunStatus, EvaluationScheduleStore, MAX_CLAIM_BATCH,
     MAX_EVALUATION_SUITE_BYTES, MAX_SCHEDULES, SCHEDULE_LEASE_SECONDS,
+};
+pub use evaluation_suite::{
+    EvaluationSuite, EvaluationSuiteError, EvaluationSuiteStore, MAX_EVALUATION_DEFINITION_BYTES,
+    MAX_EVALUATION_SUITE_ID_BYTES, MAX_EVALUATION_SUITES,
 };
 pub use evolution::{EvolutionEngine, EvolutionError, EvolutionRecord};
 pub use execution_controller::{

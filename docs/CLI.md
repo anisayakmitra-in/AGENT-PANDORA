@@ -435,10 +435,15 @@ call providers, or grant permissions.
 ```text
 pandora evaluation golden --input golden.json --json
 pandora evaluation golden --input golden.json --fail-on-failure
+pandora evaluation suite register --id golden-default --input golden.json
+pandora evaluation suite list --json
+pandora evaluation suite inspect --id golden-default --json
 ```
 
 The command accepts at most 256 cases and a 4 MiB input file. It emits a
-stable report digest and per-case outcome results. `--fail-on-failure` returns
+stable report digest and per-case outcome results. `evaluation suite register`
+stores a validated, local suite definition by its exact `suite_id`; registration
+rejects empty or duplicate suites and does not execute tools or providers. `--fail-on-failure` returns
 a non-zero command result for CI when any case fails.
 
 `evolution evaluate` runs the same deterministic evaluator against a bounded
@@ -579,6 +584,7 @@ pandora evaluation schedule create --id nightly --name "Nightly checks" --suite 
 pandora evaluation schedule list --json
 pandora evaluation schedule disable --id nightly --json
 pandora evaluation schedule claim --worker local-evaluator --limit 4 --json
+pandora evaluation schedule run --id nightly --worker local-evaluator --json
 pandora evaluation schedule run --id nightly --worker local-evaluator --input golden.json --json
 
 `rollout inspect` reads the redacted rollout summary persisted with a CLI
@@ -768,7 +774,7 @@ pandora strategies list
 pandora evaluation golden --input <path> [--fail-on-failure]
 pandora evaluation inspect --session <id> [--execution <id>]
 pandora evaluation scorecard --session <id>
-pandora evaluation schedule create --id <id> --name <name> --suite <id> --interval-seconds <seconds> | list | disable --id <id> | claim --worker <id> [--limit <1-16>] | run --id <id> --worker <id> --input <path> [--fail-on-failure]
+pandora evaluation schedule create --id <id> --name <name> --suite <id> --interval-seconds <seconds> | list | disable --id <id> | claim --worker <id> [--limit <1-16>] | run --id <id> --worker <id> [--input <path>] [--fail-on-failure]
 pandora evolution generate --session <id> [--provider <name>] [--model <id>] --kind prompt|skill|workflow|wasm_gene --target-id <id> --base <path> --output <path>
 pandora evolution list [--limit <1-256>]
 pandora evolution inspect --id <proposal-id>

@@ -77,7 +77,7 @@ fn powershell() -> &'static str {
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'efficiency') {
         'rank'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'evaluation') {
-        'golden','inspect','scorecard','schedule'
+        'golden','inspect','scorecard','suite','schedule'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'graph') {
         'code','knowledge','review','architecture'
     } elseif ($elements.Count -gt 2 -and $elements[1] -eq "fleet" -and $elements[2] -eq "supervisor") {
@@ -146,7 +146,7 @@ fn bash() -> &'static str {
     elif [[ "$previous" == "efficiency" ]]; then
         COMPREPLY=( $(compgen -W 'rank' -- "$current") )
     elif [[ "$previous" == "evaluation" ]]; then
-        COMPREPLY=( $(compgen -W 'golden inspect scorecard schedule' -- "$current") )
+        COMPREPLY=( $(compgen -W 'golden inspect scorecard suite schedule' -- "$current") )
     elif [[ "$previous" == "evolution" ]]; then
         COMPREPLY=( $(compgen -W 'generate list inspect submit evaluate approve stage canary activate rollback' -- "$current") )
     elif [[ "$previous" == "graph" ]]; then
@@ -209,7 +209,7 @@ elif [[ ${words[2]} == strategies ]]; then
 elif [[ ${words[2]} == efficiency ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet completions migrate update uninstall doctor)' '2:efficiency command:(rank)'
 elif [[ ${words[2]} == evaluation ]]; then
-    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet graph completions migrate update uninstall doctor)' '2:evaluation command:(golden inspect scorecard schedule)'
+    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet graph completions migrate update uninstall doctor)' '2:evaluation command:(golden inspect scorecard suite schedule)'
 elif [[ ${words[2]} == evolution ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet graph completions migrate update uninstall doctor)' '2:evolution command:(generate list inspect submit evaluate approve stage canary activate rollback)'
 elif [[ ${words[2]} == graph ]]; then
@@ -249,7 +249,7 @@ complete -c pandora -f -n '__fish_seen_subcommand_from strategies; and __fish_se
 complete -c pandora -f -n '__fish_seen_subcommand_from strategies; and __fish_seen_subcommand_from population; and __fish_seen_subcommand_from inspect' -l state -r
 complete -c pandora -f -n '__fish_seen_subcommand_from strategies; and __fish_seen_subcommand_from population; and __fish_seen_subcommand_from inspect' -l id -r
 complete -c pandora -f -n '__fish_seen_subcommand_from efficiency' -a 'rank'
-complete -c pandora -f -n '__fish_seen_subcommand_from evaluation' -a 'golden inspect scorecard schedule'
+complete -c pandora -f -n '__fish_seen_subcommand_from evaluation' -a 'golden inspect scorecard suite schedule'
 complete -c pandora -f -n '__fish_seen_subcommand_from evolution' -a 'generate list inspect submit evaluate approve stage canary activate rollback'
 complete -c pandora -f -n '__fish_seen_subcommand_from graph' -a 'code knowledge review architecture'
 complete -c pandora -f -n '__fish_seen_subcommand_from fleet; and __fish_seen_subcommand_from supervisor' -a 'list start drain stop recover heartbeat reconcile reap restart'
@@ -286,7 +286,7 @@ mod tests {
             "'list','inspect','resolve'",
             "'list','set','use','test'",
             "'list','inspect','set','remove','catalog','call'",
-            "'golden','inspect','scorecard','schedule'",
+            "'golden','inspect','scorecard','suite','schedule'",
             "'list','inspect','submit','evaluate'",
             "'submit','work','list','inspect','cancel','mark-interrupted'",
             "'spawn','work','list','inspect','cancel','mark-interrupted','cleanup'",

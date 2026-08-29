@@ -2,8 +2,8 @@ use super::{load_config, parse_options, require_config_file, session_scope, sess
 use crate::commands::run::evaluation_receipt_json;
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{
-    EvaluationEngine, EvaluationScheduleStore, GoldenCase, GoldenSetReport, MAX_CLAIM_BATCH,
-    MAX_GOLDEN_CASES,
+    EvaluationEngine, EvaluationScheduleStore, EvaluationSuiteStore, GoldenCase, GoldenSetReport,
+    MAX_CLAIM_BATCH, MAX_GOLDEN_CASES,
 };
 use pandora_types::{
     EvaluationReceipt, EvaluationRequest, EvaluationStatus, ExecutionId, JobWorkerId, RunLoopId,
@@ -38,17 +38,126 @@ struct GoldenCaseInput {
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
-        CliError::usage("evaluation requires 'golden', 'inspect', 'scorecard', or 'schedule'")
+        CliError::usage(
+            "evaluation requires 'golden', 'inspect', 'scorecard', 'suite', or 'schedule'",
+        )
     })?;
     match subcommand.as_str() {
         "golden" => golden(&args[1..]),
         "inspect" => inspect(&args[1..]),
         "scorecard" => scorecard(&args[1..]),
+        "suite" => suite(&args[1..]),
         "schedule" => schedule(&args[1..]),
         _ => Err(CliError::usage(format!(
             "unknown evaluation command '{subcommand}'"
         ))),
     }
+}
+
+fn suite(args: &[String]) -> Result<CommandResult, CliError> {
+    let subcommand = args.first().ok_or_else(|| {
+        CliError::usage("evaluation suite requires 'register', 'list', or 'inspect'")
+    })?;
+    match subcommand.as_str() {
+        "register" => suite_register(&args[1..]),
+        "list" => suite_list(&args[1..]),
+        "inspect" => suite_inspect(&args[1..]),
+        _ => Err(CliError::usage(format!(
+            "unknown evaluation suite command '{subcommand}'"
+        ))),
+    }
+}
+
+fn suite_register(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "id", "input"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evaluation suite register does not accept positional arguments",
+        ));
+    }
+    let id = required_option(
+        &parsed,
+        "id",
+        "evaluation suite register requires '--id <id>'",
+    )?;
+    let input = required_option(
+        &parsed,
+        "input",
+        "evaluation suite register requires '--input <path>'",
+    )?;
+    let bytes = read_bounded(Path::new(input))?;
+    let input_suite_id = scheduled_suite_id(&bytes)?;
+    if input_suite_id != id {
+        return Err(CliError::usage(format!(
+            "suite input ID '{}' does not match '--id {}'",
+            input_suite_id, id
+        )));
+    }
+    let cases = parse_cases(&bytes)?;
+    if cases.is_empty() {
+        return Err(CliError::usage(
+            "evaluation suite must contain at least one case",
+        ));
+    }
+    let report = EvaluationEngine::new()
+        .evaluate_golden_set(cases)
+        .map_err(|error| CliError::usage(format!("invalid evaluation suite: {error:?}")))?;
+    let config = schedule_config(&parsed)?;
+    let store = suite_store(&config)?;
+    let suite = store
+        .register(id, &bytes, crate::commands::timestamp())
+        .map_err(suite_error)?;
+    let mut data = suite_value(&suite);
+    if let Value::Object(object) = &mut data {
+        object.insert("case_count".to_owned(), Value::from(report.total()));
+    }
+    Ok(success(
+        "evaluation suite register",
+        data,
+        format!("Registered evaluation suite {}", suite.id()),
+    ))
+}
+
+fn suite_list(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evaluation suite list does not accept positional arguments",
+        ));
+    }
+    let config = schedule_config(&parsed)?;
+    let suites = suite_store(&config)?.list().map_err(suite_error)?;
+    let count = suites.len();
+    Ok(success(
+        "evaluation suite list",
+        json!({
+            "suites": suites.iter().map(suite_value).collect::<Vec<_>>(),
+            "count": count,
+            "durability": "evaluation-suite-store",
+        }),
+        format!("Listed {count} evaluation suite(s)"),
+    ))
+}
+
+fn suite_inspect(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "id"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evaluation suite inspect does not accept positional arguments",
+        ));
+    }
+    let id = required_option(
+        &parsed,
+        "id",
+        "evaluation suite inspect requires '--id <id>'",
+    )?;
+    let config = schedule_config(&parsed)?;
+    let suite = suite_store(&config)?.inspect(id).map_err(suite_error)?;
+    Ok(success(
+        "evaluation suite inspect",
+        suite_value(&suite),
+        format!("Inspected evaluation suite {}", suite.id()),
+    ))
 }
 
 fn schedule(args: &[String]) -> Result<CommandResult, CliError> {
@@ -252,14 +361,6 @@ fn schedule_run(args: &[String]) -> Result<CommandResult, CliError> {
         .to_owned(),
     )
     .map_err(|_| CliError::usage("worker ID is invalid"))?;
-    let input = required_option(
-        &parsed,
-        "input",
-        "evaluation schedule run requires '--input <path>'",
-    )?;
-    let bytes = read_bounded(Path::new(input))?;
-    let suite_id = scheduled_suite_id(&bytes)?;
-    let cases = parse_cases(&bytes)?;
     let (principal, tenant, workspace) = session_scope();
     let store = schedule_store(&config)?;
     let schedule = store
@@ -276,6 +377,13 @@ fn schedule_run(args: &[String]) -> Result<CommandResult, CliError> {
                 }),
             )
         })?;
+    let suite_store = suite_store(&config)?;
+    let bytes = if let Some(input) = parsed.value("input") {
+        read_bounded(Path::new(input))?
+    } else {
+        suite_store.load(schedule.suite_id()).map_err(suite_error)?
+    };
+    let suite_id = scheduled_suite_id(&bytes)?;
     if schedule.suite_id() != suite_id {
         return Err(CliError::usage(format!(
             "scheduled input suite '{}' does not match schedule suite '{}'",
@@ -283,6 +391,7 @@ fn schedule_run(args: &[String]) -> Result<CommandResult, CliError> {
             schedule.suite_id()
         )));
     }
+    let cases = parse_cases(&bytes)?;
     let mut runs = store
         .claim_due_for(
             &principal,
@@ -378,6 +487,13 @@ fn schedule_config(
     Ok(config)
 }
 
+fn suite_store(
+    config: &pandora_runtime::config::RuntimeConfig,
+) -> Result<EvaluationSuiteStore, CliError> {
+    EvaluationSuiteStore::open(config.data_dir().join("evaluation-suites.sqlite3"))
+        .map_err(suite_error)
+}
+
 fn schedule_store(
     config: &pandora_runtime::config::RuntimeConfig,
 ) -> Result<EvaluationScheduleStore, CliError> {
@@ -409,6 +525,23 @@ fn parse_u64(value: &str, name: &str) -> Result<u64, CliError> {
     value
         .parse::<u64>()
         .map_err(|_| CliError::usage(format!("{name} must be an unsigned integer")))
+}
+
+fn suite_value(suite: &pandora_runtime::EvaluationSuite) -> Value {
+    json!({
+        "id": suite.id(),
+        "digest": suite.digest(),
+        "definition_bytes": suite.definition_bytes(),
+        "created_at": suite.created_at().as_unix_seconds(),
+        "durability": "evaluation-suite-store",
+    })
+}
+
+fn suite_error(error: pandora_runtime::EvaluationSuiteError) -> CliError {
+    CliError::execution(
+        error.to_string(),
+        json!({"durability": "evaluation-suite-store"}),
+    )
 }
 
 fn schedule_value(schedule: &pandora_runtime::EvaluationSchedule) -> Value {
