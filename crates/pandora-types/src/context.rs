@@ -70,6 +70,7 @@ impl ContextTrust {
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ContextOriginKind {
     Runtime,
     Memory,
@@ -923,6 +924,10 @@ mod tests {
         );
         assert!(ContextOriginKind::Mcp.is_external());
         assert!(!ContextOriginKind::Runtime.is_external());
+        let encoded =
+            serde_json::to_value(ContextOrigin::new("pandora-mcp", "server.result").unwrap())
+                .unwrap();
+        assert_eq!(encoded["kind"], "mcp");
     }
 
     #[test]
