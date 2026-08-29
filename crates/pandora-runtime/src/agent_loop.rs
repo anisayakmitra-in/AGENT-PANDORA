@@ -1849,7 +1849,7 @@ mod tests {
         )
         .unwrap();
 
-        let sanitized = quarantine_context_fragments(&[fragment.clone()]).unwrap();
+        let sanitized = quarantine_context_fragments(std::slice::from_ref(&fragment)).unwrap();
         assert_eq!(sanitized.len(), 1);
         let payload: serde_json::Value = serde_json::from_str(sanitized[0].content()).unwrap();
         assert_eq!(payload["kind"], "pandora.context_fragment");
