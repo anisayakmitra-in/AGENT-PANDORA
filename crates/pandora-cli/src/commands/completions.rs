@@ -152,7 +152,7 @@ fn bash() -> &'static str {
     elif [[ "$previous" == "graph" ]]; then
         COMPREPLY=( $(compgen -W 'code knowledge review architecture' -- "$current") )
     elif [[ "$previous" == "supervisor" && "${COMP_WORDS[1]}" == "fleet" ]]; then
-        COMPREPLY=( $(compgen -W 'list start drain stop recover heartbeat reconcile reap' -- "$current") )
+        COMPREPLY=( $(compgen -W 'list start drain stop recover heartbeat reconcile reap restart' -- "$current") )
     elif [[ "$previous" == "fleet" ]]; then
         COMPREPLY=( $(compgen -W 'list register dispatch lease renew release expire supervisor quarantine revoke kill' -- "$current") )
     elif [[ "$previous" == "feedback" ]]; then
@@ -215,7 +215,7 @@ elif [[ ${words[2]} == evolution ]]; then
 elif [[ ${words[2]} == graph ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet graph completions migrate update uninstall doctor)' '2:graph command:(code knowledge review architecture)'
 elif [[ ${words[2]} == fleet && ${words[3]} == supervisor ]]; then
-    _arguments '3:supervisor command:(list start drain stop recover heartbeat reconcile reap)'
+    _arguments '3:supervisor command:(list start drain stop recover heartbeat reconcile reap restart)'
 elif [[ ${words[2]} == fleet ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet completions migrate update uninstall doctor)' '2:fleet command:(list register dispatch lease renew release expire supervisor quarantine revoke kill)'
 elif [[ ${words[2]} == feedback ]]; then
@@ -252,7 +252,7 @@ complete -c pandora -f -n '__fish_seen_subcommand_from efficiency' -a 'rank'
 complete -c pandora -f -n '__fish_seen_subcommand_from evaluation' -a 'golden inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from evolution' -a 'generate list inspect submit evaluate approve stage canary activate rollback'
 complete -c pandora -f -n '__fish_seen_subcommand_from graph' -a 'code knowledge review architecture'
-complete -c pandora -f -n '__fish_seen_subcommand_from fleet; and __fish_seen_subcommand_from supervisor' -a 'list start drain stop recover heartbeat reconcile reap'
+complete -c pandora -f -n '__fish_seen_subcommand_from fleet; and __fish_seen_subcommand_from supervisor' -a 'list start drain stop recover heartbeat reconcile reap restart'
 complete -c pandora -f -n '__fish_seen_subcommand_from fleet' -a 'list register dispatch lease renew release expire supervisor quarantine revoke kill'
 complete -c pandora -f -n '__fish_seen_subcommand_from feedback' -a 'coding'"#
 }
@@ -308,7 +308,7 @@ mod tests {
                 "list inspect set remove",
                 "golden inspect",
                 "list inspect submit evaluate",
-                "list start drain stop recover heartbeat reconcile reap",
+                "list start drain stop recover heartbeat reconcile reap restart",
                 "submit work list inspect cancel mark-interrupted",
                 "spawn work list inspect cancel mark-interrupted cleanup",
                 "list register dispatch lease renew release expire supervisor quarantine revoke kill",

@@ -55,7 +55,7 @@ fn list(args: &[String]) -> Result<CommandResult, CliError> {
 
 fn supervisor(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
-        CliError::usage("fleet supervisor requires 'list', 'start', 'drain', 'stop', 'recover', 'heartbeat', 'reconcile', or 'reap'")
+        CliError::usage("fleet supervisor requires 'list', 'start', 'drain', 'stop', 'recover', 'heartbeat', 'reconcile', 'reap', or 'restart'")
     })?;
     match subcommand.as_str() {
         "list" => supervisor_list(&args[1..]),
@@ -66,6 +66,7 @@ fn supervisor(args: &[String]) -> Result<CommandResult, CliError> {
         "heartbeat" => supervisor_heartbeat(&args[1..]),
         "reconcile" => supervisor_reconcile(&args[1..]),
         "reap" => supervisor_reap(&args[1..]),
+        "restart" => supervisor_restart(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown fleet supervisor command '{unknown}'"
         ))),
@@ -148,6 +149,53 @@ fn supervisor_heartbeat(args: &[String]) -> Result<CommandResult, CliError> {
             "Fleet supervisor {} is {}",
             supervisor.node_id(),
             supervisor.state().as_str()
+        ),
+    ))
+}
+
+fn supervisor_restart(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "now",
+            "stale-after",
+            "process-id",
+            "node",
+        ],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "fleet supervisor restart does not accept positional arguments",
+        ));
+    }
+    let now = parsed.value("now").map_or_else(
+        || Ok(timestamp().as_unix_seconds()),
+        |value| {
+            value
+                .parse()
+                .map_err(|_| CliError::usage("--now must be an unsigned integer"))
+        },
+    )?;
+    let process_id = required(&parsed, "process-id")?
+        .parse::<u32>()
+        .map_err(|_| CliError::usage("--process-id must be an unsigned 32-bit integer"))?;
+    let supervisor = engine(&parsed)?
+        .restart_supervisor_for_process(
+            required(&parsed, "node")?,
+            process_id,
+            now,
+            number(&parsed, "stale-after")?,
+        )
+        .map_err(fleet_error)?;
+    Ok(success(
+        "fleet supervisor restart",
+        json!({"supervisor": supervisor_value(&supervisor)}),
+        format!(
+            "Fleet supervisor {} restarted as generation {}",
+            supervisor.node_id(),
+            supervisor.generation()
         ),
     ))
 }

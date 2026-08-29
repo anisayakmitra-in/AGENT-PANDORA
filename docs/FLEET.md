@@ -36,4 +36,5 @@ Supervisor commands:
   pandora fleet supervisor heartbeat node-a
   pandora fleet supervisor reconcile node-a --stale-after 30
   pandora fleet supervisor reap --stale-after 30
+  pandora fleet supervisor restart --node node-a --process-id 42 --stale-after 30 --stale-after 30
   pandora fleet supervisor list --json

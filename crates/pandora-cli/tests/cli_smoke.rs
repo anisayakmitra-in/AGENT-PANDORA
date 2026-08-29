@@ -1373,6 +1373,48 @@ fn subagent_work_returns_multiple_records_in_id_order() {
 }
 
 #[test]
+fn fleet_supervisor_restart_requires_a_stale_heartbeat() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let fleet = FleetEngine::open(fixture.data.join("fleet.sqlite3")).unwrap();
+    let node = FleetNode::new(
+        "node-restart".to_owned(),
+        "2.0.0-beta.7",
+        "local",
+        vec!["subagent.work".to_owned()],
+        1,
+    )
+    .unwrap();
+    fleet.register_node(&node).unwrap();
+    fleet
+        .start_supervisor_for_process("node-restart", 41, 1)
+        .unwrap();
+
+    let output = fixture
+        .command(&[
+            "fleet",
+            "supervisor",
+            "restart",
+            "--node",
+            "node-restart",
+            "--process-id",
+            "42",
+            "--stale-after",
+            "10",
+            "--now",
+            "20",
+            "--json",
+        ])
+        .output()
+        .expect("fleet supervisor restart should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["supervisor"]["state"], "running");
+    assert_eq!(response["supervisor"]["generation"], 2);
+    assert_eq!(response["supervisor"]["process_id"], 42);
+}
+
+#[test]
 fn fleet_supervisor_reap_is_exposed_as_a_bounded_cli_operation() {
     let fixture = Fixture::new();
     fixture.setup();

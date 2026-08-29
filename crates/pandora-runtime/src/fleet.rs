@@ -299,6 +299,7 @@ pub enum FleetError {
     LeaseExecutionMismatch,
     SupervisorNotFound,
     SupervisorAlreadyRunning,
+    SupervisorNotStale,
     SupervisorNotAcceptingWork(FleetSupervisorState),
     SupervisorProcessMismatch,
     ActiveLeasesPresent,
@@ -342,6 +343,9 @@ impl fmt::Display for FleetError {
             Self::SupervisorNotFound => formatter.write_str("fleet supervisor was not found"),
             Self::SupervisorAlreadyRunning => {
                 formatter.write_str("fleet supervisor is already running")
+            }
+            Self::SupervisorNotStale => {
+                formatter.write_str("fleet supervisor heartbeat is not stale enough to restart")
             }
             Self::SupervisorNotAcceptingWork(state) => {
                 write!(formatter, "fleet supervisor is {}", state.as_str())
@@ -695,6 +699,82 @@ impl FleetEngine {
             })
             .map(|supervisor| self.reconcile_supervisor(&supervisor.node_id, now, stale_after))
             .collect()
+    }
+
+    pub fn restart_supervisor_for_process(
+        &self,
+        node_id: &str,
+        process_id: u32,
+        now: u64,
+        stale_after: u64,
+    ) -> Result<FleetSupervisor, FleetError> {
+        if stale_after == 0 {
+            return Err(FleetError::InvalidSupervisorStaleness);
+        }
+        let node_id = validate_text("node ID", node_id.to_owned(), 256)?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let node_state = transaction
+            .query_row(
+                "SELECT state FROM fleet_nodes WHERE id = ?1",
+                params![node_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or(FleetError::NodeNotFound)?;
+        if decode_node_state(&node_state)? != FleetNodeState::Ready {
+            return Err(FleetError::NodeUnavailable(decode_node_state(&node_state)?));
+        }
+        let current =
+            load_supervisor(&transaction, &node_id)?.ok_or(FleetError::SupervisorNotFound)?;
+        let current = match current.state {
+            FleetSupervisorState::Running => {
+                if now.saturating_sub(current.updated_at) <= stale_after {
+                    return Err(FleetError::SupervisorNotStale);
+                }
+                transaction.execute(
+                    "UPDATE fleet_leases SET state = ?1
+                     WHERE node_id = ?2 AND state = ?3 AND expires_at <= ?4",
+                    params![
+                        FleetLeaseState::Expired.as_str(),
+                        node_id,
+                        FleetLeaseState::Active.as_str(),
+                        to_i64(now)?,
+                    ],
+                )?;
+                FleetSupervisor {
+                    state: FleetSupervisorState::Recovering,
+                    reason: Some("heartbeat_expired".to_owned()),
+                    updated_at: now,
+                    ..current
+                }
+            }
+            FleetSupervisorState::Stopped | FleetSupervisorState::Recovering => current,
+            state => {
+                return Err(FleetError::InvalidSupervisorTransition {
+                    state,
+                    action: "restart",
+                });
+            }
+        };
+        save_supervisor(&transaction, &current)?;
+        if active_lease_count(&transaction, &node_id)? > 0 {
+            return Err(FleetError::ActiveLeasesPresent);
+        }
+        let supervisor = FleetSupervisor {
+            node_id,
+            state: FleetSupervisorState::Running,
+            generation: current
+                .generation
+                .checked_add(1)
+                .ok_or(FleetError::CorruptRecord)?,
+            process_id: Some(process_id),
+            reason: Some("operator_restart".to_owned()),
+            updated_at: now,
+        };
+        save_supervisor(&transaction, &supervisor)?;
+        transaction.commit()?;
+        Ok(supervisor)
     }
 
     pub fn start_supervisor(&self, node_id: &str, now: u64) -> Result<FleetSupervisor, FleetError> {
@@ -1620,6 +1700,39 @@ mod tests {
             2
         );
         assert!(reopened.heartbeat_supervisor("node-a", 53).is_ok());
+    }
+
+    #[test]
+    fn restart_handoff_requires_staleness_and_replaces_the_process_binding() {
+        let fleet = engine("pandora-fleet-restart");
+        fleet.register_node(&node("node-a", &["coding"])).unwrap();
+        fleet.start_supervisor_for_process("node-a", 41, 1).unwrap();
+        fleet
+            .acquire_lease(
+                "lease-a",
+                "node-a",
+                "execution-a",
+                FleetBudget::new(1, 1, 10, 1),
+                1,
+                10,
+            )
+            .unwrap();
+
+        let restarted = fleet
+            .restart_supervisor_for_process("node-a", 42, 20, 10)
+            .unwrap();
+        assert_eq!(restarted.state(), FleetSupervisorState::Running);
+        assert_eq!(restarted.generation(), 2);
+        assert_eq!(restarted.process_id(), Some(42));
+        assert_eq!(restarted.reason(), Some("operator_restart"));
+        assert_eq!(
+            fleet.list_leases().unwrap()[0].state(),
+            FleetLeaseState::Expired
+        );
+        assert!(matches!(
+            fleet.restart_supervisor_for_process("node-a", 43, 21, 10),
+            Err(FleetError::SupervisorNotStale)
+        ));
     }
 
     #[test]
