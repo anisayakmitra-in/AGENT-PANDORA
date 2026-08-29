@@ -1119,6 +1119,94 @@ mod tests {
     }
 
     #[test]
+    fn partial_multi_repository_failure_preserves_receipts_and_requires_reconciliation() {
+        let fixture = Fixture::new();
+        let run_id = fixture.submit("run-partial", 10);
+        fixture.claim(20);
+        fixture
+            .store
+            .start_ready(
+                &run_id,
+                &fixture.principal,
+                &fixture.tenant,
+                &fixture.coordinator_workspace,
+                &fixture.worker,
+                Timestamp::from_unix_seconds(30),
+            )
+            .unwrap();
+
+        let planner_receipt =
+            fixture.receipt(&run_id, "planner", "api", "workspace-api", "commit-api");
+        fixture
+            .store
+            .complete_role(
+                &run_id,
+                &fixture.principal,
+                &fixture.tenant,
+                &fixture.coordinator_workspace,
+                &fixture.worker,
+                &RoleId::new("planner").unwrap(),
+                &planner_receipt,
+                Timestamp::from_unix_seconds(40),
+            )
+            .unwrap();
+        fixture
+            .store
+            .start_ready(
+                &run_id,
+                &fixture.principal,
+                &fixture.tenant,
+                &fixture.coordinator_workspace,
+                &fixture.worker,
+                Timestamp::from_unix_seconds(50),
+            )
+            .unwrap();
+
+        let wrong_maker = fixture.receipt(&run_id, "maker", "api", "workspace-api", "commit-api");
+        assert!(matches!(
+            fixture.store.complete_role(
+                &run_id,
+                &fixture.principal,
+                &fixture.tenant,
+                &fixture.coordinator_workspace,
+                &fixture.worker,
+                &RoleId::new("maker").unwrap(),
+                &wrong_maker,
+                Timestamp::from_unix_seconds(60),
+            ),
+            Err(OrchestrationStoreError::Contract(
+                WorkspaceOrchestrationError::ReceiptRepositoryMismatch(_)
+            ))
+        ));
+
+        let interrupted = fixture
+            .store
+            .mark_interrupted(
+                &run_id,
+                &fixture.principal,
+                &fixture.tenant,
+                &fixture.coordinator_workspace,
+                "maker repository failed after planner completed",
+                Timestamp::from_unix_seconds(70),
+            )
+            .unwrap();
+        assert_eq!(interrupted.status(), OrchestrationRunStatus::Interrupted);
+        assert_eq!(interrupted.role_receipts().len(), 1);
+        assert_eq!(interrupted.snapshot().completed_roles().len(), 1);
+        assert_eq!(interrupted.snapshot().active_roles().len(), 1);
+        assert!(matches!(
+            fixture.store.resume(
+                &run_id,
+                &fixture.principal,
+                &fixture.tenant,
+                &fixture.coordinator_workspace,
+                Timestamp::from_unix_seconds(80),
+            ),
+            Err(OrchestrationStoreError::ActiveRolesRequireReconciliation)
+        ));
+    }
+
+    #[test]
     fn interrupted_runs_resume_only_before_role_execution_is_active() {
         let fixture = Fixture::new();
         let safe_run = fixture.submit("run-safe", 10);

@@ -48,15 +48,18 @@ Next work:
 ## Phase 7: finish worker operations
 
 Pandora can execute concurrent local subagents and persist orchestration state.
-It still needs the operating layer that keeps those workers healthy for days,
-not one command invocation.
+Subagent cancellation is now terminally race-safe: once a running cancellation
+request is recorded, a late provider response cannot be stored as success. It
+still needs the operating layer that keeps those workers healthy for days, not
+one command invocation.
 
 Next work:
 
 - extend PID-bound supervision to independently launched worker daemons and restart reaping;
 - add cross-process quiescence and crash recovery evidence around those workers;
-- test queue pressure, cancellation races, worker crashes, and multi-repository
-  partial failure.
+- expand cancellation-race coverage around provider return and worker shutdown;
+- test queue pressure, worker crashes, and multi-repository partial failure
+  across independently restarted workers.
 
 ## Phase 8: finish the modular product surface
 
@@ -161,7 +164,8 @@ best split into:
 
 - route-conflict preview and package-authoring validation;
 - desktop accessibility and native packaging checks;
-- worker crash, lease expiry, and cancellation race tests;
+- worker crash, daemon restart/reaping, lease expiry, and cancellation race tests;
+- multi-repository partial-failure fixtures and reconciliation evidence;
 - evaluation fixtures and scorecard views;
 - memory provenance and revocation inspection;
 - poisoning corpora, parser fuzz targets, and publisher trust design;
