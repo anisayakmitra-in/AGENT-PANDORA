@@ -1,8 +1,8 @@
 use base64::Engine as _;
 use ed25519_dalek::{Signer, SigningKey};
 use pandora_runtime::{
-    DeviceKeyStore, DeviceProofRequest, EfficiencyStore, FleetEngine, FleetNode, MemoryEngine,
-    SessionStore, SubagentPreparation, SubagentScope, SubagentStore,
+    DeviceKeyStore, DeviceProofRequest, EfficiencyStore, FleetEngine, FleetNode, JobStore,
+    MemoryEngine, SessionStore, SubagentPreparation, SubagentScope, SubagentStore,
 };
 use pandora_types::{
     ContextClassification, DomainRoutingProfile, EffectOutcome, EffectReceipt, ExecutionId,
@@ -2358,6 +2358,108 @@ fn long_lived_job_daemon_finishes_current_queue_and_stops_after_external_drain()
         .into_iter()
         .find(|supervisor| supervisor.node_id() == "job-worker")
         .expect("daemon supervisor should remain inspectable after drain");
+    assert_eq!(supervisor.state().as_str(), "stopped");
+    assert_eq!(supervisor.process_id(), Some(process_id));
+}
+
+#[test]
+fn long_lived_job_daemon_handles_staggered_enqueue_without_duplicate_completion() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let child = fixture
+        .command(&["job", "work", "--daemon", "--json"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("daemon worker should start as an independent process");
+    let fleet = FleetEngine::open(fixture.data.join("fleet.sqlite3")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let process_id = loop {
+        if let Some(supervisor) = fleet
+            .list_supervisors()
+            .unwrap()
+            .into_iter()
+            .find(|supervisor| {
+                supervisor.node_id() == "job-worker" && supervisor.state().as_str() == "running"
+            })
+        {
+            break supervisor
+                .process_id()
+                .expect("daemon worker should bind its PID");
+        }
+        assert!(
+            Instant::now() < deadline,
+            "staggered daemon did not publish a running supervisor"
+        );
+        thread::sleep(Duration::from_millis(25));
+    };
+    assert_ne!(process_id, std::process::id());
+
+    let mut job_ids = Vec::new();
+    for _ in 0..4 {
+        for _ in 0..4 {
+            let submitted = fixture
+                .command(&["job", "submit", "--", "guide", "--json"])
+                .output()
+                .expect("job submission should start");
+            assert_success(&submitted);
+            job_ids.push(
+                parse_json(&submitted)["job_id"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            );
+        }
+        thread::sleep(Duration::from_millis(150));
+    }
+
+    let store = JobStore::open(fixture.data.join("jobs.sqlite3")).unwrap();
+    let principal = PrincipalId::new("local-user").unwrap();
+    let tenant = TenantId::new("local-tenant").unwrap();
+    let workspace = WorkspaceId::new("local-workspace").unwrap();
+    let completion_deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        let jobs = store.list(&principal, &tenant, &workspace).unwrap();
+        if jobs.len() == job_ids.len()
+            && jobs.iter().all(|job| job.status().as_str() == "completed")
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < completion_deadline,
+            "staggered daemon did not complete the full queue"
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    let drained = fixture
+        .command(&["fleet", "supervisor", "drain", "job-worker", "--json"])
+        .output()
+        .expect("daemon drain request should start");
+    assert_success(&drained);
+
+    let output = child
+        .wait_with_output()
+        .expect("staggered daemon should finish after external drain");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["daemon"], true);
+    assert_eq!(response["stop_reason"], "external_drain");
+    assert_eq!(response["processed_count"], job_ids.len());
+    let mut processed_ids = response["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|job| job["job_id"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    processed_ids.sort();
+    job_ids.sort();
+    assert_eq!(processed_ids, job_ids);
+    let supervisor = fleet
+        .list_supervisors()
+        .unwrap()
+        .into_iter()
+        .find(|supervisor| supervisor.node_id() == "job-worker")
+        .expect("staggered daemon supervisor should remain inspectable");
     assert_eq!(supervisor.state().as_str(), "stopped");
     assert_eq!(supervisor.process_id(), Some(process_id));
 }
