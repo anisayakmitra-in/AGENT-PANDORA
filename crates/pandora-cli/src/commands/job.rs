@@ -1,11 +1,171 @@
 use super::{load_config, parse_options, require_config_file, session_scope, timestamp};
 use crate::output::{CliError, CommandResult, success};
-use pandora_runtime::{JobRecord, JobStore, JobStoreError};
+use pandora_runtime::{
+    FleetBudget, FleetEngine, FleetError, FleetNode, JobRecord, JobStore, JobStoreError,
+};
 use pandora_types::{JobCommand, JobId, JobRequest, JobStatus, JobWorkerId};
 use serde_json::{Map, Value, json};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const MAX_DRAIN_JOBS: usize = 64;
+const JOB_WORKER_LEASE_DURATION_SECONDS: u64 = 3_600;
+const JOB_WORKER_HEARTBEAT_SECONDS: u64 = 10;
+const JOB_WORKER_RESTART_STALE_AFTER_SECONDS: u64 = 30;
+static NEXT_JOB_SUPERVISOR_NONCE: AtomicU64 = AtomicU64::new(1);
+
+struct ActiveJobSupervisor {
+    fleet: Arc<FleetEngine>,
+    node_id: String,
+    lease_id: String,
+    execution_id: String,
+}
+
+impl ActiveJobSupervisor {
+    fn heartbeat(&self) -> Result<(), FleetError> {
+        let now = timestamp().as_unix_seconds();
+        self.fleet
+            .heartbeat_supervisor_for_process(&self.node_id, std::process::id(), now)?;
+        self.fleet.renew_lease(
+            &self.lease_id,
+            &self.execution_id,
+            now,
+            JOB_WORKER_LEASE_DURATION_SECONDS,
+        )?;
+        Ok(())
+    }
+
+    fn start_heartbeat(&self) -> JobWorkerHeartbeat {
+        let active = Arc::new(AtomicBool::new(true));
+        let failed = Arc::new(AtomicBool::new(false));
+        let active_for_thread = Arc::clone(&active);
+        let failed_for_thread = Arc::clone(&failed);
+        let fleet = Arc::clone(&self.fleet);
+        let node_id = self.node_id.clone();
+        let lease_id = self.lease_id.clone();
+        let execution_id = self.execution_id.clone();
+        let handle = thread::spawn(move || {
+            while active_for_thread.load(Ordering::Acquire) {
+                thread::sleep(Duration::from_secs(JOB_WORKER_HEARTBEAT_SECONDS));
+                if !active_for_thread.load(Ordering::Acquire) {
+                    break;
+                }
+                let now = timestamp().as_unix_seconds();
+                if fleet
+                    .heartbeat_supervisor_for_process(&node_id, std::process::id(), now)
+                    .and_then(|_| {
+                        fleet.renew_lease(
+                            &lease_id,
+                            &execution_id,
+                            now,
+                            JOB_WORKER_LEASE_DURATION_SECONDS,
+                        )
+                    })
+                    .is_err()
+                {
+                    failed_for_thread.store(true, Ordering::Release);
+                    break;
+                }
+            }
+        });
+        JobWorkerHeartbeat {
+            active,
+            failed,
+            handle: Some(handle),
+        }
+    }
+}
+
+impl Drop for ActiveJobSupervisor {
+    fn drop(&mut self) {
+        let now = timestamp().as_unix_seconds();
+        let _ = self.fleet.release_lease(&self.lease_id);
+        let _ = self.fleet.drain_supervisor(&self.node_id, now);
+        let _ = self.fleet.stop_supervisor(&self.node_id, now);
+    }
+}
+
+struct JobWorkerHeartbeat {
+    active: Arc<AtomicBool>,
+    failed: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl JobWorkerHeartbeat {
+    fn failed(&self) -> bool {
+        self.failed.load(Ordering::Acquire)
+    }
+}
+
+impl Drop for JobWorkerHeartbeat {
+    fn drop(&mut self) {
+        self.active.store(false, Ordering::Release);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn start_job_supervisor(config: &super::RuntimeConfig) -> Result<ActiveJobSupervisor, CliError> {
+    let fleet =
+        Arc::new(FleetEngine::open(config.data_dir().join("fleet.sqlite3")).map_err(fleet_error)?);
+    let process_id = std::process::id();
+    let node_id = "job-worker".to_owned();
+    let now = timestamp().as_unix_seconds();
+    let node = FleetNode::new(
+        node_id.clone(),
+        env!("CARGO_PKG_VERSION"),
+        "local-job-worker",
+        ["job.work".to_owned()],
+        now,
+    )
+    .map_err(fleet_error)?;
+    match fleet.register_node(&node) {
+        Ok(_) | Err(FleetError::NodeAlreadyRegistered) => {}
+        Err(error) => return Err(fleet_error(error)),
+    }
+    match fleet.start_supervisor_for_process(&node_id, process_id, now) {
+        Ok(_) => {}
+        Err(FleetError::SupervisorAlreadyRunning) => {
+            fleet
+                .restart_supervisor_for_process(
+                    &node_id,
+                    process_id,
+                    now,
+                    JOB_WORKER_RESTART_STALE_AFTER_SECONDS,
+                )
+                .map_err(fleet_error)?;
+        }
+        Err(error) => return Err(fleet_error(error)),
+    }
+    let nonce = NEXT_JOB_SUPERVISOR_NONCE.fetch_add(1, Ordering::Relaxed);
+    let lease_id = format!("job-process-lease-{process_id}-{now}-{nonce}");
+    let execution_id = format!("job-process:{process_id}");
+    if let Err(error) = fleet.acquire_lease(
+        lease_id.clone(),
+        node_id.clone(),
+        execution_id.clone(),
+        FleetBudget::new(0, 0, JOB_WORKER_LEASE_DURATION_SECONDS, 0),
+        now,
+        JOB_WORKER_LEASE_DURATION_SECONDS,
+    ) {
+        let _ = fleet.drain_supervisor(&node_id, now);
+        let _ = fleet.stop_supervisor(&node_id, now);
+        return Err(fleet_error(error));
+    }
+    Ok(ActiveJobSupervisor {
+        fleet,
+        node_id,
+        lease_id,
+        execution_id,
+    })
+}
+
+fn fleet_error(error: FleetError) -> CliError {
+    CliError::execution(error.to_string(), json!({}))
+}
 
 struct CompletedJob {
     id: JobId,
@@ -137,31 +297,43 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
     let max_jobs = parse_max_jobs(parsed.value("max-jobs"))?;
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
+    let supervisor = start_job_supervisor(&config)?;
+    let heartbeat = supervisor.start_heartbeat();
+    supervisor.heartbeat().map_err(fleet_error)?;
     let store = JobStore::open(config.data_dir().join("jobs.sqlite3")).map_err(job_store_error)?;
     let (principal, tenant, workspace) = session_scope();
     let worker_id = allocate_worker_id()?;
-    if let Some(max_jobs) = max_jobs {
-        return drain_jobs(
+    let result = if let Some(max_jobs) = max_jobs {
+        drain_jobs(
             &store, &principal, &tenant, &workspace, &worker_id, max_jobs,
-        );
-    }
-    let Some(completed) = execute_one_job(&store, &principal, &tenant, &workspace, &worker_id)?
-    else {
-        return Ok(success(
-            "job work",
-            json!({"job": null, "status": "idle"}),
-            "No queued jobs",
-        ));
+        )
+    } else {
+        match execute_one_job(&store, &principal, &tenant, &workspace, &worker_id)? {
+            Some(completed) => Ok(success(
+                "job work",
+                json!({
+                    "job_id": completed.id,
+                    "status": completed.status.as_str(),
+                    "result": completed.result,
+                }),
+                format!("Completed {}", completed.id),
+            )),
+            None => Ok(success(
+                "job work",
+                json!({"job": null, "status": "idle"}),
+                "No queued jobs",
+            )),
+        }
     };
-    Ok(success(
-        "job work",
-        json!({
-            "job_id": completed.id,
-            "status": completed.status.as_str(),
-            "result": completed.result,
-        }),
-        format!("Completed {}", completed.id),
-    ))
+    let heartbeat_failed = heartbeat.failed();
+    drop(heartbeat);
+    if heartbeat_failed {
+        return Err(CliError::execution(
+            "job worker supervisor heartbeat failed",
+            json!({"code": "worker_supervisor_heartbeat_failed"}),
+        ));
+    }
+    result
 }
 
 fn parse_max_jobs(value: Option<&str>) -> Result<Option<usize>, CliError> {

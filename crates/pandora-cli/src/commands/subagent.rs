@@ -32,6 +32,8 @@ const DEFAULT_MAX_DELEGATION_DEPTH: u8 = 1;
 const DEFAULT_MAX_RESULT_BYTES: usize = 8_192;
 const SUBAGENT_FLEET_WORKER_CLASS: &str = "local-subagent-worker";
 const SUBAGENT_WORKER_LEASE_DURATION_SECONDS: u64 = 3_600;
+const SUBAGENT_WORKER_HEARTBEAT_SECONDS: u64 = 10;
+const SUBAGENT_WORKER_RESTART_STALE_AFTER_SECONDS: u64 = 30;
 
 static NEXT_SUBAGENT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -39,6 +41,7 @@ struct ActiveSubagentSupervisor {
     fleet: Arc<FleetEngine>,
     node_id: String,
     lease_id: String,
+    execution_id: String,
 }
 
 impl Drop for ActiveSubagentSupervisor {
@@ -54,7 +57,7 @@ fn start_subagent_supervisor(config: &RuntimeConfig) -> Result<ActiveSubagentSup
     let fleet =
         Arc::new(FleetEngine::open(config.data_dir().join("fleet.sqlite3")).map_err(fleet_error)?);
     let process_id = std::process::id();
-    let node_id = format!("subagent-process-{process_id}");
+    let node_id = "subagent-worker".to_owned();
     let now = timestamp().as_unix_seconds();
     let node = FleetNode::new(
         node_id.clone(),
@@ -68,14 +71,26 @@ fn start_subagent_supervisor(config: &RuntimeConfig) -> Result<ActiveSubagentSup
         Ok(_) | Err(FleetError::NodeAlreadyRegistered) => {}
         Err(error) => return Err(fleet_error(error)),
     }
-    fleet
-        .start_supervisor_for_process(&node_id, process_id, now)
-        .map_err(fleet_error)?;
+    match fleet.start_supervisor_for_process(&node_id, process_id, now) {
+        Ok(_) => {}
+        Err(FleetError::SupervisorAlreadyRunning) => {
+            fleet
+                .restart_supervisor_for_process(
+                    &node_id,
+                    process_id,
+                    now,
+                    SUBAGENT_WORKER_RESTART_STALE_AFTER_SECONDS,
+                )
+                .map_err(fleet_error)?;
+        }
+        Err(error) => return Err(fleet_error(error)),
+    }
     let lease_id = format!("subagent-process-lease-{process_id}-{now}");
+    let execution_id = format!("subagent-process:{process_id}");
     if let Err(error) = fleet.acquire_lease(
         lease_id.clone(),
         node_id.clone(),
-        format!("subagent-process:{process_id}"),
+        execution_id.clone(),
         FleetBudget::new(0, 0, SUBAGENT_WORKER_LEASE_DURATION_SECONDS, 0),
         now,
         SUBAGENT_WORKER_LEASE_DURATION_SECONDS,
@@ -88,6 +103,7 @@ fn start_subagent_supervisor(config: &RuntimeConfig) -> Result<ActiveSubagentSup
         fleet,
         node_id,
         lease_id,
+        execution_id,
     })
 }
 
@@ -137,18 +153,25 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
     let heartbeat_failed_for_thread = Arc::clone(&heartbeat_failed);
     let heartbeat_fleet = Arc::clone(&supervisor.fleet);
     let heartbeat_node = supervisor.node_id.clone();
+    let heartbeat_lease = supervisor.lease_id.clone();
+    let heartbeat_execution = supervisor.execution_id.clone();
     let heartbeat_thread = thread::spawn(move || {
         while heartbeat.load(Ordering::Acquire) {
-            thread::sleep(Duration::from_secs(10));
+            thread::sleep(Duration::from_secs(SUBAGENT_WORKER_HEARTBEAT_SECONDS));
             if !heartbeat.load(Ordering::Acquire) {
                 break;
             }
+            let now = timestamp().as_unix_seconds();
             if heartbeat_fleet
-                .heartbeat_supervisor_for_process(
-                    &heartbeat_node,
-                    worker_process_id,
-                    timestamp().as_unix_seconds(),
-                )
+                .heartbeat_supervisor_for_process(&heartbeat_node, worker_process_id, now)
+                .and_then(|_| {
+                    heartbeat_fleet.renew_lease(
+                        &heartbeat_lease,
+                        &heartbeat_execution,
+                        now,
+                        SUBAGENT_WORKER_LEASE_DURATION_SECONDS,
+                    )
+                })
                 .is_err()
             {
                 heartbeat_failed_for_thread.store(true, Ordering::Release);

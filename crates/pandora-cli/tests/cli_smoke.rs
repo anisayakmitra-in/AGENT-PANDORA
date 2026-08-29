@@ -2106,6 +2106,23 @@ fn headless_job_worker_executes_the_existing_run_command() {
     let inspected = parse_json(&inspected);
     assert_eq!(inspected["status"], "completed");
     assert_eq!(inspected["result"]["command"], "run");
+
+    let fleet = FleetEngine::open(fixture.data.join("fleet.sqlite3")).unwrap();
+    let supervisor = fleet
+        .list_supervisors()
+        .unwrap()
+        .into_iter()
+        .find(|supervisor| supervisor.node_id() == "job-worker")
+        .expect("headless job worker supervisor should persist");
+    assert_eq!(supervisor.state().as_str(), "stopped");
+    assert!(supervisor.process_id().is_some());
+    assert!(
+        fleet
+            .list_leases()
+            .unwrap()
+            .iter()
+            .all(|lease| lease.state().as_str() != "active")
+    );
 }
 
 #[test]
