@@ -68,7 +68,7 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora evolution approve --input <path> --json` | `evolution approve` | `proposal_id`, `state`, `approver`, `signer`, `durability` |
 | `pandora evolution stage --id <proposal-id> --json` | `evolution stage` | `proposal_id`, `state`, `durability` |
 | `pandora evolution generate --session <id> --kind <kind> --target-id <id> --base <path> --output <path> --json` | `evolution generate` | `proposal_id`, `state`, `kind`, `target_id`, `base_artifact`, `candidate_artifact`, `evidence_digest`, `provider`, `output`, `runtime_authority_changed`, `next_required`, `durability` |
-| `pandora evolution canary --input <path> --json` | `evolution canary` | `proposal_id`, `state`, `passed`, `failure_count`, `durability` |
+| `pandora evolution canary --input <path> --json` | `evolution canary` | `proposal_id`, `state`, `passed`, `failure_count`, `canary_policy_version`, `max_failure_count`, `durability` |
 | `pandora evolution activate --id <proposal-id> --json` | `evolution activate` | `proposal_id`, `state`, `base_artifact`, `candidate_artifact`, `activated_at`, `activation_scope`, `runtime_authority_changed`, `durability` |
 | `pandora evolution rollback --id <proposal-id> --reason <text> --json` | `evolution rollback` | `proposal_id`, `state`, `restored_artifact`, `rolled_back_at`, `reason`, `durability` |
 | `pandora evaluation suite ... --json` | `evaluation suite` | register/inspect: `id`, `digest`, `definition_bytes`, `created_at`, `durability`; register with `--candidate` also returns `candidate_id` and `review_gate`; list: `suites`, `count`, `durability`

@@ -9,10 +9,10 @@ use pandora_provider::{
 };
 use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::{
-    ArtifactCatalog, EvaluationEngine, EvolutionEngine, EvolutionError, EvolutionRecord,
-    ExecutionController, FleetEngine, FleetQuiescenceGuard, HoldoutCase, HoldoutSetReport,
-    MAX_HOLDOUT_CASES, MemoryEngine, PackageStore, ReplacementEngine, ReplacementError,
-    ResearchArtifactError, ResearchArtifactStore,
+    ArtifactCatalog, CANARY_POLICY_VERSION, CanaryPolicy, EvaluationEngine, EvolutionEngine,
+    EvolutionError, EvolutionRecord, ExecutionController, FleetEngine, FleetQuiescenceGuard,
+    HoldoutCase, HoldoutSetReport, MAX_HOLDOUT_CASES, MemoryEngine, PackageStore,
+    ReplacementEngine, ReplacementError, ResearchArtifactError, ResearchArtifactStore,
 };
 use pandora_types::{
     ArtifactId, ArtifactSignature, CanaryResult, Capability, ContextClassification,
@@ -68,7 +68,8 @@ struct ApprovalInput {
 #[derive(Debug, Deserialize)]
 struct CanaryInput {
     proposal_id: String,
-    passed: bool,
+    #[serde(default)]
+    passed: Option<bool>,
     failure_count: u32,
     note: String,
     evaluated_at: Option<u64>,
@@ -364,6 +365,8 @@ fn canary(args: &[String]) -> Result<CommandResult, CliError> {
             "state": if canary.passed() { "canary_passed" } else { "canary_failed" },
             "passed": canary.passed(),
             "failure_count": canary.failure_count(),
+            "canary_policy_version": CANARY_POLICY_VERSION,
+            "max_failure_count": CanaryPolicy::production().max_failure_count(),
             "durability": "sqlite",
         }),
         format!("Recorded canary result for evolution proposal {proposal_id}"),
@@ -1045,14 +1048,18 @@ fn parse_canary(bytes: &[u8]) -> Result<CanaryResult, CliError> {
         .evaluated_at
         .map(Timestamp::from_unix_seconds)
         .unwrap_or_else(timestamp);
-    CanaryResult::new(
-        proposal_id,
-        input.passed,
-        input.failure_count,
-        input.note,
-        evaluated_at,
-    )
-    .map_err(|error| CliError::usage(format!("invalid canary result: {error}")))
+    let policy = CanaryPolicy::production();
+    let canary = policy
+        .evaluate(proposal_id, input.failure_count, input.note, evaluated_at)
+        .map_err(|error| CliError::usage(format!("invalid canary result: {error}")))?;
+    if let Some(declared_passed) = input.passed
+        && declared_passed != canary.passed()
+    {
+        return Err(CliError::usage(
+            "canary passed metadata disagrees with the evidence-derived policy",
+        ));
+    }
+    Ok(canary)
 }
 
 fn parse_holdout_cases(bytes: &[u8]) -> Result<Vec<HoldoutCase>, CliError> {
@@ -1372,6 +1379,11 @@ mod tests {
         assert!(canary.passed());
         assert_eq!(canary.failure_count(), 0);
         assert_eq!(canary.note(), "shadow traffic passed");
+        let error = parse_canary(
+            br#"{"proposal_id":"proposal-1","passed":true,"failure_count":1,"note":"inconsistent"}"#,
+        )
+        .unwrap_err();
+        assert!(error.message.contains("disagrees"));
     }
 
     #[test]

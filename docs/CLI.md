@@ -561,8 +561,12 @@ pandora evolution activate --id proposal-1 --json
 pandora evolution rollback --id proposal-1 --reason "regression observed" --json
 ```
 
-The canary document contains `proposal_id`, `passed`, `failure_count`, `note`,
-and an optional `evaluated_at` Unix timestamp. Activation succeeds only after
+The canary document contains proposal_id, failure_count, note, and an
+optional evaluated_at Unix timestamp. The legacy passed field is optional and,
+when present, must agree with the versioned evidence-derived production policy
+(currently zero failures). The CLI computes the stored pass state from
+failure_count; it never trusts contradictory metadata. The response includes
+the canary policy version and its maximum failure count. Activation succeeds only after
 all production gates pass. Package and WASM Gene candidates require the exact
 base and candidate content hashes to be present in the admitted package store;
 prompt, Skill, and workflow candidates instead require an exact verified record

@@ -71,6 +71,45 @@ impl From<ArtifactCatalogError> for ReplacementError {
     }
 }
 
+pub const CANARY_POLICY_VERSION: u32 = 1;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CanaryPolicy {
+    max_failure_count: u32,
+}
+
+impl CanaryPolicy {
+    pub const fn production() -> Self {
+        Self {
+            max_failure_count: 0,
+        }
+    }
+
+    pub const fn max_failure_count(self) -> u32 {
+        self.max_failure_count
+    }
+
+    pub const fn version(self) -> u32 {
+        CANARY_POLICY_VERSION
+    }
+
+    pub fn evaluate(
+        self,
+        proposal_id: ProposalId,
+        failure_count: u32,
+        note: impl Into<String>,
+        evaluated_at: pandora_types::Timestamp,
+    ) -> Result<CanaryResult, EvolutionContractError> {
+        CanaryResult::new(
+            proposal_id,
+            failure_count <= self.max_failure_count,
+            failure_count,
+            note,
+            evaluated_at,
+        )
+    }
+}
+
 pub struct ReplacementEngine {
     active_executions: Mutex<BTreeSet<ExecutionId>>,
 }
@@ -332,6 +371,33 @@ mod tests {
             TrustEvidence::unsigned(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn canary_policy_derives_pass_state_from_failure_evidence() {
+        let policy = CanaryPolicy::production();
+        let passed = policy
+            .evaluate(
+                ProposalId::new("proposal-1").unwrap(),
+                0,
+                "no failures",
+                Timestamp::from_unix_seconds(1),
+            )
+            .unwrap();
+        let failed = policy
+            .evaluate(
+                ProposalId::new("proposal-1").unwrap(),
+                1,
+                "one failure",
+                Timestamp::from_unix_seconds(2),
+            )
+            .unwrap();
+
+        assert_eq!(policy.version(), CANARY_POLICY_VERSION);
+        assert_eq!(policy.max_failure_count(), 0);
+        assert!(passed.passed());
+        assert!(!failed.passed());
+        assert_eq!(failed.failure_count(), 1);
     }
 
     #[test]

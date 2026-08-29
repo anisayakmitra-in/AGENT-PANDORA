@@ -169,7 +169,7 @@ pub use permit_store::{ConsumedPermit, PermitError, PermitStore};
 pub use recovery_archive::{RecoveryArchive, RecoveryArchiveError, RecoveryBundle, RecoveryEntry};
 pub use reference_monitor::{AuthorizationError, ReferenceMonitor};
 pub use registry_client::{PackageRegistryClient, PackageRegistryError};
-pub use replacement::{ReplacementEngine, ReplacementError};
+pub use replacement::{CANARY_POLICY_VERSION, CanaryPolicy, ReplacementEngine, ReplacementError};
 pub use research_artifact::{
     MAX_RESEARCH_ARTIFACT_BYTES, ResearchArtifactError, ResearchArtifactRecord,
     ResearchArtifactStore, ResearchCandidateRecord,
