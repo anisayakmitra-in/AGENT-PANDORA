@@ -560,6 +560,23 @@ returns an execution error with the same scorecard data.
 pandora evaluation scorecard --session <id> [--fail-on-non-passed] --json
 ```
 
+
+## Scheduled evaluation runs
+
+The evaluation schedule command manages local, durable evaluation definitions.
+A schedule stores a suite identifier and interval, creates at most one
+persisted occurrence per claim tick, and advances only inside a SQLite
+transaction. The claim operation returns worker-owned runs with a five-minute
+lease; an expired lease is returned to the bounded queue. Claiming does not
+execute a suite or bypass policy, permits, or the ReferenceMonitor. The
+evaluator worker must run the suite through the normal governed evaluation path
+and record its result separately.
+
+pandora evaluation schedule create --id nightly --name "Nightly checks" --suite golden-default --interval-seconds 86400
+pandora evaluation schedule list --json
+pandora evaluation schedule disable --id nightly --json
+pandora evaluation schedule claim --worker local-evaluator --limit 4 --json
+
 `rollout inspect` reads the redacted rollout summary persisted with a CLI
 execution. It reports the projection version, record count, context-manifest
 digest, final digest, and recording time. It does not replay effects, expose
@@ -746,6 +763,7 @@ pandora strategies list
 pandora evaluation golden --input <path> [--fail-on-failure]
 pandora evaluation inspect --session <id> [--execution <id>]
 pandora evaluation scorecard --session <id>
+pandora evaluation schedule create --id <id> --name <name> --suite <id> --interval-seconds <seconds> | list | disable --id <id> | claim --worker <id> [--limit <1-16>]
 pandora evolution generate --session <id> [--provider <name>] [--model <id>] --kind prompt|skill|workflow|wasm_gene --target-id <id> --base <path> --output <path>
 pandora evolution list [--limit <1-256>]
 pandora evolution inspect --id <proposal-id>

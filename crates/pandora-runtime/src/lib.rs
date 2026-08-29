@@ -14,6 +14,7 @@ pub mod device_trust;
 pub mod efficiency_engine;
 pub mod efficiency_store;
 pub mod evaluation_engine;
+pub mod evaluation_schedule;
 pub mod evolution;
 pub mod execution_controller;
 mod execution_profile;
@@ -91,6 +92,11 @@ pub use evaluation_engine::{
     HoldoutCaseResult, HoldoutSetReport, MAX_GOLDEN_CASE_ID_BYTES, MAX_GOLDEN_CASES,
     MAX_GOLDEN_EXPECTED_OUTPUT_BYTES, MAX_HOLDOUT_CASE_ID_BYTES, MAX_HOLDOUT_CASES,
     MAX_HOLDOUT_OUTPUT_BYTES,
+};
+pub use evaluation_schedule::{
+    EvaluationSchedule, EvaluationScheduleError, EvaluationScheduleRun,
+    EvaluationScheduleRunStatus, EvaluationScheduleStore, MAX_CLAIM_BATCH, MAX_SCHEDULES,
+    SCHEDULE_LEASE_SECONDS,
 };
 pub use evolution::{EvolutionEngine, EvolutionError, EvolutionRecord};
 pub use execution_controller::{

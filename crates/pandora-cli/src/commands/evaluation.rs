@@ -1,9 +1,13 @@
 use super::{load_config, parse_options, require_config_file, session_scope, session_store};
 use crate::commands::run::evaluation_receipt_json;
 use crate::output::{CliError, CommandResult, success};
-use pandora_runtime::{EvaluationEngine, GoldenCase, GoldenSetReport, MAX_GOLDEN_CASES};
+use pandora_runtime::{
+    EvaluationEngine, EvaluationScheduleStore, GoldenCase, GoldenSetReport, MAX_CLAIM_BATCH,
+    MAX_GOLDEN_CASES,
+};
 use pandora_types::{
-    EvaluationReceipt, EvaluationRequest, EvaluationStatus, ExecutionId, SessionId, hash_artifact,
+    EvaluationReceipt, EvaluationRequest, EvaluationStatus, ExecutionId, JobWorkerId, RunLoopId,
+    SessionId, hash_artifact,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -32,16 +36,239 @@ struct GoldenCaseInput {
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
-        CliError::usage("evaluation requires 'golden', 'inspect', or 'scorecard'")
+        CliError::usage("evaluation requires 'golden', 'inspect', 'scorecard', or 'schedule'")
     })?;
     match subcommand.as_str() {
         "golden" => golden(&args[1..]),
         "inspect" => inspect(&args[1..]),
         "scorecard" => scorecard(&args[1..]),
+        "schedule" => schedule(&args[1..]),
         _ => Err(CliError::usage(format!(
             "unknown evaluation command '{subcommand}'"
         ))),
     }
+}
+
+fn schedule(args: &[String]) -> Result<CommandResult, CliError> {
+    let subcommand = args.first().ok_or_else(|| {
+        CliError::usage("evaluation schedule requires 'create', 'list', 'disable', or 'claim'")
+    })?;
+    match subcommand.as_str() {
+        "create" => schedule_create(&args[1..]),
+        "list" => schedule_list(&args[1..]),
+        "disable" => schedule_disable(&args[1..]),
+        "claim" => schedule_claim(&args[1..]),
+        _ => Err(CliError::usage(format!(
+            "unknown evaluation schedule command '{subcommand}'"
+        ))),
+    }
+}
+
+fn schedule_create(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "id",
+            "name",
+            "suite",
+            "interval-seconds",
+        ],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evaluation schedule create does not accept positional arguments",
+        ));
+    }
+    let config = schedule_config(&parsed)?;
+    let (principal, tenant, workspace) = session_scope();
+    let store = schedule_store(&config)?;
+    if store
+        .list(&principal, &tenant, &workspace)
+        .map_err(schedule_error)?
+        .len()
+        >= pandora_runtime::MAX_SCHEDULES
+    {
+        return Err(CliError::usage(format!(
+            "at most {} evaluation schedules are allowed",
+            pandora_runtime::MAX_SCHEDULES
+        )));
+    }
+    let id = schedule_id(&parsed)?;
+    let name = required_option(
+        &parsed,
+        "name",
+        "evaluation schedule create requires '--name <name>'",
+    )?;
+    let suite = required_option(
+        &parsed,
+        "suite",
+        "evaluation schedule create requires '--suite <id>'",
+    )?;
+    let interval = parse_u64(
+        required_option(
+            &parsed,
+            "interval-seconds",
+            "evaluation schedule create requires '--interval-seconds <seconds>'",
+        )?,
+        "interval-seconds",
+    )?;
+    let schedule = store
+        .create(
+            &id,
+            &principal,
+            &tenant,
+            &workspace,
+            name,
+            suite,
+            interval,
+            crate::commands::timestamp(),
+        )
+        .map_err(schedule_error)?;
+    Ok(success(
+        "evaluation schedule create",
+        schedule_value(&schedule),
+        format!("Created evaluation schedule {}", schedule.id()),
+    ))
+}
+
+fn schedule_list(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evaluation schedule list does not accept positional arguments",
+        ));
+    }
+    let config = schedule_config(&parsed)?;
+    let (principal, tenant, workspace) = session_scope();
+    let schedules = schedule_store(&config)?
+        .list(&principal, &tenant, &workspace)
+        .map_err(schedule_error)?;
+    let count = schedules.len();
+    Ok(success(
+        "evaluation schedule list",
+        json!({"schedules": schedules.iter().map(schedule_value).collect::<Vec<_>>(), "count": count, "durability": "schedule-store"}),
+        format!("Listed {count} evaluation schedule(s)"),
+    ))
+}
+
+fn schedule_disable(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "id"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evaluation schedule disable does not accept positional arguments",
+        ));
+    }
+    let config = schedule_config(&parsed)?;
+    let (principal, tenant, workspace) = session_scope();
+    let id = schedule_id(&parsed)?;
+    schedule_store(&config)?
+        .disable(&id, &principal, &tenant, &workspace)
+        .map_err(schedule_error)?;
+    Ok(success(
+        "evaluation schedule disable",
+        json!({"id": id, "enabled": false, "durability": "schedule-store"}),
+        format!("Disabled evaluation schedule {id}"),
+    ))
+}
+
+fn schedule_claim(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "worker", "limit"],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evaluation schedule claim does not accept positional arguments",
+        ));
+    }
+    let config = schedule_config(&parsed)?;
+    let worker = JobWorkerId::new(
+        required_option(
+            &parsed,
+            "worker",
+            "evaluation schedule claim requires '--worker <id>'",
+        )?
+        .to_owned(),
+    )
+    .map_err(|_| CliError::usage("worker ID is invalid"))?;
+    let limit = parsed
+        .value("limit")
+        .map(|value| parse_u64(value, "limit"))
+        .transpose()?
+        .unwrap_or(MAX_CLAIM_BATCH as u64);
+    let (principal, tenant, workspace) = session_scope();
+    let runs = schedule_store(&config)?
+        .claim_due(
+            &principal,
+            &tenant,
+            &workspace,
+            &worker,
+            crate::commands::timestamp(),
+            limit as usize,
+        )
+        .map_err(schedule_error)?;
+    let count = runs.len();
+    Ok(success(
+        "evaluation schedule claim",
+        json!({"runs": runs.iter().map(schedule_run_value).collect::<Vec<_>>(), "count": count, "worker": worker, "durability": "schedule-store"}),
+        format!("Claimed {count} due evaluation schedule run(s)"),
+    ))
+}
+
+fn schedule_config(
+    parsed: &super::ParsedArgs,
+) -> Result<pandora_runtime::config::RuntimeConfig, CliError> {
+    let config = load_config(parsed)?;
+    require_config_file(&config)?;
+    Ok(config)
+}
+
+fn schedule_store(
+    config: &pandora_runtime::config::RuntimeConfig,
+) -> Result<EvaluationScheduleStore, CliError> {
+    EvaluationScheduleStore::open(config.data_dir().join("evaluation-schedules.sqlite3"))
+        .map_err(schedule_error)
+}
+
+fn schedule_id(parsed: &super::ParsedArgs) -> Result<RunLoopId, CliError> {
+    RunLoopId::new(
+        required_option(
+            parsed,
+            "id",
+            "evaluation schedule command requires '--id <id>'",
+        )?
+        .to_owned(),
+    )
+    .map_err(|_| CliError::usage("schedule ID is invalid"))
+}
+
+fn required_option<'a>(
+    parsed: &'a super::ParsedArgs,
+    name: &str,
+    message: &'static str,
+) -> Result<&'a str, CliError> {
+    parsed.value(name).ok_or_else(|| CliError::usage(message))
+}
+
+fn parse_u64(value: &str, name: &str) -> Result<u64, CliError> {
+    value
+        .parse::<u64>()
+        .map_err(|_| CliError::usage(format!("{name} must be an unsigned integer")))
+}
+
+fn schedule_value(schedule: &pandora_runtime::EvaluationSchedule) -> Value {
+    json!({"id": schedule.id(), "name": schedule.name(), "suite_id": schedule.suite_id(), "interval_seconds": schedule.interval_seconds(), "next_run_at": schedule.next_run_at(), "enabled": schedule.enabled(), "created_at": schedule.created_at(), "last_claimed_at": schedule.last_claimed_at(), "run_count": schedule.run_count(), "scope": {"principal_id": schedule.principal_id(), "tenant_id": schedule.tenant_id(), "workspace_id": schedule.workspace_id()}})
+}
+
+fn schedule_run_value(run: &pandora_runtime::EvaluationScheduleRun) -> Value {
+    json!({"schedule_id": run.schedule_id(), "suite_id": run.suite_id(), "scheduled_for": run.scheduled_for(), "status": run.status().as_str(), "worker_id": run.worker_id(), "claimed_at": run.claimed_at(), "lease_until": run.lease_until(), "finished_at": run.finished_at()})
+}
+
+fn schedule_error(error: pandora_runtime::EvaluationScheduleError) -> CliError {
+    CliError::execution(error.to_string(), json!({"durability": "schedule-store"}))
 }
 
 fn scorecard(args: &[String]) -> Result<CommandResult, CliError> {
