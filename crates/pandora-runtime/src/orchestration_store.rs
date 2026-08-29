@@ -1194,8 +1194,23 @@ mod tests {
         assert_eq!(interrupted.role_receipts().len(), 1);
         assert_eq!(interrupted.snapshot().completed_roles().len(), 1);
         assert_eq!(interrupted.snapshot().active_roles().len(), 1);
+
+        let reopened =
+            OrchestrationStore::open(fixture.root.join("orchestration.sqlite3")).unwrap();
+        let persisted = reopened
+            .inspect(
+                &run_id,
+                &fixture.principal,
+                &fixture.tenant,
+                &fixture.coordinator_workspace,
+            )
+            .unwrap();
+        assert_eq!(persisted.status(), OrchestrationRunStatus::Interrupted);
+        assert_eq!(persisted.role_receipts().len(), 1);
+        assert_eq!(persisted.snapshot().completed_roles().len(), 1);
+        assert_eq!(persisted.snapshot().active_roles().len(), 1);
         assert!(matches!(
-            fixture.store.resume(
+            reopened.resume(
                 &run_id,
                 &fixture.principal,
                 &fixture.tenant,
