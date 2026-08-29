@@ -119,7 +119,10 @@ impl ContextOriginKind {
             Self::Memory
         } else if producer.starts_with("pandora-skill") {
             Self::Skill
-        } else if producer.contains("user-selection") || producer.contains("attachment") {
+        } else if producer.contains("user-selection")
+            || producer.contains("local-selection")
+            || producer.contains("attachment")
+        {
             Self::UserSelection
         } else if producer.contains("handoff") {
             Self::AgentHandoff

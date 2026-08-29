@@ -682,7 +682,11 @@ impl AgentLoop {
                     trusted_harness.as_ref(),
                 )? {
                     ToolExecution::Output(result) => {
-                        messages.push(untrusted_tool_result(call.id(), &result)?);
+                        messages.push(untrusted_tool_result(
+                            call.id(),
+                            Some(call.name()),
+                            &result,
+                        )?);
                         check_control(
                             control,
                             AgentCheckpointKind::AfterEffect,
@@ -861,7 +865,11 @@ impl AgentLoop {
                     trusted_harness.as_ref(),
                 )? {
                     ToolExecution::Output(result) => {
-                        messages.push(untrusted_tool_result(call.id(), &result)?);
+                        messages.push(untrusted_tool_result(
+                            call.id(),
+                            Some(call.name()),
+                            &result,
+                        )?);
                         check_control(
                             control,
                             AgentCheckpointKind::AfterEffect,
@@ -1228,11 +1236,17 @@ fn bounded_text(bytes: &[u8]) -> String {
     text
 }
 
-fn untrusted_tool_result(call_id: &str, output: &str) -> Result<ChatMessage, AgentLoopError> {
+fn untrusted_tool_result(
+    call_id: &str,
+    tool_name: Option<&str>,
+    output: &str,
+) -> Result<ChatMessage, AgentLoopError> {
+    let origin_kind = tool_output_origin_kind(tool_name);
     let payload = if is_instruction_shaped_tool_output(output) {
         serde_json::json!({
             "kind": "pandora.tool_output",
             "source": "tool_output",
+            "origin_kind": origin_kind,
             "trust": "untrusted",
             "status": "quarantined",
             "reason": "instruction-shaped tool output was withheld from context",
@@ -1243,6 +1257,7 @@ fn untrusted_tool_result(call_id: &str, output: &str) -> Result<ChatMessage, Age
         serde_json::json!({
             "kind": "pandora.tool_output",
             "source": "tool_output",
+            "origin_kind": origin_kind,
             "trust": "untrusted",
             "content": output,
         })
@@ -1268,9 +1283,47 @@ fn normalize_tool_history(history: Vec<ChatMessage>) -> Result<Vec<ChatMessage>,
             if is_untrusted_tool_result(message.content()) {
                 return Ok(ChatMessage::tool_result(call_id, message.content())?);
             }
-            untrusted_tool_result(call_id, message.content())
+            untrusted_tool_result(call_id, None, message.content())
         })
         .collect()
+}
+
+fn tool_output_origin_kind(tool_name: Option<&str>) -> &'static str {
+    let Some(tool_name) = tool_name else {
+        return "tool";
+    };
+    let normalized = tool_name.to_ascii_lowercase();
+    if normalized.starts_with("mcp.") || normalized.contains(".mcp.") {
+        "mcp"
+    } else if normalized.starts_with("package.") || normalized.contains("gene") {
+        "package"
+    } else if normalized.contains("handoff") {
+        "agent_handoff"
+    } else if normalized.starts_with("issue.") || normalized.contains(".issue.") {
+        "issue"
+    } else if normalized.starts_with("design.") {
+        "design"
+    } else if normalized == "workspace.read" || normalized.contains("document") {
+        "document"
+    } else if normalized == "workspace.search" || normalized.contains("repository") {
+        "repository"
+    } else {
+        "tool"
+    }
+}
+
+fn is_known_tool_origin_kind(value: &str) -> bool {
+    matches!(
+        value,
+        "tool"
+            | "mcp"
+            | "package"
+            | "repository"
+            | "document"
+            | "issue"
+            | "design"
+            | "agent_handoff"
+    )
 }
 
 fn is_untrusted_tool_result(content: &str) -> bool {
@@ -1282,11 +1335,14 @@ fn is_untrusted_tool_result(content: &str) -> bool {
         && fields
             .get("source")
             .is_none_or(|source| source.as_str() == Some("tool_output"))
-        && ((matches!(fields.len(), 3 | 4)
+        && fields
+            .get("origin_kind")
+            .is_none_or(|origin| origin.as_str().is_some_and(is_known_tool_origin_kind))
+        && ((matches!(fields.len(), 3..=5)
             && fields
                 .get("content")
                 .is_some_and(serde_json::Value::is_string))
-            || (matches!(fields.len(), 6 | 7)
+            || (matches!(fields.len(), 6..=8)
                 && fields.get("status").and_then(serde_json::Value::as_str) == Some("quarantined")
                 && fields
                     .get("reason")
@@ -1330,6 +1386,7 @@ fn quarantine_context_fragments(
             let content = serde_json::to_string(&serde_json::json!({
                 "kind": "pandora.context_fragment",
                 "source": "context_fragment",
+                "origin_kind": fragment.origin().kind().as_str(),
                 "trust": "untrusted",
                 "status": "quarantined",
                 "reason": "instruction-shaped context was withheld from context",
@@ -1815,13 +1872,14 @@ mod tests {
 
     #[test]
     fn ordinary_tool_output_keeps_bounded_untrusted_content() {
-        let message = untrusted_tool_result("call-1", "bounded result").unwrap();
+        let message = untrusted_tool_result("call-1", None, "bounded result").unwrap();
         let payload: serde_json::Value = serde_json::from_str(message.content()).unwrap();
         assert_eq!(
             payload,
             serde_json::json!({
                 "kind": "pandora.tool_output",
                 "source": "tool_output",
+                "origin_kind": "tool",
                 "trust": "untrusted",
                 "content": "bounded result",
             })
@@ -1829,15 +1887,36 @@ mod tests {
     }
 
     #[test]
+    fn adapter_outputs_carry_typed_origin_kinds_without_changing_trust() {
+        for (tool_name, expected_kind) in [
+            ("mcp.local.search", "mcp"),
+            ("package.example_echo.gene", "package"),
+            ("workspace.search", "repository"),
+            ("workspace.read", "document"),
+            ("issue.lookup", "issue"),
+            ("design.tokens", "design"),
+            ("orchestration.handoff", "agent_handoff"),
+            ("workspace.status", "tool"),
+        ] {
+            let message =
+                untrusted_tool_result("call-origin", Some(tool_name), "bounded result").unwrap();
+            let payload: serde_json::Value = serde_json::from_str(message.content()).unwrap();
+            assert_eq!(payload["origin_kind"], expected_kind);
+            assert_eq!(payload["trust"], "untrusted");
+        }
+    }
+
+    #[test]
     fn hostile_tool_output_corpus_is_quarantined_and_benign_control_stays_visible() {
         for (index, output) in INSTRUCTION_SHAPED_TOOL_OUTPUT_CORPUS.iter().enumerate() {
-            let message = untrusted_tool_result(&format!("call-{index}"), output).unwrap();
+            let message = untrusted_tool_result(&format!("call-{index}"), None, output).unwrap();
             let payload: serde_json::Value = serde_json::from_str(message.content()).unwrap();
             assert_eq!(payload["status"], "quarantined", "corpus case {index}");
             assert!(payload.get("content").is_none(), "corpus case {index}");
         }
 
-        let benign = untrusted_tool_result("control", "The build completed successfully.").unwrap();
+        let benign =
+            untrusted_tool_result("control", None, "The build completed successfully.").unwrap();
         let payload: serde_json::Value = serde_json::from_str(benign.content()).unwrap();
         assert_eq!(payload["content"], "The build completed successfully.");
         assert!(payload.get("status").is_none());
@@ -1863,6 +1942,7 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_str(sanitized[0].content()).unwrap();
         assert_eq!(payload["kind"], "pandora.context_fragment");
         assert_eq!(payload["source"], "context_fragment");
+        assert_eq!(payload["origin_kind"], "user_selection");
         assert_eq!(payload["trust"], "untrusted");
         assert_eq!(payload["status"], "quarantined");
         assert_eq!(payload["content_bytes"], fragment.content().len());
@@ -2543,6 +2623,7 @@ mod tests {
             serde_json::json!({
                 "kind": "pandora.tool_output",
                 "source": "tool_output",
+                "origin_kind": "document",
                 "trust": "untrusted",
                 "content": "tool error: invalid arguments: unknown argument 'extra'",
             })
