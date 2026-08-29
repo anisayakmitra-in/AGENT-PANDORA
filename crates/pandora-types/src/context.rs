@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
 
-pub const CONTEXT_PROJECTION_VERSION: u32 = 1;
+pub const CONTEXT_PROJECTION_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub enum ContextClassification {
@@ -69,10 +69,85 @@ impl ContextTrust {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub enum ContextOriginKind {
+    Runtime,
+    Memory,
+    Skill,
+    UserSelection,
+    Tool,
+    Mcp,
+    Package,
+    Repository,
+    Document,
+    Issue,
+    Design,
+    AgentHandoff,
+    #[default]
+    External,
+}
+
+impl ContextOriginKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Runtime => "runtime",
+            Self::Memory => "memory",
+            Self::Skill => "skill",
+            Self::UserSelection => "user_selection",
+            Self::Tool => "tool",
+            Self::Mcp => "mcp",
+            Self::Package => "package",
+            Self::Repository => "repository",
+            Self::Document => "document",
+            Self::Issue => "issue",
+            Self::Design => "design",
+            Self::AgentHandoff => "agent_handoff",
+            Self::External => "external",
+        }
+    }
+
+    pub const fn is_external(self) -> bool {
+        !matches!(self, Self::Runtime | Self::Memory | Self::Skill)
+    }
+
+    fn infer(producer: &str) -> Self {
+        let producer = producer.to_ascii_lowercase();
+        if producer.starts_with("pandora-runtime") {
+            Self::Runtime
+        } else if producer.starts_with("pandora-memory") {
+            Self::Memory
+        } else if producer.starts_with("pandora-skill") {
+            Self::Skill
+        } else if producer.contains("user-selection") || producer.contains("attachment") {
+            Self::UserSelection
+        } else if producer.contains("handoff") {
+            Self::AgentHandoff
+        } else if producer.contains("mcp") {
+            Self::Mcp
+        } else if producer.contains("package") || producer.contains("gene") {
+            Self::Package
+        } else if producer.contains("repository") || producer.contains("repo") {
+            Self::Repository
+        } else if producer.contains("document") || producer.contains("file") {
+            Self::Document
+        } else if producer.contains("issue") {
+            Self::Issue
+        } else if producer.contains("design") {
+            Self::Design
+        } else if producer.contains("tool") {
+            Self::Tool
+        } else {
+            Self::External
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ContextOrigin {
     producer: Option<String>,
     reference: Option<String>,
+    #[serde(default)]
+    kind: ContextOriginKind,
 }
 
 impl ContextOrigin {
@@ -80,9 +155,23 @@ impl ContextOrigin {
         producer: impl Into<String>,
         reference: impl Into<String>,
     ) -> Result<Self, ContextContractError> {
+        let producer = producer.into();
+        Self::new_with_kind(
+            producer.clone(),
+            reference,
+            ContextOriginKind::infer(&producer),
+        )
+    }
+
+    pub fn new_with_kind(
+        producer: impl Into<String>,
+        reference: impl Into<String>,
+        kind: ContextOriginKind,
+    ) -> Result<Self, ContextContractError> {
         Ok(Self {
             producer: Some(validate_origin_text("origin producer", producer.into())?),
             reference: Some(validate_origin_text("origin reference", reference.into())?),
+            kind,
         })
     }
 
@@ -90,6 +179,7 @@ impl ContextOrigin {
         Self {
             producer: None,
             reference: None,
+            kind: ContextOriginKind::External,
         }
     }
 
@@ -99,6 +189,10 @@ impl ContextOrigin {
 
     pub fn reference(&self) -> Option<&str> {
         self.reference.as_deref()
+    }
+
+    pub const fn kind(&self) -> ContextOriginKind {
+        self.kind
     }
 
     pub const fn is_complete(&self) -> bool {
@@ -799,6 +893,36 @@ mod tests {
         assert!(first.origin().is_complete());
         assert_eq!(first.content_digest(), second.content_digest());
         assert!(first.content_digest().starts_with("sha256:"));
+    }
+
+    #[test]
+    fn origin_kind_is_inferred_for_external_sources() {
+        assert_eq!(
+            ContextOrigin::new("pandora-mcp", "server.result")
+                .unwrap()
+                .kind(),
+            ContextOriginKind::Mcp
+        );
+        assert_eq!(
+            ContextOrigin::new("pandora-package", "gene.wasm")
+                .unwrap()
+                .kind(),
+            ContextOriginKind::Package
+        );
+        assert_eq!(
+            ContextOrigin::new("pandora-repository", "issue-42")
+                .unwrap()
+                .kind(),
+            ContextOriginKind::Repository
+        );
+        assert_eq!(
+            ContextOrigin::new("pandora-document", "README.md")
+                .unwrap()
+                .kind(),
+            ContextOriginKind::Document
+        );
+        assert!(ContextOriginKind::Mcp.is_external());
+        assert!(!ContextOriginKind::Runtime.is_external());
     }
 
     #[test]

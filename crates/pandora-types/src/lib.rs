@@ -40,8 +40,8 @@ pub use containment::{
 pub use context::{
     CONTEXT_PROJECTION_VERSION, ContextAssembly, ContextCacheDisposition, ContextCacheKey,
     ContextClassification, ContextContractError, ContextEntry, ContextFragment,
-    ContextFragmentManifest, ContextManifest, ContextOrigin, ContextReceipt, ContextRequest,
-    ContextSource, ContextTrust,
+    ContextFragmentManifest, ContextManifest, ContextOrigin, ContextOriginKind, ContextReceipt,
+    ContextRequest, ContextSource, ContextTrust,
 };
 pub use effect::{
     EffectOutcome, EffectPermit, EffectReceipt, EffectTarget, OperationRequest, RequestError,
