@@ -2418,7 +2418,10 @@ fn long_lived_job_daemon_handles_staggered_enqueue_without_duplicate_completion(
     let principal = PrincipalId::new("local-user").unwrap();
     let tenant = TenantId::new("local-tenant").unwrap();
     let workspace = WorkspaceId::new("local-workspace").unwrap();
-    let completion_deadline = Instant::now() + Duration::from_secs(8);
+    // Windows process startup and SQLite handoff are substantially slower than
+    // the in-process worker path; keep the soak bounded but allow the full
+    // staggered batch to drain on a hosted runner.
+    let completion_deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let jobs = store.list(&principal, &tenant, &workspace).unwrap();
         if jobs.len() == job_ids.len()
