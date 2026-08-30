@@ -1,3 +1,4 @@
+use crate::package_admission::{PackageAdmission, PackageAdmissionBoundary};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use pandora_harnesses::{builtin_genes, builtin_harnesses, replaceable_builtin_harness_kind};
@@ -59,7 +60,10 @@ pub enum HarnessRegistryError {
     InvalidSignatureEncoding,
     InvalidSignature,
     OfficialTrustUnsupported,
-    UnsupportedKind(PackageKind),
+    WrongAdmissionBoundary {
+        kind: PackageKind,
+        required: PackageAdmissionBoundary,
+    },
     MissingDependency {
         id: String,
         version: String,
@@ -118,10 +122,11 @@ impl fmt::Display for HarnessRegistryError {
             Self::OfficialTrustUnsupported => {
                 formatter.write_str("official package trust requires a configured publisher root")
             }
-            Self::UnsupportedKind(kind) => write!(
+            Self::WrongAdmissionBoundary { kind, required } => write!(
                 formatter,
-                "package kind {} is not installable",
-                kind.as_str()
+                "{} packages require the {} admission boundary",
+                kind.as_str(),
+                required.as_str()
             ),
             Self::MissingDependency { id, version } => {
                 write!(
@@ -327,11 +332,12 @@ impl HarnessRegistry {
                 );
             }
         }
-        if !matches!(
-            embedded.kind(),
-            PackageKind::Gene | PackageKind::DomainHarness | PackageKind::MetaHarness
-        ) {
-            return Err(HarnessRegistryError::UnsupportedKind(embedded.kind()));
+        let admission_rule = PackageAdmission::rule_for(embedded.kind());
+        if !admission_rule.allows_harness_registry() {
+            return Err(HarnessRegistryError::WrongAdmissionBoundary {
+                kind: admission_rule.kind(),
+                required: admission_rule.boundary(),
+            });
         }
 
         let key = (
@@ -997,11 +1003,18 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_remote_kinds_fail_closed() {
-        for kind in [
-            PackageKind::SourceHarness,
-            PackageKind::Provider,
-            PackageKind::Skill,
+    fn non_harness_package_kinds_report_their_required_boundary() {
+        for (kind, required) in [
+            (
+                PackageKind::SourceHarness,
+                PackageAdmissionBoundary::ConstitutionalSource,
+            ),
+            (PackageKind::Package, PackageAdmissionBoundary::DataOnly),
+            (
+                PackageKind::Provider,
+                PackageAdmissionBoundary::ProviderConfiguration,
+            ),
+            (PackageKind::Skill, PackageAdmissionBoundary::SkillEngine),
         ] {
             let artifact = b"metadata only";
             let package = manifest("publisher/package", "1.0.0", kind, vec![], artifact);
@@ -1009,7 +1022,7 @@ mod tests {
 
             assert_eq!(
                 registry.install(&package, &package, artifact),
-                Err(HarnessRegistryError::UnsupportedKind(kind))
+                Err(HarnessRegistryError::WrongAdmissionBoundary { kind, required })
             );
             assert!(registry.list().is_empty());
         }

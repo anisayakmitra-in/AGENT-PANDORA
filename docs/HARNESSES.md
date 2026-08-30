@@ -453,8 +453,14 @@ the separate composition-profile admission boundary described below.
 `domain_harness` packages can pass a profile-only admission boundary when they
 declare at least one required dependency that resolves to an available Gene,
 either from the local package store or the built-in catalog.
-Source, Provider, Skill, and generic Package records remain recognized but
-rejected until their lifecycles have their own validation and execution rules.
+Source, Provider, Skill, and generic Package records have explicit, separate
+fail-closed boundaries. `source_harness` requires the immutable
+`constitutional_source` boundary, `provider` requires
+`provider_configuration`, `skill` requires `skill_engine`, and generic
+`package` records are `data_only`. None may enter `HarnessRegistry`; an
+attempt reports the exact boundary required. A package envelope cannot bypass
+Source binding, provider validation, or SkillEngine admission, and every rule
+reports that it grants no runtime authority.
 
 Custom Meta Harness packages may be admitted as composition-only metadata
 profiles. Admission verifies their declared Domain members, exact artifact
