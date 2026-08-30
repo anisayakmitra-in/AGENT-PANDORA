@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  preserveUpgradeDrillBundle,
   upgradeDrillConfiguration,
   writeUpgradeDrillConfiguration,
 } from "./create-upgrade-drill-configs.mjs";
@@ -41,6 +42,24 @@ test("writes each upgrade drill file once", () => {
     }
     assert.throws(
       () => writeUpgradeDrillConfiguration(output, "2.0.0-beta.7", "linux"),
+      /EEXIST/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("preserves each versioned bundle outside a bundler-cleaned directory", () => {
+  const root = mkdtempSync(join(tmpdir(), "pandora-upgrade-preserve-"));
+  const source = join(root, "source");
+  const preserved = join(root, "preserved");
+  try {
+    mkdirSync(source);
+    writeFileSync(join(source, "Pandora_2.0.0_aarch64.dmg"), "predecessor");
+    const destination = preserveUpgradeDrillBundle(source, preserved, "darwin", "2.0.0");
+    assert.equal(readFileSync(destination, "utf8"), "predecessor");
+    assert.throws(
+      () => preserveUpgradeDrillBundle(source, preserved, "darwin", "2.0.0"),
       /EEXIST/,
     );
   } finally {

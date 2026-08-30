@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-import { lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { constants, copyFileSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveBundleRoot } from "./verify-bundle-lifecycle.mjs";
+import { selectVersionedBundle } from "./verify-bundle-upgrade-lifecycle.mjs";
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -51,6 +53,19 @@ export function writeUpgradeDrillConfiguration(outputDirectory, packageVersion, 
   return canonicalOutput;
 }
 
+export function preserveUpgradeDrillBundle(bundleRoot, outputDirectory, platform, version) {
+  const source = selectVersionedBundle(resolve(bundleRoot), platform, version);
+  const output = resolve(outputDirectory);
+  mkdirSync(output, { recursive: true });
+  const metadata = lstatSync(output);
+  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+    throw new Error("preserved upgrade bundle output must be a directory and not a symlink");
+  }
+  const destination = join(realpathSync(output), basename(source));
+  copyFileSync(source, destination, constants.COPYFILE_EXCL);
+  return destination;
+}
+
 function argumentValue(name) {
   const index = process.argv.indexOf(name);
   if (index === -1 || index + 1 >= process.argv.length) throw new Error(`missing ${name}`);
@@ -59,6 +74,22 @@ function argumentValue(name) {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
+    if (process.argv.includes("--preserve")) {
+      const stage = argumentValue("--preserve");
+      if (stage !== "predecessor" && stage !== "current") {
+        throw new Error("--preserve must be predecessor or current");
+      }
+      const manifest = JSON.parse(readFileSync(argumentValue("--manifest"), "utf8"));
+      const version = manifest[`${stage}_version`];
+      const preserved = preserveUpgradeDrillBundle(
+        resolveBundleRoot(),
+        argumentValue("--output-dir"),
+        process.platform,
+        version,
+      );
+      console.log(`preserved ${stage} desktop bundle at ${preserved}`);
+      process.exit(0);
+    }
     const packageJson = JSON.parse(readFileSync(join(desktopRoot, "package.json"), "utf8"));
     const output = writeUpgradeDrillConfiguration(
       argumentValue("--output-dir"),
