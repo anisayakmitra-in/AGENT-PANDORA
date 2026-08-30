@@ -7,6 +7,7 @@ import {
   assertTemporarySandbox,
   applicationBinary,
   createLifecycleSandbox,
+  createMacDiskImageMount,
   packagedSidecarName,
   removeLifecycleSandbox,
   resolveBundleRoot,
@@ -32,6 +33,19 @@ test("accepts and removes only its exact lifecycle sandbox", () => {
     assert.equal(existsSync(sandbox), false);
   } finally {
     if (existsSync(sandbox)) removeLifecycleSandbox(sandbox);
+  }
+});
+
+test("allocates a fresh macOS disk-image mount for every lifecycle stage", () => {
+  const sandbox = createLifecycleSandbox();
+  try {
+    const predecessorMount = createMacDiskImageMount(sandbox);
+    const currentMount = createMacDiskImageMount(sandbox);
+    assert.notEqual(predecessorMount, currentMount);
+    assert.equal(existsSync(predecessorMount), true);
+    assert.equal(existsSync(currentMount), true);
+  } finally {
+    removeLifecycleSandbox(sandbox);
   }
 });
 

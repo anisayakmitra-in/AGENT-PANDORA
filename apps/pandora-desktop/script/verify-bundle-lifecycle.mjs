@@ -59,6 +59,10 @@ export function createLifecycleSandbox() {
   return canonicalSandbox;
 }
 
+export function createMacDiskImageMount(sandbox) {
+  return mkdtempSync(join(sandbox, "mounted-disk-image-"));
+}
+
 export function assertTemporarySandbox(path) {
   const sandbox = resolve(path);
   const temporaryRoot = canonicalTemporaryRoot();
@@ -313,8 +317,7 @@ function copyMacBundle(
 
   const image = selectedDiskImage
     ?? findBundle(bundleRoot, (path) => path.endsWith(".dmg"), "macOS disk image");
-  const mount = join(sandbox, "mounted-disk-image");
-  mkdirSync(mount);
+  const mount = createMacDiskImageMount(sandbox);
   run("hdiutil", ["attach", "-readonly", "-nobrowse", "-quiet", "-mountpoint", mount, image]);
   try {
     const mountedApp = exactlyOne(
