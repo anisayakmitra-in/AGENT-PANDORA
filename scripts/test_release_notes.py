@@ -83,6 +83,33 @@ Older notes.
             '$expected = "pandora " + $env:GITHUB_REF_NAME.Substring(1)', workflow
         )
 
+    def test_release_workflow_verifies_desktop_signing_and_lifecycle_before_staging(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+
+        build = workflow.index("- name: Build desktop bundle")
+        macos_verify = workflow.index(
+            "- name: Verify signed and notarized desktop bundle (macOS)"
+        )
+        windows_sign = workflow.index("- name: Sign desktop bundles (Windows)")
+        lifecycle = workflow.index("- name: Verify desktop bundle lifecycle")
+        stage = workflow.index("- name: Stage desktop artifacts (Unix)")
+
+        self.assertLess(build, macos_verify)
+        self.assertLess(build, windows_sign)
+        self.assertLess(macos_verify, lifecycle)
+        self.assertLess(windows_sign, lifecycle)
+        self.assertLess(lifecycle, stage)
+        self.assertIn("codesign --verify --deep --strict", workflow)
+        self.assertIn("spctl --assess --type execute", workflow)
+        self.assertIn("xcrun stapler validate", workflow)
+        self.assertIn("signtool verify /pa /all /v", workflow)
+        self.assertIn("npm run verify:bundle-lifecycle", workflow)
+        self.assertIn("patchelf xvfb", workflow)
+        self.assertIn("target/release/bundle", workflow)
+        self.assertNotIn("apps/pandora-desktop/src-tauri/target/release/bundle", workflow)
+
     def test_release_workflow_smokes_published_installers_on_fresh_runners(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
             encoding="utf-8"

@@ -260,7 +260,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install --yes libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
@@ -299,19 +299,41 @@ jobs:
         working-directory: apps/pandora-desktop
         run: npm run tauri:build
 
+      - name: Verify signed and notarized desktop bundle (macOS)
+        if: runner.os == 'macOS' && env.PANDORA_APPLE_CERTIFICATE_BASE64 != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle_root="target/release/bundle"
+          apps=("$bundle_root"/macos/*.app)
+          test "${#apps[@]}" -eq 1
+          test -d "${apps[0]}"
+          codesign --verify --deep --strict --verbose=2 "${apps[0]}"
+          spctl --assess --type execute --verbose=4 "${apps[0]}"
+          images=("$bundle_root"/dmg/*.dmg)
+          test "${#images[@]}" -eq 1
+          test -f "${images[0]}"
+          xcrun stapler validate "${images[0]}"
+
       - name: Sign desktop bundles (Windows)
         if: runner.os == 'Windows' && env.PANDORA_WINDOWS_CERTIFICATE_BASE64 != ''
         shell: pwsh
         run: |
           $certificate = Join-Path $env:RUNNER_TEMP "pandora-desktop-signing.pfx"
           [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:PANDORA_WINDOWS_CERTIFICATE_BASE64))
-          $artifacts = Get-ChildItem -Path "apps/pandora-desktop/src-tauri/target/release/bundle" -File -Recurse | Where-Object { $_.Extension -in @(".exe", ".msi") }
+          $artifacts = Get-ChildItem -Path "target/release/bundle" -File -Recurse | Where-Object { $_.Extension -in @(".exe", ".msi") }
           if ($artifacts.Count -eq 0) { throw "no Windows desktop bundles found to sign" }
           foreach ($artifact in $artifacts) {
             & signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f $certificate /p $env:PANDORA_WINDOWS_CERTIFICATE_PASSWORD $artifact.FullName
             if ($LASTEXITCODE -ne 0) { throw "Windows desktop signing failed" }
+            & signtool verify /pa /all /v $artifact.FullName
+            if ($LASTEXITCODE -ne 0) { throw "Windows desktop signature verification failed" }
           }
           Remove-Item -LiteralPath $certificate -Force
+
+      - name: Verify desktop bundle lifecycle
+        working-directory: apps/pandora-desktop
+        run: npm run verify:bundle-lifecycle
 
       - name: Stage desktop artifacts (Unix)
         if: runner.os != 'Windows'
@@ -322,7 +344,7 @@ jobs:
           while IFS= read -r -d '' file; do
             name="$(basename "$file")"
             cp "$file" "dist/desktop-${{ matrix.artifact }}-${name}"
-          done < <(find apps/pandora-desktop/src-tauri/target/release/bundle -type f \
+          done < <(find target/release/bundle -type f \
             \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' \) -print0)
 
       - name: Stage desktop artifacts (Windows)
@@ -330,7 +352,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Get-ChildItem -Path apps/pandora-desktop/src-tauri/target/release/bundle -File -Recurse |
+          Get-ChildItem -Path target/release/bundle -File -Recurse |
             Where-Object { $_.Extension -in @(".exe", ".msi") } |
             ForEach-Object {
               Copy-Item $_.FullName (Join-Path dist ("desktop-${{ matrix.artifact }}-" + $_.Name))

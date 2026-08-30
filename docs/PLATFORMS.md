@@ -30,6 +30,16 @@ macOS app is therefore a direct-distribution target, not a Mac App Store
 target. Stable distribution still requires Apple signing and notarization,
 Windows signing, and retained clean-machine release evidence.
 
+The tagged release workflow fails closed for a stable version unless the
+Windows certificate, Developer ID Application certificate, Apple notarization
+credentials, signing identities, and explicit stable-release approval are all
+configured. Signed Windows installers are checked again with `signtool verify`.
+Signed macOS app bundles must pass strict `codesign` and Gatekeeper assessment,
+and their DMG must pass stapler validation. Every tagged desktop build also
+runs the installed-bundle lifecycle check before upload. These controls prove
+pipeline readiness; a stable signed release still needs the real credentials
+and retained clean-machine evidence.
+
 ## Installation verification
 
 Release assets include `checksums.txt`, a signed checksum manifest, an SPDX
