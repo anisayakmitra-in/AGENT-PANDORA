@@ -9023,7 +9023,11 @@ fn phase7_worker_operations_recover_without_replaying_durable_effects() {
 
     let mut recovery_job_ids = BTreeSet::new();
     for round in 0..profile.rounds {
-        eprintln!("Phase 7 recovery submission round {}/{}", round + 1, profile.rounds);
+        eprintln!(
+            "Phase 7 recovery submission round {}/{}",
+            round + 1,
+            profile.rounds
+        );
         let round_job_ids = submit_phase7_jobs(
             &fixture,
             profile.producer_count,
