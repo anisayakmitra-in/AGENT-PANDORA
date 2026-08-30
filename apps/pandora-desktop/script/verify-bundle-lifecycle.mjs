@@ -27,6 +27,18 @@ export function validateSidecarTarget(target) {
   return normalized;
 }
 
+export function systemInstallLifecycleEnabled(environment = process.env) {
+  const requested = environment.PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE?.trim();
+  if (!requested) return false;
+  if (requested !== "1") {
+    throw new Error("PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE must be exactly 1");
+  }
+  if (environment.CI?.trim().toLowerCase() !== "true") {
+    throw new Error("desktop system-install lifecycle is restricted to an ephemeral CI runner");
+  }
+  return true;
+}
+
 function canonicalTemporaryRoot() {
   const root = realpathSync(tmpdir());
   const metadata = lstatSync(root);
@@ -280,9 +292,15 @@ function extractLinuxBundle(bundleRoot, sandbox) {
   return installed;
 }
 
-function copyMacBundle(bundleRoot, sandbox) {
-  const localApps = walkDirectories(bundleRoot).filter((path) => path.endsWith("Pandora.app"));
-  const installed = join(sandbox, "Applications", "Pandora.app");
+function copyMacBundle(
+  bundleRoot,
+  sandbox,
+  requireDiskImage = false,
+  installed = join(sandbox, "Applications", "Pandora.app"),
+) {
+  const localApps = requireDiskImage
+    ? []
+    : walkDirectories(bundleRoot).filter((path) => path.endsWith("Pandora.app"));
   mkdirSync(dirname(installed), { recursive: true });
   if (localApps.length === 1) {
     cpSync(localApps[0], installed, { recursive: true, dereference: false });
@@ -316,6 +334,103 @@ function installWindowsBundle(bundleRoot, sandbox) {
   return installed;
 }
 
+function msiResult(argumentsList) {
+  const result = spawnSync("msiexec.exe", argumentsList, {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  if (result.error) throw result.error;
+  return result;
+}
+
+function assertMsiSuccess(result, operation, accepted = new Set([0, 3010])) {
+  if (!accepted.has(result.status)) {
+    throw new Error(`${operation} failed with MSI status ${result.status}: ${result.stderr.trim()}`);
+  }
+}
+
+function linuxPackageIsInstalled() {
+  const result = spawnSync("dpkg-query", ["--show", "--showformat=${db:Status-Abbrev}", "pandora"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return result.status === 0 && result.stdout.trim().startsWith("ii");
+}
+
+function systemInstallContract(bundleRoot, sandbox, platform) {
+  if (platform === "linux") {
+    const deb = findBundle(bundleRoot, (path) => path.endsWith(".deb"), "Linux .deb bundle");
+    const installed = "/usr/bin";
+    const binaries = [join(installed, "pandora"), join(installed, "pandora-desktop")];
+    return {
+      installed,
+      install() {
+        if (linuxPackageIsInstalled() || binaries.some((path) => existsSync(path))) {
+          throw new Error("refusing to replace a pre-existing system Pandora installation");
+        }
+        run("sudo", ["dpkg", "--install", deb]);
+        if (!linuxPackageIsInstalled()) throw new Error("Debian package did not register as installed");
+      },
+      uninstall() {
+        const result = spawnSync("sudo", ["dpkg", "--purge", "pandora"], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        if (result.error) throw result.error;
+        if (result.status !== 0 && linuxPackageIsInstalled()) {
+          throw new Error(`Debian package purge failed: ${result.stderr.trim()}`);
+        }
+        if (linuxPackageIsInstalled() || binaries.some((path) => existsSync(path))) {
+          throw new Error("Debian package uninstall left Pandora installed");
+        }
+      },
+    };
+  }
+
+  if (platform === "darwin") {
+    const installed = join(sandbox, "home", "Applications", "Pandora.app");
+    return {
+      installed,
+      install() {
+        if (existsSync(installed)) throw new Error("refusing to replace an existing macOS Pandora app");
+        copyMacBundle(bundleRoot, sandbox, true, installed);
+      },
+      uninstall() {
+        if (existsSync(installed)) rmSync(installed, { recursive: true, force: false });
+        if (existsSync(installed)) throw new Error("macOS app uninstall left Pandora installed");
+      },
+    };
+  }
+
+  if (platform === "win32") {
+    const msi = findBundle(bundleRoot, (path) => path.endsWith(".msi"), "Windows MSI bundle");
+    const installed = join(sandbox, "installed", "Pandora");
+    const installLog = join(sandbox, "msi-install.log");
+    const uninstallLog = join(sandbox, "msi-uninstall.log");
+    return {
+      installed,
+      install() {
+        if (existsSync(installed)) throw new Error("refusing to replace an existing Windows Pandora installation");
+        mkdirSync(dirname(installed), { recursive: true });
+        const result = msiResult([
+          "/i", msi, "/qn", "/norestart", `INSTALLDIR=${installed}`, "/l*v", installLog,
+        ]);
+        assertMsiSuccess(result, "Windows MSI install");
+        if (!existsSync(installed)) throw new Error("Windows MSI did not create the configured install directory");
+      },
+      uninstall() {
+        const result = msiResult(["/x", msi, "/qn", "/norestart", "/l*v", uninstallLog]);
+        assertMsiSuccess(result, "Windows MSI uninstall", new Set([0, 1605, 3010]));
+        if (existsSync(installed)) throw new Error("Windows MSI uninstall left Pandora installed");
+      },
+    };
+  }
+
+  throw new Error(`unsupported system-install lifecycle platform: ${platform}`);
+}
+
 export function applicationBinary(installed, platform) {
   if (platform === "darwin") return join(installed, "Contents", "MacOS", "pandora-desktop");
   const extension = platform === "win32" ? ".exe" : "";
@@ -346,17 +461,28 @@ async function main() {
   const target = validateSidecarTarget(process.env.PANDORA_SIDECAR_TARGET ?? run("rustc", ["--print", "host-tuple"]));
   const requestedTarget = Boolean(process.env.PANDORA_SIDECAR_TARGET?.trim());
   const source = resolveSourceSidecar(target, requestedTarget);
+  const systemInstall = systemInstallLifecycleEnabled();
   const sandbox = createLifecycleSandbox();
+  let systemContract;
   try {
     const bundleRoot = resolveBundleRoot();
-    const installed = process.platform === "linux" ? extractLinuxBundle(bundleRoot, sandbox) : process.platform === "darwin" ? copyMacBundle(bundleRoot, sandbox) : process.platform === "win32" ? installWindowsBundle(bundleRoot, sandbox) : (() => { throw new Error(`unsupported lifecycle platform: ${process.platform}`); })();
+    systemContract = systemInstall
+      ? systemInstallContract(bundleRoot, sandbox, process.platform)
+      : undefined;
+    systemContract?.install();
+    const installed = systemContract?.installed
+      ?? (process.platform === "linux" ? extractLinuxBundle(bundleRoot, sandbox) : process.platform === "darwin" ? copyMacBundle(bundleRoot, sandbox) : process.platform === "win32" ? installWindowsBundle(bundleRoot, sandbox) : (() => { throw new Error(`unsupported lifecycle platform: ${process.platform}`); })());
     const bundledSidecar = findBundle(installed, (path) => basename(path) === packagedSidecarName(target), "bundled sidecar");
     regularFile(bundledSidecar, "bundled sidecar");
     if (sha256(source) !== sha256(bundledSidecar)) throw new Error("bundled sidecar differs from the same-commit release binary");
     await smokeInstalledBundle(installed, process.platform, target, lifecycleEnvironment(sandbox));
     console.log(`verified ${process.platform} bundle lifecycle with ${relative(sandbox, bundledSidecar)}`);
   } finally {
-    await removeLifecycleSandboxWithRetry(sandbox);
+    try {
+      systemContract?.uninstall();
+    } finally {
+      await removeLifecycleSandboxWithRetry(sandbox);
+    }
   }
 }
 

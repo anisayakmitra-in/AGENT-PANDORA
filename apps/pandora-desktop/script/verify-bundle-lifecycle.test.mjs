@@ -12,6 +12,7 @@ import {
   resolveBundleRoot,
   resolveSourceSidecar,
   sidecarName,
+  systemInstallLifecycleEnabled,
   validateSidecarTarget,
 } from "./verify-bundle-lifecycle.mjs";
 
@@ -142,4 +143,26 @@ test("accepts a canonical downloaded sidecar but rejects final symlinks", () => 
     rmSync(linkRoot, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("restricts system installation to an explicit ephemeral CI contract", () => {
+  assert.equal(systemInstallLifecycleEnabled({}), false);
+  assert.equal(systemInstallLifecycleEnabled({
+    CI: "true",
+    PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE: "1",
+  }), true);
+  assert.throws(
+    () => systemInstallLifecycleEnabled({
+      CI: "false",
+      PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE: "1",
+    }),
+    /restricted to an ephemeral CI runner/,
+  );
+  assert.throws(
+    () => systemInstallLifecycleEnabled({
+      CI: "true",
+      PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE: "yes",
+    }),
+    /must be exactly 1/,
+  );
 });

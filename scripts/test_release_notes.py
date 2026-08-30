@@ -112,6 +112,8 @@ Older notes.
         self.assertIn("Download verified native sidecar", workflow)
         self.assertIn("PANDORA_SIDECAR_SOURCE:", workflow)
         self.assertIn("PANDORA_DESKTOP_SOURCE_SIDECAR:", workflow)
+        self.assertIn("Verify desktop system install lifecycle", workflow)
+        self.assertIn("PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE: \"1\"", workflow)
 
     def test_release_workflow_smokes_published_installers_on_fresh_runners(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
@@ -205,4 +207,15 @@ Older notes.
         self.assertIn("verify_release_downloads.py", workflow)
         self.assertIn("PANDORA_DESKTOP_SOURCE_SIDECAR", workflow)
         self.assertIn("PANDORA_DESKTOP_BUNDLE_ROOT", workflow)
+        self.assertIn("PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE", workflow)
+        self.assertIn("npm run verify:bundle-lifecycle", workflow)
+
+    def test_ci_runs_ephemeral_system_installer_lifecycle(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("Verify desktop system install lifecycle", workflow)
+        self.assertIn('CI: "true"', workflow)
+        self.assertIn('PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE: "1"', workflow)
         self.assertIn("npm run verify:bundle-lifecycle", workflow)

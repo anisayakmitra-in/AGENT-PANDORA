@@ -53,7 +53,12 @@ it does not rebuild an independent sidecar. After publication, fresh Linux,
 macOS Intel, macOS Apple Silicon, and Windows runners download the native and
 desktop assets, verify both against the published checksum manifest, then
 extract, mount, or administratively unpack the package and run the bounded
-launch-and-cleanup lifecycle check.
+launch-and-cleanup lifecycle check. Ephemeral CI runners then exercise the
+platform installer contract itself: Debian registers and purges the `pandora`
+package, Windows MSI registers into a unique temporary `INSTALLDIR` and
+uninstalls it, and macOS copies the app from the DMG into the runner's isolated
+user Applications directory before removing it. The verifier refuses this
+system-install mode outside an explicit CI environment.
 These controls prove pipeline readiness; a stable signed release still needs
 the real credentials and retained real-user installation, update, rollback,
 and uninstall evidence.

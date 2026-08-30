@@ -187,3 +187,10 @@ jobs:
       - name: Verify desktop bundle lifecycle
         working-directory: apps/pandora-desktop
         run: npm run verify:bundle-lifecycle
+
+      - name: Verify desktop system install lifecycle
+        working-directory: apps/pandora-desktop
+        env:
+          CI: "true"
+          PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE: "1"
+        run: npm run verify:bundle-lifecycle

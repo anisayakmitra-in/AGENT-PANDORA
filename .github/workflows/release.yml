@@ -347,6 +347,13 @@ jobs:
         working-directory: apps/pandora-desktop
         run: npm run verify:bundle-lifecycle
 
+      - name: Verify desktop system install lifecycle
+        working-directory: apps/pandora-desktop
+        env:
+          CI: "true"
+          PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE: "1"
+        run: npm run verify:bundle-lifecycle
+
       - name: Stage desktop artifacts (Unix)
         if: runner.os != 'Windows'
         shell: bash
@@ -717,6 +724,7 @@ jobs:
     permissions:
       contents: read
     env:
+      CI: "true"
       GH_TOKEN: ${{ github.token }}
       PANDORA_SIDECAR_TARGET: ${{ matrix.target }}
     steps:
@@ -798,6 +806,7 @@ jobs:
           chmod 0755 "$native"
           PANDORA_DESKTOP_SOURCE_SIDECAR="$native" \
           PANDORA_DESKTOP_BUNDLE_ROOT="$release" \
+          PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE=1 \
             npm run verify:bundle-lifecycle
 
       - name: Exercise published desktop lifecycle (Windows)
@@ -815,4 +824,5 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "published desktop checksum verification failed" }
           $env:PANDORA_DESKTOP_SOURCE_SIDECAR = $native
           $env:PANDORA_DESKTOP_BUNDLE_ROOT = $release
+          $env:PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE = "1"
           npm run verify:bundle-lifecycle
