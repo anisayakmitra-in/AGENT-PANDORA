@@ -238,6 +238,36 @@ struct NativePackageResult {
     data: Value,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MemoryScopeInput {
+    session_id: String,
+    provider: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MemoryIdentity {
+    session_id: String,
+    provider: String,
+    memory_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MemoryForget {
+    session_id: String,
+    provider: String,
+    memory_id: String,
+    confirmation: String,
+}
+
+#[derive(Serialize)]
+struct NativeMemoryResult {
+    message: String,
+    data: Value,
+}
+
 #[tauri::command]
 fn configure_provider(
     mut input: ProviderConfiguration,
@@ -719,6 +749,117 @@ fn lock_local_packages() -> Result<NativePackageResult, String> {
     Ok(NativePackageResult {
         message: "Deterministic package lock written for the current workspace.".to_owned(),
         restart_required: false,
+        data,
+    })
+}
+
+fn validate_memory_scope(session_id: &str, provider: &str) -> Result<(), String> {
+    validate_identifier(session_id, "memory session")?;
+    validate_identifier(provider, "memory provider")
+}
+
+fn validate_memory_id(memory_id: &str) -> Result<(), String> {
+    validate_text_field(memory_id, "memory ID", 256)?;
+    if memory_id.trim() != memory_id || memory_id.bytes().any(|byte| byte.is_ascii_whitespace()) {
+        return Err("memory ID must be one bounded token without whitespace".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_memory_forget(input: &MemoryForget) -> Result<(), String> {
+    validate_memory_scope(&input.session_id, &input.provider)?;
+    validate_memory_id(&input.memory_id)?;
+    if input.confirmation != input.memory_id {
+        return Err(format!(
+            "type {} to confirm this exact memory revocation",
+            input.memory_id
+        ));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn inspect_memory_audit(input: MemoryScopeInput) -> Result<NativeMemoryResult, String> {
+    validate_memory_scope(&input.session_id, &input.provider)?;
+    let args = vec![
+        "memory".to_owned(),
+        "audit".to_owned(),
+        "--session".to_owned(),
+        input.session_id,
+        "--provider".to_owned(),
+        input.provider,
+        "--json".to_owned(),
+    ];
+    let data = run_cli_json(&args, "inspecting memory audit evidence")?;
+    let count = data.get("count").and_then(Value::as_u64).unwrap_or_default();
+    Ok(NativeMemoryResult {
+        message: format!("Loaded {count} durable memory audit record(s)."),
+        data,
+    })
+}
+
+#[tauri::command]
+fn inspect_memory_provenance(input: MemoryIdentity) -> Result<NativeMemoryResult, String> {
+    validate_memory_scope(&input.session_id, &input.provider)?;
+    validate_memory_id(&input.memory_id)?;
+    let memory_id = input.memory_id.clone();
+    let args = vec![
+        "memory".to_owned(),
+        "provenance".to_owned(),
+        "--session".to_owned(),
+        input.session_id,
+        "--provider".to_owned(),
+        input.provider,
+        input.memory_id,
+        "--json".to_owned(),
+    ];
+    let data = run_cli_json(&args, "inspecting memory provenance")?;
+    Ok(NativeMemoryResult {
+        message: format!("Loaded bounded provenance for {memory_id}."),
+        data,
+    })
+}
+
+#[tauri::command]
+fn preview_memory_forget(input: MemoryIdentity) -> Result<NativeMemoryResult, String> {
+    validate_memory_scope(&input.session_id, &input.provider)?;
+    validate_memory_id(&input.memory_id)?;
+    let memory_id = input.memory_id.clone();
+    let args = vec![
+        "memory".to_owned(),
+        "forget".to_owned(),
+        "--session".to_owned(),
+        input.session_id,
+        "--provider".to_owned(),
+        input.provider,
+        input.memory_id,
+        "--json".to_owned(),
+    ];
+    let data = run_cli_json(&args, "previewing memory revocation")?;
+    Ok(NativeMemoryResult {
+        message: format!("Previewed durable revocation for {memory_id}; no memory changed."),
+        data,
+    })
+}
+
+#[tauri::command]
+fn forget_memory(input: MemoryForget) -> Result<NativeMemoryResult, String> {
+    validate_memory_forget(&input)?;
+    let memory_id = input.memory_id.clone();
+    let args = vec![
+        "memory".to_owned(),
+        "forget".to_owned(),
+        "--session".to_owned(),
+        input.session_id,
+        "--provider".to_owned(),
+        input.provider,
+        input.memory_id,
+        "--yes".to_owned(),
+        "--json".to_owned(),
+    ];
+    let data = run_cli_json(&args, "revoking memory")?;
+    Ok(NativeMemoryResult {
+        message: format!("Memory {memory_id} revoked with a durable tombstone."),
         data,
     })
 }
@@ -1296,6 +1437,10 @@ fn main() {
             preview_package_removal,
             remove_local_package,
             lock_local_packages,
+            inspect_memory_audit,
+            inspect_memory_provenance,
+            preview_memory_forget,
+            forget_memory,
             pandora_rpc
         ])
         .on_window_event(|window, event| {
@@ -1391,7 +1536,8 @@ mod configuration_tests {
     use super::{
         optional_package_version, validate_environment_name, validate_github_commit,
         validate_github_repository_path, validate_github_repository_url, validate_identifier,
-        validate_package_id, validate_provider_url, validate_registry_url,
+        validate_memory_forget, validate_memory_id, validate_package_id, validate_provider_url,
+        validate_registry_url, MemoryForget,
     };
 
     #[test]
@@ -1426,6 +1572,28 @@ mod configuration_tests {
         assert!(validate_registry_url("http://127.0.0.1:8080").is_ok());
         assert!(validate_registry_url("http://registry.example.test").is_err());
         assert!(validate_registry_url("https://user@registry.example.test").is_err());
+    }
+
+    #[test]
+    fn memory_governance_inputs_are_bounded_and_confirmation_is_exact() {
+        assert!(validate_memory_id("lesson-release-review").is_ok());
+        assert!(validate_memory_id(" lesson-release-review").is_err());
+        assert!(validate_memory_id("lesson release review").is_err());
+        assert!(validate_memory_id(&"x".repeat(257)).is_err());
+
+        let valid = MemoryForget {
+            session_id: "session-1".to_owned(),
+            provider: "openai-compatible".to_owned(),
+            memory_id: "lesson-release-review".to_owned(),
+            confirmation: "lesson-release-review".to_owned(),
+        };
+        assert!(validate_memory_forget(&valid).is_ok());
+
+        let wrong_confirmation = MemoryForget {
+            confirmation: "lesson-release".to_owned(),
+            ..valid
+        };
+        assert!(validate_memory_forget(&wrong_confirmation).is_err());
     }
 
     #[test]

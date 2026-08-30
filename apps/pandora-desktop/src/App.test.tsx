@@ -20,6 +20,8 @@ const runtime = vi.hoisted(() => ({
   events: vi.fn(),
   health: vi.fn(),
   inspectEvolution: vi.fn(),
+  inspectMemoryAudit: vi.fn(),
+  inspectMemoryProvenance: vi.fn(),
   inspectOrchestration: vi.fn(),
   inspectSession: vi.fn(),
   installGitHubPackage: vi.fn(),
@@ -27,6 +29,7 @@ const runtime = vi.hoisted(() => ({
   listLocalPackages: vi.fn(),
   listRegistryProfiles: vi.fn(),
   lockLocalPackages: vi.fn(),
+  forgetMemory: vi.fn(),
   memory: vi.fn(),
   memorySchedules: vi.fn(),
   memoryScheduleRuns: vi.fn(),
@@ -38,6 +41,7 @@ const runtime = vi.hoisted(() => ({
   previewPackageDisable: vi.fn(),
   previewPackageEnable: vi.fn(),
   previewPackageRollback: vi.fn(),
+  previewMemoryForget: vi.fn(),
   removeLocalPackage: vi.fn(),
   rollbackLocalPackage: vi.fn(),
   resolveApproval: vi.fn(),
@@ -66,10 +70,14 @@ vi.mock("./runtimeClient", () => ({
   listLocalPackages: runtime.listLocalPackages,
   listRegistryProfiles: runtime.listRegistryProfiles,
   lockLocalPackages: runtime.lockLocalPackages,
+  inspectMemoryAudit: runtime.inspectMemoryAudit,
+  inspectMemoryProvenance: runtime.inspectMemoryProvenance,
+  forgetMemory: runtime.forgetMemory,
   previewPackageRemoval: runtime.previewPackageRemoval,
   previewPackageDisable: runtime.previewPackageDisable,
   previewPackageEnable: runtime.previewPackageEnable,
   previewPackageRollback: runtime.previewPackageRollback,
+  previewMemoryForget: runtime.previewMemoryForget,
   removeLocalPackage: runtime.removeLocalPackage,
   rollbackLocalPackage: runtime.rollbackLocalPackage,
   startLocalService: vi.fn(),
@@ -166,6 +174,22 @@ beforeEach(() => {
   runtime.inspectSession.mockResolvedValue({ session, event_count: 0 });
   runtime.events.mockResolvedValue([]);
   runtime.memory.mockResolvedValue([]);
+  runtime.inspectMemoryAudit.mockResolvedValue({
+    message: "Loaded 0 durable memory audit record(s).",
+    data: { entries: [], count: 0 },
+  });
+  runtime.inspectMemoryProvenance.mockResolvedValue({
+    message: "Loaded bounded provenance.",
+    data: { root_id: "", nodes: [], edges: [], bounded: true, max_nodes: 64 },
+  });
+  runtime.previewMemoryForget.mockResolvedValue({
+    message: "Previewed durable revocation; no memory changed.",
+    data: { dry_run: true, memory_id: "memory", would_revoke: true },
+  });
+  runtime.forgetMemory.mockResolvedValue({
+    message: "Memory revoked with a durable tombstone.",
+    data: { dry_run: false, memory_id: "memory", revoked: true },
+  });
   runtime.memorySchedules.mockResolvedValue([]);
   runtime.memoryScheduleRuns.mockResolvedValue([]);
   runtime.createMemorySchedule.mockResolvedValue({
@@ -542,6 +566,125 @@ describe("Pandora desktop run state", () => {
       classification: "internal",
       interval_seconds: 86400,
     })));
+  });
+
+
+  it("inspects bounded memory provenance and requires exact revocation confirmation", async () => {
+    const memoryRecord = {
+      memory_id: "lesson-release-review",
+      tier: "l1",
+      kind: "lesson",
+      summary: "Use the signed release evidence set",
+      classification: "internal",
+      created_at_unix_seconds: 10,
+      provenance: "synthesized",
+      origin: "synthesized",
+      evidence_count: 1,
+    };
+    runtime.sessions.mockResolvedValue([session]);
+    runtime.memory.mockResolvedValueOnce([memoryRecord]).mockResolvedValueOnce([]);
+    runtime.inspectMemoryProvenance.mockResolvedValue({
+      message: "Loaded bounded provenance for lesson-release-review.",
+      data: {
+        root_id: "lesson-release-review",
+        bounded: true,
+        max_nodes: 64,
+        nodes: [{
+          id: "lesson-release-review",
+          tier: "l1",
+          kind: "lesson",
+          summary: "Use the signed release evidence set",
+          classification: "internal",
+          created_at: 10,
+          expires_at: null,
+          provenance: "synthesized",
+          origin: "synthesized",
+          evidence_ids: ["receipt-release"],
+          approval: null,
+        }, {
+          id: "receipt-release",
+          tier: "l1",
+          kind: "execution_evidence",
+          summary: "Release workflow completed",
+          classification: "internal",
+          created_at: 9,
+          expires_at: null,
+          provenance: "runtime",
+          origin: "runtime",
+          evidence_ids: [],
+          approval: null,
+        }],
+        edges: [{ from: "lesson-release-review", to: "receipt-release" }],
+      },
+    });
+    runtime.inspectMemoryAudit.mockResolvedValue({
+      message: "Loaded 2 durable memory audit record(s).",
+      data: {
+        count: 2,
+        entries: [
+          { memory_id: "lesson-release-review", tier: "l1", action: "added", at: 10, approval_id: null },
+          { memory_id: "lesson-release-review", tier: "l1", action: "revoked", at: 11, approval_id: null },
+        ],
+      },
+    });
+    runtime.previewMemoryForget.mockResolvedValue({
+      message: "Previewed durable revocation for lesson-release-review; no memory changed.",
+      data: {
+        dry_run: true,
+        memory_id: "lesson-release-review",
+        would_revoke: true,
+      },
+    });
+    runtime.forgetMemory.mockResolvedValue({
+      message: "Memory lesson-release-review revoked with a durable tombstone.",
+      data: {
+        dry_run: false,
+        memory_id: "lesson-release-review",
+        revoked: true,
+      },
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Connections" }));
+    const sessionButtons = await screen.findAllByRole("button", { name: /session-1/ });
+    fireEvent.click(sessionButtons[sessionButtons.length - 1]);
+    await waitFor(() => expect(runtime.memory).toHaveBeenCalledWith(session.session_id));
+
+    fireEvent.click(screen.getByRole("button", { name: "Memory" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Inspect provenance" }));
+    await waitFor(() => expect(runtime.inspectMemoryProvenance).toHaveBeenCalledWith(
+      session.session_id,
+      "local",
+      memoryRecord.memory_id,
+    ));
+    expect(await screen.findByLabelText("Memory provenance")).toHaveTextContent("2 nodes · 1 edges · bounded to 64");
+    expect(screen.getByText("Release workflow completed")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Load audit" }));
+    await waitFor(() => expect(runtime.inspectMemoryAudit).toHaveBeenCalledWith(session.session_id, "local"));
+    expect(await screen.findByLabelText("Memory audit trail")).toHaveTextContent("revoked");
+
+    fireEvent.click(screen.getByRole("button", { name: `Forget memory ${memoryRecord.memory_id}` }));
+    await waitFor(() => expect(runtime.previewMemoryForget).toHaveBeenCalledWith(
+      session.session_id,
+      "local",
+      memoryRecord.memory_id,
+    ));
+    const confirmation = await screen.findByLabelText(`Confirm forget ${memoryRecord.memory_id}`);
+    const revoke = screen.getByRole("button", { name: "Confirm revocation" });
+    expect(revoke).toBeDisabled();
+    fireEvent.change(confirmation, { target: { value: memoryRecord.memory_id } });
+    expect(revoke).toBeEnabled();
+    fireEvent.click(revoke);
+
+    await waitFor(() => expect(runtime.forgetMemory).toHaveBeenCalledWith(
+      session.session_id,
+      "local",
+      memoryRecord.memory_id,
+      memoryRecord.memory_id,
+    ));
+    expect(await screen.findByText("Memory lesson-release-review revoked with a durable tombstone.")).toBeInTheDocument();
+    await waitFor(() => expect(runtime.memory).toHaveBeenCalledTimes(2));
   });
 
   it("renders Council from recorded run evidence without fabricating authority", async () => {

@@ -1213,6 +1213,40 @@ input:focus, textarea:focus, select:focus { border-color: var(--signal); box-sha
 .memory-record p { margin: 0; color: var(--text-secondary); font-size: .8125rem; line-height: 1.6; }
 .memory-record-meta { color: var(--text-muted); font-family: var(--font-mono); font-size: .625rem; }
 
+
+.memory-record-actions { display: flex; flex-wrap: wrap; gap: 12px; padding-top: 2px; border-top: 1px solid var(--line); }
+.memory-record-actions .text-link { padding-top: 8px; }
+.memory-forget-link { color: var(--red) !important; }
+.memory-governance { display: grid; gap: 11px; margin-top: 15px; padding-top: 15px; border-top: 1px solid var(--line); }
+.memory-governance-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.memory-governance-heading > div { display: grid; gap: 4px; }
+.memory-governance-heading h3 { margin: 0; color: var(--text-primary); font-family: var(--font-display); font-size: 1rem; font-weight: 520; }
+.memory-provenance { display: grid; gap: 8px; padding: 11px; border: 1px solid var(--line); background: var(--canvas); }
+.memory-provenance-summary { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; }
+.memory-provenance-summary strong { overflow: hidden; color: var(--text-secondary); font-size: .75rem; text-overflow: ellipsis; white-space: nowrap; }
+.memory-provenance-summary span { flex: 0 0 auto; color: var(--text-muted); font-family: var(--font-mono); font-size: .625rem; }
+.memory-provenance-list { display: grid; border-top: 1px solid var(--line); }
+.memory-provenance-list article { display: grid; min-width: 0; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.memory-lineage-mark { width: 7px; height: 7px; border: 1px solid var(--signal); background: var(--signal-soft); transform: rotate(45deg); }
+.memory-provenance-list article > div { display: grid; min-width: 0; gap: 3px; }
+.memory-provenance-list strong, .memory-provenance-list small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memory-provenance-list strong { color: var(--text-secondary); font-size: .75rem; font-weight: 550; }
+.memory-provenance-list small { color: var(--text-muted); font-size: .625rem; }
+.memory-audit-list { display: grid; border-top: 1px solid var(--line); }
+.memory-audit-row { display: grid; min-width: 0; grid-template-columns: 75px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.memory-audit-action { color: var(--blue); font-family: var(--font-mono); font-size: .625rem; letter-spacing: .06em; text-transform: uppercase; }
+.memory-audit-action.is-promoted { color: var(--gold); }
+.memory-audit-action.is-revoked { color: var(--red); }
+.memory-audit-row strong { overflow: hidden; color: var(--text-secondary); font-size: .6875rem; text-overflow: ellipsis; white-space: nowrap; }
+.memory-audit-row time { color: var(--text-muted); font-family: var(--font-mono); font-size: .625rem; }
+.memory-forget-confirm { display: grid; gap: 10px; padding: 12px; border: 1px solid color-mix(in srgb, var(--red) 45%, var(--line)); border-left: 2px solid var(--red); background: color-mix(in srgb, var(--red) 4%, var(--canvas)); }
+.memory-forget-confirm > div:first-child { display: grid; gap: 5px; }
+.memory-forget-confirm strong { color: var(--text-primary); font-size: .8125rem; }
+.memory-forget-confirm p { margin: 0; color: var(--text-muted); font-size: .75rem; line-height: 1.5; }
+.memory-forget-confirm label { display: grid; gap: 5px; }
+.memory-forget-confirm label > span { color: var(--text-muted); font-family: var(--font-mono); font-size: .625rem; text-transform: uppercase; }
+.memory-forget-actions { display: flex; justify-content: flex-end; gap: 7px; }
+
 /* Memory scheduler */
 .memory-scheduler-panel { display: grid; gap: 12px; }
 .memory-schedule-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding-top: 4px; }
@@ -1609,6 +1643,9 @@ input:focus, textarea:focus, select:focus { border-color: var(--signal); box-sha
   .memory-grid, .workflow-grid, .connection-grid, .audit-grid, .runs-workbench, .harness-workbench, .engine-workbench, .tool-workbench { grid-template-columns: 1fr; }
   .memory-schedule-form { grid-template-columns: 1fr; }
   .memory-schedule-form-wide { grid-column: auto; }
+  .memory-provenance-summary, .memory-governance-heading { align-items: stretch; flex-direction: column; }
+  .memory-audit-row { grid-template-columns: 70px minmax(0, 1fr); }
+  .memory-audit-row time { grid-column: 2; }
   .runs-browser, .harness-browser, .engine-browser, .tool-browser { max-height: 310px; overflow-y: auto; }
   .council-chambers { grid-template-columns: 1fr; }
   .council-chamber { min-height: 0; }

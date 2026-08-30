@@ -275,6 +275,50 @@ export type MemorySynthesisScheduleInput = {
   interval_seconds: number;
 };
 
+export type RuntimeMemoryAuditEntry = {
+  memory_id: string;
+  tier: string;
+  action: "added" | "promoted" | "revoked";
+  at: number;
+  approval_id: string | null;
+};
+
+export type RuntimeMemoryProvenanceNode = {
+  id: string;
+  tier: string;
+  kind: string;
+  summary: string;
+  classification: string;
+  created_at: number;
+  expires_at: number | null;
+  provenance: string;
+  origin: string;
+  evidence_ids: string[];
+  approval: { approval_id: string; approver: string } | null;
+};
+
+export type RuntimeMemoryProvenanceEdge = {
+  from: string;
+  to: string;
+};
+
+export type NativeMemoryResult = {
+  message: string;
+  data: {
+    root_id?: string;
+    nodes?: RuntimeMemoryProvenanceNode[];
+    edges?: RuntimeMemoryProvenanceEdge[];
+    bounded?: boolean;
+    max_nodes?: number;
+    entries?: RuntimeMemoryAuditEntry[];
+    count?: number;
+    dry_run?: boolean;
+    memory_id?: string;
+    would_revoke?: boolean;
+    revoked?: boolean;
+  };
+};
+
 export type RuntimeApproval = {
   approval_id: string;
   session_id: string;
@@ -568,6 +612,42 @@ export async function configureRegistryProfile(input: RegistryConfiguration): Pr
     throw new Error("Registry configuration is available only in the Pandora desktop app");
   }
   return invoke<NativeConfigurationResult>("configure_registry_profile", { input });
+}
+
+export async function inspectMemoryAudit(sessionId: string, provider: string): Promise<NativeMemoryResult> {
+  if (!isNativeRuntime()) {
+    throw new Error("Memory audit is available only in the Pandora desktop app");
+  }
+  return invoke<NativeMemoryResult>("inspect_memory_audit", {
+    input: { sessionId, provider },
+  });
+}
+
+export async function inspectMemoryProvenance(sessionId: string, provider: string, memoryId: string): Promise<NativeMemoryResult> {
+  if (!isNativeRuntime()) {
+    throw new Error("Memory provenance is available only in the Pandora desktop app");
+  }
+  return invoke<NativeMemoryResult>("inspect_memory_provenance", {
+    input: { sessionId, provider, memoryId },
+  });
+}
+
+export async function previewMemoryForget(sessionId: string, provider: string, memoryId: string): Promise<NativeMemoryResult> {
+  if (!isNativeRuntime()) {
+    throw new Error("Memory revocation is available only in the Pandora desktop app");
+  }
+  return invoke<NativeMemoryResult>("preview_memory_forget", {
+    input: { sessionId, provider, memoryId },
+  });
+}
+
+export async function forgetMemory(sessionId: string, provider: string, memoryId: string, confirmation: string): Promise<NativeMemoryResult> {
+  if (!isNativeRuntime()) {
+    throw new Error("Memory revocation is available only in the Pandora desktop app");
+  }
+  return invoke<NativeMemoryResult>("forget_memory", {
+    input: { sessionId, provider, memoryId, confirmation },
+  });
 }
 
 export async function listLocalPackages(): Promise<NativePackageResult> {
