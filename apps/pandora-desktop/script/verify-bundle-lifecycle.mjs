@@ -80,8 +80,8 @@ export function resolveBundleRoot(environment = process.env) {
   }
   const metadata = lstatSync(candidate);
   const canonical = realpathSync(candidate);
-  if (metadata.isSymbolicLink() || !metadata.isDirectory() || candidate !== canonical) {
-    throw new Error(`desktop release bundle root must be a canonical directory: ${candidate}`);
+  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+    throw new Error(`desktop release bundle root must be a directory and not a symlink: ${candidate}`);
   }
   return canonical;
 }

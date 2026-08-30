@@ -52,8 +52,10 @@ test("rejects same-prefix siblings, symlinks, and non-directories", () => {
   }
 });
 
-test("accepts only a canonical configured bundle directory", () => {
+test("accepts directories through canonical ancestor aliases but rejects final symlinks", () => {
   const bundleRoot = mkdtempSync(join(tmpdir(), "pandora-desktop-bundle-"));
+  const nested = join(bundleRoot, "nested");
+  mkdirSync(nested);
   const link = join(tmpdir(), `pandora-desktop-bundle-link-${process.pid}-${Date.now()}`);
   try {
     assert.equal(
@@ -61,9 +63,13 @@ test("accepts only a canonical configured bundle directory", () => {
       realpathSync(bundleRoot),
     );
     symlinkSync(bundleRoot, link);
+    assert.equal(
+      resolveBundleRoot({ PANDORA_DESKTOP_BUNDLE_ROOT: join(link, "nested") }),
+      realpathSync(nested),
+    );
     assert.throws(
       () => resolveBundleRoot({ PANDORA_DESKTOP_BUNDLE_ROOT: link }),
-      /must be a canonical directory/,
+      /must be a directory and not a symlink/,
     );
     assert.throws(
       () => resolveBundleRoot({ PANDORA_DESKTOP_BUNDLE_ROOT: join(bundleRoot, "missing") }),
