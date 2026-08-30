@@ -3,10 +3,11 @@ use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::sessions::{MAX_MEMORY_RECALL_RECORDS, SessionStore};
 use pandora_runtime::{
     ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, MemoryEngine, MemoryError,
+    MemorySynthesisScheduleError, MemorySynthesisScheduleStore,
 };
 use pandora_types::{
-    ContextClassification, ExecutionId, GeneId, MemoryApproval, MemoryId, MemoryKind, MemoryRecord,
-    MemoryScope, MemoryTier, RequestDigest, Timestamp, hash_artifact,
+    ContextClassification, ExecutionId, GeneId, JobWorkerId, MemoryApproval, MemoryId, MemoryKind,
+    MemoryRecord, MemoryScope, MemoryTier, RequestDigest, RunLoopId, Timestamp, hash_artifact,
 };
 use serde_json::json;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -19,7 +20,7 @@ const MEMORY_PROMOTION_GENE: &str = "memory.promote";
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "memory requires 'recall', 'audit', 'forget', 'promote', 'synthesize', 'consolidate', or 'provenance'",
+            "memory requires 'recall', 'audit', 'forget', 'promote', 'synthesize', 'consolidate', 'provenance', or 'schedule'",
         )
     })?;
     match subcommand.as_str() {
@@ -30,10 +31,362 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "synthesize" => synthesize(&args[1..]),
         "consolidate" => consolidate(&args[1..]),
         "provenance" => provenance(&args[1..]),
+        "schedule" => schedule(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown memory command '{unknown}'"
         ))),
     }
+}
+
+fn schedule(args: &[String]) -> Result<CommandResult, CliError> {
+    let subcommand = args.first().ok_or_else(|| {
+        CliError::usage(
+            "memory schedule requires 'create', 'list', 'disable', 'claim', 'run', or 'runs'",
+        )
+    })?;
+    match subcommand.as_str() {
+        "create" => schedule_create(&args[1..]),
+        "list" => schedule_list(&args[1..]),
+        "disable" => schedule_disable(&args[1..]),
+        "claim" => schedule_claim(&args[1..]),
+        "run" => schedule_run(&args[1..]),
+        "runs" => schedule_runs(&args[1..]),
+        unknown => Err(CliError::usage(format!(
+            "unknown memory schedule command '{unknown}'"
+        ))),
+    }
+}
+
+fn schedule_create(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "id",
+            "name",
+            "session",
+            "provider",
+            "memory-id",
+            "kind",
+            "summary",
+            "classification",
+            "interval-seconds",
+        ],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory schedule create does not accept positional arguments",
+        ));
+    }
+    let id = RunLoopId::new(
+        required_option(&parsed, "id", "memory schedule create requires '--id <id>'")?.to_owned(),
+    )
+    .map_err(|_| CliError::usage("memory schedule ID is invalid"))?;
+    let name = required_option(
+        &parsed,
+        "name",
+        "memory schedule create requires '--name <name>'",
+    )?;
+    let session = parse_session_option(&parsed, "session")?;
+    let provider = required_option(
+        &parsed,
+        "provider",
+        "memory schedule create requires '--provider <name>'",
+    )?;
+    let memory_id = MemoryId::new(
+        required_option(
+            &parsed,
+            "memory-id",
+            "memory schedule create requires '--memory-id <id>'",
+        )?
+        .to_owned(),
+    )
+    .map_err(|_| CliError::usage("memory ID is invalid"))?;
+    let kind = parse_memory_kind(parsed.value("kind"))?;
+    let summary = required_option(
+        &parsed,
+        "summary",
+        "memory schedule create requires '--summary <text>'",
+    )?;
+    let classification = parse_memory_classification(parsed.value("classification"))?;
+    let interval_seconds = parsed
+        .value("interval-seconds")
+        .ok_or_else(|| {
+            CliError::usage("memory schedule create requires '--interval-seconds <seconds>'")
+        })?
+        .parse::<u64>()
+        .map_err(|_| CliError::usage("interval-seconds must be an integer"))?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let (principal, tenant, workspace) = session_scope();
+    let schedule = memory_schedule_store(&config)?
+        .create(
+            &id,
+            &principal,
+            &tenant,
+            &workspace,
+            &session,
+            name,
+            provider,
+            &memory_id,
+            kind,
+            summary,
+            classification,
+            interval_seconds,
+            timestamp(),
+        )
+        .map_err(memory_schedule_error)?;
+    Ok(success(
+        "memory schedule create",
+        schedule_value(&schedule),
+        format!("Created memory synthesis schedule {}", schedule.id()),
+    ))
+}
+
+fn schedule_list(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory schedule list does not accept positional arguments",
+        ));
+    }
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let (principal, tenant, workspace) = session_scope();
+    let schedules = memory_schedule_store(&config)?
+        .list(&principal, &tenant, &workspace)
+        .map_err(memory_schedule_error)?;
+    let count = schedules.len();
+    Ok(success(
+        "memory schedule list",
+        json!({
+            "schedules": schedules.iter().map(schedule_value).collect::<Vec<_>>(),
+            "count": count,
+            "durability": "memory-schedule-store"
+        }),
+        format!("Listed {count} memory synthesis schedule(s)"),
+    ))
+}
+
+fn schedule_disable(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "id"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory schedule disable does not accept positional arguments",
+        ));
+    }
+    let id = memory_schedule_id(&parsed)?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let (principal, tenant, workspace) = session_scope();
+    memory_schedule_store(&config)?
+        .disable(&id, &principal, &tenant, &workspace)
+        .map_err(memory_schedule_error)?;
+    Ok(success(
+        "memory schedule disable",
+        json!({
+            "id": id,
+            "enabled": false,
+            "durability": "memory-schedule-store"
+        }),
+        format!("Disabled memory synthesis schedule {id}"),
+    ))
+}
+
+fn schedule_claim(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "worker", "limit"],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory schedule claim does not accept positional arguments",
+        ));
+    }
+    let worker = memory_schedule_worker(&parsed)?;
+    let limit = parsed
+        .value("limit")
+        .map(|value| {
+            value
+                .parse::<usize>()
+                .map_err(|_| CliError::usage("limit must be an integer"))
+        })
+        .transpose()?
+        .unwrap_or(1);
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let (principal, tenant, workspace) = session_scope();
+    let runs = memory_schedule_store(&config)?
+        .claim_due(&principal, &tenant, &workspace, &worker, timestamp(), limit)
+        .map_err(memory_schedule_error)?;
+    let count = runs.len();
+    Ok(success(
+        "memory schedule claim",
+        json!({
+            "runs": runs.iter().map(schedule_run_value).collect::<Vec<_>>(),
+            "count": count,
+            "worker": worker,
+            "durability": "memory-schedule-store"
+        }),
+        format!("Claimed {count} due memory synthesis run(s)"),
+    ))
+}
+
+fn schedule_run(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "id", "worker"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory schedule run does not accept positional arguments",
+        ));
+    }
+    let id = memory_schedule_id(&parsed)?;
+    let worker = memory_schedule_worker(&parsed)?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let (principal, tenant, workspace) = session_scope();
+    let store = memory_schedule_store(&config)?;
+    let schedule = store
+        .list(&principal, &tenant, &workspace)
+        .map_err(memory_schedule_error)?
+        .into_iter()
+        .find(|schedule| schedule.id() == &id)
+        .ok_or_else(|| {
+            CliError::execution(
+                "memory synthesis schedule was not found",
+                json!({"schedule_id": id}),
+            )
+        })?;
+    let run = store
+        .claim_due_for(
+            &principal,
+            &tenant,
+            &workspace,
+            Some(&id),
+            &worker,
+            timestamp(),
+            1,
+        )
+        .map_err(memory_schedule_error)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| {
+            CliError::execution(
+                "memory synthesis schedule has no due run",
+                json!({"schedule_id": id, "worker": worker}),
+            )
+        })?;
+    let scope = MemoryScope::new(
+        tenant.clone(),
+        workspace.clone(),
+        schedule.session_id().clone(),
+        schedule.provider().to_owned(),
+    )
+    .map_err(|error| CliError::usage(error.to_string()))?;
+    let engine = open_engine(&config, &principal)?;
+    let outcome = (|| {
+        let snapshot = engine
+            .synthesis_snapshot(&scope, timestamp())
+            .map_err(memory_error)?;
+        let proposal = engine
+            .propose_synthesis(
+                &snapshot,
+                schedule.memory_id().as_str().to_owned(),
+                schedule.kind(),
+                schedule.summary().to_owned(),
+                schedule.classification(),
+                timestamp(),
+            )
+            .map_err(memory_error)?;
+        let committed = engine
+            .commit_synthesis(&proposal, timestamp())
+            .map_err(memory_error)?;
+        Ok::<_, CliError>((snapshot.digest().to_owned(), committed))
+    })();
+    let finished_at = timestamp();
+    match outcome {
+        Ok((snapshot_digest, committed)) => {
+            store
+                .complete(
+                    &id,
+                    &principal,
+                    &tenant,
+                    &workspace,
+                    run.scheduled_for(),
+                    &worker,
+                    true,
+                    finished_at,
+                    Some(&snapshot_digest),
+                    Some(committed.id()),
+                    None,
+                )
+                .map_err(memory_schedule_error)?;
+            Ok(success(
+                "memory schedule run",
+                json!({
+                    "schedule_id": id,
+                    "run": schedule_run_value(&run),
+                    "committed": record_value(&committed),
+                    "snapshot_digest": snapshot_digest,
+                    "durability": "memory-schedule-store",
+                    "promotion_required": true
+                }),
+                format!("Completed scheduled memory synthesis {}", committed.id()),
+            ))
+        }
+        Err(error) => {
+            let failure = error.message.clone();
+            store
+                .complete(
+                    &id,
+                    &principal,
+                    &tenant,
+                    &workspace,
+                    run.scheduled_for(),
+                    &worker,
+                    false,
+                    finished_at,
+                    None,
+                    None,
+                    Some(&failure),
+                )
+                .map_err(memory_schedule_error)?;
+            Err(error)
+        }
+    }
+}
+
+fn schedule_runs(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "id"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory schedule runs does not accept positional arguments",
+        ));
+    }
+    let requested = parsed
+        .value("id")
+        .map(|value| {
+            RunLoopId::new(value.to_owned())
+                .map_err(|_| CliError::usage("memory schedule ID is invalid"))
+        })
+        .transpose()?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let (principal, tenant, workspace) = session_scope();
+    let runs = memory_schedule_store(&config)?
+        .list_runs(&principal, &tenant, &workspace, requested.as_ref())
+        .map_err(memory_schedule_error)?;
+    let count = runs.len();
+    Ok(success(
+        "memory schedule runs",
+        json!({
+            "runs": runs.iter().map(schedule_run_value).collect::<Vec<_>>(),
+            "count": count,
+            "durability": "memory-schedule-store"
+        }),
+        format!("Listed {count} memory synthesis run(s)"),
+    ))
 }
 
 fn consolidate(args: &[String]) -> Result<CommandResult, CliError> {
@@ -796,6 +1149,14 @@ fn parse_memory_classification(value: Option<&str>) -> Result<ContextClassificat
     }
 }
 
+fn required_option<'a>(
+    parsed: &'a super::ParsedArgs,
+    name: &str,
+    message: &'static str,
+) -> Result<&'a str, CliError> {
+    parsed.value(name).ok_or_else(|| CliError::usage(message))
+}
+
 fn parse_limit(value: Option<&str>) -> Result<u16, CliError> {
     let limit = value
         .map(|value| {
@@ -811,6 +1172,78 @@ fn parse_limit(value: Option<&str>) -> Result<u16, CliError> {
         )));
     }
     Ok(limit)
+}
+
+fn memory_schedule_store(
+    config: &pandora_runtime::config::RuntimeConfig,
+) -> Result<MemorySynthesisScheduleStore, CliError> {
+    MemorySynthesisScheduleStore::open(config.data_dir().join("memory-schedules.sqlite3"))
+        .map_err(memory_schedule_error)
+}
+
+fn memory_schedule_id(parsed: &super::ParsedArgs) -> Result<RunLoopId, CliError> {
+    RunLoopId::new(
+        required_option(parsed, "id", "memory schedule command requires '--id <id>'")?.to_owned(),
+    )
+    .map_err(|_| CliError::usage("memory schedule ID is invalid"))
+}
+
+fn memory_schedule_worker(parsed: &super::ParsedArgs) -> Result<JobWorkerId, CliError> {
+    JobWorkerId::new(
+        required_option(
+            parsed,
+            "worker",
+            "memory schedule command requires '--worker <id>'",
+        )?
+        .to_owned(),
+    )
+    .map_err(|_| CliError::usage("worker ID is invalid"))
+}
+
+fn schedule_value(schedule: &pandora_runtime::MemorySynthesisSchedule) -> serde_json::Value {
+    json!({
+        "id": schedule.id(),
+        "name": schedule.name(),
+        "session_id": schedule.session_id(),
+        "provider": schedule.provider(),
+        "memory_id": schedule.memory_id(),
+        "kind": schedule.kind().as_str(),
+        "summary": schedule.summary(),
+        "classification": schedule.classification().as_str(),
+        "interval_seconds": schedule.interval_seconds(),
+        "next_run_at": schedule.next_run_at().as_unix_seconds(),
+        "enabled": schedule.enabled(),
+        "created_at": schedule.created_at().as_unix_seconds(),
+        "last_claimed_at": schedule.last_claimed_at().map(|value| value.as_unix_seconds()),
+        "run_count": schedule.run_count(),
+        "scope": {
+            "principal_id": schedule.principal_id(),
+            "tenant_id": schedule.tenant_id(),
+            "workspace_id": schedule.workspace_id(),
+        }
+    })
+}
+
+fn schedule_run_value(run: &pandora_runtime::MemorySynthesisScheduleRun) -> serde_json::Value {
+    json!({
+        "schedule_id": run.schedule_id(),
+        "scheduled_for": run.scheduled_for().as_unix_seconds(),
+        "status": run.status().as_str(),
+        "worker_id": run.worker_id(),
+        "claimed_at": run.claimed_at().map(|value| value.as_unix_seconds()),
+        "lease_until": run.lease_until().map(|value| value.as_unix_seconds()),
+        "finished_at": run.finished_at().map(|value| value.as_unix_seconds()),
+        "snapshot_digest": run.snapshot_digest(),
+        "result_memory_id": run.result_memory_id(),
+        "failure": run.failure(),
+    })
+}
+
+fn memory_schedule_error(error: MemorySynthesisScheduleError) -> CliError {
+    CliError::execution(
+        error.to_string(),
+        json!({"durability": "memory-schedule-store"}),
+    )
 }
 
 fn scope_value(scope: &MemoryScope) -> serde_json::Value {

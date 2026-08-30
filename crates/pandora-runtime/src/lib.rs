@@ -31,6 +31,7 @@ pub mod job_store;
 pub mod mcp;
 pub mod mcp_catalog;
 pub mod memory_engine;
+pub mod memory_schedule;
 pub mod mutation;
 pub mod observability;
 pub mod operations;
@@ -148,6 +149,13 @@ pub use mcp_catalog::{McpCatalogRevision, McpCatalogTool};
 pub use memory_engine::{
     MAX_SYNTHESIS_SOURCE_RECORDS, MemoryEngine, MemoryError, MemorySynthesisProposal,
     MemorySynthesisSnapshot,
+};
+pub use memory_schedule::{
+    MAX_MEMORY_SYNTHESIS_CLAIM_BATCH, MAX_MEMORY_SYNTHESIS_RUNS,
+    MAX_MEMORY_SYNTHESIS_SCHEDULE_NAME_BYTES, MAX_MEMORY_SYNTHESIS_SCHEDULES,
+    MAX_MEMORY_SYNTHESIS_SUMMARY_BYTES, MEMORY_SYNTHESIS_SCHEDULE_LEASE_SECONDS,
+    MemorySynthesisSchedule, MemorySynthesisScheduleError, MemorySynthesisScheduleRun,
+    MemorySynthesisScheduleRunStatus, MemorySynthesisScheduleStore,
 };
 pub use mutation::{MutationEngine, MutationError};
 pub use observability::{
