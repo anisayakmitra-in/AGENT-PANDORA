@@ -12,7 +12,7 @@ const {
   resolveReleaseVersion,
 } = require("../lib/release.js");
 
-const repository = "anisayakmitra-in/PANDORA-AGENT";
+const repository = "anisayakmitra-in/AGENT-PANDORA";
 const packageVersion = require("../package.json").version;
 const MAX_RELEASE_DOWNLOAD_BYTES = 64 * 1024 * 1024;
 const MAX_RELEASE_REDIRECTS = 5;

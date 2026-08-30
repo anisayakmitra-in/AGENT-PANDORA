@@ -10,7 +10,7 @@ use std::time::Duration;
 
 const MAX_UPDATE_BYTES: u64 = 256 * 1024 * 1024;
 const OFFICIAL_RELEASE_BASE_URL: &str =
-    "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download";
+    "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download";
 const RELEASE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug)]
@@ -623,7 +623,7 @@ mod tests {
         let mut requested = Vec::new();
 
         let downloaded = download_release_artifact(
-            "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download",
+            "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download",
             "v2.0.0-alpha.6",
             "linux",
             "x86_64",
@@ -645,8 +645,8 @@ mod tests {
         assert_eq!(
             requested,
             vec![
-                "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download/v2.0.0-alpha.6/checksums.txt",
-                "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download/v2.0.0-alpha.6/pandora-x86_64-unknown-linux-gnu",
+                "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/v2.0.0-alpha.6/checksums.txt",
+                "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/v2.0.0-alpha.6/pandora-x86_64-unknown-linux-gnu",
             ]
         );
     }
@@ -656,7 +656,7 @@ mod tests {
         let manifest = "0000000000000000000000000000000000000000000000000000000000000000  pandora-x86_64-unknown-linux-gnu\n";
 
         let error = download_release_artifact(
-            "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download",
+            "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download",
             "v2.0.0-alpha.6",
             "linux",
             "x86_64",
@@ -683,7 +683,7 @@ mod tests {
         );
 
         let downloaded = download_release_artifact(
-            "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download",
+            "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download",
             "v2.0.0-alpha.6",
             "linux",
             "x86_64",
