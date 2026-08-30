@@ -57,6 +57,20 @@ Prerelease packages may be unsigned. Stable release tags fail closed until the
 release environment provides Windows signing and Apple signing/notarization
 credentials.
 
+## Accessibility
+
+The shell exposes a skip link, named navigation and main landmarks, focus-contained
+Quick Open dialog, and one-tab-stop tablists with Arrow, Home, and End key
+navigation. View changes move focus to the selected workspace; dismissing Quick
+Open returns focus to its invoking control. Runtime and view changes are announced
+through a polite live region.
+
+Typography uses scalable root-relative units. The stylesheet honors reduced
+motion, reduced transparency, increased contrast, and Windows forced-colors
+preferences. These contracts are covered by desktop regression tests; native
+screen-reader and clean-machine scaling checks remain release evidence rather
+than authority or execution tests.
+
 ## Interface direction
 
 The shell uses a three-zone layout: a compact navigation rail, an ambient

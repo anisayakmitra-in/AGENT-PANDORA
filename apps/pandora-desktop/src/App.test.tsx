@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import pandoraCss from "./pandora.css?raw";
 
 const runtime = vi.hoisted(() => ({
   admitLocalPackage: vi.fn(),
@@ -207,7 +208,7 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("Pandora desktop run state", () => {
-  it("keeps command-palette keyboard navigation visible and restores focus", async () => {
+  it("moves focus into the selected workspace after command-palette navigation", async () => {
     render(<App />);
 
     const trigger = await screen.findByRole("button", { name: "Search" });
@@ -222,7 +223,55 @@ describe("Pandora desktop run state", () => {
     fireEvent.keyDown(search, { key: "Enter" });
 
     expect(await screen.findByRole("heading", { name: "Background Runs" })).toBeInTheDocument();
+    expect(screen.getByRole("main", { name: "Background Runs workspace" })).toHaveFocus();
+  });
+
+  it("traps command-palette focus and restores the invoking control when dismissed", async () => {
+    render(<App />);
+
+    const trigger = await screen.findByRole("button", { name: "Search" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const search = screen.getByRole("combobox", { name: "Search Pandora surfaces" });
+    const close = screen.getByRole("button", { name: "Close quick open" });
+    await waitFor(() => expect(search).toHaveFocus());
+
+    fireEvent.keyDown(search, { key: "Tab", shiftKey: true });
+    expect(close).toHaveFocus();
+    fireEvent.keyDown(close, { key: "Tab" });
+    expect(search).toHaveFocus();
+    fireEvent.click(close);
+
     await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("exposes skip navigation and one-tab-stop keyboard tablists", async () => {
+    render(<App />);
+
+    const skipLink = screen.getByRole("link", { name: "Skip to workspace" });
+    expect(skipLink).toHaveAttribute("href", "#pandora-main");
+    expect(await screen.findAllByRole("button", { name: "Connections" })).toHaveLength(1);
+
+    const tabList = screen.getByRole("tablist", { name: "Run inspector" });
+    const flow = within(tabList).getByRole("tab", { name: "flow" });
+    const evidence = within(tabList).getByRole("tab", { name: "evidence" });
+    expect(flow).toHaveAttribute("tabindex", "0");
+    expect(evidence).toHaveAttribute("tabindex", "-1");
+
+    flow.focus();
+    fireEvent.keyDown(flow, { key: "ArrowRight" });
+    await waitFor(() => expect(evidence).toHaveFocus());
+    expect(evidence).toHaveAttribute("aria-selected", "true");
+    expect(flow).toHaveAttribute("tabindex", "-1");
+    expect(screen.getByRole("tabpanel", { name: "evidence" })).toBeInTheDocument();
+  });
+
+  it("ships reduced-motion, scalable-type, and native high-contrast contracts", () => {
+    expect(pandoraCss).toContain("@media (prefers-reduced-motion: reduce)");
+    expect(pandoraCss).toContain("@media (prefers-contrast: more)");
+    expect(pandoraCss).toContain("@media (forced-colors: active)");
+    expect(pandoraCss).toContain(".skip-link:focus");
+    expect(pandoraCss).not.toMatch(/font-size:\s*[6-9]px/);
   });
 
   it("disables duplicate submission while a governed run is active", async () => {

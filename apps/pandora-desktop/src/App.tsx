@@ -69,6 +69,15 @@ type InspectorTab = "flow" | "evidence" | "work" | "browser";
 type WorkSurface = "files" | "changes" | "terminal" | "artifacts";
 type HarnessTab = "genes" | "extensions" | "packages" | "authority" | "receipts";
 type InventoryTab = "overview" | "contract" | "boundaries" | "evidence";
+type PackageSourceTab = "registry" | "github" | "local" | "author";
+type ConnectionTab = "provider" | "mcp" | "registry";
+
+const inspectorTabs: readonly InspectorTab[] = ["flow", "evidence", "work", "browser"];
+const workSurfaceTabs: readonly WorkSurface[] = ["files", "changes", "terminal", "artifacts"];
+const harnessTabs: readonly HarnessTab[] = ["genes", "extensions", "packages", "authority", "receipts"];
+const packageSourceTabs: readonly PackageSourceTab[] = ["registry", "github", "local", "author"];
+const inventoryTabs: readonly InventoryTab[] = ["overview", "contract", "boundaries", "evidence"];
+const connectionTabs: readonly ConnectionTab[] = ["provider", "mcp", "registry"];
 
 type AuthoringKind = "gene" | "domain_harness" | "meta_harness";
 
@@ -307,6 +316,44 @@ function mergeEvolutionDetails(current: RuntimeEvolutionProposal[], incoming: Ru
   }));
 }
 
+function viewLabel(view: ViewId): string {
+  if (view === "command") return "Command Center";
+  if (view === "runs") return "Background Runs";
+  return navigation.flatMap((group) => group.items).find((item) => item.id === view)?.label
+    ?? view[0].toUpperCase() + view.slice(1);
+}
+
+function handleTabListKeyDown<T extends string>(
+  event: React.KeyboardEvent<HTMLButtonElement>,
+  items: readonly T[],
+  selected: T,
+  onSelect: (item: T) => void,
+) {
+  const index = items.indexOf(selected);
+  let nextIndex: number | null = null;
+  if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+    nextIndex = (index + 1) % items.length;
+  } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+    nextIndex = (index - 1 + items.length) % items.length;
+  } else if (event.key === "Home") {
+    nextIndex = 0;
+  } else if (event.key === "End") {
+    nextIndex = items.length - 1;
+  }
+  if (nextIndex === null) return;
+  event.preventDefault();
+  const next = items[nextIndex];
+  onSelect(next);
+  const tabList = event.currentTarget.closest<HTMLElement>('[role="tablist"]');
+  window.requestAnimationFrame(() => {
+    tabList?.querySelector<HTMLElement>('[role="tab"][data-tab-id="' + next + '"]')?.focus();
+  });
+}
+
+function RovingTab<T extends string>({ group, item, items, selected, onSelect, children }: { group: string; item: T; items: readonly T[]; selected: T; onSelect: (item: T) => void; children: ReactNode }) {
+  return <button id={group + "-tab-" + item} type="button" role="tab" data-tab-id={item} tabIndex={selected === item ? 0 : -1} aria-controls={group + "-panel"} aria-selected={selected === item} className={selected === item ? "is-active is-selected" : ""} onClick={() => onSelect(item)} onKeyDown={(event) => handleTabListKeyDown(event, items, selected, onSelect)}>{children}</button>;
+}
+
 function Icon({ name, size = 17 }: { name: IconName; size?: number }) {
   const common = {
     width: size,
@@ -425,6 +472,7 @@ function App() {
   const [workflows, setWorkflows] = useState<WorkflowRecipe[]>(loadWorkflows);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const autoStartAttempted = useRef(false);
+  const mainRef = useRef<HTMLElement>(null);
   const native = isNativeRuntime();
   const clientState = useMemo(() => {
     if (!endpoint || (!token && !(native && endpoint === nativeEndpoint))) {
@@ -1005,17 +1053,24 @@ function App() {
     setWorkflows((current) => current.filter((workflow) => workflow.id !== id));
   };
 
+  const selectView = (view: ViewId) => {
+    setActiveView(view);
+    mainRef.current?.focus({ preventScroll: true });
+  };
+
   const runWorkflow = async (workflow: WorkflowRecipe) => {
-    setActiveView("command");
+    selectView("command");
     await runTask(workflow.task, workflow.profile);
   };
 
   return (
     <div className="app-shell">
-      <Sidebar activeView={activeView} onSelect={setActiveView} runtimeStatus={runtimeStatus} sessions={sessions} selectedSessionId={selectedSessionId} onOpenPalette={() => setPaletteOpen(true)} onOpenSession={async (sessionId) => { setActiveView("command"); await openSession(sessionId); }} />
-      <main className="main-shell">
+      <a className="skip-link" href="#pandora-main">Skip to workspace</a>
+      <span className="sr-only" aria-live="polite" aria-atomic="true">{viewLabel(activeView)}. {runtimeStatusLabel(runtimeStatus)}.</span>
+      <Sidebar activeView={activeView} onSelect={selectView} runtimeStatus={runtimeStatus} sessions={sessions} selectedSessionId={selectedSessionId} onOpenPalette={() => setPaletteOpen(true)} onOpenSession={async (sessionId) => { selectView("command"); await openSession(sessionId); }} />
+      <main ref={mainRef} id="pandora-main" className="main-shell" tabIndex={-1} aria-label={viewLabel(activeView) + " workspace"}>
         <TopBar activeView={activeView} runtimeStatus={runtimeStatus} onOpenPalette={() => setPaletteOpen(true)} />
-        {paletteOpen ? <CommandPalette onClose={() => setPaletteOpen(false)} onSelectView={(view) => { setActiveView(view); setPaletteOpen(false); }} /> : null}
+        {paletteOpen ? <CommandPalette onClose={() => setPaletteOpen(false)} onSelectView={(view) => { selectView(view); setPaletteOpen(false); }} /> : null}
         {activeView === "command" ? (
           <CommandView
             selectedStep={selectedStep}
@@ -1062,8 +1117,8 @@ function App() {
             events={events}
             selectedSession={selectedSession}
             harnesses={harnesses}
-            onOpenCommand={() => setActiveView("command")}
-            onOpenAudit={() => setActiveView("audit")}
+            onOpenCommand={() => selectView("command")}
+            onOpenAudit={() => selectView("audit")}
           />
         ) : activeView === "memory" ? (
           <MemoryView
@@ -1078,7 +1133,7 @@ function App() {
             onDisable={disableMemorySchedule}
           />
         ) : activeView === "workflows" ? (
-          <WorkflowsView runtimeStatus={runtimeStatus} workflows={workflows} harnesses={harnesses} onOpenCommand={() => setActiveView("command")} onCreate={createWorkflow} onRemove={removeWorkflow} onRun={runWorkflow} />
+          <WorkflowsView runtimeStatus={runtimeStatus} workflows={workflows} harnesses={harnesses} onOpenCommand={() => selectView("command")} onCreate={createWorkflow} onRemove={removeWorkflow} onRun={runWorkflow} />
         ) : activeView === "connections" ? (
           <ConnectionView endpoint={endpoint} runtimeStatus={runtimeStatus} runtimeError={runtimeError} health={runtimeHealth} providers={providers} sessions={sessions} selectedSessionId={selectedSessionId} selectedSession={selectedSession} native={native} serviceActive={serviceActive} onConnect={connect} onStartService={startService} onStopService={stopService} onSelectSession={openSession} />
         ) : activeView === "audit" ? (
@@ -1086,9 +1141,9 @@ function App() {
         ) : activeView === "capabilities" ? (
           <CapabilitiesView harnesses={harnesses} tools={tools} runtimeStatus={runtimeStatus} native={native} />
         ) : activeView === "engines" ? (
-          <RuntimeInventoryView engines={engines} runtimeStatus={runtimeStatus} onOpenView={setActiveView} />
+          <RuntimeInventoryView engines={engines} runtimeStatus={runtimeStatus} onOpenView={selectView} />
         ) : activeView === "tools" ? (
-          <ToolsView tools={tools} runtimeStatus={runtimeStatus} onOpenView={setActiveView} />
+          <ToolsView tools={tools} runtimeStatus={runtimeStatus} onOpenView={selectView} />
         ) : activeView === "evolution" ? (
           <EvolutionView proposals={evolutionProposals} activations={artifactActivations} runtimeStatus={runtimeStatus} onInspect={inspectEvolutionCandidate} onMutate={mutateEvolution} />
         ) : (
@@ -1102,7 +1157,7 @@ function App() {
 function Sidebar({ activeView, onSelect, runtimeStatus, sessions, selectedSessionId, onOpenPalette, onOpenSession }: { activeView: ViewId; onSelect: (view: ViewId) => void; runtimeStatus: RuntimeStatus; sessions: RuntimeSession[]; selectedSessionId: string; onOpenPalette: () => void; onOpenSession: (sessionId: string) => Promise<void> }) {
   const threads = sessions.map((session) => ({ title: session.session_id, meta: session.workspace_id, sessionId: session.session_id, active: selectedSessionId === session.session_id }));
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" aria-label="Pandora sidebar">
       <div className="brand-lockup">
         <button className="brand-mark" type="button" aria-label="Open Command" onClick={() => onSelect("command")}><span>P</span></button>
         <div><strong>Pandora</strong><span>local control plane</span></div>
@@ -1110,31 +1165,31 @@ function Sidebar({ activeView, onSelect, runtimeStatus, sessions, selectedSessio
       </div>
       <button type="button" className="rail-search" onClick={onOpenPalette}><Icon name="search" size={15} /><span>Find a surface</span><kbd>Ctrl K</kbd></button>
       <nav className="navigation" aria-label="Pandora navigation">
-        {navigation.map((group) => <div className="nav-group" key={group.label}>
-          <span className="nav-label">{group.label}</span>
-          {group.items.map((item, itemIndex) => <button className={`nav-item ${activeView === item.id ? "is-active" : ""}`} key={item.id} onClick={() => onSelect(item.id)} aria-label={item.label} aria-current={activeView === item.id ? "page" : undefined}>
+        {navigation.map((group, groupIndex) => <section className="nav-group" aria-labelledby={"pandora-nav-group-" + groupIndex} key={group.label}>
+          <span id={"pandora-nav-group-" + groupIndex} className="nav-label">{group.label}</span>
+          {group.items.map((item, itemIndex) => <button className={`nav-item ${activeView === item.id ? "is-active" : ""}`} key={item.id} type="button" onClick={() => onSelect(item.id)} aria-label={item.label} aria-current={activeView === item.id ? "page" : undefined}>
             <span className="nav-count">{String(itemIndex + 1).padStart(2, "0")}</span><Icon name={item.icon} size={16} /><span>{item.label}</span>
           </button>)}
-        </div>)}
+        </section>)}
       </nav>
       <div className="recent-section">
-        <div className="recent-heading"><span className="nav-label">{sessions.length ? "Live sessions" : "Sessions"}</span><button className="text-icon-button" aria-label="New thread" onClick={onOpenPalette}><Icon name="plus" size={15} /></button></div>
+        <div className="recent-heading"><span className="nav-label">{sessions.length ? "Live sessions" : "Sessions"}</span><button className="text-icon-button" type="button" aria-label="Open a new task" onClick={onOpenPalette}><Icon name="plus" size={15} /></button></div>
         <div className="thread-list">
-          {threads.length ? threads.map((thread) => <button className={`thread-item ${thread.active && activeView === "command" ? "is-current" : ""}`} key={thread.title} onClick={() => void onOpenSession(thread.sessionId)}>
+          {threads.length ? threads.map((thread) => <button className={`thread-item ${thread.active && activeView === "command" ? "is-current" : ""}`} key={thread.title} type="button" aria-current={thread.active ? "true" : undefined} onClick={() => void onOpenSession(thread.sessionId)}>
             <span className="thread-title">{thread.title}</span><span className="thread-meta">{thread.meta}</span>
           </button>) : <span className="thread-meta">No recorded sessions</span>}
         </div>
       </div>
       <div className="sidebar-footer">
-        <div className={`footer-status footer-status-${runtimeStatus}`}><span className={`status-pulse status-pulse-${runtimeStatus}`} /> <span>{runtimeStatusLabel(runtimeStatus)}</span></div>
-        <div className="footer-meta"><span>Local only</span><span className="footer-separator">/</span><button className="text-icon-button" aria-label="Open settings" onClick={() => onSelect("settings")}><Icon name="gear" size={13} /> Settings</button></div>
+        <div className={`footer-status footer-status-${runtimeStatus}`}><span className={`status-pulse status-pulse-${runtimeStatus}`} aria-hidden="true" /> <span>{runtimeStatusLabel(runtimeStatus)}</span></div>
+        <div className="footer-meta"><span>Local only</span><span className="footer-separator">/</span><button className="text-icon-button" type="button" aria-label="Open settings" onClick={() => onSelect("settings")}><Icon name="gear" size={13} /> Settings</button></div>
       </div>
     </aside>
   );
 }
 
 function TopBar({ activeView, runtimeStatus, onOpenPalette }: { activeView: ViewId; runtimeStatus: RuntimeStatus; onOpenPalette: () => void }) {
-  const label = activeView === "command" ? "Command Center" : activeView === "runs" ? "Background Runs" : activeView[0].toUpperCase() + activeView.slice(1);
+  const label = viewLabel(activeView);
   const section = navigation.find((group) => group.items.some((item) => item.id === activeView))?.label ?? "Workspace";
   const tone = runtimeStatus === "connected" ? "green" : runtimeStatus === "offline" ? "amber" : "blue";
   return <header className="top-bar"><div className="breadcrumb"><span className="breadcrumb-muted">{section}</span><span className="breadcrumb-rule" /><strong>{label}</strong></div><div className="top-actions"><button className="top-search" type="button" aria-label="Search" onClick={onOpenPalette}><Icon name="search" size={14} /><span>Quick open</span><kbd>Ctrl K</kbd></button><Chip tone={tone} icon="lock">{runtimeStatusLabel(runtimeStatus)}</Chip></div></header>;
@@ -1341,16 +1396,21 @@ function CommandPalette({ onClose, onSelectView }: { onClose: () => void; onSele
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
   const previousFocus = useRef<HTMLElement | null>(document.activeElement instanceof HTMLElement ? document.activeElement : null);
+  const restorePreviousFocus = useRef(true);
   const actions = navigation.flatMap((group) => group.items.map((item) => ({ ...item, group: group.label })));
   const filtered = actions.filter((action) => `${action.label} ${action.group}`.toLowerCase().includes(query.toLowerCase()));
   useEffect(() => {
     listRef.current?.querySelector<HTMLElement>(`#pandora-palette-option-${selectedIndex}`)?.scrollIntoView?.({ block: "nearest" });
   }, [selectedIndex]);
-  useEffect(() => () => previousFocus.current?.focus(), []);
+  useEffect(() => () => {
+    if (restorePreviousFocus.current) previousFocus.current?.focus();
+  }, []);
   const choose = (index: number) => {
     const action = filtered[index];
     if (action) {
+      restorePreviousFocus.current = false;
       onSelectView(action.id);
     }
   };
@@ -1366,7 +1426,35 @@ function CommandPalette({ onClose, onSelectView }: { onClose: () => void; onSele
       choose(selectedIndex);
     }
   };
-  return <div className="palette-backdrop" role="presentation" onMouseDown={onClose}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Open Pandora surface" onMouseDown={(event) => event.stopPropagation()}><div className="palette-search"><Icon name="search" size={16} /><input autoFocus value={query} onChange={(event) => { setQuery(event.target.value); setSelectedIndex(0); }} onKeyDown={handleKeyDown} placeholder="Search Pandora surfaces…" aria-label="Search Pandora surfaces" role="combobox" aria-controls="pandora-palette-list" aria-expanded="true" aria-autocomplete="list" aria-activedescendant={filtered.length ? `pandora-palette-option-${selectedIndex}` : undefined} /><kbd>ESC</kbd></div><div ref={listRef} id="pandora-palette-list" className="palette-list" role="listbox" aria-label="Pandora surfaces">{filtered.length ? filtered.map((action, index) => <button id={`pandora-palette-option-${index}`} type="button" role="option" className={`palette-item ${index === selectedIndex ? "is-active" : ""}`} aria-selected={index === selectedIndex} key={action.id} onMouseEnter={() => setSelectedIndex(index)} onClick={() => choose(index)}><Icon name={action.icon} size={16} /><span><strong>{action.label}</strong><small>{action.group}</small></span><kbd>↵</kbd></button>) : <p className="palette-empty">No matching Pandora surface.</p>}</div><div className="palette-footer"><span>Use ↑ ↓ and Enter</span><span className="mono">Ctrl/⌘ K</span></div></section></div>;
+  const handleDialogKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      onClose();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>("input, button:not(:disabled)") ?? [])
+      .filter((element) => element.tabIndex >= 0);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+  return <div className="palette-backdrop" role="presentation" onMouseDown={onClose}>
+    <section ref={dialogRef} className="command-palette" role="dialog" aria-modal="true" aria-labelledby="pandora-palette-title" aria-describedby="pandora-palette-help" onKeyDown={handleDialogKeyDown} onMouseDown={(event) => event.stopPropagation()}>
+      <h2 id="pandora-palette-title" className="sr-only">Open a Pandora surface</h2>
+      <p id="pandora-palette-help" className="sr-only">Type to filter, use arrow keys to select, then press Enter.</p>
+      <div className="palette-search"><Icon name="search" size={16} /><input autoFocus value={query} onChange={(event) => { setQuery(event.target.value); setSelectedIndex(0); }} onKeyDown={handleKeyDown} placeholder="Search Pandora surfaces…" aria-label="Search Pandora surfaces" role="combobox" aria-controls="pandora-palette-list" aria-expanded="true" aria-autocomplete="list" aria-activedescendant={filtered.length ? "pandora-palette-option-" + selectedIndex : undefined} /><button className="palette-close" type="button" aria-label="Close quick open" onClick={onClose}><span aria-hidden="true">×</span></button></div>
+      <div ref={listRef} id="pandora-palette-list" className="palette-list" role="listbox" aria-label="Pandora surfaces">{filtered.length ? filtered.map((action, index) => <button id={"pandora-palette-option-" + index} type="button" role="option" tabIndex={-1} className={"palette-item " + (index === selectedIndex ? "is-active" : "")} aria-selected={index === selectedIndex} key={action.id} onMouseEnter={() => setSelectedIndex(index)} onClick={() => choose(index)}><Icon name={action.icon} size={16} /><span><strong>{action.label}</strong><small>{action.group}</small></span><kbd>↵</kbd></button>) : <p className="palette-empty">No matching Pandora surface.</p>}</div>
+      <div className="palette-footer"><span>Use ↑ ↓ and Enter</span><span className="mono">Ctrl/⌘ K</span></div>
+    </section>
+  </div>;
 }
 
 function workSurfaceForTask(task: string): WorkSurface {
@@ -1555,23 +1643,23 @@ function Inspector({ steps, lastRun, events, selectedSession, runtimeStatus, app
   return <aside className="inspector">
     <div className="inspector-header"><div><span className="eyebrow">{hasLiveRun ? "LIVE RUN SUMMARY" : "AUTHORITY CONTRACT"}</span><h2>{hasLiveRun ? "Execution recorded" : "Waiting for a run"}</h2></div><Chip tone={hasLiveRun ? "green" : "neutral"} icon={hasLiveRun ? "archive" : "lock"}>{hasLiveRun ? "Recorded" : "Idle"}</Chip></div>
     <div className="inspector-tabs" role="tablist" aria-label="Run inspector">
-      {(["flow", "evidence", "work", "browser"] as InspectorTab[]).map((item) => <button type="button" role="tab" aria-selected={tab === item} className={tab === item ? "is-active" : ""} key={item} onClick={() => setTab(item)}>{item}</button>)}
+      {inspectorTabs.map((item) => <RovingTab group="run-inspector" item={item} items={inspectorTabs} selected={tab} onSelect={setTab} key={item}>{item}</RovingTab>)}
     </div>
-    {tab === "evidence" ? <div className="inspector-pane" role="tabpanel">
+    {tab === "evidence" ? <div id="run-inspector-panel" className="inspector-pane" role="tabpanel" aria-labelledby={"run-inspector-tab-" + tab}>
       <Panel className="evidence-summary"><div className="panel-heading"><div><span className="eyebrow">RUN EVIDENCE</span><h3>{lastRun ? `${lastRun.receipt_count} receipts · ${lastRun.event_count} events` : "No run selected"}</h3></div><Chip tone={lastRun?.status === "completed" ? "green" : "neutral"} icon="archive">{lastRun?.status ?? "waiting"}</Chip></div>{lastRun ? <div className="evidence-facts"><div><span>Execution</span><strong className="mono">{lastRun.execution_id ?? "provider-only"}</strong></div><div><span>Harness</span><strong>{lastRun.selected_harness ?? "unselected"}</strong></div><div><span>Gene</span><strong>{lastRun.selected_gene ?? "unselected"}</strong></div><div><span>Prompt cache</span><strong>{lastRun.cached_prompt_tokens ?? 0} reused · {lastRun.cache_write_prompt_tokens ?? 0} written</strong></div></div> : <p className="task-copy">Run or select a session to inspect its immutable evidence summary.</p>}</Panel>
       <div className="inspector-section"><div className="section-heading"><span>Redacted activity</span><span className="mono section-count">{events.length}</span></div>{events.length ? <div className="compact-event-list">{events.map((event) => <div className="compact-event" key={event.event_id}><span className="event-dot" /><span>{event.event_type.replaceAll("_", " ")}</span><small className="mono">{event.event_id}</small></div>)}</div> : <p className="inspector-empty">No runtime events loaded.</p>}</div>
-    </div> : tab === "work" ? <div className="inspector-pane" role="tabpanel">
+    </div> : tab === "work" ? <div id="run-inspector-panel" className="inspector-pane" role="tabpanel" aria-labelledby={"run-inspector-tab-" + tab}>
       <Panel className="context-panel"><div className="panel-heading"><div><span className="eyebrow">SCOPED WORKSPACE</span><h3>{selectedSession?.session.workspace_id ?? "Local runtime workspace"}</h3></div><Icon name="lock" size={17} /></div><div className="evidence-facts"><div><span>Session</span><strong className="mono">{workspaceInspection?.session_id ?? selectedSession?.session.session_id ?? "new inspection"}</strong></div><div><span>Runtime scope</span><strong>Local device</strong></div><div><span>Reads</span><strong>Filesystem Gene</strong></div><div><span>Commands</span><strong>Exact permit path</strong></div></div></Panel>
-      <div className="work-surface-tabs" role="tablist" aria-label="Workspace surfaces">{(["files", "changes", "terminal", "artifacts"] as WorkSurface[]).map((surface) => <button type="button" role="tab" aria-selected={workSurface === surface} className={workSurface === surface ? "is-active" : ""} key={surface} onClick={() => setWorkSurface(surface)}><Icon name={surface === "files" ? "book" : surface === "changes" ? "code" : surface === "terminal" ? "terminal" : "archive"} size={13} />{surface}</button>)}</div>
-      <WorkSurfacePanel surface={workSurface} runtimeStatus={runtimeStatus} workspacePath={workspacePath} workspaceInspectionInFlight={workspaceInspectionInFlight} lastRun={lastRun} onPathChange={setWorkspacePath} onReadFile={readWorkspaceFile} onInspect={inspectWorkspace} />
+      <div className="work-surface-tabs" role="tablist" aria-label="Workspace surfaces">{workSurfaceTabs.map((surface) => <RovingTab group="workspace-surface" item={surface} items={workSurfaceTabs} selected={workSurface} onSelect={setWorkSurface} key={surface}><Icon name={surface === "files" ? "book" : surface === "changes" ? "code" : surface === "terminal" ? "terminal" : "archive"} size={13} />{surface}</RovingTab>)}</div>
+      <div id="workspace-surface-panel" role="tabpanel" aria-labelledby={"workspace-surface-tab-" + workSurface}><WorkSurfacePanel surface={workSurface} runtimeStatus={runtimeStatus} workspacePath={workspacePath} workspaceInspectionInFlight={workspaceInspectionInFlight} lastRun={lastRun} onPathChange={setWorkspacePath} onReadFile={readWorkspaceFile} onInspect={inspectWorkspace} /></div>
       {workspaceError ? <p className="workspace-inspection-error" role="alert">{workspaceError}</p> : null}
       {workspaceResultVisible && workspaceInspection ? <Panel className="workspace-result-panel"><div className="panel-heading"><div><span className="eyebrow">GOVERNED RESULT</span><h3>{workspaceInspection.selected_gene ?? "Workspace inspection"}</h3></div><Chip tone={workspaceInspection.status === "completed" ? "green" : workspaceInspection.status === "approval_required" ? "amber" : "neutral"}>{workspaceInspection.status}</Chip></div><div className="workspace-result-meta"><span className="mono">{workspaceInspection.execution_id ?? workspaceInspection.session_id}</span><span>{workspaceInspection.receipt_count} receipt{workspaceInspection.receipt_count === 1 ? "" : "s"}</span></div>{workspaceApproval ? <div className="workspace-approval"><div><span className="eyebrow">EXACT APPROVAL</span><strong>{workspaceApproval.request_summary}</strong><small className="mono">{workspaceApproval.request_digest}</small></div><div className="workspace-approval-actions">{workspaceApproval.status === "pending" ? <><button className="button button-deny" type="button" disabled={workspaceInspectionInFlight} onClick={() => void resolveWorkspace(false)}>Deny</button><button className="button button-primary" type="button" disabled={workspaceInspectionInFlight} onClick={() => void resolveWorkspace(true)}>Allow once</button></> : workspaceApproval.status === "approved" ? <button className="button button-primary" type="button" disabled={workspaceInspectionInFlight} onClick={() => void resolveWorkspace(true)}>Resume approved inspection</button> : <Chip tone="neutral">{workspaceApproval.status}</Chip>}</div></div> : null}{workspaceOutput ? <WorkspaceEvidenceOutput task={workspaceTask} output={workspaceOutput} /> : <p className="inspector-empty">{workspaceInspection.status_detail ?? (workspaceInspectionInFlight ? "Waiting for runtime evidence…" : "No output returned.")}</p>}</Panel> : null}
       <Panel className="context-boundary"><span className="eyebrow">BOUNDARY</span><h3>Work surfaces expose evidence, not authority</h3><p>Files, changes, checks, and artifacts stay on Pandora’s existing Harness → Gene → ReferenceMonitor → receipt path. The desktop cannot issue permits, run arbitrary commands, or mutate repository state outside a registered Gene.</p></Panel>
-    </div> : tab === "browser" ? <div className="inspector-pane" role="tabpanel">
+    </div> : tab === "browser" ? <div id="run-inspector-panel" className="inspector-pane" role="tabpanel" aria-labelledby={"run-inspector-tab-" + tab}>
       <Panel className="browser-control-panel"><div className="panel-heading"><div><span className="eyebrow">GOVERNED BROWSER</span><h3>Fetch inert source evidence</h3></div><Chip tone={runtimeStatus === "connected" ? "green" : "neutral"} icon="shield">{runtimeStatus === "connected" ? "Exact approval" : "Offline"}</Chip></div><form className="browser-fetch-form" onSubmit={(event) => void fetchBrowser(event)}><label><span>Exact URL</span><input aria-label="Browser URL" value={browserUrl} onChange={(event) => setBrowserUrl(event.target.value)} maxLength={2048} spellCheck={false} autoComplete="off" /></label><button className="button button-primary" type="submit" disabled={runtimeStatus !== "connected" || browserInspectionInFlight || !browserUrl.trim()}>{browserInspectionInFlight ? "Fetching…" : "Fetch source"}</button></form><div className="browser-rules"><span><Icon name="check" size={11} /> HTTPS, or loopback HTTP</span><span><Icon name="check" size={11} /> No redirects</span><span><Icon name="check" size={11} /> Text only · 128 KiB</span></div>{browserError ? <p className="workspace-inspection-error" role="alert">{browserError}</p> : null}</Panel>
       {browserInspection ? <Panel className="browser-result-panel"><div className="panel-heading"><div><span className="eyebrow">NETWORK RECEIPT PATH</span><h3>{browserInspection.selected_gene ?? "browser.fetch"}</h3></div><Chip tone={browserInspection.status === "completed" ? "green" : browserInspection.status === "approval_required" ? "amber" : "neutral"}>{browserInspection.status}</Chip></div><div className="workspace-result-meta"><span className="mono">{browserInspection.execution_id ?? browserInspection.session_id}</span><span>{browserInspection.receipt_count} receipt{browserInspection.receipt_count === 1 ? "" : "s"}</span></div>{browserApproval ? <div className="workspace-approval"><div><span className="eyebrow">EXACT NETWORK APPROVAL</span><strong>{browserApproval.request_summary}</strong><small className="mono">{browserApproval.request_digest}</small></div><div className="workspace-approval-actions">{browserApproval.status === "pending" ? <><button className="button button-deny" type="button" disabled={browserInspectionInFlight} onClick={() => void resolveBrowser(false)}>Deny</button><button className="button button-primary" type="button" disabled={browserInspectionInFlight} onClick={() => void resolveBrowser(true)}>Allow once</button></> : browserApproval.status === "approved" ? <button className="button button-primary" type="button" disabled={browserInspectionInFlight} onClick={() => void resolveBrowser(true)}>Resume approved fetch</button> : <Chip tone="neutral">{browserApproval.status}</Chip>}</div></div> : null}{browserEvidence ? <div className="browser-evidence"><div className="browser-evidence-meta"><div><span>Status</span><strong>{browserEvidence.status}</strong></div><div><span>Media</span><strong>{browserEvidence.content_type ?? "UTF-8 text"}</strong></div><div><span>Boundary</span><strong>{browserEvidence.truncated ? "Truncated" : "Complete"}{browserEvidence.lossy ? " · normalized" : ""}</strong></div></div><div className="browser-address mono">{browserEvidence.url}</div><pre aria-label="Browser evidence body">{browserEvidence.body}</pre></div> : browserInspection.output ? <pre className="workspace-output" aria-label="Browser inspection output">{browserInspection.output}</pre> : <p className="inspector-empty">{browserInspection.status_detail ?? (browserInspectionInFlight ? "Waiting for network evidence…" : "No source returned.")}</p>}</Panel> : null}
       <Panel className="context-boundary browser-boundary"><span className="eyebrow">UNTRUSTED EVIDENCE</span><h3>Remote content cannot speak with authority</h3><p>Pandora never executes returned HTML or scripts. The exact URL is payload-digest bound, DNS is pinned after boundary checks, every connection consumes one permit, and the result enters context only as untrusted evidence.</p></Panel>
-    </div> : <div className="inspector-pane" role="tabpanel">
+    </div> : <div id="run-inspector-panel" className="inspector-pane" role="tabpanel" aria-labelledby={"run-inspector-tab-" + tab}>
       <Panel className="task-panel"><div className="task-heading"><span className="task-icon"><Icon name="code" size={18} /></span><div><span className="eyebrow">PANDORA DESKTOP</span><h3>Governed command surface</h3></div></div><p className="task-copy">Submit work through the local service. The desktop shell does not issue permits or execute tools directly.</p><div className="task-meta"><span><Icon name="book" size={13} /> Existing runtime</span><span><Icon name="lock" size={13} /> Workspace scoped</span></div></Panel>
       <div className="inspector-section"><div className="section-heading"><span>Authority chain</span><span className="mono section-count">{steps.filter((step) => step.status !== "idle").length}/8</span></div><div className="authority-timeline">{steps.map((step) => <button className={`authority-row status-${step.status} ${selectedStep === step.id ? "is-selected" : ""}`} key={step.id} onClick={() => onSelectStep(step.id)}><span className="timeline-line" /><span className="timeline-node">{step.status === "complete" ? <Icon name="check" size={12} /> : <Icon name={step.icon} size={13} />}</span><span className="authority-copy"><strong>{step.label}</strong><small>{step.detail}</small></span><Icon name="chevron" size={14} /></button>)}</div></div>
       <Panel className={`approval-panel ${approval && approval.status !== "pending" ? "is-preview-complete" : ""}`}><div className="approval-top"><span className="approval-icon"><Icon name={approval && approval.status !== "pending" ? "check" : "shield"} size={17} /></span><div><span className="eyebrow">{approval ? "LIVE APPROVAL" : approvalDetail ? "LIVE RUNTIME" : "REFERENCE MONITOR"}</span><h3>{approval ? approval.status === "pending" ? "Exact approval required" : `Approval ${approval.status}` : approvalDetail ? "Approval metadata unavailable" : "No pending approval"}</h3></div></div>{approval ? <><p className="approval-note">{approval.status === "pending" ? "Review the exact digest before allowing this operation once." : `This approval is ${approval.status}; it cannot authorize another execution.`}</p><div className="operation-box"><div><span className="eyebrow">OPERATION</span><strong>{approval.request_summary}</strong></div><div><span className="eyebrow">GENE</span><span className="mono">{approval.gene_id}</span></div><div><span className="eyebrow">REQUEST DIGEST</span><span className="digest"><span className="mono">{approval.request_digest}</span></span></div><div><span className="eyebrow">SCOPE</span><span className="mono">{approval.session_id}</span></div></div>{approvalError ? <p className="approval-error" role="alert">{approvalError}</p> : null}{approval.status === "pending" ? <div className="approval-actions"><button className="button button-deny" type="button" disabled={approvalInFlight} onClick={() => void decide(false)}>Deny</button><button className="button button-primary" type="button" disabled={approvalInFlight} onClick={() => void decide(true)}>{approvalInFlight ? "Resolving…" : "Allow once"} <Icon name="arrow" size={14} /></button></div> : null}</> : approvalDetail ? <><p className="approval-note">The runtime paused, but this service did not return an exact approval record. Upgrade the local service before resuming.</p><div className="operation-box"><div><span className="eyebrow">REASON</span><strong>{approvalDetail}</strong></div><div><span className="eyebrow">SCOPE</span><span className="mono">Exact session and request</span></div></div></> : <><p className="approval-note">An exact request digest appears here only when the runtime pauses a real operation. This desktop cannot fabricate an approval or issue a permit.</p><div className="operation-box"><div><span className="eyebrow">STATE</span><strong>Waiting for governed work</strong></div><div><span className="eyebrow">AUTHORITY</span><span className="mono">ReferenceMonitor only</span></div></div></>}</Panel>
@@ -1788,8 +1876,8 @@ function CapabilitiesView({ harnesses, tools, runtimeStatus, native }: { harness
     <div className="harness-workbench">
       <Panel className="harness-browser"><div className="panel-heading"><div><span className="eyebrow">CATALOG</span><h3>{visibleHarnesses.length} Harnesses</h3></div><Icon name="search" size={16} /></div><div className="harness-browser-list">{connected && visibleHarnesses.length ? visibleHarnesses.map((harness) => <button type="button" className={`harness-browser-row ${selectedHarness?.id === harness.id ? "is-selected" : ""}`} key={harness.id} onClick={() => setSelectedHarnessId(harness.id)}><span className="harness-browser-icon"><Icon name="box" size={16} /></span><span><strong>{harness.name}</strong><small>{harness.kind} · v{harness.version}</small></span><Chip tone={harness.runnable ? "green" : "neutral"}>{harness.runnable ? "ready" : "bound"}</Chip></button>) : <div className="harness-empty"><Icon name="lock" size={20} /><p>{connected ? "No Harnesses in this filter." : "Runtime connection required."}</p></div>}</div></Panel>
       <Panel className="harness-inspection">{selectedHarness ? <><div className="harness-hero"><span className="harness-hero-icon"><Icon name="box" size={22} /></span><div><span className="eyebrow">VERSIONED HARNESS</span><h2>{selectedHarness.name}</h2><p className="mono">{selectedHarness.id} · {selectedHarness.kind} · v{selectedHarness.version}</p></div><Chip tone={selectedHarness.runnable ? "green" : "gold"} icon={selectedHarness.runnable ? "check" : "lock"}>{selectedHarness.runnable ? "Runnable" : "Bound"}</Chip></div>
-        <div className="harness-tabs" role="tablist" aria-label="Harness inspector">{(["genes", "extensions", "packages", "authority", "receipts"] as HarnessTab[]).map((item) => <button type="button" role="tab" aria-selected={tab === item} className={tab === item ? "is-active" : ""} onClick={() => setTab(item)} key={item}>{item === "extensions" ? "Plugins & tools" : item}</button>)}</div>
-        <div className={`harness-tab-panel ${tab === "packages" ? "package-tab-panel" : ""}`} role="tabpanel">{tab === "genes" ? <><div className="inspection-heading"><div><span className="eyebrow">GENE CATALOG</span><h3>{selectedHarness.gene_count} admitted Genes</h3></div><Chip tone="blue">Exact versions</Chip></div>{selectedHarness.gene_ids?.length ? <div className="gene-table">{selectedHarness.gene_ids.map((gene, index) => <div className="gene-row" key={gene}><span className="gene-index mono">{String(index + 1).padStart(2, "0")}</span><span><strong>{gene}</strong><small>Capability identity reported by runtime</small></span><Chip tone="green" icon="check">admitted</Chip></div>)}</div> : <p className="inspector-empty">Gene identities are unavailable from this runtime version.</p>}</> : tab === "extensions" ? <><div className="inspection-heading"><div><span className="eyebrow">ADMITTED EXTENSIONS</span><h3>{tools.length} plugin and tool surfaces</h3></div><Chip tone="gold" icon="shield">No authority implied</Chip></div>{tools.length ? <div className="gene-table">{tools.map((tool) => <div className="gene-row" key={tool.id}><span className="harness-browser-icon"><Icon name="terminal" size={14} /></span><span><strong>{tool.name}</strong><small className="mono">{tool.id} · v{tool.version}</small></span><span className="extension-operation">{tool.capability} / {tool.operation}</span></div>)}</div> : <p className="inspector-empty">No extension metadata reported.</p>}</> : tab === "packages" ? <PackageManager native={native} /> : tab === "authority" ? <div className="authority-map"><div><span>May select</span><strong>{selectedHarness.gene_count} admitted Genes</strong></div><div><span>May propose</span><strong>Bound tool requests</strong></div><div><span>May approve</span><strong className="authority-denied">Never</strong></div><div><span>May execute</span><strong className="authority-denied">Never directly</strong></div><p><Icon name="shield" size={14} /> Parliament plans, the Shadow Council routes, and ReferenceMonitor alone can authorize an exact effect.</p></div> : <div className="receipt-posture"><div className="receipt-seal"><Icon name="archive" size={24} /></div><h3>Evidence follows execution</h3><p>This catalog exposes capability identity and admission state. Receipts are run-scoped and appear in the Command inspector after an exact permit is consumed.</p><div className="receipt-rules"><span><Icon name="check" size={12} /> Request digest</span><span><Icon name="check" size={12} /> Bound Gene version</span><span><Icon name="check" size={12} /> Workspace scope</span><span><Icon name="check" size={12} /> Effect outcome</span></div></div>}</div>
+        <div className="harness-tabs" role="tablist" aria-label="Harness inspector">{harnessTabs.map((item) => <RovingTab group="harness-inspector" item={item} items={harnessTabs} selected={tab} onSelect={setTab} key={item}>{item === "extensions" ? "Plugins & tools" : item}</RovingTab>)}</div>
+        <div id="harness-inspector-panel" className={`harness-tab-panel ${tab === "packages" ? "package-tab-panel" : ""}`} role="tabpanel" aria-labelledby={"harness-inspector-tab-" + tab}>{tab === "genes" ? <><div className="inspection-heading"><div><span className="eyebrow">GENE CATALOG</span><h3>{selectedHarness.gene_count} admitted Genes</h3></div><Chip tone="blue">Exact versions</Chip></div>{selectedHarness.gene_ids?.length ? <div className="gene-table">{selectedHarness.gene_ids.map((gene, index) => <div className="gene-row" key={gene}><span className="gene-index mono">{String(index + 1).padStart(2, "0")}</span><span><strong>{gene}</strong><small>Capability identity reported by runtime</small></span><Chip tone="green" icon="check">admitted</Chip></div>)}</div> : <p className="inspector-empty">Gene identities are unavailable from this runtime version.</p>}</> : tab === "extensions" ? <><div className="inspection-heading"><div><span className="eyebrow">ADMITTED EXTENSIONS</span><h3>{tools.length} plugin and tool surfaces</h3></div><Chip tone="gold" icon="shield">No authority implied</Chip></div>{tools.length ? <div className="gene-table">{tools.map((tool) => <div className="gene-row" key={tool.id}><span className="harness-browser-icon"><Icon name="terminal" size={14} /></span><span><strong>{tool.name}</strong><small className="mono">{tool.id} · v{tool.version}</small></span><span className="extension-operation">{tool.capability} / {tool.operation}</span></div>)}</div> : <p className="inspector-empty">No extension metadata reported.</p>}</> : tab === "packages" ? <PackageManager native={native} /> : tab === "authority" ? <div className="authority-map"><div><span>May select</span><strong>{selectedHarness.gene_count} admitted Genes</strong></div><div><span>May propose</span><strong>Bound tool requests</strong></div><div><span>May approve</span><strong className="authority-denied">Never</strong></div><div><span>May execute</span><strong className="authority-denied">Never directly</strong></div><p><Icon name="shield" size={14} /> Parliament plans, the Shadow Council routes, and ReferenceMonitor alone can authorize an exact effect.</p></div> : <div className="receipt-posture"><div className="receipt-seal"><Icon name="archive" size={24} /></div><h3>Evidence follows execution</h3><p>This catalog exposes capability identity and admission state. Receipts are run-scoped and appear in the Command inspector after an exact permit is consumed.</p><div className="receipt-rules"><span><Icon name="check" size={12} /> Request digest</span><span><Icon name="check" size={12} /> Bound Gene version</span><span><Icon name="check" size={12} /> Workspace scope</span><span><Icon name="check" size={12} /> Effect outcome</span></div></div>}</div>
       </> : <div className="harness-empty"><Icon name="box" size={24} /><h3>Select a Harness</h3><p>The inspector never fabricates catalog entries.</p></div>}</Panel>
     </div>
   </div>;
@@ -1889,7 +1977,7 @@ function PackageManager({ native }: { native: boolean }) {
   const [registryProfiles, setRegistryProfiles] = useState<RegistryProfile[]>([]);
   const [registryProfile, setRegistryProfile] = useState("");
   const [selectedIdentity, setSelectedIdentity] = useState("");
-  const [sourceTab, setSourceTab] = useState<"registry" | "github" | "local" | "author">("registry");
+  const [sourceTab, setSourceTab] = useState<PackageSourceTab>("registry");
   const [packageId, setPackageId] = useState("");
   const [version, setVersion] = useState("");
   const [registryUrl, setRegistryUrl] = useState("");
@@ -2184,8 +2272,8 @@ function PackageManager({ native }: { native: boolean }) {
           </form> : null}
           {removeTarget ? <form className="package-remove-confirm" onSubmit={confirmRemoval}><p>Dependency and lifecycle-binding checks passed. Type <span className="mono">{removeTarget.id}@{removeTarget.version}</span> to remove this exact record.</p><input aria-label={`Confirm removal ${removeTarget.id}@${removeTarget.version}`} value={removeConfirmation} onChange={(event) => setRemoveConfirmation(event.target.value)} autoComplete="off" spellCheck={false} /><div><button className="button button-secondary" type="button" onClick={() => setRemoveTarget(null)}>Close</button><button className="button button-deny" type="submit" disabled={busy === "remove" || removeConfirmation !== `${removeTarget.id}@${removeTarget.version}`}>{busy === "remove" ? "Removing…" : "Remove package"}</button></div></form> : null}
         </div> : null}
-        <div className="package-source-tabs" role="tablist" aria-label="Package source"><button type="button" role="tab" aria-selected={sourceTab === "registry"} className={sourceTab === "registry" ? "is-selected" : ""} onClick={() => setSourceTab("registry")}>Registry URL</button><button type="button" role="tab" aria-selected={sourceTab === "github"} className={sourceTab === "github" ? "is-selected" : ""} onClick={() => setSourceTab("github")}>GitHub commit</button><button type="button" role="tab" aria-selected={sourceTab === "local"} className={sourceTab === "local" ? "is-selected" : ""} onClick={() => setSourceTab("local")}>Local artifact</button><button type="button" role="tab" aria-selected={sourceTab === "author"} className={sourceTab === "author" ? "is-selected" : ""} onClick={() => setSourceTab("author")}>Author manifest</button></div>
-        {sourceTab === "registry" ? (
+        <div className="package-source-tabs" role="tablist" aria-label="Package source">{packageSourceTabs.map((item) => <RovingTab group="package-source" item={item} items={packageSourceTabs} selected={sourceTab} onSelect={setSourceTab} key={item}>{item === "registry" ? "Registry URL" : item === "github" ? "GitHub commit" : item === "local" ? "Local artifact" : "Author manifest"}</RovingTab>)}</div>
+        <div id="package-source-panel" role="tabpanel" aria-labelledby={"package-source-tab-" + sourceTab}>{sourceTab === "registry" ? (
           <form className="package-form" onSubmit={submitRegistry}>
             <label><span>Package ID</span><input aria-label="Registry package ID" value={packageId} onChange={(event) => setPackageId(event.target.value)} placeholder="publisher/gene" maxLength={256} autoComplete="off" spellCheck={false} /></label>
             <label><span>Exact version <small>optional current release</small></span><input aria-label="Registry package version" value={version} onChange={(event) => setVersion(event.target.value)} placeholder="1.0.0" maxLength={128} autoComplete="off" spellCheck={false} /></label>
@@ -2209,7 +2297,7 @@ function PackageManager({ native }: { native: boolean }) {
             <label className="package-form-wide"><span>Absolute artifact path</span><input aria-label="Local package artifact path" value={artifactPath} onChange={(event) => setArtifactPath(event.target.value)} placeholder="C:\path\to\gene.wasm" maxLength={4096} autoComplete="off" spellCheck={false} /></label>
             <div className="package-form-footer"><p>Both paths must be regular local files, not symlinks. Admission remains metadata-only until an exact governed run selects the package.</p><button className="button button-primary" type="submit" disabled={Boolean(busy) || !manifestPath.trim() || !artifactPath.trim()}>{busy === "admit" ? "Admitting…" : "Validate and admit"}</button></div>
           </form>
-        ) : <PackageAuthoring />}
+        ) : <PackageAuthoring />}</div>
       </div>
     </div>
   </div>;
@@ -2292,12 +2380,12 @@ function RuntimeInventoryView({ engines, runtimeStatus, onOpenView }: { engines:
       </Panel>
       <Panel className="engine-inspection">{selected ? <>
         <div className="engine-inspection-hero"><span className={`engine-hero-icon ${constitutional ? "is-core" : embedded ? "is-embedded" : ""}`}><Icon name={selected.id === "reference-monitor" ? "shield" : embedded ? "activity" : "stack"} size={22} /></span><div><span className="eyebrow">{constitutional ? "CONSTITUTIONAL RUNTIME BOUNDARY" : embedded ? "EMBEDDED RESILIENCE COMPONENT" : inventoryLabel(selected.component_kind).toUpperCase()}</span><h2>{selected.name}</h2><p className="mono">{selected.id}</p></div><Chip tone={constitutional ? "gold" : embedded ? "amber" : "blue"}>{selected.category || "Reported"}</Chip></div>
-        <div className="inventory-tabs" role="tablist" aria-label="Component inspection"><button role="tab" aria-selected={inventoryTab === "overview"} className={inventoryTab === "overview" ? "is-active" : ""} onClick={() => setInventoryTab("overview")}>Overview</button><button role="tab" aria-selected={inventoryTab === "contract"} className={inventoryTab === "contract" ? "is-active" : ""} onClick={() => setInventoryTab("contract")}>Contract</button><button role="tab" aria-selected={inventoryTab === "boundaries"} className={inventoryTab === "boundaries" ? "is-active" : ""} onClick={() => setInventoryTab("boundaries")}>Boundaries</button><button role="tab" aria-selected={inventoryTab === "evidence"} className={inventoryTab === "evidence" ? "is-active" : ""} onClick={() => setInventoryTab("evidence")}>Evidence & source</button></div>
-        {inventoryTab === "overview" ? <div className="inventory-tab-panel">
+        <div className="inventory-tabs" role="tablist" aria-label="Component inspection">{inventoryTabs.map((item) => <RovingTab group="component-inspection" item={item} items={inventoryTabs} selected={inventoryTab} onSelect={setInventoryTab} key={item}>{item === "evidence" ? "Evidence & source" : item[0].toUpperCase() + item.slice(1)}</RovingTab>)}</div>
+        <div id="component-inspection-panel" role="tabpanel" aria-labelledby={"component-inspection-tab-" + inventoryTab}>{inventoryTab === "overview" ? <div className="inventory-tab-panel">
           <div className="engine-contract-grid"><div><span>Owned role</span><strong>{selected.role}</strong></div><div><span>Authority boundary</span><strong>{selected.authority}</strong></div><div><span>Category</span><strong>{selected.category || "Not reported"}</strong></div><div><span>Component kind</span><strong>{inventoryLabel(selected.component_kind)}</strong></div></div>
           <div className="engine-proof-grid"><section><span className="eyebrow">WHAT THIS PROVES</span><p>The connected runtime reports this component’s identity, contract, relationships, evidence classes, and source locations.</p></section><section><span className="eyebrow">WHAT THIS DOES NOT PROVE</span><p>Inventory metadata is not a health check, execution permit, activation receipt, or proof that a replaceable package is trusted.</p></section></div>
           <div className="inventory-authority-map"><article><small>POLICY</small><strong>Parliament</strong><span>Decides policy outside the component inventory.</span></article><article><small>COMPOSITION</small><strong>Shadow Council</strong><span>Selects approved Harness, Gene, and provider compositions.</span></article><article><small>AUTHORIZATION</small><strong>ReferenceMonitor</strong><span>Alone issues exact one-shot effect permits.</span></article><article className={constitutional ? "is-core" : ""}><small>INSPECTED</small><strong>{selected.name}</strong><span>{selected.authority}</span></article></div>
-        </div> : inventoryTab === "contract" ? <div className="inventory-tab-panel inventory-contract-sections"><section><span className="eyebrow">INPUTS</span><InventoryItems items={selected.inputs} empty="No inputs reported by this runtime version." /></section><section><span className="eyebrow">OUTPUTS</span><InventoryItems items={selected.outputs} empty="No outputs reported by this runtime version." /></section><section className="inventory-wide"><span className="eyebrow">RELATED COMPONENTS AND AUTHORITIES</span><div className="inventory-token-list">{selected.related_components?.length ? selected.related_components.map((component) => <span key={component}>{component}</span>) : <span>None reported</span>}</div></section></div> : inventoryTab === "boundaries" ? <div className="inventory-tab-panel inventory-boundaries"><section><span className="eyebrow">NON-NEGOTIABLE INVARIANTS</span><InventoryItems items={selected.invariants} empty="No invariants reported by this runtime version." /></section><section className="inventory-boundary-callout"><Icon name="lock" size={18} /><div><strong>Authority never transfers through inspection</strong><p>Parliament decides policy. Shadow Council selects only approved compositions. ReferenceMonitor alone issues exact one-shot permits. {selected.name} cannot grant itself capabilities or bypass those boundaries.</p></div></section></div> : <div className="inventory-tab-panel inventory-evidence-grid"><section><span className="eyebrow">EVIDENCE PRODUCED OR CONSUMED</span><InventoryItems items={selected.evidence} empty="No evidence classes reported by this runtime version." /></section><section><span className="eyebrow">SOURCE MODULES</span><InventoryItems items={selected.source_modules} empty="No source locations reported by this runtime version." /></section><section><span className="eyebrow">DOCUMENTATION</span><InventoryItems items={selected.documentation} empty="No documentation paths reported by this runtime version." /></section><pre className="engine-contract-json" aria-label="Component contract JSON">{JSON.stringify(selected, null, 2)}</pre></div>}
+        </div> : inventoryTab === "contract" ? <div className="inventory-tab-panel inventory-contract-sections"><section><span className="eyebrow">INPUTS</span><InventoryItems items={selected.inputs} empty="No inputs reported by this runtime version." /></section><section><span className="eyebrow">OUTPUTS</span><InventoryItems items={selected.outputs} empty="No outputs reported by this runtime version." /></section><section className="inventory-wide"><span className="eyebrow">RELATED COMPONENTS AND AUTHORITIES</span><div className="inventory-token-list">{selected.related_components?.length ? selected.related_components.map((component) => <span key={component}>{component}</span>) : <span>None reported</span>}</div></section></div> : inventoryTab === "boundaries" ? <div className="inventory-tab-panel inventory-boundaries"><section><span className="eyebrow">NON-NEGOTIABLE INVARIANTS</span><InventoryItems items={selected.invariants} empty="No invariants reported by this runtime version." /></section><section className="inventory-boundary-callout"><Icon name="lock" size={18} /><div><strong>Authority never transfers through inspection</strong><p>Parliament decides policy. Shadow Council selects only approved compositions. ReferenceMonitor alone issues exact one-shot permits. {selected.name} cannot grant itself capabilities or bypass those boundaries.</p></div></section></div> : <div className="inventory-tab-panel inventory-evidence-grid"><section><span className="eyebrow">EVIDENCE PRODUCED OR CONSUMED</span><InventoryItems items={selected.evidence} empty="No evidence classes reported by this runtime version." /></section><section><span className="eyebrow">SOURCE MODULES</span><InventoryItems items={selected.source_modules} empty="No source locations reported by this runtime version." /></section><section><span className="eyebrow">DOCUMENTATION</span><InventoryItems items={selected.documentation} empty="No documentation paths reported by this runtime version." /></section><pre className="engine-contract-json" aria-label="Component contract JSON">{JSON.stringify(selected, null, 2)}</pre></div>}</div>
         <div className="engine-inspection-actions"><p><Icon name="lock" size={13} /> Selecting or filtering inventory records never changes the active Harness, Gene, provider, or permit state.</p>{related ? <button className="button button-secondary" type="button" onClick={() => onOpenView(related.view)}>{related.label} <Icon name="arrow" size={13} /></button> : null}</div>
       </> : <div className="runs-empty"><Icon name="stack" size={27} /><h3>No component selected</h3><p>Choose a runtime-reported component to inspect its bounded contract.</p></div>}</Panel>
     </div>
@@ -2311,7 +2399,7 @@ function SettingsView({ theme, onThemeChange, runtimeStatus, health, native, end
 function ConnectionView({ endpoint, runtimeStatus, runtimeError, health, providers, sessions, selectedSessionId, selectedSession, native, serviceActive, onConnect, onStartService, onStopService, onSelectSession }: { endpoint: string; runtimeStatus: RuntimeStatus; runtimeError: string; health: RuntimeHealth | null; providers: RuntimeProvider[]; sessions: RuntimeSession[]; selectedSessionId: string; selectedSession: RuntimeSessionDetail | null; native: boolean; serviceActive: boolean; onConnect: (endpoint: string, token: string) => void; onStartService: () => Promise<void>; onStopService: () => Promise<void>; onSelectSession: (sessionId: string) => Promise<void> }) {
   const [draftEndpoint, setDraftEndpoint] = useState(endpoint);
   const [draftToken, setDraftToken] = useState("");
-  const [configurationTab, setConfigurationTab] = useState<"provider" | "mcp" | "registry">("provider");
+  const [configurationTab, setConfigurationTab] = useState<ConnectionTab>("provider");
   const [configurationBusy, setConfigurationBusy] = useState(false);
   const [configurationMessage, setConfigurationMessage] = useState("");
   const [configurationError, setConfigurationError] = useState("");
@@ -2426,11 +2514,9 @@ function ConnectionView({ endpoint, runtimeStatus, runtimeError, health, provide
       {native ? <Panel className="connection-panel connection-config-panel">
         <div className="panel-heading"><div><span className="eyebrow">LOCAL CONFIGURATION</span><h3>Add a connection</h3></div><Chip tone="green" icon="shield">Native only</Chip></div>
         <div className="configuration-tabs" role="tablist" aria-label="Connection type">
-          <button type="button" role="tab" aria-selected={configurationTab === "provider"} className={configurationTab === "provider" ? "is-selected" : ""} onClick={() => { setConfigurationTab("provider"); setConfigurationError(""); setConfigurationMessage(""); }}>Model provider</button>
-          <button type="button" role="tab" aria-selected={configurationTab === "mcp"} className={configurationTab === "mcp" ? "is-selected" : ""} onClick={() => { setConfigurationTab("mcp"); setConfigurationError(""); setConfigurationMessage(""); }}>Local MCP server</button>
-          <button type="button" role="tab" aria-selected={configurationTab === "registry"} className={configurationTab === "registry" ? "is-selected" : ""} onClick={() => { setConfigurationTab("registry"); setConfigurationError(""); setConfigurationMessage(""); }}>Package registry</button>
+          {connectionTabs.map((item) => <RovingTab group="connection-type" item={item} items={connectionTabs} selected={configurationTab} onSelect={(next) => { setConfigurationTab(next); setConfigurationError(""); setConfigurationMessage(""); }} key={item}>{item === "provider" ? "Model provider" : item === "mcp" ? "Local MCP server" : "Package registry"}</RovingTab>)}
         </div>
-        {configurationTab === "provider" ? <form className="native-config-form" onSubmit={(event) => void submitProvider(event)}>
+        <div id="connection-type-panel" role="tabpanel" aria-labelledby={"connection-type-tab-" + configurationTab}>{configurationTab === "provider" ? <form className="native-config-form" onSubmit={(event) => void submitProvider(event)}>
           <div className="config-form-grid">
             <label><span>Profile name</span><input aria-label="Provider profile name" value={providerName} onChange={(event) => setProviderName(event.target.value)} placeholder="custom" maxLength={64} autoComplete="off" spellCheck={false} /></label>
             <label><span>Protocol</span><select aria-label="Provider protocol" value={providerProtocol} onChange={(event) => setProviderProtocol(event.target.value as typeof providerProtocol)}><option value="open_ai_compatible">OpenAI compatible</option><option value="anthropic_messages">Anthropic Messages</option><option value="gemini_generate_content">Gemini Generate Content</option></select></label>
@@ -2456,7 +2542,7 @@ function ConnectionView({ endpoint, runtimeStatus, runtimeError, health, provide
             <label className="config-span-2"><span>Registry token <small>optional · encrypted native vault</small></span><input aria-label="Registry profile token" type="password" value={registryProfileToken} onChange={(event) => setRegistryProfileToken(event.target.value)} maxLength={65535} autoComplete="new-password" spellCheck={false} /></label>
           </div>
           <div className="config-form-footer"><p><Icon name="lock" size={13} /> The profile stores only its URL and secret reference. A supplied token passes through process stdin into Pandora’s encrypted vault.</p><button className="button button-primary" type="submit" disabled={!registryReady || configurationBusy}>{configurationBusy ? "Saving…" : "Save registry"} <Icon name="arrow" size={14} /></button></div>
-        </form>}
+        </form>}</div>
         {configurationMessage ? <p className="configuration-result is-success" role="status"><Icon name="check" size={14} /> {configurationMessage}</p> : null}
         {configurationError ? <p className="configuration-result is-error" role="alert">{configurationError}</p> : null}
       </Panel> : null}
