@@ -40,6 +40,11 @@ runs the installed-bundle lifecycle check before upload. These controls prove
 pipeline readiness; a stable signed release still needs the real credentials
 and retained clean-machine evidence.
 
+Use [Desktop accessibility evidence](ACCESSIBILITY.md) for the native Narrator,
+VoiceOver, Orca, and scaling protocol. The document records the current Windows
+UI Automation checkpoint without presenting it as complete screen-reader
+certification.
+
 ## Installation verification
 
 Release assets include `checksums.txt`, a signed checksum manifest, an SPDX

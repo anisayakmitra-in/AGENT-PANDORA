@@ -95,6 +95,8 @@ This is automated webview and package-lifecycle evidence, not native
 VoiceOver, Narrator, or Orca coverage. Signed release packages, real
 clean-machine user install/update/rollback evidence, native screen-reader
 checks, and clean-machine scaling checks remain release gates.
+The repeatable native test protocol and retained-evidence fields are documented
+in [Desktop accessibility evidence](../../docs/ACCESSIBILITY.md).
 
 ## Interface direction
 
