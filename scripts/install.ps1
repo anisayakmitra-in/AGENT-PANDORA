@@ -16,7 +16,7 @@ if ($version -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$') {
 
 $base = $env:PANDORA_RELEASE_BASE_URL
 if ([string]::IsNullOrWhiteSpace($base)) {
-    $base = "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download"
+    $base = "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download"
 }
 $baseUri = [Uri]$base
 if ($baseUri.Scheme -ne "https" -or $baseUri.UserInfo -or $baseUri.Query -or $baseUri.Fragment) {

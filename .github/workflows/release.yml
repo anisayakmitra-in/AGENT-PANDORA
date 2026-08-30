@@ -427,7 +427,7 @@ jobs:
           cosign verify-blob \
             --certificate dist/checksums.txt.pem \
             --signature dist/checksums.txt.sig \
-            --certificate-identity-regexp "^https://github.com/anisayakmitra-in/PANDORA-AGENT/.github/workflows/release.yml@refs/tags/${GITHUB_REF_NAME}$" \
+            --certificate-identity-regexp "^https://github.com/anisayakmitra-in/AGENT-PANDORA/.github/workflows/release.yml@refs/tags/${GITHUB_REF_NAME}$" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             dist/checksums.txt
 
@@ -504,10 +504,10 @@ jobs:
           update_target="$RUNNER_TEMP/pandora-update/${{ matrix.binary }}"
           curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
             --output "$installer" \
-            "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download/${GITHUB_REF_NAME}/install.sh"
+            "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/${GITHUB_REF_NAME}/install.sh"
           curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
             --output "$checksums" \
-            "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download/${GITHUB_REF_NAME}/checksums.txt"
+            "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/${GITHUB_REF_NAME}/checksums.txt"
 
           assert_version() {
             path="$1"
@@ -582,10 +582,10 @@ jobs:
           $updateDirectory = Join-Path $env:RUNNER_TEMP "pandora-update"
           $updateTarget = Join-Path $updateDirectory "${{ matrix.binary }}"
           Invoke-WebRequest `
-            -Uri "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download/$env:GITHUB_REF_NAME/install.ps1" `
+            -Uri "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/$env:GITHUB_REF_NAME/install.ps1" `
             -OutFile $installer
           Invoke-WebRequest `
-            -Uri "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download/$env:GITHUB_REF_NAME/checksums.txt" `
+            -Uri "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/$env:GITHUB_REF_NAME/checksums.txt" `
             -OutFile $checksums
 
           function Assert-Version([string]$Path, [string]$Tag) {

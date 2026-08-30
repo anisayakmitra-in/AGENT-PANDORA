@@ -103,11 +103,11 @@ class InstallerContractTests(unittest.TestCase):
     def test_release_url_requires_https(self) -> None:
         self.assertEqual(
             release_url(
-                "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download",
+                "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download",
                 "v2.0.0-beta.1",
                 "pandora-linux",
             ),
-            "https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download/v2.0.0-beta.1/pandora-linux",
+            "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/v2.0.0-beta.1/pandora-linux",
         )
         with self.assertRaises(ValueError):
             release_url("http://example.test/releases", "v2.0.0", "pandora-linux")
@@ -170,7 +170,7 @@ class InstallerContractTests(unittest.TestCase):
         self.assertIsNotNone(version)
         tag = f"v{version.group(1)}"
         self.assertIn(
-            f"curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.sh | PANDORA_VERSION={tag} sh",
+            f"curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/AGENT-PANDORA/main/scripts/install.sh | PANDORA_VERSION={tag} sh",
             readme,
         )
         self.assertNotIn(

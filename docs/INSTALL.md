@@ -1,7 +1,7 @@
 # Install Pandora
 
 This guide covers the supported CLI path. The current release line is a
-prerelease, so check the [release page](https://github.com/anisayakmitra-in/PANDORA-AGENT/releases)
+prerelease, so check the [release page](https://github.com/anisayakmitra-in/AGENT-PANDORA/releases)
 before installing.
 
 ## Published binary
@@ -12,14 +12,14 @@ binary and verifies it against the release checksum manifest.
 Unix:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/AGENT-PANDORA/main/scripts/install.sh | sh
 pandora --version
 ```
 
 Windows PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/anisayakmitra-in/AGENT-PANDORA/main/scripts/install.ps1 | iex
 & "$env:LOCALAPPDATA\Pandora\bin\pandora.exe" --version
 ```
 

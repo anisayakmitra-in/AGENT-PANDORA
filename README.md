@@ -53,11 +53,11 @@ before installation. Set `PANDORA_VERSION` to pin another published tag.
 Install and open Pandora in one command:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.sh | sh && "$HOME/.local/bin/pandora"
+curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/AGENT-PANDORA/main/scripts/install.sh | sh && "$HOME/.local/bin/pandora"
 ```
 
 ```powershell
-irm https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.ps1 | iex; & "$env:LOCALAPPDATA\Pandora\bin\pandora.exe"
+irm https://raw.githubusercontent.com/anisayakmitra-in/AGENT-PANDORA/main/scripts/install.ps1 | iex; & "$env:LOCALAPPDATA\Pandora\bin\pandora.exe"
 ```
 
 The first interactive launch creates the local configuration and opens the
@@ -67,7 +67,7 @@ environment. For scripted setup, use `pandora setup` instead.
 To pin the current release explicitly:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/PANDORA-AGENT/main/scripts/install.sh | PANDORA_VERSION=v2.0.0-beta.7 sh
+curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/AGENT-PANDORA/main/scripts/install.sh | PANDORA_VERSION=v2.0.0-beta.7 sh
 ```
 
 After installation, update to a specific published tag with the same checksum

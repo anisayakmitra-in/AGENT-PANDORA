@@ -13,7 +13,7 @@ case "$version" in
   *[!A-Za-z0-9._-]*) fail "PANDORA_VERSION contains unsafe characters" ;;
 esac
 
-base="${PANDORA_RELEASE_BASE_URL:-https://github.com/anisayakmitra-in/PANDORA-AGENT/releases/download}"
+base="${PANDORA_RELEASE_BASE_URL:-https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download}"
 case "$base" in
   https://*) ;;
   *) fail "PANDORA_RELEASE_BASE_URL must use HTTPS" ;;
