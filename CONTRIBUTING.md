@@ -7,7 +7,8 @@ failure path.
 ## Before writing code
 
 1. Read [Why Pandora?](docs/WHY_PANDORA.md), the
-   [roadmap](docs/ROADMAP.md), and [SECURITY.md](SECURITY.md).
+   [roadmap](docs/ROADMAP.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and
+   [SECURITY.md](SECURITY.md).
 2. Search open and closed issues and pull requests for the same behavior.
 3. Open or claim an issue before starting a change that will take more than a
    small patch. Say what you plan to change and what you will leave alone.
