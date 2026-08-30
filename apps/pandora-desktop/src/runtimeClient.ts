@@ -40,6 +40,20 @@ export type ProviderConfiguration = {
   apiKey: string;
 };
 
+export type RuntimeSkill = {
+  id: string;
+  version: string;
+  name: string;
+  description: string;
+  publisher: string | null;
+  resources: string[];
+  state: "enabled" | "disabled" | "suspended";
+  root: string;
+  provenance: string;
+};
+
+export type SkillMutationAction = "enable" | "disable" | "suspend" | "remove" | "restore";
+
 export type McpConfiguration = {
   serverId: string;
   program: string;
@@ -128,6 +142,16 @@ export type NativePackageResult = {
       enabled: boolean;
     }>;
     binding?: RuntimePackage["activation"];
+  };
+};
+
+export type NativeSkillResult = {
+  message: string;
+  restartRequired: boolean;
+  data: {
+    skills?: RuntimeSkill[];
+    skill?: RuntimeSkill | { id: string; state: "removed" };
+    dry_run?: boolean;
   };
 };
 
@@ -590,6 +614,13 @@ export async function configureProvider(input: ProviderConfiguration): Promise<N
   return invoke<NativeConfigurationResult>("configure_provider", { input });
 }
 
+export async function activateProvider(name: string): Promise<NativeConfigurationResult> {
+  if (!isNativeRuntime()) {
+    throw new Error("Provider activation is available only in the Pandora desktop app");
+  }
+  return invoke<NativeConfigurationResult>("activate_provider", { input: { name } });
+}
+
 export async function configureMcp(input: McpConfiguration): Promise<NativeConfigurationResult> {
   if (!isNativeRuntime()) {
     throw new Error("MCP configuration is available only in the Pandora desktop app");
@@ -659,6 +690,31 @@ export async function listLocalPackages(): Promise<NativePackageResult> {
     };
   }
   return invoke<NativePackageResult>("list_local_packages");
+}
+
+export async function listLocalSkills(): Promise<NativeSkillResult> {
+  if (!isNativeRuntime()) {
+    return {
+      message: "Skill management is available only in the Pandora desktop app.",
+      restartRequired: false,
+      data: { skills: [] },
+    };
+  }
+  return invoke<NativeSkillResult>("list_local_skills");
+}
+
+export async function installLocalSkill(sourcePath: string): Promise<NativeSkillResult> {
+  if (!isNativeRuntime()) {
+    throw new Error("Skill installation is available only in the Pandora desktop app");
+  }
+  return invoke<NativeSkillResult>("install_local_skill", { input: { sourcePath } });
+}
+
+export async function mutateLocalSkill(skillId: string, action: SkillMutationAction, confirmation = ""): Promise<NativeSkillResult> {
+  if (!isNativeRuntime()) {
+    throw new Error("Skill lifecycle controls are available only in the Pandora desktop app");
+  }
+  return invoke<NativeSkillResult>("mutate_local_skill", { input: { skillId, action, confirmation } });
 }
 
 export async function installRegistryPackage(input: RegistryPackageInstall): Promise<NativePackageResult> {

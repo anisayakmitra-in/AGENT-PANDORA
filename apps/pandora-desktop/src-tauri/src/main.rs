@@ -155,6 +155,11 @@ struct ProviderConfiguration {
 }
 
 #[derive(Deserialize)]
+struct ProviderIdentity {
+    name: String,
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct McpConfiguration {
     server_id: String,
@@ -245,6 +250,28 @@ struct NativePackageResult {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct LocalSkillInstall {
+    source_path: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillMutation {
+    skill_id: String,
+    action: String,
+    confirmation: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeSkillResult {
+    message: String,
+    restart_required: bool,
+    data: Value,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct MemoryScopeInput {
     session_id: String,
     provider: String,
@@ -321,6 +348,22 @@ fn configure_provider(
     run_cli(&provider_args, "saving the provider profile")?;
     Ok(NativeConfigurationResult {
         message: format!("Provider {} configured.", input.name),
+        restart_required: true,
+    })
+}
+
+#[tauri::command]
+fn activate_provider(input: ProviderIdentity) -> Result<NativeConfigurationResult, String> {
+    validate_identifier(&input.name, "provider profile")?;
+    let args = vec![
+        "provider".to_owned(),
+        "use".to_owned(),
+        input.name.clone(),
+        "--json".to_owned(),
+    ];
+    run_cli(&args, "activating the provider profile")?;
+    Ok(NativeConfigurationResult {
+        message: format!("Provider {} selected.", input.name),
         restart_required: true,
     })
 }
@@ -441,6 +484,56 @@ fn list_local_packages() -> Result<NativePackageResult, String> {
     Ok(NativePackageResult {
         message: package_count_message(&data),
         restart_required: false,
+        data,
+    })
+}
+
+#[tauri::command]
+fn list_local_skills() -> Result<NativeSkillResult, String> {
+    let args = vec!["skill".to_owned(), "list".to_owned(), "--json".to_owned()];
+    let data = run_cli_json(&args, "listing local skills")?;
+    Ok(NativeSkillResult {
+        message: "Loaded local Skills.".to_owned(),
+        restart_required: false,
+        data,
+    })
+}
+
+#[tauri::command]
+fn install_local_skill(input: LocalSkillInstall) -> Result<NativeSkillResult, String> {
+    validate_text_field(&input.source_path, "Skill source", 4096)?;
+    let source = validate_local_skill_directory(Path::new(&input.source_path))?;
+    let args = vec![
+        "skill".to_owned(),
+        "install".to_owned(),
+        source.to_string_lossy().into_owned(),
+        "--json".to_owned(),
+    ];
+    let data = run_cli_json(&args, "installing the local Skill")?;
+    Ok(NativeSkillResult {
+        message: "Skill installed disabled.".to_owned(),
+        restart_required: true,
+        data,
+    })
+}
+
+#[tauri::command]
+fn mutate_local_skill(input: SkillMutation) -> Result<NativeSkillResult, String> {
+    validate_skill_mutation(&input)?;
+    let mut args = vec!["skill".to_owned(), input.action.clone(), input.skill_id.clone()];
+    if input.action == "remove" {
+        args.push("--yes".to_owned());
+    }
+    args.push("--json".to_owned());
+    let data = run_cli_json(&args, "changing the local Skill lifecycle")?;
+    let state = match input.action.as_str() {
+        "restore" => "restored disabled",
+        "remove" => "removed and retained for restore",
+        action => action,
+    };
+    Ok(NativeSkillResult {
+        message: format!("Skill {} is now {state}.", input.skill_id),
+        restart_required: true,
         data,
     })
 }
@@ -1075,6 +1168,36 @@ fn validate_regular_absolute_path(value: &str, label: &str) -> Result<std::path:
     Ok(path)
 }
 
+fn validate_local_skill_directory(path: &Path) -> Result<PathBuf, String> {
+    if !path.is_absolute() {
+        return Err("Skill source must be an absolute directory path".to_owned());
+    }
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|_| "Skill source does not exist or is not readable".to_owned())?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err("Skill source must be a regular directory, not a symlink".to_owned());
+    }
+    std::fs::canonicalize(path).map_err(|_| "Skill source could not be resolved".to_owned())
+}
+
+fn validate_skill_mutation(input: &SkillMutation) -> Result<(), String> {
+    validate_identifier(&input.skill_id, "Skill")?;
+    if !matches!(
+        input.action.as_str(),
+        "enable" | "disable" | "suspend" | "remove" | "restore"
+    ) {
+        return Err("Skill lifecycle action is unsupported".to_owned());
+    }
+    if input.action == "remove" {
+        if input.confirmation != input.skill_id {
+            return Err("Skill removal confirmation must match the exact Skill ID".to_owned());
+        }
+    } else if !input.confirmation.is_empty() {
+        return Err("Skill confirmation is accepted only for removal".to_owned());
+    }
+    Ok(())
+}
+
 fn cli_binary_name() -> &'static str {
     if cfg!(target_os = "windows") {
         "pandora.exe"
@@ -1501,10 +1624,14 @@ fn main() {
             start_local_service,
             stop_local_service,
             configure_provider,
+            activate_provider,
             configure_mcp,
             list_registry_profiles,
             configure_registry_profile,
             list_local_packages,
+            list_local_skills,
+            install_local_skill,
+            mutate_local_skill,
             install_registry_package,
             install_github_package,
             admit_local_package,
@@ -1616,9 +1743,11 @@ mod configuration_tests {
     use super::{
         optional_package_version, validate_environment_name, validate_github_commit,
         validate_github_repository_path, validate_github_repository_url, validate_identifier,
-        validate_memory_forget, validate_memory_id, validate_package_id, validate_provider_url,
-        validate_registry_url, MemoryForget,
+        validate_local_skill_directory, validate_memory_forget, validate_memory_id,
+        validate_package_id, validate_provider_url, validate_registry_url, validate_skill_mutation,
+        MemoryForget, SkillMutation,
     };
+    use std::path::Path;
 
     #[test]
     fn provider_urls_require_https_except_for_loopback() {
@@ -1636,6 +1765,35 @@ mod configuration_tests {
         assert!(validate_identifier("../escape", "MCP server").is_err());
         assert!(validate_environment_name("PANDORA_CUSTOM_API_KEY").is_ok());
         assert!(validate_environment_name("Pandora-Key").is_err());
+    }
+
+    #[test]
+    fn skill_lifecycle_is_allowlisted_and_removal_requires_exact_confirmation() {
+        let enable = SkillMutation {
+            skill_id: "local-skill".to_owned(),
+            action: "enable".to_owned(),
+            confirmation: String::new(),
+        };
+        assert!(validate_skill_mutation(&enable).is_ok());
+        assert!(validate_local_skill_directory(Path::new("relative-skill")).is_err());
+
+        let wrong_action = SkillMutation {
+            action: "execute".to_owned(),
+            ..enable
+        };
+        assert!(validate_skill_mutation(&wrong_action).is_err());
+
+        let remove = SkillMutation {
+            skill_id: "local-skill".to_owned(),
+            action: "remove".to_owned(),
+            confirmation: "different-skill".to_owned(),
+        };
+        assert!(validate_skill_mutation(&remove).is_err());
+        assert!(validate_skill_mutation(&SkillMutation {
+            confirmation: "local-skill".to_owned(),
+            ..remove
+        })
+        .is_ok());
     }
 
     #[test]

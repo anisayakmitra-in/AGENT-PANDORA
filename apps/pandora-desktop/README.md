@@ -28,10 +28,15 @@ uses progressive Flow, Evidence, and Context tabs, keeping approvals and the
 authority chain close while moving redacted receipts, cache usage, events, and
 scope details behind deliberate disclosure.
 
-Harness Lab is a read-only catalog browser for runtime-reported Harnesses,
-Genes, plugins and tools, authority posture, and receipt requirements. Catalog
-metadata never grants execution authority, and the offline UI does not invent
-entries.
+Harness Lab reads runtime-reported Harnesses, Genes, plugins, tools, authority
+posture, and receipt requirements. Its native Skills tab uses SkillEngine's
+separate local lifecycle to install, inspect, enable, disable, suspend, remove,
+and restore Skills. Skill changes require a local-service restart and never
+grant execution authority. The offline UI does not invent catalog entries.
+
+Connections can create Provider profiles and select the active profile through
+Pandora's native configuration boundary. API keys remain in the encrypted local
+vault; the webview receives only readiness metadata.
 
 Background Runs inspects the scoped durable orchestration queue, exact repository
 and commit assignments, worker ownership, role state, receipts, and handoffs.

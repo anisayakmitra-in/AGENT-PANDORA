@@ -4,6 +4,7 @@ import { App } from "./App";
 import pandoraCss from "./pandora.css?raw";
 
 const runtime = vi.hoisted(() => ({
+  activateProvider: vi.fn(),
   admitLocalPackage: vi.fn(),
   activateEvolution: vi.fn(),
   agentResume: vi.fn(),
@@ -25,14 +26,17 @@ const runtime = vi.hoisted(() => ({
   inspectOrchestration: vi.fn(),
   inspectSession: vi.fn(),
   installGitHubPackage: vi.fn(),
+  installLocalSkill: vi.fn(),
   installRegistryPackage: vi.fn(),
   listLocalPackages: vi.fn(),
+  listLocalSkills: vi.fn(),
   listRegistryProfiles: vi.fn(),
   lockLocalPackages: vi.fn(),
   forgetMemory: vi.fn(),
   memory: vi.fn(),
   memorySchedules: vi.fn(),
   memoryScheduleRuns: vi.fn(),
+  mutateLocalSkill: vi.fn(),
   createMemorySchedule: vi.fn(),
   disableMemorySchedule: vi.fn(),
   orchestrations: vi.fn(),
@@ -55,6 +59,7 @@ const runtime = vi.hoisted(() => ({
 }));
 
 vi.mock("./runtimeClient", () => ({
+  activateProvider: runtime.activateProvider,
   nativeEndpoint: "tauri://pandora",
   isNativeRuntime: () => true,
   loadRuntimeEndpoint: () => "tauri://pandora",
@@ -66,10 +71,13 @@ vi.mock("./runtimeClient", () => ({
   enableLocalPackage: runtime.enableLocalPackage,
   admitLocalPackage: runtime.admitLocalPackage,
   installGitHubPackage: runtime.installGitHubPackage,
+  installLocalSkill: runtime.installLocalSkill,
   installRegistryPackage: runtime.installRegistryPackage,
   listLocalPackages: runtime.listLocalPackages,
+  listLocalSkills: runtime.listLocalSkills,
   listRegistryProfiles: runtime.listRegistryProfiles,
   lockLocalPackages: runtime.lockLocalPackages,
+  mutateLocalSkill: runtime.mutateLocalSkill,
   inspectMemoryAudit: runtime.inspectMemoryAudit,
   inspectMemoryProvenance: runtime.inspectMemoryProvenance,
   forgetMemory: runtime.forgetMemory,
@@ -150,6 +158,7 @@ beforeEach(() => {
   runtime.tools.mockResolvedValue([]);
   runtime.providers.mockResolvedValue([]);
   runtime.configureProvider.mockResolvedValue({ message: "Provider custom configured.", restartRequired: true });
+  runtime.activateProvider.mockResolvedValue({ message: "Provider design selected.", restartRequired: true });
   runtime.configureMcp.mockResolvedValue({ message: "MCP server local-tools configured.", restartRequired: true });
   runtime.configureRegistryProfile.mockResolvedValue({ message: "Registry m-place configured.", restartRequired: false });
   runtime.installGitHubPackage.mockResolvedValue({
@@ -161,6 +170,21 @@ beforeEach(() => {
     message: "0 local package(s) available.",
     restartRequired: false,
     data: { packages: [] },
+  });
+  runtime.listLocalSkills.mockResolvedValue({
+    message: "Loaded local Skills.",
+    restartRequired: false,
+    data: { skills: [] },
+  });
+  runtime.installLocalSkill.mockResolvedValue({
+    message: "Skill installed disabled.",
+    restartRequired: true,
+    data: {},
+  });
+  runtime.mutateLocalSkill.mockResolvedValue({
+    message: "Skill lifecycle updated.",
+    restartRequired: true,
+    data: {},
   });
   runtime.listRegistryProfiles.mockResolvedValue({
     message: "0 registry profile(s) configured.",
@@ -1394,6 +1418,51 @@ describe("Pandora desktop run state", () => {
     expect(screen.getByRole("heading", { name: "Evidence follows execution" })).toBeInTheDocument();
   });
 
+  it("manages local Skills through their separate desktop lifecycle", async () => {
+    runtime.capabilities.mockResolvedValue([{
+      id: "coding-domain",
+      version: "1.2.0",
+      name: "Coding Domain",
+      kind: "domain",
+      gene_count: 1,
+      runnable: true,
+      gene_ids: ["coding.inspect"],
+    }]);
+    runtime.listLocalSkills.mockResolvedValue({
+      message: "Loaded local Skills.",
+      restartRequired: false,
+      data: { skills: [{
+        id: "release-review",
+        version: "1.0.0",
+        name: "Release Reviewer",
+        description: "Reviews local release evidence.",
+        publisher: "local",
+        resources: ["release-checklist"],
+        state: "enabled",
+        root: "C:\\Pandora\\skills\\release-review",
+        provenance: "local",
+      }] },
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Harness Lab" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "skills" }));
+
+    expect(await screen.findByText("Release Reviewer")).toBeInTheDocument();
+    expect(screen.getByText(/does not grant a capability/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Disable Release Reviewer" }));
+    await waitFor(() => expect(runtime.mutateLocalSkill).toHaveBeenCalledWith("release-review", "disable", ""));
+
+    fireEvent.change(screen.getByLabelText("Local Skill directory"), { target: { value: "C:\\skills\\new-skill" } });
+    fireEvent.click(screen.getByRole("button", { name: "Install disabled" }));
+    await waitFor(() => expect(runtime.installLocalSkill).toHaveBeenCalledWith("C:\\skills\\new-skill"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove Release Reviewer" }));
+    fireEvent.change(screen.getByLabelText("Confirm removal release-review"), { target: { value: "release-review" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm removal" }));
+    await waitFor(() => expect(runtime.mutateLocalSkill).toHaveBeenCalledWith("release-review", "remove", "release-review"));
+  });
+
   it("offers a runtime-loaded custom Harness for governed desktop runs", async () => {
     runtime.capabilities.mockResolvedValue([{
       id: "example/service-domain",
@@ -1721,6 +1790,24 @@ describe("Pandora desktop run state", () => {
     expect(screen.getByLabelText("Provider API key")).toHaveValue("");
     expect(screen.getByRole("status")).toHaveTextContent("Restart the local service to apply it");
     expect(Object.values(window.localStorage)).not.toContain("secret-test-key");
+  });
+
+  it("selects an existing provider profile through the native configuration boundary", async () => {
+    runtime.providers.mockResolvedValue([{
+      name: "design",
+      model: "design-model",
+      protocol: "open_ai_compatible",
+      active: false,
+      credential_configured: true,
+      fallback_provider: null,
+    }]);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Connections" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Use design" }));
+
+    await waitFor(() => expect(runtime.activateProvider).toHaveBeenCalledWith("design"));
+    expect(screen.getByRole("status")).toHaveTextContent("Restart the local service to apply it");
   });
 
   it("configures an absolute local MCP server with explicit arguments", async () => {

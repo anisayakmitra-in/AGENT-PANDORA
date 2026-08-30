@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
 import {
+  activateProvider,
   admitLocalPackage,
   configureMcp,
   configureProvider,
@@ -7,15 +8,18 @@ import {
   disableLocalPackage,
   enableLocalPackage,
   installGitHubPackage,
+  installLocalSkill,
   installRegistryPackage,
   inspectMemoryAudit,
   inspectMemoryProvenance,
   forgetMemory,
   listLocalPackages,
+  listLocalSkills,
   listRegistryProfiles,
   loadRuntimeEndpoint,
   isNativeRuntime,
   lockLocalPackages,
+  mutateLocalSkill,
   nativeEndpoint,
   previewPackageRemoval,
   previewPackageDisable,
@@ -32,6 +36,7 @@ import {
   type RuntimeArtifactActivation,
   type RuntimeContextAttachment,
   type RuntimeRun,
+  type RuntimeSkill,
   type RuntimeEvent,
   type RuntimeEngine,
   type RuntimeEvolutionMutation,
@@ -75,7 +80,7 @@ type WorkspaceDockPlacement = "right" | "bottom";
 type WorkspaceDockSize = "compact" | "comfortable" | "expanded";
 type InspectorTab = "flow" | "evidence" | "work" | "browser";
 type WorkSurface = "files" | "changes" | "terminal" | "artifacts";
-type HarnessTab = "genes" | "extensions" | "packages" | "authority" | "receipts";
+type HarnessTab = "genes" | "extensions" | "skills" | "packages" | "authority" | "receipts";
 type InventoryTab = "overview" | "contract" | "boundaries" | "evidence";
 type PackageSourceTab = "registry" | "github" | "local" | "author";
 type ConnectionTab = "provider" | "mcp" | "registry";
@@ -83,7 +88,7 @@ type SettingsSectionId = "general" | "appearance" | "workspace" | "intelligence"
 
 const inspectorTabs: readonly InspectorTab[] = ["flow", "evidence", "work", "browser"];
 const workSurfaceTabs: readonly WorkSurface[] = ["files", "changes", "terminal", "artifacts"];
-const harnessTabs: readonly HarnessTab[] = ["genes", "extensions", "packages", "authority", "receipts"];
+const harnessTabs: readonly HarnessTab[] = ["genes", "extensions", "skills", "packages", "authority", "receipts"];
 const packageSourceTabs: readonly PackageSourceTab[] = ["registry", "github", "local", "author"];
 const inventoryTabs: readonly InventoryTab[] = ["overview", "contract", "boundaries", "evidence"];
 const connectionTabs: readonly ConnectionTab[] = ["provider", "mcp", "registry"];
@@ -2035,9 +2040,103 @@ function CapabilitiesView({ harnesses, tools, runtimeStatus, native }: { harness
       <Panel className="harness-browser"><div className="panel-heading"><div><span className="eyebrow">CATALOG</span><h3>{visibleHarnesses.length} Harnesses</h3></div><Icon name="search" size={16} /></div><div className="harness-browser-list">{connected && visibleHarnesses.length ? visibleHarnesses.map((harness) => <button type="button" className={`harness-browser-row ${selectedHarness?.id === harness.id ? "is-selected" : ""}`} key={harness.id} onClick={() => setSelectedHarnessId(harness.id)}><span className="harness-browser-icon"><Icon name="box" size={16} /></span><span><strong>{harness.name}</strong><small>{harness.kind} · v{harness.version}</small></span><Chip tone={harness.runnable ? "green" : "neutral"}>{harness.runnable ? "ready" : "bound"}</Chip></button>) : <div className="harness-empty"><Icon name="lock" size={20} /><p>{connected ? "No Harnesses in this filter." : "Runtime connection required."}</p></div>}</div></Panel>
       <Panel className="harness-inspection">{selectedHarness ? <><div className="harness-hero"><span className="harness-hero-icon"><Icon name="box" size={22} /></span><div><span className="eyebrow">VERSIONED HARNESS</span><h2>{selectedHarness.name}</h2><p className="mono">{selectedHarness.id} · {selectedHarness.kind} · v{selectedHarness.version}</p></div><Chip tone={selectedHarness.runnable ? "green" : "gold"} icon={selectedHarness.runnable ? "check" : "lock"}>{selectedHarness.runnable ? "Runnable" : "Bound"}</Chip></div>
         <div className="harness-tabs" role="tablist" aria-label="Harness inspector">{harnessTabs.map((item) => <RovingTab group="harness-inspector" item={item} items={harnessTabs} selected={tab} onSelect={setTab} key={item}>{item === "extensions" ? "Plugins & tools" : item}</RovingTab>)}</div>
-        <div id="harness-inspector-panel" className={`harness-tab-panel ${tab === "packages" ? "package-tab-panel" : ""}`} role="tabpanel" aria-labelledby={"harness-inspector-tab-" + tab}>{tab === "genes" ? <><div className="inspection-heading"><div><span className="eyebrow">GENE CATALOG</span><h3>{selectedHarness.gene_count} admitted Genes</h3></div><Chip tone="blue">Exact versions</Chip></div>{selectedHarness.gene_ids?.length ? <div className="gene-table">{selectedHarness.gene_ids.map((gene, index) => <div className="gene-row" key={gene}><span className="gene-index mono">{String(index + 1).padStart(2, "0")}</span><span><strong>{gene}</strong><small>Capability identity reported by runtime</small></span><Chip tone="green" icon="check">admitted</Chip></div>)}</div> : <p className="inspector-empty">Gene identities are unavailable from this runtime version.</p>}</> : tab === "extensions" ? <><div className="inspection-heading"><div><span className="eyebrow">ADMITTED EXTENSIONS</span><h3>{tools.length} plugin and tool surfaces</h3></div><Chip tone="gold" icon="shield">No authority implied</Chip></div>{tools.length ? <div className="gene-table">{tools.map((tool) => <div className="gene-row" key={tool.id}><span className="harness-browser-icon"><Icon name="terminal" size={14} /></span><span><strong>{tool.name}</strong><small className="mono">{tool.id} · v{tool.version}</small></span><span className="extension-operation">{tool.capability} / {tool.operation}</span></div>)}</div> : <p className="inspector-empty">No extension metadata reported.</p>}</> : tab === "packages" ? <PackageManager native={native} /> : tab === "authority" ? <div className="authority-map"><div><span>May select</span><strong>{selectedHarness.gene_count} admitted Genes</strong></div><div><span>May propose</span><strong>Bound tool requests</strong></div><div><span>May approve</span><strong className="authority-denied">Never</strong></div><div><span>May execute</span><strong className="authority-denied">Never directly</strong></div><p><Icon name="shield" size={14} /> Parliament plans, the Shadow Council routes, and ReferenceMonitor alone can authorize an exact effect.</p></div> : <div className="receipt-posture"><div className="receipt-seal"><Icon name="archive" size={24} /></div><h3>Evidence follows execution</h3><p>This catalog exposes capability identity and admission state. Receipts are run-scoped and appear in the Command inspector after an exact permit is consumed.</p><div className="receipt-rules"><span><Icon name="check" size={12} /> Request digest</span><span><Icon name="check" size={12} /> Bound Gene version</span><span><Icon name="check" size={12} /> Workspace scope</span><span><Icon name="check" size={12} /> Effect outcome</span></div></div>}</div>
+        <div id="harness-inspector-panel" className={`harness-tab-panel ${tab === "packages" || tab === "skills" ? "package-tab-panel" : ""}`} role="tabpanel" aria-labelledby={"harness-inspector-tab-" + tab}>{tab === "genes" ? <><div className="inspection-heading"><div><span className="eyebrow">GENE CATALOG</span><h3>{selectedHarness.gene_count} admitted Genes</h3></div><Chip tone="blue">Exact versions</Chip></div>{selectedHarness.gene_ids?.length ? <div className="gene-table">{selectedHarness.gene_ids.map((gene, index) => <div className="gene-row" key={gene}><span className="gene-index mono">{String(index + 1).padStart(2, "0")}</span><span><strong>{gene}</strong><small>Capability identity reported by runtime</small></span><Chip tone="green" icon="check">admitted</Chip></div>)}</div> : <p className="inspector-empty">Gene identities are unavailable from this runtime version.</p>}</> : tab === "extensions" ? <><div className="inspection-heading"><div><span className="eyebrow">ADMITTED EXTENSIONS</span><h3>{tools.length} plugin and tool surfaces</h3></div><Chip tone="gold" icon="shield">No authority implied</Chip></div>{tools.length ? <div className="gene-table">{tools.map((tool) => <div className="gene-row" key={tool.id}><span className="harness-browser-icon"><Icon name="terminal" size={14} /></span><span><strong>{tool.name}</strong><small className="mono">{tool.id} · v{tool.version}</small></span><span className="extension-operation">{tool.capability} / {tool.operation}</span></div>)}</div> : <p className="inspector-empty">No extension metadata reported.</p>}</> : tab === "skills" ? <SkillManager native={native} /> : tab === "packages" ? <PackageManager native={native} /> : tab === "authority" ? <div className="authority-map"><div><span>May select</span><strong>{selectedHarness.gene_count} admitted Genes</strong></div><div><span>May propose</span><strong>Bound tool requests</strong></div><div><span>May approve</span><strong className="authority-denied">Never</strong></div><div><span>May execute</span><strong className="authority-denied">Never directly</strong></div><p><Icon name="shield" size={14} /> Parliament plans, the Shadow Council routes, and ReferenceMonitor alone can authorize an exact effect.</p></div> : <div className="receipt-posture"><div className="receipt-seal"><Icon name="archive" size={24} /></div><h3>Evidence follows execution</h3><p>This catalog exposes capability identity and admission state. Receipts are run-scoped and appear in the Command inspector after an exact permit is consumed.</p><div className="receipt-rules"><span><Icon name="check" size={12} /> Request digest</span><span><Icon name="check" size={12} /> Bound Gene version</span><span><Icon name="check" size={12} /> Workspace scope</span><span><Icon name="check" size={12} /> Effect outcome</span></div></div>}</div>
       </> : <div className="harness-empty"><Icon name="box" size={24} /><h3>Select a Harness</h3><p>The inspector never fabricates catalog entries.</p></div>}</Panel>
     </div>
+  </div>;
+}
+
+function SkillManager({ native }: { native: boolean }) {
+  const [skills, setSkills] = useState<RuntimeSkill[]>([]);
+  const [sourcePath, setSourcePath] = useState("");
+  const [restoreId, setRestoreId] = useState("");
+  const [removeId, setRemoveId] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  const refresh = async () => {
+    if (!native) {
+      setSkills([]);
+      return;
+    }
+    const result = await listLocalSkills();
+    setSkills(result.data.skills ?? []);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!native) return;
+    setBusy("refresh");
+    listLocalSkills()
+      .then((result) => { if (!cancelled) setSkills(result.data.skills ?? []); })
+      .catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : "Could not load local Skills"); })
+      .finally(() => { if (!cancelled) setBusy(""); });
+    return () => { cancelled = true; };
+  }, [native]);
+
+  const runMutation = async (skillId: string, action: "enable" | "disable" | "suspend" | "remove" | "restore", exactConfirmation = "") => {
+    setBusy(`${action}:${skillId}`);
+    setMessage("");
+    setError("");
+    try {
+      const result = await mutateLocalSkill(skillId, action, exactConfirmation);
+      setMessage(`${result.message}${result.restartRequired ? " Restart the local service to apply it." : ""}`);
+      setRemoveId("");
+      setConfirmation("");
+      if (action === "restore") setRestoreId("");
+      await refresh();
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : `Could not ${action} the Skill`);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const submitInstall = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy("install");
+    setMessage("");
+    setError("");
+    try {
+      const result = await installLocalSkill(sourcePath.trim());
+      setMessage(`${result.message}${result.restartRequired ? " Restart the local service to apply it." : ""}`);
+      setSourcePath("");
+      await refresh();
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "Could not install the Skill");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return <div className="package-manager skill-manager">
+    <div className="inspection-heading"><div><span className="eyebrow">SKILL ENGINE</span><h3>{skills.length} local Skills</h3></div><Chip tone="gold" icon="shield">Separate admission owner</Chip></div>
+    <p className="settings-copy">Skills are local instruction and resource packages. Installing or enabling one does not grant a capability, approve an effect, or bypass ReferenceMonitor.</p>
+    {native ? <div className="package-console">
+      <form className="package-form" onSubmit={(event) => void submitInstall(event)}>
+        <label className="package-form-wide"><span>Absolute Skill directory</span><input aria-label="Local Skill directory" value={sourcePath} onChange={(event) => setSourcePath(event.target.value)} placeholder="C:\\path\\to\\skill" maxLength={4096} autoComplete="off" spellCheck={false} /></label>
+        <div className="package-form-footer"><p>The directory and its SKILL.md are copied through SkillEngine’s symlink and path-confinement checks.</p><button className="button button-primary" type="submit" disabled={Boolean(busy) || !sourcePath.trim()}>{busy === "install" ? "Installing…" : "Install disabled"}</button></div>
+      </form>
+      <form className="package-form" onSubmit={(event) => { event.preventDefault(); void runMutation(restoreId.trim(), "restore"); }}>
+        <label className="package-form-wide"><span>Removed Skill ID</span><input aria-label="Restore Skill ID" value={restoreId} onChange={(event) => setRestoreId(event.target.value)} placeholder="skill-id" maxLength={64} autoComplete="off" spellCheck={false} /></label>
+        <div className="package-form-footer"><p>Restore recovers SkillEngine’s retained removal receipt and returns the Skill disabled.</p><button className="button button-secondary" type="submit" disabled={Boolean(busy) || !restoreId.trim()}>Restore Skill</button></div>
+      </form>
+    </div> : <p className="inspector-empty">Skill lifecycle controls are available in the native desktop app.</p>}
+    {skills.length ? <div className="gene-table">{skills.map((skill) => <div className="gene-row" key={skill.id}>
+      <span className="harness-browser-icon"><Icon name="spark" size={14} /></span>
+      <span><strong>{skill.name}</strong><small className="mono">{skill.id} · v{skill.version} · {skill.resources.length} resources</small><small>{skill.description}</small></span>
+      <span className="skill-row-controls"><Chip tone={skill.state === "enabled" ? "green" : skill.state === "suspended" ? "gold" : "neutral"}>{skill.state}</Chip>
+      {native ? <span className="package-actions">
+        {skill.state !== "enabled" ? <button className="button button-secondary" type="button" disabled={Boolean(busy)} onClick={() => void runMutation(skill.id, "enable")}>Enable {skill.name}</button> : <button className="button button-secondary" type="button" disabled={Boolean(busy)} onClick={() => void runMutation(skill.id, "disable")}>Disable {skill.name}</button>}
+        {skill.state === "enabled" ? <button className="button button-secondary" type="button" disabled={Boolean(busy)} onClick={() => void runMutation(skill.id, "suspend")}>Suspend {skill.name}</button> : null}
+        <button className="button button-deny" type="button" disabled={Boolean(busy)} onClick={() => { setRemoveId(skill.id); setConfirmation(""); }}>Remove {skill.name}</button>
+      </span> : null}</span>
+    </div>)}</div> : <p className="inspector-empty">{busy === "refresh" ? "Loading local Skills…" : "No local Skills are installed."}</p>}
+    {removeId ? <form className="package-remove-confirm" onSubmit={(event) => { event.preventDefault(); void runMutation(removeId, "remove", confirmation); }}><p>Type <span className="mono">{removeId}</span> to remove this Skill into SkillEngine’s recoverable removal area.</p><input aria-label={`Confirm removal ${removeId}`} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="off" spellCheck={false} /><div><button className="button button-secondary" type="button" onClick={() => setRemoveId("")}>Close</button><button className="button button-deny" type="submit" disabled={Boolean(busy) || confirmation !== removeId}>Confirm removal</button></div></form> : null}
+    {message ? <p className="configuration-result is-success" role="status"><Icon name="check" size={14} /> {message}</p> : null}
+    {error ? <p className="configuration-result is-error" role="alert">{error}</p> : null}
   </div>;
 }
 
@@ -2573,6 +2672,8 @@ function ConnectionView({ endpoint, runtimeStatus, runtimeError, health, provide
   const [configurationBusy, setConfigurationBusy] = useState(false);
   const [configurationMessage, setConfigurationMessage] = useState("");
   const [configurationError, setConfigurationError] = useState("");
+  const [providerSelectionMessage, setProviderSelectionMessage] = useState("");
+  const [providerSelectionError, setProviderSelectionError] = useState("");
   const [providerName, setProviderName] = useState("custom");
   const [providerProtocol, setProviderProtocol] = useState<"open_ai_compatible" | "anthropic_messages" | "gemini_generate_content">("open_ai_compatible");
   const [providerUrl, setProviderUrl] = useState("");
@@ -2616,6 +2717,20 @@ function ConnectionView({ endpoint, runtimeStatus, runtimeError, health, provide
       setConfigurationMessage(`${result.message}${result.restartRequired ? " Restart the local service to apply it." : ""}`);
     } catch (error: unknown) {
       setConfigurationError(error instanceof Error ? error.message : "Provider configuration failed");
+    } finally {
+      setConfigurationBusy(false);
+    }
+  };
+
+  const selectProvider = async (name: string) => {
+    setConfigurationBusy(true);
+    setProviderSelectionMessage("");
+    setProviderSelectionError("");
+    try {
+      const result = await activateProvider(name);
+      setProviderSelectionMessage(`${result.message}${result.restartRequired ? " Restart the local service to apply it." : ""}`);
+    } catch (error: unknown) {
+      setProviderSelectionError(error instanceof Error ? error.message : "Provider activation failed");
     } finally {
       setConfigurationBusy(false);
     }
@@ -2678,7 +2793,9 @@ function ConnectionView({ endpoint, runtimeStatus, runtimeError, health, provide
 
       <Panel className="connection-panel">
         <div className="panel-heading"><div><span className="eyebrow">PROVIDER PROFILES</span><h3>{providers.length} configured</h3></div><Chip tone={providers.some((provider) => provider.active) ? "blue" : "neutral"} icon="spark">Secrets hidden</Chip></div>
-        {providers.length ? <div className="provider-list">{providers.map((provider) => <div className="provider-row" key={provider.name}><span className={`provider-dot ${provider.active ? "is-active" : ""}`} /><span><strong>{provider.name}</strong><small>{provider.model} · {provider.protocol}</small></span><span className={`provider-state ${provider.credential_configured ? "is-ready" : ""}`}>{provider.credential_configured ? "Ready" : "Credential needed"}</span></div>)}</div> : <div className="connection-empty"><Icon name="lock" size={21} /><p>Provider profiles are not configured.</p></div>}
+        {providers.length ? <div className="provider-list">{providers.map((provider) => <div className="provider-row" key={provider.name}><span className={`provider-dot ${provider.active ? "is-active" : ""}`} /><span><strong>{provider.name}</strong><small>{provider.model} · {provider.protocol}</small></span><span className={`provider-state ${provider.credential_configured ? "is-ready" : ""}`}>{provider.credential_configured ? "Ready" : "Credential needed"}</span>{native ? provider.active ? <Chip tone="blue">Active</Chip> : <button className="button button-secondary" type="button" disabled={configurationBusy} onClick={() => void selectProvider(provider.name)}>Use {provider.name}</button> : null}</div>)}</div> : <div className="connection-empty"><Icon name="lock" size={21} /><p>Provider profiles are not configured.</p></div>}
+        {providerSelectionMessage ? <p className="configuration-result is-success" role="status"><Icon name="check" size={14} /> {providerSelectionMessage}</p> : null}
+        {providerSelectionError ? <p className="configuration-result is-error" role="alert">{providerSelectionError}</p> : null}
       </Panel>
 
       {native ? <Panel className="connection-panel connection-config-panel">
