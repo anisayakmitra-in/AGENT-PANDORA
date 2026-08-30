@@ -47,9 +47,16 @@ credentials, signing identities, and explicit stable-release approval are all
 configured. Signed Windows installers are checked again with `signtool verify`.
 Signed macOS app bundles must pass strict `codesign` and Gatekeeper assessment,
 and their DMG must pass stapler validation. Every tagged desktop build also
-runs the installed-bundle lifecycle check before upload. These controls prove
-pipeline readiness; a stable signed release still needs the real credentials
-and retained clean-machine evidence.
+runs the installed-bundle lifecycle check before upload. The desktop build
+packages the exact native CLI artifact already verified by the release build;
+it does not rebuild an independent sidecar. After publication, fresh Linux,
+macOS Intel, macOS Apple Silicon, and Windows runners download the native and
+desktop assets, verify both against the published checksum manifest, then
+extract, mount, or administratively unpack the package and run the bounded
+launch-and-cleanup lifecycle check.
+These controls prove pipeline readiness; a stable signed release still needs
+the real credentials and retained real-user installation, update, rollback,
+and uninstall evidence.
 
 Use [Desktop accessibility evidence](ACCESSIBILITY.md) for the native Narrator,
 VoiceOver, Orca, and scaling protocol. The document records the current Windows

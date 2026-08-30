@@ -10,6 +10,7 @@ import {
   packagedSidecarName,
   removeLifecycleSandbox,
   resolveBundleRoot,
+  resolveSourceSidecar,
   sidecarName,
   validateSidecarTarget,
 } from "./verify-bundle-lifecycle.mjs";
@@ -103,4 +104,42 @@ test("rejects sidecar target traversal before path construction", () => {
   assert.equal(validateSidecarTarget(" x86_64-unknown-linux-gnu "), "x86_64-unknown-linux-gnu");
   assert.throws(() => validateSidecarTarget("../release"), /invalid Pandora sidecar target triple/);
   assert.throws(() => validateSidecarTarget(""), /invalid Pandora sidecar target triple/);
+});
+
+test("accepts a canonical downloaded sidecar but rejects final symlinks", () => {
+  const root = mkdtempSync(join(tmpdir(), "pandora-desktop-source-"));
+  const linkRoot = mkdtempSync(join(tmpdir(), "pandora-desktop-source-link-"));
+  const source = join(root, "pandora-x86_64-unknown-linux-gnu");
+  const link = join(linkRoot, "pandora-x86_64-unknown-linux-gnu");
+  try {
+    writeFileSync(source, "published sidecar");
+    assert.equal(
+      resolveSourceSidecar("x86_64-unknown-linux-gnu", true, {
+        PANDORA_DESKTOP_SOURCE_SIDECAR: ` ${source} `,
+      }),
+      realpathSync(source),
+    );
+    symlinkSync(root, link, process.platform === "win32" ? "junction" : "dir");
+    assert.throws(
+      () => resolveSourceSidecar("x86_64-unknown-linux-gnu", true, {
+        PANDORA_DESKTOP_SOURCE_SIDECAR: link,
+      }),
+      /must be a regular file and not a symlink/,
+    );
+    assert.throws(
+      () => resolveSourceSidecar("x86_64-unknown-linux-gnu", true, {
+        PANDORA_DESKTOP_SOURCE_SIDECAR: join(root, "missing"),
+      }),
+      /must be named pandora-x86_64-unknown-linux-gnu/,
+    );
+    assert.throws(
+      () => resolveSourceSidecar("x86_64-unknown-linux-gnu", true, {
+        PANDORA_DESKTOP_SOURCE_SIDECAR: join(root, "missing", "pandora-x86_64-unknown-linux-gnu"),
+      }),
+      /source sidecar is missing/,
+    );
+  } finally {
+    rmSync(linkRoot, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
 });

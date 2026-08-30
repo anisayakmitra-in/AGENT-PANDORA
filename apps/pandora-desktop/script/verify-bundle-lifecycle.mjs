@@ -113,6 +113,25 @@ function cargoTargetDirectory() {
   return JSON.parse(run("cargo", ["metadata", "--format-version", "1", "--no-deps", "--locked"])).target_directory;
 }
 
+export function resolveSourceSidecar(target, requestedTarget, environment = process.env) {
+  const configured = environment.PANDORA_DESKTOP_SOURCE_SIDECAR?.trim();
+  const candidate = resolve(
+    configured || sourceSidecar(target, requestedTarget),
+  );
+  if (configured && basename(candidate) !== sidecarName(target)) {
+    throw new Error(`configured desktop source sidecar must be named ${sidecarName(target)}`);
+  }
+  if (!existsSync(candidate)) {
+    throw new Error(`desktop source sidecar is missing: ${candidate}`);
+  }
+  const metadata = lstatSync(candidate);
+  const canonical = realpathSync(candidate);
+  if (metadata.isSymbolicLink() || !metadata.isFile()) {
+    throw new Error(`desktop source sidecar must be a regular file and not a symlink: ${candidate}`);
+  }
+  return canonical;
+}
+
 function sha256(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
@@ -262,10 +281,30 @@ function extractLinuxBundle(bundleRoot, sandbox) {
 }
 
 function copyMacBundle(bundleRoot, sandbox) {
-  const app = exactlyOne(walkDirectories(bundleRoot).filter((path) => path.endsWith("Pandora.app")), "macOS app bundle");
+  const localApps = walkDirectories(bundleRoot).filter((path) => path.endsWith("Pandora.app"));
   const installed = join(sandbox, "Applications", "Pandora.app");
   mkdirSync(dirname(installed), { recursive: true });
-  cpSync(app, installed, { recursive: true, dereference: false });
+  if (localApps.length === 1) {
+    cpSync(localApps[0], installed, { recursive: true, dereference: false });
+    return installed;
+  }
+  if (localApps.length > 1) {
+    throw new Error(`expected exactly one macOS app bundle, found ${localApps.length}`);
+  }
+
+  const image = findBundle(bundleRoot, (path) => path.endsWith(".dmg"), "macOS disk image");
+  const mount = join(sandbox, "mounted-disk-image");
+  mkdirSync(mount);
+  run("hdiutil", ["attach", "-readonly", "-nobrowse", "-quiet", "-mountpoint", mount, image]);
+  try {
+    const mountedApp = exactlyOne(
+      walkDirectories(mount).filter((path) => path.endsWith("Pandora.app")),
+      "mounted macOS app bundle",
+    );
+    cpSync(mountedApp, installed, { recursive: true, dereference: false });
+  } finally {
+    run("hdiutil", ["detach", "-quiet", mount]);
+  }
   return installed;
 }
 
@@ -306,8 +345,7 @@ async function smokeInstalledBundle(installed, platform, target, environment) {
 async function main() {
   const target = validateSidecarTarget(process.env.PANDORA_SIDECAR_TARGET ?? run("rustc", ["--print", "host-tuple"]));
   const requestedTarget = Boolean(process.env.PANDORA_SIDECAR_TARGET?.trim());
-  const source = sourceSidecar(target, requestedTarget);
-  regularFile(source, "built same-commit sidecar");
+  const source = resolveSourceSidecar(target, requestedTarget);
   const sandbox = createLifecycleSandbox();
   try {
     const bundleRoot = resolveBundleRoot();

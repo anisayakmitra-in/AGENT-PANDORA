@@ -124,8 +124,10 @@ authority path.
 
 Next work:
 
-- retain signed-release and real-user clean-machine install, update, rollback,
-  and uninstall evidence on every advertised platform;
+- retain signed-release and real-user update, rollback, and uninstall evidence
+  on every advertised platform; tagged releases now re-download checksum-bound
+  desktop packages on fresh runners and prove bounded package extraction,
+  launch, and sandbox cleanup;
 - complete native VoiceOver, Narrator, and Orca checks plus clean-machine
   scaling checks;
 - exercise Windows signing plus Apple signing and notarization with stable

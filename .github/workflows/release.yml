@@ -216,7 +216,7 @@ jobs:
 
   build-desktop:
     name: Build desktop ${{ matrix.platform }}
-    needs: verify
+    needs: [verify, build]
     strategy:
       fail-fast: false
       matrix:
@@ -225,18 +225,22 @@ jobs:
             platform: linux-x64
             target: x86_64-unknown-linux-gnu
             artifact: linux-x64
+            native: pandora-x86_64-unknown-linux-gnu
           - os: macos-26-intel
             platform: macos-x64
             target: x86_64-apple-darwin
             artifact: macos-x64
+            native: pandora-x86_64-apple-darwin
           - os: macos-26
             platform: macos-arm64
             target: aarch64-apple-darwin
             artifact: macos-arm64
+            native: pandora-aarch64-apple-darwin
           - os: windows-latest
             platform: windows-x64
             target: x86_64-pc-windows-msvc
             artifact: windows-x64
+            native: pandora-x86_64-pc-windows-msvc.exe
     runs-on: ${{ matrix.os }}
     env:
       PANDORA_WINDOWS_CERTIFICATE_BASE64: ${{ secrets.PANDORA_WINDOWS_CERTIFICATE_BASE64 }}
@@ -248,6 +252,8 @@ jobs:
       APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       PANDORA_SIDECAR_TARGET: ${{ matrix.target }}
+      PANDORA_SIDECAR_SOURCE: ${{ github.workspace }}/.pandora-native/${{ matrix.native }}
+      PANDORA_DESKTOP_SOURCE_SIDECAR: ${{ github.workspace }}/.pandora-native/${{ matrix.native }}
     permissions:
       contents: read
     steps:
@@ -271,6 +277,12 @@ jobs:
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: "22"
+
+      - name: Download verified native sidecar
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: native-${{ matrix.target }}
+          path: ${{ github.workspace }}/.pandora-native
 
       - name: Install desktop dependencies
         working-directory: apps/pandora-desktop
@@ -673,3 +685,134 @@ jobs:
           if (Test-Path -LiteralPath $env:PANDORA_DATA_DIR) { throw "uninstall preserved data" }
           $sentinel = (Get-Content -LiteralPath (Join-Path $env:PANDORA_WORKSPACE "sentinel.txt")).Trim()
           if ($sentinel -ne "preserved") { throw "uninstall changed workspace" }
+
+  smoke-desktop:
+    name: Exercise published desktop package on ${{ matrix.platform }}
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+            target: x86_64-unknown-linux-gnu
+            native: pandora-x86_64-unknown-linux-gnu
+            bundle: desktop-linux-x64-*.deb
+          - os: macos-26-intel
+            platform: macos-x64
+            target: x86_64-apple-darwin
+            native: pandora-x86_64-apple-darwin
+            bundle: desktop-macos-x64-*.dmg
+          - os: macos-26
+            platform: macos-arm64
+            target: aarch64-apple-darwin
+            native: pandora-aarch64-apple-darwin
+            bundle: desktop-macos-arm64-*.dmg
+          - os: windows-latest
+            platform: windows-x64
+            target: x86_64-pc-windows-msvc
+            native: pandora-x86_64-pc-windows-msvc.exe
+            bundle: desktop-windows-x64-*.msi
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PANDORA_SIDECAR_TARGET: ${{ matrix.target }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22"
+
+      - name: Install Linux lifecycle dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes xvfb
+
+      - name: Download published artifacts (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          release="$RUNNER_TEMP/pandora-release"
+          mkdir -p "$release"
+          for attempt in 1 2 3; do
+            if gh release download "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --dir "$release" \
+              --clobber \
+              --pattern checksums.txt \
+              --pattern '${{ matrix.native }}' \
+              --pattern '${{ matrix.bundle }}'; then
+              break
+            fi
+            test "$attempt" -lt 3
+            sleep "$((10 * attempt))"
+          done
+
+      - name: Download published artifacts (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $release = Join-Path $env:RUNNER_TEMP "pandora-release"
+          New-Item -ItemType Directory -Force -Path $release | Out-Null
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            gh release download $env:GITHUB_REF_NAME `
+              --repo $env:GITHUB_REPOSITORY `
+              --dir $release `
+              --clobber `
+              --pattern checksums.txt `
+              --pattern '${{ matrix.native }}' `
+              --pattern '${{ matrix.bundle }}'
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($attempt -eq 3) { throw "published desktop artifact download failed" }
+            Start-Sleep -Seconds (10 * $attempt)
+          }
+
+      - name: Exercise published desktop lifecycle (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        working-directory: apps/pandora-desktop
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          release="$RUNNER_TEMP/pandora-release"
+          native="$release/${{ matrix.native }}"
+          bundles=("$release"/${{ matrix.bundle }})
+          test "${#bundles[@]}" -eq 1
+          python "$GITHUB_WORKSPACE/scripts/verify_release_downloads.py" \
+            --manifest "$release/checksums.txt" \
+            "$native" "${bundles[0]}"
+          chmod 0755 "$native"
+          PANDORA_DESKTOP_SOURCE_SIDECAR="$native" \
+          PANDORA_DESKTOP_BUNDLE_ROOT="$release" \
+            npm run verify:bundle-lifecycle
+
+      - name: Exercise published desktop lifecycle (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: apps/pandora-desktop
+        run: |
+          $release = Join-Path $env:RUNNER_TEMP "pandora-release"
+          $native = Join-Path $release '${{ matrix.native }}'
+          $bundles = @(Get-ChildItem -LiteralPath $release -Filter '${{ matrix.bundle }}' -File)
+          if ($bundles.Count -ne 1) { throw "expected exactly one published Windows MSI" }
+          python "$env:GITHUB_WORKSPACE/scripts/verify_release_downloads.py" `
+            --manifest (Join-Path $release "checksums.txt") `
+            $native ($bundles[0].FullName)
+          if ($LASTEXITCODE -ne 0) { throw "published desktop checksum verification failed" }
+          $env:PANDORA_DESKTOP_SOURCE_SIDECAR = $native
+          $env:PANDORA_DESKTOP_BUNDLE_ROOT = $release
+          npm run verify:bundle-lifecycle

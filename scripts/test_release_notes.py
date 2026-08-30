@@ -109,6 +109,9 @@ Older notes.
         self.assertIn("patchelf xvfb", workflow)
         self.assertIn("target/release/bundle", workflow)
         self.assertNotIn("apps/pandora-desktop/src-tauri/target/release/bundle", workflow)
+        self.assertIn("Download verified native sidecar", workflow)
+        self.assertIn("PANDORA_SIDECAR_SOURCE:", workflow)
+        self.assertIn("PANDORA_DESKTOP_SOURCE_SIDECAR:", workflow)
 
     def test_release_workflow_smokes_published_installers_on_fresh_runners(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
@@ -181,3 +184,25 @@ Older notes.
             self.assertIn(command, workflow)
         self.assertIn("checksums.txt", workflow)
         self.assertIn("sentinel.txt", workflow)
+
+    def test_release_workflow_smokes_published_desktop_packages(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("smoke-desktop:", workflow)
+        self.assertIn(
+            "Exercise published desktop package on ${{ matrix.platform }}", workflow
+        )
+        for bundle in (
+            "desktop-linux-x64-*.deb",
+            "desktop-macos-x64-*.dmg",
+            "desktop-macos-arm64-*.dmg",
+            "desktop-windows-x64-*.msi",
+        ):
+            self.assertIn(bundle, workflow)
+        self.assertIn("gh release download", workflow)
+        self.assertIn("verify_release_downloads.py", workflow)
+        self.assertIn("PANDORA_DESKTOP_SOURCE_SIDECAR", workflow)
+        self.assertIn("PANDORA_DESKTOP_BUNDLE_ROOT", workflow)
+        self.assertIn("npm run verify:bundle-lifecycle", workflow)

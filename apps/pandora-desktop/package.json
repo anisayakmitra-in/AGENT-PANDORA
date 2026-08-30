@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:accessibility": "playwright test",
-    "test:bundle-lifecycle": "node --test script/verify-bundle-lifecycle.test.mjs",
+    "test:bundle-lifecycle": "node --test script/stage-sidecar.test.mjs script/verify-bundle-lifecycle.test.mjs",
     "tauri": "tauri",
     "tauri:dev": "npm run stage:sidecar && tauri dev",
     "tauri:build": "node script/stage-sidecar.mjs --release && tauri build",
