@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -22,7 +22,7 @@ test("accepts only an exact target-qualified regular source artifact", () => {
   try {
     writeFileSync(source, "verified native artifact");
     writeFileSync(wrongName, "wrong name");
-    assert.equal(resolveConfiguredSource(source, target), source);
+    assert.equal(resolveConfiguredSource(source, target), realpathSync(source));
     assert.throws(
       () => resolveConfiguredSource(wrongName, target),
       /must be named pandora-x86_64-unknown-linux-gnu/,
