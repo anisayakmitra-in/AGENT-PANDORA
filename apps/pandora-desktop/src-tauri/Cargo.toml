@@ -22,5 +22,8 @@ getrandom = "0.4"
 sha2 = "0.10"
 zeroize = "1"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+window-vibrancy = "=0.8.0"
+
 [lints.rust]
 unsafe_code = "forbid"

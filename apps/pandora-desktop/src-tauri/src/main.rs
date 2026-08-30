@@ -10,6 +10,11 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use tauri::{Manager, State, WindowEvent};
 use url::{Host, Url};
+#[cfg(target_os = "macos")]
+use window_vibrancy::{
+    apply_liquid_glass, apply_vibrancy, LiquidGlassOptions, NSGlassEffectViewStyle,
+    NSVisualEffectMaterial, NSVisualEffectState,
+};
 use zeroize::{Zeroize, Zeroizing};
 
 const NATIVE_ENDPOINT: &str = "tauri://pandora";
@@ -791,7 +796,10 @@ fn inspect_memory_audit(input: MemoryScopeInput) -> Result<NativeMemoryResult, S
         "--json".to_owned(),
     ];
     let data = run_cli_json(&args, "inspecting memory audit evidence")?;
-    let count = data.get("count").and_then(Value::as_u64).unwrap_or_default();
+    let count = data
+        .get("count")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
     Ok(NativeMemoryResult {
         message: format!("Loaded {count} durable memory audit record(s)."),
         data,
@@ -1068,15 +1076,23 @@ fn validate_regular_absolute_path(value: &str, label: &str) -> Result<std::path:
 }
 
 fn cli_binary_name() -> &'static str {
-    if cfg!(target_os = "windows") { "pandora.exe" } else { "pandora" }
+    if cfg!(target_os = "windows") {
+        "pandora.exe"
+    } else {
+        "pandora"
+    }
 }
 
 fn validate_cli_program_path(path: &Path, label: &str) -> Result<PathBuf, String> {
-    if !path.is_absolute() { return Err(format!("{label} must be an absolute path")); }
+    if !path.is_absolute() {
+        return Err(format!("{label} must be an absolute path"));
+    }
     let metadata = std::fs::symlink_metadata(path)
         .map_err(|_| format!("{label} does not exist or is not readable"))?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(format!("{label} must identify a regular file, not a symlink"));
+        return Err(format!(
+            "{label} must identify a regular file, not a symlink"
+        ));
     }
     #[cfg(unix)]
     {
@@ -1091,7 +1107,8 @@ fn validate_cli_program_path(path: &Path, label: &str) -> Result<PathBuf, String
 fn bundled_cli_program() -> Result<PathBuf, String> {
     let executable = std::env::current_exe()
         .map_err(|_| "could not resolve the Pandora desktop executable".to_owned())?;
-    let directory = executable.parent()
+    let directory = executable
+        .parent()
         .ok_or_else(|| "Pandora desktop executable has no parent directory".to_owned())?;
     Ok(directory.join(cli_binary_name()))
 }
@@ -1451,9 +1468,34 @@ fn encode_hex(bytes: &[u8]) -> String {
     encoded
 }
 
+#[cfg(target_os = "macos")]
+fn install_platform_material(app: &mut tauri::App) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let options = LiquidGlassOptions::new(NSGlassEffectViewStyle::Clear)
+        .radius(26.0)
+        .opaque(false);
+    if apply_liquid_glass(&window, options).is_err() {
+        let _ = apply_vibrancy(
+            &window,
+            NSVisualEffectMaterial::UnderWindowBackground,
+            Some(NSVisualEffectState::FollowsWindowActiveState),
+            Some(26.0),
+        );
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn install_platform_material(_app: &mut tauri::App) {}
+
 fn main() {
     install_desktop_crash_reporter();
     tauri::Builder::default()
+        .setup(|app| {
+            install_platform_material(app);
+            Ok(())
+        })
         .manage(ServiceState::default())
         .invoke_handler(tauri::generate_handler![
             start_local_service,
@@ -1651,7 +1693,6 @@ mod configuration_tests {
     }
 }
 
-
 #[cfg(test)]
 mod desktop_packaging_tests {
     use super::{cli_binary_name, validate_cli_program_path};
@@ -1667,7 +1708,14 @@ mod desktop_packaging_tests {
     fn bundle_configuration_declares_the_pandora_sidecar() {
         let config: Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
         assert_eq!(config["bundle"]["externalBin"][0], "binaries/pandora");
-        assert_eq!(cli_binary_name(), if cfg!(windows) { "pandora.exe" } else { "pandora" });
+        assert_eq!(
+            cli_binary_name(),
+            if cfg!(windows) {
+                "pandora.exe"
+            } else {
+                "pandora"
+            }
+        );
     }
 
     #[test]
