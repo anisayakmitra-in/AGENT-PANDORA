@@ -13,12 +13,17 @@ exit-code mapping.
 ```text
 pandora --help
 pandora help
+pandora run --help
+pandora help evaluation suite
 pandora --version
 pandora --version --json
 ```
 
 Both forms print the command surface and exit successfully. Add `--json` when
 the help text needs to be consumed by an installer or another tool.
+Pass a command and optional subcommand to either help form to return only the
+matching usage lines. Scoped help is resolved before configuration loading, so
+it remains available during installation and recovery.
 `pandora --version` remains a single human-readable line; with `--json`, it
 uses the normal output envelope and includes `pandora_version`.
 

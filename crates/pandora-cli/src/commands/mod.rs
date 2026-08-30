@@ -70,6 +70,9 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         .into_iter()
         .filter(|argument| argument != "--json")
         .collect::<Vec<_>>();
+    if let Some(help_topics) = requested_help(&args) {
+        return help(help_topics);
+    }
     if starts_interactive_tui(&args, json_requested, interactive_terminal()) {
         return open_interactive_default();
     }
@@ -118,21 +121,58 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "efficiency" => efficiency::execute(&args[1..]),
         "fleet" => fleet::execute(&args[1..]),
         "graph" => graph::execute(&args[1..]),
-        "--help" | "help" => {
-            if args.len() != 1 {
-                return Err(CliError::usage("help does not accept additional arguments"));
-            }
-            Ok(crate::output::success(
-                "help",
-                json!({"usage": usage()}),
-                usage(),
-            ))
-        }
         unknown => Err(CliError::usage(format!(
             "unknown command '{unknown}'.\n\n{}",
             usage()
         ))),
     }
+}
+
+fn requested_help(args: &[String]) -> Option<&[String]> {
+    match args {
+        [help, topics @ ..] if help == "help" || help == "--help" => Some(topics),
+        [topics @ .., help] if help == "--help" => Some(topics),
+        _ => None,
+    }
+}
+
+fn help(topics: &[String]) -> Result<CommandResult, CliError> {
+    if topics.is_empty() {
+        return Ok(crate::output::success(
+            "help",
+            json!({"usage": usage()}),
+            usage(),
+        ));
+    }
+    if topics.iter().any(|topic| topic.starts_with('-')) {
+        return Err(CliError::usage(
+            "help topics must be command or subcommand names",
+        ));
+    }
+    let topic = topics.join(" ");
+    let topic_usage = usage()
+        .lines()
+        .map(str::trim)
+        .filter(|line| {
+            line.strip_prefix(&topic).is_some_and(|remainder| {
+                remainder.is_empty()
+                    || remainder.starts_with(' ')
+                    || remainder.starts_with('|')
+                    || remainder.starts_with(" [")
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if topic_usage.is_empty() {
+        return Err(CliError::usage(format!(
+            "unknown help topic '{topic}'; run 'pandora help' to list commands"
+        )));
+    }
+    Ok(crate::output::success(
+        "help",
+        json!({"topic": topic, "usage": topic_usage}),
+        topic_usage,
+    ))
 }
 
 fn starts_interactive_tui(
@@ -330,7 +370,7 @@ fn usage() -> &'static str {
     r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|tui|harness|slash|session|job|subagent|skill|package|registry|memory|approval|provider|mcp|tool|orchestration|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor> [options]
 
 commands:
-  help (or --help)
+  help [command [subcommand]] (or <command> [subcommand] --help)
   setup [--interactive] [--provider-url <url>] [--model <model>] [--api-key-env <name>]
   run [--provider <name>] [--session <id>] [--agent] [--max-turns <n>] [--max-tools <n>] [--harness <id>] [--harness-version <version>] [--gene <id>] [--plan] [--model <model>] [--task-class <name>] [--approval <id>] [--optimize <cost|latency|tokens|certainty>] <task>
   service start [--port <port>]
@@ -539,5 +579,42 @@ mod tests {
         assert!(usage.contains("list [--limit <1-256>]"));
         assert!(usage.contains("evolution inspect --id <proposal-id>"));
         assert!(usage.contains("graph code|knowledge|review|architecture --input <path>"));
+    }
+
+    #[test]
+    fn help_can_be_scoped_to_a_command_or_nested_topic() {
+        let evaluation = execute(vec!["help".to_owned(), "evaluation".to_owned()]).unwrap();
+        let usage = evaluation.data["usage"].as_str().unwrap();
+        assert_eq!(evaluation.data["topic"], "evaluation");
+        assert!(usage.contains("evaluation golden"));
+        assert!(usage.contains("evaluation schedule"));
+        assert!(!usage.contains("pandora setup"));
+
+        let suite = execute(vec![
+            "evaluation".to_owned(),
+            "suite".to_owned(),
+            "--help".to_owned(),
+        ])
+        .unwrap();
+        assert_eq!(suite.data["topic"], "evaluation suite");
+        assert!(
+            suite.data["usage"]
+                .as_str()
+                .unwrap()
+                .starts_with("evaluation suite register")
+        );
+    }
+
+    #[test]
+    fn unknown_help_topic_is_a_usage_error() {
+        let error = match execute(vec!["help".to_owned(), "missing".to_owned()]) {
+            Ok(_) => panic!("unknown help topic should fail"),
+            Err(error) => error,
+        };
+
+        assert_eq!(
+            error.message,
+            "unknown help topic 'missing'; run 'pandora help' to list commands"
+        );
     }
 }

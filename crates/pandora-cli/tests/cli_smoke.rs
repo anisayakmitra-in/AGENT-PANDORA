@@ -1950,6 +1950,35 @@ fn subagent_help_and_completion_surfaces_list_all_lifecycle_commands() {
 }
 
 #[test]
+fn scoped_help_supports_command_topics_and_json_output() {
+    let fixture = Fixture::new();
+    let run = fixture
+        .command(&["run", "--help", "--json"])
+        .output()
+        .expect("run help should start");
+    assert_success(&run);
+    let run = parse_json(&run);
+    assert_eq!(run["command"], "help");
+    assert_eq!(run["topic"], "run");
+    assert!(run["usage"].as_str().unwrap().starts_with("run "));
+
+    let suite = fixture
+        .command(&["help", "evaluation", "suite", "--json"])
+        .output()
+        .expect("evaluation suite help should start");
+    assert_success(&suite);
+    let suite = parse_json(&suite);
+    assert_eq!(suite["command"], "help");
+    assert_eq!(suite["topic"], "evaluation suite");
+    assert!(
+        suite["usage"]
+            .as_str()
+            .unwrap()
+            .starts_with("evaluation suite register")
+    );
+}
+
+#[test]
 fn subagent_work_inspect_and_cleanup_complete_an_exact_commit_lifecycle() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("provider fixture should bind");
     let address = listener
