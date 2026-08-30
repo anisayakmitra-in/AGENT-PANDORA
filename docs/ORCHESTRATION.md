@@ -116,7 +116,11 @@ pandora orchestration resume <run-id>
 
 Resume succeeds only when the durable snapshot has no active roles. If roles
 were dispatched, Pandora requires their effect receipts to be reconciled first
-instead of guessing that retry is safe. Queued runs may be cancelled with
+instead of guessing that retry is safe. There is intentionally no orchestration
+CLI reconciliation, retry, or restart transition for an interrupted snapshot
+with active roles: resume fails closed with the receipt reconciliation gate, and
+a replacement worker sees no claimable run. This avoids inventing a replay path
+for an uncertain external effect. Queued runs may be cancelled with
 `pandora orchestration cancel <run-id>`.
 
 ## Desktop inspection and control
@@ -133,3 +137,13 @@ Both mutations require the exact run ID as confirmation, and service role policy
 limits them to operators and administrators. Native desktop device trust is
 established automatically, so this internal service boundary does not create an
 account or sign-in flow.
+
+## Phase 7 recovery evidence
+
+The bounded worker-operations CLI acceptance regression uses fresh processes for
+submit, claim, complete, interruption, inspection, a replacement worker claim,
+two unsafe-resume attempts, and final inspection. It proves that a completed
+planner receipt remains exactly once while the maker stays active and uncertain.
+The current contract has no safe active-role reconciliation transition, so both
+resume attempts fail closed and the replacement worker remains idle. This is
+deliberate evidence of the no-replay gate, not a request to retry the maker.

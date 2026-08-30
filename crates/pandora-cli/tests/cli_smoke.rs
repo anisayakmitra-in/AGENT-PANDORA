@@ -8562,6 +8562,7 @@ struct Phase7AcceptanceProfile {
     producer_count: usize,
     warmup_job_count: usize,
     recovery_job_count: usize,
+    rounds: usize,
     warmup_spread: Duration,
     recovery_spread: Duration,
     completion_timeout: Duration,
@@ -8577,6 +8578,7 @@ impl Phase7AcceptanceProfile {
                 producer_count: 3,
                 warmup_job_count: 6,
                 recovery_job_count: 12,
+                rounds: 1,
                 warmup_spread: Duration::from_millis(300),
                 recovery_spread: Duration::from_millis(900),
                 completion_timeout: Duration::from_secs(60),
@@ -8589,11 +8591,13 @@ impl Phase7AcceptanceProfile {
             phase7_environment_number("PANDORA_PHASE7_SOAK_JOBS", 512, producer_count * 4, 4_096);
         let soak_seconds =
             phase7_environment_number("PANDORA_PHASE7_SOAK_SECONDS", 600, 60, 86_400);
+        let rounds = phase7_environment_number("PANDORA_PHASE7_SOAK_ROUNDS", 1, 1, 16);
         let warmup_job_count = producer_count * 2;
         Self {
             producer_count,
             warmup_job_count,
             recovery_job_count: total_jobs - warmup_job_count,
+            rounds,
             warmup_spread: Duration::from_secs(2),
             recovery_spread: Duration::from_secs(soak_seconds as u64),
             completion_timeout: Duration::from_secs(180),
@@ -8601,8 +8605,12 @@ impl Phase7AcceptanceProfile {
         }
     }
 
+    fn recovery_jobs(self) -> usize {
+        self.recovery_job_count * self.rounds
+    }
+
     fn total_jobs(self) -> usize {
-        self.warmup_job_count + self.recovery_job_count
+        self.warmup_job_count + self.recovery_jobs()
     }
 }
 
@@ -8742,6 +8750,7 @@ struct Phase7TerminalEvidence {
 fn phase7_terminal_evidence(
     fixture: &Fixture,
     expected_job_ids: &BTreeSet<String>,
+    expected_worker_count: usize,
 ) -> Phase7TerminalEvidence {
     let principal = PrincipalId::new("local-user").unwrap();
     let tenant = TenantId::new("local-tenant").unwrap();
@@ -8816,17 +8825,86 @@ fn phase7_terminal_evidence(
     assert_eq!(evidence.session_ids.len(), expected_job_ids.len());
     assert_eq!(evidence.execution_ids.len(), expected_job_ids.len());
     assert_eq!(evidence.receipt_ids.len(), expected_job_ids.len());
-    assert_eq!(evidence.worker_ids.len(), 2);
+    assert_eq!(evidence.worker_ids.len(), expected_worker_count);
     evidence
+}
+
+fn assert_phase7_fresh_process_terminal_evidence(
+    fixture: &Fixture,
+    evidence: &Phase7TerminalEvidence,
+) {
+    for job_id in evidence.job_results.keys() {
+        let inspected = fixture
+            .command(&["job", "inspect", job_id, "--json"])
+            .output()
+            .expect("fresh Phase 7 job inspection CLI should start");
+        assert_success_with_context(&inspected, "fresh Phase 7 job inspection");
+        let inspected = parse_json(&inspected);
+        assert_eq!(inspected["status"], "completed");
+        assert_eq!(
+            serde_json::to_string(&inspected["result"]).unwrap(),
+            evidence.job_results[job_id]
+        );
+        let session_id = inspected["result"]["session_id"].as_str().unwrap();
+        let session = fixture
+            .command(&["session", "inspect", session_id, "--json"])
+            .output()
+            .expect("fresh Phase 7 session inspection CLI should start");
+        assert_success_with_context(&session, "fresh Phase 7 session inspection");
+        let session = parse_json(&session);
+        assert_eq!(session["last_event_type"], "effect_completed");
+        assert_eq!(session["evaluations"]["count"], 1);
+    }
+}
+
+fn assert_phase7_fresh_supervisor_snapshot(
+    fixture: &Fixture,
+    expected_state: &str,
+    expected_process_id: u32,
+    expected_generation: u64,
+) {
+    let output = fixture
+        .command(&["fleet", "supervisor", "list", "--json"])
+        .output()
+        .expect("fresh Phase 7 supervisor inspection CLI should start");
+    assert_success_with_context(&output, "fresh Phase 7 supervisor inspection");
+    let inspection = parse_json(&output);
+    let supervisors = inspection["supervisors"]
+        .as_array()
+        .expect("supervisor inspection should return an array");
+    let supervisor = supervisors
+        .iter()
+        .find(|supervisor| supervisor["node_id"] == "job-worker")
+        .expect("job worker supervisor should be inspectable");
+    assert_eq!(supervisor["state"], expected_state);
+    assert_eq!(supervisor["process_id"], expected_process_id);
+    assert_eq!(supervisor["generation"], expected_generation);
+}
+
+fn assert_phase7_fresh_process_leases_released(fixture: &Fixture) {
+    let output = fixture
+        .command(&["fleet", "list", "--json"])
+        .output()
+        .expect("fresh Phase 7 Fleet inspection CLI should start");
+    assert_success_with_context(&output, "fresh Phase 7 Fleet inspection");
+    let inspection = parse_json(&output);
+    let leases = inspection["leases"]
+        .as_array()
+        .expect("Fleet inspection should return leases");
+    assert!(
+        leases.iter().all(|lease| lease["state"] != "active"),
+        "every process lease must be released: {leases:?}"
+    );
 }
 
 #[test]
 fn phase7_worker_operations_recover_without_replaying_durable_effects() {
     let profile = Phase7AcceptanceProfile::from_environment();
     eprintln!(
-        "Phase 7 worker-operations mode={} producers={} jobs={} recovery_spread={:?}",
+        "Phase 7 worker-operations mode={} producers={} rounds={} jobs={} recovery_spread={:?}",
         profile.mode,
         profile.producer_count,
+        profile.rounds,
         profile.total_jobs(),
         profile.recovery_spread
     );
@@ -8873,6 +8951,12 @@ fn phase7_worker_operations_recover_without_replaying_durable_effects() {
     assert_eq!(stale.state().as_str(), "running");
     assert_eq!(stale.generation(), first_running.generation());
     assert_eq!(stale.process_id(), Some(first_process_id));
+    assert_phase7_fresh_supervisor_snapshot(
+        &fixture,
+        "running",
+        first_process_id,
+        first_running.generation(),
+    );
     let active_leases = fleet
         .list_leases()
         .unwrap()
@@ -8930,15 +9014,28 @@ fn phase7_worker_operations_recover_without_replaying_durable_effects() {
         Duration::from_secs(15),
     );
     assert_eq!(second_running.process_id(), Some(second_process_id));
-
-    let recovery_job_ids = submit_phase7_jobs(
+    assert_phase7_fresh_supervisor_snapshot(
         &fixture,
-        profile.producer_count,
-        profile.recovery_job_count,
-        profile.recovery_spread,
+        "running",
+        second_process_id,
+        second_running.generation(),
     );
-    let recovery_job_ids = recovery_job_ids.into_iter().collect::<BTreeSet<_>>();
-    assert_eq!(recovery_job_ids.len(), profile.recovery_job_count);
+
+    let mut recovery_job_ids = BTreeSet::new();
+    for round in 0..profile.rounds {
+        eprintln!("Phase 7 recovery submission round {}/{}", round + 1, profile.rounds);
+        let round_job_ids = submit_phase7_jobs(
+            &fixture,
+            profile.producer_count,
+            profile.recovery_job_count,
+            profile.recovery_spread,
+        )
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+        assert_eq!(round_job_ids.len(), profile.recovery_job_count);
+        recovery_job_ids.extend(round_job_ids);
+    }
+    assert_eq!(recovery_job_ids.len(), profile.recovery_jobs());
     let mut all_job_ids = warmup_job_ids.clone();
     all_job_ids.extend(recovery_job_ids.iter().cloned());
     assert_eq!(all_job_ids.len(), profile.total_jobs());
@@ -8958,7 +9055,7 @@ fn phase7_worker_operations_recover_without_replaying_durable_effects() {
     assert_success_with_context(&second_output, "Phase 7 recovery daemon");
     let second_output = parse_json(&second_output);
     assert_eq!(second_output["stop_reason"], "external_drain");
-    assert_eq!(second_output["processed_count"], profile.recovery_job_count);
+    assert_eq!(second_output["processed_count"], profile.recovery_jobs());
     let processed_after_recovery = second_output["jobs"]
         .as_array()
         .unwrap()
@@ -8967,7 +9064,8 @@ fn phase7_worker_operations_recover_without_replaying_durable_effects() {
         .collect::<BTreeSet<_>>();
     assert_eq!(processed_after_recovery, recovery_job_ids);
 
-    let before_idle_restart = phase7_terminal_evidence(&fixture, &all_job_ids);
+    let before_idle_restart = phase7_terminal_evidence(&fixture, &all_job_ids, 2);
+    assert_phase7_fresh_process_terminal_evidence(&fixture, &before_idle_restart);
     let idle_restart = fixture
         .command(&["job", "work", "--max-jobs", "64", "--json"])
         .output()
@@ -8976,8 +9074,10 @@ fn phase7_worker_operations_recover_without_replaying_durable_effects() {
     let idle_restart = parse_json(&idle_restart);
     assert_eq!(idle_restart["processed_count"], 0);
     assert_eq!(idle_restart["stop_reason"], "queue_empty");
-    let after_idle_restart = phase7_terminal_evidence(&fixture, &all_job_ids);
+    let after_idle_restart = phase7_terminal_evidence(&fixture, &all_job_ids, 2);
     assert_eq!(after_idle_restart, before_idle_restart);
+    assert_phase7_fresh_process_terminal_evidence(&fixture, &after_idle_restart);
+    assert_phase7_fresh_process_leases_released(&fixture);
 
     let run_id = "phase7-multi-repository-recovery";
     let plan = OrchestrationPlan::new(
@@ -9273,6 +9373,18 @@ fn phase7_worker_operations_recover_without_replaying_durable_effects() {
             .contains("receipt reconciliation")
     );
 
+    let blocked_resume_after_worker_restart = fixture
+        .command(&["orchestration", "resume", run_id, "--json"])
+        .output()
+        .expect("post-restart blocked-resume CLI should start");
+    assert_eq!(blocked_resume_after_worker_restart.status.code(), Some(50));
+    assert!(
+        parse_json(&blocked_resume_after_worker_restart)["message"]
+            .as_str()
+            .unwrap()
+            .contains("receipt reconciliation")
+    );
+
     let final_inspection = fixture
         .command(&["orchestration", "inspect", run_id, "--json"])
         .output()
@@ -9285,13 +9397,14 @@ fn phase7_worker_operations_recover_without_replaying_durable_effects() {
         inspected["role_receipts"]
     );
     assert_eq!(
-        phase7_terminal_evidence(&fixture, &all_job_ids),
+        phase7_terminal_evidence(&fixture, &all_job_ids, 2),
         before_idle_restart
     );
 
     eprintln!(
-        "Phase 7 worker-operations evidence passed: jobs={} workers=2 generations>=2 receipts={} partial_run={run_id}",
+        "Phase 7 worker-operations evidence passed: jobs={} workers=2 generations={} receipts={} partial_run={run_id}",
         profile.total_jobs(),
-        profile.total_jobs()
+        second_running.generation(),
+        before_idle_restart.receipt_ids.len(),
     );
 }

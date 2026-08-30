@@ -60,13 +60,17 @@ one command invocation. Operators can now reap all heartbeat-stale supervisors i
 The combined Phase 7 worker-operations acceptance profile now runs three
 independent producer streams and 18 governed jobs under live queue pressure,
 force-stops the first daemon, reconciles its stale PID and expired lease from a
-fresh CLI, and binds a second daemon at a new PID and generation. Durable
-snapshots prove exactly one terminal result, session, evaluation, rollout, and
-effect receipt per job before and after another fresh worker observes the empty
-queue. The same fixture drives a partial two-repository role failure through
-independently restarted CLI processes, preserves the completed planner receipt
-and active maker role, rejects duplicate or mismatched completion, and keeps
-resume blocked for explicit receipt reconciliation.
+fresh CLI, and binds a second daemon at a new PID and generation. Fresh CLI
+inspections cover every terminal job and session; captured supervisor snapshots
+make both generations inspectable, and the final Fleet inspection proves every
+process lease is released. The same fixture drives a partial two-repository
+role failure through independently restarted CLI processes, preserves the
+completed planner receipt and active maker role, rejects duplicate or mismatched
+completion, and proves that the current contract has no active-role
+reconciliation transition: repeated resume attempts fail closed rather than
+replaying an uncertain effect. Normal CI remains one bounded round; the
+documented opt-in PANDORA_PHASE7_SOAK_ROUNDS multiplier adds bounded recovery
+rounds without changing any authority boundary.
 
 This evidence does not widen authority:
 `ExecutionController -> Parliament -> ReferenceMonitor -> executor -> receipt`

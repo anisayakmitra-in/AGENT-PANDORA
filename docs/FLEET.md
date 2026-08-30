@@ -38,7 +38,7 @@ Supervisor commands:
   pandora fleet supervisor heartbeat node-a
   pandora fleet supervisor reconcile node-a --stale-after 30
   pandora fleet supervisor reap --stale-after 30
-  pandora fleet supervisor restart --node node-a --process-id 42 --stale-after 30 --stale-after 30
+  pandora fleet supervisor restart --node node-a --process-id 42 --stale-after 30
   pandora fleet supervisor list --json
 
 ## Phase 7 worker-operations acceptance
@@ -58,7 +58,12 @@ The durable assertions require exactly one terminal job result, one session,
 one evaluation, one rollout, and one `EffectCompleted` receipt identity per
 submitted job. They are captured before and after the no-op restart and again
 after orchestration recovery attempts, so a worker, Fleet, or Orchestration
-replay changes the evidence and fails the test.
+replay changes the evidence and fails the test. Every completed job and its
+session are then inspected through fresh CLI processes, including the durable
+result and terminal effect event. Independent fresh supervisor inspections
+retain the PID and generation snapshots for the killed generation and its
+replacement; a final fresh Fleet inspection proves every process lease is
+released.
 
 Run the bounded profile with:
 
@@ -76,15 +81,17 @@ PANDORA_PHASE7_SOAK=1 \
 PANDORA_PHASE7_SOAK_SECONDS=600 \
 PANDORA_PHASE7_SOAK_JOBS=512 \
 PANDORA_PHASE7_SOAK_PRODUCERS=4 \
+PANDORA_PHASE7_SOAK_ROUNDS=1 \
 cargo test -p pandora-cli --test cli_smoke phase7_worker_operations_recover_without_replaying_durable_effects --locked -- --exact --nocapture
 ```
 
-PowerShell uses the same values through `$env:PANDORA_PHASE7_SOAK`,
-`$env:PANDORA_PHASE7_SOAK_SECONDS`, `$env:PANDORA_PHASE7_SOAK_JOBS`, and
-`$env:PANDORA_PHASE7_SOAK_PRODUCERS`. Producers may be 2-8, jobs may be from
-four per producer through 4,096, and the submission window may be 60-86,400
-seconds. Long-duration runs remain an operator/release evidence gate and are
-not part of the default CI profile.
+PowerShell uses the same values through PANDORA_PHASE7_SOAK,
+PANDORA_PHASE7_SOAK_SECONDS, PANDORA_PHASE7_SOAK_JOBS,
+PANDORA_PHASE7_SOAK_PRODUCERS, and PANDORA_PHASE7_SOAK_ROUNDS. Producers may
+be 2-8, jobs may be from four per producer through 4,096, rounds may be 1-16,
+and the submission window may be 60-86,400 seconds. Each round creates another
+bounded recovery batch; normal CI remains one 18-job round. Long-duration runs
+remain an operator/release evidence gate and are not part of the default CI profile.
 
 Workers only claim and delegate the original governed command. Fleet leases and
 Orchestration role receipts remain scheduling and recovery evidence, not
