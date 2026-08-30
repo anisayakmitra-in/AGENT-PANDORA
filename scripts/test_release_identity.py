@@ -31,6 +31,11 @@ class ReleaseIdentityTests(unittest.TestCase):
         tag: str,
         shell_version: str | None = None,
         powershell_version: str | None = None,
+        desktop_npm_version: str | None = None,
+        desktop_lock_version: str | None = None,
+        desktop_cargo_version: str | None = None,
+        tauri_version_source: str = "../package.json",
+        windows_upgrade_code: str = "43f9019a-cb48-59a1-b463-5508bd89d386",
     ) -> subprocess.CompletedProcess[str]:
         root = make_temp_root()
         self.addCleanup(shutil.rmtree, root, True)
@@ -42,6 +47,41 @@ class ReleaseIdentityTests(unittest.TestCase):
         package_dir.mkdir(parents=True)
         (package_dir / "package.json").write_text(
             json.dumps({"version": npm_version}),
+            encoding="utf-8",
+        )
+        desktop_dir = root / "apps" / "pandora-desktop"
+        desktop_dir.mkdir(parents=True)
+        resolved_desktop_npm_version = desktop_npm_version or cargo_version
+        resolved_desktop_lock_version = desktop_lock_version or cargo_version
+        (desktop_dir / "package.json").write_text(
+            json.dumps({"version": resolved_desktop_npm_version}),
+            encoding="utf-8",
+        )
+        (desktop_dir / "package-lock.json").write_text(
+            json.dumps(
+                {
+                    "version": resolved_desktop_lock_version,
+                    "packages": {"": {"version": resolved_desktop_lock_version}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        desktop_tauri_dir = desktop_dir / "src-tauri"
+        desktop_tauri_dir.mkdir()
+        (desktop_tauri_dir / "Cargo.toml").write_text(
+            "[package]\n"
+            f'version = "{desktop_cargo_version or cargo_version}"\n',
+            encoding="utf-8",
+        )
+        (desktop_tauri_dir / "tauri.conf.json").write_text(
+            json.dumps(
+                {
+                    "version": tauri_version_source,
+                    "bundle": {
+                        "windows": {"wix": {"upgradeCode": windows_upgrade_code}}
+                    },
+                }
+            ),
             encoding="utf-8",
         )
         scripts_dir = root / "scripts"
@@ -75,6 +115,36 @@ class ReleaseIdentityTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("npm package version", result.stdout)
+
+    def test_rejects_desktop_version_drift(self) -> None:
+        cases = {
+            "desktop npm package version": {
+                "desktop_npm_version": "2.0.0-beta.0"
+            },
+            "desktop package lock versions": {
+                "desktop_lock_version": "2.0.0-beta.0"
+            },
+            "desktop Cargo package version": {
+                "desktop_cargo_version": "2.0.0-beta.0"
+            },
+            "Tauri version must resolve": {
+                "tauri_version_source": "2.0.0-beta.1"
+            },
+            "desktop Windows MSI upgrade code changed": {
+                "windows_upgrade_code": "00000000-0000-0000-0000-000000000000"
+            },
+        }
+        for message, overrides in cases.items():
+            with self.subTest(message=message):
+                result = self.run_validator(
+                    "2.0.0-beta.1",
+                    "2.0.0-beta.1",
+                    "v2.0.0-beta.1",
+                    **overrides,
+                )
+
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(message, result.stdout)
 
     def test_rejects_tag_drift(self) -> None:
         result = self.run_validator(

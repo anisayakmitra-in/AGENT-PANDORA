@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Pandora",
-  "version": "2.0.0",
+  "version": "../package.json",
   "identifier": "dev.pandora.agent",
   "build": {
     "beforeDevCommand": "npm run dev -- --host 127.0.0.1",
@@ -36,6 +36,11 @@
     ],
     "externalBin": [
       "binaries/pandora"
-    ]
+    ],
+    "windows": {
+      "wix": {
+        "upgradeCode": "43f9019a-cb48-59a1-b463-5508bd89d386"
+      }
+    }
   }
 }

@@ -30,6 +30,12 @@ macOS app is therefore a direct-distribution target, not a Mac App Store
 target. Stable distribution still requires Apple signing and notarization,
 Windows signing, and retained clean-machine release evidence.
 
+Desktop bundle versions resolve from the desktop `package.json`. The release
+identity gate requires the desktop npm, lockfile, Cargo, and workspace versions
+to match the exact release tag before any package is built. The Windows MSI
+upgrade code is pinned so later releases update the same installed product
+instead of creating a duplicate application.
+
 The tagged release workflow fails closed for a stable version unless the
 Windows certificate, Developer ID Application certificate, Apple notarization
 credentials, signing identities, and explicit stable-release approval are all
