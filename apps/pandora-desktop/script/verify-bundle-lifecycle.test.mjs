@@ -1,0 +1,100 @@
+import assert from "node:assert/strict";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import {
+  assertTemporarySandbox,
+  applicationBinary,
+  createLifecycleSandbox,
+  packagedSidecarName,
+  removeLifecycleSandbox,
+  resolveBundleRoot,
+  sidecarName,
+  validateSidecarTarget,
+} from "./verify-bundle-lifecycle.mjs";
+
+test("distinguishes staged and packaged sidecar filenames", () => {
+  assert.equal(sidecarName("x86_64-unknown-linux-gnu"), "pandora-x86_64-unknown-linux-gnu");
+  assert.equal(sidecarName("x86_64-pc-windows-msvc"), "pandora-x86_64-pc-windows-msvc.exe");
+  assert.equal(packagedSidecarName("x86_64-unknown-linux-gnu"), "pandora");
+  assert.equal(packagedSidecarName("x86_64-pc-windows-msvc"), "pandora.exe");
+});
+
+test("accepts and removes only its exact lifecycle sandbox", () => {
+  const sandbox = createLifecycleSandbox();
+  try {
+    assert.doesNotThrow(() => assertTemporarySandbox(sandbox));
+    removeLifecycleSandbox(sandbox);
+    assert.equal(existsSync(sandbox), false);
+  } finally {
+    if (existsSync(sandbox)) removeLifecycleSandbox(sandbox);
+  }
+});
+
+test("rejects same-prefix siblings, symlinks, and non-directories", () => {
+  const sibling = join(tmpdir(), "pandora-desktop-lifecycle-sibling");
+  const file = join(tmpdir(), "pandora-desktop-lifecycle-file");
+  const sandbox = createLifecycleSandbox();
+  const link = join(tmpdir(), "pandora-desktop-lifecycle-link");
+  try {
+    mkdirSync(sibling);
+    writeFileSync(file, "not a sandbox");
+    symlinkSync(sandbox, link);
+    assert.throws(() => assertTemporarySandbox(sibling), /outside the lifecycle sandbox/);
+    assert.throws(() => assertTemporarySandbox(file), /outside the lifecycle sandbox/);
+    assert.throws(() => assertTemporarySandbox(link), /outside the lifecycle sandbox/);
+  } finally {
+    rmSync(sibling, { recursive: true, force: true });
+    rmSync(file, { force: true });
+    rmSync(link, { force: true });
+    if (existsSync(sandbox)) removeLifecycleSandbox(sandbox);
+  }
+});
+
+test("accepts only a canonical configured bundle directory", () => {
+  const bundleRoot = mkdtempSync(join(tmpdir(), "pandora-desktop-bundle-"));
+  const link = join(tmpdir(), `pandora-desktop-bundle-link-${process.pid}-${Date.now()}`);
+  try {
+    assert.equal(
+      resolveBundleRoot({ PANDORA_DESKTOP_BUNDLE_ROOT: ` ${bundleRoot} ` }),
+      realpathSync(bundleRoot),
+    );
+    symlinkSync(bundleRoot, link);
+    assert.throws(
+      () => resolveBundleRoot({ PANDORA_DESKTOP_BUNDLE_ROOT: link }),
+      /must be a canonical directory/,
+    );
+    assert.throws(
+      () => resolveBundleRoot({ PANDORA_DESKTOP_BUNDLE_ROOT: join(bundleRoot, "missing") }),
+      /directory is missing/,
+    );
+  } finally {
+    rmSync(link, { force: true });
+    rmSync(bundleRoot, { recursive: true, force: true });
+  }
+});
+
+test("selects the exact desktop binary instead of sidecars and resources", () => {
+  const installed = mkdtempSync(join(tmpdir(), "pandora-desktop-installed-"));
+  const binaries = join(installed, "usr", "bin");
+  const icons = join(installed, "usr", "share", "icons");
+  try {
+    mkdirSync(binaries, { recursive: true });
+    mkdirSync(icons, { recursive: true });
+    for (const name of ["pandora", "pandora-desktop", "pandora.exe", "pandora-desktop.exe"]) {
+      writeFileSync(join(binaries, name), name);
+    }
+    writeFileSync(join(icons, "pandora-desktop.png"), "icon");
+    assert.equal(applicationBinary(installed, "linux"), join(binaries, "pandora-desktop"));
+    assert.equal(applicationBinary(installed, "win32"), join(binaries, "pandora-desktop.exe"));
+  } finally {
+    rmSync(installed, { recursive: true, force: true });
+  }
+});
+
+test("rejects sidecar target traversal before path construction", () => {
+  assert.equal(validateSidecarTarget(" x86_64-unknown-linux-gnu "), "x86_64-unknown-linux-gnu");
+  assert.throws(() => validateSidecarTarget("../release"), /invalid Pandora sidecar target triple/);
+  assert.throws(() => validateSidecarTarget(""), /invalid Pandora sidecar target triple/);
+});

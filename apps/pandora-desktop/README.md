@@ -83,9 +83,18 @@ through a polite live region.
 
 Typography uses scalable root-relative units. The stylesheet honors reduced
 motion, reduced transparency, increased contrast, and Windows forced-colors
-preferences. These contracts are covered by desktop regression tests; native
-screen-reader and clean-machine scaling checks remain release evidence rather
-than authority or execution tests.
+preferences. Every Desktop CI runner now performs a Chromium and axe audit of
+the rendered Command Center, including the 1080×720 minimum window and a
+540×360 viewport that represents 200% browser zoom; both must avoid horizontal
+clipping. Each runner also extracts, copies, or administratively installs its
+freshly built package in a temporary sandbox, verifies the bundled sidecar has
+the same SHA-256 as the release CLI it just built, starts a bounded smoke where
+the runner supports it, and removes that sandbox.
+
+This is automated webview and package-lifecycle evidence, not native
+VoiceOver, Narrator, or Orca coverage. Signed release packages, real
+clean-machine user install/update/rollback evidence, native screen-reader
+checks, and clean-machine scaling checks remain release gates.
 
 ## Interface direction
 

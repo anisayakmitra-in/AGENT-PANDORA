@@ -11,9 +11,12 @@
     "dev": "vite",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:accessibility": "playwright test",
+    "test:bundle-lifecycle": "node --test script/verify-bundle-lifecycle.test.mjs",
     "tauri": "tauri",
     "tauri:dev": "npm run stage:sidecar && tauri dev",
     "tauri:build": "node script/stage-sidecar.mjs --release && tauri build",
+    "verify:bundle-lifecycle": "node script/verify-bundle-lifecycle.mjs",
     "stage:sidecar": "node script/stage-sidecar.mjs"
   },
   "dependencies": {
@@ -22,12 +25,14 @@
     "react-dom": "^19.1.1"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.11.0",
     "@tauri-apps/cli": "^2.8.4",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.3",
     "@types/react": "^19.1.1",
     "@types/react-dom": "^19.1.1",
     "@vitejs/plugin-react": "^5.0.2",
+    "@playwright/test": "^1.55.0",
     "jsdom": "^26.1.0",
     "typescript": "^5.8.3",
     "vite": "^7.1.2",
