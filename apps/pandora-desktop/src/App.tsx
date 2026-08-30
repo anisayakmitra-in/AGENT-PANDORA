@@ -71,12 +71,15 @@ type ViewId =
 
 type RunProfile = string;
 type ThemeMode = "dark" | "light";
+type WorkspaceDockPlacement = "right" | "bottom";
+type WorkspaceDockSize = "compact" | "comfortable" | "expanded";
 type InspectorTab = "flow" | "evidence" | "work" | "browser";
 type WorkSurface = "files" | "changes" | "terminal" | "artifacts";
 type HarnessTab = "genes" | "extensions" | "packages" | "authority" | "receipts";
 type InventoryTab = "overview" | "contract" | "boundaries" | "evidence";
 type PackageSourceTab = "registry" | "github" | "local" | "author";
 type ConnectionTab = "provider" | "mcp" | "registry";
+type SettingsSectionId = "general" | "appearance" | "workspace" | "intelligence" | "authority";
 
 const inspectorTabs: readonly InspectorTab[] = ["flow", "evidence", "work", "browser"];
 const workSurfaceTabs: readonly WorkSurface[] = ["files", "changes", "terminal", "artifacts"];
@@ -125,6 +128,9 @@ type WorkflowRecipe = {
 
 const themeStorageKey = "pandora.desktop.theme";
 const workflowStorageKey = "pandora.desktop.workflows";
+const dockOpenStorageKey = "pandora.desktop.dock.open";
+const dockPlacementStorageKey = "pandora.desktop.dock.placement";
+const dockSizeStorageKey = "pandora.desktop.dock.size";
 const maxContextAttachments = 8;
 const maxContextAttachmentBytes = 16 * 1024;
 const maxContextBytes = 24 * 1024;
@@ -183,6 +189,19 @@ function readTextAttachment(file: File): Promise<string> {
 
 function loadTheme(): ThemeMode {
   return typeof window !== "undefined" && window.localStorage.getItem(themeStorageKey) === "light" ? "light" : "dark";
+}
+
+function loadDockOpen(): boolean {
+  return typeof window === "undefined" || window.localStorage.getItem(dockOpenStorageKey) !== "false";
+}
+
+function loadDockPlacement(): WorkspaceDockPlacement {
+  return typeof window !== "undefined" && window.localStorage.getItem(dockPlacementStorageKey) === "bottom" ? "bottom" : "right";
+}
+
+function loadDockSize(): WorkspaceDockSize {
+  const value = typeof window !== "undefined" ? window.localStorage.getItem(dockSizeStorageKey) : null;
+  return value === "compact" || value === "expanded" ? value : "comfortable";
 }
 
 function loadWorkflows(): WorkflowRecipe[] {
@@ -247,6 +266,14 @@ const navigation: Array<{ label: string; items: Array<{ id: ViewId; label: strin
       { id: "evolution", label: "Evolution", icon: "evolution" }
     ]
   }
+];
+
+const settingsSections: Array<{ id: SettingsSectionId; label: string; description: string; icon: IconName; keywords: string }> = [
+  { id: "general", label: "General", description: "Local app and runtime posture", icon: "gear", keywords: "local runtime connection health device" },
+  { id: "appearance", label: "Appearance", description: "Theme and visual behavior", icon: "spark", keywords: "theme dark light contrast motion" },
+  { id: "workspace", label: "Workspace", description: "Inspector placement and density", icon: "grid", keywords: "dock panel right bottom size layout" },
+  { id: "intelligence", label: "Intelligence", description: "Providers, MCP, Harnesses, and tools", icon: "box", keywords: "models providers mcp skills genes packages tools" },
+  { id: "authority", label: "Authority & evidence", description: "Council, approvals, audit, and evolution", icon: "shield", keywords: "parliament council reference monitor permit receipt audit evolution" },
 ];
 
 const runProfiles: Array<{ id: RunProfile; label: string; harness: string | null }> = [
@@ -475,6 +502,9 @@ function App() {
   const [runProvider, setRunProvider] = useState("auto");
   const [runModel, setRunModel] = useState("");
   const [theme, setTheme] = useState<ThemeMode>(loadTheme);
+  const [dockOpen, setDockOpen] = useState(loadDockOpen);
+  const [dockPlacement, setDockPlacement] = useState<WorkspaceDockPlacement>(loadDockPlacement);
+  const [dockSize, setDockSize] = useState<WorkspaceDockSize>(loadDockSize);
   const [workflows, setWorkflows] = useState<WorkflowRecipe[]>(loadWorkflows);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const autoStartAttempted = useRef(false);
@@ -500,6 +530,12 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem(workflowStorageKey, JSON.stringify(workflows));
   }, [workflows]);
+
+  useEffect(() => {
+    window.localStorage.setItem(dockOpenStorageKey, String(dockOpen));
+    window.localStorage.setItem(dockPlacementStorageKey, dockPlacement);
+    window.localStorage.setItem(dockSizeStorageKey, dockSize);
+  }, [dockOpen, dockPlacement, dockSize]);
 
   useEffect(() => {
     const availableProviders = providers.filter((provider) => provider.credential_configured);
@@ -1075,7 +1111,7 @@ function App() {
       <span className="sr-only" aria-live="polite" aria-atomic="true">{viewLabel(activeView)}. {runtimeStatusLabel(runtimeStatus)}.</span>
       <Sidebar activeView={activeView} onSelect={selectView} runtimeStatus={runtimeStatus} sessions={sessions} selectedSessionId={selectedSessionId} onOpenPalette={() => setPaletteOpen(true)} onOpenSession={async (sessionId) => { selectView("command"); await openSession(sessionId); }} />
       <main ref={mainRef} id="pandora-main" className="main-shell" tabIndex={-1} aria-label={viewLabel(activeView) + " workspace"}>
-        <TopBar activeView={activeView} runtimeStatus={runtimeStatus} onOpenPalette={() => setPaletteOpen(true)} />
+        <TopBar activeView={activeView} runtimeStatus={runtimeStatus} dockOpen={dockOpen} dockPlacement={dockPlacement} onOpenPalette={() => setPaletteOpen(true)} onToggleDock={() => setDockOpen((current) => !current)} onMoveDock={() => { setDockOpen(true); setDockPlacement((current) => current === "right" ? "bottom" : "right"); }} />
         {paletteOpen ? <CommandPalette onClose={() => setPaletteOpen(false)} onSelectView={(view) => { selectView(view); setPaletteOpen(false); }} /> : null}
         {activeView === "command" ? (
           <CommandView
@@ -1097,6 +1133,12 @@ function App() {
             onRunProfileChange={setRunProfile}
             runProvider={runProvider}
             runModel={runModel}
+            dockOpen={dockOpen}
+            dockPlacement={dockPlacement}
+            dockSize={dockSize}
+            onDockOpenChange={setDockOpen}
+            onDockPlacementChange={setDockPlacement}
+            onDockSizeChange={setDockSize}
             onRunProviderChange={(provider) => {
               setRunProvider(provider);
               const availableProviders = providers.filter((candidate) => candidate.credential_configured);
@@ -1158,7 +1200,7 @@ function App() {
         ) : activeView === "evolution" ? (
           <EvolutionView proposals={evolutionProposals} activations={artifactActivations} runtimeStatus={runtimeStatus} onInspect={inspectEvolutionCandidate} onMutate={mutateEvolution} />
         ) : (
-          <SettingsView theme={theme} onThemeChange={setTheme} runtimeStatus={runtimeStatus} health={runtimeHealth} native={native} endpoint={endpoint} />
+          <SettingsView theme={theme} onThemeChange={setTheme} runtimeStatus={runtimeStatus} health={runtimeHealth} native={native} endpoint={endpoint} dockOpen={dockOpen} dockPlacement={dockPlacement} dockSize={dockSize} onDockOpenChange={setDockOpen} onDockPlacementChange={setDockPlacement} onDockSizeChange={setDockSize} onOpenView={selectView} />
         )}
       </main>
     </div>
@@ -1199,11 +1241,11 @@ function Sidebar({ activeView, onSelect, runtimeStatus, sessions, selectedSessio
   );
 }
 
-function TopBar({ activeView, runtimeStatus, onOpenPalette }: { activeView: ViewId; runtimeStatus: RuntimeStatus; onOpenPalette: () => void }) {
+function TopBar({ activeView, runtimeStatus, dockOpen, dockPlacement, onOpenPalette, onToggleDock, onMoveDock }: { activeView: ViewId; runtimeStatus: RuntimeStatus; dockOpen: boolean; dockPlacement: WorkspaceDockPlacement; onOpenPalette: () => void; onToggleDock: () => void; onMoveDock: () => void }) {
   const label = viewLabel(activeView);
   const section = navigation.find((group) => group.items.some((item) => item.id === activeView))?.label ?? "Workspace";
   const tone = runtimeStatus === "connected" ? "green" : runtimeStatus === "offline" ? "amber" : "blue";
-  return <header className="top-bar" data-tauri-drag-region><div className="breadcrumb"><span className="breadcrumb-muted">{section}</span><span className="breadcrumb-rule" /><strong>{label}</strong></div><div className="top-actions"><button className="top-search" type="button" aria-label="Search" onClick={onOpenPalette}><Icon name="search" size={14} /><span>Quick open</span><kbd>Ctrl K</kbd></button><Chip tone={tone} icon="lock">{runtimeStatusLabel(runtimeStatus)}</Chip></div></header>;
+  return <header className="top-bar" data-tauri-drag-region><div className="breadcrumb"><span className="breadcrumb-muted">{section}</span><span className="breadcrumb-rule" /><strong>{label}</strong></div><div className="top-actions">{activeView === "command" ? <div className="dock-quick-controls" aria-label="Workspace dock controls"><button className="icon-button" type="button" aria-label={dockOpen ? "Hide workspace inspector" : "Show workspace inspector"} aria-pressed={dockOpen} onClick={onToggleDock}><Icon name="grid" size={14} /></button><button className="icon-button" type="button" aria-label={`Move workspace inspector to ${dockPlacement === "right" ? "bottom" : "right"}`} onClick={onMoveDock}><Icon name={dockPlacement === "right" ? "menu" : "grid"} size={14} /></button></div> : null}<button className="top-search" type="button" aria-label="Search" onClick={onOpenPalette}><Icon name="search" size={14} /><span>Quick open</span><kbd>Ctrl K</kbd></button><Chip tone={tone} icon="lock">{runtimeStatusLabel(runtimeStatus)}</Chip></div></header>;
 }
 
 function runtimeStatusLabel(status: RuntimeStatus): string {
@@ -1254,6 +1296,12 @@ type CommandViewProps = {
   onRunProfileChange: (profile: RunProfile) => void;
   runProvider: string;
   runModel: string;
+  dockOpen: boolean;
+  dockPlacement: WorkspaceDockPlacement;
+  dockSize: WorkspaceDockSize;
+  onDockOpenChange: (open: boolean) => void;
+  onDockPlacementChange: (placement: WorkspaceDockPlacement) => void;
+  onDockSizeChange: (size: WorkspaceDockSize) => void;
   onRunProviderChange: (provider: string) => void;
   onRunModelChange: (model: string) => void;
   onRun: (task: string, profile: RunProfile, contextAttachments: RuntimeContextAttachment[]) => Promise<RuntimeRun>;
@@ -1265,7 +1313,7 @@ type CommandViewProps = {
   onResolveBrowserInspection: (allow: boolean) => Promise<void>;
 };
 
-function CommandView({ selectedStep, onSelectStep, runtimeStatus, selectedSession, lastRun, lastRunRequest, events, harnesses, providers, runInFlight, workspaceInspection, workspaceInspectionInFlight, browserInspection, browserInspectionInFlight, runProfile, onRunProfileChange, runProvider, runModel, onRunProviderChange, onRunModelChange, onRun, onRetryRun, onResolveApproval, onInspectWorkspace, onResolveWorkspaceInspection, onInspectBrowser, onResolveBrowserInspection }: CommandViewProps) {
+function CommandView({ selectedStep, onSelectStep, runtimeStatus, selectedSession, lastRun, lastRunRequest, events, harnesses, providers, runInFlight, workspaceInspection, workspaceInspectionInFlight, browserInspection, browserInspectionInFlight, runProfile, onRunProfileChange, runProvider, runModel, dockOpen, dockPlacement, dockSize, onDockOpenChange, onDockPlacementChange, onDockSizeChange, onRunProviderChange, onRunModelChange, onRun, onRetryRun, onResolveApproval, onInspectWorkspace, onResolveWorkspaceInspection, onInspectBrowser, onResolveBrowserInspection }: CommandViewProps) {
   const [task, setTask] = useState("");
   const [runError, setRunError] = useState("");
   const [contextAttachments, setContextAttachments] = useState<RuntimeContextAttachment[]>([]);
@@ -1369,7 +1417,7 @@ function CommandView({ selectedStep, onSelectStep, runtimeStatus, selectedSessio
   const evidenceValue = lastRun ? String(lastRun.receipt_count) : selectedSession ? String(selectedSession.event_count) : "None";
   const evidenceDetail = lastRun ? "receipts" : selectedSession ? "events recorded" : "after execution";
 
-  return <div className="command-layout" aria-busy={runInFlight}>
+  return <div className={`command-layout dock-${dockOpen ? dockPlacement : "closed"} dock-size-${dockSize}`} data-dock-placement={dockOpen ? dockPlacement : "closed"} aria-busy={runInFlight}>
     <section className="core-column">
       <div className="stage-toolbar"><div><span className="eyebrow">LOCAL WORKSPACE</span><strong>{selectedSession?.session.workspace_id ?? "unscoped"}</strong></div><div className="stage-controls"><span className="mono">CONTROL / 01</span><Chip tone={connected ? "green" : runtimeStatus === "offline" ? "amber" : "blue"} icon="activity">{runtimeStatusLabel(runtimeStatus)}</Chip></div></div>
       <div className="core-stage">
@@ -1395,7 +1443,7 @@ function CommandView({ selectedStep, onSelectStep, runtimeStatus, selectedSessio
       </form>
       {lastRun ? <RunResultPanel lastRun={lastRun} request={lastRunRequest} events={events} runInFlight={runInFlight} onRepeat={repeatRecordedRun} /> : null}
     </section>
-    <Inspector steps={steps} lastRun={lastRun} events={events} selectedSession={selectedSession} runtimeStatus={runtimeStatus} approval={lastRun?.approval} approvalDetail={lastRun?.status_detail} approvalInFlight={runInFlight} workspaceInspection={workspaceInspection} workspaceInspectionInFlight={workspaceInspectionInFlight} browserInspection={browserInspection} browserInspectionInFlight={browserInspectionInFlight} selectedStep={selectedStep} onResolveApproval={onResolveApproval} onInspectWorkspace={onInspectWorkspace} onResolveWorkspaceInspection={onResolveWorkspaceInspection} onInspectBrowser={onInspectBrowser} onResolveBrowserInspection={onResolveBrowserInspection} onSelectStep={onSelectStep} />
+    {dockOpen ? <Inspector steps={steps} lastRun={lastRun} events={events} selectedSession={selectedSession} runtimeStatus={runtimeStatus} approval={lastRun?.approval} approvalDetail={lastRun?.status_detail} approvalInFlight={runInFlight} workspaceInspection={workspaceInspection} workspaceInspectionInFlight={workspaceInspectionInFlight} browserInspection={browserInspection} browserInspectionInFlight={browserInspectionInFlight} selectedStep={selectedStep} dockPlacement={dockPlacement} dockSize={dockSize} onClose={() => onDockOpenChange(false)} onPlacementChange={onDockPlacementChange} onSizeChange={onDockSizeChange} onResolveApproval={onResolveApproval} onInspectWorkspace={onInspectWorkspace} onResolveWorkspaceInspection={onResolveWorkspaceInspection} onInspectBrowser={onInspectBrowser} onResolveBrowserInspection={onResolveBrowserInspection} onSelectStep={onSelectStep} /> : null}
   </div>;
 }
 
@@ -1573,9 +1621,10 @@ function WorkSurfacePanel({
   </Panel>;
 }
 
-function Inspector({ steps, lastRun, events, selectedSession, runtimeStatus, approval, approvalDetail, approvalInFlight, workspaceInspection, workspaceInspectionInFlight, browserInspection, browserInspectionInFlight, selectedStep, onResolveApproval, onInspectWorkspace, onResolveWorkspaceInspection, onInspectBrowser, onResolveBrowserInspection, onSelectStep }: { steps: typeof authoritySteps; lastRun: RuntimeRun | null; events: RuntimeEvent[]; selectedSession: RuntimeSessionDetail | null; runtimeStatus: RuntimeStatus; approval?: RuntimeApproval; approvalDetail?: string; approvalInFlight: boolean; workspaceInspection: RuntimeRun | null; workspaceInspectionInFlight: boolean; browserInspection: RuntimeRun | null; browserInspectionInFlight: boolean; selectedStep: string; onResolveApproval: (allow: boolean) => Promise<void>; onInspectWorkspace: (task: string) => Promise<void>; onResolveWorkspaceInspection: (allow: boolean) => Promise<void>; onInspectBrowser: (url: string) => Promise<void>; onResolveBrowserInspection: (allow: boolean) => Promise<void>; onSelectStep: (id: string) => void }) {
+function Inspector({ steps, lastRun, events, selectedSession, runtimeStatus, approval, approvalDetail, approvalInFlight, workspaceInspection, workspaceInspectionInFlight, browserInspection, browserInspectionInFlight, selectedStep, dockPlacement, dockSize, onClose, onPlacementChange, onSizeChange, onResolveApproval, onInspectWorkspace, onResolveWorkspaceInspection, onInspectBrowser, onResolveBrowserInspection, onSelectStep }: { steps: typeof authoritySteps; lastRun: RuntimeRun | null; events: RuntimeEvent[]; selectedSession: RuntimeSessionDetail | null; runtimeStatus: RuntimeStatus; approval?: RuntimeApproval; approvalDetail?: string; approvalInFlight: boolean; workspaceInspection: RuntimeRun | null; workspaceInspectionInFlight: boolean; browserInspection: RuntimeRun | null; browserInspectionInFlight: boolean; selectedStep: string; dockPlacement: WorkspaceDockPlacement; dockSize: WorkspaceDockSize; onClose: () => void; onPlacementChange: (placement: WorkspaceDockPlacement) => void; onSizeChange: (size: WorkspaceDockSize) => void; onResolveApproval: (allow: boolean) => Promise<void>; onInspectWorkspace: (task: string) => Promise<void>; onResolveWorkspaceInspection: (allow: boolean) => Promise<void>; onInspectBrowser: (url: string) => Promise<void>; onResolveBrowserInspection: (allow: boolean) => Promise<void>; onSelectStep: (id: string) => void }) {
   const [approvalError, setApprovalError] = useState("");
   const [tab, setTab] = useState<InspectorTab>("flow");
+  const [optionsOpen, setOptionsOpen] = useState(false);
   const [workSurface, setWorkSurface] = useState<WorkSurface>("files");
   const [workspaceTask, setWorkspaceTask] = useState("");
   const [workspacePath, setWorkspacePath] = useState("README.md");
@@ -1651,8 +1700,8 @@ function Inspector({ steps, lastRun, events, selectedSession, runtimeStatus, app
   const browserEvidence = browserInspection?.status === "completed"
     ? parseBrowserEvidence(browserInspection.output)
     : null;
-  return <aside className="inspector">
-    <div className="inspector-header"><div><span className="eyebrow">{hasLiveRun ? "LIVE RUN SUMMARY" : "AUTHORITY CONTRACT"}</span><h2>{hasLiveRun ? "Execution recorded" : "Waiting for a run"}</h2></div><Chip tone={hasLiveRun ? "green" : "neutral"} icon={hasLiveRun ? "archive" : "lock"}>{hasLiveRun ? "Recorded" : "Idle"}</Chip></div>
+  return <aside className="inspector" aria-label="Workspace inspector">
+    <div className="inspector-header"><div><span className="eyebrow">{hasLiveRun ? "LIVE RUN SUMMARY" : "AUTHORITY CONTRACT"}</span><h2>{hasLiveRun ? "Execution recorded" : "Waiting for a run"}</h2></div><div className="inspector-header-actions"><Chip tone={hasLiveRun ? "green" : "neutral"} icon={hasLiveRun ? "archive" : "lock"}>{hasLiveRun ? "Recorded" : "Idle"}</Chip><div className="inspector-options"><button className="icon-button" type="button" aria-label="Inspector options" aria-expanded={optionsOpen} onClick={() => setOptionsOpen((current) => !current)}><Icon name="dots" size={15} /></button>{optionsOpen ? <div className="inspector-options-menu" role="group" aria-label="Inspector layout options"><span className="eyebrow">PLACEMENT</span><div className="inspector-option-row"><button type="button" aria-pressed={dockPlacement === "right"} onClick={() => onPlacementChange("right")}>Right</button><button type="button" aria-pressed={dockPlacement === "bottom"} onClick={() => onPlacementChange("bottom")}>Bottom</button></div><span className="eyebrow">SIZE</span><div className="inspector-option-row">{(["compact", "comfortable", "expanded"] as const).map((size) => <button type="button" aria-pressed={dockSize === size} onClick={() => onSizeChange(size)} key={size}>{size}</button>)}</div><button className="inspector-close-action" type="button" onClick={onClose}>Hide inspector</button></div> : null}</div></div></div>
     <div className="inspector-tabs" role="tablist" aria-label="Run inspector">
       {inspectorTabs.map((item) => <RovingTab group="run-inspector" item={item} items={inspectorTabs} selected={tab} onSelect={setTab} key={item}>{item}</RovingTab>)}
     </div>
@@ -2501,8 +2550,20 @@ function RuntimeInventoryView({ engines, runtimeStatus, onOpenView }: { engines:
   </div>;
 }
 
-function SettingsView({ theme, onThemeChange, runtimeStatus, health, native, endpoint }: { theme: ThemeMode; onThemeChange: (nextTheme: ThemeMode) => void; runtimeStatus: RuntimeStatus; health: RuntimeHealth | null; native: boolean; endpoint: string }) {
-  return <div className="full-view"><PageHeader eyebrow="Workspace" title="Settings" description="Personalize the desktop shell while keeping runtime authority in Pandora." actions={<Chip tone="neutral" icon="gear">Local preference</Chip>} /><div className="settings-grid"><Panel className="settings-panel"><div className="panel-heading"><div><span className="eyebrow">APPEARANCE</span><h3>Theme</h3></div><Icon name="spark" size={18} /></div><p className="settings-copy">Choose the visual mode for this device. The setting is stored locally and does not change runtime policy.</p><div className="theme-toggle" role="group" aria-label="Theme mode"><button type="button" className={`theme-option ${theme === "dark" ? "is-selected" : ""}`} aria-pressed={theme === "dark"} onClick={() => onThemeChange("dark")}>Dark<span>Low-light command surface</span></button><button type="button" className={`theme-option ${theme === "light" ? "is-selected" : ""}`} aria-pressed={theme === "light"} onClick={() => onThemeChange("light")}>Light<span>High-contrast workspace</span></button></div></Panel><Panel className="settings-panel"><div className="panel-heading"><div><span className="eyebrow">RUNTIME</span><h3>Connection posture</h3></div><Chip tone={runtimeStatus === "connected" ? "green" : runtimeStatus === "offline" ? "amber" : "neutral"} icon="lock">{runtimeStatusLabel(runtimeStatus)}</Chip></div><div className="settings-facts"><div><span>Client</span><strong>{native ? "Native desktop shell" : "Loopback development shell"}</strong></div><div><span>Endpoint</span><strong className="mono">{endpoint || "Not connected"}</strong></div><div><span>Health</span><strong>{health?.status ?? "Unavailable"}</strong></div><div><span>Authority</span><strong>Local service only</strong></div></div><p className="settings-copy">Local device trust is established automatically. Effect authorization remains inside the Pandora runtime on this device.</p></Panel></div></div>;
+function SettingsView({ theme, onThemeChange, runtimeStatus, health, native, endpoint, dockOpen, dockPlacement, dockSize, onDockOpenChange, onDockPlacementChange, onDockSizeChange, onOpenView }: { theme: ThemeMode; onThemeChange: (nextTheme: ThemeMode) => void; runtimeStatus: RuntimeStatus; health: RuntimeHealth | null; native: boolean; endpoint: string; dockOpen: boolean; dockPlacement: WorkspaceDockPlacement; dockSize: WorkspaceDockSize; onDockOpenChange: (open: boolean) => void; onDockPlacementChange: (placement: WorkspaceDockPlacement) => void; onDockSizeChange: (size: WorkspaceDockSize) => void; onOpenView: (view: ViewId) => void }) {
+  const [section, setSection] = useState<SettingsSectionId>("general");
+  const [query, setQuery] = useState("");
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleSections = normalizedQuery
+    ? settingsSections.filter((item) => `${item.label} ${item.description} ${item.keywords}`.toLowerCase().includes(normalizedQuery))
+    : settingsSections;
+  const selectedSection = settingsSections.find((item) => item.id === section) ?? settingsSections[0];
+
+  return <div className="full-view settings-view"><PageHeader eyebrow="Local workspace" title="Settings" description="Shape the desktop around your work. Runtime authority, approvals, and permits remain inside Pandora." actions={<Chip tone="neutral" icon="gear">Stored on this device</Chip>} /><div className="settings-workbench"><aside className="settings-directory" aria-label="Settings sections"><label className="settings-search"><Icon name="search" size={14} /><span className="sr-only">Search settings</span><input aria-label="Search settings" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a setting" /></label><nav>{visibleSections.map((item) => <button type="button" className={section === item.id ? "is-selected" : ""} aria-current={section === item.id ? "page" : undefined} onClick={() => setSection(item.id)} key={item.id}><Icon name={item.icon} size={15} /><span><strong>{item.label}</strong><small>{item.description}</small></span><Icon name="chevron" size={13} /></button>)}</nav>{visibleSections.length === 0 ? <p className="settings-directory-empty">No settings match “{query.trim()}”.</p> : null}<div className="settings-local-note"><Icon name="lock" size={14} /><span><strong>Local by default</strong><small>No account or sign-in boundary.</small></span></div></aside><section className="settings-detail" aria-labelledby="settings-section-title"><div className="settings-detail-header"><div><span className="eyebrow">{selectedSection.label}</span><h2 id="settings-section-title">{selectedSection.description}</h2></div><span className="settings-section-index mono">{String(settingsSections.findIndex((item) => item.id === section) + 1).padStart(2, "0")} / {String(settingsSections.length).padStart(2, "0")}</span></div>{section === "appearance" ? <Panel className="settings-panel"><div className="panel-heading"><div><span className="eyebrow">VISUAL MODE</span><h3>Theme</h3></div><Icon name="spark" size={18} /></div><p className="settings-copy">Choose the visual mode for this device. The setting does not change runtime policy.</p><div className="theme-toggle" role="group" aria-label="Theme mode"><button type="button" className={`theme-option ${theme === "dark" ? "is-selected" : ""}`} aria-pressed={theme === "dark"} onClick={() => onThemeChange("dark")}>Dark<span>Low-light command surface</span></button><button type="button" className={`theme-option ${theme === "light" ? "is-selected" : ""}`} aria-pressed={theme === "light"} onClick={() => onThemeChange("light")}>Light<span>High-contrast workspace</span></button></div><div className="settings-proof-row"><Icon name="check" size={13} /><span>System reduced-motion, increased-contrast, forced-colors, and reduced-transparency preferences are respected automatically.</span></div></Panel> : section === "workspace" ? <><Panel className="settings-panel"><div className="panel-heading"><div><span className="eyebrow">WITNESS DOCK</span><h3>Inspector layout</h3></div><Chip tone={dockOpen ? "green" : "neutral"} icon="grid">{dockOpen ? dockPlacement : "Hidden"}</Chip></div><p className="settings-copy">Keep Flow, Evidence, Work, and Browser beside the command surface or below it. Moving the dock changes presentation only.</p><div className="settings-control-group" role="group" aria-label="Inspector visibility"><button type="button" aria-pressed={dockOpen} onClick={() => onDockOpenChange(true)}>Shown</button><button type="button" aria-pressed={!dockOpen} onClick={() => onDockOpenChange(false)}>Hidden</button></div><div className="settings-control-label"><span>Placement</span><small>Command workspace</small></div><div className="settings-control-group" role="group" aria-label="Inspector placement"><button type="button" aria-pressed={dockPlacement === "right"} onClick={() => { onDockOpenChange(true); onDockPlacementChange("right"); }}>Right</button><button type="button" aria-pressed={dockPlacement === "bottom"} onClick={() => { onDockOpenChange(true); onDockPlacementChange("bottom"); }}>Bottom</button></div><div className="settings-control-label"><span>Dock size</span><small>Persists on this device</small></div><div className="settings-control-group" role="group" aria-label="Inspector size">{(["compact", "comfortable", "expanded"] as const).map((size) => <button type="button" aria-pressed={dockSize === size} onClick={() => onDockSizeChange(size)} key={size}>{size}</button>)}</div></Panel><Panel className="settings-panel settings-boundary-panel"><div className="panel-heading"><div><span className="eyebrow">BOUNDARY</span><h3>Layout cannot widen authority</h3></div><Icon name="shield" size={18} /></div><p className="settings-copy">Dock controls never run a tool, select a Gene, approve an effect, issue a permit, or mutate a workspace.</p></Panel></> : section === "intelligence" ? <div className="settings-route-grid"><SettingsRoute icon="grid" title="Providers, models, MCP, and registries" detail="Configure saved local connections and secret references." action="Open Connections" onClick={() => onOpenView("connections")} /><SettingsRoute icon="box" title="Harnesses, Genes, skills, and packages" detail="Inspect modular contracts, installation evidence, and lifecycle state." action="Open Harness Lab" onClick={() => onOpenView("capabilities")} /><SettingsRoute icon="terminal" title="Built-in tools" detail="Inspect ToolEngine contracts without executing them." action="Open Tools" onClick={() => onOpenView("tools")} /><SettingsRoute icon="stack" title="Runtime components" detail="Inspect engines, adapters, strategies, and fixed boundaries." action="Open Inventory" onClick={() => onOpenView("engines")} /></div> : section === "authority" ? <div className="settings-route-grid"><SettingsRoute icon="council" title="Parliament and Shadow Council" detail="Inspect planning and routing evidence without granting authority." action="Open Council" onClick={() => onOpenView("council")} /><SettingsRoute icon="archive" title="Receipts and audit" detail="Review the redacted event timeline for a selected session." action="Open Audit" onClick={() => onOpenView("audit")} /><SettingsRoute icon="evolution" title="Governed evolution" detail="Inspect candidate evidence, canaries, activation, and rollback." action="Open Evolution" onClick={() => onOpenView("evolution")} /><SettingsRoute icon="graph" title="Memory governance" detail="Review scoped memory, lineage, tombstones, and schedules." action="Open Memory" onClick={() => onOpenView("memory")} /></div> : <><Panel className="settings-panel"><div className="panel-heading"><div><span className="eyebrow">RUNTIME</span><h3>Connection posture</h3></div><Chip tone={runtimeStatus === "connected" ? "green" : runtimeStatus === "offline" ? "amber" : "neutral"} icon="lock">{runtimeStatusLabel(runtimeStatus)}</Chip></div><div className="settings-facts"><div><span>Client</span><strong>{native ? "Native desktop shell" : "Loopback development shell"}</strong></div><div><span>Endpoint</span><strong className="mono">{endpoint || "Not connected"}</strong></div><div><span>Health</span><strong>{health?.status ?? "Unavailable"}</strong></div><div><span>Authority</span><strong>Local service only</strong></div></div><p className="settings-copy">Local device trust is established automatically. Effect authorization remains inside the runtime on this device.</p><button className="button button-secondary" type="button" onClick={() => onOpenView("connections")}>Open connection controls <Icon name="arrow" size={13} /></button></Panel><Panel className="settings-panel settings-boundary-panel"><div className="panel-heading"><div><span className="eyebrow">IDENTITY</span><h3>No login required</h3></div><Icon name="lock" size={18} /></div><p className="settings-copy">Pandora stays local. Provider keys remain referenced through the encrypted local boundary and are never stored in this interface.</p></Panel></>}</section></div></div>;
+}
+
+function SettingsRoute({ icon, title, detail, action, onClick }: { icon: IconName; title: string; detail: string; action: string; onClick: () => void }) {
+  return <Panel className="settings-route-card"><span className="settings-route-icon"><Icon name={icon} size={18} /></span><div><h3>{title}</h3><p>{detail}</p></div><button className="text-link" type="button" onClick={onClick}>{action} <Icon name="arrow" size={13} /></button></Panel>;
 }
 
 function ConnectionView({ endpoint, runtimeStatus, runtimeError, health, providers, sessions, selectedSessionId, selectedSession, native, serviceActive, onConnect, onStartService, onStopService, onSelectSession }: { endpoint: string; runtimeStatus: RuntimeStatus; runtimeError: string; health: RuntimeHealth | null; providers: RuntimeProvider[]; sessions: RuntimeSession[]; selectedSessionId: string; selectedSession: RuntimeSessionDetail | null; native: boolean; serviceActive: boolean; onConnect: (endpoint: string, token: string) => void; onStartService: () => Promise<void>; onStopService: () => Promise<void>; onSelectSession: (sessionId: string) => Promise<void> }) {

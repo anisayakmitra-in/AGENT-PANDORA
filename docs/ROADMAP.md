@@ -115,6 +115,13 @@ Domain is enabled. This is advisory evidence only; runtime routing still uses
 active admitted bindings, explicit user selection wins, and ambiguous ties
 fail closed.
 
+The Command Center now has a persistent Witness Dock for Flow, Evidence, Work,
+and Browser. Operators can place it on the right or bottom, choose a bounded
+size, or hide it. Searchable grouped Settings expose the same workspace choices
+and route operators to providers, MCP, Harnesses, packages, tools, runtime
+contracts, Council, audit, evolution, and memory without creating a second
+authority path.
+
 Next work:
 
 - retain signed-release and real-user clean-machine install, update, rollback,

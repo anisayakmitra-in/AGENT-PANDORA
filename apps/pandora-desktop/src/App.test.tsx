@@ -290,6 +290,58 @@ describe("Pandora desktop run state", () => {
     expect(screen.getByRole("tabpanel", { name: "evidence" })).toBeInTheDocument();
   });
 
+  it("moves, resizes, hides, and restores the witness dock without changing runtime state", async () => {
+    render(<App />);
+
+    const inspector = await screen.findByRole("complementary", { name: "Workspace inspector" });
+    const workspace = screen.getByRole("main", { name: "Command Center workspace" });
+    const layout = workspace.querySelector(".command-layout");
+    expect(inspector).toBeInTheDocument();
+    expect(layout).toHaveAttribute("data-dock-placement", "right");
+
+    fireEvent.click(screen.getByRole("button", { name: "Inspector options" }));
+    const options = screen.getByRole("group", { name: "Inspector layout options" });
+    fireEvent.click(within(options).getByRole("button", { name: "Bottom" }));
+    fireEvent.click(within(options).getByRole("button", { name: "expanded" }));
+    expect(layout).toHaveAttribute("data-dock-placement", "bottom");
+    expect(layout).toHaveClass("dock-size-expanded");
+
+    fireEvent.click(within(options).getByRole("button", { name: "Hide inspector" }));
+    expect(screen.queryByRole("complementary", { name: "Workspace inspector" })).not.toBeInTheDocument();
+    const restore = screen.getByRole("button", { name: "Show workspace inspector" });
+    expect(layout).toHaveAttribute("data-dock-placement", "closed");
+
+    fireEvent.click(restore);
+    expect(await screen.findByRole("complementary", { name: "Workspace inspector" })).toBeInTheDocument();
+    expect(layout).toHaveAttribute("data-dock-placement", "bottom");
+  });
+
+  it("searches grouped settings and persists workspace layout controls", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open settings" }));
+    expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Settings sections" })).toBeInTheDocument();
+
+    const search = screen.getByRole("textbox", { name: "Search settings" });
+    fireEvent.change(search, { target: { value: "dock" } });
+    expect(screen.getByRole("button", { name: /Workspace Inspector placement and density/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /General Local app and runtime posture/ })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Workspace Inspector placement and density/ }));
+    fireEvent.click(within(screen.getByRole("group", { name: "Inspector placement" })).getByRole("button", { name: "Bottom" }));
+    fireEvent.click(within(screen.getByRole("group", { name: "Inspector size" })).getByRole("button", { name: "expanded" }));
+    await waitFor(() => {
+      expect(window.localStorage.getItem("pandora.desktop.dock.placement")).toBe("bottom");
+      expect(window.localStorage.getItem("pandora.desktop.dock.size")).toBe("expanded");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Command" }));
+    const layout = screen.getByRole("main", { name: "Command Center workspace" }).querySelector(".command-layout");
+    expect(layout).toHaveAttribute("data-dock-placement", "bottom");
+    expect(layout).toHaveClass("dock-size-expanded");
+  });
+
   it("ships reduced-motion, scalable-type, and native high-contrast contracts", () => {
     expect(pandoraCss).toContain("@media (prefers-reduced-motion: reduce)");
     expect(pandoraCss).toContain("@media (prefers-contrast: more)");
@@ -1193,7 +1245,7 @@ describe("Pandora desktop run state", () => {
     expect(screen.getByRole("heading", { name: "Work surfaces expose evidence, not authority" })).toBeInTheDocument();
     expect(screen.getByText("Read only")).toBeInTheDocument();
     expect(screen.getByText("Exact permit path")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Inspector options" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Inspector options" })).toBeInTheDocument();
   });
 
   it("inspects deep runtime component contracts from one inventory", async () => {

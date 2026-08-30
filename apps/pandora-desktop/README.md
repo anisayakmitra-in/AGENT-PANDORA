@@ -103,3 +103,9 @@ in [Desktop accessibility evidence](../../docs/ACCESSIBILITY.md).
 The shell uses a three-zone layout: a compact navigation rail, an ambient
 Command Center, and a dense execution inspector. Its names, authority stages,
 colors, and vessel mark belong to Pandora.
+
+The execution inspector is a persistent Witness Dock. It can sit on the right
+or below the Command Center, use three bounded sizes, or be hidden and restored.
+Flow, Evidence, Work, and Browser remain the same read-only inspection surfaces
+in every layout. Grouped, searchable Settings store these presentation choices
+on the device; they never select a Gene, approve an effect, or issue a permit.
