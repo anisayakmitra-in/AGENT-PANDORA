@@ -91,6 +91,14 @@ freshly built package in a temporary sandbox, verifies the bundled sidecar has
 the same SHA-256 as the release CLI it just built, starts a bounded smoke where
 the runner supports it, and removes that sandbox.
 
+The same Linux, macOS, and Windows jobs also build two synthetic stable package
+identities from the same commit. They install and launch the predecessor,
+replace it with the newer package, launch the update, roll back to the
+predecessor, launch it again, and uninstall it. This proves the native installer
+mechanics and stable product identity without publishing fake releases. It does
+not prove migration compatibility between two real releases or replace signed
+stable-release evidence.
+
 This is automated webview and package-lifecycle evidence, not native
 VoiceOver, Narrator, or Orca coverage. Signed release packages, real
 clean-machine user install/update/rollback evidence, native screen-reader

@@ -194,3 +194,23 @@ jobs:
           CI: "true"
           PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE: "1"
         run: npm run verify:bundle-lifecycle
+
+      - name: Create synthetic desktop upgrade identities
+        working-directory: apps/pandora-desktop
+        run: node script/create-upgrade-drill-configs.mjs --output-dir "${{ runner.temp }}/pandora-desktop-upgrade"
+
+      - name: Build synthetic predecessor desktop bundle
+        working-directory: apps/pandora-desktop
+        run: npm run tauri:build -- --config "${{ runner.temp }}/pandora-desktop-upgrade/predecessor.json"
+
+      - name: Build synthetic current desktop bundle
+        working-directory: apps/pandora-desktop
+        run: npm run tauri:build -- --config "${{ runner.temp }}/pandora-desktop-upgrade/current.json"
+
+      - name: Verify desktop install, update, rollback, and uninstall
+        working-directory: apps/pandora-desktop
+        env:
+          CI: "true"
+          PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE: "1"
+          PANDORA_DESKTOP_UPGRADE_MANIFEST: ${{ runner.temp }}/pandora-desktop-upgrade/manifest.json
+        run: npm run verify:bundle-upgrade-lifecycle

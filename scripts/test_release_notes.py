@@ -219,3 +219,23 @@ Older notes.
         self.assertIn('CI: "true"', workflow)
         self.assertIn('PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE: "1"', workflow)
         self.assertIn("npm run verify:bundle-lifecycle", workflow)
+
+    def test_ci_runs_synthetic_desktop_upgrade_rollback_drill(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+
+        create = workflow.index("- name: Create synthetic desktop upgrade identities")
+        predecessor = workflow.index("- name: Build synthetic predecessor desktop bundle")
+        current = workflow.index("- name: Build synthetic current desktop bundle")
+        verify = workflow.index(
+            "- name: Verify desktop install, update, rollback, and uninstall"
+        )
+        self.assertLess(create, predecessor)
+        self.assertLess(predecessor, current)
+        self.assertLess(current, verify)
+        self.assertIn("create-upgrade-drill-configs.mjs", workflow)
+        self.assertIn("predecessor.json", workflow)
+        self.assertIn("current.json", workflow)
+        self.assertIn("PANDORA_DESKTOP_UPGRADE_MANIFEST:", workflow)
+        self.assertIn("npm run verify:bundle-upgrade-lifecycle", workflow)

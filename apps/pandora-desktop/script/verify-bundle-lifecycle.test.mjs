@@ -12,6 +12,7 @@ import {
   resolveBundleRoot,
   resolveSourceSidecar,
   sidecarName,
+  systemInstallContract,
   systemInstallLifecycleEnabled,
   validateSidecarTarget,
 } from "./verify-bundle-lifecycle.mjs";
@@ -165,4 +166,20 @@ test("restricts system installation to an explicit ephemeral CI contract", () =>
     }),
     /must be exactly 1/,
   );
+});
+
+test("exposes a versioned system package contract without invoking it", () => {
+  const root = mkdtempSync(join(tmpdir(), "pandora-desktop-system-contract-"));
+  const extension = process.platform === "linux" ? ".deb" : process.platform === "darwin" ? ".dmg" : ".msi";
+  const bundle = join(root, `Pandora_2.0.0_test${extension}`);
+  try {
+    writeFileSync(bundle, "package fixture");
+    const contract = systemInstallContract(root, root, process.platform, bundle);
+    assert.equal(typeof contract.installed, "string");
+    for (const method of ["install", "replace", "version", "uninstall", "assertUninstalled"]) {
+      assert.equal(typeof contract[method], "function", `${method} must be part of the system package contract`);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

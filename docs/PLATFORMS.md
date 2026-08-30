@@ -36,6 +36,13 @@ to match the exact release tag before any package is built. The Windows MSI
 upgrade code is pinned so later releases update the same installed product
 instead of creating a duplicate application.
 
+Desktop CI exercises that identity on every native runner with two same-commit,
+synthetic stable versions. It uses the operating system's real Debian package,
+DMG application-copy, or MSI registration path and proves launch after install,
+in-place update, explicit rollback, and final uninstall. The synthetic packages
+are never published. This is bounded installer-mechanics evidence; only a drill
+between two real signed releases can close the release-migration gate.
+
 WiX receives the numeric MSI form of the same release identity. For example,
 Pandora `2.0.0-beta.7` is packaged as MSI version `2.0.0.7` because MSI does not
 accept named prerelease identifiers. The release identity gate derives and

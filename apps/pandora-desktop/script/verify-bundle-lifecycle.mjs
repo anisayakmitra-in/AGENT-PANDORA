@@ -82,7 +82,7 @@ export function removeLifecycleSandbox(path) {
   lifecycleSandboxes.delete(path);
 }
 
-async function removeLifecycleSandboxWithRetry(path) {
+export async function removeLifecycleSandboxWithRetry(path) {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     try {
       removeLifecycleSandbox(path);
@@ -144,7 +144,7 @@ export function resolveSourceSidecar(target, requestedTarget, environment = proc
   return canonical;
 }
 
-function sha256(path) {
+export function sha256(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
@@ -174,11 +174,11 @@ function exactlyOne(candidates, description) {
   return candidates[0];
 }
 
-function findBundle(root, predicate, description) {
+export function findBundle(root, predicate, description) {
   return exactlyOne(walk(root).filter(predicate), description);
 }
 
-function regularFile(path, description) {
+export function regularFile(path, description) {
   const metadata = lstatSync(path);
   if (metadata.isSymbolicLink() || !metadata.isFile()) throw new Error(`${description} must be a regular file, not a symlink`);
 }
@@ -270,7 +270,7 @@ async function boundedSmoke(command, args, environment) {
   await terminateProcessTree(child);
 }
 
-function lifecycleEnvironment(sandbox) {
+export function lifecycleEnvironment(sandbox) {
   const home = join(sandbox, "home");
   const config = join(sandbox, "config");
   const data = join(sandbox, "data");
@@ -297,6 +297,7 @@ function copyMacBundle(
   sandbox,
   requireDiskImage = false,
   installed = join(sandbox, "Applications", "Pandora.app"),
+  selectedDiskImage,
 ) {
   const localApps = requireDiskImage
     ? []
@@ -310,7 +311,8 @@ function copyMacBundle(
     throw new Error(`expected exactly one macOS app bundle, found ${localApps.length}`);
   }
 
-  const image = findBundle(bundleRoot, (path) => path.endsWith(".dmg"), "macOS disk image");
+  const image = selectedDiskImage
+    ?? findBundle(bundleRoot, (path) => path.endsWith(".dmg"), "macOS disk image");
   const mount = join(sandbox, "mounted-disk-image");
   mkdirSync(mount);
   run("hdiutil", ["attach", "-readonly", "-nobrowse", "-quiet", "-mountpoint", mount, image]);
@@ -359,21 +361,31 @@ function linuxPackageIsInstalled() {
   return result.status === 0 && result.stdout.trim().startsWith("ii");
 }
 
-function systemInstallContract(bundleRoot, sandbox, platform) {
+export function systemInstallContract(bundleRoot, sandbox, platform, selectedBundle) {
   if (platform === "linux") {
-    const deb = findBundle(bundleRoot, (path) => path.endsWith(".deb"), "Linux .deb bundle");
+    const deb = selectedBundle
+      ?? findBundle(bundleRoot, (path) => path.endsWith(".deb"), "Linux .deb bundle");
     const installed = "/usr/bin";
     const binaries = [join(installed, "pandora"), join(installed, "pandora-desktop")];
+    const installPackage = () => {
+      run("sudo", ["dpkg", "--install", deb]);
+      if (!linuxPackageIsInstalled()) throw new Error("Debian package did not register as installed");
+    };
     return {
       installed,
       install() {
         if (linuxPackageIsInstalled() || binaries.some((path) => existsSync(path))) {
           throw new Error("refusing to replace a pre-existing system Pandora installation");
         }
-        run("sudo", ["dpkg", "--install", deb]);
-        if (!linuxPackageIsInstalled()) throw new Error("Debian package did not register as installed");
+        installPackage();
       },
-      uninstall() {
+      replace() {
+        installPackage();
+      },
+      version() {
+        return run("dpkg-query", ["--show", "--showformat=${Version}", "pandora"]);
+      },
+      uninstall(allowAnotherVersion = false) {
         const result = spawnSync("sudo", ["dpkg", "--purge", "pandora"], {
           encoding: "utf8",
           stdio: ["ignore", "pipe", "pipe"],
@@ -382,6 +394,11 @@ function systemInstallContract(bundleRoot, sandbox, platform) {
         if (result.status !== 0 && linuxPackageIsInstalled()) {
           throw new Error(`Debian package purge failed: ${result.stderr.trim()}`);
         }
+        if (!allowAnotherVersion && (linuxPackageIsInstalled() || binaries.some((path) => existsSync(path)))) {
+          throw new Error("Debian package uninstall left Pandora installed");
+        }
+      },
+      assertUninstalled() {
         if (linuxPackageIsInstalled() || binaries.some((path) => existsSync(path))) {
           throw new Error("Debian package uninstall left Pandora installed");
         }
@@ -391,38 +408,71 @@ function systemInstallContract(bundleRoot, sandbox, platform) {
 
   if (platform === "darwin") {
     const installed = join(sandbox, "home", "Applications", "Pandora.app");
+    const installApp = () => copyMacBundle(bundleRoot, sandbox, true, installed, selectedBundle);
     return {
       installed,
       install() {
         if (existsSync(installed)) throw new Error("refusing to replace an existing macOS Pandora app");
-        copyMacBundle(bundleRoot, sandbox, true, installed);
+        installApp();
+      },
+      replace() {
+        if (existsSync(installed)) rmSync(installed, { recursive: true, force: false });
+        installApp();
+      },
+      version() {
+        return run("plutil", [
+          "-extract", "CFBundleShortVersionString", "raw", "-o", "-", join(installed, "Contents", "Info.plist"),
+        ]);
       },
       uninstall() {
         if (existsSync(installed)) rmSync(installed, { recursive: true, force: false });
+        if (existsSync(installed)) throw new Error("macOS app uninstall left Pandora installed");
+      },
+      assertUninstalled() {
         if (existsSync(installed)) throw new Error("macOS app uninstall left Pandora installed");
       },
     };
   }
 
   if (platform === "win32") {
-    const msi = findBundle(bundleRoot, (path) => path.endsWith(".msi"), "Windows MSI bundle");
+    const msi = selectedBundle
+      ?? findBundle(bundleRoot, (path) => path.endsWith(".msi"), "Windows MSI bundle");
     const installed = join(sandbox, "installed", "Pandora");
     const installLog = join(sandbox, "msi-install.log");
     const uninstallLog = join(sandbox, "msi-uninstall.log");
+    const installPackage = () => {
+      mkdirSync(dirname(installed), { recursive: true });
+      const result = msiResult([
+        "/i", msi, "/qn", "/norestart", `INSTALLDIR=${installed}`, "/l*v", installLog,
+      ]);
+      assertMsiSuccess(result, "Windows MSI install");
+      if (!existsSync(installed)) throw new Error("Windows MSI did not create the configured install directory");
+    };
     return {
       installed,
       install() {
         if (existsSync(installed)) throw new Error("refusing to replace an existing Windows Pandora installation");
-        mkdirSync(dirname(installed), { recursive: true });
-        const result = msiResult([
-          "/i", msi, "/qn", "/norestart", `INSTALLDIR=${installed}`, "/l*v", installLog,
-        ]);
-        assertMsiSuccess(result, "Windows MSI install");
-        if (!existsSync(installed)) throw new Error("Windows MSI did not create the configured install directory");
+        installPackage();
       },
-      uninstall() {
+      replace() {
+        installPackage();
+      },
+      version() {
+        return run("powershell.exe", [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "(Get-Item -LiteralPath $env:PANDORA_VERSION_BINARY).VersionInfo.ProductVersion",
+        ], {
+          env: { ...process.env, PANDORA_VERSION_BINARY: applicationBinary(installed, platform) },
+        });
+      },
+      uninstall(allowAnotherVersion = false) {
         const result = msiResult(["/x", msi, "/qn", "/norestart", "/l*v", uninstallLog]);
         assertMsiSuccess(result, "Windows MSI uninstall", new Set([0, 1605, 3010]));
+        if (!allowAnotherVersion && existsSync(installed)) throw new Error("Windows MSI uninstall left Pandora installed");
+      },
+      assertUninstalled() {
         if (existsSync(installed)) throw new Error("Windows MSI uninstall left Pandora installed");
       },
     };
@@ -440,7 +490,7 @@ export function applicationBinary(installed, platform) {
   }), `${platform} desktop executable`);
 }
 
-async function smokeInstalledBundle(installed, platform, target, environment) {
+export async function smokeInstalledBundle(installed, platform, target, environment) {
   if (platform === "darwin") {
     run("open", ["-n", installed], { env: environment });
     await delay(1_500);
