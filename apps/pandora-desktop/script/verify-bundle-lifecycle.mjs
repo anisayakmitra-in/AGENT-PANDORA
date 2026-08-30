@@ -70,6 +70,22 @@ export function removeLifecycleSandbox(path) {
   lifecycleSandboxes.delete(path);
 }
 
+async function removeLifecycleSandboxWithRetry(path) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      removeLifecycleSandbox(path);
+      return;
+    } catch (error) {
+      const retryable = process.platform === "win32"
+        && error instanceof Error
+        && "code" in error
+        && (error.code === "EPERM" || error.code === "EBUSY");
+      if (!retryable || attempt === 19) throw error;
+      await delay(100);
+    }
+  }
+}
+
 export function resolveBundleRoot(environment = process.env) {
   const configured = environment.PANDORA_DESKTOP_BUNDLE_ROOT?.trim();
   const candidate = resolve(
@@ -180,6 +196,20 @@ async function waitForProcessTreeExit(child, milliseconds) {
 }
 
 async function terminateProcessTree(child) {
+  if (process.platform === "win32") {
+    const result = spawnSync(
+      "taskkill.exe",
+      ["/PID", String(child.pid), "/T", "/F"],
+      { stdio: "ignore", windowsHide: true },
+    );
+    if (result.error) throw result.error;
+    await waitForProcessClose(child, 5_000);
+    await delay(500);
+    if (processTreeIsAlive(child)) {
+      throw new Error("Windows desktop process tree did not stop after taskkill");
+    }
+    return;
+  }
   signalProcessTree(child, "SIGTERM");
   await waitForProcessTreeExit(child, 5_000);
   if (processTreeIsAlive(child)) {
@@ -288,7 +318,7 @@ async function main() {
     await smokeInstalledBundle(installed, process.platform, target, lifecycleEnvironment(sandbox));
     console.log(`verified ${process.platform} bundle lifecycle with ${relative(sandbox, bundledSidecar)}`);
   } finally {
-    removeLifecycleSandbox(sandbox);
+    await removeLifecycleSandboxWithRetry(sandbox);
   }
 }
 

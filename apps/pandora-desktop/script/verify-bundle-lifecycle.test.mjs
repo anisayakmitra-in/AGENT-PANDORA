@@ -40,7 +40,7 @@ test("rejects same-prefix siblings, symlinks, and non-directories", () => {
   try {
     mkdirSync(sibling);
     writeFileSync(file, "not a sandbox");
-    symlinkSync(sandbox, link);
+    symlinkSync(sandbox, link, process.platform === "win32" ? "junction" : "dir");
     assert.throws(() => assertTemporarySandbox(sibling), /outside the lifecycle sandbox/);
     assert.throws(() => assertTemporarySandbox(file), /outside the lifecycle sandbox/);
     assert.throws(() => assertTemporarySandbox(link), /outside the lifecycle sandbox/);
@@ -62,7 +62,7 @@ test("accepts directories through canonical ancestor aliases but rejects final s
       resolveBundleRoot({ PANDORA_DESKTOP_BUNDLE_ROOT: ` ${bundleRoot} ` }),
       realpathSync(bundleRoot),
     );
-    symlinkSync(bundleRoot, link);
+    symlinkSync(bundleRoot, link, process.platform === "win32" ? "junction" : "dir");
     assert.equal(
       resolveBundleRoot({ PANDORA_DESKTOP_BUNDLE_ROOT: join(link, "nested") }),
       realpathSync(nested),
