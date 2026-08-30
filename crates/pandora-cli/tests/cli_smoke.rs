@@ -18,8 +18,10 @@ use std::fs;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::process::{Command, Output, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::process::{Child, Command, Output, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -255,6 +257,198 @@ fn serve_provider_response(stream: &mut TcpStream) {
     stream
         .write_all(response)
         .expect("provider response should be written");
+}
+
+struct HeldToolProvider {
+    request_arrived: Receiver<()>,
+    release_response: SyncSender<()>,
+    stop: SyncSender<()>,
+    calls: Arc<AtomicUsize>,
+    server: thread::JoinHandle<usize>,
+}
+
+impl HeldToolProvider {
+    fn start(listener: TcpListener) -> Self {
+        listener
+            .set_nonblocking(true)
+            .expect("provider fixture should become non-blocking");
+        let (request_arrived_tx, request_arrived) = mpsc::sync_channel(0);
+        let (release_response, release_response_rx) = mpsc::sync_channel(0);
+        let (stop, stop_rx) = mpsc::sync_channel(0);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let server_calls = Arc::clone(&calls);
+        let server = thread::spawn(move || {
+            let request_deadline = Instant::now() + Duration::from_secs(15);
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(connection) => break connection,
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                        assert!(
+                            Instant::now() < request_deadline,
+                            "subagent did not reach the held provider"
+                        );
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("held provider should accept: {error}"),
+                }
+            };
+            stream
+                .set_nonblocking(false)
+                .expect("held provider connection should become blocking");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .expect("held provider should keep a bounded read");
+            stream
+                .set_write_timeout(Some(Duration::from_secs(10)))
+                .expect("held provider should keep a bounded write");
+            read_provider_request(&mut stream);
+            server_calls.fetch_add(1, Ordering::SeqCst);
+            request_arrived_tx
+                .send(())
+                .expect("provider request barrier should remain connected");
+            release_response_rx
+                .recv_timeout(Duration::from_secs(15))
+                .expect("provider response release should arrive");
+            write_provider_response(
+                &mut stream,
+                br#"{"choices":[{"message":{"content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"workspace.read","arguments":"{\"path\":\"README.md\"}"}}]}}],"usage":{"prompt_tokens":4,"completion_tokens":2}}"#,
+            );
+
+            let replay_deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                match stop_rx.try_recv() {
+                    Ok(()) | Err(TryRecvError::Disconnected) => break,
+                    Err(TryRecvError::Empty) => {}
+                }
+                match listener.accept() {
+                    Ok((mut replay, _)) => {
+                        replay
+                            .set_nonblocking(false)
+                            .expect("replay connection should become blocking");
+                        replay
+                            .set_read_timeout(Some(Duration::from_secs(10)))
+                            .expect("replay request should keep a bounded read");
+                        read_provider_request(&mut replay);
+                        server_calls.fetch_add(1, Ordering::SeqCst);
+                        write_provider_response(
+                            &mut replay,
+                            br#"{"choices":[{"message":{"content":"unexpected replay"}}],"usage":{"prompt_tokens":2,"completion_tokens":1}}"#,
+                        );
+                    }
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                        assert!(
+                            Instant::now() < replay_deadline,
+                            "held provider fixture exceeded its bounded lifetime"
+                        );
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("held provider should accept replay checks: {error}"),
+                }
+            }
+            server_calls.load(Ordering::SeqCst)
+        });
+        Self {
+            request_arrived,
+            release_response,
+            stop,
+            calls,
+            server,
+        }
+    }
+
+    fn wait_for_request(&self) {
+        self.request_arrived
+            .recv_timeout(Duration::from_secs(15))
+            .expect("subagent should reach the provider barrier");
+    }
+
+    fn release(&self) {
+        self.release_response
+            .send(())
+            .expect("provider response barrier should remain connected");
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+
+    fn finish(self) -> usize {
+        self.stop
+            .send(())
+            .expect("provider stop barrier should remain connected");
+        self.server
+            .join()
+            .expect("held provider fixture should finish")
+    }
+}
+
+fn read_provider_request(stream: &mut TcpStream) {
+    let mut request = Vec::new();
+    let header_end = loop {
+        let mut chunk = [0_u8; 1_024];
+        let bytes_read = stream
+            .read(&mut chunk)
+            .expect("provider request should read");
+        assert_ne!(bytes_read, 0, "provider request ended before its headers");
+        request.extend_from_slice(&chunk[..bytes_read]);
+        if let Some(position) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+            break position + 4;
+        }
+    };
+    let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+    let content_length = headers
+        .lines()
+        .find_map(|line| line.strip_prefix("content-length:"))
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .expect("provider request should send a content length");
+    while request.len() < header_end + content_length {
+        let mut chunk = [0_u8; 1_024];
+        let bytes_read = stream
+            .read(&mut chunk)
+            .expect("provider request body should read");
+        assert_ne!(bytes_read, 0, "provider request body ended early");
+        request.extend_from_slice(&chunk[..bytes_read]);
+    }
+}
+
+fn write_provider_response(stream: &mut TcpStream, response: &[u8]) {
+    write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        response.len()
+    )
+    .expect("provider response headers should be written");
+    stream
+        .write_all(response)
+        .expect("provider response should be written");
+}
+
+fn wait_for_child(mut child: Child, timeout: Duration, label: &str) -> Output {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child
+            .try_wait()
+            .expect("child status should remain inspectable")
+        {
+            Some(_) => {
+                return child
+                    .wait_with_output()
+                    .expect("finished child output should be readable");
+            }
+            None if Instant::now() < deadline => thread::sleep(Duration::from_millis(20)),
+            None => {
+                let _ = child.kill();
+                let output = child
+                    .wait_with_output()
+                    .expect("timed-out child output should be readable");
+                panic!(
+                    "{label} exceeded {timeout:?}: stdout={} stderr={}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -2072,6 +2266,289 @@ fn subagent_work_inspect_and_cleanup_complete_an_exact_commit_lifecycle() {
     assert_eq!(parse_json(&cleaned)["worktree"]["state"], "removed");
 
     server.join().expect("provider fixture should finish");
+}
+
+#[test]
+fn cancellation_during_provider_return_survives_worker_restart_without_replay() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("provider fixture should bind");
+    let address = listener
+        .local_addr()
+        .expect("provider fixture should expose its address");
+    let provider = HeldToolProvider::start(listener);
+
+    let fixture = Fixture::new();
+    fixture.initialize_git_workspace();
+    fixture.setup();
+    let parent = fixture
+        .command(&["run", "read:README.md", "--json"])
+        .output()
+        .expect("parent run should start");
+    assert_success(&parent);
+    let parent = parse_json(&parent);
+    let configured = fixture
+        .command(&[
+            "provider",
+            "set",
+            "--provider-url",
+            &format!("http://{address}/v1"),
+            "--model",
+            "held-provider-model",
+            "--json",
+        ])
+        .output()
+        .expect("provider setup should start");
+    assert_success(&configured);
+    let spawned = fixture
+        .command(&[
+            "subagent",
+            "spawn",
+            "--session",
+            parent["session_id"].as_str().unwrap(),
+            "--execution",
+            parent["execution_id"].as_str().unwrap(),
+            "--max-turns",
+            "1",
+            "--max-tools",
+            "1",
+            "Read the README",
+            "--json",
+        ])
+        .output()
+        .expect("subagent spawn should start");
+    assert_success(&spawned);
+    let spawned = parse_json(&spawned);
+    let subagent_id = spawned["subagent_id"]
+        .as_str()
+        .expect("spawn should return a subagent ID")
+        .to_owned();
+    let child_session_id = spawned["child"]["session_id"]
+        .as_str()
+        .expect("spawn should return a child session ID")
+        .to_owned();
+
+    let first_worker = fixture
+        .command(&["subagent", "work", "--max-agents", "1", "--json"])
+        .env("PANDORA_PROVIDER_API_KEY", "held-provider-key")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("first independent subagent worker should start");
+    let first_process_id = first_worker.id();
+    provider.wait_for_request();
+    assert_eq!(provider.calls(), 1);
+
+    let fleet = fixture
+        .command(&["fleet", "list", "--json"])
+        .output()
+        .expect("fresh fleet inspection should start");
+    assert_success(&fleet);
+    let fleet = parse_json(&fleet);
+    let running = fleet["supervisors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|supervisor| supervisor["node_id"] == "subagent-worker")
+        .expect("running subagent supervisor should be inspectable");
+    assert_eq!(running["state"], "running");
+    assert_eq!(running["process_id"], first_process_id);
+    let first_generation = running["generation"]
+        .as_u64()
+        .expect("supervisor generation should be numeric");
+    assert!(
+        fleet["leases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|lease| { lease["node_id"] == "subagent-worker" && lease["state"] == "active" }),
+        "the first process lease should remain inspectable while the provider is held: {fleet}"
+    );
+
+    let cancelled = fixture
+        .command(&["subagent", "cancel", &subagent_id, "--json"])
+        .output()
+        .expect("independent cancellation should start");
+    assert_success(&cancelled);
+    let cancelled = parse_json(&cancelled);
+    assert_eq!(cancelled["lifecycle"]["status"], "running");
+    assert!(
+        cancelled["worker"]["cancel_requested_at"].is_number(),
+        "the cancellation request should be durable before provider release: {cancelled}"
+    );
+
+    let drained = fixture
+        .command(&["fleet", "supervisor", "drain", "subagent-worker", "--json"])
+        .output()
+        .expect("independent supervisor drain should start");
+    assert_success(&drained);
+    let drained = parse_json(&drained);
+    assert_eq!(drained["supervisor"]["state"], "draining");
+    assert_eq!(drained["supervisor"]["generation"], first_generation);
+    assert_eq!(drained["supervisor"]["process_id"], first_process_id);
+
+    provider.release();
+    let first_output = wait_for_child(
+        first_worker,
+        Duration::from_secs(30),
+        "first independent subagent worker",
+    );
+    assert!(
+        first_output.status.success() || first_output.status.code() == Some(50),
+        "drained worker should exit in a bounded, classified state: stdout={} stderr={}",
+        String::from_utf8_lossy(&first_output.stdout),
+        String::from_utf8_lossy(&first_output.stderr)
+    );
+
+    let inspected = fixture
+        .command(&["subagent", "inspect", &subagent_id, "--json"])
+        .output()
+        .expect("fresh subagent inspection should start");
+    assert_success(&inspected);
+    let inspected = parse_json(&inspected);
+    assert_eq!(inspected["lifecycle"]["status"], "cancelled");
+    assert_eq!(inspected["result"]["code"], "agent_controlled_stop");
+    assert_eq!(inspected["result"]["status"], "cancelled");
+    assert_eq!(inspected["result"]["reason"], "cancelled");
+    assert!(inspected["lifecycle"]["finished_at"].is_number());
+
+    let listed = fixture
+        .command(&["subagent", "list", "--json"])
+        .output()
+        .expect("fresh subagent list should start");
+    assert_success(&listed);
+    let listed = parse_json(&listed);
+    assert_eq!(listed["count"], 1);
+    assert_eq!(listed["subagents"][0]["subagent_id"], subagent_id);
+    assert_eq!(listed["subagents"][0]["lifecycle"]["status"], "cancelled");
+
+    let child_workspace_digest = hash_artifact(subagent_id.as_bytes());
+    let child_workspace_digest = child_workspace_digest
+        .strip_prefix("sha256:")
+        .expect("hash_artifact should return a SHA-256 digest");
+    let child_workspace = WorkspaceId::new(format!("subagent-{child_workspace_digest}")).unwrap();
+    let child_session = SessionStore::open(fixture.data.join("sessions.sqlite3"))
+        .unwrap()
+        .resume(
+            &SessionId::new(child_session_id).unwrap(),
+            &PrincipalId::new("local-user").unwrap(),
+            &TenantId::new("local-tenant").unwrap(),
+            &child_workspace,
+        )
+        .expect("child session should survive fresh-process inspection");
+    assert!(
+        child_session.evaluations().is_empty(),
+        "cancellation at the post-provider checkpoint must prevent every governed tool/effect permit"
+    );
+
+    let fleet = fixture
+        .command(&["fleet", "list", "--json"])
+        .output()
+        .expect("post-shutdown fleet inspection should start");
+    assert_success(&fleet);
+    let fleet = parse_json(&fleet);
+    let stopped = fleet["supervisors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|supervisor| supervisor["node_id"] == "subagent-worker")
+        .expect("stopped subagent supervisor should remain inspectable");
+    assert_eq!(stopped["state"], "stopped");
+    assert_eq!(stopped["generation"], first_generation);
+    assert_eq!(stopped["process_id"], first_process_id);
+    let first_updated_at = stopped["updated_at"]
+        .as_u64()
+        .expect("supervisor update time should be numeric");
+    let first_worker_leases = fleet["leases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|lease| lease["node_id"] == "subagent-worker")
+        .collect::<Vec<_>>();
+    assert_eq!(first_worker_leases.len(), 1);
+    assert!(
+        first_worker_leases
+            .iter()
+            .all(|lease| lease["state"] == "released")
+    );
+
+    let reconcile_now = (first_updated_at + 31).to_string();
+    let reconciled = fixture
+        .command(&[
+            "fleet",
+            "supervisor",
+            "reconcile",
+            "subagent-worker",
+            "--now",
+            &reconcile_now,
+            "--stale-after",
+            "30",
+            "--json",
+        ])
+        .output()
+        .expect("fresh supervisor reconciliation should start");
+    assert_success(&reconciled);
+    let reconciled = parse_json(&reconciled);
+    assert_eq!(reconciled["supervisor"]["state"], "stopped");
+    assert_eq!(
+        reconciled["supervisor"]["generation"], first_generation,
+        "reconciliation must not manufacture a replay generation"
+    );
+    assert_eq!(provider.calls(), 1);
+
+    let second_worker = fixture
+        .command(&["subagent", "work", "--max-agents", "1", "--json"])
+        .env("PANDORA_PROVIDER_API_KEY", "held-provider-key")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("second independent subagent worker should start");
+    let second_process_id = second_worker.id();
+    let second_output = wait_for_child(
+        second_worker,
+        Duration::from_secs(30),
+        "second independent subagent worker",
+    );
+    assert_success_with_context(&second_output, "restarted subagent work");
+    let second_output = parse_json(&second_output);
+    assert_eq!(second_output["processed_count"], 0);
+    assert_eq!(provider.calls(), 1, "restart must not replay the provider");
+
+    let fleet = fixture
+        .command(&["fleet", "list", "--json"])
+        .output()
+        .expect("restarted fleet inspection should start");
+    assert_success(&fleet);
+    let fleet = parse_json(&fleet);
+    let restarted = fleet["supervisors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|supervisor| supervisor["node_id"] == "subagent-worker")
+        .expect("restarted supervisor should remain inspectable");
+    assert_eq!(restarted["state"], "stopped");
+    assert_eq!(restarted["generation"], first_generation + 1);
+    assert_eq!(restarted["process_id"], second_process_id);
+    let worker_leases = fleet["leases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|lease| lease["node_id"] == "subagent-worker")
+        .collect::<Vec<_>>();
+    assert_eq!(worker_leases.len(), 2);
+    assert!(
+        worker_leases
+            .iter()
+            .all(|lease| lease["state"] == "released")
+    );
+
+    let inspected = fixture
+        .command(&["subagent", "inspect", &subagent_id, "--json"])
+        .output()
+        .expect("final fresh subagent inspection should start");
+    assert_success(&inspected);
+    let inspected = parse_json(&inspected);
+    assert_eq!(inspected["lifecycle"]["status"], "cancelled");
+    assert_eq!(inspected["result"]["code"], "agent_controlled_stop");
+    assert_eq!(provider.finish(), 1);
 }
 
 #[test]

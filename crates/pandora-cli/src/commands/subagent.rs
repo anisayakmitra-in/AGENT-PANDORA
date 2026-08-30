@@ -757,9 +757,10 @@ fn stable_result(result: Option<&Value>) -> Option<Value> {
             Some(json!({"code": "approval_required", "status": "approval_required"}))
         }
         "agent_controlled_stop"
-            if exact_summary(result, "agent_controlled_stop", "cancelled")
-                && result.get("reason").and_then(Value::as_str) == Some("cancelled")
-                && result.len() == 3 =>
+            if result.len() == 3
+                && result.get("code").and_then(Value::as_str) == Some("agent_controlled_stop")
+                && result.get("status").and_then(Value::as_str) == Some("cancelled")
+                && result.get("reason").and_then(Value::as_str) == Some("cancelled") =>
         {
             Some(json!({
                 "code": "agent_controlled_stop",
@@ -997,6 +998,17 @@ mod tests {
         let result = json!({
             "code": "worker_interrupted",
             "outcome_known": false,
+        });
+
+        assert_eq!(stable_result(Some(&result)), Some(result));
+    }
+
+    #[test]
+    fn stable_result_keeps_a_valid_cancelled_summary() {
+        let result = json!({
+            "code": "agent_controlled_stop",
+            "status": "cancelled",
+            "reason": "cancelled",
         });
 
         assert_eq!(stable_result(Some(&result)), Some(result));
