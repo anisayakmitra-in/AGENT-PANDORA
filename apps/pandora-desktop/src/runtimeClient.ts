@@ -232,6 +232,49 @@ export type RuntimeMemoryRecord = {
   evidence_count: number;
 };
 
+export type RuntimeMemorySynthesisSchedule = {
+  id: string;
+  name: string;
+  session_id: string;
+  provider: string;
+  memory_id: string;
+  kind: string;
+  summary: string;
+  classification: string;
+  interval_seconds: number;
+  next_run_at: number;
+  enabled: boolean;
+  created_at: number;
+  last_claimed_at: number | null;
+  run_count: number;
+  scope: { principal_id: string; tenant_id: string; workspace_id: string };
+};
+
+export type RuntimeMemorySynthesisScheduleRun = {
+  schedule_id: string;
+  scheduled_for: number;
+  status: "pending" | "claimed" | "completed" | "failed";
+  worker_id: string | null;
+  claimed_at: number | null;
+  lease_until: number | null;
+  finished_at: number | null;
+  snapshot_digest: string | null;
+  result_memory_id: string | null;
+  failure: string | null;
+};
+
+export type MemorySynthesisScheduleInput = {
+  id: string;
+  name: string;
+  session_id: string;
+  provider: string;
+  memory_id: string;
+  kind: string;
+  summary: string;
+  classification: "public" | "internal";
+  interval_seconds: number;
+};
+
 export type RuntimeApproval = {
   approval_id: string;
   session_id: string;
@@ -428,6 +471,21 @@ type SessionMemoryResponse = {
     session_id: string;
     records: RuntimeMemoryRecord[];
   };
+};
+
+type MemoryScheduleListResponse = {
+  kind: "memory_schedule_list";
+  schedules: RuntimeMemorySynthesisSchedule[];
+};
+
+type MemoryScheduleRunsResponse = {
+  kind: "memory_schedule_runs";
+  runs: RuntimeMemorySynthesisScheduleRun[];
+};
+
+type MemoryScheduleMutationResponse = {
+  kind: "memory_schedule_mutation";
+  schedule: RuntimeMemorySynthesisSchedule;
 };
 
 type ApprovalListResponse = {
@@ -851,6 +909,41 @@ export class RuntimeClient {
       limit,
     });
     return response.memory.records;
+  }
+
+  async memorySchedules(limit = 128): Promise<RuntimeMemorySynthesisSchedule[]> {
+    try {
+      const response = await this.call<MemoryScheduleListResponse>("memory.schedule.list", { limit });
+      return response.schedules;
+    } catch (error: unknown) {
+      if (error instanceof Error && error.message === "method_not_found") return [];
+      throw error;
+    }
+  }
+
+  async memoryScheduleRuns(scheduleId?: string, limit = 256): Promise<RuntimeMemorySynthesisScheduleRun[]> {
+    try {
+      const response = await this.call<MemoryScheduleRunsResponse>("memory.schedule.runs", {
+        schedule_id: scheduleId ?? null,
+        limit,
+      });
+      return response.runs;
+    } catch (error: unknown) {
+      if (error instanceof Error && error.message === "method_not_found") return [];
+      throw error;
+    }
+  }
+
+  async createMemorySchedule(input: MemorySynthesisScheduleInput): Promise<RuntimeMemorySynthesisSchedule> {
+    const response = await this.call<MemoryScheduleMutationResponse>("memory.schedule.create", input);
+    return response.schedule;
+  }
+
+  async disableMemorySchedule(scheduleId: string): Promise<RuntimeMemorySynthesisSchedule> {
+    const response = await this.call<MemoryScheduleMutationResponse>("memory.schedule.disable", {
+      schedule_id: scheduleId,
+    });
+    return response.schedule;
   }
 
   private async call<T>(method: string, params: unknown): Promise<T> {

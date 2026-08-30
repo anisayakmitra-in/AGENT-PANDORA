@@ -27,6 +27,10 @@ const runtime = vi.hoisted(() => ({
   listRegistryProfiles: vi.fn(),
   lockLocalPackages: vi.fn(),
   memory: vi.fn(),
+  memorySchedules: vi.fn(),
+  memoryScheduleRuns: vi.fn(),
+  createMemorySchedule: vi.fn(),
+  disableMemorySchedule: vi.fn(),
   orchestrations: vi.fn(),
   providers: vi.fn(),
   previewPackageRemoval: vi.fn(),
@@ -83,6 +87,10 @@ vi.mock("./runtimeClient", () => ({
     inspectOrchestration = runtime.inspectOrchestration;
     inspectSession = runtime.inspectSession;
     memory = runtime.memory;
+    memorySchedules = runtime.memorySchedules;
+    memoryScheduleRuns = runtime.memoryScheduleRuns;
+    createMemorySchedule = runtime.createMemorySchedule;
+    disableMemorySchedule = runtime.disableMemorySchedule;
     orchestrations = runtime.orchestrations;
     providers = runtime.providers;
     resolveApproval = runtime.resolveApproval;
@@ -157,6 +165,42 @@ beforeEach(() => {
   runtime.inspectSession.mockResolvedValue({ session, event_count: 0 });
   runtime.events.mockResolvedValue([]);
   runtime.memory.mockResolvedValue([]);
+  runtime.memorySchedules.mockResolvedValue([]);
+  runtime.memoryScheduleRuns.mockResolvedValue([]);
+  runtime.createMemorySchedule.mockResolvedValue({
+    id: "memory-schedule-1",
+    name: "Nightly lessons",
+    session_id: session.session_id,
+    provider: "local",
+    memory_id: "lesson-release-review",
+    kind: "lesson",
+    summary: "Distill release evidence",
+    classification: "internal",
+    interval_seconds: 86400,
+    next_run_at: 1,
+    enabled: true,
+    created_at: 1,
+    last_claimed_at: null,
+    run_count: 0,
+    scope: { principal_id: "principal-1", tenant_id: "tenant-1", workspace_id: "workspace-1" },
+  });
+  runtime.disableMemorySchedule.mockResolvedValue({
+    id: "memory-schedule-1",
+    name: "Nightly lessons",
+    session_id: session.session_id,
+    provider: "local",
+    memory_id: "lesson-release-review",
+    kind: "lesson",
+    summary: "Distill release evidence",
+    classification: "internal",
+    interval_seconds: 86400,
+    next_run_at: 1,
+    enabled: false,
+    created_at: 1,
+    last_claimed_at: null,
+    run_count: 0,
+    scope: { principal_id: "principal-1", tenant_id: "tenant-1", workspace_id: "workspace-1" },
+  });
   runtime.orchestrations.mockResolvedValue([]);
 });
 
@@ -405,6 +449,50 @@ describe("Pandora desktop run state", () => {
       );
     });
     expect(screen.queryByText("notes.ts")).not.toBeInTheDocument();
+  });
+
+  it("inspects and creates a scoped memory synthesis schedule", async () => {
+    runtime.sessions.mockResolvedValue([session]);
+    runtime.memorySchedules.mockResolvedValue([{
+      id: "memory-schedule-1",
+      name: "Nightly lessons",
+      session_id: session.session_id,
+      provider: "local",
+      memory_id: "lesson-release-review",
+      kind: "lesson",
+      summary: "Distill release evidence",
+      classification: "internal",
+      interval_seconds: 86400,
+      next_run_at: 1,
+      enabled: true,
+      created_at: 1,
+      last_claimed_at: null,
+      run_count: 0,
+      scope: { principal_id: "principal-1", tenant_id: "tenant-1", workspace_id: "workspace-1" },
+    }]);
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Connections" }));
+    const sessionButtons = await screen.findAllByRole("button", { name: /session-1/ });
+    fireEvent.click(sessionButtons[sessionButtons.length - 1]);
+    await waitFor(() => expect(runtime.inspectSession).toHaveBeenCalledWith("session-1"));
+    fireEvent.click(await screen.findByRole("button", { name: "Memory" }));
+    expect(await screen.findByRole("heading", { name: "Synthesis schedules" })).toBeInTheDocument();
+    expect(screen.getByText("Nightly lessons")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Schedule name"), { target: { value: "Release lessons" } });
+    fireEvent.change(screen.getByLabelText("Memory ID"), { target: { value: "lesson-release" } });
+    fireEvent.change(screen.getByLabelText("Synthesis summary"), { target: { value: "Distill release evidence" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add schedule" }));
+
+    await waitFor(() => expect(runtime.createMemorySchedule).toHaveBeenCalledWith(expect.objectContaining({
+      name: "Release lessons",
+      session_id: session.session_id,
+      memory_id: "lesson-release",
+      kind: "lesson",
+      classification: "internal",
+      interval_seconds: 86400,
+    })));
   });
 
   it("renders Council from recorded run evidence without fabricating authority", async () => {

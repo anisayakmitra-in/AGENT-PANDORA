@@ -1197,6 +1197,32 @@ input:focus, textarea:focus, select:focus { border-color: var(--signal); box-sha
 .memory-record p { margin: 0; color: var(--text-secondary); font-size: 9px; line-height: 1.6; }
 .memory-record-meta { color: var(--text-muted); font-family: var(--font-mono); font-size: 6px; }
 
+/* Memory scheduler */
+.memory-scheduler-panel { display: grid; gap: 12px; }
+.memory-schedule-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding-top: 4px; }
+.memory-schedule-form label { display: grid; gap: 5px; min-width: 0; }
+.memory-schedule-form label > span { color: var(--text-muted); font-family: var(--font-mono); font-size: 7px; text-transform: uppercase; }
+.memory-schedule-form input, .memory-schedule-form select, .memory-schedule-form textarea { width: 100%; min-width: 0; }
+.memory-schedule-form-wide { grid-column: 1 / -1; }
+.memory-schedule-form .button { justify-self: start; margin-top: 3px; }
+.memory-schedule-list { display: grid; gap: 7px; padding-top: 4px; }
+.memory-schedule-card { display: grid; gap: 7px; padding: 11px; border: 1px solid var(--line); border-left: 2px solid var(--blue); background: var(--canvas); }
+.memory-schedule-card.is-disabled { border-left-color: var(--text-muted); opacity: .72; }
+.memory-schedule-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.memory-schedule-card-top > div { display: grid; min-width: 0; gap: 3px; }
+.memory-schedule-card strong { color: var(--text-secondary); font-size: 9px; font-weight: 600; }
+.memory-schedule-card small { overflow: hidden; color: var(--text-muted); font-size: 6px; text-overflow: ellipsis; white-space: nowrap; }
+.memory-schedule-card p { margin: 0; color: var(--text-muted); font-size: 8px; line-height: 1.5; }
+.memory-schedule-meta { display: flex; flex-wrap: wrap; gap: 8px; color: var(--text-muted); font-family: var(--font-mono); font-size: 6px; }
+.memory-schedule-card .text-link { justify-self: start; }
+.memory-schedule-empty { display: flex; align-items: center; gap: 8px; padding: 13px 0 4px; color: var(--text-muted); font-size: 8px; }
+.memory-schedule-empty svg { color: var(--blue); }
+.memory-run-history { display: grid; gap: 7px; padding-top: 11px; border-top: 1px solid var(--line); }
+.memory-run-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 7px 0; border-top: 1px solid var(--line); }
+.memory-run-row > span:nth-child(2) { display: grid; min-width: 0; gap: 3px; }
+.memory-run-row strong { overflow: hidden; color: var(--text-secondary); font-family: var(--font-mono); font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.memory-run-row small { color: var(--text-muted); font-size: 7px; }
+
 /* Audit */
 .audit-grid { grid-template-columns: 340px minmax(0, 1fr); }
 .audit-summary, .audit-events { padding: 19px; }
@@ -1565,6 +1591,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--signal); box-sha
   .inspector { min-height: 720px; border-top: 1px solid var(--line); border-left: 0; overflow: visible; }
   .secondary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .memory-grid, .workflow-grid, .connection-grid, .audit-grid, .runs-workbench, .harness-workbench, .engine-workbench, .tool-workbench { grid-template-columns: 1fr; }
+  .memory-schedule-form { grid-template-columns: 1fr; }
+  .memory-schedule-form-wide { grid-column: auto; }
   .runs-browser, .harness-browser, .engine-browser, .tool-browser { max-height: 310px; overflow-y: auto; }
   .council-chambers { grid-template-columns: 1fr; }
   .council-chamber { min-height: 0; }
