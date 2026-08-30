@@ -1,7 +1,6 @@
-use crate::ConsumedPermit;
+use crate::{ConsumedPermit, receipt_id::allocate_effect_receipt_id};
 use pandora_types::{
-    Capability, EffectOutcome, EffectReceipt, EffectTarget, Operation, ReceiptId, ResourceScope,
-    Timestamp,
+    Capability, EffectOutcome, EffectReceipt, EffectTarget, Operation, ResourceScope, Timestamp,
 };
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -11,7 +10,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_DIRECTORY_ENTRIES: usize = 2_048;
 const MAX_SEARCH_ENTRIES: usize = 10_000;
-static NEXT_RECEIPT_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -465,11 +463,7 @@ fn request_matches_search(permit: &ConsumedPermit, query: &str) -> bool {
 }
 
 fn receipt_for(permit: &ConsumedPermit, now: Timestamp, outcome: EffectOutcome) -> EffectReceipt {
-    let receipt_id = ReceiptId::new(format!(
-        "receipt-{}",
-        NEXT_RECEIPT_ID.fetch_add(1, Ordering::Relaxed)
-    ))
-    .expect("generated receipt ID is valid");
+    let receipt_id = allocate_effect_receipt_id("filesystem");
     EffectReceipt::new(
         receipt_id,
         permit.permit().permit_id().clone(),

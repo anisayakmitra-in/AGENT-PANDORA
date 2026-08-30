@@ -40,3 +40,55 @@ Supervisor commands:
   pandora fleet supervisor reap --stale-after 30
   pandora fleet supervisor restart --node node-a --process-id 42 --stale-after 30 --stale-after 30
   pandora fleet supervisor list --json
+
+## Phase 7 worker-operations acceptance
+
+The cross-platform bounded profile is implemented by
+`phase7_worker_operations_recover_without_replaying_durable_effects`. Its
+normal CI mode launches three independent producer streams, completes 18
+governed filesystem jobs across two independently launched daemon worker
+processes, force-stops the first worker, reconciles its stale PID and expired
+lease, and proves that the replacement publishes a new PID and generation. A
+third fresh worker observes an empty queue. The same test then drives a
+two-repository orchestration run through fresh CLI processes, preserves the
+completed planner receipt after the maker role fails, and leaves resume blocked
+for explicit receipt reconciliation.
+
+The durable assertions require exactly one terminal job result, one session,
+one evaluation, one rollout, and one `EffectCompleted` receipt identity per
+submitted job. They are captured before and after the no-op restart and again
+after orchestration recovery attempts, so a worker, Fleet, or Orchestration
+replay changes the evidence and fails the test.
+
+Run the bounded profile with:
+
+```sh
+cargo test -p pandora-cli --test cli_smoke phase7_worker_operations_recover_without_replaying_durable_effects --locked -- --exact --nocapture
+```
+
+The explicit soak profile keeps normal CI bounded. By default it uses four
+independent producers, eight warm-up jobs, 504 recovery jobs, and a 600-second
+recovery submission window. It allows another bounded 180 seconds for the final
+drain. On a POSIX shell:
+
+```sh
+PANDORA_PHASE7_SOAK=1 \
+PANDORA_PHASE7_SOAK_SECONDS=600 \
+PANDORA_PHASE7_SOAK_JOBS=512 \
+PANDORA_PHASE7_SOAK_PRODUCERS=4 \
+cargo test -p pandora-cli --test cli_smoke phase7_worker_operations_recover_without_replaying_durable_effects --locked -- --exact --nocapture
+```
+
+PowerShell uses the same values through `$env:PANDORA_PHASE7_SOAK`,
+`$env:PANDORA_PHASE7_SOAK_SECONDS`, `$env:PANDORA_PHASE7_SOAK_JOBS`, and
+`$env:PANDORA_PHASE7_SOAK_PRODUCERS`. Producers may be 2-8, jobs may be from
+four per producer through 4,096, and the submission window may be 60-86,400
+seconds. Long-duration runs remain an operator/release evidence gate and are
+not part of the default CI profile.
+
+Workers only claim and delegate the original governed command. Fleet leases and
+Orchestration role receipts remain scheduling and recovery evidence, not
+authority. The sole effect-authority chain remains
+`ExecutionController -> Parliament -> ReferenceMonitor -> executor -> receipt`;
+none of these operating layers can add capabilities, issue permits, or replay
+an uncertain effect.

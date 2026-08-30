@@ -1,14 +1,13 @@
-use crate::ConsumedPermit;
+use crate::{ConsumedPermit, receipt_id::allocate_effect_receipt_id};
 use pandora_types::{
     ArtifactId, Capability, EffectOutcome, EffectReceipt, EffectTarget, ExecutionId,
     ExecutionProfile, ExecutionProfileBindingKind, Gene, GeneError, GeneInput, GeneKind,
     GeneManifest, Operation, OperationRequest, PackageKind, PackageManifest, PrincipalId,
-    ReceiptId, ResourceScope, SessionId, Timestamp, hash_artifact,
+    ResourceScope, SessionId, Timestamp, hash_artifact,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
 use wasmi::{
     Config, EnforcedLimits, Engine, ExternType, Linker, Module, Store, StoreLimits,
     StoreLimitsBuilder, TrapCode, ValType,
@@ -18,8 +17,6 @@ pub const MAX_WASM_INPUT_BYTES: usize = 64 * 1024;
 pub const MAX_WASM_OUTPUT_BYTES: usize = 64 * 1024;
 pub const MAX_WASM_MEMORY_BYTES: usize = 16 * 1024 * 1024;
 pub const DEFAULT_WASM_FUEL: u64 = 1_000_000;
-
-static NEXT_RECEIPT_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WasmError {
@@ -461,11 +458,7 @@ fn map_execution_error(error: wasmi::Error) -> WasmError {
 }
 
 fn receipt_for(permit: &ConsumedPermit, now: Timestamp, outcome: EffectOutcome) -> EffectReceipt {
-    let receipt_id = ReceiptId::new(format!(
-        "receipt-wasm-{}",
-        NEXT_RECEIPT_ID.fetch_add(1, Ordering::Relaxed)
-    ))
-    .expect("generated receipt ID is valid");
+    let receipt_id = allocate_effect_receipt_id("wasm");
     EffectReceipt::new(
         receipt_id,
         permit.permit().permit_id().clone(),

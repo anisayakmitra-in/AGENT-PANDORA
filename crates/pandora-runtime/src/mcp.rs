@@ -1,10 +1,10 @@
 use crate::mcp_catalog::{
     McpCatalogError, McpCatalogReservation, McpCatalogRevision, McpCatalogTool, digest_bytes,
 };
+use crate::receipt_id::allocate_effect_receipt_id;
 use crate::{ConsumedPermit, ToolDefinition, ToolEngine, ToolError, ToolPlan};
 use pandora_types::{
-    Capability, EffectOutcome, EffectReceipt, EffectTarget, Operation, ReceiptId, ResourceScope,
-    Timestamp,
+    Capability, EffectOutcome, EffectReceipt, EffectTarget, Operation, ResourceScope, Timestamp,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -13,7 +13,6 @@ use std::fmt;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -23,7 +22,6 @@ pub const MCP_LEGACY_PROTOCOL_VERSION: &str = "2025-11-25";
 const MCP_CLIENT_NAME: &str = "pandora-agent";
 const MAX_TOOLS: usize = 128;
 const MAX_CONTENT_ITEMS: usize = 128;
-static NEXT_RECEIPT_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -1245,11 +1243,7 @@ fn executor_result<T>(
             code: error.code().to_owned(),
         },
     };
-    let receipt_id = ReceiptId::new(format!(
-        "receipt-mcp-{}",
-        NEXT_RECEIPT_ID.fetch_add(1, Ordering::Relaxed)
-    ))
-    .expect("generated receipt ID is valid");
+    let receipt_id = allocate_effect_receipt_id("mcp");
     McpExecutorResult {
         result,
         receipt: EffectReceipt::new(

@@ -17,7 +17,7 @@ operations, and signed native releases.
 | Phase | Estimate | Shipped in the source tree | Work still open |
 | --- | ---: | --- | --- |
 | 6. Production readiness | 85-90% | scoped identity, automatic local device trust, encrypted secrets, local telemetry and crash records, encrypted backup and restore, fresh-runner install/update/rollback/backup/restore/uninstall drills, update channels, release workflows, checksum signature verification, release evidence index, CodeQL, dependency audits | signed stable artifacts, real clean-machine release proof on every advertised platform, installer rollback exercises with the stable artifact |
-| 7. Runtime scale and orchestration | 85-90% | persistent prompt-context cache, headless jobs, bounded parallel subagents, exact-commit worktrees, durable orchestration claims and receipts, interruption and resume rules, multi-repository plans, fleet leases, budgets, execution-bound lease renewal, and durable supervisor state with PID-bound worker heartbeats, process-wide execution leases for headless jobs and subagents, lease gating, stale-supervisor reconciliation without replay, bounded stale reaping, atomic PID-bound restart handoff, atomic cross-process quiescence guards, bounded independently launched job watch windows, long-lived local daemon workers with explicit drain/stop protocol, cross-process crash reconciliation/restart evidence, and bounded staggered-producer soak coverage | long-duration load and soak tests, expanded cancellation races, multi-repository partial failure |
+| 7. Runtime scale and orchestration | 90-95% | persistent prompt-context cache, headless jobs, bounded parallel subagents, exact-commit worktrees, durable orchestration claims and receipts, interruption and resume rules, multi-repository plans, fleet leases, budgets, execution-bound lease renewal, and durable supervisor state with PID-bound worker heartbeats, process-wide execution leases for headless jobs and subagents, lease gating, stale-supervisor reconciliation without replay, bounded stale reaping, atomic PID-bound restart handoff, atomic cross-process quiescence guards, bounded independently launched job watch windows, long-lived local daemon workers with explicit drain/stop protocol, cross-process crash reconciliation/restart evidence, bounded staggered-producer soak coverage, cancellation/provider-return restart evidence, and combined cross-process worker-operations recovery acceptance | retained long-duration and multi-platform worker soak evidence |
 | 8. Agent experience and disclosure | 80-88% | native desktop source, Command and Council inspection, background runs, runtime inventory, Harness Lab, package lifecycle, package manifest workbench, BYOK providers and models, MCP configuration, pinned GitHub packages, active custom Domain and Meta Harnesses, WebAssembly Genes, custom Auto Route contracts, optional built-in Domain and Meta replacement, encrypted-vault package key generation and atomic local manifest signing | broader Skill and provider package lifecycles, desktop accessibility pass, native installer release proof |
 | 9. Evaluation-driven loops | 85-90% | trajectory, outcome, policy, regression, adversarial, golden, and holdout evaluation; coding feedback; research-only mutation and population strategies; durable evolution state; canary activation and rollback; versioned evidence-derived zero-failure canary policy; read-only durable per-session evaluation scorecards with a fail-on-non-passed CI gate; durable schedules with a bounded local registry of validated suite definitions; typed prompt/Skill/workflow/WebAssembly Gene target metadata; durable failure-derived regression candidates; explicit review-gated suite admission; task-backed suites executed through governed Controller adapters with bounded evidence | self-healing test generation beyond metadata candidates; automated canary scheduling and rollout policy; quality gates for every artifact class |
 | 10. Memory consolidation | 70-75% | scoped L0, L1, and L2 records; durable recall; approval-gated promotion; revocation, audit, and compaction; deterministic evidence-bound synthesis; bounded CLI synthesis preview and commit with stale-snapshot checks; bounded read-only CLI provenance graphs; explicit same-tenant/workspace/provider cross-session L1 consolidation with dry-run and hashed source provenance | cross-project consolidation policy, scheduled synthesis, desktop removal views, source graph visualization and retention controls |
@@ -57,18 +57,28 @@ that each queued job is claimed once across separate SQLite connections. It
 still needs the operating layer that keeps those workers healthy for days, not
 one command invocation. Operators can now reap all heartbeat-stale supervisors in one bounded pass and perform an atomic PID-bound restart handoff. An independently launched `job work --watch --idle-timeout <1-3600>` window now binds its own PID, heartbeat, and execution lease, exits deterministically on idle timeout, external drain, or `--max-jobs`, and leaves durable stopped state. `job work --daemon` now keeps the same bounded authority and liveness records alive until an optional job cap or `pandora fleet supervisor drain job-worker` requests graceful stop. A bounded staggered-producer soak regression completes 16 jobs exactly once while the daemon is live. A killed worker can be reconciled and rebound to a new PID without replaying a claimed effect.
 
+The combined Phase 7 worker-operations acceptance profile now runs three
+independent producer streams and 18 governed jobs under live queue pressure,
+force-stops the first daemon, reconciles its stale PID and expired lease from a
+fresh CLI, and binds a second daemon at a new PID and generation. Durable
+snapshots prove exactly one terminal result, session, evaluation, rollout, and
+effect receipt per job before and after another fresh worker observes the empty
+queue. The same fixture drives a partial two-repository role failure through
+independently restarted CLI processes, preserves the completed planner receipt
+and active maker role, rejects duplicate or mismatched completion, and keeps
+resume blocked for explicit receipt reconciliation.
+
+This evidence does not widen authority:
+`ExecutionController -> Parliament -> ReferenceMonitor -> executor -> receipt`
+remains the only effect path. Workers, Fleet, and Orchestration cannot add
+capabilities, issue permits, or replay uncertain effects.
+
 Next work:
 
-The partial multi-repository failure regression now runs submit, claim,
-completion, interruption, inspection, and resume in separate CLI processes.
-It preserves the completed planner receipt and active maker role, and keeps
-resume blocked until reconciliation.
-
-- extend bounded soak coverage into long-duration load and recovery runs;
-- expand cancellation-race coverage around provider return and worker shutdown;
-- extend queue-pressure coverage into sustained soak runs;
-- test worker crashes and partial multi-repository failure across independently
-  restarted worker processes, including the reconciliation path.
+- run and retain the documented opt-in 10-minute worker-operations soak on
+  every advertised platform;
+- retain multi-hour or day-scale operator evidence before claiming workers stay
+  healthy for days.
 
 ## Phase 8: finish the modular product surface
 

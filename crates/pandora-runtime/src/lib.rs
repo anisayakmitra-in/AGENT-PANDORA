@@ -41,6 +41,7 @@ pub mod package_admission;
 pub mod package_store;
 pub mod parliament;
 pub mod permit_store;
+mod receipt_id;
 pub mod recovery_archive;
 pub mod reference_monitor;
 pub mod registry_client;

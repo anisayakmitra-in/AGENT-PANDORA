@@ -5,23 +5,24 @@ use pandora_runtime::{
     MemoryEngine, SessionStore, SubagentPreparation, SubagentScope, SubagentStore,
 };
 use pandora_types::{
-    ContextClassification, DomainRoutingProfile, EffectOutcome, EffectReceipt, ExecutionId,
-    GovernedOrchestrationPlan, Handoff, HarnessId, JobId, JobWorkerId, MemoryKind, MemoryScope,
-    MetaComposition, OrchestrationPlan, OrchestrationRole, OrchestrationRoleReceipt,
+    ContextClassification, DomainRoutingProfile, EffectOutcome, EffectReceipt, EventType,
+    ExecutionId, GovernedOrchestrationPlan, Handoff, HarnessId, JobId, JobWorkerId, MemoryKind,
+    MemoryScope, MetaComposition, OrchestrationPlan, OrchestrationRole, OrchestrationRoleReceipt,
     OrchestrationRunId, PackageCompatibility, PackageDependency, PackageKind, PackageManifest,
     PermitId, PlanId, PrincipalId, ReceiptId, RepositoryBinding, RepositoryId, RequestDigest,
     RoleAssignment, RoleId, RoleRepositoryBinding, Session, SessionId, SubagentBudgets, SubagentId,
     SubagentRequest, TenantId, Timestamp, TrustEvidence, TrustLevel, WorkspaceId, hash_artifact,
 };
 use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
+use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -2813,6 +2814,26 @@ fn long_lived_job_daemon_finishes_current_queue_and_stops_after_external_drain()
         );
         thread::sleep(Duration::from_millis(25));
     };
+
+    let store = JobStore::open(fixture.data.join("jobs.sqlite3")).unwrap();
+    let principal = PrincipalId::new("local-user").unwrap();
+    let tenant = TenantId::new("local-tenant").unwrap();
+    let workspace = WorkspaceId::new("local-workspace").unwrap();
+    let job_record_id = JobId::new(job_id.clone()).unwrap();
+    let claim_deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let job = store
+            .inspect(&job_record_id, &principal, &tenant, &workspace)
+            .unwrap();
+        if matches!(job.status().as_str(), "running" | "completed") {
+            break;
+        }
+        assert!(
+            Instant::now() < claim_deadline,
+            "daemon worker did not durably claim the queued job"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
 
     let drained = fixture
         .command(&["fleet", "supervisor", "drain", "job-worker", "--json"])
@@ -8535,4 +8556,742 @@ fn parse_json(output: &Output) -> Value {
             String::from_utf8_lossy(&output.stderr)
         )
     })
+}
+#[derive(Clone, Copy, Debug)]
+struct Phase7AcceptanceProfile {
+    producer_count: usize,
+    warmup_job_count: usize,
+    recovery_job_count: usize,
+    warmup_spread: Duration,
+    recovery_spread: Duration,
+    completion_timeout: Duration,
+    mode: &'static str,
+}
+
+impl Phase7AcceptanceProfile {
+    fn from_environment() -> Self {
+        let soak = std::env::var("PANDORA_PHASE7_SOAK")
+            .is_ok_and(|value| matches!(value.as_str(), "1" | "true" | "yes"));
+        if !soak {
+            return Self {
+                producer_count: 3,
+                warmup_job_count: 6,
+                recovery_job_count: 12,
+                warmup_spread: Duration::from_millis(300),
+                recovery_spread: Duration::from_millis(900),
+                completion_timeout: Duration::from_secs(60),
+                mode: "ci",
+            };
+        }
+
+        let producer_count = phase7_environment_number("PANDORA_PHASE7_SOAK_PRODUCERS", 4, 2, 8);
+        let total_jobs =
+            phase7_environment_number("PANDORA_PHASE7_SOAK_JOBS", 512, producer_count * 4, 4_096);
+        let soak_seconds =
+            phase7_environment_number("PANDORA_PHASE7_SOAK_SECONDS", 600, 60, 86_400);
+        let warmup_job_count = producer_count * 2;
+        Self {
+            producer_count,
+            warmup_job_count,
+            recovery_job_count: total_jobs - warmup_job_count,
+            warmup_spread: Duration::from_secs(2),
+            recovery_spread: Duration::from_secs(soak_seconds as u64),
+            completion_timeout: Duration::from_secs(180),
+            mode: "soak",
+        }
+    }
+
+    fn total_jobs(self) -> usize {
+        self.warmup_job_count + self.recovery_job_count
+    }
+}
+
+fn phase7_environment_number(name: &str, default: usize, minimum: usize, maximum: usize) -> usize {
+    let value = std::env::var(name).map_or(default, |value| {
+        value
+            .parse::<usize>()
+            .unwrap_or_else(|_| panic!("{name} must be an integer"))
+    });
+    assert!(
+        (minimum..=maximum).contains(&value),
+        "{name} must be between {minimum} and {maximum}"
+    );
+    value
+}
+
+fn submit_phase7_jobs(
+    fixture: &Fixture,
+    producer_count: usize,
+    job_count: usize,
+    spread: Duration,
+) -> Vec<String> {
+    assert!(producer_count >= 2);
+    assert!(job_count >= producer_count);
+    let barrier = Arc::new(Barrier::new(producer_count));
+    thread::scope(|scope| {
+        let mut producers = Vec::with_capacity(producer_count);
+        for producer_index in 0..producer_count {
+            let barrier = Arc::clone(&barrier);
+            producers.push(scope.spawn(move || {
+                let producer_jobs = job_count / producer_count
+                    + usize::from(producer_index < job_count % producer_count);
+                let interval = if producer_jobs > 1 {
+                    spread / u32::try_from(producer_jobs - 1).unwrap()
+                } else {
+                    Duration::ZERO
+                };
+                let mut job_ids = Vec::with_capacity(producer_jobs);
+                barrier.wait();
+                for ordinal in 0..producer_jobs {
+                    if ordinal > 0 {
+                        thread::sleep(interval);
+                    }
+                    let submitted = fixture
+                        .command(&["job", "submit", "--", "read:README.md", "--json"])
+                        .output()
+                        .expect("independent Phase 7 producer should start");
+                    assert_success_with_context(&submitted, "Phase 7 producer submission");
+                    job_ids.push(
+                        parse_json(&submitted)["job_id"]
+                            .as_str()
+                            .expect("producer submission should return a job ID")
+                            .to_owned(),
+                    );
+                }
+                job_ids
+            }));
+        }
+        producers
+            .into_iter()
+            .flat_map(|producer| producer.join().expect("Phase 7 producer should finish"))
+            .collect()
+    })
+}
+
+fn wait_for_phase7_jobs(fixture: &Fixture, expected_job_ids: &BTreeSet<String>, timeout: Duration) {
+    let store = JobStore::open(fixture.data.join("jobs.sqlite3")).unwrap();
+    let principal = PrincipalId::new("local-user").unwrap();
+    let tenant = TenantId::new("local-tenant").unwrap();
+    let workspace = WorkspaceId::new("local-workspace").unwrap();
+    let deadline = Instant::now() + timeout;
+    loop {
+        let jobs = store.list(&principal, &tenant, &workspace).unwrap();
+        let matching = jobs
+            .iter()
+            .filter(|job| expected_job_ids.contains(job.id().as_str()))
+            .collect::<Vec<_>>();
+        if matching.len() == expected_job_ids.len()
+            && matching
+                .iter()
+                .all(|job| job.status().as_str() == "completed")
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Phase 7 queue did not reach durable completion: expected={} observed={} completed={}",
+            expected_job_ids.len(),
+            matching.len(),
+            matching
+                .iter()
+                .filter(|job| job.status().as_str() == "completed")
+                .count()
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn wait_for_phase7_supervisor(
+    fleet: &FleetEngine,
+    process_id: u32,
+    generation: u64,
+    timeout: Duration,
+) -> pandora_runtime::FleetSupervisor {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(supervisor) = fleet
+            .list_supervisors()
+            .unwrap()
+            .into_iter()
+            .find(|supervisor| {
+                supervisor.node_id() == "job-worker"
+                    && supervisor.state().as_str() == "running"
+                    && supervisor.process_id() == Some(process_id)
+                    && supervisor.generation() == generation
+            })
+        {
+            return supervisor;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Phase 7 worker PID {process_id} generation {generation} did not publish liveness"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct Phase7TerminalEvidence {
+    job_results: BTreeMap<String, String>,
+    session_ids: BTreeSet<String>,
+    execution_ids: BTreeSet<String>,
+    receipt_ids: BTreeSet<String>,
+    worker_ids: BTreeSet<String>,
+}
+
+fn phase7_terminal_evidence(
+    fixture: &Fixture,
+    expected_job_ids: &BTreeSet<String>,
+) -> Phase7TerminalEvidence {
+    let principal = PrincipalId::new("local-user").unwrap();
+    let tenant = TenantId::new("local-tenant").unwrap();
+    let workspace = WorkspaceId::new("local-workspace").unwrap();
+    let jobs = JobStore::open(fixture.data.join("jobs.sqlite3"))
+        .unwrap()
+        .list(&principal, &tenant, &workspace)
+        .unwrap();
+    assert_eq!(jobs.len(), expected_job_ids.len());
+    let sessions = SessionStore::open(fixture.data.join("sessions.sqlite3")).unwrap();
+    let mut evidence = Phase7TerminalEvidence {
+        job_results: BTreeMap::new(),
+        session_ids: BTreeSet::new(),
+        execution_ids: BTreeSet::new(),
+        receipt_ids: BTreeSet::new(),
+        worker_ids: BTreeSet::new(),
+    };
+    for job in jobs {
+        assert!(expected_job_ids.contains(job.id().as_str()));
+        assert_eq!(job.status().as_str(), "completed");
+        assert!(job.finished_at().is_some());
+        evidence.worker_ids.insert(
+            job.worker_id()
+                .expect("completed job should retain its worker")
+                .as_str()
+                .to_owned(),
+        );
+        let result = job
+            .result()
+            .expect("completed job should retain its result");
+        assert_eq!(result["command"], "run");
+        assert_eq!(result["status"], "completed");
+        let session_id = result["session_id"].as_str().unwrap().to_owned();
+        let execution_id = result["execution_id"].as_str().unwrap().to_owned();
+        assert!(evidence.session_ids.insert(session_id.clone()));
+        assert!(
+            evidence
+                .execution_ids
+                .insert(format!("{session_id}:{execution_id}"))
+        );
+        let snapshot = sessions
+            .resume(
+                &SessionId::new(session_id).unwrap(),
+                &principal,
+                &tenant,
+                &workspace,
+            )
+            .expect("completed job session should be durable");
+        let effect_receipts = snapshot
+            .events()
+            .iter()
+            .filter(|event| event.event_type() == EventType::EffectCompleted)
+            .map(|event| {
+                event
+                    .context()
+                    .receipt_id()
+                    .expect("completed effect event should link its receipt")
+                    .as_str()
+                    .to_owned()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(effect_receipts.len(), 1);
+        assert!(evidence.receipt_ids.insert(effect_receipts[0].clone()));
+        assert_eq!(snapshot.evaluations().len(), 1);
+        assert_eq!(snapshot.rollouts().len(), 1);
+        evidence.job_results.insert(
+            job.id().as_str().to_owned(),
+            serde_json::to_string(result).unwrap(),
+        );
+    }
+    assert_eq!(evidence.job_results.len(), expected_job_ids.len());
+    assert_eq!(evidence.session_ids.len(), expected_job_ids.len());
+    assert_eq!(evidence.execution_ids.len(), expected_job_ids.len());
+    assert_eq!(evidence.receipt_ids.len(), expected_job_ids.len());
+    assert_eq!(evidence.worker_ids.len(), 2);
+    evidence
+}
+
+#[test]
+fn phase7_worker_operations_recover_without_replaying_durable_effects() {
+    let profile = Phase7AcceptanceProfile::from_environment();
+    eprintln!(
+        "Phase 7 worker-operations mode={} producers={} jobs={} recovery_spread={:?}",
+        profile.mode,
+        profile.producer_count,
+        profile.total_jobs(),
+        profile.recovery_spread
+    );
+
+    let fixture = Fixture::new();
+    let exact_commit = fixture.initialize_git_workspace();
+    fixture.setup();
+    let fleet = FleetEngine::open(fixture.data.join("fleet.sqlite3")).unwrap();
+
+    let mut first_worker = fixture
+        .command(&["job", "work", "--daemon", "--json"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("first Phase 7 daemon should start independently");
+    let first_process_id = first_worker.id();
+    let first_running =
+        wait_for_phase7_supervisor(&fleet, first_process_id, 1, Duration::from_secs(15));
+
+    let warmup_job_ids = submit_phase7_jobs(
+        &fixture,
+        profile.producer_count,
+        profile.warmup_job_count,
+        profile.warmup_spread,
+    );
+    let warmup_job_ids = warmup_job_ids.into_iter().collect::<BTreeSet<_>>();
+    assert_eq!(warmup_job_ids.len(), profile.warmup_job_count);
+    wait_for_phase7_jobs(&fixture, &warmup_job_ids, profile.completion_timeout);
+
+    first_worker
+        .kill()
+        .expect("first Phase 7 daemon should accept a forced stop");
+    let killed = first_worker
+        .wait_with_output()
+        .expect("forced Phase 7 daemon should terminate");
+    assert!(!killed.status.success());
+
+    let stale = fleet
+        .list_supervisors()
+        .unwrap()
+        .into_iter()
+        .find(|supervisor| supervisor.node_id() == "job-worker")
+        .expect("forced-stop supervisor should remain durable");
+    assert_eq!(stale.state().as_str(), "running");
+    assert_eq!(stale.generation(), first_running.generation());
+    assert_eq!(stale.process_id(), Some(first_process_id));
+    let active_leases = fleet
+        .list_leases()
+        .unwrap()
+        .into_iter()
+        .filter(|lease| lease.node_id() == "job-worker" && lease.state().as_str() == "active")
+        .collect::<Vec<_>>();
+    assert_eq!(active_leases.len(), 1);
+    let recovery_now = stale
+        .updated_at()
+        .saturating_add(31)
+        .max(active_leases[0].expires_at().saturating_add(1));
+    let recovery_now = recovery_now.to_string();
+    let reconciled = fixture
+        .command(&[
+            "fleet",
+            "supervisor",
+            "reconcile",
+            "job-worker",
+            "--now",
+            &recovery_now,
+            "--stale-after",
+            "30",
+            "--json",
+        ])
+        .output()
+        .expect("fresh reconciliation CLI should start");
+    assert_success_with_context(&reconciled, "Phase 7 stale-supervisor reconciliation");
+    let reconciled = parse_json(&reconciled);
+    assert_eq!(reconciled["supervisor"]["state"], "recovering");
+    assert_eq!(
+        reconciled["supervisor"]["generation"],
+        first_running.generation()
+    );
+    assert_eq!(reconciled["supervisor"]["process_id"], first_process_id);
+    assert!(
+        fleet
+            .list_leases()
+            .unwrap()
+            .iter()
+            .all(|lease| lease.state().as_str() != "active")
+    );
+
+    let second_worker = fixture
+        .command(&["job", "work", "--daemon", "--json"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("recovery Phase 7 daemon should start independently");
+    let second_process_id = second_worker.id();
+    assert_ne!(second_process_id, first_process_id);
+    let second_running = wait_for_phase7_supervisor(
+        &fleet,
+        second_process_id,
+        first_running.generation() + 1,
+        Duration::from_secs(15),
+    );
+    assert_eq!(second_running.process_id(), Some(second_process_id));
+
+    let recovery_job_ids = submit_phase7_jobs(
+        &fixture,
+        profile.producer_count,
+        profile.recovery_job_count,
+        profile.recovery_spread,
+    );
+    let recovery_job_ids = recovery_job_ids.into_iter().collect::<BTreeSet<_>>();
+    assert_eq!(recovery_job_ids.len(), profile.recovery_job_count);
+    let mut all_job_ids = warmup_job_ids.clone();
+    all_job_ids.extend(recovery_job_ids.iter().cloned());
+    assert_eq!(all_job_ids.len(), profile.total_jobs());
+    wait_for_phase7_jobs(&fixture, &all_job_ids, profile.completion_timeout);
+
+    let drained = fixture
+        .command(&["fleet", "supervisor", "drain", "job-worker", "--json"])
+        .output()
+        .expect("fresh drain CLI should start");
+    assert_success_with_context(&drained, "Phase 7 recovery worker drain");
+    assert_eq!(parse_json(&drained)["supervisor"]["state"], "draining");
+    let second_output = wait_for_child(
+        second_worker,
+        profile.completion_timeout,
+        "recovery Phase 7 daemon",
+    );
+    assert_success_with_context(&second_output, "Phase 7 recovery daemon");
+    let second_output = parse_json(&second_output);
+    assert_eq!(second_output["stop_reason"], "external_drain");
+    assert_eq!(second_output["processed_count"], profile.recovery_job_count);
+    let processed_after_recovery = second_output["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|job| job["job_id"].as_str().unwrap().to_owned())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(processed_after_recovery, recovery_job_ids);
+
+    let before_idle_restart = phase7_terminal_evidence(&fixture, &all_job_ids);
+    let idle_restart = fixture
+        .command(&["job", "work", "--max-jobs", "64", "--json"])
+        .output()
+        .expect("post-recovery idle worker should start as a fresh CLI process");
+    assert_success_with_context(&idle_restart, "post-recovery idle worker");
+    let idle_restart = parse_json(&idle_restart);
+    assert_eq!(idle_restart["processed_count"], 0);
+    assert_eq!(idle_restart["stop_reason"], "queue_empty");
+    let after_idle_restart = phase7_terminal_evidence(&fixture, &all_job_ids);
+    assert_eq!(after_idle_restart, before_idle_restart);
+
+    let run_id = "phase7-multi-repository-recovery";
+    let plan = OrchestrationPlan::new(
+        PlanId::new("phase7-worker-operations-plan").unwrap(),
+        vec![
+            RoleAssignment::new(
+                RoleId::new("planner").unwrap(),
+                OrchestrationRole::Planner,
+                HarnessId::new("coding-domain").unwrap(),
+                Vec::new(),
+            )
+            .unwrap(),
+            RoleAssignment::new(
+                RoleId::new("maker").unwrap(),
+                OrchestrationRole::Maker,
+                HarnessId::new("design-domain").unwrap(),
+                vec![RoleId::new("planner").unwrap()],
+            )
+            .unwrap(),
+        ],
+        2,
+        1,
+        vec![Handoff::new(
+            RoleId::new("planner").unwrap(),
+            RoleId::new("maker").unwrap(),
+            Some(HarnessId::new("coordination-meta").unwrap()),
+        )],
+    )
+    .unwrap();
+    let governed = GovernedOrchestrationPlan::new(
+        plan,
+        MetaComposition::new(
+            vec![
+                HarnessId::new("coding-domain").unwrap(),
+                HarnessId::new("design-domain").unwrap(),
+            ],
+            1,
+        )
+        .unwrap(),
+        vec![
+            RepositoryBinding::new(
+                RepositoryId::new("api").unwrap(),
+                WorkspaceId::new("local-workspace").unwrap(),
+                exact_commit.clone(),
+            )
+            .unwrap(),
+            RepositoryBinding::new(
+                RepositoryId::new("desktop").unwrap(),
+                WorkspaceId::new("workspace-desktop").unwrap(),
+                "desktop-commit",
+            )
+            .unwrap(),
+        ],
+        vec![
+            RoleRepositoryBinding::new(
+                RoleId::new("planner").unwrap(),
+                RepositoryId::new("api").unwrap(),
+            ),
+            RoleRepositoryBinding::new(
+                RoleId::new("maker").unwrap(),
+                RepositoryId::new("desktop").unwrap(),
+            ),
+        ],
+    )
+    .unwrap();
+    let plan_path = fixture.root.join("phase7-plan.json");
+    fs::write(&plan_path, serde_json::to_vec(&governed).unwrap()).unwrap();
+    let submitted = fixture
+        .command(&[
+            "orchestration",
+            "submit",
+            "--input",
+            plan_path.to_str().unwrap(),
+            "--id",
+            run_id,
+            "--json",
+        ])
+        .output()
+        .expect("fresh orchestration submit CLI should start");
+    assert_success_with_context(&submitted, "Phase 7 orchestration submit");
+
+    let claimed = fixture
+        .command(&[
+            "orchestration",
+            "claim",
+            "--worker",
+            "role-worker-a",
+            "--json",
+        ])
+        .output()
+        .expect("first orchestration worker process should claim");
+    assert_success_with_context(&claimed, "Phase 7 orchestration claim");
+    assert_eq!(parse_json(&claimed)["assignments"][0]["role_id"], "planner");
+
+    let governed_effect_receipt = ReceiptId::new(
+        before_idle_restart
+            .receipt_ids
+            .iter()
+            .next()
+            .expect("governed queue work should persist an effect receipt")
+            .clone(),
+    )
+    .unwrap();
+    let planner_receipt = OrchestrationRoleReceipt::new(
+        ReceiptId::new("phase7-planner-receipt").unwrap(),
+        OrchestrationRunId::new(run_id).unwrap(),
+        RoleId::new("planner").unwrap(),
+        RepositoryId::new("api").unwrap(),
+        WorkspaceId::new("local-workspace").unwrap(),
+        exact_commit.clone(),
+        vec![governed_effect_receipt.clone()],
+        None,
+    )
+    .unwrap();
+    let planner_receipt_path = fixture.root.join("phase7-planner-receipt.json");
+    fs::write(
+        &planner_receipt_path,
+        serde_json::to_vec(&planner_receipt).unwrap(),
+    )
+    .unwrap();
+    let completed_planner = fixture
+        .command(&[
+            "orchestration",
+            "complete",
+            run_id,
+            "--worker",
+            "role-worker-a",
+            "--role",
+            "planner",
+            "--receipt",
+            planner_receipt_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("restarted planner CLI should record its governed receipt");
+    assert_success_with_context(&completed_planner, "Phase 7 planner completion");
+    let completed_planner = parse_json(&completed_planner);
+    assert_eq!(completed_planner["run"]["status"], "running");
+    assert_eq!(completed_planner["assignments"][0]["role_id"], "maker");
+
+    let duplicate_planner = fixture
+        .command(&[
+            "orchestration",
+            "complete",
+            run_id,
+            "--worker",
+            "role-worker-a",
+            "--role",
+            "planner",
+            "--receipt",
+            planner_receipt_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("duplicate planner completion CLI should start");
+    assert_eq!(duplicate_planner.status.code(), Some(50));
+    assert!(
+        parse_json(&duplicate_planner)["message"]
+            .as_str()
+            .unwrap()
+            .contains("duplicated")
+    );
+
+    let maker_receipt = OrchestrationRoleReceipt::new(
+        ReceiptId::new("phase7-maker-receipt").unwrap(),
+        OrchestrationRunId::new(run_id).unwrap(),
+        RoleId::new("maker").unwrap(),
+        RepositoryId::new("desktop").unwrap(),
+        WorkspaceId::new("workspace-desktop").unwrap(),
+        "desktop-commit",
+        Vec::new(),
+        Some(RequestDigest::new("phase7-maker-evidence").unwrap()),
+    )
+    .unwrap();
+    let maker_receipt_path = fixture.root.join("phase7-maker-receipt.json");
+    fs::write(
+        &maker_receipt_path,
+        serde_json::to_vec(&maker_receipt).unwrap(),
+    )
+    .unwrap();
+    let wrong_worker = fixture
+        .command(&[
+            "orchestration",
+            "complete",
+            run_id,
+            "--worker",
+            "role-worker-b",
+            "--role",
+            "maker",
+            "--receipt",
+            maker_receipt_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("independently restarted wrong worker CLI should start");
+    assert_eq!(wrong_worker.status.code(), Some(50));
+    assert!(
+        parse_json(&wrong_worker)["message"]
+            .as_str()
+            .unwrap()
+            .contains("owned by another worker")
+    );
+
+    let wrong_repository_receipt = OrchestrationRoleReceipt::new(
+        ReceiptId::new("phase7-maker-wrong-repository").unwrap(),
+        OrchestrationRunId::new(run_id).unwrap(),
+        RoleId::new("maker").unwrap(),
+        RepositoryId::new("api").unwrap(),
+        WorkspaceId::new("local-workspace").unwrap(),
+        exact_commit,
+        Vec::new(),
+        Some(RequestDigest::new("phase7-maker-wrong-repository-evidence").unwrap()),
+    )
+    .unwrap();
+    let wrong_repository_path = fixture.root.join("phase7-maker-wrong-repository.json");
+    fs::write(
+        &wrong_repository_path,
+        serde_json::to_vec(&wrong_repository_receipt).unwrap(),
+    )
+    .unwrap();
+    let partial_failure = fixture
+        .command(&[
+            "orchestration",
+            "complete",
+            run_id,
+            "--worker",
+            "role-worker-a",
+            "--role",
+            "maker",
+            "--receipt",
+            wrong_repository_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("independently restarted maker failure CLI should start");
+    assert_eq!(partial_failure.status.code(), Some(2));
+    assert_eq!(parse_json(&partial_failure)["code"], "usage_error");
+
+    let interrupted = fixture
+        .command(&[
+            "orchestration",
+            "mark-interrupted",
+            run_id,
+            "--reason",
+            "desktop role failed after the API receipt became durable",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("fresh interruption CLI should start");
+    assert_success_with_context(&interrupted, "Phase 7 orchestration interruption");
+    assert_eq!(parse_json(&interrupted)["status"], "interrupted");
+
+    let inspected = fixture
+        .command(&["orchestration", "inspect", run_id, "--json"])
+        .output()
+        .expect("fresh partial-failure inspection CLI should start");
+    assert_success_with_context(&inspected, "Phase 7 orchestration inspection");
+    let inspected = parse_json(&inspected);
+    assert_eq!(inspected["status"], "interrupted");
+    assert_eq!(inspected["completed_roles"][0], "planner");
+    assert_eq!(inspected["active_roles"][0], "maker");
+    assert_eq!(inspected["role_receipts"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        inspected["role_receipts"][0]["governed_effect_receipts"][0],
+        governed_effect_receipt.as_str()
+    );
+
+    let replacement_claim = fixture
+        .command(&[
+            "orchestration",
+            "claim",
+            "--worker",
+            "role-worker-b",
+            "--json",
+        ])
+        .output()
+        .expect("replacement orchestration worker CLI should start");
+    assert_success_with_context(&replacement_claim, "replacement orchestration claim");
+    let replacement_claim = parse_json(&replacement_claim);
+    assert!(replacement_claim["run"].is_null());
+    assert_eq!(replacement_claim["status"], "idle");
+
+    let blocked_resume = fixture
+        .command(&["orchestration", "resume", run_id, "--json"])
+        .output()
+        .expect("fresh blocked-resume CLI should start");
+    assert_eq!(blocked_resume.status.code(), Some(50));
+    assert!(
+        parse_json(&blocked_resume)["message"]
+            .as_str()
+            .unwrap()
+            .contains("receipt reconciliation")
+    );
+
+    let final_inspection = fixture
+        .command(&["orchestration", "inspect", run_id, "--json"])
+        .output()
+        .expect("final fresh orchestration inspection CLI should start");
+    assert_success_with_context(&final_inspection, "final orchestration inspection");
+    let final_inspection = parse_json(&final_inspection);
+    assert_eq!(final_inspection["status"], "interrupted");
+    assert_eq!(
+        final_inspection["role_receipts"],
+        inspected["role_receipts"]
+    );
+    assert_eq!(
+        phase7_terminal_evidence(&fixture, &all_job_ids),
+        before_idle_restart
+    );
+
+    eprintln!(
+        "Phase 7 worker-operations evidence passed: jobs={} workers=2 generations>=2 receipts={} partial_run={run_id}",
+        profile.total_jobs(),
+        profile.total_jobs()
+    );
 }

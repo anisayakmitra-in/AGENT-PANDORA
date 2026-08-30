@@ -1,13 +1,10 @@
-use crate::ConsumedPermit;
+use crate::{ConsumedPermit, receipt_id::allocate_effect_receipt_id};
 use pandora_provider::{ModelRequest, ModelResponse, Provider, ProviderError};
 use pandora_types::{
-    Capability, EffectOutcome, EffectReceipt, EffectTarget, Operation, ReceiptId, ResourceScope,
+    Capability, EffectOutcome, EffectReceipt, EffectTarget, Operation, ResourceScope,
     SecretReference, Timestamp,
 };
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
-
-static NEXT_RECEIPT_ID: AtomicU64 = AtomicU64::new(1);
 
 pub struct ProviderResult {
     result: Result<ModelResponse, ProviderError>,
@@ -207,11 +204,7 @@ fn error_code(error: &ProviderError) -> &'static str {
 }
 
 fn receipt_for(permit: &ConsumedPermit, now: Timestamp, outcome: EffectOutcome) -> EffectReceipt {
-    let receipt_id = ReceiptId::new(format!(
-        "receipt-provider-{}",
-        NEXT_RECEIPT_ID.fetch_add(1, Ordering::Relaxed)
-    ))
-    .expect("generated receipt ID is valid");
+    let receipt_id = allocate_effect_receipt_id("provider");
     EffectReceipt::new(
         receipt_id,
         permit.permit().permit_id().clone(),

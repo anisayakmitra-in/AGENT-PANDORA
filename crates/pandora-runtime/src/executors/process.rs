@@ -1,12 +1,11 @@
 use super::filesystem::WorkspaceRoot;
-use crate::ConsumedPermit;
+use crate::{ConsumedPermit, receipt_id::allocate_effect_receipt_id};
 use pandora_types::{
-    Capability, EffectOutcome, EffectReceipt, EffectTarget, Operation, ReceiptId, ResourceScope,
-    Timestamp,
+    Capability, EffectOutcome, EffectReceipt, EffectTarget, Operation, ResourceScope, Timestamp,
 };
 use std::io::Read;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -14,7 +13,6 @@ use std::time::{Duration, Instant};
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 const DEFAULT_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
-static NEXT_RECEIPT_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProcessError {
@@ -617,11 +615,7 @@ fn read_bounded_output(reader: &mut impl Read, limit: usize) -> Result<Vec<u8>, 
 }
 
 fn receipt_for(permit: &ConsumedPermit, now: Timestamp, outcome: EffectOutcome) -> EffectReceipt {
-    let receipt_id = ReceiptId::new(format!(
-        "receipt-process-{}",
-        NEXT_RECEIPT_ID.fetch_add(1, Ordering::Relaxed)
-    ))
-    .expect("generated receipt ID is valid");
+    let receipt_id = allocate_effect_receipt_id("process");
     EffectReceipt::new(
         receipt_id,
         permit.permit().permit_id().clone(),

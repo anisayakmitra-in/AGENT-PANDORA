@@ -1,7 +1,6 @@
-use crate::ConsumedPermit;
+use crate::{ConsumedPermit, receipt_id::allocate_effect_receipt_id};
 use pandora_types::{
-    Capability, EffectOutcome, EffectReceipt, EffectTarget, Operation, ReceiptId, ResourceScope,
-    Timestamp,
+    Capability, EffectOutcome, EffectReceipt, EffectTarget, Operation, ResourceScope, Timestamp,
 };
 use reqwest::blocking::Client;
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
@@ -10,14 +9,12 @@ use serde::Serialize;
 use std::fmt;
 use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use url::{Host, Url};
 
 const MAX_BROWSER_URL_BYTES: usize = 2048;
 const MAX_BROWSER_BODY_BYTES: usize = 128 * 1024;
 const BROWSER_TIMEOUT_SECONDS: u64 = 15;
-static NEXT_RECEIPT_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum NetworkError {
@@ -381,11 +378,7 @@ fn sanitize_text(value: &str) -> (String, bool) {
 }
 
 fn receipt_for(permit: &ConsumedPermit, now: Timestamp, outcome: EffectOutcome) -> EffectReceipt {
-    let receipt_id = ReceiptId::new(format!(
-        "receipt-network-{}",
-        NEXT_RECEIPT_ID.fetch_add(1, Ordering::Relaxed)
-    ))
-    .expect("generated receipt ID is valid");
+    let receipt_id = allocate_effect_receipt_id("network");
     EffectReceipt::new(
         receipt_id,
         permit.permit().permit_id().clone(),
