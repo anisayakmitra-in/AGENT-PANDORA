@@ -10,6 +10,32 @@ from pathlib import Path
 DESKTOP_WINDOWS_UPGRADE_CODE = "43f9019a-cb48-59a1-b463-5508bd89d386"
 
 
+def windows_msi_version(version: str) -> str:
+    match = re.fullmatch(
+        r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+        r"(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?",
+        version,
+    )
+    if match is None:
+        raise ValueError(f"workspace package version {version!r} is not valid semver")
+    major, minor, patch, prerelease = match.groups()
+    numeric_fields = [int(major), int(minor), int(patch)]
+    limits = [255, 255, 65_535]
+    if any(field > limit for field, limit in zip(numeric_fields, limits, strict=True)):
+        raise ValueError(f"workspace package version {version!r} exceeds MSI limits")
+    if prerelease is None:
+        return f"{major}.{minor}.{patch}"
+    prerelease_parts = prerelease.split(".")
+    if not prerelease_parts[-1].isdigit():
+        raise ValueError(
+            "prerelease versions must end in a numeric identifier for Windows MSI"
+        )
+    build = int(prerelease_parts[-1])
+    if build > 65_535:
+        raise ValueError(f"workspace package version {version!r} exceeds MSI limits")
+    return f"{major}.{minor}.{patch}.{build}"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate Pandora release identity")
     parser.add_argument("tag", nargs="?")
@@ -47,9 +73,9 @@ def main() -> int:
         ).open(encoding="utf-8") as tauri_config_file:
             tauri_config = json.load(tauri_config_file)
             tauri_version_source = tauri_config["version"]
-            windows_upgrade_code = tauri_config["bundle"]["windows"]["wix"][
-                "upgradeCode"
-            ]
+            windows_wix = tauri_config["bundle"]["windows"]["wix"]
+            windows_msi_bundle_version = windows_wix["version"]
+            windows_upgrade_code = windows_wix["upgradeCode"]
         if not isinstance(version, str) or not version:
             raise ValueError("workspace package version is invalid")
         if npm_version != version:
@@ -79,6 +105,13 @@ def main() -> int:
             raise ValueError(
                 "Tauri version must resolve from '../package.json' so desktop "
                 "bundle metadata cannot drift"
+            )
+        expected_windows_msi_version = windows_msi_version(version)
+        if windows_msi_bundle_version != expected_windows_msi_version:
+            raise ValueError(
+                "desktop Windows MSI version "
+                f"{windows_msi_bundle_version!r} does not match derived "
+                f"release version {expected_windows_msi_version!r}"
             )
         if windows_upgrade_code != DESKTOP_WINDOWS_UPGRADE_CODE:
             raise ValueError(

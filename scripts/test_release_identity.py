@@ -35,6 +35,7 @@ class ReleaseIdentityTests(unittest.TestCase):
         desktop_lock_version: str | None = None,
         desktop_cargo_version: str | None = None,
         tauri_version_source: str = "../package.json",
+        windows_msi_version: str = "2.0.0.1",
         windows_upgrade_code: str = "43f9019a-cb48-59a1-b463-5508bd89d386",
     ) -> subprocess.CompletedProcess[str]:
         root = make_temp_root()
@@ -78,7 +79,12 @@ class ReleaseIdentityTests(unittest.TestCase):
                 {
                     "version": tauri_version_source,
                     "bundle": {
-                        "windows": {"wix": {"upgradeCode": windows_upgrade_code}}
+                        "windows": {
+                            "wix": {
+                                "version": windows_msi_version,
+                                "upgradeCode": windows_upgrade_code,
+                            }
+                        }
                     },
                 }
             ),
@@ -108,6 +114,26 @@ class ReleaseIdentityTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_stable_release_uses_three_field_msi_version(self) -> None:
+        result = self.run_validator(
+            "2.0.0",
+            "2.0.0",
+            "v2.0.0",
+            windows_msi_version="2.0.0",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_prerelease_requires_numeric_msi_build_identity(self) -> None:
+        result = self.run_validator(
+            "2.0.0-beta",
+            "2.0.0-beta",
+            "v2.0.0-beta",
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("must end in a numeric identifier", result.stdout)
+
     def test_rejects_npm_version_drift(self) -> None:
         result = self.run_validator(
             "2.0.0-beta.1", "2.0.0-beta.0", "v2.0.0-beta.1"
@@ -129,6 +155,9 @@ class ReleaseIdentityTests(unittest.TestCase):
             },
             "Tauri version must resolve": {
                 "tauri_version_source": "2.0.0-beta.1"
+            },
+            "desktop Windows MSI version": {
+                "windows_msi_version": "2.0.0.2"
             },
             "desktop Windows MSI upgrade code changed": {
                 "windows_upgrade_code": "00000000-0000-0000-0000-000000000000"

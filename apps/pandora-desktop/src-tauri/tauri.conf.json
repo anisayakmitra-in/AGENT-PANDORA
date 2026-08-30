@@ -39,6 +39,7 @@
     ],
     "windows": {
       "wix": {
+        "version": "2.0.0.7",
         "upgradeCode": "43f9019a-cb48-59a1-b463-5508bd89d386"
       }
     }

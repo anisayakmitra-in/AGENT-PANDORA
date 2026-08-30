@@ -36,6 +36,11 @@ to match the exact release tag before any package is built. The Windows MSI
 upgrade code is pinned so later releases update the same installed product
 instead of creating a duplicate application.
 
+WiX receives the numeric MSI form of the same release identity. For example,
+Pandora `2.0.0-beta.7` is packaged as MSI version `2.0.0.7` because MSI does not
+accept named prerelease identifiers. The release identity gate derives and
+verifies this mapping.
+
 The tagged release workflow fails closed for a stable version unless the
 Windows certificate, Developer ID Application certificate, Apple notarization
 credentials, signing identities, and explicit stable-release approval are all
