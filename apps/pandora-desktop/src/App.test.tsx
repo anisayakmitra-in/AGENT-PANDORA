@@ -294,6 +294,9 @@ describe("Pandora desktop run state", () => {
     expect(pandoraCss).toContain("@media (prefers-reduced-motion: reduce)");
     expect(pandoraCss).toContain("@media (prefers-contrast: more)");
     expect(pandoraCss).toContain("@media (forced-colors: active)");
+    expect(pandoraCss).toContain("@media (prefers-reduced-transparency: reduce)");
+    expect(pandoraCss).toContain(':root[data-platform="macos"] .sidebar');
+    expect(pandoraCss).toContain(':root[data-platform="macos"] .main-shell');
     expect(pandoraCss).toContain(".skip-link:focus");
     expect(pandoraCss).not.toMatch(/font-size:\s*[6-9]px/);
   });

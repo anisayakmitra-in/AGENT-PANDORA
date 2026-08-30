@@ -347,6 +347,33 @@ kbd {
 .top-search:hover { border-color: var(--line-strong); color: var(--text-secondary); }
 .top-search span { font-size: .8125rem; }
 
+/* AppKit supplies the macOS material; CSS only reveals it through shell chrome.
+   Linux and Windows retain the opaque base surfaces above. */
+:root[data-platform="macos"] body { background: transparent; }
+:root[data-platform="macos"] .app-shell { background: transparent; }
+:root[data-platform="macos"] .main-shell {
+  background: color-mix(in srgb, var(--canvas) 96%, transparent);
+}
+:root[data-platform="macos"] .sidebar {
+  background: color-mix(in srgb, var(--canvas-raised) 72%, transparent);
+  -webkit-backdrop-filter: saturate(135%) blur(24px);
+  backdrop-filter: saturate(135%) blur(24px);
+}
+:root[data-platform="macos"] .top-bar {
+  background: color-mix(in srgb, var(--canvas) 68%, transparent);
+  -webkit-backdrop-filter: saturate(140%) blur(22px);
+  backdrop-filter: saturate(140%) blur(22px);
+}
+:root[data-platform="macos"] .brand-lockup {
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 8px;
+  padding-right: 12px;
+  padding-left: 78px;
+}
+:root[data-platform="macos"] .brand-mark { width: 34px; height: 34px; }
+:root[data-platform="macos"] .brand-lockup > div span { display: none; }
+
+
 .icon-button {
   display: inline-grid;
   width: 32px;
@@ -1747,7 +1774,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--signal); box-sha
     --gold-light: CanvasText;
     --red: CanvasText;
   }
-  .app-shell { background: Canvas; }
+  .app-shell, .sidebar, .main-shell, .top-bar { background: Canvas; backdrop-filter: none; }
   button:disabled { color: GrayText; opacity: 1; }
   .nav-item.is-active, [role="tab"][aria-selected="true"], [aria-pressed="true"], .thread-item[aria-current="true"] { outline: 2px solid Highlight; outline-offset: -2px; }
   .status-pulse, .event-dot, .run-state-dot, .session-dot, .provider-dot { border: 1px solid CanvasText; background: CanvasText; }
@@ -1757,4 +1784,11 @@ input:focus, textarea:focus, select:focus { border-color: var(--signal); box-sha
 @media (prefers-reduced-transparency: reduce) {
   .top-bar { background: var(--canvas); backdrop-filter: none; }
   .palette-backdrop { backdrop-filter: none; }
+  :root[data-platform="macos"] body,
+  :root[data-platform="macos"] .app-shell,
+  :root[data-platform="macos"] .main-shell { background: var(--canvas); }
+  :root[data-platform="macos"] .sidebar { background: var(--canvas-raised); }
+  :root[data-platform="macos"] .top-bar { background: var(--canvas); }
+  :root[data-platform="macos"] .sidebar,
+  :root[data-platform="macos"] .top-bar { -webkit-backdrop-filter: none; backdrop-filter: none; }
 }

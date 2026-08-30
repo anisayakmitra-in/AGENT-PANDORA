@@ -12,8 +12,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:dev": "npm run stage:sidecar && tauri dev",
+    "tauri:build": "node script/stage-sidecar.mjs --release && tauri build",
+    "stage:sidecar": "node script/stage-sidecar.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",

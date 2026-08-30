@@ -42,16 +42,29 @@ Open Settings to choose a locally stored light or dark theme. Select a live
 session from the sidebar or Connections to inspect its recorded event count;
 the desktop clears the previous run result when you change sessions.
 
-The packaged app resolves `pandora` from `PATH`. Set `PANDORA_CLI_PATH` when
-the CLI is installed elsewhere. The service still requires a valid Pandora
-configuration and workspace.
+Release bundles include the same-commit Pandora CLI as a native sidecar, so the
+app does not depend on a shell or an inherited `PATH`. For local development,
+`PANDORA_CLI_PATH` remains an explicit override and must point to an absolute,
+regular, non-symlink executable. Release builds fail closed when the bundled
+sidecar is unavailable. The service still requires a valid Pandora configuration
+and workspace.
 
-Build the desktop shell with:
+Build the desktop shell on Linux, macOS, or Windows with:
 
 ```text
 npm run tauri:dev
 npm run tauri:build
 ```
+
+On macOS, `script/build_and_run.sh` is the stable build/run entrypoint. It
+supports `--verify`, `--debug`, `--logs`, and `--telemetry`. The packaged app
+uses an overlay titlebar and a transparent native window so macOS 26 can supply
+system Liquid Glass; older macOS versions use the native vibrancy fallback.
+Linux remains opaque and leaves compositor effects to the user’s desktop.
+
+The transparent macOS webview requires Tauri’s `macOSPrivateApi`, so Pandora’s
+macOS package is intended for signed and notarized direct distribution rather
+than the Mac App Store.
 
 Prerelease packages may be unsigned. Stable release tags fail closed until the
 release environment provides Windows signing and Apple signing/notarization

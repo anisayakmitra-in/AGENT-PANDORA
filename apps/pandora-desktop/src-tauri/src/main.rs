@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use tauri::{Manager, State, WindowEvent};
@@ -52,7 +52,7 @@ fn start_local_service(state: State<'_, ServiceState>) -> Result<NativeServiceSt
         });
     }
 
-    let program = std::env::var_os("PANDORA_CLI_PATH").unwrap_or_else(|| "pandora".into());
+    let program = cli_program()?;
     let mut child = Command::new(program)
         .args(["service", "start"])
         .stdin(Stdio::null())
@@ -1067,12 +1067,50 @@ fn validate_regular_absolute_path(value: &str, label: &str) -> Result<std::path:
     Ok(path)
 }
 
-fn cli_program() -> std::ffi::OsString {
-    std::env::var_os("PANDORA_CLI_PATH").unwrap_or_else(|| "pandora".into())
+fn cli_binary_name() -> &'static str {
+    if cfg!(target_os = "windows") { "pandora.exe" } else { "pandora" }
+}
+
+fn validate_cli_program_path(path: &Path, label: &str) -> Result<PathBuf, String> {
+    if !path.is_absolute() { return Err(format!("{label} must be an absolute path")); }
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|_| format!("{label} does not exist or is not readable"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(format!("{label} must identify a regular file, not a symlink"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o111 == 0 {
+            return Err(format!("{label} is not executable"));
+        }
+    }
+    Ok(path.to_path_buf())
+}
+
+fn bundled_cli_program() -> Result<PathBuf, String> {
+    let executable = std::env::current_exe()
+        .map_err(|_| "could not resolve the Pandora desktop executable".to_owned())?;
+    let directory = executable.parent()
+        .ok_or_else(|| "Pandora desktop executable has no parent directory".to_owned())?;
+    Ok(directory.join(cli_binary_name()))
+}
+
+fn cli_program() -> Result<std::ffi::OsString, String> {
+    if let Some(override_path) = std::env::var_os("PANDORA_CLI_PATH") {
+        let path = PathBuf::from(override_path);
+        return validate_cli_program_path(&path, "PANDORA_CLI_PATH").map(PathBuf::into_os_string);
+    }
+    let bundled = bundled_cli_program()?;
+    match validate_cli_program_path(&bundled, "bundled Pandora CLI") {
+        Ok(path) => Ok(path.into_os_string()),
+        Err(_) if cfg!(debug_assertions) => Ok("pandora".into()),
+        Err(error) => Err(error),
+    }
 }
 
 fn run_cli(args: &[String], action: &str) -> Result<(), String> {
-    let output = Command::new(cli_program())
+    let output = Command::new(cli_program()?)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -1083,7 +1121,7 @@ fn run_cli(args: &[String], action: &str) -> Result<(), String> {
 }
 
 fn run_cli_json(args: &[String], action: &str) -> Result<Value, String> {
-    let output = Command::new(cli_program())
+    let output = Command::new(cli_program()?)
         .args(args)
         .env_remove("PANDORA_REGISTRY_TOKEN")
         .env_remove("PANDORA_DESKTOP_REGISTRY_TOKEN")
@@ -1103,7 +1141,7 @@ fn run_cli_json_with_secret_environment(
     secret: &mut String,
     action: &str,
 ) -> Result<Value, String> {
-    let output = Command::new(cli_program())
+    let output = Command::new(cli_program()?)
         .args(args)
         .env_remove("PANDORA_REGISTRY_TOKEN")
         .env_remove("PANDORA_DESKTOP_REGISTRY_TOKEN")
@@ -1141,7 +1179,7 @@ fn package_count_message(data: &Value) -> String {
 }
 
 fn run_cli_with_secret(args: &[String], secret: &mut String, action: &str) -> Result<(), String> {
-    let child = Command::new(cli_program())
+    let child = Command::new(cli_program()?)
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1610,5 +1648,36 @@ mod configuration_tests {
         assert!(validate_github_commit("main").is_err());
         assert!(validate_github_repository_path("packages/gene.json", "manifest").is_ok());
         assert!(validate_github_repository_path("../gene.json", "manifest").is_err());
+    }
+}
+
+
+#[cfg(test)]
+mod desktop_packaging_tests {
+    use super::{cli_binary_name, validate_cli_program_path};
+    use serde_json::Value;
+    use std::path::Path;
+
+    #[test]
+    fn cli_override_requires_an_absolute_regular_file() {
+        assert!(validate_cli_program_path(Path::new("pandora"), "CLI override").is_err());
+    }
+
+    #[test]
+    fn bundle_configuration_declares_the_pandora_sidecar() {
+        let config: Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(config["bundle"]["externalBin"][0], "binaries/pandora");
+        assert_eq!(cli_binary_name(), if cfg!(windows) { "pandora.exe" } else { "pandora" });
+    }
+
+    #[test]
+    fn macos_configuration_keeps_native_window_controls_and_transparency() {
+        let config: Value = serde_json::from_str(include_str!("../tauri.macos.conf.json")).unwrap();
+        assert_eq!(config["app"]["macOSPrivateApi"], true);
+        let window = &config["app"]["windows"][0];
+        assert_eq!(window["transparent"], true);
+        assert_eq!(window["titleBarStyle"], "Overlay");
+        assert_eq!(window["hiddenTitle"], true);
+        assert_eq!(window["decorations"], true);
     }
 }

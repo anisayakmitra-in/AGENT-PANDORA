@@ -223,15 +223,19 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux-x64
+            target: x86_64-unknown-linux-gnu
             artifact: linux-x64
-          - os: macos-15-intel
+          - os: macos-26-intel
             platform: macos-x64
+            target: x86_64-apple-darwin
             artifact: macos-x64
-          - os: macos-14
+          - os: macos-26
             platform: macos-arm64
+            target: aarch64-apple-darwin
             artifact: macos-arm64
           - os: windows-latest
             platform: windows-x64
+            target: x86_64-pc-windows-msvc
             artifact: windows-x64
     runs-on: ${{ matrix.os }}
     env:
@@ -243,6 +247,7 @@ jobs:
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      PANDORA_SIDECAR_TARGET: ${{ matrix.target }}
     permissions:
       contents: read
     steps:
@@ -317,16 +322,19 @@ jobs:
           while IFS= read -r -d '' file; do
             name="$(basename "$file")"
             cp "$file" "dist/desktop-${{ matrix.artifact }}-${name}"
-          done < <(find apps/pandora-desktop/src-tauri/target/release/bundle -type f -print0)
+          done < <(find apps/pandora-desktop/src-tauri/target/release/bundle -type f \
+            \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' \) -print0)
 
       - name: Stage desktop artifacts (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Get-ChildItem -Path apps/pandora-desktop/src-tauri/target/release/bundle -File -Recurse | ForEach-Object {
-            Copy-Item $_.FullName (Join-Path dist ("desktop-${{ matrix.artifact }}-" + $_.Name))
-          }
+          Get-ChildItem -Path apps/pandora-desktop/src-tauri/target/release/bundle -File -Recurse |
+            Where-Object { $_.Extension -in @(".exe", ".msi") } |
+            ForEach-Object {
+              Copy-Item $_.FullName (Join-Path dist ("desktop-${{ matrix.artifact }}-" + $_.Name))
+            }
 
       - name: Upload desktop artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

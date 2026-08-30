@@ -1169,7 +1169,7 @@ function Sidebar({ activeView, onSelect, runtimeStatus, sessions, selectedSessio
   const threads = sessions.map((session) => ({ title: session.session_id, meta: session.workspace_id, sessionId: session.session_id, active: selectedSessionId === session.session_id }));
   return (
     <aside className="sidebar" aria-label="Pandora sidebar">
-      <div className="brand-lockup">
+      <div className="brand-lockup" data-tauri-drag-region>
         <button className="brand-mark" type="button" aria-label="Open Command" onClick={() => onSelect("command")}><span>P</span></button>
         <div><strong>Pandora</strong><span>local control plane</span></div>
         <span className="brand-edition">β7</span>
@@ -1203,7 +1203,7 @@ function TopBar({ activeView, runtimeStatus, onOpenPalette }: { activeView: View
   const label = viewLabel(activeView);
   const section = navigation.find((group) => group.items.some((item) => item.id === activeView))?.label ?? "Workspace";
   const tone = runtimeStatus === "connected" ? "green" : runtimeStatus === "offline" ? "amber" : "blue";
-  return <header className="top-bar"><div className="breadcrumb"><span className="breadcrumb-muted">{section}</span><span className="breadcrumb-rule" /><strong>{label}</strong></div><div className="top-actions"><button className="top-search" type="button" aria-label="Search" onClick={onOpenPalette}><Icon name="search" size={14} /><span>Quick open</span><kbd>Ctrl K</kbd></button><Chip tone={tone} icon="lock">{runtimeStatusLabel(runtimeStatus)}</Chip></div></header>;
+  return <header className="top-bar" data-tauri-drag-region><div className="breadcrumb"><span className="breadcrumb-muted">{section}</span><span className="breadcrumb-rule" /><strong>{label}</strong></div><div className="top-actions"><button className="top-search" type="button" aria-label="Search" onClick={onOpenPalette}><Icon name="search" size={14} /><span>Quick open</span><kbd>Ctrl K</kbd></button><Chip tone={tone} icon="lock">{runtimeStatusLabel(runtimeStatus)}</Chip></div></header>;
 }
 
 function runtimeStatusLabel(status: RuntimeStatus): string {
