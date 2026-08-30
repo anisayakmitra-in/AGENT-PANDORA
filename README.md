@@ -166,4 +166,4 @@ a development artifact until its release gates complete.
 
 ## License
 
-Pandora Agent is released under the [MIT License](LICENSE).
+Pandora Agent is released under the [Apache License 2.0](LICENSE).

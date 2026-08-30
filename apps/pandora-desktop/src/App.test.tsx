@@ -1422,6 +1422,7 @@ describe("Pandora desktop run state", () => {
     expect(await screen.findByText("manifest ready")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy JSON" })).toBeEnabled();
     expect(screen.getByLabelText("Package manifest JSON")).toHaveTextContent('"kind": "domain_harness"');
+    expect(screen.getByLabelText("Package manifest JSON")).toHaveTextContent('"license": "Apache-2.0"');
     expect(screen.getByLabelText("Package manifest JSON")).toHaveTextContent('"hints": [');
     expect(screen.getByText(/never signs, admits, enables, publishes, stores keys/i)).toBeInTheDocument();
     expect(runtime.admitLocalPackage).not.toHaveBeenCalled();

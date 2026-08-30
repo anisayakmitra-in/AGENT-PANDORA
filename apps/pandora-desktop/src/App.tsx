@@ -1890,7 +1890,7 @@ function PackageAuthoring() {
   const [publisher, setPublisher] = useState("local");
   const [contentHash, setContentHash] = useState("");
   const [compatibility, setCompatibility] = useState("pandora>=2.0.0");
-  const [license, setLicense] = useState("MIT");
+  const [license, setLicense] = useState("Apache-2.0");
   const [dependencies, setDependencies] = useState("");
   const [routeHints, setRouteHints] = useState("");
   const [allowedDomains, setAllowedDomains] = useState("");
@@ -1936,7 +1936,7 @@ function PackageAuthoring() {
       content_hash: cleanHash || "sha256:" + "0".repeat(64),
       dependencies: dependencyRecords,
       compatibility: { runtime: cleanCompatibility || "pandora>=2.0.0" },
-      license: cleanLicense || "MIT",
+      license: cleanLicense || "Apache-2.0",
       trust: { level: "unverified", signature: null, public_key: null },
     };
     if (kind === "domain_harness" && hints.length) manifest.domain_routing = { hints };

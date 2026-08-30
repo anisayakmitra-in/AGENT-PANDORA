@@ -2,7 +2,7 @@
   "name": "pandora-agent",
   "version": "2.0.0-beta.7",
   "description": "Verified native launcher for the Pandora Agent CLI",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": "github:anisayakmitra-in/PANDORA-AGENT",
   "homepage": "https://github.com/anisayakmitra-in/PANDORA-AGENT",
   "bugs": "https://github.com/anisayakmitra-in/PANDORA-AGENT/issues",

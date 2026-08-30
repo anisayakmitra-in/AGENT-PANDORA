@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- Relicensed Pandora-owned material under the Apache License 2.0. Third-party
+  dependency and example-package licenses remain governed by their respective
+  owners and package manifests.
 - Added bounded Auto Route hints for admitted Domain Harnesses. Shadow Council
   selects the most specific active route, rejects equal matches, and preserves
   explicit operator selection. Route metadata grants no runtime capability.
