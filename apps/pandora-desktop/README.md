@@ -1,8 +1,9 @@
 # Pandora Desktop
 
-This is the first Pandora desktop control surface. It uses a thin Tauri shell
-around the React interface; Pandora’s Rust runtime and CLI remain the
-execution authority.
+Pandora Desktop is the local graphical control surface for the same runtime
+used by the `pandora` CLI. Its Tauri shell hosts the React interface;
+Pandora's Rust runtime, Parliament, and ReferenceMonitor retain execution
+authority.
 
 ## Run locally
 
@@ -57,10 +58,12 @@ npm run tauri:build
 ```
 
 On macOS, `script/build_and_run.sh` is the stable build/run entrypoint. It
-supports `--verify`, `--debug`, `--logs`, and `--telemetry`. The packaged app
-uses an overlay titlebar and a transparent native window so macOS 26 can supply
-system Liquid Glass; older macOS versions use the native vibrancy fallback.
-Linux remains opaque and leaves compositor effects to the user’s desktop.
+supports `--verify`, `--debug`, `--logs`, and `--telemetry`. On macOS 26,
+the packaged app installs AppKit's supported `NSGlassEffectView` Clear
+material with a 26-point radius. If Liquid Glass is unavailable, it attempts
+the semantic `UnderWindowBackground` vibrancy material. A material failure is
+cosmetic and does not stop Pandora. Linux remains opaque and leaves compositor
+effects to the user's desktop.
 
 The transparent macOS webview requires Tauri’s `macOSPrivateApi`, so Pandora’s
 macOS package is intended for signed and notarized direct distribution rather
@@ -87,6 +90,5 @@ than authority or execution tests.
 ## Interface direction
 
 The shell uses a three-zone layout: a compact navigation rail, an ambient
-Command Center, and a dense execution inspector. The layout is inspired by the
-supplied reference screenshots but uses Pandora’s own names, authority stages,
-colors, and abstract vessel mark.
+Command Center, and a dense execution inspector. Its names, authority stages,
+colors, and vessel mark belong to Pandora.

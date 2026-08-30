@@ -2,38 +2,58 @@
 
 ## CLI
 
-The current beta targets the native Pandora CLI on Windows, macOS, and Linux. Tagged
-release builds publish native artifacts for Windows x64, Linux x64, and macOS
-Intel and Apple Silicon. The release workflow verifies each artifact before
-publishing it.
+The current beta targets the native Pandora CLI on Windows, macOS, and Linux.
+Tagged release builds publish native artifacts for Windows x64, Linux x64, and
+macOS Intel and Apple Silicon. The release workflow verifies each artifact
+before publishing it.
 
 WSL uses the Linux CLI environment. It is not a separate packaged target.
 
 Source development requires Rust `1.97.1`. Release installation does not
 require Rust.
 
+## Desktop app
+
+The current main branch builds Pandora Desktop with Tauri 2 on Windows x64,
+Linux x64, macOS Intel, and macOS Apple Silicon. Each package contains a
+same-commit `pandora` CLI sidecar. The native launcher rejects a sidecar that
+is missing, a symlink, or not a regular executable; release builds do not fall
+back to `PATH`.
+
+macOS 26 uses AppKit's supported Liquid Glass Clear material. Older macOS
+versions fall back to semantic vibrancy. Linux keeps an opaque application
+surface and leaves background effects to the compositor. Windows keeps the
+opaque application surface.
+
+The transparent macOS webview requires Tauri's `macOSPrivateApi`. Pandora's
+macOS app is therefore a direct-distribution target, not a Mac App Store
+target. Stable distribution still requires Apple signing and notarization,
+Windows signing, and retained clean-machine release evidence.
+
 ## Installation verification
 
 Release assets include `checksums.txt`, a signed checksum manifest, an SPDX
-SBOM, and GitHub build provenance. The shell and PowerShell installers verify
-the artifact checksum before replacing the local binary. Signature verification
-can be required with `PANDORA_REQUIRE_SIGNATURE=1` and a configured Cosign
-identity.
+SBOM, and GitHub build provenance. The shell and PowerShell CLI installers
+verify the artifact checksum before replacing the local binary. Signature
+verification can be required with `PANDORA_REQUIRE_SIGNATURE=1` and a
+configured Cosign identity.
 
 Each tagged GitHub release includes a `pandora-agent-<version>.tgz` Node/Bun
 launcher. It downloads the matching native binary, verifies its checksum,
-caches it, and then forwards command-line arguments to the `pandora` executable.
-Its small release-target resolver is authored in TypeScript and compiled during
-release verification; it remains a downloader and argument forwarder, not a
-second runtime or authority boundary.
-The launcher is not published to the public npm registry, so `npm install -g
-pandora-agent` and equivalent Bun registry installation are not supported. The
-immutable first preview retains its original `o-pandora-cli` asset filename;
-new release assets use the current package identity.
+caches it, and forwards command-line arguments to the `pandora` executable.
+It is a downloader and argument forwarder, not a second runtime or authority
+boundary.
+
+The launcher is not published to the public npm registry, so
+`npm install -g pandora-agent` and equivalent Bun registry installation are
+not supported. The immutable first preview retains its original
+`o-pandora-cli` asset filename; new release assets use the current package
+identity.
 
 ## Product boundary
 
-The current beta is a CLI release line. No packaged desktop client is part of the current
-support claim. A successful workspace build is not evidence that a platform
-package exists; the corresponding release artifact and clean-machine checks
-must be present first.
+The `2.0.0-beta.7` tag publishes the CLI release line. Desktop packaging was
+added after that tag and is verified on the main branch. A desktop package
+becomes a supported release only when its tagged workflow publishes the
+artifact and records the platform, signing, install, update, and rollback
+evidence required by the release policy.

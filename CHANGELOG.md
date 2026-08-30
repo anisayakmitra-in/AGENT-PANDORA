@@ -1,6 +1,17 @@
 # Changelog
 
 ## Unreleased
+
+- Added a self-contained Tauri desktop app for Windows, macOS, and Linux.
+  Release builds stage the same-commit `pandora` CLI as a native sidecar;
+  release launchers fail closed when that sidecar is missing or unsafe.
+- Added native macOS 26 Liquid Glass using AppKit's supported Clear material,
+  with semantic vibrancy fallback on older macOS. Linux and Windows keep their
+  opaque application surfaces.
+- Moved desktop CI to macOS 26 and verified Tauri bundles on macOS, Ubuntu, and
+  Windows. The release matrix now covers macOS Intel and Apple Silicon
+  separately.
+
 - Relicensed Pandora-owned material under the Apache License 2.0. Third-party
   dependency and example-package licenses remain governed by their respective
   owners and package manifests.

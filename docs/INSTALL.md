@@ -1,13 +1,14 @@
 # Install Pandora
 
-This guide covers the supported CLI path. The current release line is a
-prerelease, so check the [release page](https://github.com/anisayakmitra-in/AGENT-PANDORA/releases)
-before installing.
+This guide covers the published CLI installer and the desktop source build.
+The current release line is a prerelease, so check the
+[release page](https://github.com/anisayakmitra-in/AGENT-PANDORA/releases)
+before installing an artifact.
 
-## Published binary
+## Published CLI binary
 
-Use a tagged installer on a clean machine. The installer downloads the platform
-binary and verifies it against the release checksum manifest.
+Use a tagged installer on a clean machine. The installer downloads the
+platform binary and verifies it against the release checksum manifest.
 
 Unix:
 
@@ -23,11 +24,11 @@ irm https://raw.githubusercontent.com/anisayakmitra-in/AGENT-PANDORA/main/script
 & "$env:LOCALAPPDATA\Pandora\bin\pandora.exe" --version
 ```
 
-Pin a published tag with `PANDORA_VERSION`, for example `v2.0.0-beta.7`.
-Do not use a tag until its release page contains the binary for your platform
-and its checksum manifest.
+Pin a published tag with `PANDORA_VERSION`, for example
+`v2.0.0-beta.7`. Do not use a tag until its release page contains the binary
+for your platform and its checksum manifest.
 
-## Source build
+## CLI source build
 
 Install Rust `1.97.1`, clone the repository, and run:
 
@@ -36,13 +37,29 @@ cargo build --release -p pandora-cli --locked
 cargo run --release -p pandora-cli -- --version
 ```
 
-The source build is for development and verification. It is not evidence that
-a packaged desktop release exists.
+## Desktop source build
 
-## First run
+Pandora Desktop has no account or login. It starts the same local Pandora
+service used by the CLI and keeps service credentials in the native Tauri
+layer.
 
-Start interactive setup and keep provider credentials outside the configuration
-file:
+Install Node.js and the native Tauri prerequisites for your platform, then run:
+
+```sh
+cd apps/pandora-desktop
+npm ci
+npm run tauri:build
+```
+
+The build stages a same-commit CLI sidecar before packaging. On macOS, use
+`./script/build_and_run.sh --verify` for the project build, checks, and app
+bundle launch. See [Platform support](PLATFORMS.md) for macOS direct
+distribution and current signing limits.
+
+## First CLI run
+
+Start interactive setup and keep provider credentials outside the
+configuration file:
 
 ```text
 pandora setup --interactive
@@ -50,17 +67,19 @@ pandora doctor --json
 ```
 
 Provider endpoints and credential variable names may be stored; credential
-values should remain in the environment or an external secret manager.
+values should remain in the encrypted local vault, environment, or an external
+secret manager.
 
 ## npm and Bun
 
 The repository contains a TypeScript launcher package that resolves a verified
-native binary. Use it only after the package has been published for the tagged
-release. It does not replace the native runtime or create a second permission
-boundary.
+native CLI binary. Use it only after the package has been published for the
+tagged release. It does not replace the Rust runtime or create a second
+permission boundary.
 
 ## Support status
 
-The supported product target is the native CLI on Windows, macOS, and Linux.
-The Tauri desktop control surface is source-buildable but is not a supported
-packaged release until the release page and cross-platform gates say otherwise.
+The `2.0.0-beta.7` installers support the native CLI on Windows, macOS, and
+Linux. The main branch also builds desktop packages for those platforms.
+Desktop support remains prerelease until a tagged release publishes the
+packages and retains the required signing and clean-machine evidence.

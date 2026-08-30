@@ -1,12 +1,16 @@
-# Pandora Agent
+# Pandora
 
-Pandora is a governed, CLI-first agent runtime built around:
+Pandora is a local-first agent platform with two interfaces: a Tauri desktop
+app and the `pandora` CLI. Both use the same Rust runtime, authenticated
+loopback service, and governed effect path:
 
 ```text
-Parliament → Shadow Council → Harness → Gene → governed execution
+ExecutionController → Parliament → ReferenceMonitor → executor → receipt
 ```
 
-The `ReferenceMonitor` is the sole authority that can issue effect permits. Genes request work; effect executors perform it only with a valid, scoped, one-shot permit.
+Shadow Council selects an approved Harness, Gene, provider, and model
+composition. It cannot grant capabilities, issue effect permits, or bypass
+approvals. The `ReferenceMonitor` alone issues scoped, one-shot effect permits.
 
 Every effect request carries an immutable `ExecutionProfile` assembled before Parliament evaluates it. The profile binds the runtime, platform, policy version, workspace identity digest, containment snapshot, executor, and selected components. Its digest is part of the versioned operation-request digest, so a permit or receipt cannot be reused after the execution environment changes. The profile is evidence only; it cannot grant authority.
 
@@ -17,14 +21,17 @@ observation surface.
 
 ## Status
 
-The active prerelease is `2.0.0-beta.7`. The native CLI is the published
-product boundary; the repository also contains a tested Tauri desktop that
-connects only to Pandora's authenticated loopback service. Existing legacy
-preview tags remain immutable for compatibility. Release tags use plain
-SemVer; prereleases use `alpha`, `beta`, and `rc` suffixes. Older codename tags
-are historical references only. See [RELEASES.md](RELEASES.md),
-[CHANGELOG.md](CHANGELOG.md), and [platform support](docs/PLATFORMS.md) for the
-shipped scope and release gates.
+The active prerelease is `2.0.0-beta.7`. The repository now builds two local
+product surfaces: the Rust CLI and a Tauri desktop app. Desktop release builds
+bundle the same-commit CLI as a native sidecar and connect only to Pandora's
+authenticated loopback service. The webview cannot issue permits or execute
+tools by itself.
+
+Existing legacy preview tags remain immutable for compatibility. Release tags
+use plain SemVer; prereleases use `alpha`, `beta`, and `rc` suffixes. Older
+codename tags are historical references only. See
+[RELEASES.md](RELEASES.md), [CHANGELOG.md](CHANGELOG.md), and
+[platform support](docs/PLATFORMS.md) for the shipped scope and release gates.
 The source tree also contains the production-readiness controls for the next
 release: scoped identities, cryptographic device trust, encrypted secrets,
 recovery archives, local crash records, and stable-release signing gates. See
@@ -45,6 +52,8 @@ For project context, contribution rules, and security reporting, see
 [SECURITY.md](SECURITY.md).
 
 ## Install and start
+
+### CLI
 
 The bootstrap installers use the current published prerelease by default. They
 verify the downloaded native binary against the release checksum manifest
@@ -76,6 +85,24 @@ verification:
 ```text
 pandora update --release v2.0.0-beta.7
 ```
+
+### Desktop app
+
+Pandora Desktop is local and has no account or login screen. Its package
+contains the same-commit `pandora` CLI sidecar, so launching the app does not
+depend on an inherited shell or `PATH`.
+
+Build a local package from source:
+
+```sh
+cd apps/pandora-desktop
+npm ci
+npm run tauri:build
+```
+
+On macOS, `./script/build_and_run.sh --verify` builds the app bundle and runs
+the project checks. See [Pandora Desktop](apps/pandora-desktop/README.md) for
+platform behavior and direct-distribution limits.
 
 ## Build
 
@@ -151,19 +178,18 @@ It prints one JSON readiness record with the bound endpoint and protected token
 file path, then remains in the foreground until Ctrl-C. It never prints the
 token or accepts non-loopback connections. See [CLI reference](docs/CLI.md).
 
-The published product target is the native CLI on Windows, macOS, and Linux.
-The desktop remains a source-build artifact until native signing, packaging,
-clean-machine, and release checks pass. Remote execution, mobile, and a public
-package marketplace remain outside the shipped boundary. The CLI can manage
-profiles for the runtime's governed local stdio MCP preview and execute
-import-free WebAssembly package Genes through an admitted Domain Harness. See
-[MCP.md](docs/MCP.md) and [WebAssembly package Genes](docs/WASM.md).
+The `2.0.0-beta.7` installers remain CLI-only because that tag predates the
+desktop packaging work. The current main branch builds the desktop on Ubuntu,
+Windows, and macOS 26 CI. A stable desktop support claim still requires signed
+and notarized packages, clean-machine install and update drills, and retained
+release evidence. Remote execution, mobile, and a public package marketplace
+remain outside the shipped boundary.
 
-For a clean-machine installation, release verification, and cross-platform
-notes, see [Installation](docs/INSTALL.md). Published release artifacts are
-the only supported installation source for end users; a local desktop build is
-a development artifact until its release gates complete.
+The CLI and desktop use the same governed local stdio MCP preview and admitted
+WebAssembly package Genes. See [MCP.md](docs/MCP.md),
+[WebAssembly package Genes](docs/WASM.md), and
+[Installation](docs/INSTALL.md).
 
 ## License
 
-Pandora Agent is released under the [Apache License 2.0](LICENSE).
+Pandora is released under the [Apache License 2.0](LICENSE).
