@@ -18,7 +18,7 @@ test("Command Center has no automated accessibility violations", async ({ page }
 
   await expect(page.getByRole("main")).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Pandora navigation" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Search" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Search", exact: true })).toBeVisible();
 
   const results = await new AxeBuilder({ page }).analyze();
   expect(results.violations).toEqual([]);
@@ -34,6 +34,32 @@ test("grouped Settings has no automated accessibility violations", async ({ page
 
   const results = await new AxeBuilder({ page }).analyze();
   expect(results.violations).toEqual([]);
+});
+
+test("Appearance preview persists and remains accessible at 200% zoom equivalent", async ({ page }) => {
+  await page.setViewportSize({ width: 1080, height: 720 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Open settings" }).click();
+  await page.getByRole("button", { name: /Appearance Theme and visual behavior/ }).click();
+  await page.setViewportSize({ width: 540, height: 360 });
+  await page.getByRole("group", { name: "Theme mode" }).getByRole("button", { name: /Light/ }).click();
+  await page.getByRole("group", { name: "Theme accent" }).getByRole("button", { name: "Violet" }).click();
+  await page.getByRole("group", { name: "Theme preset" }).getByRole("button", { name: /Verdant/ }).click();
+
+  await expect(page.getByRole("heading", { name: "Representative controls and states" })).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(page.locator("html")).toHaveAttribute("data-accent", "violet");
+  await expect(page.locator("html")).toHaveAttribute("data-theme-preset", "verdant");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+
+  const dimensions = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme-preset", "verdant");
 });
 
 for (const viewport of viewports) {

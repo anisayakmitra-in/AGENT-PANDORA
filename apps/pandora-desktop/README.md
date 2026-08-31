@@ -44,8 +44,12 @@ The desktop can exactly cancel queued runs and resume safely reconciled
 interruptions; it cannot claim work, steal leases, complete roles, mint permits,
 or bypass the existing Harness and ReferenceMonitor path.
 
-Open Settings to choose a locally stored light or dark theme. Select a live
-session from the sidebar or Connections to inspect its recorded event count;
+Open Settings to choose system, light, or dark mode, one of three accessible
+accents, and a validated built-in token preset. The live Appearance gallery and
+the non-default Verdant reference theme use presentation tokens only; invalid
+or incomplete local data falls back to the safe Foundry preset. See
+`docs/DESKTOP_THEMES.md` for the contributor contract. Select a live session
+from the sidebar or Connections to inspect its recorded event count;
 the desktop clears the previous run result when you change sessions.
 
 Release bundles include the same-commit Pandora CLI as a native sidecar, so the
