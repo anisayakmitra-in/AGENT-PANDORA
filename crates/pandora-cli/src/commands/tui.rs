@@ -330,6 +330,7 @@ impl App {
                     "/domain-starter show the safe Domain Harness scaffold workflow",
                     "/meta-starter show the safe Meta Harness scaffold workflow",
                     "/gene-pack  show the declarative Gene pack evaluation workflow",
+                    "/canary-loop show the governed scheduled-canary workflow",
                     "/approve    approve and resume the pending task",
                     "/deny       deny the pending task",
                     "/coding     inspect the Coding Domain Harness",
@@ -379,6 +380,14 @@ impl App {
                 );
                 self.push_message(
                     "gene-pack> declared effects still require Parliament, approval, and a one-shot permit",
+                );
+            }
+            "/canary-loop" => {
+                self.push_message(
+                    "canary> register a reviewed suite, stage the approved proposal, then create an evaluation schedule with --proposal",
+                );
+                self.push_message(
+                    "canary> the one-shot run records report evidence and stops before explicit evolution activate",
                 );
             }
             value if value.starts_with("/theme ") => {
@@ -886,6 +895,9 @@ mod tests {
         assert!(app.messages.iter().any(|message| {
             message == "/gene-pack  show the declarative Gene pack evaluation workflow"
         }));
+        assert!(app.messages.iter().any(|message| {
+            message == "/canary-loop show the governed scheduled-canary workflow"
+        }));
     }
 
     #[test]
@@ -930,6 +942,23 @@ mod tests {
         assert!(app.messages.iter().any(|message| {
             message
                 == "gene-pack> declared effects still require Parliament, approval, and a one-shot permit"
+        }));
+        assert_eq!(app.activity, TuiActivity::Idle);
+    }
+
+    #[test]
+    fn canary_loop_command_is_guidance_only() {
+        let mut app = app();
+        app.input = "/canary-loop".chars().collect();
+        app.submit();
+
+        assert!(app.messages.iter().any(|message| {
+            message
+                == "canary> register a reviewed suite, stage the approved proposal, then create an evaluation schedule with --proposal"
+        }));
+        assert!(app.messages.iter().any(|message| {
+            message
+                == "canary> the one-shot run records report evidence and stops before explicit evolution activate"
         }));
         assert_eq!(app.activity, TuiActivity::Idle);
     }

@@ -43,6 +43,11 @@ evaluation primitives, scoped memory synthesis, and the desktop foundation are
 also present. For the audited shipped/open split, see
 [the roadmap](docs/ROADMAP.md).
 
+Registered evaluation suites can run on durable worker-owned schedules.
+Binding a staged proposal creates a one-shot canary that records the exact
+report digest and case counts, then pauses at canary evidence; it never
+activates the candidate. See [evaluation](docs/EVALUATION.md).
+
 The npm package also exports a typed TypeScript client for the stable JSON CLI
 contract. It forwards an argv array to the verified native binary and does not
 create a second runtime or permission path. See [TypeScript client](docs/TYPESCRIPT.md).

@@ -5,14 +5,15 @@ use super::{
 use crate::commands::run::{configured_service_runtime, evaluation_receipt_json};
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{
-    EvaluationEngine, EvaluationScheduleStore, EvaluationSuiteStore, EvaluationTarget,
-    EvaluationTargetKind, GoldenCase, GoldenSetReport, MAX_CLAIM_BATCH, MAX_EVALUATION_TASK_BYTES,
-    MAX_GOLDEN_CASES, RunStatus, TaskBackedCase,
+    CanaryPolicy, EvaluationEngine, EvaluationScheduleRunEvidence, EvaluationScheduleStore,
+    EvaluationSuiteStore, EvaluationTarget, EvaluationTargetKind, EvolutionEngine, GoldenCase,
+    GoldenSetReport, MAX_CLAIM_BATCH, MAX_EVALUATION_TASK_BYTES, MAX_GOLDEN_CASES,
+    MAX_SCHEDULE_RUN_HISTORY, ReplacementEngine, RunStatus, TaskBackedCase,
 };
 use pandora_types::{
-    Capability, EvaluationReceipt, EvaluationRequest, EvaluationStatus, ExecutionId, GeneId,
-    HarnessId, JobWorkerId, Operation, PolicyContext, RunLoopId, Session, SessionId, TaskIntent,
-    WorkspaceId, hash_artifact,
+    Capability, EvaluationReceipt, EvaluationRequest, EvaluationStatus, EvolutionPolicy,
+    EvolutionState, ExecutionId, GeneId, HarnessId, JobWorkerId, Operation, PolicyContext,
+    ProposalId, RunLoopId, Session, SessionId, TaskIntent, WorkspaceId, hash_artifact,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -227,12 +228,38 @@ fn suite_run(args: &[String]) -> Result<CommandResult, CliError> {
             ));
         }
     };
-    let (harnesses, wasm) = configured_service_runtime(&config)?;
     let requested_harness = parsed
         .value("harness")
         .map(|value| HarnessId::new(value.to_owned()))
         .transpose()
         .map_err(|_| CliError::usage("evaluation suite run requires a valid Harness ID"))?;
+    let report = run_task_backed_suite(&config, cases, requested_harness)?;
+    let data = report_value(&report);
+    if parsed.value("fail-on-failure").is_some() && report.failed() > 0 {
+        return Err(CliError::execution(
+            "task-backed suite evaluation failed",
+            data,
+        ));
+    }
+    Ok(success(
+        "evaluation suite run",
+        data,
+        format!(
+            "Ran evaluation suite {}: {}/{} passed (digest {})",
+            id,
+            report.passed(),
+            report.total(),
+            report.digest()
+        ),
+    ))
+}
+
+fn run_task_backed_suite(
+    config: &pandora_runtime::config::RuntimeConfig,
+    cases: Vec<TaskBackedCase>,
+    requested_harness: Option<HarnessId>,
+) -> Result<GoldenSetReport, CliError> {
+    let (harnesses, wasm) = configured_service_runtime(config)?;
     if let Some(harness_id) = requested_harness.as_ref()
         && harnesses.find(harness_id).is_none()
     {
@@ -241,7 +268,7 @@ fn suite_run(args: &[String]) -> Result<CommandResult, CliError> {
             json!({"harness": harness_id}),
         ));
     }
-    let store = session_store(&config)?;
+    let store = session_store(config)?;
     let workspace_id = WorkspaceId::new(LOCAL_WORKSPACE).expect("built-in workspace ID is valid");
     let session = create_session(&store, &workspace_id)?;
     let workspace = pandora_runtime::executors::WorkspaceRoot::new(config.workspace_dir())
@@ -271,35 +298,17 @@ fn suite_run(args: &[String]) -> Result<CommandResult, CliError> {
         controller: &controller,
         session: &session,
         store: &store,
-        config: &config,
+        config,
         harness: requested_harness,
     };
-    let report = EvaluationEngine::new()
+    EvaluationEngine::new()
         .evaluate_task_backed_set(cases, &mut adapter)
         .map_err(|error| {
             CliError::execution(
                 "task-backed suite evaluation failed",
                 json!({"error": format!("{error:?}")}),
             )
-        })?;
-    let data = report_value(&report);
-    if parsed.value("fail-on-failure").is_some() && report.failed() > 0 {
-        return Err(CliError::execution(
-            "task-backed suite evaluation failed",
-            data,
-        ));
-    }
-    Ok(success(
-        "evaluation suite run",
-        data,
-        format!(
-            "Ran evaluation suite {}: {}/{} passed (digest {})",
-            id,
-            report.passed(),
-            report.total(),
-            report.digest()
-        ),
-    ))
+        })
 }
 
 struct GovernedEvaluationAdapter<'a> {
@@ -613,7 +622,7 @@ fn regression_review(args: &[String]) -> Result<CommandResult, CliError> {
 fn schedule(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "evaluation schedule requires 'create', 'list', 'disable', 'claim', or 'run'",
+            "evaluation schedule requires 'create', 'list', 'disable', 'claim', 'run', or 'runs'",
         )
     })?;
     match subcommand.as_str() {
@@ -622,6 +631,7 @@ fn schedule(args: &[String]) -> Result<CommandResult, CliError> {
         "disable" => schedule_disable(&args[1..]),
         "claim" => schedule_claim(&args[1..]),
         "run" => schedule_run(&args[1..]),
+        "runs" => schedule_runs(&args[1..]),
         _ => Err(CliError::usage(format!(
             "unknown evaluation schedule command '{subcommand}'"
         ))),
@@ -638,6 +648,7 @@ fn schedule_create(args: &[String]) -> Result<CommandResult, CliError> {
             "id",
             "name",
             "suite",
+            "proposal",
             "interval-seconds",
         ],
     )?;
@@ -671,6 +682,8 @@ fn schedule_create(args: &[String]) -> Result<CommandResult, CliError> {
         "suite",
         "evaluation schedule create requires '--suite <id>'",
     )?;
+    let suite_catalog = suite_store(&config)?;
+    suite_catalog.inspect(suite).map_err(suite_error)?;
     let interval = parse_u64(
         required_option(
             &parsed,
@@ -679,18 +692,37 @@ fn schedule_create(args: &[String]) -> Result<CommandResult, CliError> {
         )?,
         "interval-seconds",
     )?;
-    let schedule = store
-        .create(
-            &id,
-            &principal,
-            &tenant,
-            &workspace,
-            name,
-            suite,
-            interval,
-            crate::commands::timestamp(),
-        )
-        .map_err(schedule_error)?;
+    let schedule = if let Some(value) = parsed.value("proposal") {
+        let proposal = ProposalId::new(value.to_owned())
+            .map_err(|_| CliError::usage("proposal ID is invalid"))?;
+        require_staged_proposal(&config, &proposal)?;
+        store
+            .create_canary(
+                &id,
+                &principal,
+                &tenant,
+                &workspace,
+                name,
+                suite,
+                &proposal,
+                interval,
+                crate::commands::timestamp(),
+            )
+            .map_err(schedule_error)?
+    } else {
+        store
+            .create(
+                &id,
+                &principal,
+                &tenant,
+                &workspace,
+                name,
+                suite,
+                interval,
+                crate::commands::timestamp(),
+            )
+            .map_err(schedule_error)?
+    };
     Ok(success(
         "evaluation schedule create",
         schedule_value(&schedule),
@@ -792,6 +824,7 @@ fn schedule_run(args: &[String]) -> Result<CommandResult, CliError> {
             "id",
             "worker",
             "input",
+            "harness",
             "fail-on-failure",
         ],
     )?;
@@ -827,9 +860,21 @@ fn schedule_run(args: &[String]) -> Result<CommandResult, CliError> {
                 }),
             )
         })?;
+    if let Some(proposal) = schedule.proposal_id() {
+        require_canary_runnable_proposal(&config, proposal)?;
+    }
     let suite_store = suite_store(&config)?;
+    let registered_suite = suite_store
+        .inspect(schedule.suite_id())
+        .map_err(suite_error)?;
     let bytes = if let Some(input) = parsed.value("input") {
-        read_bounded(Path::new(input))?
+        let candidate = read_bounded(Path::new(input))?;
+        if hash_artifact(&candidate) != registered_suite.digest() {
+            return Err(CliError::usage(
+                "scheduled input does not match the registered suite digest",
+            ));
+        }
+        candidate
     } else {
         suite_store.load(schedule.suite_id()).map_err(suite_error)?
     };
@@ -841,7 +886,12 @@ fn schedule_run(args: &[String]) -> Result<CommandResult, CliError> {
             schedule.suite_id()
         )));
     }
-    let cases = parse_cases(&bytes)?;
+    let suite_definition = parse_suite_definition(&bytes)?;
+    let requested_harness = parsed
+        .value("harness")
+        .map(|value| HarnessId::new(value.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("evaluation schedule run requires a valid Harness ID"))?;
     let mut runs = store
         .claim_due_for(
             &principal,
@@ -863,25 +913,93 @@ fn schedule_run(args: &[String]) -> Result<CommandResult, CliError> {
             }),
         )
     })?;
-    let report = EvaluationEngine::new()
-        .evaluate_golden_set(cases)
-        .map_err(|error| {
-            let _ = store.complete(
+    let report = match suite_definition {
+        ParsedSuite::Evidence(cases) => EvaluationEngine::new()
+            .evaluate_golden_set(cases)
+            .map_err(|error| CliError::usage(format!("invalid scheduled golden set: {error:?}"))),
+        ParsedSuite::Task(cases) => run_task_backed_suite(&config, cases, requested_harness),
+    }
+    .inspect_err(|_error| {
+        let _ = store.complete(
+            run.schedule_id(),
+            &principal,
+            &tenant,
+            &workspace,
+            run.scheduled_for(),
+            &worker,
+            false,
+            crate::commands::timestamp(),
+        );
+    })?;
+    let passed = report.failed() == 0;
+    let evidence = EvaluationScheduleRunEvidence::new(
+        report.digest(),
+        report.total() as u64,
+        report.passed() as u64,
+        report.failed() as u64,
+    )
+    .map_err(schedule_error)?;
+    let canary = if let Some(proposal_id) = run.proposal_id() {
+        let policy = CanaryPolicy::production();
+        let canary = policy
+            .evaluate(
+                proposal_id.clone(),
+                u32::try_from(report.failed()).map_err(|_| {
+                    CliError::internal("scheduled failure count overflowed", json!({}))
+                })?,
+                format!(
+                    "scheduled suite {} report {}",
+                    run.suite_id(),
+                    report.digest()
+                ),
+                run.scheduled_for(),
+            )
+            .map_err(|error| {
+                CliError::internal(
+                    "could not derive scheduled canary evidence",
+                    json!({"error": error.to_string()}),
+                )
+            })?;
+        let engine = open_evolution_engine(&config)?;
+        if let Err(error) = ReplacementEngine::new().record_canary(&engine, canary.clone()) {
+            let finished_at = crate::commands::timestamp();
+            let _ = store.complete_with_evidence(
                 run.schedule_id(),
                 &principal,
                 &tenant,
                 &workspace,
                 run.scheduled_for(),
                 &worker,
-                false,
-                crate::commands::timestamp(),
+                passed,
+                finished_at,
+                Some(&evidence),
             );
-            CliError::usage(format!("invalid scheduled golden set: {error:?}"))
-        })?;
-    let passed = report.failed() == 0;
+            return Err(CliError::execution(
+                "scheduled evaluation completed but canary evidence was not accepted",
+                json!({
+                    "proposal_id": proposal_id,
+                    "report": report_value(&report),
+                    "error": error.to_string(),
+                    "activation_performed": false,
+                }),
+            ));
+        }
+        Some(json!({
+            "proposal_id": proposal_id,
+            "state": if canary.passed() { "canary_passed" } else { "canary_failed" },
+            "passed": canary.passed(),
+            "failure_count": canary.failure_count(),
+            "policy_version": policy.version(),
+            "max_failure_count": policy.max_failure_count(),
+            "activation_performed": false,
+            "next_required": if canary.passed() { "explicit evolution activate" } else { "review or replace candidate" },
+        }))
+    } else {
+        None
+    };
     let finished_at = crate::commands::timestamp();
     store
-        .complete(
+        .complete_with_evidence(
             run.schedule_id(),
             &principal,
             &tenant,
@@ -890,6 +1008,7 @@ fn schedule_run(args: &[String]) -> Result<CommandResult, CliError> {
             &worker,
             passed,
             finished_at,
+            Some(&evidence),
         )
         .map_err(schedule_error)?;
     let mut completed_run = schedule_run_value(&run);
@@ -903,29 +1022,73 @@ fn schedule_run(args: &[String]) -> Result<CommandResult, CliError> {
             Value::from(finished_at.as_unix_seconds()),
         );
         object.insert("lease_until".to_owned(), Value::Null);
+        object.insert(
+            "evidence".to_owned(),
+            schedule_run_evidence_value(&evidence),
+        );
     }
     let data = json!({
         "run": completed_run,
         "report": report_value(&report),
         "completed": true,
         "passed": passed,
+        "canary": canary,
+        "activation_performed": false,
         "durability": "schedule-store",
     });
     if parsed.values.contains_key("fail-on-failure") && !passed {
-        return Err(CliError::execution(
-            "scheduled golden-set evaluation failed",
-            data,
-        ));
+        return Err(CliError::execution("scheduled evaluation failed", data));
     }
     Ok(success(
         "evaluation schedule run",
         data,
         format!(
-            "Scheduled golden set: {}/{} passed (digest {})",
+            "Scheduled evaluation: {}/{} passed (digest {})",
             report.passed(),
             report.total(),
             report.digest()
         ),
+    ))
+}
+
+fn schedule_runs(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "id", "limit"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evaluation schedule runs does not accept positional arguments",
+        ));
+    }
+    let config = schedule_config(&parsed)?;
+    let schedule_id = parsed
+        .value("id")
+        .map(|value| RunLoopId::new(value.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("schedule ID is invalid"))?;
+    let limit = parsed
+        .value("limit")
+        .map(|value| parse_u64(value, "limit"))
+        .transpose()?
+        .unwrap_or(64);
+    let limit = usize::try_from(limit).map_err(|_| CliError::usage("limit is too large"))?;
+    if limit > MAX_SCHEDULE_RUN_HISTORY {
+        return Err(CliError::usage(format!(
+            "limit cannot exceed {MAX_SCHEDULE_RUN_HISTORY}"
+        )));
+    }
+    let (principal, tenant, workspace) = session_scope();
+    let runs = schedule_store(&config)?
+        .list_runs(&principal, &tenant, &workspace, schedule_id.as_ref(), limit)
+        .map_err(schedule_error)?;
+    let count = runs.len();
+    Ok(success(
+        "evaluation schedule runs",
+        json!({
+            "runs": runs.iter().map(schedule_run_value).collect::<Vec<_>>(),
+            "count": count,
+            "schedule_id": schedule_id,
+            "durability": "schedule-store",
+        }),
+        format!("Listed {count} evaluation schedule run(s)"),
     ))
 }
 
@@ -949,6 +1112,68 @@ fn schedule_store(
 ) -> Result<EvaluationScheduleStore, CliError> {
     EvaluationScheduleStore::open(config.data_dir().join("evaluation-schedules.sqlite3"))
         .map_err(schedule_error)
+}
+
+fn open_evolution_engine(
+    config: &pandora_runtime::config::RuntimeConfig,
+) -> Result<EvolutionEngine, CliError> {
+    EvolutionEngine::open(
+        config.data_dir().join("evolution.sqlite3"),
+        EvolutionPolicy::production(1),
+    )
+    .map_err(|error| {
+        CliError::execution(
+            error.to_string(),
+            json!({"durability": "sqlite", "component": "evolution"}),
+        )
+    })
+}
+
+fn require_staged_proposal(
+    config: &pandora_runtime::config::RuntimeConfig,
+    proposal_id: &ProposalId,
+) -> Result<(), CliError> {
+    let record = open_evolution_engine(config)?
+        .inspect(proposal_id)
+        .map_err(|error| {
+            CliError::execution(error.to_string(), json!({"proposal_id": proposal_id}))
+        })?;
+    if record.state() != EvolutionState::Staged {
+        return Err(CliError::policy(
+            "a canary schedule requires a staged, evaluated, approved, and signed proposal",
+            json!({
+                "proposal_id": proposal_id,
+                "state": record.state().as_str(),
+                "activation_performed": false,
+            }),
+        ));
+    }
+    Ok(())
+}
+
+fn require_canary_runnable_proposal(
+    config: &pandora_runtime::config::RuntimeConfig,
+    proposal_id: &ProposalId,
+) -> Result<(), CliError> {
+    let record = open_evolution_engine(config)?
+        .inspect(proposal_id)
+        .map_err(|error| {
+            CliError::execution(error.to_string(), json!({"proposal_id": proposal_id}))
+        })?;
+    if !matches!(
+        record.state(),
+        EvolutionState::Staged | EvolutionState::CanaryPassed | EvolutionState::CanaryFailed
+    ) {
+        return Err(CliError::policy(
+            "proposal is not eligible for a scheduled canary run",
+            json!({
+                "proposal_id": proposal_id,
+                "state": record.state().as_str(),
+                "activation_performed": false,
+            }),
+        ));
+    }
+    Ok(())
 }
 
 fn schedule_id(parsed: &super::ParsedArgs) -> Result<RunLoopId, CliError> {
@@ -1014,11 +1239,20 @@ fn suite_error(error: pandora_runtime::EvaluationSuiteError) -> CliError {
 }
 
 fn schedule_value(schedule: &pandora_runtime::EvaluationSchedule) -> Value {
-    json!({"id": schedule.id(), "name": schedule.name(), "suite_id": schedule.suite_id(), "interval_seconds": schedule.interval_seconds(), "next_run_at": schedule.next_run_at(), "enabled": schedule.enabled(), "created_at": schedule.created_at(), "last_claimed_at": schedule.last_claimed_at(), "run_count": schedule.run_count(), "scope": {"principal_id": schedule.principal_id(), "tenant_id": schedule.tenant_id(), "workspace_id": schedule.workspace_id()}})
+    json!({"id": schedule.id(), "name": schedule.name(), "suite_id": schedule.suite_id(), "proposal_id": schedule.proposal_id(), "one_shot": schedule.one_shot(), "interval_seconds": schedule.interval_seconds(), "next_run_at": schedule.next_run_at(), "enabled": schedule.enabled(), "created_at": schedule.created_at(), "last_claimed_at": schedule.last_claimed_at(), "run_count": schedule.run_count(), "activation_performed": false, "scope": {"principal_id": schedule.principal_id(), "tenant_id": schedule.tenant_id(), "workspace_id": schedule.workspace_id()}})
 }
 
 fn schedule_run_value(run: &pandora_runtime::EvaluationScheduleRun) -> Value {
-    json!({"schedule_id": run.schedule_id(), "suite_id": run.suite_id(), "scheduled_for": run.scheduled_for(), "status": run.status().as_str(), "worker_id": run.worker_id(), "claimed_at": run.claimed_at(), "lease_until": run.lease_until(), "finished_at": run.finished_at()})
+    json!({"schedule_id": run.schedule_id(), "suite_id": run.suite_id(), "proposal_id": run.proposal_id(), "scheduled_for": run.scheduled_for(), "status": run.status().as_str(), "worker_id": run.worker_id(), "claimed_at": run.claimed_at(), "lease_until": run.lease_until(), "finished_at": run.finished_at(), "evidence": run.evidence().map(schedule_run_evidence_value), "activation_performed": false})
+}
+
+fn schedule_run_evidence_value(evidence: &EvaluationScheduleRunEvidence) -> Value {
+    json!({
+        "report_digest": evidence.report_digest(),
+        "total_cases": evidence.total_cases(),
+        "passed_cases": evidence.passed_cases(),
+        "failed_cases": evidence.failed_cases(),
+    })
 }
 
 fn schedule_error(error: pandora_runtime::EvaluationScheduleError) -> CliError {

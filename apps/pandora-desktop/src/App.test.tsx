@@ -1278,6 +1278,8 @@ describe("Pandora desktop run state", () => {
     expect(screen.getByText("parliament-a · policy v1")).toBeInTheDocument();
     expect(screen.getByText("catalog active")).toBeInTheDocument();
     expect(screen.getByText("Runtime authority").nextSibling).toHaveTextContent("Unchanged");
+    expect(screen.getByLabelText("Scheduled canary loop")).toHaveTextContent("one-shot");
+    expect(screen.getByLabelText("Scheduled canary loop")).toHaveTextContent("Activation remains a separate exact-confirmation action");
     fireEvent.click(screen.getByRole("button", { name: /Inspect candidate diff/ }));
     await waitFor(() => {
       expect(runtime.inspectEvolution).toHaveBeenCalledWith("proposal-a");

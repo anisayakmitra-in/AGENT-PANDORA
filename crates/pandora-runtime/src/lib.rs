@@ -100,8 +100,9 @@ pub use evaluation_engine::{
 };
 pub use evaluation_schedule::{
     EvaluationSchedule, EvaluationScheduleError, EvaluationScheduleRun,
-    EvaluationScheduleRunStatus, EvaluationScheduleStore, MAX_CLAIM_BATCH,
-    MAX_EVALUATION_SUITE_BYTES, MAX_SCHEDULES, SCHEDULE_LEASE_SECONDS,
+    EvaluationScheduleRunEvidence, EvaluationScheduleRunStatus, EvaluationScheduleStore,
+    MAX_CLAIM_BATCH, MAX_EVALUATION_SUITE_BYTES, MAX_SCHEDULE_RUN_HISTORY, MAX_SCHEDULES,
+    SCHEDULE_LEASE_SECONDS,
 };
 pub use evaluation_suite::{
     EvaluationSuite, EvaluationSuiteError, EvaluationSuiteStore, MAX_EVALUATION_DEFINITION_BYTES,

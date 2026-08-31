@@ -55,3 +55,23 @@ target, call a provider, invoke a tool, or approve an artifact.
 This is a regression primitive, not a benchmark claim. A passing golden set
 does not establish safety, general capability, citation quality, or production
 readiness without separate policy, adversarial, holdout, and human evaluation.
+
+## Scheduled candidate canaries
+
+Durable evaluation schedules reference the exact digest of a registered suite.
+Evidence-backed cases remain deterministic. Task-backed cases use the governed
+Controller adapter, so their requested Harness, Genes, policy decisions,
+permits, and receipts stay on the normal execution path. A caller-supplied
+suite file is accepted only when its digest matches the registered definition.
+
+A schedule may bind one staged evolution proposal. That binding makes the
+schedule one-shot: the first durable claim disables further occurrences and
+records the proposal ID on the run. The production canary policy derives its
+result from the report failure count, while run history retains the suite
+report digest and case counts. Exact canary retries are idempotent; conflicting
+evidence fails closed.
+
+The scheduled worker cannot approve, activate, or roll back the candidate. A
+passing result changes the proposal only to `canary_passed`. Activation remains
+a separate operator command guarded by artifact admission, quiescence, backup,
+and exact confirmation.

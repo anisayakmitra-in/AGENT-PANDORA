@@ -634,15 +634,27 @@ pandora evaluation scorecard --session <id> [--fail-on-non-passed] --json
 ## Scheduled evaluation runs
 
 The evaluation schedule command manages local, durable evaluation definitions.
-A schedule stores a suite identifier and interval, creates at most one
-persisted occurrence per claim tick, and advances only inside a SQLite
-transaction. The claim operation returns worker-owned runs with a five-minute
-lease; an expired lease is returned to the bounded queue. Claiming does not
-execute a suite or bypass policy, permits, or the ReferenceMonitor. The
-`run` operation is the bounded local worker for a golden-set JSON input: it
-claims only the requested schedule, evaluates through `EvaluationEngine`, and
-marks the occurrence completed or failed. External workers may keep using
-`claim` and record results through their own governed path.
+A schedule references an already registered, hash-bound suite and an interval,
+creates at most one persisted occurrence per claim tick, and advances only
+inside a SQLite transaction. The claim operation returns worker-owned runs
+with a five-minute lease; an expired lease is returned to the bounded queue.
+Claiming does not execute a suite or bypass policy, permits, or the
+ReferenceMonitor.
+
+`run` accepts evidence-backed suites through the deterministic
+`EvaluationEngine` and task-backed suites through the same governed Controller
+adapter used by `evaluation suite run`. An optional `--input` must exactly
+match the registered suite digest. Every terminal occurrence stores the report
+digest and consistent total, passed, and failed case counts. `runs` exposes
+that bounded history without rerunning anything.
+
+Adding `--proposal <proposal-id>` creates a one-shot canary schedule. The
+proposal must already be evaluated, approved, signed, and staged. Its first
+claim atomically disables the schedule, evaluates the registered suite, and
+derives the versioned zero-failure canary result. A passing run stops at
+`canary_passed`; it never invokes activation. `pandora evolution activate`
+remains a separate exact mutation with the existing quiescence, admission, and
+backup gates.
 
 pandora evaluation schedule create --id nightly --name "Nightly checks" --suite golden-default --interval-seconds 86400
 pandora evaluation schedule list --json
@@ -650,6 +662,11 @@ pandora evaluation schedule disable --id nightly --json
 pandora evaluation schedule claim --worker local-evaluator --limit 4 --json
 pandora evaluation schedule run --id nightly --worker local-evaluator --json
 pandora evaluation schedule run --id nightly --worker local-evaluator --input golden.json --json
+pandora evaluation schedule runs --id nightly --limit 64 --json
+
+pandora evaluation schedule create --id candidate-canary --name "Candidate canary" --suite candidate-suite --proposal <proposal-id> --interval-seconds 60 --json
+pandora evaluation schedule run --id candidate-canary --worker local-evaluator --json
+pandora evolution inspect --id <proposal-id> --json
 
 `rollout inspect` reads the redacted rollout summary persisted with a CLI
 execution. It reports the projection version, record count, context-manifest
@@ -846,7 +863,7 @@ pandora evaluation golden --input <path> [--fail-on-failure]
 pandora evaluation regression propose --id <id> --input <path> --case <case-id> | list | inspect --id <id> | review --id <id> --decision <accept|reject>
 pandora evaluation inspect --session <id> [--execution <id>]
 pandora evaluation scorecard --session <id>
-pandora evaluation schedule create --id <id> --name <name> --suite <id> --interval-seconds <seconds> | list | disable --id <id> | claim --worker <id> [--limit <1-16>] | run --id <id> --worker <id> [--input <path>] [--fail-on-failure]
+pandora evaluation schedule create --id <id> --name <name> --suite <id> [--proposal <proposal-id>] --interval-seconds <seconds> | list | disable --id <id> | claim --worker <id> [--limit <1-16>] | run --id <id> --worker <id> [--input <path>] [--harness <id>] [--fail-on-failure] | runs [--id <id>] [--limit <1-256>]
 pandora evolution generate --session <id> [--provider <name>] [--model <id>] --kind prompt|skill|workflow|wasm_gene --target-id <id> --base <path> --output <path>
 pandora evolution list [--limit <1-256>]
 pandora evolution inspect --id <proposal-id>

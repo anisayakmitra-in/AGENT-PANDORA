@@ -1,4 +1,6 @@
-use pandora_types::{JobWorkerId, PrincipalId, RunLoopId, TenantId, Timestamp, WorkspaceId};
+use pandora_types::{
+    JobWorkerId, PrincipalId, ProposalId, RunLoopId, TenantId, Timestamp, WorkspaceId,
+};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::fmt;
 use std::path::Path;
@@ -9,6 +11,7 @@ pub const MAX_SCHEDULES: usize = 128;
 pub const MAX_CLAIM_BATCH: usize = 16;
 pub const MAX_SCHEDULE_NAME_BYTES: usize = 128;
 pub const MAX_EVALUATION_SUITE_BYTES: usize = 256;
+pub const MAX_SCHEDULE_RUN_HISTORY: usize = 256;
 pub const SCHEDULE_LEASE_SECONDS: u64 = 300;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -19,6 +22,7 @@ pub struct EvaluationSchedule {
     workspace_id: WorkspaceId,
     name: String,
     suite_id: String,
+    proposal_id: Option<ProposalId>,
     interval_seconds: u64,
     next_run_at: Timestamp,
     enabled: bool,
@@ -46,6 +50,12 @@ impl EvaluationSchedule {
     pub fn suite_id(&self) -> &str {
         &self.suite_id
     }
+    pub fn proposal_id(&self) -> Option<&ProposalId> {
+        self.proposal_id.as_ref()
+    }
+    pub const fn one_shot(&self) -> bool {
+        self.proposal_id.is_some()
+    }
     pub const fn interval_seconds(&self) -> u64 {
         self.interval_seconds
     }
@@ -70,12 +80,14 @@ impl EvaluationSchedule {
 pub struct EvaluationScheduleRun {
     schedule_id: RunLoopId,
     suite_id: String,
+    proposal_id: Option<ProposalId>,
     scheduled_for: Timestamp,
     status: EvaluationScheduleRunStatus,
     worker_id: Option<JobWorkerId>,
     claimed_at: Option<Timestamp>,
     lease_until: Option<Timestamp>,
     finished_at: Option<Timestamp>,
+    evidence: Option<EvaluationScheduleRunEvidence>,
 }
 
 impl EvaluationScheduleRun {
@@ -84,6 +96,9 @@ impl EvaluationScheduleRun {
     }
     pub fn suite_id(&self) -> &str {
         &self.suite_id
+    }
+    pub fn proposal_id(&self) -> Option<&ProposalId> {
+        self.proposal_id.as_ref()
     }
     pub const fn scheduled_for(&self) -> Timestamp {
         self.scheduled_for
@@ -102,6 +117,61 @@ impl EvaluationScheduleRun {
     }
     pub const fn finished_at(&self) -> Option<Timestamp> {
         self.finished_at
+    }
+    pub fn evidence(&self) -> Option<&EvaluationScheduleRunEvidence> {
+        self.evidence.as_ref()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EvaluationScheduleRunEvidence {
+    report_digest: String,
+    total_cases: u64,
+    passed_cases: u64,
+    failed_cases: u64,
+}
+
+impl EvaluationScheduleRunEvidence {
+    pub fn new(
+        report_digest: impl Into<String>,
+        total_cases: u64,
+        passed_cases: u64,
+        failed_cases: u64,
+    ) -> Result<Self, EvaluationScheduleError> {
+        let report_digest = report_digest.into();
+        let valid_digest = report_digest.len() == 71
+            && report_digest.starts_with("sha256:")
+            && report_digest[7..]
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+        if !valid_digest
+            || total_cases == 0
+            || passed_cases.checked_add(failed_cases) != Some(total_cases)
+            || [total_cases, passed_cases, failed_cases]
+                .into_iter()
+                .any(|value| i64::try_from(value).is_err())
+        {
+            return Err(EvaluationScheduleError::InvalidRunEvidence);
+        }
+        Ok(Self {
+            report_digest,
+            total_cases,
+            passed_cases,
+            failed_cases,
+        })
+    }
+
+    pub fn report_digest(&self) -> &str {
+        &self.report_digest
+    }
+    pub const fn total_cases(&self) -> u64 {
+        self.total_cases
+    }
+    pub const fn passed_cases(&self) -> u64 {
+        self.passed_cases
+    }
+    pub const fn failed_cases(&self) -> u64 {
+        self.failed_cases
     }
 }
 
@@ -133,6 +203,7 @@ pub enum EvaluationScheduleError {
     InvalidInterval,
     InvalidLimit,
     InvalidWorker,
+    InvalidRunEvidence,
     CorruptRecord,
     ScheduleAlreadyExists,
     ScheduleNotFound,
@@ -161,6 +232,9 @@ impl fmt::Display for EvaluationScheduleError {
             Self::InvalidWorker => {
                 formatter.write_str("evaluation schedule worker identifier is invalid")
             }
+            Self::InvalidRunEvidence => formatter.write_str(
+                "evaluation schedule run evidence must contain one canonical report digest and consistent case counts",
+            ),
             Self::CorruptRecord => {
                 formatter.write_str("evaluation schedule database contains an invalid record")
             }
@@ -224,6 +298,7 @@ impl EvaluationScheduleStore {
              CREATE TABLE IF NOT EXISTS evaluation_schedules (
                  id TEXT NOT NULL, principal_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
                  workspace_id TEXT NOT NULL, name TEXT NOT NULL, suite_id TEXT NOT NULL,
+                 proposal_id TEXT,
                  interval_seconds INTEGER NOT NULL CHECK (interval_seconds > 0), next_run_at INTEGER NOT NULL,
                  enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)), created_at INTEGER NOT NULL,
                  last_claimed_at INTEGER, run_count INTEGER NOT NULL CHECK (run_count >= 0),
@@ -234,13 +309,16 @@ impl EvaluationScheduleStore {
              CREATE TABLE IF NOT EXISTS evaluation_schedule_runs (
                  principal_id TEXT NOT NULL, tenant_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
                  schedule_id TEXT NOT NULL, scheduled_for INTEGER NOT NULL, suite_id TEXT NOT NULL,
+                 proposal_id TEXT,
                  status TEXT NOT NULL CHECK (status IN ('pending', 'claimed', 'completed', 'failed')),
                  worker_id TEXT, claimed_at INTEGER, lease_until INTEGER, finished_at INTEGER,
+                 report_digest TEXT, total_cases INTEGER, passed_cases INTEGER, failed_cases INTEGER,
                  PRIMARY KEY (principal_id, tenant_id, workspace_id, schedule_id, scheduled_for)
              );
              CREATE INDEX IF NOT EXISTS evaluation_schedule_runs_queue_idx
                  ON evaluation_schedule_runs(principal_id, tenant_id, workspace_id, status, scheduled_for);",
         )?;
+        migrate_schedule_schema(&connection)?;
         Ok(Self {
             connection: Mutex::new(connection),
         })
@@ -258,13 +336,65 @@ impl EvaluationScheduleStore {
         interval_seconds: u64,
         now: Timestamp,
     ) -> Result<EvaluationSchedule, EvaluationScheduleError> {
-        let name = validate_text(
+        self.create_inner(
+            id,
+            principal_id,
+            tenant_id,
+            workspace_id,
             name.into(),
+            suite_id.into(),
+            None,
+            interval_seconds,
+            now,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_canary(
+        &self,
+        id: &RunLoopId,
+        principal_id: &PrincipalId,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        name: impl Into<String>,
+        suite_id: impl Into<String>,
+        proposal_id: &ProposalId,
+        interval_seconds: u64,
+        now: Timestamp,
+    ) -> Result<EvaluationSchedule, EvaluationScheduleError> {
+        self.create_inner(
+            id,
+            principal_id,
+            tenant_id,
+            workspace_id,
+            name.into(),
+            suite_id.into(),
+            Some(proposal_id.clone()),
+            interval_seconds,
+            now,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn create_inner(
+        &self,
+        id: &RunLoopId,
+        principal_id: &PrincipalId,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        name: String,
+        suite_id: String,
+        proposal_id: Option<ProposalId>,
+        interval_seconds: u64,
+        now: Timestamp,
+    ) -> Result<EvaluationSchedule, EvaluationScheduleError> {
+        let name = validate_text(
+            name,
             MAX_SCHEDULE_NAME_BYTES,
             EvaluationScheduleError::InvalidName,
         )?;
         let suite_id = validate_text(
-            suite_id.into(),
+            suite_id,
             MAX_EVALUATION_SUITE_BYTES,
             EvaluationScheduleError::InvalidSuite,
         )?;
@@ -274,8 +404,8 @@ impl EvaluationScheduleStore {
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let result = transaction.execute(
-            "INSERT INTO evaluation_schedules (id, principal_id, tenant_id, workspace_id, name, suite_id, interval_seconds, next_run_at, enabled, created_at, run_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?8, 0)",
-            params![id.as_str(), principal_id.as_str(), tenant_id.as_str(), workspace_id.as_str(), name, suite_id, i64::try_from(interval_seconds).unwrap_or(i64::MAX), to_i64(now.as_unix_seconds())?],
+            "INSERT INTO evaluation_schedules (id, principal_id, tenant_id, workspace_id, name, suite_id, proposal_id, interval_seconds, next_run_at, enabled, created_at, run_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?9, 0)",
+            params![id.as_str(), principal_id.as_str(), tenant_id.as_str(), workspace_id.as_str(), name, suite_id, proposal_id.as_ref().map(ProposalId::as_str), i64::try_from(interval_seconds).unwrap_or(i64::MAX), to_i64(now.as_unix_seconds())?],
         );
         match result {
             Ok(_) => {
@@ -287,6 +417,7 @@ impl EvaluationScheduleStore {
                     workspace_id: workspace_id.clone(),
                     name,
                     suite_id,
+                    proposal_id,
                     interval_seconds,
                     next_run_at: now,
                     enabled: true,
@@ -311,7 +442,7 @@ impl EvaluationScheduleStore {
         workspace_id: &WorkspaceId,
     ) -> Result<Vec<EvaluationSchedule>, EvaluationScheduleError> {
         let connection = self.lock()?;
-        let mut statement = connection.prepare("SELECT id, principal_id, tenant_id, workspace_id, name, suite_id, interval_seconds, next_run_at, enabled, created_at, last_claimed_at, run_count FROM evaluation_schedules WHERE principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3 ORDER BY created_at ASC, id ASC")?;
+        let mut statement = connection.prepare("SELECT id, principal_id, tenant_id, workspace_id, name, suite_id, interval_seconds, next_run_at, enabled, created_at, last_claimed_at, run_count, proposal_id FROM evaluation_schedules WHERE principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3 ORDER BY created_at ASC, id ASC")?;
         let rows = statement.query_map(
             params![
                 principal_id.as_str(),
@@ -384,7 +515,7 @@ impl EvaluationScheduleStore {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         transaction.execute("UPDATE evaluation_schedule_runs SET status = 'pending', worker_id = NULL, claimed_at = NULL, lease_until = NULL WHERE principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3 AND status = 'claimed' AND lease_until <= ?4", params![principal_id.as_str(), tenant_id.as_str(), workspace_id.as_str(), now_seconds])?;
         let schedules = if let Some(schedule_id) = schedule_id {
-            let mut due = transaction.prepare("SELECT id, suite_id, interval_seconds, next_run_at FROM evaluation_schedules WHERE principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3 AND enabled = 1 AND next_run_at <= ?4 AND id = ?5 ORDER BY next_run_at ASC, id ASC LIMIT ?6")?;
+            let mut due = transaction.prepare("SELECT id, suite_id, interval_seconds, next_run_at, proposal_id FROM evaluation_schedules WHERE principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3 AND enabled = 1 AND next_run_at <= ?4 AND id = ?5 ORDER BY next_run_at ASC, id ASC LIMIT ?6")?;
             due.query_map(
                 params![
                     principal_id.as_str(),
@@ -400,12 +531,13 @@ impl EvaluationScheduleStore {
                         row.get::<_, String>(1)?,
                         row.get::<_, i64>(2)?,
                         row.get::<_, i64>(3)?,
+                        row.get::<_, Option<String>>(4)?,
                     ))
                 },
             )?
             .collect::<Result<Vec<_>, _>>()?
         } else {
-            let mut due = transaction.prepare("SELECT id, suite_id, interval_seconds, next_run_at FROM evaluation_schedules WHERE principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3 AND enabled = 1 AND next_run_at <= ?4 ORDER BY next_run_at ASC, id ASC LIMIT ?5")?;
+            let mut due = transaction.prepare("SELECT id, suite_id, interval_seconds, next_run_at, proposal_id FROM evaluation_schedules WHERE principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3 AND enabled = 1 AND next_run_at <= ?4 ORDER BY next_run_at ASC, id ASC LIMIT ?5")?;
             due.query_map(
                 params![
                     principal_id.as_str(),
@@ -420,23 +552,28 @@ impl EvaluationScheduleStore {
                         row.get::<_, String>(1)?,
                         row.get::<_, i64>(2)?,
                         row.get::<_, i64>(3)?,
+                        row.get::<_, Option<String>>(4)?,
                     ))
                 },
             )?
             .collect::<Result<Vec<_>, _>>()?
         };
-        for (id, suite_id, interval_seconds, next_run_at) in schedules {
+        for (id, suite_id, interval_seconds, next_run_at, proposal_id) in schedules {
             if interval_seconds <= 0 || next_run_at < 0 {
                 return Err(EvaluationScheduleError::CorruptRecord);
             }
             let next = next_run_at
                 .checked_add(interval_seconds)
                 .ok_or(EvaluationScheduleError::CorruptRecord)?;
-            transaction.execute("INSERT OR IGNORE INTO evaluation_schedule_runs (principal_id, tenant_id, workspace_id, schedule_id, scheduled_for, suite_id, status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending')", params![principal_id.as_str(), tenant_id.as_str(), workspace_id.as_str(), id, next_run_at, suite_id])?;
-            transaction.execute("UPDATE evaluation_schedules SET next_run_at = ?1, last_claimed_at = ?2, run_count = run_count + 1 WHERE id = ?3 AND principal_id = ?4 AND tenant_id = ?5 AND workspace_id = ?6 AND next_run_at = ?7", params![next, now_seconds, id, principal_id.as_str(), tenant_id.as_str(), workspace_id.as_str(), next_run_at])?;
+            transaction.execute("INSERT OR IGNORE INTO evaluation_schedule_runs (principal_id, tenant_id, workspace_id, schedule_id, scheduled_for, suite_id, proposal_id, status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending')", params![principal_id.as_str(), tenant_id.as_str(), workspace_id.as_str(), id, next_run_at, suite_id, proposal_id])?;
+            if proposal_id.is_some() {
+                transaction.execute("UPDATE evaluation_schedules SET enabled = 0, last_claimed_at = ?1, run_count = run_count + 1 WHERE id = ?2 AND principal_id = ?3 AND tenant_id = ?4 AND workspace_id = ?5 AND next_run_at = ?6", params![now_seconds, id, principal_id.as_str(), tenant_id.as_str(), workspace_id.as_str(), next_run_at])?;
+            } else {
+                transaction.execute("UPDATE evaluation_schedules SET next_run_at = ?1, last_claimed_at = ?2, run_count = run_count + 1 WHERE id = ?3 AND principal_id = ?4 AND tenant_id = ?5 AND workspace_id = ?6 AND next_run_at = ?7", params![next, now_seconds, id, principal_id.as_str(), tenant_id.as_str(), workspace_id.as_str(), next_run_at])?;
+            }
         }
         let candidates = {
-            let mut pending = transaction.prepare("SELECT schedule_id, suite_id, scheduled_for FROM evaluation_schedule_runs WHERE principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3 AND status = 'pending' AND (?4 IS NULL OR schedule_id = ?4) ORDER BY scheduled_for ASC, schedule_id ASC LIMIT ?5")?;
+            let mut pending = transaction.prepare("SELECT schedule_id, suite_id, scheduled_for, proposal_id FROM evaluation_schedule_runs WHERE principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3 AND status = 'pending' AND (?4 IS NULL OR schedule_id = ?4) ORDER BY scheduled_for ASC, schedule_id ASC LIMIT ?5")?;
             pending
                 .query_map(
                     params![
@@ -451,24 +588,30 @@ impl EvaluationScheduleStore {
                             row.get::<_, String>(0)?,
                             row.get::<_, String>(1)?,
                             row.get::<_, i64>(2)?,
+                            row.get::<_, Option<String>>(3)?,
                         ))
                     },
                 )?
                 .collect::<Result<Vec<_>, _>>()?
         };
         let mut claims = Vec::with_capacity(candidates.len());
-        for (schedule_id, suite_id, scheduled_for) in candidates {
+        for (schedule_id, suite_id, scheduled_for, proposal_id) in candidates {
             transaction.execute("UPDATE evaluation_schedule_runs SET status = 'claimed', worker_id = ?1, claimed_at = ?2, lease_until = ?3 WHERE principal_id = ?4 AND tenant_id = ?5 AND workspace_id = ?6 AND schedule_id = ?7 AND scheduled_for = ?8 AND status = 'pending'", params![worker_id.as_str(), now_seconds, to_i64(lease_until.as_unix_seconds())?, principal_id.as_str(), tenant_id.as_str(), workspace_id.as_str(), schedule_id, scheduled_for])?;
             claims.push(EvaluationScheduleRun {
                 schedule_id: RunLoopId::new(schedule_id)
                     .map_err(|_| EvaluationScheduleError::CorruptRecord)?,
                 suite_id,
+                proposal_id: proposal_id
+                    .map(ProposalId::new)
+                    .transpose()
+                    .map_err(|_| EvaluationScheduleError::CorruptRecord)?,
                 scheduled_for: Timestamp::from_unix_seconds(to_u64(scheduled_for)?),
                 status: EvaluationScheduleRunStatus::Claimed,
                 worker_id: Some(worker_id.clone()),
                 claimed_at: Some(now),
                 lease_until: Some(lease_until),
                 finished_at: None,
+                evidence: None,
             });
         }
         transaction.commit()?;
@@ -487,8 +630,38 @@ impl EvaluationScheduleStore {
         success: bool,
         finished_at: Timestamp,
     ) -> Result<(), EvaluationScheduleError> {
-        let connection = self.lock()?;
-        let current = connection.query_row("SELECT status, worker_id FROM evaluation_schedule_runs WHERE principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3 AND schedule_id = ?4 AND scheduled_for = ?5", params![principal_id.as_str(), tenant_id.as_str(), workspace_id.as_str(), schedule_id.as_str(), to_i64(scheduled_for.as_unix_seconds())?], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))).optional()?;
+        self.complete_with_evidence(
+            schedule_id,
+            principal_id,
+            tenant_id,
+            workspace_id,
+            scheduled_for,
+            worker_id,
+            success,
+            finished_at,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn complete_with_evidence(
+        &self,
+        schedule_id: &RunLoopId,
+        principal_id: &PrincipalId,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        scheduled_for: Timestamp,
+        worker_id: &JobWorkerId,
+        success: bool,
+        finished_at: Timestamp,
+        evidence: Option<&EvaluationScheduleRunEvidence>,
+    ) -> Result<(), EvaluationScheduleError> {
+        if evidence.is_some_and(|evidence| success != (evidence.failed_cases() == 0)) {
+            return Err(EvaluationScheduleError::InvalidRunEvidence);
+        }
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current = transaction.query_row("SELECT status, worker_id FROM evaluation_schedule_runs WHERE principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3 AND schedule_id = ?4 AND scheduled_for = ?5", params![principal_id.as_str(), tenant_id.as_str(), workspace_id.as_str(), schedule_id.as_str(), to_i64(scheduled_for.as_unix_seconds())?], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))).optional()?;
         let Some((status, owner)) = current else {
             return Err(EvaluationScheduleError::RunNotFound);
         };
@@ -502,8 +675,38 @@ impl EvaluationScheduleStore {
         if owner.as_deref() != Some(worker_id.as_str()) {
             return Err(EvaluationScheduleError::RunOwnedByAnotherWorker);
         }
-        connection.execute("UPDATE evaluation_schedule_runs SET status = ?1, finished_at = ?2, lease_until = NULL WHERE principal_id = ?3 AND tenant_id = ?4 AND workspace_id = ?5 AND schedule_id = ?6 AND scheduled_for = ?7 AND worker_id = ?8", params![if success { "completed" } else { "failed" }, to_i64(finished_at.as_unix_seconds())?, principal_id.as_str(), tenant_id.as_str(), workspace_id.as_str(), schedule_id.as_str(), to_i64(scheduled_for.as_unix_seconds())?, worker_id.as_str()])?;
+        let changed = transaction.execute("UPDATE evaluation_schedule_runs SET status = ?1, finished_at = ?2, lease_until = NULL, report_digest = ?3, total_cases = ?4, passed_cases = ?5, failed_cases = ?6 WHERE principal_id = ?7 AND tenant_id = ?8 AND workspace_id = ?9 AND schedule_id = ?10 AND scheduled_for = ?11 AND worker_id = ?12 AND status = 'claimed'", params![if success { "completed" } else { "failed" }, to_i64(finished_at.as_unix_seconds())?, evidence.map(EvaluationScheduleRunEvidence::report_digest), evidence.map(EvaluationScheduleRunEvidence::total_cases).map(to_i64).transpose()?, evidence.map(EvaluationScheduleRunEvidence::passed_cases).map(to_i64).transpose()?, evidence.map(EvaluationScheduleRunEvidence::failed_cases).map(to_i64).transpose()?, principal_id.as_str(), tenant_id.as_str(), workspace_id.as_str(), schedule_id.as_str(), to_i64(scheduled_for.as_unix_seconds())?, worker_id.as_str()])?;
+        if changed != 1 {
+            return Err(EvaluationScheduleError::RunOwnedByAnotherWorker);
+        }
+        transaction.commit()?;
         Ok(())
+    }
+
+    pub fn list_runs(
+        &self,
+        principal_id: &PrincipalId,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        schedule_id: Option<&RunLoopId>,
+        limit: usize,
+    ) -> Result<Vec<EvaluationScheduleRun>, EvaluationScheduleError> {
+        if limit == 0 || limit > MAX_SCHEDULE_RUN_HISTORY {
+            return Err(EvaluationScheduleError::InvalidLimit);
+        }
+        let connection = self.lock()?;
+        let mut statement = connection.prepare("SELECT schedule_id, suite_id, proposal_id, scheduled_for, status, worker_id, claimed_at, lease_until, finished_at, report_digest, total_cases, passed_cases, failed_cases FROM evaluation_schedule_runs WHERE principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3 AND (?4 IS NULL OR schedule_id = ?4) ORDER BY scheduled_for DESC, schedule_id ASC LIMIT ?5")?;
+        let rows = statement.query_map(
+            params![
+                principal_id.as_str(),
+                tenant_id.as_str(),
+                workspace_id.as_str(),
+                schedule_id.map(RunLoopId::as_str),
+                limit as i64,
+            ],
+            decode_run,
+        )?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     fn lock(&self) -> Result<MutexGuard<'_, Connection>, EvaluationScheduleError> {
@@ -547,6 +750,11 @@ fn decode_schedule(row: &rusqlite::Row<'_>) -> Result<EvaluationSchedule, rusqli
             .map_err(|_| rusqlite::Error::InvalidQuery)?,
         name: row.get(4)?,
         suite_id: row.get(5)?,
+        proposal_id: row
+            .get::<_, Option<String>>(12)?
+            .map(ProposalId::new)
+            .transpose()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?,
         interval_seconds,
         next_run_at,
         enabled: enabled == 1,
@@ -558,6 +766,60 @@ fn decode_schedule(row: &rusqlite::Row<'_>) -> Result<EvaluationSchedule, rusqli
             .map(|value| Timestamp::from_unix_seconds(to_u64(value).unwrap_or(0))),
         run_count,
     })
+}
+
+fn decode_run(row: &rusqlite::Row<'_>) -> Result<EvaluationScheduleRun, rusqlite::Error> {
+    let report_digest = row.get::<_, Option<String>>(9)?;
+    let total_cases = row.get::<_, Option<i64>>(10)?;
+    let passed_cases = row.get::<_, Option<i64>>(11)?;
+    let failed_cases = row.get::<_, Option<i64>>(12)?;
+    let evidence = match (report_digest, total_cases, passed_cases, failed_cases) {
+        (None, None, None, None) => None,
+        (Some(digest), Some(total), Some(passed), Some(failed)) => Some(
+            EvaluationScheduleRunEvidence::new(
+                digest,
+                to_u64(total).map_err(|_| rusqlite::Error::InvalidQuery)?,
+                to_u64(passed).map_err(|_| rusqlite::Error::InvalidQuery)?,
+                to_u64(failed).map_err(|_| rusqlite::Error::InvalidQuery)?,
+            )
+            .map_err(|_| rusqlite::Error::InvalidQuery)?,
+        ),
+        _ => return Err(rusqlite::Error::InvalidQuery),
+    };
+    Ok(EvaluationScheduleRun {
+        schedule_id: RunLoopId::new(row.get::<_, String>(0)?)
+            .map_err(|_| rusqlite::Error::InvalidQuery)?,
+        suite_id: row.get(1)?,
+        proposal_id: row
+            .get::<_, Option<String>>(2)?
+            .map(ProposalId::new)
+            .transpose()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?,
+        scheduled_for: Timestamp::from_unix_seconds(
+            to_u64(row.get::<_, i64>(3)?).map_err(|_| rusqlite::Error::InvalidQuery)?,
+        ),
+        status: parse_status(&row.get::<_, String>(4)?)
+            .map_err(|_| rusqlite::Error::InvalidQuery)?,
+        worker_id: row
+            .get::<_, Option<String>>(5)?
+            .map(JobWorkerId::new)
+            .transpose()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?,
+        claimed_at: optional_timestamp(row.get(6)?)?,
+        lease_until: optional_timestamp(row.get(7)?)?,
+        finished_at: optional_timestamp(row.get(8)?)?,
+        evidence,
+    })
+}
+
+fn optional_timestamp(value: Option<i64>) -> Result<Option<Timestamp>, rusqlite::Error> {
+    value
+        .map(|value| {
+            to_u64(value)
+                .map(Timestamp::from_unix_seconds)
+                .map_err(|_| rusqlite::Error::InvalidQuery)
+        })
+        .transpose()
 }
 fn parse_status(value: &str) -> Result<EvaluationScheduleRunStatus, EvaluationScheduleError> {
     match value {
@@ -573,6 +835,48 @@ fn to_i64(value: u64) -> Result<i64, EvaluationScheduleError> {
 }
 fn to_u64(value: i64) -> Result<u64, EvaluationScheduleError> {
     u64::try_from(value).map_err(|_| EvaluationScheduleError::CorruptRecord)
+}
+
+fn migrate_schedule_schema(connection: &Connection) -> Result<(), EvaluationScheduleError> {
+    for (table, column, definition) in [
+        ("evaluation_schedules", "proposal_id", "proposal_id TEXT"),
+        (
+            "evaluation_schedule_runs",
+            "proposal_id",
+            "proposal_id TEXT",
+        ),
+        (
+            "evaluation_schedule_runs",
+            "report_digest",
+            "report_digest TEXT",
+        ),
+        (
+            "evaluation_schedule_runs",
+            "total_cases",
+            "total_cases INTEGER",
+        ),
+        (
+            "evaluation_schedule_runs",
+            "passed_cases",
+            "passed_cases INTEGER",
+        ),
+        (
+            "evaluation_schedule_runs",
+            "failed_cases",
+            "failed_cases INTEGER",
+        ),
+    ] {
+        let pragma = format!("PRAGMA table_info({table})");
+        let mut statement = connection.prepare(&pragma)?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(statement);
+        if !columns.iter().any(|candidate| candidate == column) {
+            connection.execute(&format!("ALTER TABLE {table} ADD COLUMN {definition}"), [])?;
+        }
+    }
+    Ok(())
 }
 fn set_private_permissions(path: &Path) -> Result<(), EvaluationScheduleError> {
     #[cfg(unix)]
@@ -798,6 +1102,190 @@ mod tests {
         assert_eq!(claims.len(), 1);
         assert_eq!(claims[0].scheduled_for(), run.scheduled_for());
         assert_eq!(claims[0].worker_id(), Some(&second));
+    }
+
+    #[test]
+    fn proposal_bound_schedule_is_one_shot_and_keeps_report_evidence() {
+        let (store, _directory) = store();
+        let (principal, tenant, workspace) = scope();
+        let id = RunLoopId::new("candidate-canary").unwrap();
+        let proposal = ProposalId::new("proposal-1").unwrap();
+        store
+            .create_canary(
+                &id,
+                &principal,
+                &tenant,
+                &workspace,
+                "Candidate canary",
+                "suite-1",
+                &proposal,
+                60,
+                Timestamp::from_unix_seconds(40),
+            )
+            .unwrap();
+        let worker = JobWorkerId::new("worker-a").unwrap();
+        let run = store
+            .claim_due(
+                &principal,
+                &tenant,
+                &workspace,
+                &worker,
+                Timestamp::from_unix_seconds(40),
+                1,
+            )
+            .unwrap()
+            .remove(0);
+        assert_eq!(run.proposal_id(), Some(&proposal));
+        let schedule = store
+            .list(&principal, &tenant, &workspace)
+            .unwrap()
+            .remove(0);
+        assert!(schedule.one_shot());
+        assert!(!schedule.enabled());
+        assert_eq!(schedule.run_count(), 1);
+        assert!(
+            store
+                .claim_due(
+                    &principal,
+                    &tenant,
+                    &workspace,
+                    &worker,
+                    Timestamp::from_unix_seconds(100),
+                    1,
+                )
+                .unwrap()
+                .is_empty()
+        );
+
+        let evidence =
+            EvaluationScheduleRunEvidence::new(format!("sha256:{}", "a".repeat(64)), 3, 3, 0)
+                .unwrap();
+        store
+            .complete_with_evidence(
+                &id,
+                &principal,
+                &tenant,
+                &workspace,
+                run.scheduled_for(),
+                &worker,
+                true,
+                Timestamp::from_unix_seconds(41),
+                Some(&evidence),
+            )
+            .unwrap();
+        let completed = store
+            .list_runs(&principal, &tenant, &workspace, Some(&id), 8)
+            .unwrap()
+            .remove(0);
+        assert_eq!(completed.status(), EvaluationScheduleRunStatus::Completed);
+        assert_eq!(completed.proposal_id(), Some(&proposal));
+        assert_eq!(completed.evidence(), Some(&evidence));
+        assert_eq!(
+            completed.finished_at(),
+            Some(Timestamp::from_unix_seconds(41))
+        );
+    }
+
+    #[test]
+    fn report_evidence_must_match_the_terminal_status() {
+        let evidence =
+            EvaluationScheduleRunEvidence::new(format!("sha256:{}", "b".repeat(64)), 2, 1, 1)
+                .unwrap();
+        assert_eq!(evidence.failed_cases(), 1);
+        assert!(matches!(
+            EvaluationScheduleRunEvidence::new("sha256:bad", 1, 1, 0),
+            Err(EvaluationScheduleError::InvalidRunEvidence)
+        ));
+
+        let (store, _directory) = store();
+        let (principal, tenant, workspace) = scope();
+        let id = RunLoopId::new("failed-report").unwrap();
+        let worker = JobWorkerId::new("worker-a").unwrap();
+        store
+            .create(
+                &id,
+                &principal,
+                &tenant,
+                &workspace,
+                "Failed report",
+                "suite",
+                60,
+                Timestamp::from_unix_seconds(50),
+            )
+            .unwrap();
+        let run = store
+            .claim_due(
+                &principal,
+                &tenant,
+                &workspace,
+                &worker,
+                Timestamp::from_unix_seconds(50),
+                1,
+            )
+            .unwrap()
+            .remove(0);
+        assert!(matches!(
+            store.complete_with_evidence(
+                &id,
+                &principal,
+                &tenant,
+                &workspace,
+                run.scheduled_for(),
+                &worker,
+                true,
+                Timestamp::from_unix_seconds(51),
+                Some(&evidence),
+            ),
+            Err(EvaluationScheduleError::InvalidRunEvidence)
+        ));
+    }
+
+    #[test]
+    fn existing_schedule_database_gains_candidate_and_evidence_columns() {
+        let directory =
+            crate::test_support::new_temp_dir("pandora-evaluation-schedule-migration").unwrap();
+        let path = directory.join("schedules.sqlite3");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE evaluation_schedules (
+                    id TEXT NOT NULL, principal_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+                    workspace_id TEXT NOT NULL, name TEXT NOT NULL, suite_id TEXT NOT NULL,
+                    interval_seconds INTEGER NOT NULL, next_run_at INTEGER NOT NULL,
+                    enabled INTEGER NOT NULL, created_at INTEGER NOT NULL,
+                    last_claimed_at INTEGER, run_count INTEGER NOT NULL,
+                    PRIMARY KEY (principal_id, tenant_id, workspace_id, id)
+                 );
+                 CREATE TABLE evaluation_schedule_runs (
+                    principal_id TEXT NOT NULL, tenant_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    schedule_id TEXT NOT NULL, scheduled_for INTEGER NOT NULL, suite_id TEXT NOT NULL,
+                    status TEXT NOT NULL, worker_id TEXT, claimed_at INTEGER,
+                    lease_until INTEGER, finished_at INTEGER,
+                    PRIMARY KEY (principal_id, tenant_id, workspace_id, schedule_id, scheduled_for)
+                 );",
+            )
+            .unwrap();
+        drop(connection);
+
+        let store = EvaluationScheduleStore::open(&path).unwrap();
+        let (principal, tenant, workspace) = scope();
+        let schedule = store
+            .create_canary(
+                &RunLoopId::new("migrated-canary").unwrap(),
+                &principal,
+                &tenant,
+                &workspace,
+                "Migrated canary",
+                "suite",
+                &ProposalId::new("proposal-migrated").unwrap(),
+                60,
+                Timestamp::from_unix_seconds(1),
+            )
+            .unwrap();
+        assert_eq!(
+            schedule.proposal_id().map(ProposalId::as_str),
+            Some("proposal-migrated")
+        );
     }
 
     #[test]

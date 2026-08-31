@@ -706,6 +706,201 @@ fn evolution_cli_can_submit_evaluate_and_approve() {
 }
 
 #[test]
+fn scheduled_canary_binds_a_reviewed_suite_and_stops_before_activation() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let proposal = fixture.root.join("scheduled-proposal.json");
+    fs::write(
+        &proposal,
+        br#"{"proposal_id":"proposal-scheduled","source":"gepa","base_artifact":"base-scheduled","candidate_artifact":"candidate-scheduled","evidence_digest":"evidence-scheduled","expected_outcome":"improve scheduled verification"}"#,
+    )
+    .unwrap();
+    assert_success_with_context(
+        &fixture
+            .command(&[
+                "evolution",
+                "submit",
+                "--input",
+                proposal.to_str().unwrap(),
+                "--json",
+            ])
+            .output()
+            .unwrap(),
+        "scheduled proposal submit",
+    );
+    let holdout = fixture.root.join("scheduled-holdout.json");
+    fs::write(
+        &holdout,
+        br#"{"cases":[{"id":"scheduled-case","execution_id":"scheduled-execution","output":"candidate","expected_output":"candidate","baseline_output":"candidate"}]}"#,
+    )
+    .unwrap();
+    assert_success_with_context(
+        &fixture
+            .command(&[
+                "evolution",
+                "evaluate",
+                "--id",
+                "proposal-scheduled",
+                "--input",
+                holdout.to_str().unwrap(),
+                "--json",
+            ])
+            .output()
+            .unwrap(),
+        "scheduled proposal evaluation",
+    );
+    let approval = fixture.root.join("scheduled-approval.json");
+    fs::write(
+        &approval,
+        br#"{"proposal_id":"proposal-scheduled","approver":"parliament-scheduled","policy_version":1,"artifact_id":"candidate-scheduled","signer":"signer-scheduled","signature":"signed-scheduled-candidate"}"#,
+    )
+    .unwrap();
+    assert_success_with_context(
+        &fixture
+            .command(&[
+                "evolution",
+                "approve",
+                "--input",
+                approval.to_str().unwrap(),
+                "--json",
+            ])
+            .output()
+            .unwrap(),
+        "scheduled proposal approval",
+    );
+    let suite = fixture.root.join("scheduled-suite.json");
+    fs::write(
+        &suite,
+        br#"{"suite_id":"candidate-suite","cases":[{"id":"candidate-case","target":{"kind":"workflow","id":"workflow-1"},"task":"evaluate the candidate","execution_id":"candidate-execution","output":"verified","expected_output":"verified"}]}"#,
+    )
+    .unwrap();
+    assert_success_with_context(
+        &fixture
+            .command(&[
+                "evaluation",
+                "suite",
+                "register",
+                "--id",
+                "candidate-suite",
+                "--input",
+                suite.to_str().unwrap(),
+                "--json",
+            ])
+            .output()
+            .unwrap(),
+        "scheduled candidate suite registration",
+    );
+
+    let blocked = fixture
+        .command(&[
+            "evaluation",
+            "schedule",
+            "create",
+            "--id",
+            "candidate-canary",
+            "--name",
+            "Candidate canary",
+            "--suite",
+            "candidate-suite",
+            "--proposal",
+            "proposal-scheduled",
+            "--interval-seconds",
+            "60",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(!blocked.status.success());
+    assert_success_with_context(
+        &fixture
+            .command(&["evolution", "stage", "--id", "proposal-scheduled", "--json"])
+            .output()
+            .unwrap(),
+        "scheduled proposal stage",
+    );
+    let created = fixture
+        .command(&[
+            "evaluation",
+            "schedule",
+            "create",
+            "--id",
+            "candidate-canary",
+            "--name",
+            "Candidate canary",
+            "--suite",
+            "candidate-suite",
+            "--proposal",
+            "proposal-scheduled",
+            "--interval-seconds",
+            "60",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_success_with_context(&created, "candidate canary schedule creation");
+    let created = parse_json(&created);
+    assert_eq!(created["proposal_id"], "proposal-scheduled");
+    assert_eq!(created["one_shot"], true);
+    assert_eq!(created["activation_performed"], false);
+
+    let run = fixture
+        .command(&[
+            "evaluation",
+            "schedule",
+            "run",
+            "--id",
+            "candidate-canary",
+            "--worker",
+            "candidate-worker",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_success_with_context(&run, "candidate canary scheduled run");
+    let run = parse_json(&run);
+    assert_eq!(run["canary"]["state"], "canary_passed");
+    assert_eq!(run["canary"]["activation_performed"], false);
+    assert_eq!(run["activation_performed"], false);
+    assert_eq!(run["run"]["evidence"]["total_cases"], 1);
+    assert_eq!(run["run"]["evidence"]["failed_cases"], 0);
+    assert!(
+        run["run"]["evidence"]["report_digest"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:")
+    );
+
+    let inspected = fixture
+        .command(&[
+            "evolution",
+            "inspect",
+            "--id",
+            "proposal-scheduled",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_success_with_context(&inspected, "scheduled proposal inspection");
+    assert_eq!(parse_json(&inspected)["state"], "canary_passed");
+    let history = fixture
+        .command(&[
+            "evaluation",
+            "schedule",
+            "runs",
+            "--id",
+            "candidate-canary",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_success_with_context(&history, "candidate canary run history");
+    let history = parse_json(&history);
+    assert_eq!(history["count"], 1);
+    assert_eq!(history["runs"][0]["proposal_id"], "proposal-scheduled");
+    assert_eq!(history["runs"][0]["status"], "completed");
+}
+
+#[test]
 fn evolution_cli_generates_a_research_candidate_then_requires_every_governance_gate() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("research provider should bind");
     let address = listener
@@ -4262,6 +4457,43 @@ fn task_backed_suite_runs_a_governed_builtin_workflow() {
     assert_eq!(run["total"], 1);
     assert_eq!(run["passed"], 1);
     assert_eq!(run["cases"][0]["target"]["id"], "athena.guide");
+
+    let scheduled = fixture
+        .command(&[
+            "evaluation",
+            "schedule",
+            "create",
+            "--id",
+            "task-schedule",
+            "--name",
+            "Task schedule",
+            "--suite",
+            "task-suite",
+            "--interval-seconds",
+            "60",
+            "--json",
+        ])
+        .output()
+        .expect("task schedule creation should start");
+    assert_success_with_context(&scheduled, "task schedule creation");
+    let scheduled_run = fixture
+        .command(&[
+            "evaluation",
+            "schedule",
+            "run",
+            "--id",
+            "task-schedule",
+            "--worker",
+            "task-worker",
+            "--json",
+        ])
+        .output()
+        .expect("task scheduled run should start");
+    assert_success_with_context(&scheduled_run, "task scheduled run");
+    let scheduled_run = parse_json(&scheduled_run);
+    assert_eq!(scheduled_run["passed"], true);
+    assert_eq!(scheduled_run["report"]["passed"], 1);
+    assert_eq!(scheduled_run["run"]["evidence"]["total_cases"], 1);
 }
 
 #[test]

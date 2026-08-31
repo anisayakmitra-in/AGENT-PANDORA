@@ -441,6 +441,13 @@ impl EvolutionEngine {
         let record = proposals
             .get(canary.proposal_id())
             .ok_or(EvolutionError::NotFound)?;
+        if matches!(
+            record.state,
+            EvolutionState::CanaryPassed | EvolutionState::CanaryFailed
+        ) && record.canary.as_ref() == Some(&canary)
+        {
+            return Ok(());
+        }
         if record.state != EvolutionState::Staged {
             return Err(EvolutionError::InvalidTransition(record.state));
         }
@@ -519,7 +526,9 @@ impl EvolutionEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pandora_types::{ArtifactId, EvolutionSource, PrincipalId, RequestDigest, Timestamp};
+    use pandora_types::{
+        ArtifactId, CanaryResult, EvolutionSource, PrincipalId, RequestDigest, Timestamp,
+    };
     use rusqlite::{Connection, params};
 
     fn proposal() -> MutationProposal {
@@ -599,6 +608,57 @@ mod tests {
                 .state(&ProposalId::new("proposal-1").unwrap())
                 .unwrap(),
             EvolutionState::Approved
+        );
+    }
+
+    #[test]
+    fn exact_canary_retry_is_idempotent_but_conflicting_evidence_is_rejected() {
+        let engine = EvolutionEngine::new(EvolutionPolicy::production(1));
+        let proposal_id = ProposalId::new("proposal-1").unwrap();
+        engine.submit(proposal()).unwrap();
+        engine.record_evaluation(evaluation(true)).unwrap();
+        engine
+            .approve(
+                &proposal_id,
+                ParliamentApproval::new(
+                    proposal_id.clone(),
+                    PrincipalId::new("parliament-1").unwrap(),
+                    1,
+                    Timestamp::from_unix_seconds(21),
+                ),
+                ArtifactSignature::new(
+                    ArtifactId::new("candidate-1").unwrap(),
+                    PrincipalId::new("signer-1").unwrap(),
+                    "signed-candidate",
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        engine.stage(&proposal_id).unwrap();
+        let canary = CanaryResult::new(
+            proposal_id.clone(),
+            true,
+            0,
+            "scheduled suite report sha256:exact",
+            Timestamp::from_unix_seconds(22),
+        )
+        .unwrap();
+        engine.record_canary(canary.clone()).unwrap();
+        engine.record_canary(canary).unwrap();
+
+        let conflicting = CanaryResult::new(
+            proposal_id.clone(),
+            false,
+            1,
+            "scheduled suite report sha256:changed",
+            Timestamp::from_unix_seconds(22),
+        )
+        .unwrap();
+        assert_eq!(
+            engine.record_canary(conflicting),
+            Err(EvolutionError::InvalidTransition(
+                EvolutionState::CanaryPassed
+            ))
         );
     }
 

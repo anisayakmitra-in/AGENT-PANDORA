@@ -76,6 +76,8 @@ fn powershell() -> &'static str {
         'generate','list','inspect','submit','evaluate','approve','stage','canary','activate','rollback'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'efficiency') {
         'rank'
+    } elseif ($elements.Count -gt 2 -and $elements[1] -eq 'evaluation' -and $elements[2] -eq 'schedule') {
+        'create','list','disable','claim','run','runs'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'evaluation') {
         'golden','inspect','scorecard','suite','regression','schedule'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'graph') {
@@ -145,6 +147,8 @@ fn bash() -> &'static str {
         COMPREPLY=( $(compgen -W 'list population' -- "$current") )
     elif [[ "$previous" == "efficiency" ]]; then
         COMPREPLY=( $(compgen -W 'rank' -- "$current") )
+    elif [[ "${COMP_WORDS[1]}" == "evaluation" && "$previous" == "schedule" ]]; then
+        COMPREPLY=( $(compgen -W 'create list disable claim run runs' -- "$current") )
     elif [[ "$previous" == "evaluation" ]]; then
         COMPREPLY=( $(compgen -W 'golden inspect scorecard suite regression schedule' -- "$current") )
     elif [[ "$previous" == "evolution" ]]; then
@@ -208,6 +212,8 @@ elif [[ ${words[2]} == strategies ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:strategies command:(list population)'
 elif [[ ${words[2]} == efficiency ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet completions migrate update uninstall doctor)' '2:efficiency command:(rank)'
+elif [[ ${words[2]} == evaluation && ${words[3]} == schedule ]]; then
+    _arguments '3:evaluation schedule command:(create list disable claim run runs)'
 elif [[ ${words[2]} == evaluation ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet graph completions migrate update uninstall doctor)' '2:evaluation command:(golden inspect scorecard suite regression schedule)'
 elif [[ ${words[2]} == evolution ]]; then
@@ -249,7 +255,8 @@ complete -c pandora -f -n '__fish_seen_subcommand_from strategies; and __fish_se
 complete -c pandora -f -n '__fish_seen_subcommand_from strategies; and __fish_seen_subcommand_from population; and __fish_seen_subcommand_from inspect' -l state -r
 complete -c pandora -f -n '__fish_seen_subcommand_from strategies; and __fish_seen_subcommand_from population; and __fish_seen_subcommand_from inspect' -l id -r
 complete -c pandora -f -n '__fish_seen_subcommand_from efficiency' -a 'rank'
-complete -c pandora -f -n '__fish_seen_subcommand_from evaluation' -a 'golden inspect scorecard suite regression schedule'
+complete -c pandora -f -n '__fish_seen_subcommand_from evaluation; and not __fish_seen_subcommand_from schedule' -a 'golden inspect scorecard suite regression schedule'
+complete -c pandora -f -n '__fish_seen_subcommand_from evaluation; and __fish_seen_subcommand_from schedule' -a 'create list disable claim run runs'
 complete -c pandora -f -n '__fish_seen_subcommand_from evolution' -a 'generate list inspect submit evaluate approve stage canary activate rollback'
 complete -c pandora -f -n '__fish_seen_subcommand_from graph' -a 'code knowledge review architecture'
 complete -c pandora -f -n '__fish_seen_subcommand_from fleet; and __fish_seen_subcommand_from supervisor' -a 'list start drain stop recover heartbeat reconcile reap restart'
@@ -287,6 +294,7 @@ mod tests {
             "'list','set','use','test'",
             "'list','inspect','set','remove','catalog','call'",
             "'golden','inspect','scorecard','suite','regression','schedule'",
+            "'create','list','disable','claim','run','runs'",
             "'list','inspect','submit','evaluate'",
             "'submit','work','list','inspect','cancel','mark-interrupted'",
             "'spawn','work','list','inspect','cancel','mark-interrupted','cleanup'",
@@ -307,6 +315,7 @@ mod tests {
                 "list set use test",
                 "list inspect set remove",
                 "golden inspect",
+                "create list disable claim run runs",
                 "list inspect submit evaluate",
                 "list start drain stop recover heartbeat reconcile reap restart",
                 "submit work list inspect cancel mark-interrupted",

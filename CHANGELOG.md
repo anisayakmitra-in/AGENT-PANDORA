@@ -31,6 +31,10 @@
   provenance, owning Domains, disabled-by-default lifecycle, and rollback
   evidence. Contracted effects remain on the Parliament, approval,
   ReferenceMonitor, permit, executor, and receipt path.
+- Joined durable evaluation schedules with registered evidence-backed and
+  task-backed suites. Proposal-bound schedules are one-shot canaries that
+  retain exact report digests and case counts, derive the versioned
+  zero-failure result, and stop before the separate activation gate.
 - Added verified, signed replacement of optional built-in Domain and Meta
   Harnesses with exact rollback to the compiled default. The constitutional
   Source Harness remains immutable.
