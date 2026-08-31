@@ -349,6 +349,11 @@ current process only. The same modes can be selected at startup with
 `--theme`. TUI themes cannot add commands, invoke tools, alter a task, or affect
 approvals and permits; invalid values fail closed before terminal raw mode is
 entered.
+The status line reports one of five typed public activity states: `idle`,
+`working`, `waiting`, `success`, or `failure`. `/activity` repeats that state in
+the transcript. This is a terminal equivalent of the optional desktop
+companion and never includes prompts, tool output, hidden reasoning, or runtime
+arguments.
 The
 in-memory transcript and task history are bounded; the session store remains
 the source for later resume. The TUI accepts the same Coding and Research slash

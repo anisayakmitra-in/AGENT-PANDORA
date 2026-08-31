@@ -118,6 +118,28 @@ struct App {
     pending: Option<PendingTask>,
     turns: u32,
     theme: TuiTheme,
+    activity: TuiActivity,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TuiActivity {
+    Idle,
+    Working,
+    Waiting,
+    Success,
+    Failure,
+}
+
+impl TuiActivity {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Working => "working",
+            Self::Waiting => "waiting",
+            Self::Success => "success",
+            Self::Failure => "failure",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -204,6 +226,7 @@ impl App {
             turns: 0,
             pending: None,
             theme,
+            activity: TuiActivity::Idle,
         }
     }
 
@@ -302,6 +325,7 @@ impl App {
                     "/session    show the active session ID",
                     "/clear      clear the transcript",
                     "/theme      show or select auto, dark, light, or mono",
+                    "/activity   show the typed public TUI activity state",
                     "/approve    approve and resume the pending task",
                     "/deny       deny the pending task",
                     "/coding     inspect the Coding Domain Harness",
@@ -321,6 +345,12 @@ impl App {
             "/clear" => self.messages.clear(),
             "/theme" => {
                 self.push_message(format!("theme> {}", self.theme.name()));
+            }
+            "/activity" => {
+                self.push_message(format!(
+                    "activity> {} (typed public state only)",
+                    self.activity.name()
+                ));
             }
             value if value.starts_with("/theme ") => {
                 match TuiTheme::parse(Some(value.trim_start_matches("/theme ").trim())) {
@@ -366,9 +396,11 @@ impl App {
         }
         self.push_message(format!("you> {task}"));
         let message_index = self.push_message("pandora> working...");
+        self.activity = TuiActivity::Working;
         let args = self.run_args(&task, approval_id);
         match super::run::execute(&args) {
             Ok(result) => {
+                self.activity = TuiActivity::Success;
                 update_session(&mut self.session_id, result.data.get("session_id"));
                 let output = result
                     .data
@@ -378,10 +410,12 @@ impl App {
                 self.messages[message_index] = format!("pandora> {}", clean_text(output));
             }
             Err(error) => {
+                self.activity = TuiActivity::Failure;
                 update_session(&mut self.session_id, error.details.get("session_id"));
                 self.messages[message_index] = format!("error> {}", clean_text(&error.message));
                 if let Some(approval_id) = error.details.get("approval_id").and_then(Value::as_str)
                 {
+                    self.activity = TuiActivity::Waiting;
                     self.messages[message_index].push_str(&format!(" (approval: {approval_id})"));
                     self.pending = Some(PendingTask {
                         invocation: PendingInvocation::Agent(task),
@@ -400,9 +434,11 @@ impl App {
         }
         self.push_message(format!("you> {line}"));
         let message_index = self.push_message("pandora> working...");
+        self.activity = TuiActivity::Working;
         match slash::execute_interactive(&line, &self.args, self.session_id.as_deref(), approval_id)
         {
             Ok(result) => {
+                self.activity = TuiActivity::Success;
                 update_session(&mut self.session_id, result.data.get("session_id"));
                 let output = result
                     .data
@@ -412,10 +448,12 @@ impl App {
                 self.messages[message_index] = format!("pandora> {}", clean_text(output));
             }
             Err(error) => {
+                self.activity = TuiActivity::Failure;
                 update_session(&mut self.session_id, error.details.get("session_id"));
                 self.messages[message_index] = format!("error> {}", clean_text(&error.message));
                 if let Some(approval_id) = error.details.get("approval_id").and_then(Value::as_str)
                 {
+                    self.activity = TuiActivity::Waiting;
                     self.messages[message_index].push_str(&format!(" (approval: {approval_id})"));
                     self.pending = Some(PendingTask {
                         invocation: PendingInvocation::Slash(line),
@@ -449,9 +487,12 @@ impl App {
                             self.run_slash(line, Some(&approval_id));
                         }
                     }
+                } else {
+                    self.activity = TuiActivity::Failure;
                 }
             }
             Err(error) => {
+                self.activity = TuiActivity::Waiting;
                 self.push_message(format!("error> {}", error.message));
                 self.pending = Some(PendingTask {
                     invocation,
@@ -600,8 +641,9 @@ impl App {
 
         let session = self.session_id.as_deref().unwrap_or("not started");
         let status = format!(
-            "session: {session} · turns: {} · theme: {} · presentation only",
+            "session: {session} · turns: {} · state: {} · theme: {} · presentation only",
             self.turns,
+            self.activity.name(),
             self.theme.name()
         );
         frame.render_widget(
@@ -678,7 +720,9 @@ fn terminal_error(error: impl std::fmt::Display) -> CliError {
 
 #[cfg(test)]
 mod tests {
-    use super::{App, MAX_TUI_HISTORY, MAX_TUI_MESSAGES, TuiTheme, visible_input, wrap_message};
+    use super::{
+        App, MAX_TUI_HISTORY, MAX_TUI_MESSAGES, TuiActivity, TuiTheme, visible_input, wrap_message,
+    };
     use crate::commands::ParsedArgs;
     use ratatui::{Terminal, backend::TestBackend};
     use std::collections::BTreeMap;
@@ -761,6 +805,20 @@ mod tests {
                 .last()
                 .is_some_and(|message| message.contains("expected auto, dark, light, or mono"))
         );
+    }
+
+    #[test]
+    fn activity_command_exposes_only_the_typed_public_state() {
+        let mut app = app();
+        app.activity = TuiActivity::Waiting;
+        app.input = "/activity".chars().collect();
+        app.submit();
+
+        assert_eq!(
+            app.messages.last().map(String::as_str),
+            Some("activity> waiting (typed public state only)")
+        );
+        assert_eq!(app.run_args("inspect", None), ["--agent", "inspect"]);
     }
 
     #[test]

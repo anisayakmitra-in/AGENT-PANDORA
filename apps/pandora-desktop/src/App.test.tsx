@@ -419,6 +419,39 @@ describe("Pandora desktop run state", () => {
     });
   });
 
+  it("keeps the local companion off by default and persists only display controls", async () => {
+    const first = render(<App />);
+    expect(screen.queryByRole("complementary", { name: "Pandora companion" })).not.toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open settings" }));
+    fireEvent.click(screen.getByRole("button", { name: /Appearance Theme and visual behavior/ }));
+    fireEvent.click(within(screen.getByRole("group", { name: "Companion visibility" })).getByRole("button", { name: "On" }));
+    fireEvent.click(within(screen.getByRole("group", { name: "Companion position" })).getByRole("button", { name: "bottom left" }));
+    fireEvent.click(within(screen.getByRole("group", { name: "Companion scale" })).getByRole("button", { name: "large" }));
+    fireEvent.click(within(screen.getByRole("group", { name: "Companion motion" })).getByRole("button", { name: "static" }));
+    fireEvent.click(within(screen.getByRole("group", { name: "Companion preview state" })).getByRole("button", { name: "waiting" }));
+
+    expect(screen.getByText("Waiting for an exact approval")).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Pandora companion" })).toHaveClass("position-bottom-left", "scale-large", "motion-static");
+    expect(runtime.run).not.toHaveBeenCalled();
+    expect(runtime.agentRun).not.toHaveBeenCalled();
+    expect(runtime.resolveApproval).not.toHaveBeenCalled();
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem("pandora.desktop.companion.v1") ?? "{}")).toEqual({
+      enabled: true,
+      position: "bottom-left",
+      scale: "large",
+      motion: "static",
+    }));
+
+    first.unmount();
+    render(<App />);
+    const restored = await screen.findByRole("complementary", { name: "Pandora companion" });
+    expect(restored).toHaveClass("position-bottom-left", "scale-large", "motion-static");
+    fireEvent.click(within(restored).getByRole("button", { name: "Disable Pandora companion" }));
+    expect(screen.queryByRole("complementary", { name: "Pandora companion" })).not.toBeInTheDocument();
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem("pandora.desktop.companion.v1") ?? "{}").enabled).toBe(false));
+  });
+
   it("recovers invalid persisted layout values without disrupting runtime work", async () => {
     window.localStorage.setItem("pandora.desktop.dock.open", "not-a-boolean");
     window.localStorage.setItem("pandora.desktop.dock.placement", "left");

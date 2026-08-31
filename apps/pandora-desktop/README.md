@@ -52,6 +52,12 @@ or incomplete local data falls back to the safe Foundry preset. See
 from the sidebar or Connections to inspect its recorded event count;
 the desktop clears the previous run result when you change sessions.
 
+The optional Pandora Orbit companion is off by default. It maps only typed,
+already-public UI states (`idle`, `working`, `waiting`, `success`, and
+`failure`) to bundled local images, has a static mode and immediate disable
+control, and persists display preferences only. Declarative pack validation and
+the no-authority boundary are documented in `docs/DESKTOP_COMPANIONS.md`.
+
 Release bundles include the same-commit Pandora CLI as a native sidecar, so the
 app does not depend on a shell or an inherited `PATH`. For local development,
 `PANDORA_CLI_PATH` remains an explicit override and must point to an absolute,
