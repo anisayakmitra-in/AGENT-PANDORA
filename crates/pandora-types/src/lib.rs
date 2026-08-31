@@ -24,6 +24,7 @@ pub mod rollout;
 pub mod service;
 pub mod session;
 pub mod skill;
+pub mod storage_lifecycle;
 pub mod subagent;
 pub mod workspace_orchestration;
 
@@ -124,6 +125,11 @@ pub use service::{
 };
 pub use session::{Session, TaskIntent};
 pub use skill::{SkillId, SkillManifest, SkillManifestError};
+pub use storage_lifecycle::{
+    MAX_STORAGE_LIFECYCLE_PROVIDER_FIELDS, STORAGE_LIFECYCLE_POLICY_VERSION,
+    StorageLifecycleAction, StorageLifecycleContractError, StorageLifecycleManifest,
+    StorageLifecycleProvider,
+};
 pub use subagent::{
     MAX_SUBAGENT_DELEGATION_DEPTH, MAX_SUBAGENT_DURATION_SECONDS, MAX_SUBAGENT_RESULT_BYTES,
     MAX_SUBAGENT_TASK_BYTES, MAX_SUBAGENT_TOKENS, MAX_SUBAGENT_TOOL_CALLS, MAX_SUBAGENT_TURNS,

@@ -93,6 +93,16 @@ copies. Operators must rotate or destroy encryption keys where applicable,
 expire backups under their storage policy, remove snapshots through the storage
 provider, and verify those lifecycle actions independently.
 
+`backup lifecycle` adds a versioned evidence boundary for those external
+actions. A closed provider/action matrix validates exact local filesystem, AWS
+S3, Azure Blob, or Google Cloud Storage identifiers for backup expiry, snapshot
+removal, and encryption-key destruction. Preview is non-mutating. `record
+--yes` stores a digest-bound operator attestation in an append-only SQLite
+ledger; exact retries are idempotent and conflicting evidence IDs fail closed.
+The TUI documents the workflow and the desktop lists the receipts. Every view
+states that the runtime did not perform the provider action and does not
+guarantee secure erasure.
+
 `memory consolidate` is the explicit cross-session and cross-project boundary.
 Same-workspace copies retain the existing safe default. A cross-project copy
 requires exact source and target workspace IDs plus an explicit `reject` or

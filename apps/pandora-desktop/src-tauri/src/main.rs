@@ -317,6 +317,12 @@ struct NativeMemoryResult {
     data: Value,
 }
 
+#[derive(Serialize)]
+struct NativeStorageLifecycleResult {
+    message: String,
+    data: Value,
+}
+
 #[tauri::command]
 fn configure_provider(
     mut input: ProviderConfiguration,
@@ -1054,6 +1060,24 @@ fn compact_memory(input: MemoryCompaction) -> Result<NativeMemoryResult, String>
     })
 }
 
+#[tauri::command]
+fn list_storage_lifecycle_evidence() -> Result<NativeStorageLifecycleResult, String> {
+    let args = vec![
+        "backup".to_owned(),
+        "lifecycle".to_owned(),
+        "list".to_owned(),
+        "--limit".to_owned(),
+        "64".to_owned(),
+        "--json".to_owned(),
+    ];
+    let data = run_cli_json(&args, "loading storage lifecycle evidence")?;
+    let count = data.get("count").and_then(Value::as_u64).unwrap_or_default();
+    Ok(NativeStorageLifecycleResult {
+        message: format!("Loaded {count} append-only storage lifecycle receipt(s)."),
+        data,
+    })
+}
+
 fn validate_identifier(value: &str, label: &str) -> Result<(), String> {
     if value.is_empty()
         || value.len() > 64
@@ -1739,6 +1763,7 @@ fn main() {
             forget_memory,
             preview_memory_compaction,
             compact_memory,
+            list_storage_lifecycle_evidence,
             pandora_rpc
         ])
         .on_window_event(|window, event| {

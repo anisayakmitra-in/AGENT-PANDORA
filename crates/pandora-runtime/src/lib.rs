@@ -56,6 +56,7 @@ pub mod service_token;
 pub mod sessions;
 pub mod shadow_council;
 pub mod skill_engine;
+pub mod storage_lifecycle;
 pub mod strategies;
 pub mod subagent;
 pub mod subagent_store;
@@ -195,6 +196,10 @@ pub use sessions::{RolloutSummary, SessionEventPage, SessionSnapshot, SessionSto
 pub use skill_engine::{
     RemovalReceipt, SkillEngine, SkillError, SkillInspection, SkillProvenance, SkillRecord,
     SkillState,
+};
+pub use storage_lifecycle::{
+    MAX_STORAGE_LIFECYCLE_LIST, MAX_STORAGE_LIFECYCLE_RECEIPTS, StorageLifecycleReceipt,
+    StorageLifecycleRecordResult, StorageLifecycleStore, StorageLifecycleStoreError,
 };
 pub use strategies::population::{
     PopulationParentPlan, PopulationPlan, PopulationStrategy, PopulationStrategyError,

@@ -116,6 +116,7 @@ payloads are excluded from that audit summary.
     pandora auth revoke <identity-id> --yes
     pandora secret set OPENAI_API_KEY --value-stdin
     pandora backup create --output pandora-recovery.json
+    pandora backup inspect --input pandora-recovery.json
     pandora backup restore --input pandora-recovery.json --yes
 
 Service identities bind a principal, tenant, workspace, role, bearer-token
@@ -128,6 +129,68 @@ separate PANDORA_BACKUP_KEY value. Stop the service before backup or restore.
 Restore authenticates paths and content, validates SQLite databases, preserves
 the prior files, and does not alter the configured workspace. See
 [production readiness](PRODUCTION.md).
+
+Provider-side retention is a separate, evidence-only workflow:
+
+```text
+pandora backup lifecycle preview --input lifecycle-evidence.json
+pandora backup lifecycle record --input lifecycle-evidence.json --yes
+pandora backup lifecycle list [--storage-provider <provider>] [--action <action>] [--limit <1-256>]
+pandora backup lifecycle inspect --id <evidence-id>
+```
+
+The version 1 manifest is closed and rejects unknown top-level or provider
+fields. It requires `evidence_id`, `policy_id`, `provider`, `action`,
+`resource_id`, exact `provider_fields`, a lowercase
+`external_evidence_digest` in `sha256:<64-hex>` form, `actor`, and positive
+`performed_at` Unix seconds. Supported providers are `local_filesystem`,
+`aws_s3`, `azure_blob`, and `gcp_cloud_storage`; actions are
+`backup_expired`, `snapshot_removed`, and `encryption_key_destroyed`.
+Recording rejects an action time later than the receipt time.
+
+Provider fields are exact for each provider/action pair:
+
+| Provider | Backup expired | Snapshot removed | Encryption key destroyed |
+| --- | --- | --- | --- |
+| `local_filesystem` | `path`, `file_sha256`, `deletion_event_id` | `snapshot_id`, `deletion_event_id` | `key_id`, `destruction_event_id` |
+| `aws_s3` | `bucket`, `object_key`, `version_id`, `deletion_marker_id` | `snapshot_arn`, `deletion_event_id` | `key_arn`, `deletion_event_id` |
+| `azure_blob` | `account`, `container`, `blob`, `version_id`, `deletion_event_id` | `snapshot_id`, `deletion_event_id` | `vault_uri`, `key_name`, `key_version`, `purge_event_id` |
+| `gcp_cloud_storage` | `bucket`, `object_name`, `generation`, `operation_id` | `snapshot_resource`, `operation_id` | `key_version_resource`, `destroy_event_id` |
+
+Example local snapshot evidence manifest:
+
+```json
+{
+  "policy_version": 1,
+  "evidence_id": "evidence:snapshot-2026-09-01",
+  "policy_id": "retention:daily-30d",
+  "provider": "local_filesystem",
+  "action": "snapshot_removed",
+  "resource_id": "snapshot:daily-2026-08-01",
+  "provider_fields": {
+    "deletion_event_id": "filesystem-audit-1042",
+    "snapshot_id": "daily-2026-08-01"
+  },
+  "external_evidence_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "actor": "operator:alice",
+  "performed_at": 1788192000
+}
+```
+
+Replace the illustrative digest with the SHA-256 of the retained provider or
+filesystem audit evidence.
+
+`preview` validates without opening the ledger. `record --yes` writes an
+append-only SQLite receipt; an exact retry returns the original receipt, while
+reuse of the same evidence ID with different content fails closed. `list` and
+`inspect` are read-only. Every result says `operator_attested`,
+`external_action_performed_by_runtime: false`, and
+`secure_erasure_guaranteed: false`: the operator must perform and independently
+verify the provider action before hashing its external audit record. The TUI
+exposes this boundary through `/storage-lifecycle`, and the desktop can review
+the resulting receipts. The append-only ledger is bounded to 4,096 receipts.
+Provider fields are identifiers and audit references only; never place a
+credential, private key, recovery passphrase, or key material in the manifest.
 
 ## Sessions and execution
 

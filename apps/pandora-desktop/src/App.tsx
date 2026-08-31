@@ -41,6 +41,7 @@ import {
   listLocalPackages,
   listLocalSkills,
   listRegistryProfiles,
+  listStorageLifecycleEvidence,
   loadRuntimeEndpoint,
   isNativeRuntime,
   lockLocalPackages,
@@ -74,6 +75,7 @@ import {
   type RuntimeMemorySynthesisScheduleRun,
   type MemorySynthesisScheduleInput,
   type NativeMemoryResult,
+  type RuntimeStorageLifecycleReceipt,
   type NativePackageResult,
   type RuntimeMemoryAuditEntry,
   type RuntimeOrchestrationRun,
@@ -2096,6 +2098,8 @@ function MemoryRetentionPanel({
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [inFlight, setInFlight] = useState(false);
+  const [lifecycleReceipts, setLifecycleReceipts] = useState<RuntimeStorageLifecycleReceipt[]>([]);
+  const [lifecycleMessage, setLifecycleMessage] = useState("");
   const provider = providers.find((item) => item.credential_configured && item.active)?.name
     ?? providers.find((item) => item.credential_configured)?.name
     ?? "local";
@@ -2164,7 +2168,41 @@ function MemoryRetentionPanel({
     }
   };
 
-  return <div className="memory-retention-dock"><Panel className="memory-retention-panel"><div className="panel-heading"><div><span className="eyebrow">LOGICAL RETENTION</span><h3>Revoked-record compaction</h3></div><Chip tone="amber">Tombstones retained</Chip></div><p className="connection-note">Preview and compact only already-revoked records in the exact session and provider scope. This does not securely erase SQLite pages, WAL files, backups, or storage snapshots.</p><form className="memory-retention-form" onSubmit={(event) => void previewCompaction(event)}><label><span>Revoked before · Unix seconds</span><input aria-label="Revoked before Unix seconds" value={before} onChange={(event) => { setBefore(event.target.value); setPreview(null); setConfirmation(""); }} inputMode="numeric" /></label><div><span className="eyebrow">SCOPE</span><strong className="mono">{selectedSession?.session.session_id ?? "Select a session"} · {provider}</strong></div><button className="button button-secondary" type="submit" disabled={!native || !selectedSession || inFlight}>{inFlight ? "Checking…" : "Preview compaction"}</button></form>{preview ? <form className="memory-forget-confirm memory-compaction-confirm" onSubmit={(event) => void applyCompaction(event)}><div><span className="eyebrow">EXACT LOGICAL COMPACTION</span><strong>{preview.compactable_records ?? 0} revoked record(s) eligible</strong><p>Type <span className="mono">COMPACT {preview.revoked_before_or_at}</span> to apply this exact boundary. {preview.boundary?.storage_guidance}</p></div><label><span>Confirmation</span><input aria-label="Confirm memory compaction" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="off" spellCheck={false} /></label><div className="memory-forget-actions"><button className="button button-secondary" type="button" disabled={inFlight} onClick={() => { setPreview(null); setConfirmation(""); }}>Cancel</button><button className="button button-deny" type="submit" disabled={inFlight || confirmation !== `COMPACT ${preview.revoked_before_or_at}`}>{inFlight ? "Compacting…" : "Confirm logical compaction"}</button></div></form> : null}{message ? <p className="configuration-result is-success" role="status"><Icon name="check" size={13} /> {message}</p> : null}{error ? <p className="connection-error" role="alert">{error}</p> : null}</Panel></div>;
+  const loadLifecycleEvidence = async () => {
+    if (!native) return;
+    setInFlight(true);
+    setError("");
+    try {
+      const result = await listStorageLifecycleEvidence();
+      if (result.data.boundary.external_action_performed_by_runtime !== false) {
+        throw new Error("Storage lifecycle evidence widened the runtime boundary");
+      }
+      setLifecycleReceipts(result.data.receipts ?? []);
+      setLifecycleMessage(result.message);
+    } catch (lifecycleError: unknown) {
+      setError(lifecycleError instanceof Error ? lifecycleError.message : "Could not load storage lifecycle evidence");
+    } finally {
+      setInFlight(false);
+    }
+  };
+
+  return <div className="memory-retention-dock">
+    <Panel className="memory-retention-panel">
+      <div className="panel-heading"><div><span className="eyebrow">LOGICAL RETENTION</span><h3>Revoked-record compaction</h3></div><Chip tone="amber">Tombstones retained</Chip></div>
+      <p className="connection-note">Preview and compact only already-revoked records in the exact session and provider scope. This does not securely erase SQLite pages, WAL files, backups, or storage snapshots.</p>
+      <form className="memory-retention-form" onSubmit={(event) => void previewCompaction(event)}><label><span>Revoked before · Unix seconds</span><input aria-label="Revoked before Unix seconds" value={before} onChange={(event) => { setBefore(event.target.value); setPreview(null); setConfirmation(""); }} inputMode="numeric" /></label><div><span className="eyebrow">SCOPE</span><strong className="mono">{selectedSession?.session.session_id ?? "Select a session"} · {provider}</strong></div><button className="button button-secondary" type="submit" disabled={!native || !selectedSession || inFlight}>{inFlight ? "Checking…" : "Preview compaction"}</button></form>
+      {preview ? <form className="memory-forget-confirm memory-compaction-confirm" onSubmit={(event) => void applyCompaction(event)}><div><span className="eyebrow">EXACT LOGICAL COMPACTION</span><strong>{preview.compactable_records ?? 0} revoked record(s) eligible</strong><p>Type <span className="mono">COMPACT {preview.revoked_before_or_at}</span> to apply this exact boundary. {preview.boundary?.storage_guidance}</p></div><label><span>Confirmation</span><input aria-label="Confirm memory compaction" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="off" spellCheck={false} /></label><div className="memory-forget-actions"><button className="button button-secondary" type="button" disabled={inFlight} onClick={() => { setPreview(null); setConfirmation(""); }}>Cancel</button><button className="button button-deny" type="submit" disabled={inFlight || confirmation !== `COMPACT ${preview.revoked_before_or_at}`}>{inFlight ? "Compacting…" : "Confirm logical compaction"}</button></div></form> : null}
+      {message ? <p className="configuration-result is-success" role="status"><Icon name="check" size={13} /> {message}</p> : null}
+      {error ? <p className="connection-error" role="alert">{error}</p> : null}
+    </Panel>
+    <Panel className="storage-lifecycle-panel">
+      <div className="panel-heading"><div><span className="eyebrow">EXTERNAL RETENTION</span><h3>Provider lifecycle evidence</h3></div><Chip tone="blue">Append only</Chip></div>
+      <p className="connection-note">Review operator-attested backup expiry, snapshot removal, and encryption-key destruction receipts. The runtime records evidence; it does not delete provider resources or guarantee secure erasure.</p>
+      <button className="button button-secondary" type="button" disabled={!native || inFlight} onClick={() => void loadLifecycleEvidence()}>{inFlight ? "Loading…" : "Refresh lifecycle evidence"}</button>
+      {lifecycleReceipts.length ? <div className="memory-audit-list storage-lifecycle-list" aria-label="Storage lifecycle evidence">{lifecycleReceipts.map((receipt) => <article className="memory-audit-row" key={receipt.manifest.evidence_id}><span className="memory-audit-action">{receipt.manifest.action.replaceAll("_", " ")}</span><strong className="mono">{receipt.manifest.evidence_id}</strong><span>{receipt.manifest.provider.replaceAll("_", " ")}</span><time dateTime={new Date(receipt.recorded_at * 1000).toISOString()}>{new Date(receipt.recorded_at * 1000).toLocaleString()}</time></article>)}</div> : <p className="connection-note">No lifecycle receipts loaded. Use the CLI preview and explicit record workflow before evidence appears here.</p>}
+      {lifecycleMessage ? <p className="configuration-result is-success" role="status"><Icon name="check" size={13} /> {lifecycleMessage}</p> : null}
+    </Panel>
+  </div>;
 }
 
 function Layer({ label, value, detail, tone }: { label: string; value: string; detail: string; tone: "green" | "blue" | "gold" }) {

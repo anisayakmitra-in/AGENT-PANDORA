@@ -370,6 +370,44 @@ export type NativeMemoryResult = {
   };
 };
 
+export type RuntimeStorageLifecycleReceipt = {
+  manifest: {
+    policy_version: number;
+    evidence_id: string;
+    policy_id: string;
+    provider: "local_filesystem" | "aws_s3" | "azure_blob" | "gcp_cloud_storage";
+    action: "backup_expired" | "snapshot_removed" | "encryption_key_destroyed";
+    resource_id: string;
+    provider_fields: Record<string, string>;
+    external_evidence_digest: string;
+    actor: string;
+    performed_at: number;
+    manifest_digest: string;
+  };
+  manifest_digest: string;
+  recorded_at: number;
+  evidence_status: "operator_attested";
+  external_action_performed_by_runtime: false;
+  secure_erasure_guaranteed: false;
+  durability: "append-only-sqlite";
+};
+
+export type NativeStorageLifecycleResult = {
+  message: string;
+  data: {
+    receipts: RuntimeStorageLifecycleReceipt[];
+    count: number;
+    boundary: {
+      evidence_status: "operator_attested";
+      external_action_performed_by_runtime: false;
+      secure_erasure_guaranteed: false;
+      runtime_deletes_provider_resources: false;
+      verification_responsibility: "operator";
+      guidance: string;
+    };
+  };
+};
+
 export type RuntimeApproval = {
   approval_id: string;
   session_id: string;
@@ -725,6 +763,13 @@ export async function compactMemory(sessionId: string, provider: string, revoked
   return invoke<NativeMemoryResult>("compact_memory", {
     input: { sessionId, provider, revokedBeforeOrAt, confirmation },
   });
+}
+
+export async function listStorageLifecycleEvidence(): Promise<NativeStorageLifecycleResult> {
+  if (!isNativeRuntime()) {
+    throw new Error("Storage lifecycle evidence is available only in the Pandora desktop app");
+  }
+  return invoke<NativeStorageLifecycleResult>("list_storage_lifecycle_evidence");
 }
 
 export async function listLocalPackages(): Promise<NativePackageResult> {

@@ -336,7 +336,7 @@ commands:
   service start [--port <port>]
   auth enroll --principal <id> --tenant <id> --workspace-id <id> --role <viewer|operator|administrator> [--device-key-file <path>] [--token-file <path>] | list | revoke <identity-id> --yes
   secret set <ENV_NAME> --value-stdin | list | status <ENV_NAME> | remove <ENV_NAME> --yes
-  backup create --output <path> [--passphrase-env <name>] | inspect --input <path> [--passphrase-env <name>] | restore --input <path> [--passphrase-env <name>] --yes
+  backup create --output <path> [--passphrase-env <name>] | inspect --input <path> [--passphrase-env <name>] | restore --input <path> [--passphrase-env <name>] --yes | lifecycle preview --input <path> | record --input <path> --yes | list [--storage-provider <provider>] [--action <action>] [--limit <1-256>] | inspect --id <evidence-id>
   chat [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>]
   tui [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>] [--theme <auto|dark|light|mono>]
   harness list|inspect|run [--harness-version <version>]

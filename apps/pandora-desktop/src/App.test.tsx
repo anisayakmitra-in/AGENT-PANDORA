@@ -31,6 +31,7 @@ const runtime = vi.hoisted(() => ({
   listLocalPackages: vi.fn(),
   listLocalSkills: vi.fn(),
   listRegistryProfiles: vi.fn(),
+  listStorageLifecycleEvidence: vi.fn(),
   lockLocalPackages: vi.fn(),
   compactMemory: vi.fn(),
   forgetMemory: vi.fn(),
@@ -78,6 +79,7 @@ vi.mock("./runtimeClient", () => ({
   listLocalPackages: runtime.listLocalPackages,
   listLocalSkills: runtime.listLocalSkills,
   listRegistryProfiles: runtime.listRegistryProfiles,
+  listStorageLifecycleEvidence: runtime.listStorageLifecycleEvidence,
   lockLocalPackages: runtime.lockLocalPackages,
   compactMemory: runtime.compactMemory,
   mutateLocalSkill: runtime.mutateLocalSkill,
@@ -244,6 +246,21 @@ beforeEach(() => {
         audit_retained: true,
         secure_erasure_guaranteed: false,
         storage_guidance: "Database pages, WAL files, backups, and storage snapshots require separate lifecycle controls.",
+      },
+    },
+  });
+  runtime.listStorageLifecycleEvidence.mockResolvedValue({
+    message: "Loaded 0 append-only storage lifecycle receipt(s).",
+    data: {
+      receipts: [],
+      count: 0,
+      boundary: {
+        evidence_status: "operator_attested",
+        external_action_performed_by_runtime: false,
+        secure_erasure_guaranteed: false,
+        runtime_deletes_provider_resources: false,
+        verification_responsibility: "operator",
+        guidance: "Independently verify provider actions before recording evidence.",
       },
     },
   });
@@ -994,6 +1011,46 @@ describe("Pandora desktop run state", () => {
         },
       },
     });
+    runtime.listStorageLifecycleEvidence.mockResolvedValue({
+      message: "Loaded 1 append-only storage lifecycle receipt(s).",
+      data: {
+        receipts: [{
+          manifest: {
+            policy_version: 1,
+            evidence_id: "evidence:backup-1",
+            policy_id: "retention:daily-30d",
+            provider: "aws_s3",
+            action: "backup_expired",
+            resource_id: "resource:backup-1",
+            provider_fields: {
+              bucket: "backup-bucket",
+              deletion_marker_id: "marker-1",
+              object_key: "daily/archive.json",
+              version_id: "version-1",
+            },
+            external_evidence_digest: `sha256:${"1".repeat(64)}`,
+            actor: "operator:alice",
+            performed_at: 1_788_192_000,
+            manifest_digest: `sha256:${"2".repeat(64)}`,
+          },
+          manifest_digest: `sha256:${"2".repeat(64)}`,
+          recorded_at: 1_788_192_100,
+          evidence_status: "operator_attested",
+          external_action_performed_by_runtime: false,
+          secure_erasure_guaranteed: false,
+          durability: "append-only-sqlite",
+        }],
+        count: 1,
+        boundary: {
+          evidence_status: "operator_attested",
+          external_action_performed_by_runtime: false,
+          secure_erasure_guaranteed: false,
+          runtime_deletes_provider_resources: false,
+          verification_responsibility: "operator",
+          guidance: "Independently verify provider actions before recording evidence.",
+        },
+      },
+    });
 
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Connections" }));
@@ -1003,6 +1060,11 @@ describe("Pandora desktop run state", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Memory" }));
     expect(screen.getByLabelText("Cross-project memory policy")).toHaveTextContent("denied by default");
     expect(screen.getByLabelText("Cross-project memory policy")).toHaveTextContent("never overwrites");
+    expect(screen.getByText(/runtime records evidence; it does not delete provider resources/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh lifecycle evidence" }));
+    await waitFor(() => expect(runtime.listStorageLifecycleEvidence).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("evidence:backup-1")).toBeInTheDocument();
+    expect(screen.getByLabelText("Storage lifecycle evidence")).toHaveTextContent("backup expired");
 
     const boundary = await screen.findByLabelText("Revoked before Unix seconds");
     fireEvent.change(boundary, { target: { value: "4102444800" } });

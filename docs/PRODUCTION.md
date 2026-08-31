@@ -80,6 +80,32 @@ Operations logs, crash reports, staged application updates, and earlier
 recovery archives are excluded. Evolution rollback material is included so
 recovery does not break Pandora's candidate lineage.
 
+## Provider lifecycle evidence
+
+Logical memory compaction and local archive creation do not expire cloud
+backups, remove snapshots, or destroy encryption keys. Perform those actions in
+the provider control plane, independently verify the terminal provider state,
+retain the provider audit response, and hash that response before creating the
+version 1 lifecycle manifest documented in [the CLI guide](CLI.md).
+
+    pandora backup lifecycle preview --input lifecycle-evidence.json
+    pandora backup lifecycle record --input lifecycle-evidence.json --yes
+    pandora backup lifecycle inspect --id <evidence-id>
+    pandora backup lifecycle list --storage-provider aws_s3 --limit 64
+
+Preview must succeed before record. Recording persists an append-only,
+digest-bound operator attestation in `data/storage-lifecycle.sqlite3`. An exact
+retry is idempotent; a changed manifest cannot reuse an evidence ID. Database
+triggers reject receipt updates and deletes. The ledger is part of normal state
+backup, but it is evidence of an external action, not the action itself.
+
+The runtime does not call a cloud deletion API, rotate a provider key, verify a
+provider response, or promise secure erasure. Do not record key destruction
+until recovery requirements have been reviewed: destroying the only usable key
+can make retained archives permanently unrecoverable. Provider retention,
+replication, legal hold, object versioning, soft-delete, and cryptographic
+destruction semantics remain the operator's responsibility.
+
 ## Telemetry and crash records
 
 Operational telemetry is local-only under data/operations/telemetry.jsonl. It

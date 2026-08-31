@@ -333,6 +333,7 @@ impl App {
                     "/canary-loop show the governed scheduled-canary workflow",
                     "/memory-retention show the scoped revoked-record compaction workflow",
                     "/memory-transfer show the cross-project consolidation policy",
+                    "/storage-lifecycle show provider lifecycle evidence commands",
                     "/approve    approve and resume the pending task",
                     "/deny       deny the pending task",
                     "/coding     inspect the Coding Domain Harness",
@@ -406,6 +407,14 @@ impl App {
                 );
                 self.push_message(
                     "memory> dry-run first; --yes copies only non-sensitive L1, never overwrites, and never reuses tombstoned IDs",
+                );
+            }
+            "/storage-lifecycle" => {
+                self.push_message(
+                    "storage> validate with backup lifecycle preview --input <manifest>; record digest-bound operator evidence only with record --input <manifest> --yes",
+                );
+                self.push_message(
+                    "storage> provider actions happen outside the runtime; list and inspect are append-only evidence views, not secure-erasure guarantees",
                 );
             }
             value if value.starts_with("/theme ") => {
@@ -922,6 +931,9 @@ mod tests {
         assert!(app.messages.iter().any(|message| {
             message == "/memory-transfer show the cross-project consolidation policy"
         }));
+        assert!(app.messages.iter().any(|message| {
+            message == "/storage-lifecycle show provider lifecycle evidence commands"
+        }));
     }
 
     #[test]
@@ -1016,6 +1028,23 @@ mod tests {
         }));
         assert!(app.messages.iter().any(|message| {
             message.contains("never overwrites") && message.contains("tombstoned IDs")
+        }));
+        assert_eq!(app.activity, TuiActivity::Idle);
+    }
+
+    #[test]
+    fn storage_lifecycle_command_is_guidance_only() {
+        let mut app = app();
+        app.input = "/storage-lifecycle".chars().collect();
+        app.submit();
+
+        assert!(app.messages.iter().any(|message| {
+            message.contains("backup lifecycle preview")
+                && message.contains("record --input <manifest> --yes")
+        }));
+        assert!(app.messages.iter().any(|message| {
+            message.contains("outside the runtime")
+                && message.contains("not secure-erasure guarantees")
         }));
         assert_eq!(app.activity, TuiActivity::Idle);
     }

@@ -59,6 +59,12 @@ already-revoked logical records. Tombstones and audit history remain; database
 pages, WAL files, backups, and storage snapshots need separate lifecycle
 controls. See [memory](docs/MEMORY.md).
 
+External retention evidence is also explicit. `backup lifecycle preview`
+validates a provider-specific manifest without writing, while `record --yes`
+adds an append-only operator-attested receipt for backup expiry, snapshot
+removal, or encryption-key destruction. The runtime never claims it performed
+the external deletion or guaranteed secure erasure.
+
 Cross-project L1 consolidation is explicit and fail-closed: it requires exact
 source and target workspace IDs, the same tenant and provider, a declared
 `reject` or `keep-target` conflict rule, a dry run, and `--yes`. It never

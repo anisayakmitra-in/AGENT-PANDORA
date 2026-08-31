@@ -3,14 +3,13 @@
 Pandora is roughly 60-70% complete against the local agent platform described
 in this roadmap. The center of that range is about 65%. This is a planning
 estimate from the source tree, tests, desktop, workflows, and documented release
-gates on 2026-08-30. It is not a release claim.
+gates on 2026-09-01. It is not a release claim.
 
 The execution and authority core is ahead of the product loops around it.
 Parliament, Shadow Council, ReferenceMonitor, exact Harness and Gene bindings,
 one-shot permits, receipts, package admission, and governed replacement already
 exist. The largest unfinished areas are automatic evaluation loops,
-cross-session memory policy, hostile-input testing, fleet
-operations, and signed native releases.
+hostile-input testing, fleet operations, and signed native releases.
 
 ## Status by phase
 
@@ -20,7 +19,7 @@ operations, and signed native releases.
 | 7. Runtime scale and orchestration | 90-95% | persistent prompt-context cache, headless jobs, bounded parallel subagents, exact-commit worktrees, durable orchestration claims and receipts, interruption and resume rules, multi-repository plans, fleet leases, budgets, execution-bound lease renewal, and durable supervisor state with PID-bound worker heartbeats, process-wide execution leases for headless jobs and subagents, lease gating, stale-supervisor reconciliation without replay, bounded stale reaping, atomic PID-bound restart handoff, atomic cross-process quiescence guards, bounded independently launched job watch windows, long-lived local daemon workers with explicit drain/stop protocol, cross-process crash reconciliation/restart evidence, bounded staggered-producer soak coverage, cancellation/provider-return restart evidence, and combined cross-process worker-operations recovery acceptance | retained long-duration and multi-platform worker soak evidence |
 | 8. Agent experience and disclosure | 96-98% | cross-platform Tauri desktop app, same-commit CLI sidecar packaging, clean-runner Linux/macOS x64/macOS arm64/Windows bundle and system-installer register/copy/install/start/remove evidence, synthetic native install/update/rollback/uninstall evidence, Chromium and axe checks at the minimum desktop window and 200%-zoom-equivalent viewport, Command and Council inspection, background runs, runtime inventory, Harness Lab, package lifecycle, package manifest workbench, local Skill lifecycle, BYOK provider creation and selection, MCP configuration, pinned GitHub packages, active custom Domain and Meta Harnesses, deterministic local Domain and composition-only Meta starter kits across app/CLI/TUI, validated declarative Gene examples and inspector fixtures, WebAssembly Genes, custom Auto Route contracts, optional built-in Domain and Meta replacement, encrypted-vault package key generation and atomic local manifest signing, explicit fail-closed Source/Provider/Skill/generic package admission boundaries, macOS 26 Liquid Glass with older-mac vibrancy fallback, reduced-transparency and forced-colors regressions | remote or signed Skill and Provider package distribution, native screen-reader and clean-machine scaling evidence, signed desktop installer release proof |
 | 9. Evaluation-driven loops | 88-92% | trajectory, outcome, policy, regression, adversarial, golden, and holdout evaluation; coding feedback; research-only mutation and population strategies; durable evolution state; canary activation and rollback; versioned evidence-derived zero-failure canary policy; read-only durable per-session evaluation scorecards with a fail-on-non-passed CI gate; durable schedules with a bounded local registry of validated suite definitions; typed prompt/Skill/workflow/WebAssembly Gene target metadata; durable failure-derived regression candidates; explicit review-gated suite admission; governed scheduled execution of evidence-backed and task-backed suites; proposal-bound one-shot canary scheduling with durable report evidence and a separate activation gate | self-healing test generation beyond metadata candidates; multi-stage rollout budgets and pause/resume policy; cost and latency scorecards; quality gates for every artifact class |
-| 10. Memory consolidation | 94-97% | scoped L0, L1, and L2 records; durable recall; approval-gated promotion; revocation and audit; deterministic evidence-bound synthesis with stale-snapshot checks; bounded provenance graphs; versioned same-tenant/provider cross-session and explicit cross-project L1 consolidation with reject/keep-target conflict rules; durable leased synthesis schedules and run history; exact digest-bound memory IDs on evolution candidates; desktop source, promotion, provenance, audit, revocation, schedule, transfer-policy disclosure, and typed retention-compaction controls; logical compaction that retains tombstones and audit evidence with explicit secure-erasure guidance | storage-provider-specific backup and snapshot lifecycle automation |
+| 10. Memory consolidation | 100% | scoped L0, L1, and L2 records; durable recall; approval-gated promotion; revocation and audit; deterministic evidence-bound synthesis with stale-snapshot checks; bounded provenance graphs; versioned same-tenant/provider cross-session and explicit cross-project L1 consolidation with reject/keep-target conflict rules; durable leased synthesis schedules and run history; exact digest-bound memory IDs on evolution candidates; desktop source, promotion, provenance, audit, revocation, schedule, transfer-policy disclosure, and typed retention-compaction controls; logical compaction that retains tombstones and audit evidence with explicit secure-erasure guidance; versioned local/AWS/Azure/GCP backup-expiry, snapshot-removal, and key-destruction manifests; non-mutating preview; append-only idempotent operator-attested receipts; CLI/TUI workflow and desktop evidence view | none in the defined Phase 10 source-tree scope; provider control-plane actions and independent verification remain external by design |
 | 11. Adversarial resilience | 65-72% | path confinement, symlink checks, secret redaction, replay protection, exact signatures and hashes, fail-closed package and permit checks, adversarial evaluation primitives, typed context-origin metadata plus source-labelled deterministic quarantine for high-confidence instruction-shaped tool and adapter output, replayable hostile-output corpus coverage, durable publisher trust roots with active-key admission, rotation, revocation, and fail-closed reload behavior | prompt-injection corpus across every input source, transparency evidence for trust changes, fuzzing and hostile multi-agent handoff suites |
 | 12. Agent operations | 45-55% | three-platform CI, desktop CI, release and security workflows, bounded agent workers, orchestration receipts, local fleet records | agent CI/CD as a Pandora workflow, supervisor controls, fleet dashboards, multi-repository budget enforcement, stable channel promotion with real signing credentials |
 
@@ -187,10 +186,19 @@ Research evolution evidence now carries the exact canonical IDs of all included
 memory records. Those IDs are covered by the evidence digest, persisted on the
 candidate proposal, and visible in CLI, service, and desktop lineage inspection.
 
-Next work:
+Storage lifecycle policy version 1 closes the remaining evidence gap. It uses a
+closed provider/action field matrix for local filesystem, AWS S3, Azure Blob,
+and Google Cloud Storage backup expiry, snapshot removal, and encryption-key
+destruction. Preview does not open the ledger. Explicit record writes an
+append-only, digest-bound operator attestation; exact retry is idempotent and a
+conflicting evidence ID fails closed. CLI list/inspect, TUI guidance, and the
+desktop evidence panel all retain the same boundary: the runtime did not
+perform the provider action and does not guarantee secure erasure.
 
-- add storage-provider-specific backup expiry, snapshot removal, and key
-  destruction evidence without overstating logical database compaction.
+Phase status: complete for the defined source-tree scope. Provider control-plane
+actions, provider response verification, legal holds, replication, soft-delete,
+and cryptographic-erasure semantics remain external operator responsibilities,
+not hidden unfinished runtime authority.
 
 ## Phase 11: treat content as hostile
 
