@@ -548,7 +548,10 @@ proposer: it cannot call tools or advance the candidate beyond `proposed`.
 pandora evolution generate --session session-1 --kind prompt --target-id planner.system --base planner-v1.txt --output planner-v2.txt --json
 ```
 
-The result identifies the exact base/candidate hashes and evidence digest. It
+The result identifies the exact base/candidate hashes, evidence digest, and the
+canonical `memory_evidence_ids` list for every memory record included in the
+research evidence. That list is stored on the proposal and appears in list,
+inspect, service, and desktop views; the evidence digest covers the same IDs. It
 must still pass holdouts and regression checks, Parliament approval, staging,
 and canary before activation. Prompt, Skill, and workflow activation remains a
 non-executable catalog binding; a WASM Gene candidate also requires normal
@@ -557,7 +560,8 @@ package admission before it can be activated.
 `evolution submit` records a bounded proposal for later evaluation. It accepts
 only the three known evolution sources and writes the proposal to the same
 durable store; submission does not approve, stage, activate, or execute a
-candidate.
+candidate. `memory_evidence_ids` is optional for legacy or non-memory proposals,
+is capped at 16 entries, and is canonicalized into stable identity order.
 
 ```json
 {
@@ -566,6 +570,7 @@ candidate.
   "base_artifact": "base-1",
   "candidate_artifact": "candidate-1",
   "evidence_digest": "evidence-1",
+  "memory_evidence_ids": ["memory-a", "memory-b"],
   "expected_outcome": "improve verification reliability"
 }
 ```

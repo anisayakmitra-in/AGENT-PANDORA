@@ -126,7 +126,7 @@ impl StoredProposal {
     }
 
     fn validate(&self) -> Result<(), EvolutionStoreError> {
-        MutationProposal::new(
+        let validated = MutationProposal::new(
             self.proposal.proposal_id().as_str().to_owned(),
             self.proposal.source(),
             self.proposal.base_artifact().clone(),
@@ -135,7 +135,13 @@ impl StoredProposal {
             self.proposal.expected_outcome().to_owned(),
             self.proposal.created_at(),
         )
+        .and_then(|proposal| {
+            proposal.with_memory_evidence_ids(self.proposal.memory_evidence_ids().to_vec())
+        })
         .map_err(|_| EvolutionStoreError::CorruptRecord)?;
+        if validated.memory_evidence_ids() != self.proposal.memory_evidence_ids() {
+            return Err(EvolutionStoreError::CorruptRecord);
+        }
         if let Some(evaluation) = &self.evaluation
             && evaluation.proposal_id() != self.proposal.proposal_id()
         {
@@ -527,7 +533,7 @@ impl EvolutionEngine {
 mod tests {
     use super::*;
     use pandora_types::{
-        ArtifactId, CanaryResult, EvolutionSource, PrincipalId, RequestDigest, Timestamp,
+        ArtifactId, CanaryResult, EvolutionSource, MemoryId, PrincipalId, RequestDigest, Timestamp,
     };
     use rusqlite::{Connection, params};
 
@@ -541,6 +547,8 @@ mod tests {
             "improve verification reliability",
             Timestamp::from_unix_seconds(10),
         )
+        .unwrap()
+        .with_memory_evidence_ids(vec![MemoryId::new("memory-evidence-1").unwrap()])
         .unwrap()
     }
 
@@ -675,6 +683,10 @@ mod tests {
         let records = reopened.list().unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].state(), EvolutionState::Evaluated);
+        assert_eq!(
+            records[0].proposal().memory_evidence_ids(),
+            &[MemoryId::new("memory-evidence-1").unwrap()]
+        );
         assert_eq!(
             records[0].evaluation().unwrap().outcome_score(),
             evaluation(true).outcome_score()

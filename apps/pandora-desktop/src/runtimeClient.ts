@@ -390,6 +390,7 @@ export type RuntimeEvolutionProposal = {
   base_artifact: string;
   candidate_artifact: string;
   evidence_digest: string;
+  memory_evidence_ids?: string[];
   expected_outcome: string;
   created_at_unix_seconds: number;
   state: string;

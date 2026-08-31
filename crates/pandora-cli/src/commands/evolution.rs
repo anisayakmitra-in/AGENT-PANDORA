@@ -16,7 +16,7 @@ use pandora_runtime::{
 };
 use pandora_types::{
     ArtifactId, ArtifactSignature, CanaryResult, Capability, ContextClassification,
-    EvaluationRequest, EvolutionPolicy, EvolutionSource, ExecutionId, HoldoutEvaluation,
+    EvaluationRequest, EvolutionPolicy, EvolutionSource, ExecutionId, HoldoutEvaluation, MemoryId,
     MemoryKind, MemoryScope, MemoryTier, MutationProposal, ParliamentApproval, PolicyContext,
     PrincipalId, ProposalId, RequestDigest, ResearchArtifactKind, SessionId, Timestamp,
     hash_artifact,
@@ -50,6 +50,8 @@ struct ProposalInput {
     base_artifact: String,
     candidate_artifact: String,
     evidence_digest: String,
+    #[serde(default)]
+    memory_evidence_ids: Vec<String>,
     expected_outcome: String,
     created_at: Option<u64>,
 }
@@ -179,7 +181,8 @@ fn generate(args: &[String]) -> Result<CommandResult, CliError> {
         parsed.value("provider"),
     )?;
     let provider_id = provider.manifest().id().as_str().to_owned();
-    let evidence = research_evidence(&config, &snapshot, &principal, &provider_id)?;
+    let (evidence, memory_evidence_ids) =
+        research_evidence(&config, &snapshot, &principal, &provider_id)?;
     let evidence_digest = hash_artifact(
         &serde_json::to_vec(&evidence)
             .map_err(|error| CliError::internal(error.to_string(), json!({})))?,
@@ -240,6 +243,7 @@ fn generate(args: &[String]) -> Result<CommandResult, CliError> {
         generated.expected_outcome,
         timestamp(),
     )
+    .and_then(|proposal| proposal.with_memory_evidence_ids(memory_evidence_ids))
     .map_err(|error| CliError::provider(error.to_string(), json!({})))?;
     pandora_runtime::MutationEngine::new(EvolutionPolicy::research(1))
         .propose_gepa(proposal.clone())
@@ -276,6 +280,7 @@ fn generate(args: &[String]) -> Result<CommandResult, CliError> {
             "base_artifact": proposal.base_artifact(),
             "candidate_artifact": proposal.candidate_artifact(),
             "evidence_digest": proposal.evidence_digest(),
+            "memory_evidence_ids": proposal.memory_evidence_ids(),
             "provider": provider_id,
             "output": output_path,
             "runtime_authority_changed": false,
@@ -896,7 +901,7 @@ fn research_evidence(
     snapshot: &pandora_runtime::sessions::SessionSnapshot,
     principal: &PrincipalId,
     provider_id: &str,
-) -> Result<Value, CliError> {
+) -> Result<(Value, Vec<MemoryId>), CliError> {
     let mut evaluations = snapshot
         .evaluations()
         .iter()
@@ -932,7 +937,7 @@ fn research_evidence(
         principal.clone(),
     )
     .map_err(research_memory_error)?;
-    let feedback_summaries = memory
+    let feedback_entries = memory
         .try_recall(&scope, MemoryTier::L1, timestamp())
         .map_err(research_memory_error)?
         .into_iter()
@@ -943,13 +948,16 @@ fn research_evidence(
         })
         .take(MAX_RESEARCH_MEMORIES)
         .map(|memory| {
-            json!({
+            let memory_id = memory.id().clone();
+            let value = json!({
+                "id": memory_id,
                 "summary": bounded_text(memory.summary(), MAX_RESEARCH_MEMORY_SUMMARY_BYTES),
                 "source": "evaluation_feedback",
-            })
+            });
+            (memory.id().clone(), value)
         })
         .collect::<Vec<_>>();
-    let approved_memories = memory
+    let approved_entries = memory
         .try_recall(&scope, MemoryTier::L2, timestamp())
         .map_err(research_memory_error)?
         .into_iter()
@@ -959,22 +967,41 @@ fn research_evidence(
         })
         .take(MAX_RESEARCH_MEMORIES)
         .map(|memory| {
-            json!({
+            let memory_id = memory.id().clone();
+            let value = json!({
                 "id": memory.id(),
                 "kind": memory.kind().as_str(),
                 "summary": bounded_text(memory.summary(), MAX_RESEARCH_MEMORY_SUMMARY_BYTES),
                 "approved": true,
-            })
+            });
+            (memory_id, value)
         })
         .collect::<Vec<_>>();
-    Ok(json!({
-        "schema": "pandora.research-evidence.v1",
+    let mut memory_evidence_ids = feedback_entries
+        .iter()
+        .chain(&approved_entries)
+        .map(|(memory_id, _)| memory_id.clone())
+        .collect::<Vec<_>>();
+    memory_evidence_ids.sort();
+    memory_evidence_ids.dedup();
+    let feedback_summaries = feedback_entries
+        .into_iter()
+        .map(|(_, value)| value)
+        .collect::<Vec<_>>();
+    let approved_memories = approved_entries
+        .into_iter()
+        .map(|(_, value)| value)
+        .collect::<Vec<_>>();
+    let evidence = json!({
+        "schema": "pandora.research-evidence.v2",
         "session_id": snapshot.session().id(),
         "evaluation_summaries": evaluations,
         "failed_run_feedback_count": snapshot.l1_evidence_count(),
         "feedback_summaries": feedback_summaries,
         "approved_internal_memories": approved_memories,
-    }))
+        "memory_evidence_ids": memory_evidence_ids,
+    });
+    Ok((evidence, memory_evidence_ids))
 }
 
 fn research_messages(
@@ -1116,6 +1143,14 @@ fn parse_proposal(bytes: &[u8]) -> Result<MutationProposal, CliError> {
         .created_at
         .map(Timestamp::from_unix_seconds)
         .unwrap_or_else(timestamp);
+    let memory_evidence_ids = input
+        .memory_evidence_ids
+        .into_iter()
+        .map(|memory_id| {
+            MemoryId::new(memory_id)
+                .map_err(|error| CliError::usage(format!("invalid memory evidence ID: {error}")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     MutationProposal::new(
         input.proposal_id,
         source,
@@ -1128,6 +1163,7 @@ fn parse_proposal(bytes: &[u8]) -> Result<MutationProposal, CliError> {
         input.expected_outcome,
         created_at,
     )
+    .and_then(|proposal| proposal.with_memory_evidence_ids(memory_evidence_ids))
     .map_err(|error| CliError::usage(format!("invalid proposal: {error}")))
 }
 
@@ -1167,6 +1203,7 @@ fn summary_value(record: &EvolutionRecord) -> Value {
         "base_artifact": proposal.base_artifact(),
         "candidate_artifact": proposal.candidate_artifact(),
         "evidence_digest": proposal.evidence_digest(),
+        "memory_evidence_ids": proposal.memory_evidence_ids(),
         "state": record.state().as_str(),
         "created_at": proposal.created_at().as_unix_seconds(),
     })
@@ -1181,6 +1218,7 @@ fn record_value(record: &EvolutionRecord) -> Value {
             "base_artifact": proposal.base_artifact(),
             "candidate_artifact": proposal.candidate_artifact(),
             "evidence_digest": proposal.evidence_digest(),
+            "memory_evidence_ids": proposal.memory_evidence_ids(),
             "expected_outcome": proposal.expected_outcome(),
             "created_at": proposal.created_at().as_unix_seconds(),
         },
@@ -1345,12 +1383,20 @@ mod tests {
     #[test]
     fn parses_bounded_proposal_sources_and_uses_current_time_by_default() {
         let proposal = parse_proposal(
-            br#"{"proposal_id":"proposal-1","source":"gepa","base_artifact":"base-1","candidate_artifact":"candidate-1","evidence_digest":"evidence-1","expected_outcome":"improve verification reliability"}"#,
+            br#"{"proposal_id":"proposal-1","source":"gepa","base_artifact":"base-1","candidate_artifact":"candidate-1","evidence_digest":"evidence-1","memory_evidence_ids":["memory-b","memory-a"],"expected_outcome":"improve verification reliability"}"#,
         )
         .unwrap();
 
         assert_eq!(proposal.proposal_id().as_str(), "proposal-1");
         assert_eq!(proposal.source().as_str(), "gepa");
+        assert_eq!(
+            proposal
+                .memory_evidence_ids()
+                .iter()
+                .map(|memory_id| memory_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["memory-a", "memory-b"]
+        );
         assert!(proposal.created_at().as_unix_seconds() > 0);
     }
 

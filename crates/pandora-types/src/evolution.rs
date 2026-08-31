@@ -1,10 +1,13 @@
 use crate::effect::Timestamp;
-use crate::ids::{ArtifactId, ExecutionId, IdError, PrincipalId, ProposalId, RequestDigest};
+use crate::ids::{
+    ArtifactId, ExecutionId, IdError, MemoryId, PrincipalId, ProposalId, RequestDigest,
+};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 const MAX_TEXT_BYTES: usize = 4096;
 const MAX_FAILURE_SIGNALS: usize = 16;
+pub const MAX_EVOLUTION_MEMORY_EVIDENCE_IDS: usize = 16;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EvolutionMode {
@@ -129,6 +132,7 @@ pub enum EvolutionContractError {
     FieldTooLong(&'static str),
     ControlCharacter(&'static str),
     TooManyFailureSignals,
+    TooManyMemoryEvidenceIds,
     SameArtifact,
 }
 
@@ -142,6 +146,9 @@ impl fmt::Display for EvolutionContractError {
                 write!(formatter, "{field} contains a control character")
             }
             Self::TooManyFailureSignals => formatter.write_str("too many failure signals"),
+            Self::TooManyMemoryEvidenceIds => {
+                formatter.write_str("too many evolution memory evidence IDs")
+            }
             Self::SameArtifact => formatter.write_str("base and candidate artifacts must differ"),
         }
     }
@@ -216,6 +223,8 @@ pub struct MutationProposal {
     base_artifact: ArtifactId,
     candidate_artifact: ArtifactId,
     evidence_digest: RequestDigest,
+    #[serde(default)]
+    memory_evidence_ids: Vec<MemoryId>,
     expected_outcome: String,
     created_at: Timestamp,
 }
@@ -239,6 +248,7 @@ impl MutationProposal {
             base_artifact,
             candidate_artifact,
             evidence_digest,
+            memory_evidence_ids: Vec::new(),
             expected_outcome: validate_text(
                 "expected outcome",
                 expected_outcome.into(),
@@ -266,6 +276,26 @@ impl MutationProposal {
 
     pub fn evidence_digest(&self) -> &RequestDigest {
         &self.evidence_digest
+    }
+
+    pub fn with_memory_evidence_ids(
+        mut self,
+        mut memory_evidence_ids: Vec<MemoryId>,
+    ) -> Result<Self, EvolutionContractError> {
+        if memory_evidence_ids.len() > MAX_EVOLUTION_MEMORY_EVIDENCE_IDS {
+            return Err(EvolutionContractError::TooManyMemoryEvidenceIds);
+        }
+        for memory_id in &memory_evidence_ids {
+            MemoryId::new(memory_id.as_str())?;
+        }
+        memory_evidence_ids.sort();
+        memory_evidence_ids.dedup();
+        self.memory_evidence_ids = memory_evidence_ids;
+        Ok(self)
+    }
+
+    pub fn memory_evidence_ids(&self) -> &[MemoryId] {
+        &self.memory_evidence_ids
     }
 
     pub fn expected_outcome(&self) -> &str {
@@ -669,6 +699,51 @@ mod tests {
         assert_eq!(
             bound.holdout_digest().unwrap().as_str(),
             "sha256:holdout-report"
+        );
+    }
+
+    #[test]
+    fn proposal_memory_evidence_is_bounded_canonical_and_backward_compatible() {
+        let proposal = MutationProposal::new(
+            "proposal-1",
+            EvolutionSource::Gepa,
+            ArtifactId::new("base-1").unwrap(),
+            ArtifactId::new("candidate-1").unwrap(),
+            RequestDigest::new("evidence-1").unwrap(),
+            "improve verification reliability",
+            Timestamp::from_unix_seconds(10),
+        )
+        .unwrap()
+        .with_memory_evidence_ids(vec![
+            MemoryId::new("memory-b").unwrap(),
+            MemoryId::new("memory-a").unwrap(),
+            MemoryId::new("memory-a").unwrap(),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            proposal
+                .memory_evidence_ids()
+                .iter()
+                .map(MemoryId::as_str)
+                .collect::<Vec<_>>(),
+            vec!["memory-a", "memory-b"]
+        );
+
+        let mut serialized = serde_json::to_value(&proposal).unwrap();
+        serialized
+            .as_object_mut()
+            .unwrap()
+            .remove("memory_evidence_ids");
+        let legacy: MutationProposal = serde_json::from_value(serialized).unwrap();
+        assert!(legacy.memory_evidence_ids().is_empty());
+
+        let too_many = (0..=MAX_EVOLUTION_MEMORY_EVIDENCE_IDS)
+            .map(|index| MemoryId::new(format!("memory-{index}")).unwrap())
+            .collect();
+        assert_eq!(
+            proposal.with_memory_evidence_ids(too_many),
+            Err(EvolutionContractError::TooManyMemoryEvidenceIds)
         );
     }
 }

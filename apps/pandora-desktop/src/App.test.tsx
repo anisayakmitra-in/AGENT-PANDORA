@@ -1311,6 +1311,7 @@ describe("Pandora desktop run state", () => {
       base_artifact: "base-a",
       candidate_artifact: "candidate-a",
       evidence_digest: "evidence-a",
+      memory_evidence_ids: ["memory-a", "memory-b"],
       expected_outcome: "Improve verification reliability",
       created_at_unix_seconds: 10,
       state: "approved",
@@ -1374,6 +1375,7 @@ describe("Pandora desktop run state", () => {
 
     expect(await screen.findByRole("heading", { name: "Improve verification reliability" })).toBeInTheDocument();
     expect(screen.getByText("Passed · 95/96")).toBeInTheDocument();
+    expect(screen.getByText("memory-a, memory-b")).toBeInTheDocument();
     expect(screen.getByText("parliament-a · policy v1")).toBeInTheDocument();
     expect(screen.getByText("catalog active")).toBeInTheDocument();
     expect(screen.getByText("Runtime authority").nextSibling).toHaveTextContent("Unchanged");

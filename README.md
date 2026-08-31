@@ -48,6 +48,11 @@ Binding a staged proposal creates a one-shot canary that records the exact
 report digest and case counts, then pauses at canary evidence; it never
 activates the candidate. See [evaluation](docs/EVALUATION.md).
 
+Research evolution proposals retain the exact stable IDs of every memory record
+that shaped their bounded evidence. The canonical ID list is digest-bound,
+durable, and visible in CLI and desktop lineage inspection without granting any
+additional authority. See [governed evolution](docs/EVOLUTION.md).
+
 Scoped memory retention is also operator-controlled. `memory compact` previews
 an exact revocation-time boundary and requires `--yes` before removing only
 already-revoked logical records. Tombstones and audit history remain; database

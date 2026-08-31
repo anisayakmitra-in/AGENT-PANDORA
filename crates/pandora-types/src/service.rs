@@ -1,8 +1,9 @@
 use crate::effect::{RequestError, Timestamp};
 use crate::events::RuntimeEvent;
 use crate::ids::{
-    ArtifactId, ExecutionId, GeneId, HarnessId, IdError, JobWorkerId, OrchestrationRunId, PlanId,
-    PrincipalId, ProposalId, RepositoryId, RequestDigest, RoleId, SessionId, TenantId, WorkspaceId,
+    ArtifactId, ExecutionId, GeneId, HarnessId, IdError, JobWorkerId, MemoryId, OrchestrationRunId,
+    PlanId, PrincipalId, ProposalId, RepositoryId, RequestDigest, RoleId, SessionId, TenantId,
+    WorkspaceId,
 };
 use crate::memory::{MemoryKind, MemoryTier};
 use serde::{Deserialize, Serialize};
@@ -883,6 +884,8 @@ pub struct ServiceEvolutionSummary {
     base_artifact: ArtifactId,
     candidate_artifact: ArtifactId,
     evidence_digest: RequestDigest,
+    #[serde(default)]
+    memory_evidence_ids: Vec<MemoryId>,
     expected_outcome: String,
     created_at_unix_seconds: u64,
     state: String,
@@ -914,6 +917,7 @@ impl ServiceEvolutionSummary {
             base_artifact,
             candidate_artifact,
             evidence_digest,
+            memory_evidence_ids: Vec::new(),
             expected_outcome: expected_outcome.into(),
             created_at_unix_seconds: created_at.as_unix_seconds(),
             state: state.into(),
@@ -926,6 +930,11 @@ impl ServiceEvolutionSummary {
 
     pub fn with_candidate(mut self, candidate: ServiceEvolutionCandidate) -> Self {
         self.candidate = Some(candidate);
+        self
+    }
+
+    pub fn with_memory_evidence_ids(mut self, memory_evidence_ids: Vec<MemoryId>) -> Self {
+        self.memory_evidence_ids = memory_evidence_ids;
         self
     }
 
@@ -943,6 +952,9 @@ impl ServiceEvolutionSummary {
     }
     pub fn evidence_digest(&self) -> &RequestDigest {
         &self.evidence_digest
+    }
+    pub fn memory_evidence_ids(&self) -> &[MemoryId] {
+        &self.memory_evidence_ids
     }
     pub fn expected_outcome(&self) -> &str {
         &self.expected_outcome

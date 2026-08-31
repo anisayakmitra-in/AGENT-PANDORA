@@ -40,6 +40,10 @@
   confirmation removes already-revoked logical records; tombstones and audit
   evidence remain, and the UI explicitly distinguishes compaction from secure
   erasure of database pages, WAL files, backups, and storage snapshots.
+- Bound research evolution proposals to the canonical IDs of the exact memory
+  records included in their evidence. The bounded list is covered by the
+  evidence digest, survives restart, remains backward compatible with older
+  proposals, and is visible in CLI, service, and desktop lineage views.
 - Added verified, signed replacement of optional built-in Domain and Meta
   Harnesses with exact rollback to the compiled default. The constitutional
   Source Harness remains immutable.

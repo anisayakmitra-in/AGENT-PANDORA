@@ -2897,6 +2897,7 @@ fn service_evolution_summary(record: EvolutionRecord) -> ServiceEvolutionSummary
         approval,
         canary,
     )
+    .with_memory_evidence_ids(proposal.memory_evidence_ids().to_vec())
 }
 
 fn service_session_summary(session: Session) -> ServiceSessionSummary {
@@ -2936,7 +2937,7 @@ mod tests {
     };
     use pandora_types::{
         ArtifactId, ArtifactSignature, CanaryResult, Capability, ContextClassification,
-        EvolutionPolicy, EvolutionSource, HoldoutEvaluation, MemoryApproval, MemoryKind,
+        EvolutionPolicy, EvolutionSource, HoldoutEvaluation, MemoryApproval, MemoryId, MemoryKind,
         MemoryRecord, MemoryScope, MutationProposal, Operation, PackageCompatibility, PackageKind,
         PackageManifest, ParliamentApproval, PolicyContext, ReplacementReceipt, RequestDigest,
         TrustEvidence, hash_artifact,
@@ -3044,6 +3045,8 @@ mod tests {
                     "improve verification reliability",
                     Timestamp::from_unix_seconds(10),
                 )
+                .unwrap()
+                .with_memory_evidence_ids(vec![MemoryId::new("memory-a").unwrap()])
                 .unwrap(),
             )
             .unwrap();
@@ -3109,6 +3112,10 @@ mod tests {
         };
         assert_eq!(proposals.len(), 1);
         assert_eq!(proposals[0].state(), "approved");
+        assert_eq!(
+            proposals[0].memory_evidence_ids(),
+            &[MemoryId::new("memory-a").unwrap()]
+        );
         assert_eq!(
             proposals[0].approval().unwrap().signer_id().as_str(),
             "signer-a"

@@ -951,6 +951,16 @@ fn evolution_cli_generates_a_research_candidate_then_requires_every_governance_g
         assert!(system.contains("untrusted research proposer"));
         assert!(user.contains("base_artifact_base64"));
         assert!(user.contains("evaluation_summaries"));
+        let research_input = serde_json::from_str::<Value>(user)
+            .expect("research evidence should use the stable JSON contract");
+        assert_eq!(
+            research_input["bounded_research_evidence"]["memory_evidence_ids"][0],
+            "evolution-memory-1"
+        );
+        assert_eq!(
+            research_input["bounded_research_evidence"]["feedback_summaries"][0]["id"],
+            "evolution-memory-1"
+        );
         let response = serde_json::json!({
             "choices": [{"message": {"content": generated_content}}],
             "usage": {"prompt_tokens": 12, "completion_tokens": 8},
@@ -992,6 +1002,29 @@ fn evolution_cli_generates_a_research_candidate_then_requires_every_governance_g
         .unwrap()
         .create(&session)
         .unwrap();
+    let memory = MemoryEngine::open(
+        fixture.data.join("sessions.sqlite3"),
+        64,
+        PrincipalId::new("local-user").unwrap(),
+    )
+    .unwrap();
+    memory
+        .distill_l1(
+            MemoryScope::new(
+                TenantId::new("local-tenant").unwrap(),
+                WorkspaceId::new("local-workspace").unwrap(),
+                SessionId::new("research-session-1").unwrap(),
+                "openai-compatible",
+            )
+            .unwrap(),
+            "evolution-memory-1",
+            MemoryKind::Lesson,
+            "retain the exact verification evidence",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(10),
+            "evaluation:research-fixture",
+        )
+        .unwrap();
     let base_path = fixture.root.join("base-prompt.txt");
     let output_path = fixture.root.join("candidate-prompt.txt");
     fs::write(&base_path, "Verify every change against a holdout.\n").unwrap();
@@ -1018,6 +1051,7 @@ fn evolution_cli_generates_a_research_candidate_then_requires_every_governance_g
     let generated = parse_json(&generated);
     assert_eq!(generated["state"], "proposed");
     assert_eq!(generated["kind"], "prompt");
+    assert_eq!(generated["memory_evidence_ids"][0], "evolution-memory-1");
     assert_eq!(generated["runtime_authority_changed"], false);
     assert_eq!(fs::read(&output_path).unwrap(), candidate);
     let inspected = fixture
@@ -1039,6 +1073,10 @@ fn evolution_cli_generates_a_research_candidate_then_requires_every_governance_g
     assert_eq!(
         inspected["research_candidate"]["provider"],
         "openai-compatible"
+    );
+    assert_eq!(
+        inspected["proposal"]["memory_evidence_ids"][0],
+        "evolution-memory-1"
     );
 
     let holdout_path = fixture.root.join("research-holdout.json");
