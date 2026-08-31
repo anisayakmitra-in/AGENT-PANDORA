@@ -3,7 +3,8 @@ use crate::sessions::L1EvidenceContext;
 use crate::subagent_store::{SubagentScope, SubagentStore};
 use crate::{
     ApprovalStore, ContextEngine, ExecutionController, RunStatus, RunSummary, RuntimeError,
-    ToolEngine, ToolError,
+    ToolEngine, ToolError, guard_context_fragments, normalize_untrusted_tool_payload,
+    render_untrusted_tool_payload,
 };
 use pandora_provider::{
     ChatMessage, MessageRole, ModelId, ModelRequest, PromptCacheTtl, Provider, ProviderError,
@@ -12,7 +13,7 @@ use pandora_provider::{
 use pandora_types::{
     ContextAssembly, ContextClassification, ContextFragment, ContextOrigin, ContextReceipt,
     ContextRequest, ContextSource, ContextTrust, HarnessId, Session, SubagentBudgets, SubagentId,
-    Timestamp, hash_artifact,
+    Timestamp,
 };
 use std::fmt;
 use std::path::Path;
@@ -1241,28 +1242,7 @@ fn untrusted_tool_result(
     tool_name: Option<&str>,
     output: &str,
 ) -> Result<ChatMessage, AgentLoopError> {
-    let origin_kind = tool_output_origin_kind(tool_name);
-    let payload = if is_instruction_shaped_tool_output(output) {
-        serde_json::json!({
-            "kind": "pandora.tool_output",
-            "source": "tool_output",
-            "origin_kind": origin_kind,
-            "trust": "untrusted",
-            "status": "quarantined",
-            "reason": "instruction-shaped tool output was withheld from context",
-            "content_digest": hash_artifact(output.as_bytes()),
-            "content_bytes": output.len(),
-        })
-    } else {
-        serde_json::json!({
-            "kind": "pandora.tool_output",
-            "source": "tool_output",
-            "origin_kind": origin_kind,
-            "trust": "untrusted",
-            "content": output,
-        })
-    };
-    let output = serde_json::to_string(&payload).map_err(|_| {
+    let output = render_untrusted_tool_payload(tool_name, output).map_err(|_| {
         AgentLoopError::Execution(RuntimeError::InvalidIntent(
             "tool output could not be framed",
         ))
@@ -1280,134 +1260,22 @@ fn normalize_tool_history(history: Vec<ChatMessage>) -> Result<Vec<ChatMessage>,
             let call_id = message.tool_call_id().ok_or(AgentLoopError::Execution(
                 RuntimeError::InvalidIntent("agent history contains an unbound tool result"),
             ))?;
-            if is_untrusted_tool_result(message.content()) {
-                return Ok(ChatMessage::tool_result(call_id, message.content())?);
+            if let Some(normalized) =
+                normalize_untrusted_tool_payload(message.content()).map_err(|_| {
+                    AgentLoopError::Context("tool history could not be normalized".into())
+                })?
+            {
+                return Ok(ChatMessage::tool_result(call_id, normalized)?);
             }
             untrusted_tool_result(call_id, None, message.content())
         })
         .collect()
 }
 
-fn tool_output_origin_kind(tool_name: Option<&str>) -> &'static str {
-    let Some(tool_name) = tool_name else {
-        return "tool";
-    };
-    let normalized = tool_name.to_ascii_lowercase();
-    if normalized.starts_with("mcp.") || normalized.contains(".mcp.") {
-        "mcp"
-    } else if normalized.starts_with("package.") || normalized.contains("gene") {
-        "package"
-    } else if normalized.contains("handoff") {
-        "agent_handoff"
-    } else if normalized.starts_with("issue.") || normalized.contains(".issue.") {
-        "issue"
-    } else if normalized.starts_with("design.") {
-        "design"
-    } else if normalized == "workspace.read" || normalized.contains("document") {
-        "document"
-    } else if normalized == "workspace.search" || normalized.contains("repository") {
-        "repository"
-    } else {
-        "tool"
-    }
-}
-
-fn is_known_tool_origin_kind(value: &str) -> bool {
-    matches!(
-        value,
-        "tool"
-            | "mcp"
-            | "package"
-            | "repository"
-            | "document"
-            | "issue"
-            | "design"
-            | "agent_handoff"
-    )
-}
-
-fn is_untrusted_tool_result(content: &str) -> bool {
-    let Ok(serde_json::Value::Object(fields)) = serde_json::from_str(content) else {
-        return false;
-    };
-    fields.get("kind").and_then(serde_json::Value::as_str) == Some("pandora.tool_output")
-        && fields.get("trust").and_then(serde_json::Value::as_str) == Some("untrusted")
-        && fields
-            .get("source")
-            .is_none_or(|source| source.as_str() == Some("tool_output"))
-        && fields
-            .get("origin_kind")
-            .is_none_or(|origin| origin.as_str().is_some_and(is_known_tool_origin_kind))
-        && ((matches!(fields.len(), 3..=5)
-            && fields
-                .get("content")
-                .is_some_and(serde_json::Value::is_string))
-            || (matches!(fields.len(), 6..=8)
-                && fields.get("status").and_then(serde_json::Value::as_str) == Some("quarantined")
-                && fields
-                    .get("reason")
-                    .is_some_and(serde_json::Value::is_string)
-                && fields
-                    .get("content_digest")
-                    .is_some_and(serde_json::Value::is_string)
-                && fields
-                    .get("content_bytes")
-                    .is_some_and(serde_json::Value::is_u64)))
-}
-
-fn is_instruction_shaped_tool_output(output: &str) -> bool {
-    is_instruction_shaped_content(output)
-}
-
-fn is_instruction_shaped_content(content: &str) -> bool {
-    let normalized = content.trim().to_ascii_lowercase();
-    [
-        "ignore previous instructions",
-        "ignore all previous instructions",
-        "follow these instructions instead",
-        "reveal the system prompt",
-        "do not tell the user",
-        "<|system|>",
-        "<|assistant|>",
-    ]
-    .iter()
-    .any(|marker| normalized.contains(marker))
-}
-
 fn quarantine_context_fragments(
     fragments: &[ContextFragment],
 ) -> Result<Vec<ContextFragment>, AgentLoopError> {
-    fragments
-        .iter()
-        .map(|fragment| {
-            if !is_instruction_shaped_content(fragment.content()) {
-                return Ok(fragment.clone());
-            }
-            let content = serde_json::to_string(&serde_json::json!({
-                "kind": "pandora.context_fragment",
-                "source": "context_fragment",
-                "origin_kind": fragment.origin().kind().as_str(),
-                "trust": "untrusted",
-                "status": "quarantined",
-                "reason": "instruction-shaped context was withheld from context",
-                "content_digest": fragment.content_digest(),
-                "content_bytes": fragment.content().len(),
-            }))
-            .map_err(|error| AgentLoopError::Context(error.to_string()))?;
-            ContextFragment::new_with_origin(
-                fragment.id(),
-                fragment.source(),
-                fragment.trust(),
-                fragment.classification(),
-                fragment.priority(),
-                content,
-                fragment.token_cost(),
-                fragment.expires_at(),
-                fragment.origin().clone(),
-            )
-            .map_err(|error| AgentLoopError::Context(error.to_string()))
-        })
-        .collect()
+    guard_context_fragments(fragments).map_err(|error| AgentLoopError::Context(error.to_string()))
 }
 
 #[cfg(test)]
@@ -1896,7 +1764,7 @@ mod tests {
             ("issue.lookup", "issue"),
             ("design.tokens", "design"),
             ("orchestration.handoff", "agent_handoff"),
-            ("workspace.status", "tool"),
+            ("workspace.status", "repository"),
         ] {
             let message =
                 untrusted_tool_result("call-origin", Some(tool_name), "bounded result").unwrap();

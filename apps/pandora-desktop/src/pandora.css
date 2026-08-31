@@ -1524,6 +1524,12 @@ input:focus, textarea:focus, select:focus { border-color: var(--signal); box-sha
 .package-manager-heading p { max-width: 600px; margin: 0; color: var(--text-muted); font-size: .75rem; line-height: 1.55; }
 .package-manager-heading > div:last-child { display: flex; gap: 6px; }
 .package-manager .package-boundary { max-width: none; width: 100%; margin: 0; }
+.package-transparency-panel { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); background: var(--canvas); }
+.package-transparency-panel > p { margin: 0; color: var(--text-muted); font-size: .6875rem; line-height: 1.5; }
+.package-transparency-panel .package-section-heading { padding-bottom: 2px; }
+.package-transparency-list { max-height: 190px; overflow-y: auto; }
+.package-transparency-list .memory-audit-row { grid-template-columns: minmax(120px, .75fr) minmax(180px, 1.2fr) auto minmax(110px, .7fr) auto; }
+.package-transparency-list .memory-audit-row > span:nth-of-type(2) { color: var(--text-muted); font-size: .6875rem; text-transform: capitalize; }
 .configuration-result { display: flex; align-items: center; gap: 6px; margin: 0; padding: 9px 11px; border: 1px solid var(--line); font-size: .75rem; }
 .configuration-result.is-success { border-left: 2px solid var(--green); color: var(--green); }
 .configuration-result.is-error { border-left: 2px solid var(--red); color: var(--red); }

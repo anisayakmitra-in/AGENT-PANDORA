@@ -49,6 +49,8 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora package keygen --json` | `package keygen` | `publisher`, `key_id`, `secret_name`, `public_key`, `private_key_exposed`, `stored`, `vault_path` |
 | `pandora package sign --json` | `package sign` | `manifest`, `package`, `key_id`, `public_key`, `signature_present`, `private_key_exposed`, `vault_secret` |
 | `pandora package trust-root list --json` | `package trust-root list` | `roots`, `count`, `durability` |
+| `pandora package transparency list --json` | `package transparency list` | `events`, `count`, `durability`, `integrity`, `runtime_authority` |
+| `pandora package transparency inspect --sequence <id> --json` | `package transparency inspect` | `event`, `durability`, `integrity`, `runtime_authority` |
 | `pandora package scaffold domain-harness --output <path> --json` | `package scaffold` | `scaffold`, `network_requested`, `credential_accessed`, `persisted_package`, `runtime_authority`, `next_steps` |
 | `pandora package scaffold meta-harness --output <path> --json` | `package scaffold` | `scaffold`, `network_requested`, `credential_accessed`, `persisted_package`, `runtime_authority`, `next_steps` |
 | `pandora package validate --manifest <path> --artifact <path> --json` | `package validate` | `valid`, `package`, `execution_boundary`, `persisted` |

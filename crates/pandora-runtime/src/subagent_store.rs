@@ -13,6 +13,9 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
+const MAX_EFFECT_RECEIPT_BYTES: usize = 16 * 1_024;
+const MAX_EFFECT_OUTCOME_TEXT_BYTES: usize = 1_024;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SubagentScope {
     principal_id: PrincipalId,
@@ -1014,6 +1017,7 @@ impl SubagentStore {
 }
 
 #[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct EffectReceiptWire {
     receipt_id: String,
     permit_id: String,
@@ -1048,12 +1052,26 @@ fn encode_receipt(receipt: &EffectReceipt) -> Result<String, SubagentStoreError>
 }
 
 fn decode_receipt(value: String) -> Result<EffectReceipt, SubagentStoreError> {
-    let wire = serde_json::from_str::<EffectReceiptWire>(&value)?;
+    decode_receipt_bytes(value.as_bytes())
+}
+
+fn decode_receipt_bytes(value: &[u8]) -> Result<EffectReceipt, SubagentStoreError> {
+    if value.len() > MAX_EFFECT_RECEIPT_BYTES {
+        return Err(SubagentStoreError::CorruptRecord);
+    }
+    let wire = serde_json::from_slice::<EffectReceiptWire>(value)?;
     let outcome = match wire.outcome {
         EffectOutcomeWire::Succeeded => EffectOutcome::Succeeded,
-        EffectOutcomeWire::Failed { code } => EffectOutcome::Failed { code },
-        EffectOutcomeWire::Denied { reason } => EffectOutcome::Denied { reason },
+        EffectOutcomeWire::Failed { code } => {
+            validate_effect_outcome_text(&code)?;
+            EffectOutcome::Failed { code }
+        }
+        EffectOutcomeWire::Denied { reason } => {
+            validate_effect_outcome_text(&reason)?;
+            EffectOutcome::Denied { reason }
+        }
     };
+    i64::try_from(wire.completed_at).map_err(|_| SubagentStoreError::CorruptRecord)?;
     Ok(EffectReceipt::new(
         ReceiptId::new(wire.receipt_id)?,
         PermitId::new(wire.permit_id)?,
@@ -1061,6 +1079,22 @@ fn decode_receipt(value: String) -> Result<EffectReceipt, SubagentStoreError> {
         Timestamp::from_unix_seconds(wire.completed_at),
         outcome,
     ))
+}
+
+fn validate_effect_outcome_text(value: &str) -> Result<(), SubagentStoreError> {
+    if value.trim().is_empty()
+        || value.len() > MAX_EFFECT_OUTCOME_TEXT_BYTES
+        || value.chars().any(char::is_control)
+    {
+        return Err(SubagentStoreError::CorruptRecord);
+    }
+    Ok(())
+}
+
+/// Exercises the production parser used for persisted governed-effect receipts.
+#[doc(hidden)]
+pub fn validate_effect_receipt_for_fuzzing(value: &[u8]) -> Result<(), SubagentStoreError> {
+    decode_receipt_bytes(value).map(|_| ())
 }
 
 fn load_subagent_by_id(
@@ -1554,6 +1588,43 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.root);
         }
+    }
+
+    #[test]
+    fn persisted_effect_receipt_parser_is_strict_and_bounded() {
+        let valid = serde_json::to_vec(&json!({
+            "receipt_id": "receipt-1",
+            "permit_id": "permit-1",
+            "request_digest": "request-1",
+            "completed_at": 20,
+            "outcome": {"status": "failed", "code": "git_failed"}
+        }))
+        .unwrap();
+        assert!(validate_effect_receipt_for_fuzzing(&valid).is_ok());
+
+        let unknown = serde_json::to_vec(&json!({
+            "receipt_id": "receipt-1",
+            "permit_id": "permit-1",
+            "request_digest": "request-1",
+            "completed_at": 20,
+            "outcome": {"status": "succeeded"},
+            "authority_override": true
+        }))
+        .unwrap();
+        assert!(validate_effect_receipt_for_fuzzing(&unknown).is_err());
+
+        let invalid_outcome = serde_json::to_vec(&json!({
+            "receipt_id": "receipt-1",
+            "permit_id": "permit-1",
+            "request_digest": "request-1",
+            "completed_at": 20,
+            "outcome": {"status": "denied", "reason": "\n"}
+        }))
+        .unwrap();
+        assert!(validate_effect_receipt_for_fuzzing(&invalid_outcome).is_err());
+        assert!(
+            validate_effect_receipt_for_fuzzing(&vec![b'x'; MAX_EFFECT_RECEIPT_BYTES + 1]).is_err()
+        );
     }
 
     #[test]

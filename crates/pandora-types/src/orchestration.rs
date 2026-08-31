@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+pub const MAX_ORCHESTRATION_ROLES: usize = 64;
+pub const MAX_ORCHESTRATION_HANDOFFS: u32 = 64;
+
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OrchestrationRole {
@@ -34,6 +37,7 @@ pub enum OrchestrationContractError {
     InvalidId(IdError),
     EmptyField(&'static str),
     InvalidLimit(&'static str),
+    LimitExceeded(&'static str),
     DuplicateRole(RoleId),
     UnknownDependency(RoleId),
     SelfDependency(RoleId),
@@ -68,6 +72,7 @@ impl fmt::Display for OrchestrationContractError {
             Self::InvalidId(error) => error.fmt(formatter),
             Self::EmptyField(field) => write!(formatter, "{field} cannot be empty"),
             Self::InvalidLimit(field) => write!(formatter, "{field} must be greater than zero"),
+            Self::LimitExceeded(field) => write!(formatter, "{field} exceeds its bounded limit"),
             Self::DuplicateRole(id) => write!(formatter, "role {id} is duplicated"),
             Self::UnknownDependency(id) => write!(formatter, "role dependency {id} is unknown"),
             Self::SelfDependency(id) => write!(formatter, "role {id} cannot depend on itself"),
@@ -115,6 +120,7 @@ impl From<IdError> for OrchestrationContractError {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RoleAssignment {
     id: RoleId,
     role: OrchestrationRole,
@@ -147,6 +153,24 @@ impl RoleAssignment {
         })
     }
 
+    fn validate(&self) -> Result<(), OrchestrationContractError> {
+        RoleId::new(self.id.as_str())?;
+        HarnessId::new(self.harness_id.as_str())?;
+        if let OrchestrationRole::Custom(value) = &self.role
+            && (value.trim().is_empty() || value.len() > 64 || value.chars().any(char::is_control))
+        {
+            return Err(OrchestrationContractError::EmptyField("custom role"));
+        }
+        let mut seen = BTreeSet::new();
+        for dependency in &self.depends_on {
+            RoleId::new(dependency.as_str())?;
+            if !seen.insert(dependency) {
+                return Err(OrchestrationContractError::DuplicateRole(self.id.clone()));
+            }
+        }
+        Ok(())
+    }
+
     pub fn id(&self) -> &RoleId {
         &self.id
     }
@@ -165,6 +189,7 @@ impl RoleAssignment {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Handoff {
     from: RoleId,
     to: RoleId,
@@ -191,15 +216,49 @@ impl Handoff {
     pub fn meta_harness(&self) -> Option<&HarnessId> {
         self.meta_harness.as_ref()
     }
+
+    fn validate(&self) -> Result<(), OrchestrationContractError> {
+        RoleId::new(self.from.as_str())?;
+        RoleId::new(self.to.as_str())?;
+        if let Some(meta_harness) = &self.meta_harness {
+            HarnessId::new(meta_harness.as_str())?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "OrchestrationPlanWire")]
 pub struct OrchestrationPlan {
     id: PlanId,
     roles: Vec<RoleAssignment>,
     max_parallelism: usize,
     max_handoffs: u32,
     handoffs: Vec<Handoff>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OrchestrationPlanWire {
+    id: PlanId,
+    roles: Vec<RoleAssignment>,
+    max_parallelism: usize,
+    max_handoffs: u32,
+    handoffs: Vec<Handoff>,
+}
+
+impl TryFrom<OrchestrationPlanWire> for OrchestrationPlan {
+    type Error = OrchestrationContractError;
+
+    fn try_from(wire: OrchestrationPlanWire) -> Result<Self, Self::Error> {
+        Self::new(
+            wire.id,
+            wire.roles,
+            wire.max_parallelism,
+            wire.max_handoffs,
+            wire.handoffs,
+        )
+    }
 }
 
 impl OrchestrationPlan {
@@ -210,14 +269,30 @@ impl OrchestrationPlan {
         max_handoffs: u32,
         handoffs: Vec<Handoff>,
     ) -> Result<Self, OrchestrationContractError> {
+        PlanId::new(id.as_str())?;
         if roles.is_empty() {
             return Err(OrchestrationContractError::EmptyField("roles"));
+        }
+        if roles.len() > MAX_ORCHESTRATION_ROLES {
+            return Err(OrchestrationContractError::LimitExceeded("roles"));
         }
         if max_parallelism == 0 {
             return Err(OrchestrationContractError::InvalidLimit("max parallelism"));
         }
+        if max_parallelism > roles.len() || max_parallelism > MAX_ORCHESTRATION_ROLES {
+            return Err(OrchestrationContractError::LimitExceeded("max parallelism"));
+        }
+        if max_handoffs > MAX_ORCHESTRATION_HANDOFFS {
+            return Err(OrchestrationContractError::LimitExceeded("max handoffs"));
+        }
         if handoffs.len() as u32 > max_handoffs {
             return Err(OrchestrationContractError::TooManyHandoffs);
+        }
+        for role in &roles {
+            role.validate()?;
+        }
+        for handoff in &handoffs {
+            handoff.validate()?;
         }
 
         let mut by_id = BTreeMap::new();
@@ -736,6 +811,151 @@ mod tests {
                 .id()
                 .as_str(),
             "maker"
+        );
+    }
+
+    #[test]
+    fn orchestration_plan_json_round_trips_through_validation() {
+        let plan = OrchestrationPlan::new(
+            PlanId::new("round-trip").unwrap(),
+            vec![
+                role("planner", OrchestrationRole::Planner, "coding-domain", &[]),
+                role(
+                    "maker",
+                    OrchestrationRole::Maker,
+                    "coding-domain",
+                    &["planner"],
+                ),
+            ],
+            2,
+            1,
+            vec![Handoff::new(
+                RoleId::new("planner").unwrap(),
+                RoleId::new("maker").unwrap(),
+                None,
+            )],
+        )
+        .unwrap();
+
+        let encoded = serde_json::to_vec(&plan).unwrap();
+        let decoded: OrchestrationPlan = serde_json::from_slice(&encoded).unwrap();
+
+        assert_eq!(decoded, plan);
+    }
+
+    #[test]
+    fn orchestration_plan_json_rejects_unknown_fields_and_invalid_ids() {
+        let unknown_field = serde_json::json!({
+            "id": "strict-plan",
+            "roles": [{
+                "id": "planner",
+                "role": "planner",
+                "harness_id": "coding-domain",
+                "depends_on": []
+            }],
+            "max_parallelism": 1,
+            "max_handoffs": 0,
+            "handoffs": [],
+            "untrusted_override": true
+        });
+        assert!(serde_json::from_value::<OrchestrationPlan>(unknown_field).is_err());
+
+        let invalid_id = serde_json::json!({
+            "id": "   ",
+            "roles": [{
+                "id": "planner",
+                "role": "planner",
+                "harness_id": "coding-domain",
+                "depends_on": []
+            }],
+            "max_parallelism": 1,
+            "max_handoffs": 0,
+            "handoffs": []
+        });
+        assert!(serde_json::from_value::<OrchestrationPlan>(invalid_id).is_err());
+
+        let unknown_nested_field = serde_json::json!({
+            "id": "strict-plan",
+            "roles": [{
+                "id": "planner",
+                "role": "planner",
+                "harness_id": "coding-domain",
+                "depends_on": [],
+                "authority_override": true
+            }],
+            "max_parallelism": 1,
+            "max_handoffs": 0,
+            "handoffs": []
+        });
+        assert!(serde_json::from_value::<OrchestrationPlan>(unknown_nested_field).is_err());
+    }
+
+    #[test]
+    fn orchestration_plan_json_enforces_bounded_collections() {
+        let oversized_roles = (0..=MAX_ORCHESTRATION_ROLES)
+            .map(|index| {
+                role(
+                    &format!("role-{index}"),
+                    OrchestrationRole::Maker,
+                    "coding-domain",
+                    &[],
+                )
+            })
+            .collect();
+        assert_eq!(
+            OrchestrationPlan::new(
+                PlanId::new("too-many-roles").unwrap(),
+                oversized_roles,
+                1,
+                0,
+                Vec::new(),
+            ),
+            Err(OrchestrationContractError::LimitExceeded("roles"))
+        );
+
+        let roles = vec![
+            role("planner", OrchestrationRole::Planner, "coding-domain", &[]),
+            role("maker", OrchestrationRole::Maker, "coding-domain", &[]),
+        ];
+        let handoffs = (0..=MAX_ORCHESTRATION_HANDOFFS)
+            .map(|_| {
+                Handoff::new(
+                    RoleId::new("planner").unwrap(),
+                    RoleId::new("maker").unwrap(),
+                    None,
+                )
+            })
+            .collect();
+        assert_eq!(
+            OrchestrationPlan::new(
+                PlanId::new("too-many-handoffs").unwrap(),
+                roles,
+                1,
+                MAX_ORCHESTRATION_HANDOFFS,
+                handoffs,
+            ),
+            Err(OrchestrationContractError::TooManyHandoffs)
+        );
+    }
+
+    #[test]
+    fn orchestration_plan_rejects_parallelism_above_role_count() {
+        let result = OrchestrationPlan::new(
+            PlanId::new("excess-parallelism").unwrap(),
+            vec![role(
+                "planner",
+                OrchestrationRole::Planner,
+                "coding-domain",
+                &[],
+            )],
+            2,
+            0,
+            Vec::new(),
+        );
+
+        assert_eq!(
+            result,
+            Err(OrchestrationContractError::LimitExceeded("max parallelism"))
         );
     }
 

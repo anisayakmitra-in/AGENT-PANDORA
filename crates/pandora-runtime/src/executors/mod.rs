@@ -5,7 +5,8 @@ pub mod provider;
 pub mod worktree;
 
 pub use filesystem::{
-    FilesystemError, FilesystemExecutor, FilesystemResult, WorkspacePath, WorkspaceRoot,
+    FilesystemError, FilesystemExecutor, FilesystemResult, MAX_WORKSPACE_PATH_BYTES, WorkspacePath,
+    WorkspaceRoot, validate_workspace_relative_path,
 };
 pub use network::{BrowserEvidence, NetworkError, NetworkExecutor, NetworkResult};
 pub use process::{

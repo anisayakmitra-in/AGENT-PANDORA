@@ -6,7 +6,7 @@ use pandora_harnesses::{builtin_genes, builtin_harnesses};
 use pandora_types::{
     ArtifactId, PackageId, PackageKind, PackageLock, PackageManifest, hash_artifact,
 };
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
@@ -14,9 +14,12 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const MAX_STORED_ARTIFACT_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_PUBLISHER_TRUST_ROOTS: usize = 64;
+pub const MAX_PACKAGE_TRANSPARENCY_EVENTS: usize = 8_192;
+pub const MAX_PACKAGE_TRANSPARENCY_LIST: usize = 256;
 const MAX_PACKAGE_LOCK_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug)]
@@ -66,6 +69,8 @@ pub enum PackageStoreError {
     },
     TrustRootAlreadyExists,
     TrustRootNotFound,
+    InvalidTransparencyLimit,
+    TransparencyCapacityReached,
     Admission(HarnessRegistryError),
 }
 
@@ -131,6 +136,12 @@ impl fmt::Display for PackageStoreError {
                 formatter.write_str("publisher trust root is already configured")
             }
             Self::TrustRootNotFound => formatter.write_str("publisher trust root was not found"),
+            Self::InvalidTransparencyLimit => write!(
+                formatter,
+                "package transparency limit must be between 1 and {MAX_PACKAGE_TRANSPARENCY_LIST}"
+            ),
+            Self::TransparencyCapacityReached => formatter
+                .write_str("package transparency ledger reached its bounded event capacity"),
             Self::Admission(error) => error.fmt(formatter),
         }
     }
@@ -159,7 +170,9 @@ impl std::error::Error for PackageStoreError {
             | Self::NoRollbackBinding { .. }
             | Self::PackageBound { .. }
             | Self::TrustRootAlreadyExists
-            | Self::TrustRootNotFound => None,
+            | Self::TrustRootNotFound
+            | Self::InvalidTransparencyLimit
+            | Self::TransparencyCapacityReached => None,
         }
     }
 }
@@ -195,6 +208,126 @@ pub struct PublisherTrustRootRecord {
     root: PublisherTrustRoot,
     added_at: u64,
     revoked_at: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PackageTransparencyEventKind {
+    TrustRootAdded,
+    TrustRootRevoked,
+    AdmissionDecision,
+}
+
+impl PackageTransparencyEventKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TrustRootAdded => "trust_root_added",
+            Self::TrustRootRevoked => "trust_root_revoked",
+            Self::AdmissionDecision => "admission_decision",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "trust_root_added" => Some(Self::TrustRootAdded),
+            "trust_root_revoked" => Some(Self::TrustRootRevoked),
+            "admission_decision" => Some(Self::AdmissionDecision),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PackageTransparencyOutcome {
+    Allowed,
+    Denied,
+}
+
+impl PackageTransparencyOutcome {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Allowed => "allowed",
+            Self::Denied => "denied",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "allowed" => Some(Self::Allowed),
+            "denied" => Some(Self::Denied),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PackageTransparencyEvent {
+    sequence: u64,
+    event_kind: PackageTransparencyEventKind,
+    outcome: PackageTransparencyOutcome,
+    occurred_at: u64,
+    publisher: String,
+    key_id: Option<String>,
+    package_id: Option<String>,
+    package_version: Option<String>,
+    subject_digest: String,
+    artifact_digest: Option<String>,
+    reason_code: String,
+    previous_event_digest: Option<String>,
+    event_digest: String,
+}
+
+impl PackageTransparencyEvent {
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    pub const fn event_kind(&self) -> PackageTransparencyEventKind {
+        self.event_kind
+    }
+
+    pub const fn outcome(&self) -> PackageTransparencyOutcome {
+        self.outcome
+    }
+
+    pub const fn occurred_at(&self) -> u64 {
+        self.occurred_at
+    }
+
+    pub fn publisher(&self) -> &str {
+        &self.publisher
+    }
+
+    pub fn key_id(&self) -> Option<&str> {
+        self.key_id.as_deref()
+    }
+
+    pub fn package_id(&self) -> Option<&str> {
+        self.package_id.as_deref()
+    }
+
+    pub fn package_version(&self) -> Option<&str> {
+        self.package_version.as_deref()
+    }
+
+    pub fn subject_digest(&self) -> &str {
+        &self.subject_digest
+    }
+
+    pub fn artifact_digest(&self) -> Option<&str> {
+        self.artifact_digest.as_deref()
+    }
+
+    pub fn reason_code(&self) -> &str {
+        &self.reason_code
+    }
+
+    pub fn previous_event_digest(&self) -> Option<&str> {
+        self.previous_event_digest.as_deref()
+    }
+
+    pub fn event_digest(&self) -> &str {
+        &self.event_digest
+    }
 }
 
 impl PublisherTrustRootRecord {
@@ -283,8 +416,34 @@ impl PackageStore {
                  added_at INTEGER NOT NULL CHECK (added_at >= 0),
                  revoked_at INTEGER CHECK (revoked_at IS NULL OR revoked_at >= 0),
                  PRIMARY KEY (publisher, key_id)
-             );",
+             );
+             CREATE TABLE IF NOT EXISTS package_transparency_events (
+                 sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                 event_kind TEXT NOT NULL,
+                 outcome TEXT NOT NULL,
+                 occurred_at INTEGER NOT NULL CHECK (occurred_at >= 0),
+                 publisher TEXT NOT NULL,
+                 key_id TEXT,
+                 package_id TEXT,
+                 package_version TEXT,
+                 subject_digest TEXT NOT NULL,
+                 artifact_digest TEXT,
+                 reason_code TEXT NOT NULL,
+                 previous_event_digest TEXT,
+                 event_digest TEXT NOT NULL UNIQUE
+             );
+             CREATE TRIGGER IF NOT EXISTS package_transparency_events_no_update
+             BEFORE UPDATE ON package_transparency_events
+             BEGIN
+                 SELECT RAISE(ABORT, 'package transparency events are append-only');
+             END;
+             CREATE TRIGGER IF NOT EXISTS package_transparency_events_no_delete
+             BEFORE DELETE ON package_transparency_events
+             BEGIN
+                 SELECT RAISE(ABORT, 'package transparency events are append-only');
+             END;",
         )?;
+        validate_transparency_chain(&connection)?;
         Ok(Self {
             connection: Mutex::new(connection),
         })
@@ -296,24 +455,72 @@ impl PackageStore {
         embedded: &PackageManifest,
         artifact: &[u8],
     ) -> Result<PackageRecord, PackageStoreError> {
+        self.admit_at(declared, embedded, artifact, unix_timestamp())
+    }
+
+    pub fn admit_at(
+        &self,
+        declared: &PackageManifest,
+        embedded: &PackageManifest,
+        artifact: &[u8],
+        occurred_at: u64,
+    ) -> Result<PackageRecord, PackageStoreError> {
+        let declared_json = serde_json::to_vec(declared)?;
+        let subject_digest = hash_artifact(&declared_json);
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if artifact.len() > MAX_STORED_ARTIFACT_BYTES {
+            append_admission_event(
+                &transaction,
+                declared,
+                &subject_digest,
+                None,
+                PackageTransparencyOutcome::Denied,
+                "artifact_too_large",
+                occurred_at,
+            )?;
+            transaction.commit()?;
             return Err(PackageStoreError::ArtifactTooLarge);
         }
+        let artifact_digest = hash_artifact(artifact);
         if declared == embedded
             && embedded.kind() == PackageKind::Gene
             && embedded.gene_contract().is_some()
-        {
-            WasmExecutor::new()
+            && WasmExecutor::new()
                 .validate_artifact(embedded, artifact)
-                .map_err(|_| PackageStoreError::InvalidGeneArtifact)?;
+                .is_err()
+        {
+            append_admission_event(
+                &transaction,
+                declared,
+                &subject_digest,
+                Some(&artifact_digest),
+                PackageTransparencyOutcome::Denied,
+                "invalid_gene_artifact",
+                occurred_at,
+            )?;
+            transaction.commit()?;
+            return Err(PackageStoreError::InvalidGeneArtifact);
         }
-        let mut connection = self.lock()?;
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut registry = load_registry(&transaction)?;
         let trust_roots = load_publisher_trust_roots(&transaction)?;
-        let record = registry
-            .install_with_trust_roots(declared, embedded, artifact, &trust_roots)
-            .map_err(PackageStoreError::Admission)?;
+        let record =
+            match registry.install_with_trust_roots(declared, embedded, artifact, &trust_roots) {
+                Ok(record) => record,
+                Err(error) => {
+                    append_admission_event(
+                        &transaction,
+                        declared,
+                        &subject_digest,
+                        Some(&artifact_digest),
+                        PackageTransparencyOutcome::Denied,
+                        admission_reason_code(&error),
+                        occurred_at,
+                    )?;
+                    transaction.commit()?;
+                    return Err(PackageStoreError::Admission(error));
+                }
+            };
         let manifest_json = serde_json::to_string(record.manifest())?;
         transaction.execute(
             "INSERT INTO package_records (id, version, manifest_json, artifact, state)
@@ -325,6 +532,15 @@ impl PackageStore {
                 artifact,
                 record.state().as_str(),
             ],
+        )?;
+        append_admission_event(
+            &transaction,
+            declared,
+            &subject_digest,
+            Some(&artifact_digest),
+            PackageTransparencyOutcome::Allowed,
+            "admitted",
+            occurred_at,
         )?;
         transaction.commit()?;
         Ok(record)
@@ -363,6 +579,21 @@ impl PackageStore {
         );
         match inserted {
             Ok(_) => {
+                append_transparency_event(
+                    &transaction,
+                    PackageTransparencyEventDraft {
+                        event_kind: PackageTransparencyEventKind::TrustRootAdded,
+                        outcome: PackageTransparencyOutcome::Allowed,
+                        occurred_at: added_at,
+                        publisher: root.publisher(),
+                        key_id: Some(root.key_id()),
+                        package_id: None,
+                        package_version: None,
+                        subject_digest: &hash_artifact(root.public_key().as_bytes()),
+                        artifact_digest: None,
+                        reason_code: "trust_root_added",
+                    },
+                )?;
                 transaction.commit()?;
                 Ok(PublisherTrustRootRecord {
                     root,
@@ -416,9 +647,59 @@ impl PackageStore {
              WHERE publisher = ?2 AND key_id = ?3 AND revoked_at IS NULL",
             params![revoked_at_i64, publisher, key_id],
         )?;
+        append_transparency_event(
+            &transaction,
+            PackageTransparencyEventDraft {
+                event_kind: PackageTransparencyEventKind::TrustRootRevoked,
+                outcome: PackageTransparencyOutcome::Allowed,
+                occurred_at: revoked_at,
+                publisher: record.publisher(),
+                key_id: Some(record.key_id()),
+                package_id: None,
+                package_version: None,
+                subject_digest: &hash_artifact(record.public_key().as_bytes()),
+                artifact_digest: None,
+                reason_code: "trust_root_revoked",
+            },
+        )?;
         record.revoked_at = Some(revoked_at);
         transaction.commit()?;
         Ok(record)
+    }
+
+    pub fn list_transparency_events(
+        &self,
+        event_kind: Option<PackageTransparencyEventKind>,
+        outcome: Option<PackageTransparencyOutcome>,
+        limit: usize,
+    ) -> Result<Vec<PackageTransparencyEvent>, PackageStoreError> {
+        if limit == 0 || limit > MAX_PACKAGE_TRANSPARENCY_LIST {
+            return Err(PackageStoreError::InvalidTransparencyLimit);
+        }
+        let connection = self.lock()?;
+        validate_transparency_chain(&connection)?;
+        load_transparency_events(&connection, event_kind, outcome, limit)
+    }
+
+    pub fn transparency_event(
+        &self,
+        sequence: u64,
+    ) -> Result<Option<PackageTransparencyEvent>, PackageStoreError> {
+        let sequence = i64::try_from(sequence).map_err(|_| PackageStoreError::CorruptRecord)?;
+        let connection = self.lock()?;
+        validate_transparency_chain(&connection)?;
+        connection
+            .query_row(
+                "SELECT sequence, event_kind, outcome, occurred_at, publisher, key_id,
+                        package_id, package_version, subject_digest, artifact_digest,
+                        reason_code, previous_event_digest, event_digest
+                 FROM package_transparency_events WHERE sequence = ?1",
+                params![sequence],
+                decode_transparency_event,
+            )
+            .optional()?
+            .map(validate_transparency_event)
+            .transpose()
     }
 
     pub fn list(&self) -> Result<Vec<PackageRecord>, PackageStoreError> {
@@ -1031,6 +1312,411 @@ fn serialize_lockfile(lock: &PackageLock) -> Result<Vec<u8>, PackageStoreError> 
     Ok(data)
 }
 
+struct PackageTransparencyEventDraft<'a> {
+    event_kind: PackageTransparencyEventKind,
+    outcome: PackageTransparencyOutcome,
+    occurred_at: u64,
+    publisher: &'a str,
+    key_id: Option<&'a str>,
+    package_id: Option<&'a str>,
+    package_version: Option<&'a str>,
+    subject_digest: &'a str,
+    artifact_digest: Option<&'a str>,
+    reason_code: &'a str,
+}
+
+fn append_admission_event(
+    transaction: &Transaction<'_>,
+    manifest: &PackageManifest,
+    subject_digest: &str,
+    artifact_digest: Option<&str>,
+    outcome: PackageTransparencyOutcome,
+    reason_code: &str,
+    occurred_at: u64,
+) -> Result<(), PackageStoreError> {
+    append_transparency_event(
+        transaction,
+        PackageTransparencyEventDraft {
+            event_kind: PackageTransparencyEventKind::AdmissionDecision,
+            outcome,
+            occurred_at,
+            publisher: manifest.publisher(),
+            key_id: None,
+            package_id: Some(manifest.id().as_str()),
+            package_version: Some(manifest.version()),
+            subject_digest,
+            artifact_digest,
+            reason_code,
+        },
+    )
+}
+
+fn append_transparency_event(
+    transaction: &Transaction<'_>,
+    draft: PackageTransparencyEventDraft<'_>,
+) -> Result<(), PackageStoreError> {
+    validate_transparency_chain(transaction)?;
+    let count = transaction.query_row(
+        "SELECT COUNT(*) FROM package_transparency_events",
+        [],
+        |row| row.get::<_, i64>(0),
+    )?;
+    if usize::try_from(count).map_err(|_| PackageStoreError::CorruptRecord)?
+        >= MAX_PACKAGE_TRANSPARENCY_EVENTS
+    {
+        return Err(PackageStoreError::TransparencyCapacityReached);
+    }
+    let next_sequence = transaction.query_row(
+        "SELECT COALESCE(MAX(sequence), 0) + 1 FROM package_transparency_events",
+        [],
+        |row| row.get::<_, i64>(0),
+    )?;
+    let sequence = u64::try_from(next_sequence).map_err(|_| PackageStoreError::CorruptRecord)?;
+    let previous_event_digest = transaction
+        .query_row(
+            "SELECT event_digest FROM package_transparency_events ORDER BY sequence DESC LIMIT 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    let event_digest = transparency_event_digest(
+        sequence,
+        draft.event_kind,
+        draft.outcome,
+        draft.occurred_at,
+        draft.publisher,
+        draft.key_id,
+        draft.package_id,
+        draft.package_version,
+        draft.subject_digest,
+        draft.artifact_digest,
+        draft.reason_code,
+        previous_event_digest.as_deref(),
+    );
+    transaction.execute(
+        "INSERT INTO package_transparency_events (
+             sequence, event_kind, outcome, occurred_at, publisher, key_id, package_id,
+             package_version, subject_digest, artifact_digest, reason_code,
+             previous_event_digest, event_digest
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        params![
+            next_sequence,
+            draft.event_kind.as_str(),
+            draft.outcome.as_str(),
+            i64::try_from(draft.occurred_at).map_err(|_| PackageStoreError::CorruptRecord)?,
+            draft.publisher,
+            draft.key_id,
+            draft.package_id,
+            draft.package_version,
+            draft.subject_digest,
+            draft.artifact_digest,
+            draft.reason_code,
+            previous_event_digest,
+            event_digest,
+        ],
+    )?;
+    Ok(())
+}
+
+fn load_transparency_events(
+    connection: &Connection,
+    event_kind: Option<PackageTransparencyEventKind>,
+    outcome: Option<PackageTransparencyOutcome>,
+    limit: usize,
+) -> Result<Vec<PackageTransparencyEvent>, PackageStoreError> {
+    let mut statement = connection.prepare(
+        "SELECT sequence, event_kind, outcome, occurred_at, publisher, key_id,
+                package_id, package_version, subject_digest, artifact_digest,
+                reason_code, previous_event_digest, event_digest
+         FROM package_transparency_events
+         WHERE (?1 IS NULL OR event_kind = ?1) AND (?2 IS NULL OR outcome = ?2)
+         ORDER BY sequence DESC LIMIT ?3",
+    )?;
+    let rows = statement.query_map(
+        params![
+            event_kind.map(PackageTransparencyEventKind::as_str),
+            outcome.map(PackageTransparencyOutcome::as_str),
+            i64::try_from(limit).map_err(|_| PackageStoreError::InvalidTransparencyLimit)?,
+        ],
+        decode_transparency_event,
+    )?;
+    rows.map(|row| {
+        row.map_err(Into::into)
+            .and_then(validate_transparency_event)
+    })
+    .collect()
+}
+
+fn decode_transparency_event(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<PackageTransparencyEvent> {
+    let sequence = row.get::<_, i64>(0)?;
+    let event_kind = row.get::<_, String>(1)?;
+    let outcome = row.get::<_, String>(2)?;
+    let occurred_at = row.get::<_, i64>(3)?;
+    Ok(PackageTransparencyEvent {
+        sequence: u64::try_from(sequence).map_err(|_| rusqlite::Error::InvalidQuery)?,
+        event_kind: PackageTransparencyEventKind::parse(&event_kind)
+            .ok_or(rusqlite::Error::InvalidQuery)?,
+        outcome: PackageTransparencyOutcome::parse(&outcome)
+            .ok_or(rusqlite::Error::InvalidQuery)?,
+        occurred_at: u64::try_from(occurred_at).map_err(|_| rusqlite::Error::InvalidQuery)?,
+        publisher: row.get(4)?,
+        key_id: row.get(5)?,
+        package_id: row.get(6)?,
+        package_version: row.get(7)?,
+        subject_digest: row.get(8)?,
+        artifact_digest: row.get(9)?,
+        reason_code: row.get(10)?,
+        previous_event_digest: row.get(11)?,
+        event_digest: row.get(12)?,
+    })
+}
+
+fn validate_transparency_event(
+    event: PackageTransparencyEvent,
+) -> Result<PackageTransparencyEvent, PackageStoreError> {
+    let trust_event = matches!(
+        event.event_kind,
+        PackageTransparencyEventKind::TrustRootAdded
+            | PackageTransparencyEventKind::TrustRootRevoked
+    );
+    let field_matrix_valid = if trust_event {
+        event.outcome == PackageTransparencyOutcome::Allowed
+            && event.key_id.is_some()
+            && event.package_id.is_none()
+            && event.package_version.is_none()
+            && event.artifact_digest.is_none()
+    } else {
+        event.key_id.is_none()
+            && event.package_id.is_some()
+            && event.package_version.is_some()
+            && (event.artifact_digest.is_some() || event.reason_code == "artifact_too_large")
+    };
+    let digests_valid = is_sha256_digest(&event.subject_digest)
+        && event
+            .artifact_digest
+            .as_deref()
+            .is_none_or(is_sha256_digest)
+        && event
+            .previous_event_digest
+            .as_deref()
+            .is_none_or(is_sha256_digest)
+        && is_sha256_digest(&event.event_digest);
+    let text_valid = is_bounded_transparency_text(&event.publisher, 256)
+        && event
+            .key_id
+            .as_deref()
+            .is_none_or(|value| is_bounded_transparency_text(value, 256))
+        && event
+            .package_id
+            .as_deref()
+            .is_none_or(|value| is_bounded_transparency_text(value, 256))
+        && event
+            .package_version
+            .as_deref()
+            .is_none_or(|value| is_bounded_transparency_text(value, 256))
+        && !event.reason_code.is_empty()
+        && event.reason_code.len() <= 64
+        && event
+            .reason_code
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        && transparency_reason_is_valid(event.event_kind, event.outcome, &event.reason_code);
+    let expected_digest = transparency_event_digest(
+        event.sequence,
+        event.event_kind,
+        event.outcome,
+        event.occurred_at,
+        &event.publisher,
+        event.key_id.as_deref(),
+        event.package_id.as_deref(),
+        event.package_version.as_deref(),
+        &event.subject_digest,
+        event.artifact_digest.as_deref(),
+        &event.reason_code,
+        event.previous_event_digest.as_deref(),
+    );
+    if !field_matrix_valid || !digests_valid || !text_valid || expected_digest != event.event_digest
+    {
+        return Err(PackageStoreError::CorruptRecord);
+    }
+    Ok(event)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn transparency_event_digest(
+    sequence: u64,
+    event_kind: PackageTransparencyEventKind,
+    outcome: PackageTransparencyOutcome,
+    occurred_at: u64,
+    publisher: &str,
+    key_id: Option<&str>,
+    package_id: Option<&str>,
+    package_version: Option<&str>,
+    subject_digest: &str,
+    artifact_digest: Option<&str>,
+    reason_code: &str,
+    previous_event_digest: Option<&str>,
+) -> String {
+    let sequence = sequence.to_string();
+    let occurred_at = occurred_at.to_string();
+    let mut canonical = Vec::new();
+    for (label, value) in [
+        ("format", Some("pandora.package.transparency.v1")),
+        ("sequence", Some(sequence.as_str())),
+        ("event_kind", Some(event_kind.as_str())),
+        ("outcome", Some(outcome.as_str())),
+        ("occurred_at", Some(occurred_at.as_str())),
+        ("publisher", Some(publisher)),
+        ("key_id", key_id),
+        ("package_id", package_id),
+        ("package_version", package_version),
+        ("subject_digest", Some(subject_digest)),
+        ("artifact_digest", artifact_digest),
+        ("reason_code", Some(reason_code)),
+        ("previous_event_digest", previous_event_digest),
+    ] {
+        append_digest_field(&mut canonical, label, value);
+    }
+    hash_artifact(&canonical)
+}
+
+fn validate_transparency_chain(connection: &Connection) -> Result<(), PackageStoreError> {
+    let mut statement = connection.prepare(
+        "SELECT sequence, event_kind, outcome, occurred_at, publisher, key_id,
+                package_id, package_version, subject_digest, artifact_digest,
+                reason_code, previous_event_digest, event_digest
+         FROM package_transparency_events ORDER BY sequence ASC",
+    )?;
+    let rows = statement.query_map([], decode_transparency_event)?;
+    let mut expected_sequence = 1_u64;
+    let mut previous_event_digest: Option<String> = None;
+    let mut count = 0_usize;
+    for row in rows {
+        let event = validate_transparency_event(row?)?;
+        count = count
+            .checked_add(1)
+            .ok_or(PackageStoreError::CorruptRecord)?;
+        if count > MAX_PACKAGE_TRANSPARENCY_EVENTS
+            || event.sequence != expected_sequence
+            || event.previous_event_digest.as_deref() != previous_event_digest.as_deref()
+        {
+            return Err(PackageStoreError::CorruptRecord);
+        }
+        expected_sequence = expected_sequence
+            .checked_add(1)
+            .ok_or(PackageStoreError::CorruptRecord)?;
+        previous_event_digest = Some(event.event_digest);
+    }
+    Ok(())
+}
+
+fn is_bounded_transparency_text(value: &str, limit: usize) -> bool {
+    !value.trim().is_empty() && value.len() <= limit && !value.chars().any(char::is_control)
+}
+
+fn transparency_reason_is_valid(
+    event_kind: PackageTransparencyEventKind,
+    outcome: PackageTransparencyOutcome,
+    reason_code: &str,
+) -> bool {
+    match (event_kind, outcome) {
+        (PackageTransparencyEventKind::TrustRootAdded, PackageTransparencyOutcome::Allowed) => {
+            reason_code == "trust_root_added"
+        }
+        (PackageTransparencyEventKind::TrustRootRevoked, PackageTransparencyOutcome::Allowed) => {
+            reason_code == "trust_root_revoked"
+        }
+        (PackageTransparencyEventKind::AdmissionDecision, PackageTransparencyOutcome::Allowed) => {
+            reason_code == "admitted"
+        }
+        (PackageTransparencyEventKind::AdmissionDecision, PackageTransparencyOutcome::Denied) => {
+            matches!(
+                reason_code,
+                "artifact_too_large"
+                    | "invalid_gene_artifact"
+                    | "manifest_mismatch"
+                    | "hash_mismatch"
+                    | "incompatible_runtime"
+                    | "unverified_trust_claim"
+                    | "signature_required"
+                    | "invalid_signature_encoding"
+                    | "invalid_signature"
+                    | "official_trust_unsupported"
+                    | "wrong_admission_boundary"
+                    | "missing_dependency"
+                    | "domain_dependency_not_gene"
+                    | "domain_requires_gene"
+                    | "meta_domain_missing"
+                    | "meta_member_not_domain"
+                    | "ambiguous_meta_domain"
+                    | "reserved_harness_id"
+                    | "replacement_signature_required"
+                    | "duplicate_identity"
+                    | "invalid_publisher_trust_root"
+                    | "duplicate_publisher_trust_root"
+            )
+        }
+        _ => false,
+    }
+}
+
+fn append_digest_field(buffer: &mut Vec<u8>, label: &str, value: Option<&str>) {
+    buffer.extend_from_slice(&(label.len() as u64).to_le_bytes());
+    buffer.extend_from_slice(label.as_bytes());
+    match value {
+        Some(value) => {
+            buffer.push(1);
+            buffer.extend_from_slice(&(value.len() as u64).to_le_bytes());
+            buffer.extend_from_slice(value.as_bytes());
+        }
+        None => buffer.push(0),
+    }
+}
+
+fn is_sha256_digest(value: &str) -> bool {
+    value.len() == 71
+        && value.starts_with("sha256:")
+        && value["sha256:".len()..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
+fn unix_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn admission_reason_code(error: &HarnessRegistryError) -> &'static str {
+    match error {
+        HarnessRegistryError::ManifestMismatch => "manifest_mismatch",
+        HarnessRegistryError::HashMismatch { .. } => "hash_mismatch",
+        HarnessRegistryError::IncompatibleRuntime { .. } => "incompatible_runtime",
+        HarnessRegistryError::UnverifiedTrustClaim => "unverified_trust_claim",
+        HarnessRegistryError::SignatureRequired => "signature_required",
+        HarnessRegistryError::InvalidSignatureEncoding => "invalid_signature_encoding",
+        HarnessRegistryError::InvalidSignature => "invalid_signature",
+        HarnessRegistryError::OfficialTrustUnsupported => "official_trust_unsupported",
+        HarnessRegistryError::WrongAdmissionBoundary { .. } => "wrong_admission_boundary",
+        HarnessRegistryError::MissingDependency { .. } => "missing_dependency",
+        HarnessRegistryError::DomainDependencyNotGene { .. } => "domain_dependency_not_gene",
+        HarnessRegistryError::DomainHarnessRequiresGene => "domain_requires_gene",
+        HarnessRegistryError::MetaDomainMissing { .. } => "meta_domain_missing",
+        HarnessRegistryError::MetaDomainNotDomain { .. } => "meta_member_not_domain",
+        HarnessRegistryError::AmbiguousMetaDomain { .. } => "ambiguous_meta_domain",
+        HarnessRegistryError::ReservedHarnessId { .. } => "reserved_harness_id",
+        HarnessRegistryError::BuiltInReplacementRequiresVerifiedSignature { .. } => {
+            "replacement_signature_required"
+        }
+        HarnessRegistryError::DuplicateIdentity => "duplicate_identity",
+        HarnessRegistryError::InvalidPublisherTrustRoot => "invalid_publisher_trust_root",
+        HarnessRegistryError::DuplicatePublisherTrustRoot => "duplicate_publisher_trust_root",
+    }
+}
+
 fn load_publisher_trust_roots(
     connection: &rusqlite::Connection,
 ) -> Result<PublisherTrustRoots, PackageStoreError> {
@@ -1600,6 +2286,128 @@ mod tests {
         drop(store);
         let reopened = PackageStore::open(root.join("packages.sqlite3")).unwrap();
         assert_eq!(reopened.list_publisher_trust_roots().unwrap().len(), 2);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn transparency_ledger_chains_trust_changes_and_admission_decisions() {
+        let artifact = b"transparent gene";
+        let manifest = gene_manifest("example/transparent", artifact);
+        let signing_key = SigningKey::from_bytes(&[41_u8; 32]);
+        let (store, root) = store();
+
+        store
+            .add_publisher_trust_root("publisher", "publisher-key", hex_key(&signing_key), 10)
+            .unwrap();
+        store.admit_at(&manifest, &manifest, artifact, 11).unwrap();
+        assert!(matches!(
+            store.admit_at(&manifest, &manifest, artifact, 12),
+            Err(PackageStoreError::Admission(
+                HarnessRegistryError::DuplicateIdentity
+            ))
+        ));
+        store
+            .revoke_publisher_trust_root("publisher", "publisher-key", 13)
+            .unwrap();
+
+        let events = store.list_transparency_events(None, None, 10).unwrap();
+        assert_eq!(events.len(), 4);
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| (
+                    event.event_kind().as_str(),
+                    event.outcome().as_str(),
+                    event.reason_code()
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                ("trust_root_revoked", "allowed", "trust_root_revoked"),
+                ("admission_decision", "denied", "duplicate_identity"),
+                ("admission_decision", "allowed", "admitted"),
+                ("trust_root_added", "allowed", "trust_root_added"),
+            ]
+        );
+        for pair in events.windows(2) {
+            assert_eq!(
+                pair[0].previous_event_digest(),
+                Some(pair[1].event_digest())
+            );
+        }
+        assert_eq!(events.last().unwrap().previous_event_digest(), None);
+        assert_eq!(
+            store
+                .list_transparency_events(
+                    Some(PackageTransparencyEventKind::AdmissionDecision),
+                    Some(PackageTransparencyOutcome::Denied),
+                    10,
+                )
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            store.transparency_event(2).unwrap().unwrap().reason_code(),
+            "admitted"
+        );
+
+        drop(store);
+        let reopened = PackageStore::open(root.join("packages.sqlite3")).unwrap();
+        assert_eq!(
+            reopened.list_transparency_events(None, None, 10).unwrap(),
+            events
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn transparency_ledger_rejects_update_delete_and_unbounded_reads() {
+        let artifact = b"append only gene";
+        let manifest = gene_manifest("example/append-only", artifact);
+        let (store, root) = store();
+        store.admit_at(&manifest, &manifest, artifact, 10).unwrap();
+        assert!(store.admit_at(&manifest, &manifest, artifact, 11).is_err());
+
+        let connection = store.lock().unwrap();
+        assert!(
+            connection
+                .execute(
+                    "UPDATE package_transparency_events SET reason_code = 'changed' WHERE sequence = 1",
+                    [],
+                )
+                .is_err()
+        );
+        assert!(
+            connection
+                .execute(
+                    "DELETE FROM package_transparency_events WHERE sequence = 1",
+                    [],
+                )
+                .is_err()
+        );
+        drop(connection);
+        assert!(matches!(
+            store.list_transparency_events(None, None, 0),
+            Err(PackageStoreError::InvalidTransparencyLimit)
+        ));
+        assert!(matches!(
+            store.list_transparency_events(None, None, MAX_PACKAGE_TRANSPARENCY_LIST + 1),
+            Err(PackageStoreError::InvalidTransparencyLimit)
+        ));
+        drop(store);
+
+        let connection = Connection::open(root.join("packages.sqlite3")).unwrap();
+        connection
+            .execute_batch(
+                "DROP TRIGGER package_transparency_events_no_delete;
+                 DELETE FROM package_transparency_events WHERE sequence = 1;",
+            )
+            .unwrap();
+        drop(connection);
+        assert!(matches!(
+            PackageStore::open(root.join("packages.sqlite3")),
+            Err(PackageStoreError::CorruptRecord)
+        ));
         let _ = std::fs::remove_dir_all(root);
     }
 

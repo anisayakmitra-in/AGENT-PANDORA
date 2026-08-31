@@ -65,7 +65,16 @@ Harness. The following abbreviated JSON shows the persisted input shape:
 
 Deserialized plans are revalidated before persistence. Unknown repositories,
 missing or duplicate role bindings, undeclared Domains, dependency cycles, and
-Meta Harness handoff-limit violations fail closed.
+Meta Harness handoff-limit violations fail closed. The parser rejects unknown
+plan fields, invalid reconstructed IDs, more than 64 roles or 64 handoffs, a
+handoff list above its declared budget, and parallelism above the role count.
+The same parser is a seeded fuzz target.
+
+Content carried between roles remains untrusted. Persisted handoff fragments
+are re-assessed at every hop; high-confidence instruction-shaped content is
+replaced by digest-and-byte-count evidence before persistence or provider
+context assembly. A forwarded envelope cannot bypass this check by claiming it
+was already normalized.
 
 ## Headless worker protocol
 

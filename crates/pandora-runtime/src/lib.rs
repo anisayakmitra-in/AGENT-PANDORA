@@ -8,6 +8,7 @@ pub mod coding_feedback;
 pub mod composition_ledger;
 pub mod config;
 pub mod containment;
+pub mod content_guard;
 pub mod context_engine;
 pub mod context_recovery;
 pub mod device_trust;
@@ -84,6 +85,12 @@ pub use composition_ledger::{
     CompositionSource, MAX_COMPOSITION_BINDINGS,
 };
 pub use containment::shipped_executor_containment;
+pub use content_guard::{
+    CONTENT_GUARD_POLICY_VERSION, CONTEXT_QUARANTINE_REASON, ContentGuardError,
+    TOOL_QUARANTINE_REASON, UntrustedContentAssessment, UntrustedContentDisposition,
+    assess_untrusted_content, guard_context_fragments, normalize_untrusted_tool_payload,
+    render_untrusted_tool_payload, tool_output_origin_kind,
+};
 pub use context_engine::{ContextCacheStats, ContextEngine, ContextError};
 pub use context_recovery::{ContextRecovery, RecoveryDecision, RecoveryInput, RecoveryStep};
 pub use device_trust::{
@@ -173,8 +180,10 @@ pub use orchestration_store::{
     OrchestrationRunRecord, OrchestrationRunStatus, OrchestrationStore, OrchestrationStoreError,
 };
 pub use package_store::{
-    MAX_PUBLISHER_TRUST_ROOTS, MAX_STORED_ARTIFACT_BYTES, PackageBinding, PackageStore,
-    PackageStoreError, PublisherTrustRootRecord,
+    MAX_PACKAGE_TRANSPARENCY_EVENTS, MAX_PACKAGE_TRANSPARENCY_LIST, MAX_PUBLISHER_TRUST_ROOTS,
+    MAX_STORED_ARTIFACT_BYTES, PackageBinding, PackageStore, PackageStoreError,
+    PackageTransparencyEvent, PackageTransparencyEventKind, PackageTransparencyOutcome,
+    PublisherTrustRootRecord,
 };
 pub use parliament::Parliament;
 pub use permit_store::{ConsumedPermit, PermitError, PermitStore};

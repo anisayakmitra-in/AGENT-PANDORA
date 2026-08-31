@@ -1,0 +1,12 @@
+{
+  "id": "example/domain-starter",
+  "version": "1.0.0",
+  "kind": "domain_harness",
+  "publisher": "local-contributor",
+  "content_hash": "sha256:52440a2f8e84233b5b5452125d13e0ebd935a499b356c5970a2436bfc3424156",
+  "dependencies": [],
+  "compatibility": {"runtime": "pandora=2.0.0-beta.7"},
+  "license": "Apache-2.0",
+  "trust": {"level": "unverified", "signature": null, "public_key": null},
+  "domain_routing": {"hints": ["starter domain"]}
+}

@@ -512,6 +512,25 @@ fn list_local_packages() -> Result<NativePackageResult, String> {
 }
 
 #[tauri::command]
+fn list_package_transparency() -> Result<NativePackageResult, String> {
+    let args = vec![
+        "package".to_owned(),
+        "transparency".to_owned(),
+        "list".to_owned(),
+        "--limit".to_owned(),
+        "64".to_owned(),
+        "--json".to_owned(),
+    ];
+    let data = run_cli_json(&args, "loading package trust transparency evidence")?;
+    let count = data.get("count").and_then(Value::as_u64).unwrap_or_default();
+    Ok(NativePackageResult {
+        message: format!("Loaded {count} append-only package transparency event(s)."),
+        restart_required: false,
+        data,
+    })
+}
+
+#[tauri::command]
 fn list_local_skills() -> Result<NativeSkillResult, String> {
     let args = vec!["skill".to_owned(), "list".to_owned(), "--json".to_owned()];
     let data = run_cli_json(&args, "listing local skills")?;
@@ -1742,6 +1761,7 @@ fn main() {
             list_registry_profiles,
             configure_registry_profile,
             list_local_packages,
+            list_package_transparency,
             list_local_skills,
             install_local_skill,
             mutate_local_skill,

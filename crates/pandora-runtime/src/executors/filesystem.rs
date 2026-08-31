@@ -10,12 +10,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_DIRECTORY_ENTRIES: usize = 2_048;
 const MAX_SEARCH_ENTRIES: usize = 10_000;
+pub const MAX_WORKSPACE_PATH_BYTES: usize = 4_096;
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FilesystemError {
     InvalidWorkspace,
     EmptyPath,
+    InvalidPath,
+    PathLimitExceeded,
     AbsolutePath,
     ParentTraversal,
     PathOutsideWorkspace,
@@ -34,6 +37,8 @@ impl FilesystemError {
         match self {
             Self::InvalidWorkspace => "invalid_workspace",
             Self::EmptyPath => "empty_path",
+            Self::InvalidPath => "invalid_path",
+            Self::PathLimitExceeded => "path_limit_exceeded",
             Self::AbsolutePath => "absolute_path",
             Self::ParentTraversal => "parent_traversal",
             Self::PathOutsideWorkspace => "path_outside_workspace",
@@ -73,34 +78,53 @@ impl WorkspaceRoot {
     }
 
     pub fn path(&self, value: &str) -> Result<WorkspacePath, FilesystemError> {
-        if value.trim().is_empty() {
-            return Err(FilesystemError::EmptyPath);
-        }
-        let relative = Path::new(value);
-        if relative.is_absolute()
-            || relative
-                .components()
-                .any(|component| matches!(component, Component::Prefix(_) | Component::RootDir))
-        {
-            return Err(FilesystemError::AbsolutePath);
-        }
-        if relative
-            .components()
-            .any(|component| matches!(component, Component::ParentDir))
-        {
-            return Err(FilesystemError::ParentTraversal);
-        }
+        let relative = validate_workspace_relative_path(value)?;
 
-        let absolute = self.canonical.join(relative);
-        validate_components(&self.canonical, relative)?;
+        let absolute = self.canonical.join(&relative);
+        validate_components(&self.canonical, &relative)?;
         ensure_contained(&self.canonical, &absolute)?;
         Ok(WorkspacePath {
             root: self.canonical.clone(),
-            relative: relative.to_path_buf(),
+            relative,
             source: value.to_owned(),
             absolute,
         })
     }
+}
+
+/// Validates an untrusted workspace-relative path without touching the filesystem.
+pub fn validate_workspace_relative_path(value: &str) -> Result<PathBuf, FilesystemError> {
+    if value.trim().is_empty() {
+        return Err(FilesystemError::EmptyPath);
+    }
+    if value.len() > MAX_WORKSPACE_PATH_BYTES {
+        return Err(FilesystemError::PathLimitExceeded);
+    }
+    if value.chars().any(char::is_control) {
+        return Err(FilesystemError::InvalidPath);
+    }
+
+    let bytes = value.as_bytes();
+    let has_drive_prefix = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    let has_unc_prefix = value.starts_with("\\\\") || value.starts_with("//");
+    let relative = Path::new(value);
+    if has_drive_prefix
+        || has_unc_prefix
+        || relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| matches!(component, Component::Prefix(_) | Component::RootDir))
+    {
+        return Err(FilesystemError::AbsolutePath);
+    }
+    if value.split(['/', '\\']).any(|component| component == "..")
+        || relative
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(FilesystemError::ParentTraversal);
+    }
+    Ok(relative.to_path_buf())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -687,6 +711,34 @@ mod tests {
         assert_eq!(
             fixture.root.path(absolute.to_string_lossy().as_ref()),
             Err(FilesystemError::AbsolutePath)
+        );
+    }
+
+    #[test]
+    fn lexical_path_validation_is_cross_platform_and_bounded() {
+        assert_eq!(
+            validate_workspace_relative_path("..\\outside.txt"),
+            Err(FilesystemError::ParentTraversal)
+        );
+        assert_eq!(
+            validate_workspace_relative_path("C:\\outside.txt"),
+            Err(FilesystemError::AbsolutePath)
+        );
+        assert_eq!(
+            validate_workspace_relative_path("\\\\server\\share"),
+            Err(FilesystemError::AbsolutePath)
+        );
+        assert_eq!(
+            validate_workspace_relative_path("bad\npath"),
+            Err(FilesystemError::InvalidPath)
+        );
+        assert_eq!(
+            validate_workspace_relative_path(&"a".repeat(MAX_WORKSPACE_PATH_BYTES + 1)),
+            Err(FilesystemError::PathLimitExceeded)
+        );
+        assert_eq!(
+            validate_workspace_relative_path("src/lib.rs").unwrap(),
+            PathBuf::from("src/lib.rs")
         );
     }
 

@@ -7804,6 +7804,20 @@ fn package_trust_root_cli_supports_official_admission_and_revocation() {
     let output = fixture
         .command(&[
             "package",
+            "admit",
+            "--manifest",
+            manifest_path.to_str().unwrap(),
+            "--artifact",
+            artifact_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("duplicate package admission should start");
+    assert_eq!(output.status.code(), Some(50));
+
+    let output = fixture
+        .command(&[
+            "package",
             "trust-root",
             "revoke",
             "--publisher",
@@ -7817,6 +7831,54 @@ fn package_trust_root_cli_supports_official_admission_and_revocation() {
         .expect("trust-root revoke should start");
     assert_success(&output);
     assert_eq!(parse_json(&output)["active"], false);
+
+    let output = fixture
+        .command(&["package", "transparency", "list", "--limit", "10", "--json"])
+        .output()
+        .expect("package transparency list should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["count"], 4);
+    assert_eq!(response["events"][0]["event_kind"], "trust_root_revoked");
+    assert_eq!(response["events"][1]["outcome"], "denied");
+    assert_eq!(response["events"][1]["reason_code"], "duplicate_identity");
+    assert_eq!(response["events"][2]["outcome"], "allowed");
+    assert_eq!(response["events"][3]["event_kind"], "trust_root_added");
+    assert_eq!(response["durability"], "append-only-sqlite");
+    assert_eq!(response["integrity"], "sha256-event-chain");
+
+    let output = fixture
+        .command(&[
+            "package",
+            "transparency",
+            "list",
+            "--event-kind",
+            "admission_decision",
+            "--outcome",
+            "denied",
+            "--json",
+        ])
+        .output()
+        .expect("filtered package transparency list should start");
+    assert_success(&output);
+    assert_eq!(parse_json(&output)["count"], 1);
+
+    let output = fixture
+        .command(&[
+            "package",
+            "transparency",
+            "inspect",
+            "--sequence",
+            "2",
+            "--json",
+        ])
+        .output()
+        .expect("package transparency inspection should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["event"]["sequence"], 2);
+    assert_eq!(response["event"]["reason_code"], "admitted");
+    assert_eq!(response["runtime_authority"], false);
 
     let output = fixture
         .command(&["package", "list", "--json"])

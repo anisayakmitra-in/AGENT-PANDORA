@@ -398,6 +398,18 @@ fn decode_response(
     }
 }
 
+/// Exercises the production MCP frame and JSON-RPC response parser without starting a process.
+///
+/// This is intentionally public only so external fuzz targets can drive the exact runtime parser.
+#[doc(hidden)]
+pub fn validate_mcp_response_frame_for_fuzzing(frame: &[u8]) -> Result<(), McpError> {
+    let mut reader = BufReader::new(frame);
+    let frame = read_frame(&mut reader, McpLimits::default().max_frame_bytes)?;
+    let response = serde_json::from_str::<Value>(&frame).map_err(|_| McpError::MalformedMessage)?;
+    let mut seen = HashSet::new();
+    decode_response(response, 1, &mut seen).map(|_| ())
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProbeErrorClass {
     ContinueModern,
@@ -1502,6 +1514,26 @@ mod tests {
                 &mut seen
             ),
             Err(McpError::UnexpectedServerMessage)
+        );
+    }
+
+    #[test]
+    fn fuzz_entrypoint_uses_the_production_frame_and_response_parser() {
+        assert_eq!(
+            validate_mcp_response_frame_for_fuzzing(
+                b"{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n"
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            validate_mcp_response_frame_for_fuzzing(
+                b"{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{}}\n"
+            ),
+            Err(McpError::UnexpectedResponseId)
+        );
+        assert_eq!(
+            validate_mcp_response_frame_for_fuzzing(b"not-json\n"),
+            Err(McpError::MalformedMessage)
         );
     }
 

@@ -29,6 +29,7 @@ const runtime = vi.hoisted(() => ({
   installLocalSkill: vi.fn(),
   installRegistryPackage: vi.fn(),
   listLocalPackages: vi.fn(),
+  listPackageTransparency: vi.fn(),
   listLocalSkills: vi.fn(),
   listRegistryProfiles: vi.fn(),
   listStorageLifecycleEvidence: vi.fn(),
@@ -77,6 +78,7 @@ vi.mock("./runtimeClient", () => ({
   installLocalSkill: runtime.installLocalSkill,
   installRegistryPackage: runtime.installRegistryPackage,
   listLocalPackages: runtime.listLocalPackages,
+  listPackageTransparency: runtime.listPackageTransparency,
   listLocalSkills: runtime.listLocalSkills,
   listRegistryProfiles: runtime.listRegistryProfiles,
   listStorageLifecycleEvidence: runtime.listStorageLifecycleEvidence,
@@ -176,6 +178,17 @@ beforeEach(() => {
     message: "0 local package(s) available.",
     restartRequired: false,
     data: { packages: [] },
+  });
+  runtime.listPackageTransparency.mockResolvedValue({
+    message: "Loaded 0 append-only package transparency event(s).",
+    restartRequired: false,
+    data: {
+      events: [],
+      count: 0,
+      durability: "append-only-sqlite",
+      integrity: "sha256-event-chain",
+      runtime_authority: false,
+    },
   });
   runtime.listLocalSkills.mockResolvedValue({
     message: "Loaded local Skills.",
@@ -1889,6 +1902,31 @@ describe("Pandora desktop run state", () => {
       restartRequired: false,
       data: { packages: [localPackage] },
     });
+    runtime.listPackageTransparency.mockResolvedValue({
+      message: "Loaded 1 append-only package transparency event(s).",
+      restartRequired: false,
+      data: {
+        events: [{
+          sequence: 1,
+          event_kind: "admission_decision",
+          outcome: "allowed",
+          occurred_at: 1_788_192_000,
+          publisher: "example",
+          key_id: null,
+          package_id: "example/refactor",
+          package_version: "1.2.3",
+          subject_digest: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          artifact_digest: localPackage.content_hash,
+          reason_code: "admitted",
+          previous_event_digest: null,
+          event_digest: "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        }],
+        count: 1,
+        durability: "append-only-sqlite",
+        integrity: "sha256-event-chain",
+        runtime_authority: false,
+      },
+    });
     runtime.installRegistryPackage.mockResolvedValue({
       message: "Package owner/new-gene admitted from the registry.",
       restartRequired: true,
@@ -1926,6 +1964,9 @@ describe("Pandora desktop run state", () => {
 
     expect(await screen.findByRole("heading", { name: "Signed package manager" })).toBeInTheDocument();
     expect(await screen.findByText("example/refactor")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Package transparency evidence")).toHaveTextContent("admission decision");
+    expect(screen.getByLabelText("Package transparency evidence")).toHaveTextContent("allowed");
+    expect(screen.getByText(/Read-only SHA-256 chain evidence/)).toBeInTheDocument();
     expect(screen.getByText("Runtime authority").nextElementSibling).toHaveTextContent("none");
     expect(screen.getByText(/cannot replace Parliament, Shadow Council, ReferenceMonitor/)).toBeInTheDocument();
 

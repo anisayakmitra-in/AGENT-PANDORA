@@ -1,0 +1,7 @@
+{
+  "receipt_id": "receipt-1",
+  "permit_id": "permit-1",
+  "request_digest": "request-1",
+  "completed_at": 20,
+  "outcome": {"status": "succeeded"}
+}

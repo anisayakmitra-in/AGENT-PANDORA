@@ -894,6 +894,8 @@ pandora package install-github --repository https://github.com/<owner>/<repo> --
 pandora package trust-root add --publisher <name> --key-id <id> --public-key <hex-or-base64>
 pandora package trust-root list
 pandora package trust-root revoke --publisher <name> --key-id <id> --yes
+pandora package transparency list [--event-kind <trust_root_added|trust_root_revoked|admission_decision>] [--outcome <allowed|denied>] [--limit <1-256>]
+pandora package transparency inspect --sequence <id>
 pandora package list
 pandora package inspect <id> <version>
 pandora package lock
@@ -1097,6 +1099,17 @@ perform a bounded rotation. `trust-root revoke` requires `--yes`; revocation is
 persisted and causes packages relying only on that root to fail closed on reload.
 Trust roots contain public verification material only; they do not grant runtime
 authority or bypass package, Harness, Gene, or Reference Monitor checks.
+
+Every trust-root addition or revocation and every allowed or denied package
+admission appends one safe event to `packages.sqlite3`. `package transparency
+list` returns newest-first bounded evidence and accepts exact event and outcome
+filters; `inspect` reads one sequence. Events include stable reason codes,
+subject identity, the prior digest, and their own SHA-256 digest, but no package
+artifact, private key, credential, prompt, or model output. SQLite triggers
+reject updates and deletes. The ledger is append-only inspection evidence and
+reports `runtime_authority: false`; it cannot admit, enable, or execute a
+package. The TUI `/trust-transparency` command is guidance only, and the desktop
+Package Manager renders the same read-only ledger.
 
 `memory recall` exposes only the selected, redacted L1 or L2 records from the exact
 tenant, workspace, session, and provider scope. L0 remains process-local and is not

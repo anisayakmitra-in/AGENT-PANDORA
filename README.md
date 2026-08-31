@@ -48,6 +48,12 @@ Binding a staged proposal creates a one-shot canary that records the exact
 report digest and case counts, then pauses at canary evidence; it never
 activates the candidate. See [evaluation](docs/EVALUATION.md).
 
+Untrusted adapter content now crosses one typed, replay-tested quarantine
+boundary before provider context or handoff persistence. Package trust changes
+and admission outcomes also produce append-only hash-chained evidence, while
+six production parser targets run in bounded fuzz CI. See
+[adversarial resilience](docs/ADVERSARIAL_RESILIENCE.md).
+
 Research evolution proposals retain the exact stable IDs of every memory record
 that shaped their bounded evidence. The canonical ID list is digest-bound,
 durable, and visible in CLI and desktop lineage inspection without granting any

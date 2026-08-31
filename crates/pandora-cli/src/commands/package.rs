@@ -5,9 +5,10 @@ use ed25519_dalek::{Signer, SigningKey};
 use pandora_harnesses::{builtin_genes, builtin_harnesses, replaceable_builtin_harness_kind};
 use pandora_runtime::config::DEFAULT_REGISTRY_TOKEN_ENV;
 use pandora_runtime::{
-    ArtifactCatalog, GitHubPackageClient, GitHubPackageError, MAX_STORED_ARTIFACT_BYTES,
-    PackageBinding, PackageRecord, PackageRegistryClient, PackageRegistryError, PackageStore,
-    PackageStoreError, WasmExecutor,
+    ArtifactCatalog, GitHubPackageClient, GitHubPackageError, MAX_PACKAGE_TRANSPARENCY_LIST,
+    MAX_STORED_ARTIFACT_BYTES, PackageBinding, PackageRecord, PackageRegistryClient,
+    PackageRegistryError, PackageStore, PackageStoreError, PackageTransparencyEvent,
+    PackageTransparencyEventKind, PackageTransparencyOutcome, WasmExecutor,
 };
 use pandora_types::{
     ArtifactId, DomainRoutingProfile, HarnessId, MAX_META_HANDOFFS, MetaComposition,
@@ -26,7 +27,7 @@ const DEFAULT_GITHUB_TOKEN_ENV: &str = "PANDORA_GITHUB_TOKEN";
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "package requires 'scaffold', 'admit', 'validate', 'sign', 'keygen', 'install', 'install-github', 'list', 'inspect', 'enable', 'disable', 'rollback', 'lock', 'verify-lock', 'trust-root', or 'remove'",
+            "package requires 'scaffold', 'admit', 'validate', 'sign', 'keygen', 'install', 'install-github', 'list', 'inspect', 'enable', 'disable', 'rollback', 'lock', 'verify-lock', 'trust-root', 'transparency', or 'remove'",
         )
     })?;
     match subcommand.as_str() {
@@ -45,6 +46,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "lock" => lock(&args[1..]),
         "verify-lock" => verify_lock(&args[1..]),
         "trust-root" => trust_root(&args[1..]),
+        "transparency" => transparency(&args[1..]),
         "remove" => remove(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown package command '{unknown}'"
@@ -1475,6 +1477,157 @@ fn trust_root_value(root: &pandora_runtime::PublisherTrustRootRecord) -> Value {
         "added_at": root.added_at(),
         "revoked_at": root.revoked_at(),
         "active": root.active(),
+    })
+}
+
+fn transparency(args: &[String]) -> Result<CommandResult, CliError> {
+    let subcommand = args
+        .first()
+        .ok_or_else(|| CliError::usage("package transparency requires 'list' or 'inspect'"))?;
+    match subcommand.as_str() {
+        "list" => transparency_list(&args[1..]),
+        "inspect" => transparency_inspect(&args[1..]),
+        _ => Err(CliError::usage(format!(
+            "unknown package transparency command '{subcommand}'"
+        ))),
+    }
+}
+
+fn transparency_list(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "event-kind",
+            "outcome",
+            "limit",
+        ],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "package transparency list does not accept positional arguments",
+        ));
+    }
+    let event_kind = parsed
+        .value("event-kind")
+        .map(parse_transparency_event_kind)
+        .transpose()?;
+    let outcome = parsed
+        .value("outcome")
+        .map(parse_transparency_outcome)
+        .transpose()?;
+    let limit = parsed.value("limit").map_or(Ok(50_usize), |value| {
+        value.parse::<usize>().map_err(|_| {
+            CliError::usage(format!(
+                "--limit requires an integer between 1 and {MAX_PACKAGE_TRANSPARENCY_LIST}"
+            ))
+        })
+    })?;
+    if !(1..=MAX_PACKAGE_TRANSPARENCY_LIST).contains(&limit) {
+        return Err(CliError::usage(format!(
+            "--limit requires an integer between 1 and {MAX_PACKAGE_TRANSPARENCY_LIST}"
+        )));
+    }
+    let events = store(&parsed)?
+        .list_transparency_events(event_kind, outcome, limit)
+        .map_err(store_error)?;
+    let count = events.len();
+    Ok(success(
+        "package transparency list",
+        json!({
+            "events": events.iter().map(transparency_event_value).collect::<Vec<_>>(),
+            "count": count,
+            "filters": {
+                "event_kind": event_kind.map(PackageTransparencyEventKind::as_str),
+                "outcome": outcome.map(PackageTransparencyOutcome::as_str),
+                "limit": limit,
+            },
+            "durability": "append-only-sqlite",
+            "integrity": "sha256-event-chain",
+            "runtime_authority": false,
+        }),
+        format!("Listed {count} package transparency event(s)"),
+    ))
+}
+
+fn transparency_inspect(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "sequence"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "package transparency inspect does not accept positional arguments",
+        ));
+    }
+    let sequence = parsed
+        .value("sequence")
+        .ok_or_else(|| {
+            CliError::usage("package transparency inspect requires '--sequence <positive-id>'")
+        })?
+        .parse::<u64>()
+        .map_err(|_| {
+            CliError::usage("package transparency inspect requires a positive integer sequence")
+        })?;
+    if sequence == 0 {
+        return Err(CliError::usage(
+            "package transparency inspect requires a positive integer sequence",
+        ));
+    }
+    let event = store(&parsed)?
+        .transparency_event(sequence)
+        .map_err(store_error)?
+        .ok_or_else(|| {
+            CliError::execution(
+                "package transparency event was not found",
+                json!({"sequence": sequence}),
+            )
+        })?;
+    Ok(success(
+        "package transparency inspect",
+        json!({
+            "event": transparency_event_value(&event),
+            "durability": "append-only-sqlite",
+            "integrity": "sha256-event-chain",
+            "runtime_authority": false,
+        }),
+        format!("Inspected package transparency event {sequence}"),
+    ))
+}
+
+fn parse_transparency_event_kind(value: &str) -> Result<PackageTransparencyEventKind, CliError> {
+    match value {
+        "trust_root_added" => Ok(PackageTransparencyEventKind::TrustRootAdded),
+        "trust_root_revoked" => Ok(PackageTransparencyEventKind::TrustRootRevoked),
+        "admission_decision" => Ok(PackageTransparencyEventKind::AdmissionDecision),
+        _ => Err(CliError::usage(
+            "--event-kind requires trust_root_added, trust_root_revoked, or admission_decision",
+        )),
+    }
+}
+
+fn parse_transparency_outcome(value: &str) -> Result<PackageTransparencyOutcome, CliError> {
+    match value {
+        "allowed" => Ok(PackageTransparencyOutcome::Allowed),
+        "denied" => Ok(PackageTransparencyOutcome::Denied),
+        _ => Err(CliError::usage("--outcome requires allowed or denied")),
+    }
+}
+
+fn transparency_event_value(event: &PackageTransparencyEvent) -> Value {
+    json!({
+        "sequence": event.sequence(),
+        "event_kind": event.event_kind().as_str(),
+        "outcome": event.outcome().as_str(),
+        "occurred_at": event.occurred_at(),
+        "publisher": event.publisher(),
+        "key_id": event.key_id(),
+        "package_id": event.package_id(),
+        "package_version": event.package_version(),
+        "subject_digest": event.subject_digest(),
+        "artifact_digest": event.artifact_digest(),
+        "reason_code": event.reason_code(),
+        "previous_event_digest": event.previous_event_digest(),
+        "event_digest": event.event_digest(),
     })
 }
 

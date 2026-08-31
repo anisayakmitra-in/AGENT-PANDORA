@@ -135,6 +135,22 @@ export type RuntimePackage = {
   };
 };
 
+export type RuntimePackageTransparencyEvent = {
+  sequence: number;
+  event_kind: "trust_root_added" | "trust_root_revoked" | "admission_decision";
+  outcome: "allowed" | "denied";
+  occurred_at: number;
+  publisher: string;
+  key_id: string | null;
+  package_id: string | null;
+  package_version: string | null;
+  subject_digest: string;
+  artifact_digest: string | null;
+  reason_code: string;
+  previous_event_digest: string | null;
+  event_digest: string;
+};
+
 export type NativePackageResult = {
   message: string;
   restartRequired: boolean;
@@ -159,6 +175,11 @@ export type NativePackageResult = {
       enabled: boolean;
     }>;
     binding?: RuntimePackage["activation"];
+    events?: RuntimePackageTransparencyEvent[];
+    count?: number;
+    durability?: "append-only-sqlite";
+    integrity?: "sha256-event-chain";
+    runtime_authority?: false;
   };
 };
 
@@ -781,6 +802,17 @@ export async function listLocalPackages(): Promise<NativePackageResult> {
     };
   }
   return invoke<NativePackageResult>("list_local_packages");
+}
+
+export async function listPackageTransparency(): Promise<NativePackageResult> {
+  if (!isNativeRuntime()) {
+    return {
+      message: "Package transparency evidence is available only in the Pandora desktop app.",
+      restartRequired: false,
+      data: { events: [], count: 0 },
+    };
+  }
+  return invoke<NativePackageResult>("list_package_transparency");
 }
 
 export async function listLocalSkills(): Promise<NativeSkillResult> {

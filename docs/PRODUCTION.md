@@ -106,6 +106,23 @@ can make retained archives permanently unrecoverable. Provider retention,
 replication, legal hold, object versioning, soft-delete, and cryptographic
 destruction semantics remain the operator's responsibility.
 
+## Adversarial input and package trust evidence
+
+Tool and adapter output remains untrusted even when transport, identity, and
+signature checks succeed. The runtime records a typed origin and applies the
+shared content guard before provider context and durable handoffs. Quarantined
+content retains only a digest, byte count, policy version, and safe reason; a
+persisted or forwarded envelope is revalidated instead of trusted by shape.
+
+Publisher trust changes and package admission outcomes append to the package
+transparency ledger. Operators can inspect the SHA-256 event chain with
+`pandora package transparency list` and `inspect`; those commands are read-only
+and do not grant runtime authority. Production CI also compiles and runs bounded
+fuzz smoke campaigns against the path, manifest, MCP RPC, handoff, approval,
+and persisted effect-receipt parsers. See
+[adversarial resilience](ADVERSARIAL_RESILIENCE.md) for the exact boundary and
+replay commands.
+
 ## Telemetry and crash records
 
 Operational telemetry is local-only under data/operations/telemetry.jsonl. It

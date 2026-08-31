@@ -89,8 +89,9 @@ pub use observability::{
 };
 pub use orchestration::{
     DomainAgentProfile, DomainProfileMode, Handoff, IterationOutcome, LoopDecision,
-    LoopTermination, OrchestrationContractError, OrchestrationPlan, OrchestrationRole,
-    RoleAssignment, RunLoopConfig, RunLoopSnapshot, RunLoopState, Usage,
+    LoopTermination, MAX_ORCHESTRATION_HANDOFFS, MAX_ORCHESTRATION_ROLES,
+    OrchestrationContractError, OrchestrationPlan, OrchestrationRole, RoleAssignment,
+    RunLoopConfig, RunLoopSnapshot, RunLoopState, Usage,
 };
 pub use package::{
     DomainRoutingProfile, GeneExecutionMode, GenePackageContract, MAX_DOMAIN_ROUTE_HINT_BYTES,

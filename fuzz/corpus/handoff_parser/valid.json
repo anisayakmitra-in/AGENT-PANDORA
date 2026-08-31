@@ -1,0 +1,10 @@
+{
+  "id": "fuzz-plan",
+  "roles": [
+    {"id": "planner", "role": "planner", "harness_id": "coding-domain", "depends_on": []},
+    {"id": "maker", "role": "maker", "harness_id": "coding-domain", "depends_on": ["planner"]}
+  ],
+  "max_parallelism": 2,
+  "max_handoffs": 1,
+  "handoffs": [{"from": "planner", "to": "maker", "meta_harness": null}]
+}

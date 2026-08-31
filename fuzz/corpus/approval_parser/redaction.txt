@@ -1,0 +1,1 @@
+approval-1 Authorization: Bearer should-not-survive

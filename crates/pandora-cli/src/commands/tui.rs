@@ -334,6 +334,7 @@ impl App {
                     "/memory-retention show the scoped revoked-record compaction workflow",
                     "/memory-transfer show the cross-project consolidation policy",
                     "/storage-lifecycle show provider lifecycle evidence commands",
+                    "/trust-transparency show trust and admission evidence commands",
                     "/approve    approve and resume the pending task",
                     "/deny       deny the pending task",
                     "/coding     inspect the Coding Domain Harness",
@@ -415,6 +416,14 @@ impl App {
                 );
                 self.push_message(
                     "storage> provider actions happen outside the runtime; list and inspect are append-only evidence views, not secure-erasure guarantees",
+                );
+            }
+            "/trust-transparency" => {
+                self.push_message(
+                    "trust> package transparency list shows chained trust-root changes and package admission allow/deny decisions; filter by --event-kind or --outcome",
+                );
+                self.push_message(
+                    "trust> package transparency inspect --sequence <id> verifies one append-only event; evidence is read-only and grants no runtime authority",
                 );
             }
             value if value.starts_with("/theme ") => {
@@ -934,6 +943,9 @@ mod tests {
         assert!(app.messages.iter().any(|message| {
             message == "/storage-lifecycle show provider lifecycle evidence commands"
         }));
+        assert!(app.messages.iter().any(|message| {
+            message == "/trust-transparency show trust and admission evidence commands"
+        }));
     }
 
     #[test]
@@ -1045,6 +1057,23 @@ mod tests {
         assert!(app.messages.iter().any(|message| {
             message.contains("outside the runtime")
                 && message.contains("not secure-erasure guarantees")
+        }));
+        assert_eq!(app.activity, TuiActivity::Idle);
+    }
+
+    #[test]
+    fn trust_transparency_command_is_guidance_only() {
+        let mut app = app();
+        app.input = "/trust-transparency".chars().collect();
+        app.submit();
+
+        assert!(app.messages.iter().any(|message| {
+            message.contains("package transparency list")
+                && message.contains("admission allow/deny decisions")
+        }));
+        assert!(app.messages.iter().any(|message| {
+            message.contains("transparency inspect --sequence <id>")
+                && message.contains("grants no runtime authority")
         }));
         assert_eq!(app.activity, TuiActivity::Idle);
     }

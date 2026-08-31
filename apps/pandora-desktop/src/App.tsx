@@ -40,6 +40,7 @@ import {
   forgetMemory,
   listLocalPackages,
   listLocalSkills,
+  listPackageTransparency,
   listRegistryProfiles,
   listStorageLifecycleEvidence,
   loadRuntimeEndpoint,
@@ -80,6 +81,7 @@ import {
   type RuntimeMemoryAuditEntry,
   type RuntimeOrchestrationRun,
   type RuntimePackage,
+  type RuntimePackageTransparencyEvent,
   type RuntimeProvider,
   type RegistryProfile,
   type RuntimeStatus,
@@ -2443,6 +2445,9 @@ function PackageAuthoring() {
 
 function PackageManager({ native }: { native: boolean }) {
   const [packages, setPackages] = useState<RuntimePackage[]>([]);
+  const [transparencyEvents, setTransparencyEvents] = useState<RuntimePackageTransparencyEvent[]>([]);
+  const [transparencyBusy, setTransparencyBusy] = useState(false);
+  const [transparencyError, setTransparencyError] = useState("");
   const [registryProfiles, setRegistryProfiles] = useState<RegistryProfile[]>([]);
   const [registryProfile, setRegistryProfile] = useState("");
   const [selectedIdentity, setSelectedIdentity] = useState("");
@@ -2500,6 +2505,26 @@ function PackageManager({ native }: { native: boolean }) {
     setSelectedIdentity((current) => records.some((item) => `${item.id}@${item.version}` === current) ? current : records[0] ? `${records[0].id}@${records[0].version}` : "");
   };
 
+  const refreshTransparency = async () => {
+    if (!native) {
+      setTransparencyEvents([]);
+      return;
+    }
+    setTransparencyBusy(true);
+    setTransparencyError("");
+    try {
+      const result = await listPackageTransparency();
+      if (result.data.runtime_authority !== false && result.data.events?.length) {
+        throw new Error("Package transparency evidence widened the runtime boundary");
+      }
+      setTransparencyEvents(result.data.events ?? []);
+    } catch (reason: unknown) {
+      setTransparencyError(reason instanceof Error ? reason.message : "Could not load package transparency evidence");
+    } finally {
+      setTransparencyBusy(false);
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     if (!native) {
@@ -2527,6 +2552,10 @@ function PackageManager({ native }: { native: boolean }) {
     return () => {
       cancelled = true;
     };
+  }, [native]);
+
+  useEffect(() => {
+    void refreshTransparency();
   }, [native]);
 
   useEffect(() => {
@@ -2563,6 +2592,7 @@ function PackageManager({ native }: { native: boolean }) {
       const result = await operation();
       setMessage(`${result.message}${result.restartRequired ? " Restart the local service to load the new catalog." : ""}`);
       await refreshPackages();
+      await refreshTransparency();
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : "Package operation failed");
     } finally {
@@ -2699,6 +2729,12 @@ function PackageManager({ native }: { native: boolean }) {
   return <div className="package-manager">
     <div className="package-manager-heading"><div><span className="eyebrow">MODULAR ECOSYSTEM</span><h3>Signed package manager</h3><p>Install and inspect exact Gene, Domain Harness, and Meta Harness records without granting them authority.</p></div><div><button className="button button-secondary" type="button" disabled={Boolean(busy)} onClick={() => void writeLock()}>{busy === "lock" ? "Locking…" : "Write lockfile"}</button><button className="icon-button" type="button" aria-label="Refresh local packages" disabled={Boolean(busy)} onClick={() => { setBusy("refresh"); void completeOperation(async () => ({ message: "Local package catalog refreshed.", restartRequired: false })); }}><Icon name="activity" size={15} /></button></div></div>
     <div className="package-boundary"><Icon name="shield" size={14} /><span>Admission verifies identity, artifact hash, dependencies, compatibility, and available signature evidence. Package records cannot replace Parliament, Shadow Council, ReferenceMonitor, permits, or the constitutional service.</span></div>
+    <div className="package-transparency-panel">
+      <div className="package-section-heading"><div><span className="eyebrow">TRUST TRANSPARENCY</span><h4>Trust changes and admission decisions</h4></div><button className="button button-secondary" type="button" disabled={transparencyBusy} onClick={() => void refreshTransparency()}>{transparencyBusy ? "Loading…" : "Refresh trust evidence"}</button></div>
+      <p>Read-only SHA-256 chain evidence. Events record allow/deny outcomes and grant no runtime authority.</p>
+      {transparencyEvents.length ? <div className="memory-audit-list package-transparency-list" aria-label="Package transparency evidence">{transparencyEvents.map((event) => <article className="memory-audit-row" key={event.sequence}><span className="memory-audit-action">{event.event_kind.replaceAll("_", " ")}</span><strong>{event.package_id ? `${event.package_id}@${event.package_version}` : `${event.publisher}/${event.key_id}`}</strong><Chip tone={event.outcome === "allowed" ? "green" : "gold"}>{event.outcome}</Chip><span>{event.reason_code.replaceAll("_", " ")}</span><time dateTime={new Date(event.occurred_at * 1000).toISOString()}>{new Date(event.occurred_at * 1000).toLocaleString()}</time></article>)}</div> : <p className="connection-note">No trust or admission evidence has been recorded yet.</p>}
+      {transparencyError ? <p className="configuration-result is-error" role="alert">{transparencyError}</p> : null}
+    </div>
     {message ? <p className="configuration-result is-success" role="status"><Icon name="check" size={13} /> {message}</p> : null}
     {error ? <p className="configuration-result is-error" role="alert">{error}</p> : null}
     <div className="package-manager-grid">
