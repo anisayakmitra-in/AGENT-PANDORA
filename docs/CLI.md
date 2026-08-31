@@ -952,9 +952,22 @@ TUI `/meta-starter` command is non-mutating guidance; the desktop inspector
 shows exact composition, dependencies, trust, active generation, and rollback
 evidence without granting authority.
 
+The tracked `sdk/gene-pack` examples exercise the same package commands with
+three signed declarative contracts: `static_guidance` declares no downstream
+effect, `bounded_read` declares only `filesystem.read`, and `effect_request`
+declares `filesystem.write` with required approval. `package inspect` reports
+`gene_contract`, `provenance`, and exact `owning_domains` alongside activation
+generation and rollback state. The TUI `/gene-pack` command is guidance only,
+and the desktop renders the same evidence without calling an executor. Contract
+validation rejects undeclared or authority-changing capabilities before
+admission. Matching effect proposals still require policy, exact approval when
+required, a ReferenceMonitor permit, and an executor receipt.
+
 `package validate` performs the same bounded manifest and artifact identity checks
-without writing to the package store. Gene artifacts must also be valid import-free
-Pandora WASM modules with the required ABI; Domain and Meta Harness artifacts are
+without writing to the package store. It also checks compatibility against the
+running Pandora version and refuses manifest or artifact paths containing a
+symlink. Gene artifacts must be valid import-free Pandora WASM modules with the
+required ABI; Domain and Meta Harness artifacts are
 reported as metadata-only because their package records do not execute artifact
 bytes directly.
 

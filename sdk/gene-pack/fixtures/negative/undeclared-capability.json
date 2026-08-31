@@ -1,0 +1,22 @@
+{
+  "id": "example/invalid-bounded-read",
+  "version": "1.0.0",
+  "kind": "gene",
+  "publisher": "pandora-community",
+  "content_hash": "sha256:a4244ce45b9f768ba92daf352bca6c4eb40fa1fd763a03665934cd5e498e980e",
+  "dependencies": [],
+  "compatibility": {
+    "runtime": "pandora=2.0.0-beta.7"
+  },
+  "license": "Apache-2.0",
+  "trust": {
+    "level": "unverified",
+    "signature": null,
+    "public_key": null
+  },
+  "gene_contract": {
+    "execution": "bounded_read",
+    "capabilities": [],
+    "approval_required": false
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "format_version": 1,
+  "owning_domain": {
+    "id": "example/gene-pack-domain",
+    "version": "1.0.0",
+    "state_after_admission": "admitted"
+  },
+  "genes": [
+    {
+      "id": "example/bounded-read",
+      "version": "1.0.0",
+      "publisher": "pandora-community",
+      "content_hash": "sha256:382d1f73cd0213a6060bc8949820b8e63ec863b93bc40b51a9cf7d2ec6b299eb",
+      "execution": "bounded_read",
+      "capabilities": [
+        "filesystem.read"
+      ],
+      "approval_required": false,
+      "state_after_admission": "disabled",
+      "runtime_authority": false
+    },
+    {
+      "id": "example/patch-proposal",
+      "version": "1.0.0",
+      "publisher": "pandora-community",
+      "content_hash": "sha256:c07e269c6d03568ff0cf74cc0cca6e440131237f96ff7f6dfc10cb1aca962299",
+      "execution": "effect_request",
+      "capabilities": [
+        "filesystem.write"
+      ],
+      "approval_required": true,
+      "state_after_admission": "disabled",
+      "runtime_authority": false
+    },
+    {
+      "id": "example/static-guide",
+      "version": "1.0.0",
+      "publisher": "pandora-community",
+      "content_hash": "sha256:a4244ce45b9f768ba92daf352bca6c4eb40fa1fd763a03665934cd5e498e980e",
+      "execution": "static_guidance",
+      "capabilities": [],
+      "approval_required": false,
+      "state_after_admission": "disabled",
+      "runtime_authority": false
+    }
+  ]
+}

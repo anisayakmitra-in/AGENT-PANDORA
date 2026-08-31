@@ -25,6 +25,12 @@
   TUI, and desktop inspector. Exact built-in Domain dependencies now resolve
   correctly, while duplicate, self-cyclic, missing, disabled, wrong-kind, and
   over-limit compositions fail closed without effect authority.
+- Added a validated declarative Gene example pack with static guidance,
+  bounded-read, and approval-bound write-proposal contracts. CLI, TUI, and
+  desktop inspection now expose exact capability declarations, artifact
+  provenance, owning Domains, disabled-by-default lifecycle, and rollback
+  evidence. Contracted effects remain on the Parliament, approval,
+  ReferenceMonitor, permit, executor, and receipt path.
 - Added verified, signed replacement of optional built-in Domain and Meta
   Harnesses with exact rollback to the compiled default. The constitutional
   Source Harness remains immutable.

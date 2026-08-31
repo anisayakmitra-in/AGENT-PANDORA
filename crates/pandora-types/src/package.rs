@@ -1,3 +1,4 @@
+use crate::capability::Capability;
 use crate::harness::{HarnessKind, HarnessManifest, MetaComposition};
 use crate::ids::{IdError, PackageId};
 use semver::{Version, VersionReq};
@@ -8,6 +9,7 @@ use std::fmt;
 const MAX_PACKAGE_TEXT_BYTES: usize = 4096;
 pub const MAX_DOMAIN_ROUTE_HINTS: usize = 32;
 pub const MAX_DOMAIN_ROUTE_HINT_BYTES: usize = 64;
+pub const MAX_GENE_CAPABILITIES: usize = 8;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -74,6 +76,8 @@ pub enum PackageManifestError {
     InvalidMetaComposition,
     InvalidDomainRouting,
     UnexpectedDomainRouting,
+    InvalidGeneContract,
+    UnexpectedGeneContract,
     DuplicateDependency(String),
 }
 
@@ -109,6 +113,12 @@ impl fmt::Display for PackageManifestError {
             ),
             Self::UnexpectedDomainRouting => {
                 formatter.write_str("only Domain Harness packages may declare routing hints")
+            }
+            Self::InvalidGeneContract => formatter.write_str(
+                "Gene contract execution, capabilities, and approval requirement are inconsistent",
+            ),
+            Self::UnexpectedGeneContract => {
+                formatter.write_str("only Gene packages may declare a Gene contract")
             }
             Self::DuplicateDependency(id) => {
                 write!(
@@ -314,6 +324,96 @@ impl DomainRoutingProfile {
     }
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeneExecutionMode {
+    StaticGuidance,
+    BoundedRead,
+    EffectRequest,
+}
+
+impl GeneExecutionMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::StaticGuidance => "static_guidance",
+            Self::BoundedRead => "bounded_read",
+            Self::EffectRequest => "effect_request",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GenePackageContract {
+    execution: GeneExecutionMode,
+    capabilities: Vec<Capability>,
+    approval_required: bool,
+}
+
+impl GenePackageContract {
+    pub fn new(
+        execution: GeneExecutionMode,
+        mut capabilities: Vec<Capability>,
+        approval_required: bool,
+    ) -> Result<Self, PackageManifestError> {
+        capabilities.sort();
+        capabilities.dedup();
+        let contract = Self {
+            execution,
+            capabilities,
+            approval_required,
+        };
+        contract.validate()?;
+        Ok(contract)
+    }
+
+    pub const fn execution(&self) -> GeneExecutionMode {
+        self.execution
+    }
+
+    pub fn capabilities(&self) -> &[Capability] {
+        &self.capabilities
+    }
+
+    pub const fn approval_required(&self) -> bool {
+        self.approval_required
+    }
+
+    pub fn declares(&self, capability: Capability) -> bool {
+        self.capabilities.binary_search(&capability).is_ok()
+    }
+
+    fn validate(&self) -> Result<(), PackageManifestError> {
+        if self.capabilities.len() > MAX_GENE_CAPABILITIES
+            || self.capabilities.windows(2).any(|pair| pair[0] >= pair[1])
+            || self.capabilities.iter().any(|capability| {
+                matches!(
+                    capability,
+                    Capability::WasmExecute | Capability::PackageInstall
+                )
+            })
+        {
+            return Err(PackageManifestError::InvalidGeneContract);
+        }
+        let valid = match self.execution {
+            GeneExecutionMode::StaticGuidance => {
+                self.capabilities.is_empty() && !self.approval_required
+            }
+            GeneExecutionMode::BoundedRead => {
+                self.capabilities == [Capability::FilesystemRead] && !self.approval_required
+            }
+            GeneExecutionMode::EffectRequest => {
+                !self.capabilities.is_empty() && self.approval_required
+            }
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(PackageManifestError::InvalidGeneContract)
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PackageManifest {
@@ -330,6 +430,8 @@ pub struct PackageManifest {
     meta_composition: Option<MetaComposition>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     domain_routing: Option<DomainRoutingProfile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gene_contract: Option<GenePackageContract>,
 }
 
 impl PackageManifest {
@@ -355,6 +457,7 @@ impl PackageManifest {
             compatibility,
             validate_text("license", license.into())?,
             trust,
+            None,
             None,
             None,
         )
@@ -384,6 +487,7 @@ impl PackageManifest {
             trust,
             Some(composition),
             None,
+            None,
         )
     }
 
@@ -400,6 +504,7 @@ impl PackageManifest {
         trust: TrustEvidence,
         meta_composition: Option<MetaComposition>,
         domain_routing: Option<DomainRoutingProfile>,
+        gene_contract: Option<GenePackageContract>,
     ) -> Result<Self, PackageManifestError> {
         let package = Self {
             id,
@@ -413,6 +518,7 @@ impl PackageManifest {
             trust,
             meta_composition,
             domain_routing,
+            gene_contract,
         };
         package.validate()?;
         Ok(package)
@@ -498,11 +604,24 @@ impl PackageManifest {
         self.domain_routing.as_ref()
     }
 
+    pub fn gene_contract(&self) -> Option<&GenePackageContract> {
+        self.gene_contract.as_ref()
+    }
+
     pub fn with_domain_routing(
         mut self,
         routing: DomainRoutingProfile,
     ) -> Result<Self, PackageManifestError> {
         self.domain_routing = Some(routing);
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_gene_contract(
+        mut self,
+        contract: GenePackageContract,
+    ) -> Result<Self, PackageManifestError> {
+        self.gene_contract = Some(contract);
         self.validate()?;
         Ok(self)
     }
@@ -557,6 +676,25 @@ impl PackageManifest {
                 push_signing_field(&mut message, "route_hint", hint);
             }
         }
+        if let Some(contract) = &self.gene_contract {
+            push_signing_field(
+                &mut message,
+                "gene_execution",
+                contract.execution().as_str(),
+            );
+            push_signing_field(
+                &mut message,
+                "gene_approval_required",
+                if contract.approval_required() {
+                    "true"
+                } else {
+                    "false"
+                },
+            );
+            for capability in contract.capabilities() {
+                push_signing_field(&mut message, "gene_capability", capability.as_str());
+            }
+        }
         message
     }
 
@@ -591,6 +729,12 @@ impl PackageManifest {
             (PackageKind::DomainHarness, Some(routing)) => routing.validate(),
             (PackageKind::DomainHarness, None) => Ok(()),
             (_, Some(_)) => Err(PackageManifestError::UnexpectedDomainRouting),
+            (_, None) => Ok(()),
+        }?;
+        match (self.kind, self.gene_contract.as_ref()) {
+            (PackageKind::Gene, Some(contract)) => contract.validate(),
+            (PackageKind::Gene, None) => Ok(()),
+            (_, Some(_)) => Err(PackageManifestError::UnexpectedGeneContract),
             (_, None) => Ok(()),
         }
     }
@@ -904,6 +1048,90 @@ mod tests {
                 DomainRoutingProfile::new(vec!["image generation".to_owned()]).unwrap()
             ),
             Err(PackageManifestError::UnexpectedDomainRouting)
+        );
+    }
+
+    #[test]
+    fn gene_contracts_are_typed_canonical_and_signature_bound() {
+        let plain = PackageManifest::new(
+            "example/patch-proposal",
+            "1.0.0",
+            PackageKind::Gene,
+            "example",
+            hash_artifact(b"gene"),
+            Vec::new(),
+            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "MIT",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+        let contract = GenePackageContract::new(
+            GeneExecutionMode::EffectRequest,
+            vec![Capability::FilesystemWrite],
+            true,
+        )
+        .unwrap();
+        let declared = plain.clone().with_gene_contract(contract.clone()).unwrap();
+        let encoded = serde_json::to_value(&declared).unwrap();
+
+        assert_eq!(encoded["gene_contract"]["execution"], "effect_request");
+        assert_eq!(
+            encoded["gene_contract"]["capabilities"],
+            serde_json::json!(["filesystem.write"])
+        );
+        assert_eq!(
+            serde_json::from_value::<PackageManifest>(encoded)
+                .unwrap()
+                .gene_contract(),
+            Some(&contract)
+        );
+        assert_ne!(plain.signing_message(), declared.signing_message());
+    }
+
+    #[test]
+    fn gene_contracts_reject_undeclared_and_authority_changing_profiles() {
+        assert_eq!(
+            GenePackageContract::new(GeneExecutionMode::BoundedRead, Vec::new(), false),
+            Err(PackageManifestError::InvalidGeneContract)
+        );
+        assert_eq!(
+            GenePackageContract::new(
+                GeneExecutionMode::EffectRequest,
+                vec![Capability::PackageInstall],
+                true,
+            ),
+            Err(PackageManifestError::InvalidGeneContract)
+        );
+        assert_eq!(
+            GenePackageContract::new(
+                GeneExecutionMode::EffectRequest,
+                vec![Capability::FilesystemWrite],
+                false,
+            ),
+            Err(PackageManifestError::InvalidGeneContract)
+        );
+    }
+
+    #[test]
+    fn only_gene_packages_can_declare_gene_contracts() {
+        let package = PackageManifest::new(
+            "example/domain",
+            "1.0.0",
+            PackageKind::DomainHarness,
+            "example",
+            hash_artifact(b"domain"),
+            vec![PackageDependency::new("workspace.read", "0.1.0", false).unwrap()],
+            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "MIT",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+        let contract =
+            GenePackageContract::new(GeneExecutionMode::StaticGuidance, Vec::new(), false).unwrap();
+
+        assert_eq!(
+            package.with_gene_contract(contract),
+            Err(PackageManifestError::UnexpectedGeneContract)
         );
     }
 

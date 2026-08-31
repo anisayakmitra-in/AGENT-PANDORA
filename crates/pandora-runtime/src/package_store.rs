@@ -1,6 +1,7 @@
 use crate::harness_registry::{
     HarnessRegistry, HarnessRegistryError, PackageRecord, PublisherTrustRoot, PublisherTrustRoots,
 };
+use crate::wasm::WasmExecutor;
 use pandora_harnesses::{builtin_genes, builtin_harnesses};
 use pandora_types::{
     ArtifactId, PackageId, PackageKind, PackageLock, PackageManifest, hash_artifact,
@@ -26,6 +27,7 @@ pub enum PackageStoreError {
     CorruptRecord,
     LockPoisoned,
     ArtifactTooLarge,
+    InvalidGeneArtifact,
     InvalidLockfile,
     LockfileTooLarge,
     LockfileMismatch,
@@ -79,6 +81,9 @@ impl fmt::Display for PackageStoreError {
             Self::ArtifactTooLarge => {
                 formatter.write_str("package artifact exceeds the local limit")
             }
+            Self::InvalidGeneArtifact => formatter.write_str(
+                "contracted Gene artifact is not a valid import-free Pandora WASM module",
+            ),
             Self::InvalidLockfile => formatter.write_str("package lock is invalid"),
             Self::LockfileTooLarge => formatter.write_str("package lock exceeds the local limit"),
             Self::LockfileMismatch => {
@@ -141,6 +146,7 @@ impl std::error::Error for PackageStoreError {
             Self::CorruptRecord
             | Self::LockPoisoned
             | Self::ArtifactTooLarge
+            | Self::InvalidGeneArtifact
             | Self::InvalidLockfile
             | Self::LockfileTooLarge
             | Self::LockfileMismatch
@@ -292,6 +298,14 @@ impl PackageStore {
     ) -> Result<PackageRecord, PackageStoreError> {
         if artifact.len() > MAX_STORED_ARTIFACT_BYTES {
             return Err(PackageStoreError::ArtifactTooLarge);
+        }
+        if declared == embedded
+            && embedded.kind() == PackageKind::Gene
+            && embedded.gene_contract().is_some()
+        {
+            WasmExecutor::new()
+                .validate_artifact(embedded, artifact)
+                .map_err(|_| PackageStoreError::InvalidGeneArtifact)?;
         }
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;

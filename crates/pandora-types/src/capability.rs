@@ -1,12 +1,22 @@
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub enum Capability {
+    #[serde(rename = "filesystem.read")]
     FilesystemRead,
+    #[serde(rename = "filesystem.write")]
     FilesystemWrite,
+    #[serde(rename = "process.execute")]
     ProcessExecute,
+    #[serde(rename = "network.connect")]
     NetworkConnect,
+    #[serde(rename = "provider.invoke")]
     ProviderInvoke,
+    #[serde(rename = "mcp.invoke")]
     McpInvoke,
+    #[serde(rename = "wasm.execute")]
     WasmExecute,
+    #[serde(rename = "package.install")]
     PackageInstall,
 }
 

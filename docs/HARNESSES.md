@@ -115,6 +115,19 @@ unknown, disabled, wrong-kind, incompatible, and over-limit compositions fail
 before effect execution. Meta profiles own no Genes and cannot add capability,
 approval, permit, trust, or activation authority.
 
+The declarative Gene examples live at
+[`sdk/gene-pack`](../sdk/gene-pack/README.md). They include a static guidance
+Gene with no downstream capability, a bounded read Gene declaring only
+`filesystem.read`, and a write-proposal Gene declaring `filesystem.write` plus
+an approval requirement. Each import-free WASM artifact is hash-bound to an
+exact manifest and owned by `example/gene-pack-domain@1.0.0`. Package inspection
+reports the signed contract, publisher and artifact provenance, exact owning
+Domain records, and disabled/enabled/rollback state. A capability declaration
+only narrows proposals; it does not change policy or grant executor access.
+Undeclared capabilities, duplicate identities, traversal IDs, unsafe symlink
+inputs, incompatible runtimes, imports, and invalid ABIs fail before code loading
+or durable activation.
+
 The native desktop Package Manager includes a Manifest Workbench for Domain,
 Meta, and Gene envelopes. It produces a copyable, deterministic JSON preview
 with the package kind, exact version, content hash, dependencies, runtime
@@ -145,10 +158,11 @@ described below.
 
 The signed payload starts with `pandora-package-signature-v2` and binds the
 package ID, version, kind, publisher, artifact hash, runtime compatibility,
-license, exact dependencies, Meta composition, and Domain route hints through a
-deterministic length-prefixed encoding. Trust evidence is excluded from the
+license, exact dependencies, Meta composition, Domain route hints, and optional
+Gene execution/capability/approval contracts through a deterministic
+length-prefixed encoding. Trust evidence is excluded from the
 payload because it contains the signature itself. Changing a route, dependency,
-composition member, package kind, or artifact invalidates the signature.
+composition member, Gene contract, package kind, or artifact invalidates the signature.
 
 A valid package signature proves that the declared public key signed those
 exact fields. It does not establish publisher trust. Local `official` claims

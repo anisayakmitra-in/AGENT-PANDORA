@@ -1,0 +1,23 @@
+{
+  "format_version": 1,
+  "kind": "domain_harness_profile",
+  "id": "example/gene-pack-domain",
+  "version": "1.0.0",
+  "owned_genes": [
+    {
+      "id": "example/bounded-read",
+      "version": "1.0.0"
+    },
+    {
+      "id": "example/patch-proposal",
+      "version": "1.0.0"
+    },
+    {
+      "id": "example/static-guide",
+      "version": "1.0.0"
+    }
+  ],
+  "route_hints": [
+    "gene pack evaluation"
+  ]
+}

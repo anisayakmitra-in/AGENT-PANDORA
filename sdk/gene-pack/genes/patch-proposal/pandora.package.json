@@ -1,0 +1,24 @@
+{
+  "id": "example/patch-proposal",
+  "version": "1.0.0",
+  "kind": "gene",
+  "publisher": "pandora-community",
+  "content_hash": "sha256:c07e269c6d03568ff0cf74cc0cca6e440131237f96ff7f6dfc10cb1aca962299",
+  "dependencies": [],
+  "compatibility": {
+    "runtime": "pandora=2.0.0-beta.7"
+  },
+  "license": "Apache-2.0",
+  "trust": {
+    "level": "unverified",
+    "signature": null,
+    "public_key": null
+  },
+  "gene_contract": {
+    "execution": "effect_request",
+    "capabilities": [
+      "filesystem.write"
+    ],
+    "approval_required": true
+  }
+}

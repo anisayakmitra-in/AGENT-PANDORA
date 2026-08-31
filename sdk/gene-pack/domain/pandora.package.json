@@ -1,0 +1,38 @@
+{
+  "id": "example/gene-pack-domain",
+  "version": "1.0.0",
+  "kind": "domain_harness",
+  "publisher": "pandora-community",
+  "content_hash": "sha256:479167af25919cd26cd642ba1f6dfd0ed8c0305709b4aff0224c98ee15815f9b",
+  "dependencies": [
+    {
+      "id": "example/bounded-read",
+      "version": "1.0.0",
+      "optional": false
+    },
+    {
+      "id": "example/patch-proposal",
+      "version": "1.0.0",
+      "optional": false
+    },
+    {
+      "id": "example/static-guide",
+      "version": "1.0.0",
+      "optional": false
+    }
+  ],
+  "compatibility": {
+    "runtime": "pandora=2.0.0-beta.7"
+  },
+  "license": "Apache-2.0",
+  "trust": {
+    "level": "unverified",
+    "signature": null,
+    "public_key": null
+  },
+  "domain_routing": {
+    "hints": [
+      "gene pack evaluation"
+    ]
+  }
+}

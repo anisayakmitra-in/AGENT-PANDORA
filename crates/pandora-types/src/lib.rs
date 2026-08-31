@@ -89,10 +89,10 @@ pub use orchestration::{
     RoleAssignment, RunLoopConfig, RunLoopSnapshot, RunLoopState, Usage,
 };
 pub use package::{
-    DomainRoutingProfile, MAX_DOMAIN_ROUTE_HINT_BYTES, MAX_DOMAIN_ROUTE_HINTS,
-    PACKAGE_LOCK_FORMAT_VERSION, PackageCompatibility, PackageDependency, PackageKind, PackageLock,
-    PackageLockError, PackageManifest, PackageManifestError, TrustEvidence, TrustLevel,
-    hash_artifact,
+    DomainRoutingProfile, GeneExecutionMode, GenePackageContract, MAX_DOMAIN_ROUTE_HINT_BYTES,
+    MAX_DOMAIN_ROUTE_HINTS, MAX_GENE_CAPABILITIES, PACKAGE_LOCK_FORMAT_VERSION,
+    PackageCompatibility, PackageDependency, PackageKind, PackageLock, PackageLockError,
+    PackageManifest, PackageManifestError, TrustEvidence, TrustLevel, hash_artifact,
 };
 pub use population::{
     CandidateDisposition, CandidateOutcome, CandidatePopulation, FailureCorpus, FailureEvidence,

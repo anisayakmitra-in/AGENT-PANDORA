@@ -1,0 +1,15 @@
+{
+  "format_version": 1,
+  "cases": [
+    {
+      "id": "duplicate-identity",
+      "input": "admit example/static-guide@1.0.0 twice",
+      "expected": "duplicate identity rejected"
+    },
+    {
+      "id": "symlink-artifact",
+      "input": "artifact path resolves through a symlink",
+      "expected": "unsafe package input rejected before artifact loading"
+    }
+  ]
+}

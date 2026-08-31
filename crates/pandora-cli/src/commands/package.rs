@@ -960,6 +960,19 @@ fn validate(args: &[String]) -> Result<CommandResult, CliError> {
     manifest
         .validate()
         .map_err(|error| CliError::usage(format!("package manifest is invalid: {error}")))?;
+    if !manifest
+        .compatibility()
+        .matches_runtime(env!("CARGO_PKG_VERSION"))
+        .map_err(|error| CliError::usage(format!("package manifest is invalid: {error}")))?
+    {
+        return Err(CliError::execution(
+            "package is incompatible with this Pandora runtime",
+            json!({
+                "required": manifest.compatibility().runtime(),
+                "actual": env!("CARGO_PKG_VERSION"),
+            }),
+        ));
+    }
     if !matches!(
         manifest.kind(),
         PackageKind::Gene | PackageKind::DomainHarness | PackageKind::MetaHarness
@@ -1099,6 +1112,7 @@ fn admit(args: &[String]) -> Result<CommandResult, CliError> {
 }
 
 fn read_manifest(path: &Path) -> Result<PackageManifest, CliError> {
+    ensure_safe_package_input(path, "manifest")?;
     let manifest_bytes = fs::read(path).map_err(|error| {
         CliError::configuration(
             "could not read package manifest",
@@ -1567,6 +1581,7 @@ fn required_path(parsed: &super::ParsedArgs, name: &str) -> Result<PathBuf, CliE
 }
 
 fn read_artifact(path: &Path) -> Result<Vec<u8>, CliError> {
+    ensure_safe_package_input(path, "artifact")?;
     let mut file = fs::File::open(path).map_err(|error| artifact_read_error(path, error))?;
     match read_artifact_bytes(&mut file, MAX_STORED_ARTIFACT_BYTES) {
         Ok(artifact) => Ok(artifact),
@@ -1576,6 +1591,33 @@ fn read_artifact(path: &Path) -> Result<Vec<u8>, CliError> {
         )),
         Err(ArtifactReadError::Io(error)) => Err(artifact_read_error(path, error)),
     }
+}
+
+fn ensure_safe_package_input(path: &Path, label: &'static str) -> Result<(), CliError> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        CliError::configuration(
+            format!("could not inspect package {label}"),
+            json!({"path": path, "error": error.to_string()}),
+        )
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(CliError::configuration(
+            format!("package {label} path is unsafe"),
+            json!({"path": path, "reason": "symlinks and non-files are not allowed"}),
+        ));
+    }
+    for parent in path.ancestors().skip(1) {
+        if parent.as_os_str().is_empty() {
+            continue;
+        }
+        if fs::symlink_metadata(parent).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+            return Err(CliError::configuration(
+                format!("package {label} path is unsafe"),
+                json!({"path": path, "reason": "symlink path components are not allowed"}),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn artifact_read_error(path: &Path, error: io::Error) -> CliError {
@@ -1727,6 +1769,33 @@ pub(super) fn managed_package_value(
     let binding = store.binding(record.manifest().id()).map_err(store_error)?;
     let mut value = package_value(record);
     value["activation"] = binding_value(binding.as_ref(), record.manifest().version());
+    value["owning_domains"] = if record.manifest().kind() == PackageKind::Gene {
+        json!(
+            store
+                .list()
+                .map_err(store_error)?
+                .into_iter()
+                .filter(|candidate| candidate.manifest().kind() == PackageKind::DomainHarness)
+                .filter(|candidate| {
+                    candidate
+                        .manifest()
+                        .dependencies()
+                        .iter()
+                        .any(|dependency| {
+                            dependency.id() == record.manifest().id()
+                                && dependency.version() == record.manifest().version()
+                        })
+                })
+                .map(|candidate| json!({
+                    "id": candidate.manifest().id().as_str(),
+                    "version": candidate.manifest().version(),
+                    "state": candidate.state().as_str(),
+                }))
+                .collect::<Vec<_>>()
+        )
+    } else {
+        json!([])
+    };
     Ok(value)
 }
 
@@ -1768,6 +1837,18 @@ pub(super) fn package_value(record: &PackageRecord) -> serde_json::Value {
             "hints": routing.hints(),
             "auto_route": true,
         })),
+        "gene_contract": manifest.gene_contract().map(|contract| json!({
+            "execution": contract.execution().as_str(),
+            "capabilities": contract.capabilities().iter().map(|capability| capability.as_str()).collect::<Vec<_>>(),
+            "approval_required": contract.approval_required(),
+            "direct_executor_access": false,
+        })),
+        "provenance": {
+            "publisher": manifest.publisher(),
+            "content_hash": manifest.content_hash(),
+            "trust_level": manifest.trust().level(),
+            "artifact_verified": true,
+        },
         "replaces_builtin": replaceable_builtin_harness_kind(manifest.id().as_str())
             .is_some_and(|kind| PackageKind::from(kind) == manifest.kind()),
         "state": record.state().as_str(),

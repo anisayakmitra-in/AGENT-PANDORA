@@ -8062,6 +8062,340 @@ fn tracked_meta_harness_reference_package_validates() {
 }
 
 #[test]
+fn tracked_gene_pack_validates_and_exposes_full_lifecycle_inspection() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let pack = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("sdk/gene-pack");
+    let genes = [
+        ("static-guide", "static-guide.wasm", "example/static-guide"),
+        ("bounded-read", "bounded-read.wasm", "example/bounded-read"),
+        (
+            "patch-proposal",
+            "patch-proposal.wasm",
+            "example/patch-proposal",
+        ),
+    ];
+
+    for (directory, artifact, id) in genes {
+        let root = pack.join("genes").join(directory);
+        let manifest = root.join("pandora.package.json");
+        let artifact = root.join(artifact);
+        let validated = fixture
+            .command(&[
+                "package",
+                "validate",
+                "--manifest",
+                manifest.to_str().unwrap(),
+                "--artifact",
+                artifact.to_str().unwrap(),
+                "--json",
+            ])
+            .output()
+            .expect("tracked Gene validation should start");
+        assert_success(&validated);
+        assert_eq!(parse_json(&validated)["execution_boundary"], "wasm");
+
+        let admitted = fixture
+            .command(&[
+                "package",
+                "admit",
+                "--manifest",
+                manifest.to_str().unwrap(),
+                "--artifact",
+                artifact.to_str().unwrap(),
+                "--json",
+            ])
+            .output()
+            .expect("tracked Gene admission should start");
+        assert_success(&admitted);
+        let admitted = parse_json(&admitted);
+        assert_eq!(admitted["package"]["id"], id);
+        assert_eq!(admitted["package"]["state"], "installed");
+        assert_eq!(admitted["package"]["activation"]["state"], "disabled");
+        assert_eq!(admitted["package"]["runtime_authority"], false);
+    }
+
+    let domain = pack.join("domain");
+    let admitted_domain = fixture
+        .command(&[
+            "package",
+            "admit",
+            "--manifest",
+            domain.join("pandora.package.json").to_str().unwrap(),
+            "--artifact",
+            domain.join("gene-pack-domain.artifact").to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("Gene pack Domain admission should start");
+    assert_success(&admitted_domain);
+    assert_eq!(
+        parse_json(&admitted_domain)["package"]["activation"]["state"],
+        "disabled"
+    );
+
+    let patch_manifest_path = pack.join("genes/patch-proposal/pandora.package.json");
+    let patch_artifact_path = pack.join("genes/patch-proposal/patch-proposal.wasm");
+    let mut second_manifest: Value =
+        serde_json::from_slice(&fs::read(&patch_manifest_path).unwrap()).unwrap();
+    second_manifest["version"] = serde_json::json!("2.0.0");
+    let second_manifest_path = fixture.root.join("patch-proposal-v2.json");
+    fs::write(
+        &second_manifest_path,
+        serde_json::to_vec_pretty(&second_manifest).unwrap(),
+    )
+    .unwrap();
+    let admitted_second = fixture
+        .command(&[
+            "package",
+            "admit",
+            "--manifest",
+            second_manifest_path.to_str().unwrap(),
+            "--artifact",
+            patch_artifact_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("second Gene version admission should start");
+    assert_success(&admitted_second);
+
+    let preview = fixture
+        .command(&[
+            "package",
+            "enable",
+            "example/patch-proposal",
+            "1.0.0",
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("Gene enable preview should start");
+    assert_success(&preview);
+    assert_eq!(parse_json(&preview)["ready"], true);
+    assert_eq!(parse_json(&preview)["changed"], false);
+
+    for version in ["1.0.0", "2.0.0"] {
+        let enabled = fixture
+            .command(&[
+                "package",
+                "enable",
+                "example/patch-proposal",
+                version,
+                "--yes",
+                "--json",
+            ])
+            .output()
+            .expect("Gene enable should start");
+        assert_success(&enabled);
+        assert_eq!(parse_json(&enabled)["binding"]["active_version"], version);
+    }
+
+    let rollback_preview = fixture
+        .command(&[
+            "package",
+            "rollback",
+            "example/patch-proposal",
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("Gene rollback preview should start");
+    assert_success(&rollback_preview);
+    assert_eq!(parse_json(&rollback_preview)["target_version"], "1.0.0");
+    assert_eq!(parse_json(&rollback_preview)["changed"], false);
+
+    let rolled_back = fixture
+        .command(&[
+            "package",
+            "rollback",
+            "example/patch-proposal",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("Gene rollback should start");
+    assert_success(&rolled_back);
+    assert_eq!(parse_json(&rolled_back)["active_version"], "1.0.0");
+
+    for id in ["example/static-guide", "example/bounded-read"] {
+        let enabled = fixture
+            .command(&["package", "enable", id, "1.0.0", "--yes", "--json"])
+            .output()
+            .expect("Gene enable should start");
+        assert_success(&enabled);
+    }
+    let enabled_domain = fixture
+        .command(&[
+            "package",
+            "enable",
+            "example/gene-pack-domain",
+            "1.0.0",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("Gene pack Domain enable should start");
+    assert_success(&enabled_domain);
+
+    let inspected = fixture
+        .command(&[
+            "package",
+            "inspect",
+            "example/patch-proposal",
+            "1.0.0",
+            "--json",
+        ])
+        .output()
+        .expect("Gene inspection should start");
+    assert_success(&inspected);
+    let inspected_value = parse_json(&inspected);
+    let package = &inspected_value["package"];
+    assert_eq!(package["gene_contract"]["execution"], "effect_request");
+    assert_eq!(
+        package["gene_contract"]["capabilities"],
+        serde_json::json!(["filesystem.write"])
+    );
+    assert_eq!(package["gene_contract"]["approval_required"], true);
+    assert_eq!(package["gene_contract"]["direct_executor_access"], false);
+    assert_eq!(package["provenance"]["artifact_verified"], true);
+    assert_eq!(package["provenance"]["publisher"], "pandora-community");
+    assert_eq!(
+        package["owning_domains"][0]["id"],
+        "example/gene-pack-domain"
+    );
+    assert_eq!(package["owning_domains"][0]["version"], "1.0.0");
+    assert_eq!(package["activation"]["generation"], 3);
+    assert_eq!(package["runtime_authority"], false);
+
+    let disable_preview = fixture
+        .command(&[
+            "package",
+            "disable",
+            "example/gene-pack-domain",
+            "1.0.0",
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("Gene pack Domain disable preview should start");
+    assert_success(&disable_preview);
+    assert_eq!(parse_json(&disable_preview)["ready"], true);
+    let disabled_domain = fixture
+        .command(&[
+            "package",
+            "disable",
+            "example/gene-pack-domain",
+            "1.0.0",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("Gene pack Domain disable should start");
+    assert_success(&disabled_domain);
+    let disabled_gene = fixture
+        .command(&[
+            "package",
+            "disable",
+            "example/patch-proposal",
+            "1.0.0",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("Gene disable should start");
+    assert_success(&disabled_gene);
+    assert_eq!(parse_json(&disabled_gene)["binding"]["state"], "disabled");
+}
+
+#[test]
+fn gene_pack_negative_fixtures_fail_before_activation() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let pack = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("sdk/gene-pack");
+    let artifact = pack.join("genes/static-guide/static-guide.wasm");
+
+    for (name, expected) in [
+        ("undeclared-capability.json", "Gene contract"),
+        ("incompatible-runtime.json", "incompatible"),
+        ("traversal-id.json", "invalid path component"),
+    ] {
+        let rejected = fixture
+            .command(&[
+                "package",
+                "validate",
+                "--manifest",
+                pack.join("fixtures/negative").join(name).to_str().unwrap(),
+                "--artifact",
+                artifact.to_str().unwrap(),
+                "--json",
+            ])
+            .output()
+            .expect("negative Gene fixture validation should start");
+        assert!(!rejected.status.success());
+        assert!(
+            parse_json(&rejected)["message"]
+                .as_str()
+                .unwrap()
+                .to_ascii_lowercase()
+                .contains(&expected.to_ascii_lowercase())
+        );
+    }
+
+    let manifest = pack.join("genes/static-guide/pandora.package.json");
+    let admitted = fixture
+        .command(&[
+            "package",
+            "admit",
+            "--manifest",
+            manifest.to_str().unwrap(),
+            "--artifact",
+            artifact.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("Gene admission should start");
+    assert_success(&admitted);
+    let duplicate = fixture
+        .command(&[
+            "package",
+            "admit",
+            "--manifest",
+            manifest.to_str().unwrap(),
+            "--artifact",
+            artifact.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("duplicate Gene admission should start");
+    assert!(!duplicate.status.success());
+    assert!(
+        parse_json(&duplicate)["message"]
+            .as_str()
+            .unwrap()
+            .contains("already installed")
+    );
+    let inspected = fixture
+        .command(&[
+            "package",
+            "inspect",
+            "example/static-guide",
+            "1.0.0",
+            "--json",
+        ])
+        .output()
+        .expect("Gene inspection should start");
+    assert_success(&inspected);
+    assert_eq!(
+        parse_json(&inspected)["package"]["activation"]["state"],
+        "disabled"
+    );
+}
+
+#[test]
 fn meta_harness_scaffold_supports_exact_enable_inspect_disable_and_rollback() {
     let fixture = Fixture::new();
     fixture.setup();

@@ -1885,6 +1885,48 @@ describe("Pandora desktop run state", () => {
     expect(screen.getByText("Runtime authority").nextElementSibling).toHaveTextContent("none");
   });
 
+  it("inspects a Gene capability contract, provenance, and owning Domain without implying authority", async () => {
+    runtime.capabilities.mockResolvedValue([{ id: "example/gene-pack-domain", version: "1.0.0", name: "Gene Pack Domain", kind: "domain", gene_count: 3, runnable: true, gene_ids: ["example/static-guide", "example/bounded-read", "example/patch-proposal"] }]);
+    runtime.listLocalPackages.mockResolvedValue({
+      message: "1 local package available.",
+      restartRequired: false,
+      data: {
+        packages: [{
+          id: "example/patch-proposal",
+          version: "1.0.0",
+          kind: "gene",
+          publisher: "pandora-community",
+          content_hash: `sha256:${"c".repeat(64)}`,
+          dependencies: [],
+          compatibility: "pandora=2.0.0-beta.7",
+          license: "Apache-2.0",
+          trust: { level: "unverified", has_signature: false, has_public_key: false },
+          meta_composition: null,
+          domain_routing: null,
+          gene_contract: { execution: "effect_request", capabilities: ["filesystem.write"], approval_required: true, direct_executor_access: false },
+          provenance: { publisher: "pandora-community", content_hash: `sha256:${"c".repeat(64)}`, trust_level: "unverified", artifact_verified: true },
+          owning_domains: [{ id: "example/gene-pack-domain", version: "1.0.0", state: "admitted" }],
+          replaces_builtin: false,
+          state: "installed",
+          runtime_authority: false,
+          activation: { state: "disabled", active_version: null, previous_version: null, generation: 0, runtime_authority: false },
+        }],
+      },
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Harness Lab" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "packages" }));
+
+    const contract = await screen.findByLabelText("Gene contract inspection");
+    expect(contract).toHaveTextContent("effect request");
+    expect(contract).toHaveTextContent("filesystem.write");
+    expect(contract).toHaveTextContent("Explicit approval required");
+    expect(contract).toHaveTextContent("example/gene-pack-domain@1.0.0");
+    expect(contract).toHaveTextContent("SHA-256 verified");
+    expect(contract).toHaveTextContent("cannot call an executor, approve itself, or issue a permit");
+    expect(screen.getByText("Runtime authority").nextElementSibling).toHaveTextContent("none");
+  });
+
   it("previews an admission-safe Domain manifest without mutating runtime state", async () => {
     runtime.capabilities.mockResolvedValue([{
       id: "coding-domain",
@@ -1906,6 +1948,8 @@ describe("Pandora desktop run state", () => {
     expect(screen.getByLabelText("Domain Harness starter kit")).toHaveTextContent("/domain-starter");
     expect(screen.getByLabelText("Meta Harness starter kit")).toHaveTextContent("pandora package scaffold meta-harness");
     expect(screen.getByLabelText("Meta Harness starter kit")).toHaveTextContent("/meta-starter");
+    expect(screen.getByLabelText("Gene pack examples")).toHaveTextContent("sdk/gene-pack");
+    expect(screen.getByLabelText("Gene pack examples")).toHaveTextContent("/gene-pack");
     fireEvent.change(screen.getByLabelText("Authoring package ID"), { target: { value: "owner/image-domain" } });
     fireEvent.change(screen.getByLabelText("Authoring content hash"), { target: { value: `sha256:${"a".repeat(64)}` } });
     fireEvent.change(screen.getByLabelText("Authoring route hints"), { target: { value: "image generation, text to image" } });

@@ -106,6 +106,23 @@ export type RuntimePackage = {
     hints: string[];
     auto_route: true;
   } | null;
+  gene_contract?: {
+    execution: "static_guidance" | "bounded_read" | "effect_request";
+    capabilities: string[];
+    approval_required: boolean;
+    direct_executor_access: false;
+  } | null;
+  provenance?: {
+    publisher: string;
+    content_hash: string;
+    trust_level: "unverified" | "verified" | "official";
+    artifact_verified: boolean;
+  };
+  owning_domains?: Array<{
+    id: string;
+    version: string;
+    state: "installed" | "admitted";
+  }>;
   replaces_builtin: boolean;
   state: "installed" | "admitted";
   runtime_authority: boolean;

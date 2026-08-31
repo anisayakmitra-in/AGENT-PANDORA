@@ -329,6 +329,7 @@ impl App {
                     "/packages   list locally admitted package identities",
                     "/domain-starter show the safe Domain Harness scaffold workflow",
                     "/meta-starter show the safe Meta Harness scaffold workflow",
+                    "/gene-pack  show the declarative Gene pack evaluation workflow",
                     "/approve    approve and resume the pending task",
                     "/deny       deny the pending task",
                     "/coding     inspect the Coding Domain Harness",
@@ -370,6 +371,14 @@ impl App {
                 );
                 self.push_message(
                     "starter> composition-only; exact Domains must be enabled before --yes",
+                );
+            }
+            "/gene-pack" => {
+                self.push_message(
+                    "gene-pack> validate and admit sdk/gene-pack examples; every Gene starts disabled",
+                );
+                self.push_message(
+                    "gene-pack> declared effects still require Parliament, approval, and a one-shot permit",
                 );
             }
             value if value.starts_with("/theme ") => {
@@ -874,6 +883,9 @@ mod tests {
         assert!(app.messages.iter().any(|message| {
             message == "/meta-starter show the safe Meta Harness scaffold workflow"
         }));
+        assert!(app.messages.iter().any(|message| {
+            message == "/gene-pack  show the declarative Gene pack evaluation workflow"
+        }));
     }
 
     #[test]
@@ -903,6 +915,23 @@ mod tests {
         }));
         assert_eq!(app.activity, TuiActivity::Idle);
         assert_eq!(app.run_args("inspect", None), ["--agent", "inspect"]);
+    }
+
+    #[test]
+    fn gene_pack_command_is_guidance_only() {
+        let mut app = app();
+        app.input = "/gene-pack".chars().collect();
+        app.submit();
+
+        assert!(app.messages.iter().any(|message| {
+            message
+                == "gene-pack> validate and admit sdk/gene-pack examples; every Gene starts disabled"
+        }));
+        assert!(app.messages.iter().any(|message| {
+            message
+                == "gene-pack> declared effects still require Parliament, approval, and a one-shot permit"
+        }));
+        assert_eq!(app.activity, TuiActivity::Idle);
     }
 
     #[test]
