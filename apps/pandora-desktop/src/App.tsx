@@ -11,6 +11,18 @@ import {
   type ThemePreset,
 } from "./appearance";
 import {
+  builtInCompanionManifest,
+  companionStates,
+  deriveCompanionState,
+  loadCompanionSettings,
+  saveCompanionSettings,
+  type CompanionMotion,
+  type CompanionPosition,
+  type CompanionScale,
+  type CompanionSettings,
+  type CompanionState,
+} from "./companion";
+import {
   activateProvider,
   admitLocalPackage,
   configureMcp,
@@ -512,6 +524,7 @@ function App() {
   const [runProvider, setRunProvider] = useState("auto");
   const [runModel, setRunModel] = useState("");
   const [appearance, setAppearance] = useState<AppearanceSettings>(() => loadAppearance(typeof window === "undefined" ? undefined : window.localStorage));
+  const [companion, setCompanion] = useState<CompanionSettings>(() => loadCompanionSettings(typeof window === "undefined" ? undefined : window.localStorage));
   const [systemPrefersDark, setSystemPrefersDark] = useState(() => typeof window === "undefined" || !window.matchMedia ? true : window.matchMedia("(prefers-color-scheme: dark)").matches);
   const [dockOpen, setDockOpen] = useState(loadDockOpen);
   const [dockPlacement, setDockPlacement] = useState<WorkspaceDockPlacement>(loadDockPlacement);
@@ -553,6 +566,10 @@ function App() {
     document.documentElement.dataset.themePreset = appearance.preset;
     saveAppearance(window.localStorage, appearance);
   }, [appearance, systemPrefersDark]);
+
+  useEffect(() => {
+    saveCompanionSettings(window.localStorage, companion);
+  }, [companion]);
 
   useEffect(() => {
     window.localStorage.setItem(workflowStorageKey, JSON.stringify(workflows));
@@ -1150,10 +1167,17 @@ function App() {
     setDockSize("comfortable");
   };
 
+  const companionState = deriveCompanionState({
+    working: runInFlight || workspaceInspectionInFlight || browserInspectionInFlight,
+    approvalRequired: lastRun?.status === "approval_required" || workspaceInspection?.status === "approval_required" || browserInspection?.status === "approval_required",
+    status: lastRun?.status,
+  });
+
   return (
     <div className="app-shell">
       <a className="skip-link" href="#pandora-main">Skip to workspace</a>
       <span className="sr-only" aria-live="polite" aria-atomic="true">{viewLabel(activeView)}. {runtimeStatusLabel(runtimeStatus)}.</span>
+      {companion.enabled ? <Companion settings={companion} state={companionState} onDisable={() => setCompanion((current) => ({ ...current, enabled: false }))} /> : null}
       <Sidebar activeView={activeView} onSelect={selectView} runtimeStatus={runtimeStatus} sessions={sessions} selectedSessionId={selectedSessionId} onOpenPalette={() => setPaletteOpen(true)} onOpenSession={async (sessionId) => { selectView("command"); await openSession(sessionId); }} />
       <main ref={mainRef} id="pandora-main" className="main-shell" tabIndex={-1} aria-label={viewLabel(activeView) + " workspace"}>
         <TopBar activeView={activeView} runtimeStatus={runtimeStatus} dockOpen={dockOpen} dockPlacement={dockPlacement} dockToggleRef={dockToggleRef} onOpenPalette={() => setPaletteOpen(true)} onToggleDock={() => setDockOpen((current) => !current)} onMoveDock={() => { setDockOpen(true); setDockPlacement((current) => current === "right" ? "bottom" : "right"); }} />
@@ -1245,7 +1269,7 @@ function App() {
         ) : activeView === "evolution" ? (
           <EvolutionView proposals={evolutionProposals} activations={artifactActivations} runtimeStatus={runtimeStatus} onInspect={inspectEvolutionCandidate} onMutate={mutateEvolution} />
         ) : (
-          <SettingsView appearance={appearance} onAppearanceChange={setAppearance} runtimeStatus={runtimeStatus} health={runtimeHealth} native={native} endpoint={endpoint} dockOpen={dockOpen} dockPlacement={dockPlacement} dockSize={dockSize} onDockOpenChange={setDockOpen} onDockPlacementChange={setDockPlacement} onDockSizeChange={setDockSize} onResetDockLayout={resetDockLayout} onOpenView={selectView} />
+          <SettingsView appearance={appearance} onAppearanceChange={setAppearance} companion={companion} onCompanionChange={setCompanion} runtimeStatus={runtimeStatus} health={runtimeHealth} native={native} endpoint={endpoint} dockOpen={dockOpen} dockPlacement={dockPlacement} dockSize={dockSize} onDockOpenChange={setDockOpen} onDockPlacementChange={setDockPlacement} onDockSizeChange={setDockSize} onResetDockLayout={resetDockLayout} onOpenView={selectView} />
         )}
       </main>
     </div>
@@ -2699,7 +2723,7 @@ function RuntimeInventoryView({ engines, runtimeStatus, onOpenView }: { engines:
   </div>;
 }
 
-function SettingsView({ appearance, onAppearanceChange, runtimeStatus, health, native, endpoint, dockOpen, dockPlacement, dockSize, onDockOpenChange, onDockPlacementChange, onDockSizeChange, onResetDockLayout, onOpenView }: { appearance: AppearanceSettings; onAppearanceChange: (nextAppearance: AppearanceSettings) => void; runtimeStatus: RuntimeStatus; health: RuntimeHealth | null; native: boolean; endpoint: string; dockOpen: boolean; dockPlacement: WorkspaceDockPlacement; dockSize: WorkspaceDockSize; onDockOpenChange: (open: boolean) => void; onDockPlacementChange: (placement: WorkspaceDockPlacement) => void; onDockSizeChange: (size: WorkspaceDockSize) => void; onResetDockLayout: () => void; onOpenView: (view: ViewId) => void }) {
+function SettingsView({ appearance, onAppearanceChange, companion, onCompanionChange, runtimeStatus, health, native, endpoint, dockOpen, dockPlacement, dockSize, onDockOpenChange, onDockPlacementChange, onDockSizeChange, onResetDockLayout, onOpenView }: { appearance: AppearanceSettings; onAppearanceChange: (nextAppearance: AppearanceSettings) => void; companion: CompanionSettings; onCompanionChange: (nextCompanion: CompanionSettings) => void; runtimeStatus: RuntimeStatus; health: RuntimeHealth | null; native: boolean; endpoint: string; dockOpen: boolean; dockPlacement: WorkspaceDockPlacement; dockSize: WorkspaceDockSize; onDockOpenChange: (open: boolean) => void; onDockPlacementChange: (placement: WorkspaceDockPlacement) => void; onDockSizeChange: (size: WorkspaceDockSize) => void; onResetDockLayout: () => void; onOpenView: (view: ViewId) => void }) {
   const [section, setSection] = useState<SettingsSectionId>("general");
   const [query, setQuery] = useState("");
   const normalizedQuery = query.trim().toLowerCase();
@@ -2711,8 +2735,11 @@ function SettingsView({ appearance, onAppearanceChange, runtimeStatus, health, n
   const updateAppearance = <Key extends keyof AppearanceSettings>(key: Key, value: AppearanceSettings[Key]) => {
     onAppearanceChange({ ...appearance, [key]: value });
   };
+  const updateCompanion = <Key extends keyof CompanionSettings>(key: Key, value: CompanionSettings[Key]) => {
+    onCompanionChange({ ...companion, [key]: value });
+  };
   const detail = section === "appearance"
-    ? <AppearanceSettings appearance={appearance} onChange={updateAppearance} />
+    ? <AppearanceSettings appearance={appearance} onChange={updateAppearance} companion={companion} onCompanionChange={updateCompanion} />
     : section === "workspace"
       ? <WorkspaceSettings dockOpen={dockOpen} dockPlacement={dockPlacement} dockSize={dockSize} onDockOpenChange={onDockOpenChange} onDockPlacementChange={onDockPlacementChange} onDockSizeChange={onDockSizeChange} onResetDockLayout={onResetDockLayout} />
       : section === "intelligence"
@@ -2724,18 +2751,38 @@ function SettingsView({ appearance, onAppearanceChange, runtimeStatus, health, n
   return <div className="full-view settings-view"><PageHeader eyebrow="Local workspace" title="Settings" description="Shape the desktop around your work. Runtime authority, approvals, and permits remain inside Pandora." actions={<Chip tone="neutral" icon="gear">Stored on this device</Chip>} /><div className="settings-workbench"><aside className="settings-directory" aria-label="Settings sections"><label className="settings-search"><Icon name="search" size={14} /><span className="sr-only">Search settings</span><input aria-label="Search settings" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a setting" /></label><nav>{visibleSections.map((item) => <button type="button" className={section === item.id ? "is-selected" : ""} aria-current={section === item.id ? "page" : undefined} onClick={() => setSection(item.id)} key={item.id}><Icon name={item.icon} size={15} /><span><strong>{item.label}</strong><small>{item.description}</small></span><Icon name="chevron" size={13} /></button>)}</nav>{visibleSections.length === 0 ? <p className="settings-directory-empty">No settings match “{query.trim()}”.</p> : null}<div className="settings-local-note"><Icon name="lock" size={14} /><span><strong>Local by default</strong><small>No account or sign-in boundary.</small></span></div></aside><section className="settings-detail" aria-labelledby="settings-section-title"><div className="settings-detail-header"><div><span className="eyebrow">{selectedSection.label}</span><h2 id="settings-section-title">{selectedSection.description}</h2></div><span className="settings-section-index mono">{String(settingsSections.findIndex((item) => item.id === section) + 1).padStart(2, "0")} / {String(settingsSections.length).padStart(2, "0")}</span></div>{detail}</section></div></div>;
 }
 
-function AppearanceSettings({ appearance, onChange }: { appearance: AppearanceSettings; onChange: <Key extends keyof AppearanceSettings>(key: Key, value: AppearanceSettings[Key]) => void }) {
+function AppearanceSettings({ appearance, onChange, companion, onCompanionChange }: { appearance: AppearanceSettings; onChange: <Key extends keyof AppearanceSettings>(key: Key, value: AppearanceSettings[Key]) => void; companion: CompanionSettings; onCompanionChange: <Key extends keyof CompanionSettings>(key: Key, value: CompanionSettings[Key]) => void }) {
   const modes: readonly { id: ThemeMode; label: string; description: string }[] = [
     { id: "system", label: "System", description: "Follow this device" },
     { id: "dark", label: "Dark", description: "Low-light command surface" },
     { id: "light", label: "Light", description: "Bright command surface" },
   ];
   const accents: readonly { id: ThemeAccent; label: string }[] = [{ id: "ember", label: "Ember" }, { id: "cyan", label: "Cyan" }, { id: "violet", label: "Violet" }];
-  return <div className="appearance-settings-stack"><Panel className="settings-panel"><div className="panel-heading"><div><span className="eyebrow">VISUAL MODE</span><h3>Theme</h3></div><Icon name="spark" size={18} /></div><p className="settings-copy">Choose presentation data for this device. Appearance never changes runtime policy.</p><div className="theme-toggle" role="group" aria-label="Theme mode">{modes.map((mode) => <button type="button" className={`theme-option ${appearance.mode === mode.id ? "is-selected" : ""}`} aria-pressed={appearance.mode === mode.id} onClick={() => onChange("mode", mode.id)} key={mode.id}>{mode.label}<span>{mode.description}</span></button>)}</div><div className="settings-control-label"><span>Accent</span><small>Focus and signal color</small></div><div className="accent-options" role="group" aria-label="Theme accent">{accents.map((accent) => <button type="button" className={`accent-option is-${accent.id}`} aria-pressed={appearance.accent === accent.id} onClick={() => onChange("accent", accent.id)} key={accent.id}><span aria-hidden="true" />{accent.label}</button>)}</div><div className="settings-control-label"><span>Preset</span><small>Validated token bundle</small></div><div className="theme-presets" role="group" aria-label="Theme preset">{themeDefinitions.map((preset) => <button type="button" aria-pressed={appearance.preset === preset.id} onClick={() => onChange("preset", preset.id as ThemePreset)} key={preset.id}><strong>{preset.label}</strong><span>{preset.description}</span></button>)}</div><button className="button button-secondary" type="button" onClick={() => onChange("mode", defaultAppearance.mode)}>Use system mode</button><div className="settings-proof-row"><Icon name="check" size={13} /><span>Invalid or incomplete data falls back to Foundry. Forced colors, reduced motion, and reduced transparency remain authoritative.</span></div></Panel><AppearancePreview /></div>;
+  return <div className="appearance-settings-stack"><Panel className="settings-panel"><div className="panel-heading"><div><span className="eyebrow">VISUAL MODE</span><h3>Theme</h3></div><Icon name="spark" size={18} /></div><p className="settings-copy">Choose presentation data for this device. Appearance never changes runtime policy.</p><div className="theme-toggle" role="group" aria-label="Theme mode">{modes.map((mode) => <button type="button" className={`theme-option ${appearance.mode === mode.id ? "is-selected" : ""}`} aria-pressed={appearance.mode === mode.id} onClick={() => onChange("mode", mode.id)} key={mode.id}>{mode.label}<span>{mode.description}</span></button>)}</div><div className="settings-control-label"><span>Accent</span><small>Focus and signal color</small></div><div className="accent-options" role="group" aria-label="Theme accent">{accents.map((accent) => <button type="button" className={`accent-option is-${accent.id}`} aria-pressed={appearance.accent === accent.id} onClick={() => onChange("accent", accent.id)} key={accent.id}><span aria-hidden="true" />{accent.label}</button>)}</div><div className="settings-control-label"><span>Preset</span><small>Validated token bundle</small></div><div className="theme-presets" role="group" aria-label="Theme preset">{themeDefinitions.map((preset) => <button type="button" aria-pressed={appearance.preset === preset.id} onClick={() => onChange("preset", preset.id as ThemePreset)} key={preset.id}><strong>{preset.label}</strong><span>{preset.description}</span></button>)}</div><button className="button button-secondary" type="button" onClick={() => onChange("mode", "system")}>Use system mode</button><div className="settings-proof-row"><Icon name="check" size={13} /><span>Invalid or incomplete data falls back to Foundry. Forced colors, reduced motion, and reduced transparency remain authoritative.</span></div></Panel><AppearancePreview /><CompanionSettingsPanel settings={companion} onChange={onCompanionChange} /></div>;
 }
 
 function AppearancePreview() {
   return <Panel className="settings-panel appearance-preview"><div className="panel-heading"><div><span className="eyebrow">LIVE PREVIEW</span><h3>Representative controls and states</h3></div><Chip tone="green" icon="check">Local preview</Chip></div><div className="appearance-preview-grid"><section><label htmlFor="appearance-preview-input">Task name</label><input id="appearance-preview-input" defaultValue="Review release evidence" /><div className="appearance-preview-actions"><button className="button button-primary" type="button">Primary action</button><button className="button button-secondary" type="button">Secondary</button></div></section><section className="appearance-preview-state"><Chip tone="amber" icon="lock">Approval required</Chip><strong>Effect remains unresolved</strong><p>Theme selection cannot approve, deny, execute, or alter this state.</p></section></div></Panel>;
+}
+
+const companionStateLabels: Record<CompanionState, string> = {
+  idle: "Idle and ready",
+  working: "Governed work in progress",
+  waiting: "Waiting for an exact approval",
+  success: "Latest run completed",
+  failure: "Latest run did not complete",
+};
+
+function Companion({ settings, state, onDisable }: { settings: CompanionSettings; state: CompanionState; onDisable: () => void }) {
+  return <aside className={`pandora-companion position-${settings.position} scale-${settings.scale} motion-${settings.motion}`} data-state={state} aria-label="Pandora companion"><div className="companion-status" role="status" aria-live="polite"><img src={`/companions/${builtInCompanionManifest.assets[state]}`} alt="" /><span><strong>Pandora Orbit</strong><small>{companionStateLabels[state]}</small></span></div><button type="button" aria-label="Disable Pandora companion" onClick={onDisable}>×</button></aside>;
+}
+
+function CompanionSettingsPanel({ settings, onChange }: { settings: CompanionSettings; onChange: <Key extends keyof CompanionSettings>(key: Key, value: CompanionSettings[Key]) => void }) {
+  const [previewState, setPreviewState] = useState<CompanionState>("idle");
+  const positions: readonly CompanionPosition[] = ["bottom-left", "bottom-right"];
+  const scales: readonly CompanionScale[] = ["small", "medium", "large"];
+  const motions: readonly CompanionMotion[] = ["system", "static"];
+  return <Panel className="settings-panel companion-settings"><div className="panel-heading"><div><span className="eyebrow">OPTIONAL LOCAL COMPANION</span><h3>Pandora Orbit</h3></div><Chip tone={settings.enabled ? "green" : "neutral"}>{settings.enabled ? "On" : "Off by default"}</Chip></div><p className="settings-copy">Orbit reads only the typed public state shown below. It cannot read prompts, files, memories, tool output, or hidden reasoning.</p><div className="settings-control-group" role="group" aria-label="Companion visibility"><button type="button" aria-pressed={settings.enabled} onClick={() => onChange("enabled", true)}>On</button><button type="button" aria-pressed={!settings.enabled} onClick={() => onChange("enabled", false)}>Off</button></div><div className="companion-preview" data-state={previewState} data-motion={settings.motion}><img src={`/companions/${builtInCompanionManifest.assets[previewState]}`} alt="" /><div><span className="eyebrow">FIXTURE PREVIEW</span><strong>{companionStateLabels[previewState]}</strong><small>No runtime or prompt data is used.</small></div></div><div className="companion-state-options" role="group" aria-label="Companion preview state">{companionStates.map((state) => <button type="button" aria-pressed={previewState === state} onClick={() => setPreviewState(state)} key={state}>{state}</button>)}</div><div className="settings-control-label"><span>Position</span><small>Local display preference</small></div><div className="settings-control-group" role="group" aria-label="Companion position">{positions.map((position) => <button type="button" aria-pressed={settings.position === position} onClick={() => onChange("position", position)} key={position}>{position.replace("-", " ")}</button>)}</div><div className="settings-control-label"><span>Scale</span><small>Local display preference</small></div><div className="settings-control-group" role="group" aria-label="Companion scale">{scales.map((scale) => <button type="button" aria-pressed={settings.scale === scale} onClick={() => onChange("scale", scale)} key={scale}>{scale}</button>)}</div><div className="settings-control-label"><span>Motion</span><small>System reduction always wins</small></div><div className="settings-control-group" role="group" aria-label="Companion motion">{motions.map((motion) => <button type="button" aria-pressed={settings.motion === motion} onClick={() => onChange("motion", motion)} key={motion}>{motion}</button>)}</div><div className="settings-proof-row"><Icon name="lock" size={13} /><span>Companion packs are declarative local image manifests. Remote, executable, symlinked, traversal, and oversized assets fail closed.</span></div></Panel>;
 }
 
 function WorkspaceSettings({ dockOpen, dockPlacement, dockSize, onDockOpenChange, onDockPlacementChange, onDockSizeChange, onResetDockLayout }: { dockOpen: boolean; dockPlacement: WorkspaceDockPlacement; dockSize: WorkspaceDockSize; onDockOpenChange: (open: boolean) => void; onDockPlacementChange: (placement: WorkspaceDockPlacement) => void; onDockSizeChange: (size: WorkspaceDockSize) => void; onResetDockLayout: () => void }) {
