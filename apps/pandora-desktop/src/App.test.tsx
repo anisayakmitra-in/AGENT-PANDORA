@@ -259,7 +259,7 @@ describe("Pandora desktop run state", () => {
   it("moves focus into the selected workspace after command-palette navigation", async () => {
     render(<App />);
 
-    const trigger = await screen.findByRole("button", { name: "Search", exact: true });
+    const trigger = await screen.findByRole("button", { name: /^Search$/ });
     trigger.focus();
     fireEvent.click(trigger);
     const search = screen.getByRole("combobox", { name: "Search Pandora surfaces" });
@@ -277,7 +277,7 @@ describe("Pandora desktop run state", () => {
   it("traps command-palette focus and restores the invoking control when dismissed", async () => {
     render(<App />);
 
-    const trigger = await screen.findByRole("button", { name: "Search", exact: true });
+    const trigger = await screen.findByRole("button", { name: /^Search$/ });
     trigger.focus();
     fireEvent.click(trigger);
     const search = screen.getByRole("combobox", { name: "Search Pandora surfaces" });
