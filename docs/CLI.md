@@ -343,6 +343,13 @@ the same session, provider, AgentLoop, approval, and effect-policy path as
 Down browse task history, `/help` lists commands, `/session` shows the active
 session, `/clear` clears the transcript, `/approve` approves and resumes the
 pending task, `/deny` denies it, and Escape or Ctrl-C closes the client. The
+local `/theme` command reports the active terminal palette; `/theme auto`,
+`/theme dark`, `/theme light`, and `/theme mono` change presentation for the
+current process only. The same modes can be selected at startup with
+`--theme`. TUI themes cannot add commands, invoke tools, alter a task, or affect
+approvals and permits; invalid values fail closed before terminal raw mode is
+entered.
+The
 in-memory transcript and task history are bounded; the session store remains
 the source for later resume. The TUI accepts the same Coding and Research slash
 commands as the direct CLI and preserves quoted arguments such as

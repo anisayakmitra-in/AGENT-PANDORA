@@ -259,7 +259,7 @@ describe("Pandora desktop run state", () => {
   it("moves focus into the selected workspace after command-palette navigation", async () => {
     render(<App />);
 
-    const trigger = await screen.findByRole("button", { name: "Search" });
+    const trigger = await screen.findByRole("button", { name: /^Search$/ });
     trigger.focus();
     fireEvent.click(trigger);
     const search = screen.getByRole("combobox", { name: "Search Pandora surfaces" });
@@ -277,7 +277,7 @@ describe("Pandora desktop run state", () => {
   it("traps command-palette focus and restores the invoking control when dismissed", async () => {
     render(<App />);
 
-    const trigger = await screen.findByRole("button", { name: "Search" });
+    const trigger = await screen.findByRole("button", { name: /^Search$/ });
     trigger.focus();
     fireEvent.click(trigger);
     const search = screen.getByRole("combobox", { name: "Search Pandora surfaces" });
@@ -372,6 +372,51 @@ describe("Pandora desktop run state", () => {
     const layout = screen.getByRole("main", { name: "Command Center workspace" }).querySelector(".command-layout");
     expect(layout).toHaveAttribute("data-dock-placement", "right");
     expect(layout).toHaveClass("dock-size-comfortable");
+  });
+
+  it("previews and restores validated appearance selections", async () => {
+    const first = render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open settings" }));
+    fireEvent.click(screen.getByRole("button", { name: /Appearance Theme and visual behavior/ }));
+
+    fireEvent.click(within(screen.getByRole("group", { name: "Theme mode" })).getByRole("button", { name: /Dark/ }));
+    fireEvent.click(within(screen.getByRole("group", { name: "Theme accent" })).getByRole("button", { name: "Cyan" }));
+    fireEvent.click(within(screen.getByRole("group", { name: "Theme preset" })).getByRole("button", { name: /Verdant/ }));
+
+    expect(screen.getByRole("heading", { name: "Representative controls and states" })).toBeInTheDocument();
+    expect(screen.getByText("Effect remains unresolved")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+      expect(document.documentElement).toHaveAttribute("data-accent", "cyan");
+      expect(document.documentElement).toHaveAttribute("data-theme-preset", "verdant");
+      expect(JSON.parse(window.localStorage.getItem("pandora.desktop.appearance.v1") ?? "{}")).toEqual({
+        mode: "dark",
+        accent: "cyan",
+        preset: "verdant",
+      });
+    });
+
+    first.unmount();
+    render(<App />);
+    await waitFor(() => {
+      expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+      expect(document.documentElement).toHaveAttribute("data-accent", "cyan");
+      expect(document.documentElement).toHaveAttribute("data-theme-preset", "verdant");
+    });
+  });
+
+  it("fails closed to the built-in appearance when persisted data is incomplete", async () => {
+    window.localStorage.setItem("pandora.desktop.appearance.v1", JSON.stringify({
+      mode: "dark",
+      accent: "cyan",
+    }));
+    render(<App />);
+
+    await waitFor(() => {
+      expect(document.documentElement).toHaveAttribute("data-theme-mode", "dark");
+      expect(document.documentElement).toHaveAttribute("data-accent", "ember");
+      expect(document.documentElement).toHaveAttribute("data-theme-preset", "foundry");
+    });
   });
 
   it("recovers invalid persisted layout values without disrupting runtime work", async () => {

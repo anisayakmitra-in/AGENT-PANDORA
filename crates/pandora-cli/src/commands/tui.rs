@@ -32,6 +32,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "model",
             "max-turns",
             "max-tools",
+            "theme",
         ],
     )?;
     if !parsed.positionals.is_empty() {
@@ -44,8 +45,9 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         ));
     }
 
+    let theme = TuiTheme::parse(parsed.value("theme"))?;
     let mut terminal = TerminalSession::enter()?;
-    let mut app = App::new(parsed);
+    let mut app = App::new(parsed, theme);
     let result = app.run(&mut terminal.terminal);
     terminal.restore();
     result?;
@@ -115,6 +117,65 @@ struct App {
     session_id: Option<String>,
     pending: Option<PendingTask>,
     turns: u32,
+    theme: TuiTheme,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TuiTheme {
+    Auto,
+    Dark,
+    Light,
+    Mono,
+}
+
+impl TuiTheme {
+    fn parse(value: Option<&str>) -> Result<Self, CliError> {
+        match value.unwrap_or("auto") {
+            "auto" => Ok(Self::Auto),
+            "dark" => Ok(Self::Dark),
+            "light" => Ok(Self::Light),
+            "mono" => Ok(Self::Mono),
+            value => Err(CliError::usage(format!(
+                "invalid tui theme '{value}'; expected auto, dark, light, or mono"
+            ))),
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Dark => "dark",
+            Self::Light => "light",
+            Self::Mono => "mono",
+        }
+    }
+
+    fn title(self) -> Style {
+        let style = match self {
+            Self::Auto => Style::default().fg(TuiColor::Cyan),
+            Self::Dark => Style::default().fg(TuiColor::LightCyan),
+            Self::Light => Style::default().fg(TuiColor::Blue),
+            Self::Mono => Style::default(),
+        };
+        style.add_modifier(Modifier::BOLD)
+    }
+
+    fn muted(self) -> Style {
+        match self {
+            Self::Auto | Self::Light => Style::default().fg(TuiColor::DarkGray),
+            Self::Dark => Style::default().fg(TuiColor::Gray),
+            Self::Mono => Style::default().add_modifier(Modifier::DIM),
+        }
+    }
+
+    fn prompt(self) -> Style {
+        match self {
+            Self::Auto => Style::default().fg(TuiColor::Green),
+            Self::Dark => Style::default().fg(TuiColor::LightGreen),
+            Self::Light => Style::default().fg(TuiColor::Green),
+            Self::Mono => Style::default().add_modifier(Modifier::BOLD),
+        }
+    }
 }
 
 struct PendingTask {
@@ -128,7 +189,7 @@ enum PendingInvocation {
 }
 
 impl App {
-    fn new(args: ParsedArgs) -> Self {
+    fn new(args: ParsedArgs, theme: TuiTheme) -> Self {
         Self {
             session_id: args.value("session").map(str::to_owned),
             args,
@@ -142,6 +203,7 @@ impl App {
             ],
             turns: 0,
             pending: None,
+            theme,
         }
     }
 
@@ -239,6 +301,7 @@ impl App {
                     "/help       show TUI commands",
                     "/session    show the active session ID",
                     "/clear      clear the transcript",
+                    "/theme      show or select auto, dark, light, or mono",
                     "/approve    approve and resume the pending task",
                     "/deny       deny the pending task",
                     "/coding     inspect the Coding Domain Harness",
@@ -256,6 +319,20 @@ impl App {
                 });
             }
             "/clear" => self.messages.clear(),
+            "/theme" => {
+                self.push_message(format!("theme> {}", self.theme.name()));
+            }
+            value if value.starts_with("/theme ") => {
+                match TuiTheme::parse(Some(value.trim_start_matches("/theme ").trim())) {
+                    Ok(theme) => {
+                        self.theme = theme;
+                        self.push_message(format!("theme> {} (presentation only)", theme.name()));
+                    }
+                    Err(error) => {
+                        self.push_message(format!("usage> {}", error.message));
+                    }
+                }
+            }
             "/approve" => self.resolve_pending(true),
             "/deny" => self.resolve_pending(false),
             value if value.starts_with("/approve ") || value.starts_with("/deny ") => {
@@ -488,15 +565,10 @@ impl App {
             .split(area);
 
         let header = Paragraph::new(vec![
-            Line::from(Span::styled(
-                "PANDORA TUI",
-                Style::default()
-                    .fg(TuiColor::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )),
+            Line::from(Span::styled("PANDORA TUI", self.theme.title())),
             Line::from(Span::styled(
                 "Governed execution · Ctrl-C/Esc exits · /help for commands",
-                Style::default().fg(TuiColor::DarkGray),
+                self.theme.muted(),
             )),
         ]);
         frame.render_widget(header, sections[0]);
@@ -527,17 +599,21 @@ impl App {
         frame.render_widget(transcript, sections[1]);
 
         let session = self.session_id.as_deref().unwrap_or("not started");
-        let status = format!("session: {session} · turns: {}", self.turns);
+        let status = format!(
+            "session: {session} · turns: {} · theme: {} · presentation only",
+            self.turns,
+            self.theme.name()
+        );
         frame.render_widget(
             Paragraph::new(truncate(&status, usize::from(sections[2].width)))
-                .style(Style::default().fg(TuiColor::DarkGray)),
+                .style(self.theme.muted()),
             sections[2],
         );
 
         let (input, cursor) =
             visible_input(&self.input, self.cursor, usize::from(sections[3].width));
         let input_line = Line::from(vec![
-            Span::styled("> ", Style::default().fg(TuiColor::Green)),
+            Span::styled("> ", self.theme.prompt()),
             Span::raw(input),
         ]);
         frame.render_widget(
@@ -602,16 +678,19 @@ fn terminal_error(error: impl std::fmt::Display) -> CliError {
 
 #[cfg(test)]
 mod tests {
-    use super::{App, MAX_TUI_HISTORY, MAX_TUI_MESSAGES, visible_input, wrap_message};
+    use super::{App, MAX_TUI_HISTORY, MAX_TUI_MESSAGES, TuiTheme, visible_input, wrap_message};
     use crate::commands::ParsedArgs;
     use ratatui::{Terminal, backend::TestBackend};
     use std::collections::BTreeMap;
 
     fn app() -> App {
-        App::new(ParsedArgs {
-            values: BTreeMap::new(),
-            positionals: Vec::new(),
-        })
+        App::new(
+            ParsedArgs {
+                values: BTreeMap::new(),
+                positionals: Vec::new(),
+            },
+            TuiTheme::Auto,
+        )
     }
 
     #[test]
@@ -654,6 +733,34 @@ mod tests {
         assert!(app.messages.iter().any(|message| {
             message == "/audit, /argus-review, /debt, /measure, /guide run workflow Genes"
         }));
+    }
+
+    #[test]
+    fn theme_command_changes_presentation_without_runtime_arguments() {
+        let mut app = app();
+        app.input = "/theme mono".chars().collect();
+        app.submit();
+
+        assert_eq!(app.theme, TuiTheme::Mono);
+        assert_eq!(
+            app.messages.last().map(String::as_str),
+            Some("theme> mono (presentation only)")
+        );
+        assert_eq!(app.run_args("inspect", None), ["--agent", "inspect"]);
+    }
+
+    #[test]
+    fn invalid_theme_fails_closed_to_the_current_palette() {
+        let mut app = app();
+        app.input = "/theme executable".chars().collect();
+        app.submit();
+
+        assert_eq!(app.theme, TuiTheme::Auto);
+        assert!(
+            app.messages
+                .last()
+                .is_some_and(|message| message.contains("expected auto, dark, light, or mono"))
+        );
     }
 
     #[test]

@@ -338,7 +338,7 @@ commands:
   secret set <ENV_NAME> --value-stdin | list | status <ENV_NAME> | remove <ENV_NAME> --yes
   backup create --output <path> [--passphrase-env <name>] | inspect --input <path> [--passphrase-env <name>] | restore --input <path> [--passphrase-env <name>] --yes
   chat [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>]
-  tui [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>]
+  tui [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>] [--theme <auto|dark|light|mono>]
   harness list|inspect|run [--harness-version <version>]
   slash list|resolve <command>
   session list|resume|inspect <id>
