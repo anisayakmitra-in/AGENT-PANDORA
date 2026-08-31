@@ -20,7 +20,7 @@ operations, and signed native releases.
 | 7. Runtime scale and orchestration | 90-95% | persistent prompt-context cache, headless jobs, bounded parallel subagents, exact-commit worktrees, durable orchestration claims and receipts, interruption and resume rules, multi-repository plans, fleet leases, budgets, execution-bound lease renewal, and durable supervisor state with PID-bound worker heartbeats, process-wide execution leases for headless jobs and subagents, lease gating, stale-supervisor reconciliation without replay, bounded stale reaping, atomic PID-bound restart handoff, atomic cross-process quiescence guards, bounded independently launched job watch windows, long-lived local daemon workers with explicit drain/stop protocol, cross-process crash reconciliation/restart evidence, bounded staggered-producer soak coverage, cancellation/provider-return restart evidence, and combined cross-process worker-operations recovery acceptance | retained long-duration and multi-platform worker soak evidence |
 | 8. Agent experience and disclosure | 96-98% | cross-platform Tauri desktop app, same-commit CLI sidecar packaging, clean-runner Linux/macOS x64/macOS arm64/Windows bundle and system-installer register/copy/install/start/remove evidence, synthetic native install/update/rollback/uninstall evidence, Chromium and axe checks at the minimum desktop window and 200%-zoom-equivalent viewport, Command and Council inspection, background runs, runtime inventory, Harness Lab, package lifecycle, package manifest workbench, local Skill lifecycle, BYOK provider creation and selection, MCP configuration, pinned GitHub packages, active custom Domain and Meta Harnesses, deterministic local Domain and composition-only Meta starter kits across app/CLI/TUI, validated declarative Gene examples and inspector fixtures, WebAssembly Genes, custom Auto Route contracts, optional built-in Domain and Meta replacement, encrypted-vault package key generation and atomic local manifest signing, explicit fail-closed Source/Provider/Skill/generic package admission boundaries, macOS 26 Liquid Glass with older-mac vibrancy fallback, reduced-transparency and forced-colors regressions | remote or signed Skill and Provider package distribution, native screen-reader and clean-machine scaling evidence, signed desktop installer release proof |
 | 9. Evaluation-driven loops | 88-92% | trajectory, outcome, policy, regression, adversarial, golden, and holdout evaluation; coding feedback; research-only mutation and population strategies; durable evolution state; canary activation and rollback; versioned evidence-derived zero-failure canary policy; read-only durable per-session evaluation scorecards with a fail-on-non-passed CI gate; durable schedules with a bounded local registry of validated suite definitions; typed prompt/Skill/workflow/WebAssembly Gene target metadata; durable failure-derived regression candidates; explicit review-gated suite admission; governed scheduled execution of evidence-backed and task-backed suites; proposal-bound one-shot canary scheduling with durable report evidence and a separate activation gate | self-healing test generation beyond metadata candidates; multi-stage rollout budgets and pause/resume policy; cost and latency scorecards; quality gates for every artifact class |
-| 10. Memory consolidation | 70-75% | scoped L0, L1, and L2 records; durable recall; approval-gated promotion; revocation, audit, and compaction; deterministic evidence-bound synthesis; bounded CLI synthesis preview and commit with stale-snapshot checks; bounded read-only CLI provenance graphs; explicit same-tenant/workspace/provider cross-session L1 consolidation with dry-run and hashed source provenance | cross-project consolidation policy, scheduled synthesis, desktop removal views, source graph visualization and retention controls |
+| 10. Memory consolidation | 88-92% | scoped L0, L1, and L2 records; durable recall; approval-gated promotion; revocation and audit; deterministic evidence-bound synthesis with stale-snapshot checks; bounded provenance graphs; explicit same-tenant/workspace/provider cross-session L1 consolidation; durable leased synthesis schedules and run history; desktop source, promotion, provenance, audit, revocation, schedule, and typed retention-compaction controls; logical compaction that retains tombstones and audit evidence with explicit secure-erasure guidance | cross-project consolidation policy and conflict rules; evolution lineage bindings to exact memory evidence IDs; storage-provider-specific backup and snapshot lifecycle automation |
 | 11. Adversarial resilience | 65-72% | path confinement, symlink checks, secret redaction, replay protection, exact signatures and hashes, fail-closed package and permit checks, adversarial evaluation primitives, typed context-origin metadata plus source-labelled deterministic quarantine for high-confidence instruction-shaped tool and adapter output, replayable hostile-output corpus coverage, durable publisher trust roots with active-key admission, rotation, revocation, and fail-closed reload behavior | prompt-injection corpus across every input source, transparency evidence for trust changes, fuzzing and hostile multi-agent handoff suites |
 | 12. Agent operations | 45-55% | three-platform CI, desktop CI, release and security workflows, bounded agent workers, orchestration receipts, local fleet records | agent CI/CD as a Pandora workflow, supervisor controls, fleet dashboards, multi-repository budget enforcement, stable channel promotion with real signing credentials |
 
@@ -170,19 +170,24 @@ Next work:
 
 ## Phase 10: make memory useful across work
 
-Pandora already stores scoped summaries and can synthesize an evidence-bound L1
-record. It does not yet decide when lessons may cross a session or project.
+Pandora stores scoped summaries, synthesizes evidence-bound L1 records, and
+requires an explicit same-workspace boundary before one L1 lesson crosses a
+session. Cross-project transfer remains denied until a conflict policy exists.
+
+Durable synthesis schedules now re-check source evidence before commit and keep
+bounded worker-owned run history. The desktop exposes records, source graphs,
+audit, revocation, and schedules. Its retention panel previews an exact timestamp
+and requires typed confirmation before compacting only already-revoked logical
+records; tombstones and audit evidence remain, and storage-level erasure is
+explicitly outside that operation.
 
 Next work:
 
 - extend the explicit same-workspace cross-session boundary with cross-project policy and conflict rules;
-- add scheduled synthesis with stale-evidence checks and durable synthesis results;
-- expose source records, promotion approval, revocation, and compaction in the
-  desktop;
-- add retention controls and secure-erasure guidance for databases, backups,
-  and storage snapshots;
 - connect evolution lineage queries to the exact memory evidence IDs that
   shaped a candidate.
+- add storage-provider-specific backup expiry, snapshot removal, and key
+  destruction evidence without overstating logical database compaction.
 
 ## Phase 11: treat content as hostile
 

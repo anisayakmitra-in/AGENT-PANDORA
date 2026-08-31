@@ -949,6 +949,41 @@ impl SessionStore {
         load_memory_audit(&connection, scope)
     }
 
+    pub fn count_compactable_memory(
+        &self,
+        principal_id: &PrincipalId,
+        scope: &MemoryScope,
+        revoked_before_or_at: Timestamp,
+    ) -> Result<usize, SessionError> {
+        let connection = self.lock()?;
+        let session =
+            load_session(&connection, scope.session_id())?.ok_or(SessionError::SessionNotFound)?;
+        ensure_scope(
+            &session,
+            principal_id,
+            scope.tenant_id(),
+            scope.workspace_id(),
+        )?;
+        let count = connection.query_row(
+            "SELECT COUNT(*) FROM memory_records
+             WHERE session_id = ?1 AND provider = ?2
+               AND EXISTS (
+                   SELECT 1 FROM memory_revocations
+                   WHERE memory_revocations.session_id = memory_records.session_id
+                     AND memory_revocations.provider = memory_records.provider
+                     AND memory_revocations.memory_id = memory_records.memory_id
+                     AND memory_revocations.revoked_at <= ?3
+               )",
+            params![
+                scope.session_id().as_str(),
+                scope.provider(),
+                timestamp_i64(revoked_before_or_at)?,
+            ],
+            |row| row.get::<_, i64>(0),
+        )?;
+        usize::try_from(count).map_err(|_| SessionError::CorruptRecord)
+    }
+
     pub fn compact_revoked_memory(
         &self,
         principal_id: &PrincipalId,
@@ -2322,6 +2357,16 @@ mod tests {
             .unwrap();
         assert_eq!(
             store
+                .count_compactable_memory(
+                    session.principal_id(),
+                    &scope,
+                    Timestamp::from_unix_seconds(3),
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store
                 .compact_revoked_memory(
                     session.principal_id(),
                     &scope,
@@ -2329,6 +2374,16 @@ mod tests {
                 )
                 .unwrap(),
             1
+        );
+        assert_eq!(
+            store
+                .count_compactable_memory(
+                    session.principal_id(),
+                    &scope,
+                    Timestamp::from_unix_seconds(3),
+                )
+                .unwrap(),
+            0
         );
         assert!(matches!(
             store.record_memory(session.principal_id(), &record),

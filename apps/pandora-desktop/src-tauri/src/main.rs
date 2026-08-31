@@ -294,6 +294,23 @@ struct MemoryForget {
     confirmation: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MemoryCompactionScope {
+    session_id: String,
+    provider: String,
+    revoked_before_or_at: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MemoryCompaction {
+    session_id: String,
+    provider: String,
+    revoked_before_or_at: u64,
+    confirmation: String,
+}
+
 #[derive(Serialize)]
 struct NativeMemoryResult {
     message: String,
@@ -520,7 +537,11 @@ fn install_local_skill(input: LocalSkillInstall) -> Result<NativeSkillResult, St
 #[tauri::command]
 fn mutate_local_skill(input: SkillMutation) -> Result<NativeSkillResult, String> {
     validate_skill_mutation(&input)?;
-    let mut args = vec!["skill".to_owned(), input.action.clone(), input.skill_id.clone()];
+    let mut args = vec![
+        "skill".to_owned(),
+        input.action.clone(),
+        input.skill_id.clone(),
+    ];
     if input.action == "remove" {
         args.push("--yes".to_owned());
     }
@@ -876,6 +897,17 @@ fn validate_memory_forget(input: &MemoryForget) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_memory_compaction(input: &MemoryCompaction) -> Result<(), String> {
+    validate_memory_scope(&input.session_id, &input.provider)?;
+    let expected = format!("COMPACT {}", input.revoked_before_or_at);
+    if input.confirmation != expected {
+        return Err(format!(
+            "type {expected} to confirm logical compaction for this exact retention boundary"
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn inspect_memory_audit(input: MemoryScopeInput) -> Result<NativeMemoryResult, String> {
     validate_memory_scope(&input.session_id, &input.provider)?;
@@ -961,6 +993,63 @@ fn forget_memory(input: MemoryForget) -> Result<NativeMemoryResult, String> {
     let data = run_cli_json(&args, "revoking memory")?;
     Ok(NativeMemoryResult {
         message: format!("Memory {memory_id} revoked with a durable tombstone."),
+        data,
+    })
+}
+
+#[tauri::command]
+fn preview_memory_compaction(input: MemoryCompactionScope) -> Result<NativeMemoryResult, String> {
+    validate_memory_scope(&input.session_id, &input.provider)?;
+    let boundary = input.revoked_before_or_at;
+    let args = vec![
+        "memory".to_owned(),
+        "compact".to_owned(),
+        "--session".to_owned(),
+        input.session_id,
+        "--provider".to_owned(),
+        input.provider,
+        "--before".to_owned(),
+        boundary.to_string(),
+        "--json".to_owned(),
+    ];
+    let data = run_cli_json(&args, "previewing memory retention compaction")?;
+    let count = data
+        .get("compactable_records")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    Ok(NativeMemoryResult {
+        message: format!(
+            "Previewed {count} revoked logical memory record(s) at or before {boundary}; no records changed."
+        ),
+        data,
+    })
+}
+
+#[tauri::command]
+fn compact_memory(input: MemoryCompaction) -> Result<NativeMemoryResult, String> {
+    validate_memory_compaction(&input)?;
+    let boundary = input.revoked_before_or_at;
+    let args = vec![
+        "memory".to_owned(),
+        "compact".to_owned(),
+        "--session".to_owned(),
+        input.session_id,
+        "--provider".to_owned(),
+        input.provider,
+        "--before".to_owned(),
+        boundary.to_string(),
+        "--yes".to_owned(),
+        "--json".to_owned(),
+    ];
+    let data = run_cli_json(&args, "compacting revoked logical memory records")?;
+    let count = data
+        .get("compacted_records")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    Ok(NativeMemoryResult {
+        message: format!(
+            "Compacted {count} revoked logical memory record(s); tombstones and audit evidence remain."
+        ),
         data,
     })
 }
@@ -1648,6 +1737,8 @@ fn main() {
             inspect_memory_provenance,
             preview_memory_forget,
             forget_memory,
+            preview_memory_compaction,
+            compact_memory,
             pandora_rpc
         ])
         .on_window_event(|window, event| {
@@ -1743,9 +1834,9 @@ mod configuration_tests {
     use super::{
         optional_package_version, validate_environment_name, validate_github_commit,
         validate_github_repository_path, validate_github_repository_url, validate_identifier,
-        validate_local_skill_directory, validate_memory_forget, validate_memory_id,
-        validate_package_id, validate_provider_url, validate_registry_url, validate_skill_mutation,
-        MemoryForget, SkillMutation,
+        validate_local_skill_directory, validate_memory_compaction, validate_memory_forget,
+        validate_memory_id, validate_package_id, validate_provider_url, validate_registry_url,
+        validate_skill_mutation, MemoryCompaction, MemoryForget, SkillMutation,
     };
     use std::path::Path;
 
@@ -1832,6 +1923,19 @@ mod configuration_tests {
             ..valid
         };
         assert!(validate_memory_forget(&wrong_confirmation).is_err());
+
+        let compaction = MemoryCompaction {
+            session_id: "session-1".to_owned(),
+            provider: "openai-compatible".to_owned(),
+            revoked_before_or_at: 4_102_444_800,
+            confirmation: "COMPACT 4102444800".to_owned(),
+        };
+        assert!(validate_memory_compaction(&compaction).is_ok());
+        assert!(validate_memory_compaction(&MemoryCompaction {
+            confirmation: "COMPACT all".to_owned(),
+            ..compaction
+        })
+        .is_err());
     }
 
     #[test]

@@ -3974,6 +3974,52 @@ fn memory_cli_recalls_a_scoped_record_and_requires_confirmation_to_revoke() {
     assert_success(&forgotten);
     assert_eq!(parse_json(&forgotten)["revoked"], true);
 
+    let compaction_preview = fixture
+        .command(&[
+            "memory",
+            "compact",
+            "--session",
+            &session_id,
+            "--provider",
+            "openai-compatible",
+            "--before",
+            "4102444800",
+            "--json",
+        ])
+        .output()
+        .expect("memory compaction preview should start");
+    assert_success(&compaction_preview);
+    let compaction_preview = parse_json(&compaction_preview);
+    assert_eq!(compaction_preview["command"], "memory compact");
+    assert_eq!(compaction_preview["dry_run"], true);
+    assert!(compaction_preview["compactable_records"].as_u64().unwrap() >= 1);
+    assert_eq!(
+        compaction_preview["boundary"]["secure_erasure_guaranteed"],
+        false
+    );
+
+    let compacted = fixture
+        .command(&[
+            "memory",
+            "compact",
+            "--session",
+            &session_id,
+            "--provider",
+            "openai-compatible",
+            "--before",
+            "4102444800",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("memory compaction should start");
+    assert_success(&compacted);
+    let compacted = parse_json(&compacted);
+    assert_eq!(compacted["dry_run"], false);
+    assert!(compacted["compacted_records"].as_u64().unwrap() >= 1);
+    assert_eq!(compacted["boundary"]["tombstones_retained"], true);
+    assert_eq!(compacted["boundary"]["audit_retained"], true);
+
     let missing = fixture
         .command(&[
             "memory",

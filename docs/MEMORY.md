@@ -49,6 +49,14 @@ snapshot provenance. Any changed, revoked, expired, or missing source returns
 not write L2, approve memory, alter policy, or grant effect authority. L2
 promotion still requires the existing explicit approval path.
 
+Durable synthesis schedules bind a name, target memory identity, exact session
+and provider scope, redacted summary, classification, and bounded interval.
+Claims are worker-owned and leased. Each run takes a fresh snapshot, performs
+the same stale-evidence verification, commits at most one L1 candidate, and
+records its snapshot digest and resulting memory ID or bounded failure. Disabling
+a schedule stops future claims without deleting its run history. No scheduled
+run promotes to L2 or gains effect authority.
+
 ## Boundary
 
 `MemoryEngine::new` remains an in-process implementation for isolated runtime
@@ -70,6 +78,20 @@ revocation, and `memory promote` requires an exact approval resolved through the
 existing approval store. L0 remains process-local and is not exposed as a
 durable record. These commands do not create a second memory store or bypass
 Pandora's approval, permit, receipt, and event authority.
+
+`memory compact --before <unix-seconds>` is the explicit retention boundary for
+already-revoked logical records. Its default mode reports how many exact-scope
+records are eligible; `--yes` applies the same session, provider, and timestamp
+boundary. The runtime retains revocation tombstones and append-only audit
+evidence, so a compacted identity cannot be reinserted. The desktop requires the
+typed confirmation `COMPACT <unix-seconds>` before it invokes that apply path,
+and the TUI exposes the same workflow as non-mutating guidance.
+
+Logical compaction is not secure erasure. SQLite pages and WAL files may retain
+recoverable bytes, and encrypted backups or storage snapshots remain separate
+copies. Operators must rotate or destroy encryption keys where applicable,
+expire backups under their storage policy, remove snapshots through the storage
+provider, and verify those lifecycle actions independently.
 
 `memory consolidate` is the explicit cross-session boundary. It copies one
 non-sensitive L1 record only when source and target share the exact tenant,

@@ -29,6 +29,7 @@ import {
   configureMcp,
   configureProvider,
   configureRegistryProfile,
+  compactMemory,
   disableLocalPackage,
   enableLocalPackage,
   installGitHubPackage,
@@ -50,6 +51,7 @@ import {
   previewPackageEnable,
   previewPackageRollback,
   previewMemoryForget,
+  previewMemoryCompaction,
   removeLocalPackage,
   rollbackLocalPackage,
   RuntimeClient,
@@ -1897,7 +1899,7 @@ function RunsView({ runs, runtimeStatus, onMutate }: { runs: RuntimeOrchestratio
   </div>;
 }
 
-function MemoryView({
+function MemoryWorkspace({
   runtimeStatus,
   records,
   selectedSession,
@@ -2074,6 +2076,95 @@ function MemoryView({
   };
 
   return <div className="full-view"><PageHeader eyebrow="Scoped knowledge" title="Memory" description="Inspect bounded, redacted evidence and govern when durable synthesis may occur." actions={<Chip tone={records.length ? "green" : "neutral"} icon="archive">{records.length ? `${records.length} records` : "No records"}</Chip>} /><div className="memory-grid"><Panel className="memory-graph-panel"><div className="panel-toolbar"><div><span className="eyebrow">SESSION MEMORY · REDACTED</span><h3>{selectedSession?.session.session_id ?? "No session selected"}</h3></div><div className="toolbar-pills"><Chip tone="gold">L2</Chip><Chip tone="blue">L1</Chip><Chip tone="green">L0 ephemeral</Chip></div></div>{records.length ? <div className="memory-record-list">{records.map((record) => <article className="memory-record" key={`${record.tier}-${record.memory_id}`}><div className="memory-record-top"><Chip tone={record.tier === "l2" ? "gold" : "blue"}>{record.tier}</Chip><span className="eyebrow">{record.kind}</span><span className="memory-record-time">{new Date(record.created_at_unix_seconds * 1000).toLocaleString()}</span></div><p>{record.summary}</p><div className="memory-record-meta"><span>{record.classification}</span><span>{record.origin}</span><span>{record.evidence_count} evidence</span><span className="mono">{record.provenance}</span></div>{native ? <div className="memory-record-actions"><button className="text-link" type="button" disabled={inFlight} onClick={() => void inspectProvenance(record.memory_id)}>Inspect provenance</button><button className="text-link memory-forget-link" type="button" aria-label={`Forget memory ${record.memory_id}`} disabled={inFlight} onClick={() => void beginForget(record.memory_id)}>Forget memory</button></div> : null}</article>)}</div> : <div className="runs-empty memory-empty"><Icon name={runtimeStatus === "connected" ? "archive" : "lock"} size={27} /><h3>No memory evidence recorded</h3><p>{runtimeStatus !== "connected" ? "Connect the local runtime to inspect scoped memory evidence." : selectedSession ? "The selected session returned no durable memory records." : "Select a recorded session to inspect its bounded memory evidence."}</p><small>Ephemeral runtime state is not projected here as durable memory, and Pandora does not invent graph nodes when no records exist.</small></div>} <div className="memory-governance"><div className="memory-governance-heading"><div><span className="eyebrow">RETENTION & LINEAGE</span><h3>Memory governance</h3></div><button className="button button-secondary" type="button" disabled={!native || !selectedSession || inFlight} onClick={() => void loadAudit()}>{inFlight ? "Loading…" : "Load audit"}</button></div><p className="connection-note">{native ? "Provenance inspection is bounded and read-only. Forget writes a revocation tombstone after exact confirmation; it does not erase backups or storage snapshots." : "Memory governance actions are available in the native desktop app."}</p>{provenance ? <div className="memory-provenance" aria-label="Memory provenance"><div className="memory-provenance-summary"><strong className="mono">{provenance.root_id}</strong><span>{provenance.nodes?.length ?? 0} nodes · {provenance.edges?.length ?? 0} edges · bounded to {provenance.max_nodes ?? 64}</span></div><div className="memory-provenance-list">{provenance.nodes?.map((node) => <article key={node.id}><span className="memory-lineage-mark" /><div><strong>{node.summary}</strong><small className="mono">{node.id} · {node.tier} · {node.origin}</small></div><Chip tone={node.id === provenance.root_id ? "gold" : "blue"}>{node.id === provenance.root_id ? "root" : "source"}</Chip></article>)}</div></div> : null}{auditEntries.length ? <div className="memory-audit-list" aria-label="Memory audit trail">{auditEntries.map((entry) => <div className="memory-audit-row" key={`${entry.memory_id}-${entry.action}-${entry.at}`}><span className={`memory-audit-action is-${entry.action}`}>{entry.action}</span><strong className="mono">{entry.memory_id}</strong><time dateTime={new Date(entry.at * 1000).toISOString()}>{new Date(entry.at * 1000).toLocaleString()}</time></div>)}</div> : null}{pendingForget ? <form className="memory-forget-confirm" onSubmit={(event) => void submitForget(event)}><div><span className="eyebrow">EXACT REVOCATION</span><strong>Revoke durable memory</strong><p>Type <span className="mono">{pendingForget}</span> to create a tombstone for this exact scoped record.</p></div><label><span>Memory ID</span><input aria-label={`Confirm forget ${pendingForget}`} value={forgetConfirmation} onChange={(event) => setForgetConfirmation(event.target.value)} autoComplete="off" spellCheck={false} /></label><div className="memory-forget-actions"><button className="button button-secondary" type="button" disabled={inFlight} onClick={() => { setPendingForget(""); setForgetConfirmation(""); }}>Cancel</button><button className="button button-deny" type="submit" disabled={inFlight || forgetConfirmation !== pendingForget}>{inFlight ? "Revoking…" : "Confirm revocation"}</button></div></form> : null}{governanceMessage ? <p className="configuration-result is-success" role="status"><Icon name="check" size={13} /> {governanceMessage}</p> : null}{governanceError ? <p className="connection-error" role="alert">{governanceError}</p> : null}</div></Panel><div className="memory-side"><Panel><div className="panel-heading"><h3>Memory layers</h3><Chip tone={records.length ? "green" : "neutral"}>{records.length ? "Live" : "Unavailable"}</Chip></div><Layer label="L0 · Ephemeral trace" value="RAM" detail="expires automatically" tone="green" /><Layer label="L1 · Distilled evidence" value={String(records.filter((record) => record.tier === "l1").length)} detail="session scoped" tone="blue" /><Layer label="L2 · Evolutionary" value={String(records.filter((record) => record.tier === "l2").length)} detail="promotion gated" tone="gold" /></Panel><Panel className="memory-scheduler-panel"><div className="panel-heading"><div><span className="eyebrow">MEMORY ENGINE</span><h3>Synthesis schedules</h3></div><Chip tone={schedules.length ? "blue" : "neutral"} icon="clock">{schedules.length} configured</Chip></div><p className="connection-note">Schedule durable L1 synthesis from scoped evidence. Claims are bounded, leased, and reviewable; schedules never grant execution authority.</p><form className="memory-schedule-form" onSubmit={(event) => void submit(event)}><label><span>Schedule name</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Nightly lessons" maxLength={128} /></label><label><span>Memory ID</span><input value={memoryId} onChange={(event) => setMemoryId(event.target.value)} placeholder="lesson-release-review" maxLength={256} /></label><label><span>Evidence kind</span><select value={kind} onChange={(event) => setKind(event.target.value)}><option value="lesson">Lesson</option><option value="decision">Decision</option><option value="failure">Failure</option><option value="benchmark">Benchmark</option><option value="lineage">Lineage</option><option value="execution_evidence">Execution evidence</option></select></label><label><span>Provider</span><select value={selectedProvider} onChange={(event) => setProvider(event.target.value)}><option value="local">Local memory engine</option>{availableProviders.map((item) => <option value={item.name} key={item.name}>{item.name} · {item.model}</option>)}</select></label><label><span>Interval · seconds</span><input value={interval} onChange={(event) => setInterval(event.target.value)} inputMode="numeric" /></label><label><span>Classification</span><select value={classification} onChange={(event) => setClassification(event.target.value as "public" | "internal")}><option value="internal">Internal</option><option value="public">Public</option></select></label><label className="memory-schedule-form-wide"><span>Synthesis summary</span><textarea value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="Distill recurring release evidence into a reviewable lesson…" rows={3} maxLength={8192} /></label><button className="button button-primary" type="submit" disabled={runtimeStatus !== "connected" || !selectedSession || inFlight}>{inFlight ? "Saving…" : "Add schedule"} <Icon name="plus" size={13} /></button></form>{formError || error ? <p className="connection-error" role="alert">{formError || error}</p> : null}<div className="memory-schedule-list">{schedules.length ? schedules.map((schedule) => <article className={`memory-schedule-card ${schedule.enabled ? "" : "is-disabled"}`} key={schedule.id}><div className="memory-schedule-card-top"><div><strong>{schedule.name}</strong><small className="mono">{schedule.id}</small></div><Chip tone={schedule.enabled ? "green" : "neutral"}>{schedule.enabled ? "enabled" : "disabled"}</Chip></div><p>{schedule.summary}</p><div className="memory-schedule-meta"><span>{schedule.kind}</span><span>every {schedule.interval_seconds}s</span><span>{schedule.run_count} claims</span></div>{schedule.enabled ? <button className="text-link" type="button" disabled={inFlight} onClick={() => void disable(schedule.id)}>Disable schedule</button> : null}</article>) : <div className="memory-schedule-empty"><Icon name="clock" size={17} /><span>No durable schedules yet.</span></div>}</div>{runs.length ? <div className="memory-run-history"><div className="inspection-heading"><div><span className="eyebrow">DURABLE RUN HISTORY</span><h3>{runs.length} recorded attempts</h3></div><Chip tone="blue">Evidence</Chip></div>{runs.slice(0, 8).map((run) => <div className="memory-run-row" key={`${run.schedule_id}-${run.scheduled_for}`}><span className={`run-state-dot state-${run.status}`} /><span><strong>{run.schedule_id}</strong><small>{new Date(run.scheduled_for * 1000).toLocaleString()}</small></span><Chip tone={run.status === "completed" ? "green" : run.status === "failed" ? "amber" : "blue"}>{run.status}</Chip></div>)}</div> : null}</Panel><Panel><div className="panel-heading"><h3>Availability</h3><Chip tone={records.length ? "green" : "neutral"} icon="lock">{records.length ? "Scoped" : "Unavailable"}</Chip></div><p className="connection-note">{serviceMessage}</p></Panel></div></div></div>;
+}
+
+type MemoryWorkspaceProps = Parameters<typeof MemoryWorkspace>[0];
+
+function MemoryView(props: MemoryWorkspaceProps) {
+  return <div className="memory-retention-shell"><MemoryWorkspace {...props} /><MemoryRetentionPanel selectedSession={props.selectedSession} providers={props.providers} native={props.native} onRefresh={props.onRefresh} /></div>;
+}
+
+function MemoryRetentionPanel({
+  selectedSession,
+  providers,
+  native,
+  onRefresh,
+}: Pick<MemoryWorkspaceProps, "selectedSession" | "providers" | "native" | "onRefresh">) {
+  const [before, setBefore] = useState(() => String(Math.floor(Date.now() / 1000)));
+  const [preview, setPreview] = useState<NativeMemoryResult["data"] | null>(null);
+  const [confirmation, setConfirmation] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [inFlight, setInFlight] = useState(false);
+  const provider = providers.find((item) => item.credential_configured && item.active)?.name
+    ?? providers.find((item) => item.credential_configured)?.name
+    ?? "local";
+
+  useEffect(() => {
+    setPreview(null);
+    setConfirmation("");
+    setMessage("");
+    setError("");
+  }, [provider, selectedSession?.session.session_id]);
+
+  const previewCompaction = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!selectedSession || !native) return;
+    const boundary = Number(before);
+    if (!/^\d+$/.test(before) || !Number.isSafeInteger(boundary)) {
+      setError("Retention boundary must be non-negative Unix seconds.");
+      return;
+    }
+    setInFlight(true);
+    setError("");
+    try {
+      const result = await previewMemoryCompaction(
+        selectedSession.session.session_id,
+        provider,
+        boundary,
+      );
+      if (result.data.dry_run !== true || result.data.revoked_before_or_at !== boundary) {
+        throw new Error("Pandora did not return the exact retention preview");
+      }
+      setPreview(result.data);
+      setConfirmation("");
+      setMessage(result.message);
+    } catch (previewError: unknown) {
+      setError(previewError instanceof Error ? previewError.message : "Could not preview memory compaction");
+    } finally {
+      setInFlight(false);
+    }
+  };
+
+  const applyCompaction = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!selectedSession || !native || !preview) return;
+    const boundary = preview.revoked_before_or_at;
+    if (boundary === undefined || confirmation !== `COMPACT ${boundary}`) return;
+    setInFlight(true);
+    setError("");
+    try {
+      const result = await compactMemory(
+        selectedSession.session.session_id,
+        provider,
+        boundary,
+        confirmation,
+      );
+      if (result.data.dry_run !== false || result.data.revoked_before_or_at !== boundary) {
+        throw new Error("Pandora did not confirm the exact retention boundary");
+      }
+      setPreview(null);
+      setConfirmation("");
+      setMessage(result.message);
+      await onRefresh();
+    } catch (compactionError: unknown) {
+      setError(compactionError instanceof Error ? compactionError.message : "Could not compact memory records");
+    } finally {
+      setInFlight(false);
+    }
+  };
+
+  return <div className="memory-retention-dock"><Panel className="memory-retention-panel"><div className="panel-heading"><div><span className="eyebrow">LOGICAL RETENTION</span><h3>Revoked-record compaction</h3></div><Chip tone="amber">Tombstones retained</Chip></div><p className="connection-note">Preview and compact only already-revoked records in the exact session and provider scope. This does not securely erase SQLite pages, WAL files, backups, or storage snapshots.</p><form className="memory-retention-form" onSubmit={(event) => void previewCompaction(event)}><label><span>Revoked before · Unix seconds</span><input aria-label="Revoked before Unix seconds" value={before} onChange={(event) => { setBefore(event.target.value); setPreview(null); setConfirmation(""); }} inputMode="numeric" /></label><div><span className="eyebrow">SCOPE</span><strong className="mono">{selectedSession?.session.session_id ?? "Select a session"} · {provider}</strong></div><button className="button button-secondary" type="submit" disabled={!native || !selectedSession || inFlight}>{inFlight ? "Checking…" : "Preview compaction"}</button></form>{preview ? <form className="memory-forget-confirm memory-compaction-confirm" onSubmit={(event) => void applyCompaction(event)}><div><span className="eyebrow">EXACT LOGICAL COMPACTION</span><strong>{preview.compactable_records ?? 0} revoked record(s) eligible</strong><p>Type <span className="mono">COMPACT {preview.revoked_before_or_at}</span> to apply this exact boundary. {preview.boundary?.storage_guidance}</p></div><label><span>Confirmation</span><input aria-label="Confirm memory compaction" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="off" spellCheck={false} /></label><div className="memory-forget-actions"><button className="button button-secondary" type="button" disabled={inFlight} onClick={() => { setPreview(null); setConfirmation(""); }}>Cancel</button><button className="button button-deny" type="submit" disabled={inFlight || confirmation !== `COMPACT ${preview.revoked_before_or_at}`}>{inFlight ? "Compacting…" : "Confirm logical compaction"}</button></div></form> : null}{message ? <p className="configuration-result is-success" role="status"><Icon name="check" size={13} /> {message}</p> : null}{error ? <p className="connection-error" role="alert">{error}</p> : null}</Panel></div>;
 }
 
 function Layer({ label, value, detail, tone }: { label: string; value: string; detail: string; tone: "green" | "blue" | "gold" }) {

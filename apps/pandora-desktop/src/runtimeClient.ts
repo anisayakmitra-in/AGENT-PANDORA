@@ -357,6 +357,16 @@ export type NativeMemoryResult = {
     memory_id?: string;
     would_revoke?: boolean;
     revoked?: boolean;
+    revoked_before_or_at?: number;
+    compactable_records?: number;
+    would_compact?: boolean;
+    compacted_records?: number;
+    boundary?: {
+      tombstones_retained: boolean;
+      audit_retained: boolean;
+      secure_erasure_guaranteed: boolean;
+      storage_guidance: string;
+    };
   };
 };
 
@@ -695,6 +705,24 @@ export async function forgetMemory(sessionId: string, provider: string, memoryId
   }
   return invoke<NativeMemoryResult>("forget_memory", {
     input: { sessionId, provider, memoryId, confirmation },
+  });
+}
+
+export async function previewMemoryCompaction(sessionId: string, provider: string, revokedBeforeOrAt: number): Promise<NativeMemoryResult> {
+  if (!isNativeRuntime()) {
+    throw new Error("Memory retention controls are available only in the Pandora desktop app");
+  }
+  return invoke<NativeMemoryResult>("preview_memory_compaction", {
+    input: { sessionId, provider, revokedBeforeOrAt },
+  });
+}
+
+export async function compactMemory(sessionId: string, provider: string, revokedBeforeOrAt: number, confirmation: string): Promise<NativeMemoryResult> {
+  if (!isNativeRuntime()) {
+    throw new Error("Memory retention controls are available only in the Pandora desktop app");
+  }
+  return invoke<NativeMemoryResult>("compact_memory", {
+    input: { sessionId, provider, revokedBeforeOrAt, confirmation },
   });
 }
 

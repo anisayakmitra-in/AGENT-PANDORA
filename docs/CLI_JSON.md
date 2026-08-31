@@ -62,10 +62,12 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora memory recall ... --json` | `memory recall` | `scope`, `tier`, `records`, `count`, `limit`, `durability` |
 | `pandora memory audit ... --json` | `memory audit` | `scope`, `entries`, `count`, `durability` |
 | `pandora memory forget ... --json` | `memory forget` | `dry_run`, `memory_id`, `scope`, `revoked` or `would_revoke` |
+| `pandora memory compact ... --json` | `memory compact` | `dry_run`, `scope`, `revoked_before_or_at`, `compactable_records` and `would_compact` for previews or `compacted_records` for apply, plus the tombstone, audit, and secure-erasure `boundary` |
 | `pandora memory promote ... --json` | `memory promote` | `promoted`, `approval_id`, `approval_consumed` |
 | `pandora memory synthesize ... --json` | `memory synthesize` | `dry_run`, `candidate` or `committed`, `snapshot_digest`, `evidence_ids`, `promotion_required` |
 | `pandora memory provenance ... --json` | `memory provenance` | `root_id`, `scope`, `nodes`, `edges`, `bounded`, `max_nodes`, `durability` |
 | `pandora memory consolidate ... --json` | `memory consolidate` | `dry_run`, `source`, `candidate` or `consolidated`, `policy`, `durability` |
+| `pandora memory schedule ... --json` | `memory schedule` | create/list/disable: schedule identity, exact scope, interval, enabled state, and claim count; claim/run history: worker lease, status, snapshot digest, result memory ID or bounded failure, plus `durability`; successful run also returns the committed L1 candidate and `promotion_required` |
 | `pandora evaluation golden --input <path> --json` | `evaluation golden` | `total`, `passed`, `failed`, `digest`, `cases` |
 | `pandora evolution evaluate --id <proposal-id> --input <path> --json` | `evolution evaluate` | `proposal_id`, `total`, `passed`, `failed`, `trajectory_score`, `outcome_score`, `holdout_passed`, `policy_passed`, `regression_passed`, `digest`, `cases`, `durability` |
 | `pandora evolution submit --input <path> --json` | `evolution submit` | `proposal_id`, `state`, `durability` |

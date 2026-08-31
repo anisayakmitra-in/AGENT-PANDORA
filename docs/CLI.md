@@ -835,10 +835,13 @@ pandora package remove <id> <version> --yes
 pandora memory recall --session <id> --provider <name> --tier <l1|l2> [--id <memory-id>] [--limit <1-256>]
 pandora memory audit --session <id> --provider <name>
 pandora memory forget --session <id> --provider <name> <memory-id> [--yes]
+pandora memory compact --session <id> --provider <name> --before <unix-seconds> [--yes]
 pandora memory promote --session <id> --provider <name> <memory-id> [--approval <id>]
 pandora memory synthesize --session <id> --provider <name> --id <memory-id> --summary <text> [--kind <kind>] [--classification <public|internal>] [--yes]
 pandora memory provenance --session <id> --provider <name> <memory-id>
 pandora memory consolidate --source-session <id> --target-session <id> --provider <name> --source-id <memory-id> --target-id <memory-id> [--yes]
+pandora memory schedule create --id <id> --name <name> --session <id> --provider <name> --memory-id <memory-id> --summary <text> --interval-seconds <seconds> [--kind <kind>] [--classification <public|internal>]
+pandora memory schedule list | disable --id <id> | claim --worker <id> [--limit <n>] | run --id <id> --worker <id> | runs [--id <id>]
 pandora mcp set <id> --program <absolute-path> --arguments-json <json-array> --mode <auto|modern-only|legacy-only>
 pandora mcp list
 pandora mcp inspect <id>
@@ -1036,6 +1039,10 @@ promote` creates an inspectable, exact-scope approval request when no approval I
 provided; resolve it with `approval resolve`, then rerun the command with that ID.
 Promotion consumes the approval after the durable L2 record is written, and neither
 memory inspection nor promotion grants effect authority.
+`memory compact` previews the number of already-revoked logical records at or before
+an exact Unix timestamp. `--yes` applies that scoped boundary while retaining
+revocation tombstones and audit evidence. It does not claim secure erasure of SQLite
+pages or WAL files, and it does not alter backup or storage-snapshot retention.
 `memory synthesize` takes a fresh, scoped L1 snapshot and previews an evidence-bound
 L1 candidate by default. `--yes` commits it only after the snapshot is checked again;
 it never calls a provider, promotes the candidate, or grants runtime authority.
@@ -1047,6 +1054,12 @@ hashed source-provenance reference, and requires `--yes` to write. It does not
 promote to L2, approve memory, or grant execution authority.
 It follows only evidence IDs present in the same exact scope, caps traversal at 64
 records, and never promotes, revokes, or changes memory state.
+
+`memory schedule` stores bounded, scoped synthesis schedules and durable run
+history. A worker claim has a lease, and `schedule run` re-reads the exact source
+scope before committing an L1 candidate. Changed, missing, revoked, expired, or
+empty evidence fails without promotion or effect authority. Disablement prevents
+future claims but preserves prior run evidence.
 
 Remote admission currently accepts Gene records with no unresolved capability
 requirements and one valid Pandora runtime requirement. Other package kinds fail

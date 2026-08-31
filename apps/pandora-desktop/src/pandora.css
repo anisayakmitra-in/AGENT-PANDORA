@@ -1316,6 +1316,15 @@ input:focus, textarea:focus, select:focus { border-color: var(--signal); box-sha
 .workflow-card-actions { display: flex; align-items: center; gap: 6px; }
 
 /* Memory */
+.memory-retention-shell { min-width: 0; min-height: 0; flex: 1; overflow-y: auto; }
+.memory-retention-shell > .full-view { overflow: visible; padding-bottom: 20px; }
+.memory-retention-dock { padding: 0 38px 60px; }
+.memory-retention-panel { display: grid; max-width: 1240px; gap: 12px; margin: 0 auto; padding: 18px; }
+.memory-retention-form { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto; align-items: end; gap: 10px; }
+.memory-retention-form label, .memory-retention-form > div { display: grid; min-width: 0; gap: 5px; }
+.memory-retention-form label > span { color: var(--text-muted); font-family: var(--font-mono); font-size: .6875rem; text-transform: uppercase; }
+.memory-retention-form input { width: 100%; min-width: 0; }
+.memory-retention-form strong { overflow: hidden; color: var(--text-secondary); font-size: .75rem; text-overflow: ellipsis; white-space: nowrap; }
 .memory-grid { grid-template-columns: minmax(0, 1.5fr) 330px; }
 .memory-graph-panel { min-height: 590px; padding: 20px; }
 .memory-side { display: grid; align-content: start; gap: 12px; }
@@ -1855,6 +1864,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--signal); box-sha
   .settings-workbench { grid-template-columns: 240px minmax(0, 1fr); }
   .secondary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .memory-grid, .workflow-grid, .connection-grid, .audit-grid, .runs-workbench, .harness-workbench, .engine-workbench, .tool-workbench { grid-template-columns: 1fr; }
+  .memory-retention-form { grid-template-columns: 1fr; align-items: stretch; }
   .memory-schedule-form { grid-template-columns: 1fr; }
   .memory-schedule-form-wide { grid-column: auto; }
   .memory-provenance-summary, .memory-governance-heading { align-items: stretch; flex-direction: column; }
@@ -1880,6 +1890,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--signal); box-sha
   .breadcrumb-muted, .breadcrumb-rule, .top-search span, .top-search kbd { display: none; }
   .top-search { width: 30px; justify-content: center; padding: 0; }
   .full-view { padding: 26px 18px 50px; }
+  .memory-retention-shell > .full-view { padding-bottom: 18px; }
+  .memory-retention-dock { padding: 0 18px 50px; }
   .page-header { grid-template-columns: 1fr; align-items: start; }
   .page-actions { justify-content: flex-start; }
   .core-column { padding: 0 14px 36px; }

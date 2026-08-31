@@ -35,6 +35,11 @@
   task-backed suites. Proposal-bound schedules are one-shot canaries that
   retain exact report digests and case counts, derive the versioned
   zero-failure result, and stop before the separate activation gate.
+- Added scoped memory-retention controls across the runtime, CLI, TUI guidance,
+  and desktop. Operators preview an exact revocation-time boundary before typed
+  confirmation removes already-revoked logical records; tombstones and audit
+  evidence remain, and the UI explicitly distinguishes compaction from secure
+  erasure of database pages, WAL files, backups, and storage snapshots.
 - Added verified, signed replacement of optional built-in Domain and Meta
   Harnesses with exact rollback to the compiled default. The constitutional
   Source Harness remains immutable.

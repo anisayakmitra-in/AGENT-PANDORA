@@ -52,8 +52,10 @@ fn powershell() -> &'static str {
         'scaffold','admit','validate','sign','keygen','install','install-github','list','inspect','enable','disable','rollback','lock','verify-lock','trust-root','remove'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'registry') {
         'list','set','use','remove'
+    } elseif ($elements.Count -gt 2 -and $elements[1] -eq 'memory' -and $elements[2] -eq 'schedule') {
+        'create','list','disable','claim','run','runs'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'memory') {
-        'recall','audit','forget','promote','synthesize'
+        'recall','audit','forget','compact','promote','synthesize','consolidate','provenance','schedule'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'approval') {
         'list','inspect','resolve'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'provider') {
@@ -121,8 +123,10 @@ fn bash() -> &'static str {
         COMPREPLY=( $(compgen -W 'scaffold admit validate sign keygen install install-github list inspect enable disable rollback lock verify-lock trust-root remove' -- "$current") )
     elif [[ "$previous" == "registry" ]]; then
         COMPREPLY=( $(compgen -W 'list set use remove' -- "$current") )
+    elif [[ "${COMP_WORDS[1]}" == "memory" && "$previous" == "schedule" ]]; then
+        COMPREPLY=( $(compgen -W 'create list disable claim run runs' -- "$current") )
     elif [[ "$previous" == "memory" ]]; then
-        COMPREPLY=( $(compgen -W 'recall audit forget promote synthesize consolidate provenance' -- "$current") )
+        COMPREPLY=( $(compgen -W 'recall audit forget compact promote synthesize consolidate provenance schedule' -- "$current") )
     elif [[ "$previous" == "approval" ]]; then
         COMPREPLY=( $(compgen -W 'list inspect resolve' -- "$current") )
     elif [[ "$previous" == "provider" ]]; then
@@ -190,8 +194,10 @@ elif [[ ${words[2]} == package ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:package command:(scaffold admit validate sign keygen install install-github list inspect enable disable rollback lock verify-lock trust-root remove)'
 elif [[ ${words[2]} == registry ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:registry command:(list set use remove)'
+elif [[ ${words[2]} == memory && ${words[3]} == schedule ]]; then
+    _arguments '3:memory schedule command:(create list disable claim run runs)'
 elif [[ ${words[2]} == memory ]]; then
-    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:memory command:(recall audit forget promote synthesize consolidate provenance)'
+    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:memory command:(recall audit forget compact promote synthesize consolidate provenance schedule)'
 elif [[ ${words[2]} == approval ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:approval command:(list inspect resolve)'
 elif [[ ${words[2]} == provider ]]; then
@@ -243,7 +249,8 @@ complete -c pandora -f -n '__fish_seen_subcommand_from subagent' -a 'spawn work 
 complete -c pandora -f -n '__fish_seen_subcommand_from skill' -a 'list inspect install enable disable suspend remove restore'
 complete -c pandora -f -n '__fish_seen_subcommand_from package' -a 'scaffold admit validate sign keygen install install-github list inspect enable disable rollback lock verify-lock trust-root remove'
 complete -c pandora -f -n '__fish_seen_subcommand_from registry' -a 'list set use remove'
-complete -c pandora -f -n '__fish_seen_subcommand_from memory' -a 'recall audit forget promote synthesize consolidate provenance'
+complete -c pandora -f -n '__fish_seen_subcommand_from memory; and not __fish_seen_subcommand_from schedule' -a 'recall audit forget compact promote synthesize consolidate provenance schedule'
+complete -c pandora -f -n '__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from schedule' -a 'create list disable claim run runs'
 complete -c pandora -f -n '__fish_seen_subcommand_from approval' -a 'list inspect resolve'
 complete -c pandora -f -n '__fish_seen_subcommand_from provider' -a 'list set use test'
 complete -c pandora -f -n '__fish_seen_subcommand_from mcp' -a 'list inspect set remove catalog call'
@@ -289,7 +296,7 @@ mod tests {
             "'list','resolve'",
             "'scaffold','admit','validate','sign','keygen','install','install-github','list','inspect','enable','disable','rollback','lock','verify-lock','trust-root','remove'",
             "'list','set','use','remove'",
-            "'recall','audit','forget','promote','synthesize'",
+            "'recall','audit','forget','compact','promote','synthesize','consolidate','provenance','schedule'",
             "'list','inspect','resolve'",
             "'list','set','use','test'",
             "'list','inspect','set','remove','catalog','call'",
@@ -310,7 +317,7 @@ mod tests {
                 "list resolve",
                 "scaffold admit validate sign keygen install install-github list inspect enable disable rollback lock verify-lock trust-root remove",
                 "list set use remove",
-                "recall audit forget promote synthesize",
+                "recall audit forget compact promote synthesize consolidate provenance schedule",
                 "list inspect resolve",
                 "list set use test",
                 "list inspect set remove",

@@ -469,6 +469,24 @@ impl MemoryEngine {
             .map_err(memory_store_error)
     }
 
+    pub fn preview_compact_revoked(
+        &self,
+        scope: &MemoryScope,
+        revoked_before_or_at: Timestamp,
+    ) -> Result<usize, MemoryError> {
+        let _synthesis_guard = self
+            .synthesis_gate
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        let Some(durable) = &self.durable else {
+            return Ok(0);
+        };
+        durable
+            .store
+            .count_compactable_memory(&durable.principal_id, scope, revoked_before_or_at)
+            .map_err(memory_store_error)
+    }
+
     pub fn synthesis_snapshot(
         &self,
         scope: &MemoryScope,
@@ -1033,9 +1051,21 @@ mod tests {
         );
         assert_eq!(
             engine
+                .preview_compact_revoked(&scope, Timestamp::from_unix_seconds(5))
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            engine
                 .compact_revoked(&scope, Timestamp::from_unix_seconds(5))
                 .unwrap(),
             2
+        );
+        assert_eq!(
+            engine
+                .preview_compact_revoked(&scope, Timestamp::from_unix_seconds(5))
+                .unwrap(),
+            0
         );
         assert_eq!(engine.try_audit(&scope).unwrap().len(), 4);
     }

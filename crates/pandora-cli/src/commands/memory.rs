@@ -20,13 +20,14 @@ const MEMORY_PROMOTION_GENE: &str = "memory.promote";
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "memory requires 'recall', 'audit', 'forget', 'promote', 'synthesize', 'consolidate', 'provenance', or 'schedule'",
+            "memory requires 'recall', 'audit', 'forget', 'compact', 'promote', 'synthesize', 'consolidate', 'provenance', or 'schedule'",
         )
     })?;
     match subcommand.as_str() {
         "recall" => recall(&args[1..]),
         "audit" => audit(&args[1..]),
         "forget" => forget(&args[1..]),
+        "compact" => compact(&args[1..]),
         "promote" => promote(&args[1..]),
         "synthesize" => synthesize(&args[1..]),
         "consolidate" => consolidate(&args[1..]),
@@ -859,6 +860,80 @@ fn forget(args: &[String]) -> Result<CommandResult, CliError> {
             "revoked": true,
         }),
         format!("Revoked memory {memory_id}"),
+    ))
+}
+
+fn compact(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "session",
+            "provider",
+            "before",
+            "yes",
+        ],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory compact does not accept positional arguments",
+        ));
+    }
+    let revoked_before_or_at = required_option(
+        &parsed,
+        "before",
+        "memory compact requires '--before <unix-seconds>'",
+    )?
+    .parse::<u64>()
+    .map(Timestamp::from_unix_seconds)
+    .map_err(|_| CliError::usage("memory compact before time must be Unix seconds"))?;
+    let (_, scope) = scope(&parsed)?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let principal = session_scope().0;
+    let engine = open_engine(&config, &principal)?;
+    let compactable_records = engine
+        .preview_compact_revoked(&scope, revoked_before_or_at)
+        .map_err(memory_error)?;
+    let boundary = json!({
+        "tombstones_retained": true,
+        "audit_retained": true,
+        "secure_erasure_guaranteed": false,
+        "storage_guidance": "Database pages, WAL files, backups, and storage snapshots require separate lifecycle controls.",
+    });
+    if !parsed.values.contains_key("yes") {
+        return Ok(success(
+            "memory compact",
+            json!({
+                "dry_run": true,
+                "scope": scope_value(&scope),
+                "revoked_before_or_at": revoked_before_or_at.as_unix_seconds(),
+                "compactable_records": compactable_records,
+                "would_compact": compactable_records > 0,
+                "boundary": boundary,
+            }),
+            format!(
+                "Dry run: {compactable_records} revoked memory record(s) are eligible for logical compaction; rerun with --yes"
+            ),
+        ));
+    }
+    let compacted_records = engine
+        .compact_revoked(&scope, revoked_before_or_at)
+        .map_err(memory_error)?;
+    Ok(success(
+        "memory compact",
+        json!({
+            "dry_run": false,
+            "scope": scope_value(&scope),
+            "revoked_before_or_at": revoked_before_or_at.as_unix_seconds(),
+            "compacted_records": compacted_records,
+            "boundary": boundary,
+        }),
+        format!(
+            "Compacted {compacted_records} revoked logical memory record(s); tombstones and audit evidence were retained"
+        ),
     ))
 }
 

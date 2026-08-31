@@ -48,6 +48,12 @@ Binding a staged proposal creates a one-shot canary that records the exact
 report digest and case counts, then pauses at canary evidence; it never
 activates the candidate. See [evaluation](docs/EVALUATION.md).
 
+Scoped memory retention is also operator-controlled. `memory compact` previews
+an exact revocation-time boundary and requires `--yes` before removing only
+already-revoked logical records. Tombstones and audit history remain; database
+pages, WAL files, backups, and storage snapshots need separate lifecycle
+controls. See [memory](docs/MEMORY.md).
+
 The npm package also exports a typed TypeScript client for the stable JSON CLI
 contract. It forwards an argv array to the verified native binary and does not
 create a second runtime or permission path. See [TypeScript client](docs/TYPESCRIPT.md).

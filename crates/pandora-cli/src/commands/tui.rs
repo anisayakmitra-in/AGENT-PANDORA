@@ -331,6 +331,7 @@ impl App {
                     "/meta-starter show the safe Meta Harness scaffold workflow",
                     "/gene-pack  show the declarative Gene pack evaluation workflow",
                     "/canary-loop show the governed scheduled-canary workflow",
+                    "/memory-retention show the scoped revoked-record compaction workflow",
                     "/approve    approve and resume the pending task",
                     "/deny       deny the pending task",
                     "/coding     inspect the Coding Domain Harness",
@@ -388,6 +389,14 @@ impl App {
                 );
                 self.push_message(
                     "canary> the one-shot run records report evidence and stops before explicit evolution activate",
+                );
+            }
+            "/memory-retention" => {
+                self.push_message(
+                    "memory> preview scoped revoked records with memory compact --before <unix-seconds>",
+                );
+                self.push_message(
+                    "memory> --yes removes only logical records; tombstones and audit remain, and database pages, WAL files, backups, and snapshots need separate lifecycle controls",
                 );
             }
             value if value.starts_with("/theme ") => {
@@ -898,6 +907,9 @@ mod tests {
         assert!(app.messages.iter().any(|message| {
             message == "/canary-loop show the governed scheduled-canary workflow"
         }));
+        assert!(app.messages.iter().any(|message| {
+            message == "/memory-retention show the scoped revoked-record compaction workflow"
+        }));
     }
 
     #[test]
@@ -959,6 +971,23 @@ mod tests {
         assert!(app.messages.iter().any(|message| {
             message
                 == "canary> the one-shot run records report evidence and stops before explicit evolution activate"
+        }));
+        assert_eq!(app.activity, TuiActivity::Idle);
+    }
+
+    #[test]
+    fn memory_retention_command_is_guidance_only() {
+        let mut app = app();
+        app.input = "/memory-retention".chars().collect();
+        app.submit();
+
+        assert!(app.messages.iter().any(|message| {
+            message
+                == "memory> preview scoped revoked records with memory compact --before <unix-seconds>"
+        }));
+        assert!(app.messages.iter().any(|message| {
+            message.contains("tombstones and audit remain")
+                && message.contains("backups, and snapshots")
         }));
         assert_eq!(app.activity, TuiActivity::Idle);
     }

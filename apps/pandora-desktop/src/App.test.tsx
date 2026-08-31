@@ -32,6 +32,7 @@ const runtime = vi.hoisted(() => ({
   listLocalSkills: vi.fn(),
   listRegistryProfiles: vi.fn(),
   lockLocalPackages: vi.fn(),
+  compactMemory: vi.fn(),
   forgetMemory: vi.fn(),
   memory: vi.fn(),
   memorySchedules: vi.fn(),
@@ -46,6 +47,7 @@ const runtime = vi.hoisted(() => ({
   previewPackageEnable: vi.fn(),
   previewPackageRollback: vi.fn(),
   previewMemoryForget: vi.fn(),
+  previewMemoryCompaction: vi.fn(),
   removeLocalPackage: vi.fn(),
   rollbackLocalPackage: vi.fn(),
   resolveApproval: vi.fn(),
@@ -77,6 +79,7 @@ vi.mock("./runtimeClient", () => ({
   listLocalSkills: runtime.listLocalSkills,
   listRegistryProfiles: runtime.listRegistryProfiles,
   lockLocalPackages: runtime.lockLocalPackages,
+  compactMemory: runtime.compactMemory,
   mutateLocalSkill: runtime.mutateLocalSkill,
   inspectMemoryAudit: runtime.inspectMemoryAudit,
   inspectMemoryProvenance: runtime.inspectMemoryProvenance,
@@ -86,6 +89,7 @@ vi.mock("./runtimeClient", () => ({
   previewPackageEnable: runtime.previewPackageEnable,
   previewPackageRollback: runtime.previewPackageRollback,
   previewMemoryForget: runtime.previewMemoryForget,
+  previewMemoryCompaction: runtime.previewMemoryCompaction,
   removeLocalPackage: runtime.removeLocalPackage,
   rollbackLocalPackage: runtime.rollbackLocalPackage,
   startLocalService: vi.fn(),
@@ -213,6 +217,35 @@ beforeEach(() => {
   runtime.forgetMemory.mockResolvedValue({
     message: "Memory revoked with a durable tombstone.",
     data: { dry_run: false, memory_id: "memory", revoked: true },
+  });
+  runtime.previewMemoryCompaction.mockResolvedValue({
+    message: "Previewed 0 revoked logical memory record(s); no records changed.",
+    data: {
+      dry_run: true,
+      revoked_before_or_at: 4102444800,
+      compactable_records: 0,
+      would_compact: false,
+      boundary: {
+        tombstones_retained: true,
+        audit_retained: true,
+        secure_erasure_guaranteed: false,
+        storage_guidance: "Database pages, WAL files, backups, and storage snapshots require separate lifecycle controls.",
+      },
+    },
+  });
+  runtime.compactMemory.mockResolvedValue({
+    message: "Compacted 0 revoked logical memory record(s); tombstones and audit evidence remain.",
+    data: {
+      dry_run: false,
+      revoked_before_or_at: 4102444800,
+      compacted_records: 0,
+      boundary: {
+        tombstones_retained: true,
+        audit_retained: true,
+        secure_erasure_guaranteed: false,
+        storage_guidance: "Database pages, WAL files, backups, and storage snapshots require separate lifecycle controls.",
+      },
+    },
   });
   runtime.memorySchedules.mockResolvedValue([]);
   runtime.memoryScheduleRuns.mockResolvedValue([]);
@@ -928,6 +961,72 @@ describe("Pandora desktop run state", () => {
     ));
     expect(await screen.findByText("Memory lesson-release-review revoked with a durable tombstone.")).toBeInTheDocument();
     await waitFor(() => expect(runtime.memory).toHaveBeenCalledTimes(2));
+  });
+
+  it("previews and exactly confirms scoped logical memory compaction", async () => {
+    runtime.sessions.mockResolvedValue([session]);
+    runtime.previewMemoryCompaction.mockResolvedValue({
+      message: "Previewed 2 revoked logical memory record(s) at or before 4102444800; no records changed.",
+      data: {
+        dry_run: true,
+        revoked_before_or_at: 4102444800,
+        compactable_records: 2,
+        would_compact: true,
+        boundary: {
+          tombstones_retained: true,
+          audit_retained: true,
+          secure_erasure_guaranteed: false,
+          storage_guidance: "Database pages, WAL files, backups, and storage snapshots require separate lifecycle controls.",
+        },
+      },
+    });
+    runtime.compactMemory.mockResolvedValue({
+      message: "Compacted 2 revoked logical memory record(s); tombstones and audit evidence remain.",
+      data: {
+        dry_run: false,
+        revoked_before_or_at: 4102444800,
+        compacted_records: 2,
+        boundary: {
+          tombstones_retained: true,
+          audit_retained: true,
+          secure_erasure_guaranteed: false,
+          storage_guidance: "Database pages, WAL files, backups, and storage snapshots require separate lifecycle controls.",
+        },
+      },
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Connections" }));
+    const sessionButtons = await screen.findAllByRole("button", { name: /session-1/ });
+    fireEvent.click(sessionButtons[sessionButtons.length - 1]);
+    await waitFor(() => expect(runtime.inspectSession).toHaveBeenCalledWith("session-1"));
+    fireEvent.click(await screen.findByRole("button", { name: "Memory" }));
+
+    const boundary = await screen.findByLabelText("Revoked before Unix seconds");
+    fireEvent.change(boundary, { target: { value: "4102444800" } });
+    fireEvent.click(screen.getByRole("button", { name: "Preview compaction" }));
+    await waitFor(() => expect(runtime.previewMemoryCompaction).toHaveBeenCalledWith(
+      session.session_id,
+      "local",
+      4102444800,
+    ));
+    expect(await screen.findByText("2 revoked record(s) eligible")).toBeInTheDocument();
+    expect(screen.getByText(/does not securely erase SQLite pages/)).toBeInTheDocument();
+
+    const confirmation = screen.getByLabelText("Confirm memory compaction");
+    const apply = screen.getByRole("button", { name: "Confirm logical compaction" });
+    expect(apply).toBeDisabled();
+    fireEvent.change(confirmation, { target: { value: "COMPACT 4102444800" } });
+    expect(apply).toBeEnabled();
+    fireEvent.click(apply);
+
+    await waitFor(() => expect(runtime.compactMemory).toHaveBeenCalledWith(
+      session.session_id,
+      "local",
+      4102444800,
+      "COMPACT 4102444800",
+    ));
+    expect(await screen.findByText("Compacted 2 revoked logical memory record(s); tombstones and audit evidence remain.")).toBeInTheDocument();
   });
 
   it("renders Council from recorded run evidence without fabricating authority", async () => {
