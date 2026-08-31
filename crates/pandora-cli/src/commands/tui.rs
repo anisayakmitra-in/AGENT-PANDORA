@@ -326,6 +326,8 @@ impl App {
                     "/clear      clear the transcript",
                     "/theme      show or select auto, dark, light, or mono",
                     "/activity   show the typed public TUI activity state",
+                    "/packages   list locally admitted package identities",
+                    "/domain-starter show the safe Domain Harness scaffold workflow",
                     "/approve    approve and resume the pending task",
                     "/deny       deny the pending task",
                     "/coding     inspect the Coding Domain Harness",
@@ -351,6 +353,15 @@ impl App {
                     "activity> {} (typed public state only)",
                     self.activity.name()
                 ));
+            }
+            "/packages" => self.show_packages(),
+            "/domain-starter" => {
+                self.push_message(
+                    "starter> pandora package scaffold domain-harness --output <new-directory>",
+                );
+                self.push_message(
+                    "starter> generation is local-only; validate and dry-run enable before --yes",
+                );
             }
             value if value.starts_with("/theme ") => {
                 match TuiTheme::parse(Some(value.trim_start_matches("/theme ").trim())) {
@@ -383,6 +394,64 @@ impl App {
             self.remember_history(line.trim());
         }
         false
+    }
+
+    fn show_packages(&mut self) {
+        self.activity = TuiActivity::Working;
+        let mut args = vec!["list".to_owned()];
+        for option in ["config", "data-dir", "workspace"] {
+            if let Some(value) = self.args.value(option) {
+                args.push(format!("--{option}"));
+                args.push(value.to_owned());
+            }
+        }
+        match super::package::execute(&args) {
+            Ok(result) => {
+                self.activity = TuiActivity::Success;
+                let packages = result
+                    .data
+                    .get("packages")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                if packages.is_empty() {
+                    self.push_message("packages> none admitted locally");
+                    return;
+                }
+                let total = packages.len();
+                for package in packages.iter().take(50) {
+                    let id = package
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    let version = package
+                        .get("version")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    let kind = package
+                        .get("kind")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    let state = package
+                        .get("activation")
+                        .and_then(|activation| activation.get("state"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("disabled");
+                    self.push_message(format!(
+                        "package> {id}@{version} · {kind} · {state} · authority none"
+                    ));
+                }
+                if total > 50 {
+                    self.push_message(format!(
+                        "packages> showing 50 of {total}; use the JSON CLI for the full list"
+                    ));
+                }
+            }
+            Err(error) => {
+                self.activity = TuiActivity::Failure;
+                self.push_message(format!("error> {}", clean_text(&error.message)));
+            }
+        }
     }
 
     fn run_task(&mut self, task: String) {
@@ -777,6 +846,35 @@ mod tests {
         assert!(app.messages.iter().any(|message| {
             message == "/audit, /argus-review, /debt, /measure, /guide run workflow Genes"
         }));
+    }
+
+    #[test]
+    fn help_exposes_package_and_domain_starter_discovery() {
+        let mut app = app();
+        app.input = "/help".chars().collect();
+        app.submit();
+
+        assert!(
+            app.messages
+                .iter()
+                .any(|message| message == "/packages   list locally admitted package identities")
+        );
+        assert!(app.messages.iter().any(|message| {
+            message == "/domain-starter show the safe Domain Harness scaffold workflow"
+        }));
+    }
+
+    #[test]
+    fn domain_starter_command_is_guidance_only() {
+        let mut app = app();
+        app.input = "/domain-starter".chars().collect();
+        app.submit();
+
+        assert!(app.messages.iter().any(|message| {
+            message == "starter> pandora package scaffold domain-harness --output <new-directory>"
+        }));
+        assert_eq!(app.activity, TuiActivity::Idle);
+        assert_eq!(app.run_args("inspect", None), ["--agent", "inspect"]);
     }
 
     #[test]

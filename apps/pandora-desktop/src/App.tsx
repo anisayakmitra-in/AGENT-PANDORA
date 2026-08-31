@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode, type RefObject } from "react";
+import desktopPackage from "../package.json";
 import {
   defaultAppearance,
   loadAppearance,
@@ -2220,7 +2221,7 @@ function PackageAuthoring() {
   const [version, setVersion] = useState("0.1.0");
   const [publisher, setPublisher] = useState("local");
   const [contentHash, setContentHash] = useState("");
-  const [compatibility, setCompatibility] = useState("pandora>=2.0.0");
+  const [compatibility, setCompatibility] = useState(`pandora=${desktopPackage.version}`);
   const [license, setLicense] = useState("Apache-2.0");
   const [dependencies, setDependencies] = useState("");
   const [routeHints, setRouteHints] = useState("");
@@ -2251,9 +2252,14 @@ function PackageAuthoring() {
     if (!/^sha256:[0-9a-fA-F]{64}$/.test(cleanHash)) errors.push("Content hash must be a sha256: digest with 64 hexadecimal characters.");
     if (!cleanCompatibility.startsWith("pandora") || cleanCompatibility === "pandora*") errors.push("Compatibility must be a bounded Pandora requirement, not a wildcard.");
     if (!cleanLicense) errors.push("License is required.");
+    const dependencyIds = new Set<string>();
     dependencyRecords.forEach((dependency) => {
       if (!dependency.id || !dependency.version) errors.push(`Dependency '${dependency.id || "?"}' needs id@version.`);
+      else if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(dependency.version)) errors.push(`Dependency '${dependency.id}' needs an exact SemVer version.`);
+      if (dependencyIds.has(dependency.id)) errors.push(`Dependency '${dependency.id}' is declared more than once.`);
+      dependencyIds.add(dependency.id);
     });
+    if (kind === "domain_harness" && !dependencyRecords.some((dependency) => !dependency.optional && dependency.id && dependency.version)) errors.push("Domain Harnesses need at least one required Gene dependency.");
     if (kind === "domain_harness" && hints.some((hint) => hint.length < 3 || hint.length > 64)) errors.push("Route hints must be 3–64 characters.");
     if (kind === "meta_harness" && !domains.length) errors.push("Meta Harnesses need at least one allowed Domain Harness.");
     const handoffLimit = Number.parseInt(maxHandoffs.trim(), 10);
@@ -2285,6 +2291,7 @@ function PackageAuthoring() {
   return <div className="package-authoring">
     <div className="package-authoring-heading"><div><span className="eyebrow">MANIFEST WORKBENCH</span><h4>Author a package envelope</h4><p>Shape a Domain, Meta, or Gene manifest before it enters the normal admission boundary.</p></div><Chip tone={preview.errors.length ? "gold" : "green"}>{preview.errors.length ? `${preview.errors.length} checks` : "manifest ready"}</Chip></div>
     <div className="package-boundary"><Icon name="shield" size={14} /><span>This is a local preview only. It never signs, admits, enables, publishes, stores keys, or grants authority. Trust starts unverified; package admission re-validates the exact JSON.</span></div>
+    <div className="package-boundary" aria-label="Domain Harness starter kit"><Icon name="spark" size={14} /><span>Need the artifact and manifest files together? Run <code>pandora package scaffold domain-harness --output &lt;new-directory&gt;</code>. The TUI repeats this local-only workflow with <code>/domain-starter</code>; this workbench remains preview-only.</span></div>
     <div className="package-authoring-grid">
       <form className="package-form" onSubmit={(event) => event.preventDefault()}>
         <label><span>Package kind</span><select aria-label="Authoring package kind" value={kind} onChange={(event) => setKind(event.target.value as AuthoringKind)}><option value="domain_harness">Domain Harness</option><option value="meta_harness">Meta Harness</option><option value="gene">Gene</option></select></label>

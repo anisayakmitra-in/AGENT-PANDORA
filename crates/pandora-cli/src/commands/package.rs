@@ -9,7 +9,10 @@ use pandora_runtime::{
     PackageBinding, PackageRecord, PackageRegistryClient, PackageRegistryError, PackageStore,
     PackageStoreError, WasmExecutor,
 };
-use pandora_types::{ArtifactId, PackageId, PackageKind, PackageManifest, hash_artifact};
+use pandora_types::{
+    ArtifactId, DomainRoutingProfile, PackageCompatibility, PackageDependency, PackageId,
+    PackageKind, PackageManifest, TrustEvidence, hash_artifact,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::fs;
@@ -22,10 +25,11 @@ const DEFAULT_GITHUB_TOKEN_ENV: &str = "PANDORA_GITHUB_TOKEN";
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "package requires 'admit', 'validate', 'sign', 'keygen', 'install', 'install-github', 'list', 'inspect', 'enable', 'disable', 'rollback', 'lock', 'verify-lock', 'trust-root', or 'remove'",
+            "package requires 'scaffold', 'admit', 'validate', 'sign', 'keygen', 'install', 'install-github', 'list', 'inspect', 'enable', 'disable', 'rollback', 'lock', 'verify-lock', 'trust-root', or 'remove'",
         )
     })?;
     match subcommand.as_str() {
+        "scaffold" => scaffold(&args[1..]),
         "admit" => admit(&args[1..]),
         "validate" => validate(&args[1..]),
         "sign" => sign(&args[1..]),
@@ -509,6 +513,221 @@ fn encode_hex(bytes: &[u8]) -> String {
         encoded.push(HEX[(byte & 0x0f) as usize] as char);
     }
     encoded
+}
+
+#[derive(Serialize)]
+struct DomainHarnessStarterGene<'a> {
+    id: &'a str,
+    version: &'a str,
+}
+
+#[derive(Serialize)]
+struct DomainHarnessStarterArtifact<'a> {
+    format_version: u32,
+    kind: &'static str,
+    id: &'a str,
+    version: &'a str,
+    owned_genes: Vec<DomainHarnessStarterGene<'a>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    route_hints: Vec<&'a str>,
+}
+
+fn scaffold(args: &[String]) -> Result<CommandResult, CliError> {
+    let kind = args.first().ok_or_else(|| {
+        CliError::usage("package scaffold requires the 'domain-harness' starter kind")
+    })?;
+    if kind != "domain-harness" {
+        return Err(CliError::usage(format!(
+            "unsupported package scaffold kind '{kind}'; expected domain-harness"
+        )));
+    }
+    let parsed = parse_options(
+        &args[1..],
+        &[
+            "output",
+            "id",
+            "version",
+            "publisher",
+            "gene",
+            "route-hint",
+            "license",
+        ],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "package scaffold domain-harness accepts only named options",
+        ));
+    }
+
+    let output = required_path(&parsed, "output")?;
+    let id = parsed.value("id").unwrap_or("example/domain-starter");
+    let version = parsed.value("version").unwrap_or("1.0.0");
+    let publisher = parsed.value("publisher").unwrap_or("local-contributor");
+    let license = parsed.value("license").unwrap_or("Apache-2.0");
+    let gene = parsed.value("gene").unwrap_or("workspace.read@0.1.0");
+    let (gene_id, gene_version) = gene
+        .rsplit_once('@')
+        .ok_or_else(|| CliError::usage("--gene requires an exact '<gene-id>@<semver>' identity"))?;
+    if gene_id.is_empty() || gene_version.is_empty() {
+        return Err(CliError::usage(
+            "--gene requires an exact '<gene-id>@<semver>' identity",
+        ));
+    }
+    let route_hint = parsed.value("route-hint");
+
+    let artifact_value = DomainHarnessStarterArtifact {
+        format_version: 1,
+        kind: "domain_harness_profile",
+        id,
+        version,
+        owned_genes: vec![DomainHarnessStarterGene {
+            id: gene_id,
+            version: gene_version,
+        }],
+        route_hints: route_hint.into_iter().collect(),
+    };
+    let mut artifact = serde_json::to_vec_pretty(&artifact_value).map_err(|_| {
+        CliError::internal(
+            "could not encode Domain Harness starter artifact",
+            json!({}),
+        )
+    })?;
+    artifact.push(b'\n');
+
+    let dependency = PackageDependency::new(gene_id, gene_version, false)
+        .map_err(|error| CliError::usage(format!("starter Gene identity is invalid: {error}")))?;
+    let compatibility = PackageCompatibility::new(format!("pandora={}", env!("CARGO_PKG_VERSION")))
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let mut manifest = PackageManifest::new(
+        id,
+        version,
+        PackageKind::DomainHarness,
+        publisher,
+        hash_artifact(&artifact),
+        vec![dependency],
+        compatibility,
+        license,
+        TrustEvidence::unsigned(),
+    )
+    .map_err(|error| CliError::usage(format!("starter manifest is invalid: {error}")))?;
+    if let Some(hint) = route_hint {
+        let routing = DomainRoutingProfile::new(vec![hint.to_owned()])
+            .map_err(|error| CliError::usage(format!("starter route hint is invalid: {error}")))?;
+        manifest = manifest
+            .with_domain_routing(routing)
+            .map_err(|error| CliError::usage(format!("starter routing is invalid: {error}")))?;
+    }
+
+    let mut manifest_bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|_| CliError::internal("could not encode starter manifest", json!({})))?;
+    manifest_bytes.push(b'\n');
+    let readme = domain_harness_starter_readme(id, version, gene_id, gene_version);
+    let architecture = domain_harness_starter_architecture();
+    let files = [
+        ("pandora.package.json", manifest_bytes.as_slice()),
+        ("domain-harness.artifact", artifact.as_slice()),
+        ("README.md", readme.as_bytes()),
+        ("ARCHITECTURE.md", architecture.as_bytes()),
+    ];
+    write_scaffold_directory(&output, &files)?;
+
+    let manifest_path = output.join("pandora.package.json");
+    let artifact_path = output.join("domain-harness.artifact");
+    Ok(success(
+        "package scaffold",
+        json!({
+            "scaffold": {
+                "format_version": 1,
+                "kind": "domain_harness",
+                "directory": output,
+                "manifest": manifest_path,
+                "artifact": artifact_path,
+                "package": {
+                    "id": manifest.id().as_str(),
+                    "version": manifest.version(),
+                    "content_hash": manifest.content_hash(),
+                    "runtime_compatibility": manifest.compatibility().runtime(),
+                    "owned_genes": manifest.dependencies().iter().map(|dependency| json!({
+                        "id": dependency.id().as_str(),
+                        "version": dependency.version(),
+                    })).collect::<Vec<_>>(),
+                    "route_hints": manifest.domain_routing().map(|routing| routing.hints()).unwrap_or(&[]),
+                },
+            },
+            "network_requested": false,
+            "credential_accessed": false,
+            "persisted_package": false,
+            "runtime_authority": false,
+            "next_steps": [
+                ["pandora", "package", "validate", "--manifest", "pandora.package.json", "--artifact", "domain-harness.artifact"],
+                ["pandora", "package", "admit", "--manifest", "pandora.package.json", "--artifact", "domain-harness.artifact"],
+                ["pandora", "package", "enable", manifest.id().as_str(), manifest.version(), "--dry-run"],
+                ["pandora", "package", "enable", manifest.id().as_str(), manifest.version(), "--yes"],
+            ],
+        }),
+        format!(
+            "Created a local Domain Harness starter at {} without admission or activation",
+            output.display()
+        ),
+    ))
+}
+
+fn write_scaffold_directory(output: &Path, files: &[(&str, &[u8])]) -> Result<(), CliError> {
+    fs::create_dir(output).map_err(|error| {
+        CliError::configuration(
+            "could not create the Domain Harness starter directory; choose a new path whose parent exists",
+            json!({"path": output, "error": error.to_string()}),
+        )
+    })?;
+    let mut created = Vec::new();
+    for (name, contents) in files {
+        let path = output.join(name);
+        let mut file = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(file) => file,
+            Err(error) => {
+                for created_path in &created {
+                    let _ = fs::remove_file(created_path);
+                }
+                let _ = fs::remove_dir(output);
+                return Err(CliError::configuration(
+                    "could not write the Domain Harness starter files",
+                    json!({"path": path, "error": error.to_string()}),
+                ));
+            }
+        };
+        created.push(path.clone());
+        if let Err(error) = file.write_all(contents).and_then(|()| file.sync_all()) {
+            drop(file);
+            for created_path in &created {
+                let _ = fs::remove_file(created_path);
+            }
+            let _ = fs::remove_dir(output);
+            return Err(CliError::configuration(
+                "could not write the Domain Harness starter files",
+                json!({"path": path, "error": error.to_string()}),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn domain_harness_starter_readme(
+    id: &str,
+    version: &str,
+    gene_id: &str,
+    gene_version: &str,
+) -> String {
+    format!(
+        "# Pandora Domain Harness starter\n\nThis directory is a deterministic, metadata-only Domain Harness profile for `{id}@{version}`. It owns the exact Gene dependency `{gene_id}@{gene_version}`. No generator step contacts a network, reads a credential, admits a package, enables a binding, or grants runtime authority.\n\n## Local lifecycle\n\nRun these commands from this directory:\n\n```text\npandora package validate --manifest pandora.package.json --artifact domain-harness.artifact\npandora package admit --manifest pandora.package.json --artifact domain-harness.artifact\npandora package enable <id> <version> --dry-run\npandora package enable <id> <version> --yes\npandora package inspect <id> <version>\npandora package disable <id> <version> --dry-run\npandora package disable <id> <version> --yes\n```\n\nTo exercise rollback, scaffold and admit a second exact version with the same ID, enable the first version, then the second, and run:\n\n```text\npandora package rollback <id> --dry-run\npandora package rollback <id> --yes\n```\n\nReplace the placeholders with the manifest values. Admission resolves required Genes exactly. Activation changes package availability only; governed effects still require Parliament policy evaluation, approval when applicable, and a one-shot ReferenceMonitor permit. See `ARCHITECTURE.md`.\n"
+    )
+}
+
+fn domain_harness_starter_architecture() -> &'static str {
+    "# Authority boundary\n\nThe Domain Harness package is declarative metadata. Its dependency list names the exact Genes it owns, and optional route hints only participate in Shadow Council selection. Equal best route claims fail closed and require explicit Harness selection.\n\nAdmission verifies the package identity, strict SemVer, exact artifact hash, runtime requirement, dependencies, and trust evidence. Admission and enablement do not execute the artifact, add an effect capability, approve an operation, or issue a permit.\n\nParliament remains the policy authority for a planned operation. ReferenceMonitor remains the sole issuer of scoped, one-shot effect permits. Neither component is replaceable or configurable through a Domain Harness manifest.\n"
 }
 
 fn validate(args: &[String]) -> Result<CommandResult, CliError> {

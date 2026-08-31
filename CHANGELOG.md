@@ -18,6 +18,9 @@
 - Added bounded Auto Route hints for admitted Domain Harnesses. Shadow Council
   selects the most specific active route, rejects equal matches, and preserves
   explicit operator selection. Route metadata grants no runtime capability.
+- Added a deterministic local Domain Harness starter kit, CLI scaffolder, and
+  TUI package discovery. Duplicate owned Gene IDs and undeclared package
+  capability fields now fail closed before admission.
 - Added verified, signed replacement of optional built-in Domain and Meta
   Harnesses with exact rollback to the compiled default. The constitutional
   Source Harness remains immutable.

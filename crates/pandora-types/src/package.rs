@@ -74,6 +74,7 @@ pub enum PackageManifestError {
     InvalidMetaComposition,
     InvalidDomainRouting,
     UnexpectedDomainRouting,
+    DuplicateDependency(String),
 }
 
 impl fmt::Display for PackageManifestError {
@@ -108,6 +109,12 @@ impl fmt::Display for PackageManifestError {
             ),
             Self::UnexpectedDomainRouting => {
                 formatter.write_str("only Domain Harness packages may declare routing hints")
+            }
+            Self::DuplicateDependency(id) => {
+                write!(
+                    formatter,
+                    "package dependency '{id}' is declared more than once"
+                )
             }
         }
     }
@@ -308,6 +315,7 @@ impl DomainRoutingProfile {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PackageManifest {
     id: PackageId,
     version: String,
@@ -559,8 +567,14 @@ impl PackageManifest {
         }
         validate_text("publisher", self.publisher.clone())?;
         validate_hash(self.content_hash.clone())?;
+        let mut dependency_ids = std::collections::BTreeSet::new();
         for dependency in &self.dependencies {
             dependency.validate()?;
+            if !dependency_ids.insert(dependency.id().as_str()) {
+                return Err(PackageManifestError::DuplicateDependency(
+                    dependency.id().as_str().to_owned(),
+                ));
+            }
         }
         self.compatibility.validate()?;
         validate_text("license", self.license.clone())?;
@@ -978,6 +992,50 @@ mod tests {
             ),
             Err(PackageManifestError::InvalidVersion)
         );
+    }
+
+    #[test]
+    fn package_manifest_rejects_duplicate_owned_gene_ids() {
+        let artifact = b"domain";
+        assert_eq!(
+            PackageManifest::new(
+                "publisher/domain",
+                "1.0.0",
+                PackageKind::DomainHarness,
+                "publisher",
+                hash_artifact(artifact),
+                vec![
+                    PackageDependency::new("workspace.read", "0.1.0", false).unwrap(),
+                    PackageDependency::new("workspace.read", "0.2.0", false).unwrap(),
+                ],
+                PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+                "MIT",
+                TrustEvidence::unsigned(),
+            ),
+            Err(PackageManifestError::DuplicateDependency(
+                "workspace.read".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn package_manifest_rejects_undeclared_capability_fields() {
+        let manifest = PackageManifest::new(
+            "publisher/domain",
+            "1.0.0",
+            PackageKind::DomainHarness,
+            "publisher",
+            hash_artifact(b"domain"),
+            vec![PackageDependency::new("workspace.read", "0.1.0", false).unwrap()],
+            PackageCompatibility::new("pandora>=2.0.0").unwrap(),
+            "MIT",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+        let mut encoded = serde_json::to_value(manifest).unwrap();
+        encoded["capabilities"] = serde_json::json!(["workspace.write"]);
+
+        assert!(serde_json::from_value::<PackageManifest>(encoded).is_err());
     }
 
     #[test]

@@ -354,6 +354,10 @@ The status line reports one of five typed public activity states: `idle`,
 the transcript. This is a terminal equivalent of the optional desktop
 companion and never includes prompts, tool output, hidden reasoning, or runtime
 arguments.
+`/packages` lists at most 50 local package identities with their kind and
+activation state; it never displays package bytes or trust secrets.
+`/domain-starter` prints the local CLI scaffold command and safety sequence. It
+is guidance only and does not write files from the TUI.
 The
 in-memory transcript and task history are bounded; the session store remains
 the source for later resume. The TUI accepts the same Coding and Research slash
@@ -786,6 +790,7 @@ pandora skill disable <id>
 pandora skill remove <id> --dry-run
 pandora skill remove <id> --yes
 pandora skill restore <id>
+pandora package scaffold domain-harness --output <new-directory> [--id <id>] [--version <semver>] [--publisher <name>] [--gene <id>@<semver>] [--route-hint <hint>]
 pandora package admit --manifest <manifest.json> --artifact <artifact>
 pandora package validate --manifest <manifest.json> --artifact <artifact>
 pandora package keygen --publisher <name> --key-id <id> --secret-name <vault-name>
@@ -920,6 +925,17 @@ through the governed ToolEngine path.
 Package records are addressed by exact ID and strict SemVer version. `package admit`
 reads at most the local artifact limit plus one byte before it rejects an oversized
 artifact.
+
+`package scaffold domain-harness` creates a new, deterministic local starter
+directory with a versioned metadata-only artifact, an exact package manifest,
+and lifecycle and authority notes. Defaults bind the built-in
+`workspace.read@0.1.0` Gene and the running Pandora version exactly. `--gene`
+accepts one exact Gene identity, and `--route-hint` adds one optional canonical
+Auto Route claim. The output path must not already exist. Scaffolding does not
+load configuration credentials, contact a network, admit or enable the package,
+execute the artifact, or grant runtime authority. The TUI exposes `/packages`
+for bounded local discovery and `/domain-starter` for this workflow; mutations
+remain explicit CLI commands with the existing dry-run and `--yes` boundaries.
 
 `package validate` performs the same bounded manifest and artifact identity checks
 without writing to the package store. Gene artifacts must also be valid import-free

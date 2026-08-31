@@ -8007,6 +8007,359 @@ fn package_validate_reports_wasm_boundary_without_persisting() {
 }
 
 #[test]
+fn tracked_domain_harness_reference_package_validates() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let starter = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("sdk/domain-harness-starter");
+    let output = fixture
+        .command(&[
+            "package",
+            "validate",
+            "--manifest",
+            starter.join("pandora.package.json").to_str().unwrap(),
+            "--artifact",
+            starter.join("domain-harness.artifact").to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("tracked Domain Harness starter validation should start");
+
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["package"]["id"], "example/domain-starter");
+    assert_eq!(response["execution_boundary"], "metadata-only");
+    assert_eq!(response["persisted"], false);
+}
+
+#[test]
+fn domain_harness_scaffold_supports_the_full_local_lifecycle() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let mut generated = Vec::new();
+    for version in ["1.0.0", "2.0.0"] {
+        let directory = fixture.root.join(format!("starter-{version}"));
+        let output = fixture
+            .command(&[
+                "package",
+                "scaffold",
+                "domain-harness",
+                "--output",
+                directory.to_str().unwrap(),
+                "--id",
+                "example/starter-domain",
+                "--version",
+                version,
+                "--publisher",
+                "starter-test",
+                "--gene",
+                "workspace.read@0.1.0",
+                "--route-hint",
+                "starter domain",
+                "--json",
+            ])
+            .env("PANDORA_GITHUB_TOKEN", "must-not-be-read")
+            .output()
+            .expect("Domain Harness scaffold should start");
+        assert_success(&output);
+        let response = parse_json(&output);
+        assert_eq!(response["scaffold"]["format_version"], 1);
+        assert_eq!(response["scaffold"]["package"]["version"], version);
+        assert_eq!(response["network_requested"], false);
+        assert_eq!(response["credential_accessed"], false);
+        assert_eq!(response["persisted_package"], false);
+        assert_eq!(response["runtime_authority"], false);
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("must-not-be-read"));
+
+        let manifest = directory.join("pandora.package.json");
+        let artifact = directory.join("domain-harness.artifact");
+        assert!(manifest.is_file());
+        assert!(artifact.is_file());
+        assert!(directory.join("README.md").is_file());
+        assert!(directory.join("ARCHITECTURE.md").is_file());
+
+        let validated = fixture
+            .command(&[
+                "package",
+                "validate",
+                "--manifest",
+                manifest.to_str().unwrap(),
+                "--artifact",
+                artifact.to_str().unwrap(),
+                "--json",
+            ])
+            .output()
+            .expect("starter validation should start");
+        assert_success(&validated);
+        let validated = parse_json(&validated);
+        assert_eq!(validated["valid"], true);
+        assert_eq!(validated["execution_boundary"], "metadata-only");
+        assert_eq!(validated["persisted"], false);
+
+        let admitted = fixture
+            .command(&[
+                "package",
+                "admit",
+                "--manifest",
+                manifest.to_str().unwrap(),
+                "--artifact",
+                artifact.to_str().unwrap(),
+                "--json",
+            ])
+            .output()
+            .expect("starter admission should start");
+        assert_success(&admitted);
+        let admitted = parse_json(&admitted);
+        assert_eq!(admitted["package"]["state"], "admitted");
+        assert_eq!(admitted["package"]["activation"]["state"], "disabled");
+        assert_eq!(admitted["package"]["runtime_authority"], false);
+        assert_eq!(
+            admitted["package"]["activation"]["runtime_authority"],
+            false
+        );
+        generated.push((manifest, artifact));
+    }
+
+    let preview = fixture
+        .command(&[
+            "package",
+            "enable",
+            "example/starter-domain",
+            "1.0.0",
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("starter enable preview should start");
+    assert_success(&preview);
+    let preview = parse_json(&preview);
+    assert_eq!(preview["ready"], true);
+    assert_eq!(preview["changed"], false);
+    assert_eq!(preview["dependencies"][0]["source"], "built_in");
+
+    for version in ["1.0.0", "2.0.0"] {
+        let enabled = fixture
+            .command(&[
+                "package",
+                "enable",
+                "example/starter-domain",
+                version,
+                "--yes",
+                "--json",
+            ])
+            .output()
+            .expect("starter enable should start");
+        assert_success(&enabled);
+        let enabled = parse_json(&enabled);
+        assert_eq!(enabled["binding"]["active_version"], version);
+        assert_eq!(enabled["binding"]["runtime_authority"], false);
+    }
+
+    let inspected = fixture
+        .command(&[
+            "package",
+            "inspect",
+            "example/starter-domain",
+            "2.0.0",
+            "--json",
+        ])
+        .output()
+        .expect("starter inspection should start");
+    assert_success(&inspected);
+    let inspected = parse_json(&inspected);
+    assert_eq!(
+        inspected["package"]["activation"]["active_version"],
+        "2.0.0"
+    );
+    assert_eq!(
+        inspected["package"]["activation"]["previous_version"],
+        "1.0.0"
+    );
+
+    let rollback_preview = fixture
+        .command(&[
+            "package",
+            "rollback",
+            "example/starter-domain",
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("starter rollback preview should start");
+    assert_success(&rollback_preview);
+    assert_eq!(parse_json(&rollback_preview)["target_version"], "1.0.0");
+
+    let rolled_back = fixture
+        .command(&[
+            "package",
+            "rollback",
+            "example/starter-domain",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("starter rollback should start");
+    assert_success(&rolled_back);
+    assert_eq!(parse_json(&rolled_back)["active_version"], "1.0.0");
+
+    let disabled = fixture
+        .command(&[
+            "package",
+            "disable",
+            "example/starter-domain",
+            "1.0.0",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("starter disable should start");
+    assert_success(&disabled);
+    assert_eq!(parse_json(&disabled)["binding"]["state"], "disabled");
+    assert_eq!(generated.len(), 2);
+}
+
+#[test]
+fn domain_harness_starter_validation_fails_closed() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let directory = fixture.root.join("invalid-starter");
+    let scaffolded = fixture
+        .command(&[
+            "package",
+            "scaffold",
+            "domain-harness",
+            "--output",
+            directory.to_str().unwrap(),
+            "--id",
+            "example/invalid-starter",
+            "--gene",
+            "workspace.read@0.1.0",
+            "--route-hint",
+            "starter route",
+            "--json",
+        ])
+        .output()
+        .expect("invalid starter base should be scaffolded");
+    assert_success(&scaffolded);
+    let manifest_path = directory.join("pandora.package.json");
+    let artifact_path = directory.join("domain-harness.artifact");
+    let original: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+
+    let mut unsupported_capability = original.clone();
+    unsupported_capability["capabilities"] = serde_json::json!(["workspace.write"]);
+    let unsupported_path = directory.join("unsupported-capability.json");
+    fs::write(
+        &unsupported_path,
+        serde_json::to_vec_pretty(&unsupported_capability).unwrap(),
+    )
+    .unwrap();
+    let refused = fixture
+        .command(&[
+            "package",
+            "validate",
+            "--manifest",
+            unsupported_path.to_str().unwrap(),
+            "--artifact",
+            artifact_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("unsupported capability validation should start");
+    assert!(!refused.status.success());
+    assert!(
+        parse_json(&refused)["message"]
+            .as_str()
+            .unwrap()
+            .contains("unknown field")
+    );
+
+    let mut duplicate_route = original;
+    duplicate_route["domain_routing"]["hints"] =
+        serde_json::json!(["starter route", "starter route"]);
+    let duplicate_route_path = directory.join("duplicate-route.json");
+    fs::write(
+        &duplicate_route_path,
+        serde_json::to_vec_pretty(&duplicate_route).unwrap(),
+    )
+    .unwrap();
+    let refused = fixture
+        .command(&[
+            "package",
+            "validate",
+            "--manifest",
+            duplicate_route_path.to_str().unwrap(),
+            "--artifact",
+            artifact_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("duplicate route validation should start");
+    assert!(!refused.status.success());
+    assert!(
+        parse_json(&refused)["message"]
+            .as_str()
+            .unwrap()
+            .contains("routing")
+    );
+
+    let missing_directory = fixture.root.join("missing-dependency");
+    let scaffolded = fixture
+        .command(&[
+            "package",
+            "scaffold",
+            "domain-harness",
+            "--output",
+            missing_directory.to_str().unwrap(),
+            "--id",
+            "example/missing-dependency",
+            "--gene",
+            "example/unavailable-gene@1.0.0",
+            "--json",
+        ])
+        .output()
+        .expect("missing dependency starter should be scaffolded");
+    assert_success(&scaffolded);
+    let refused = fixture
+        .command(&[
+            "package",
+            "admit",
+            "--manifest",
+            missing_directory
+                .join("pandora.package.json")
+                .to_str()
+                .unwrap(),
+            "--artifact",
+            missing_directory
+                .join("domain-harness.artifact")
+                .to_str()
+                .unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("missing dependency admission should start");
+    assert!(!refused.status.success());
+    let message = parse_json(&refused)["message"].as_str().unwrap().to_owned();
+    assert!(message.contains("required package dependency"));
+    assert!(message.contains("is not installed"));
+
+    let existing = fixture
+        .command(&[
+            "package",
+            "scaffold",
+            "domain-harness",
+            "--output",
+            directory.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("existing scaffold path check should start");
+    assert!(!existing.status.success());
+    let unchanged: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    assert_eq!(unchanged["id"], "example/invalid-starter");
+}
+
+#[test]
 fn admitted_wasm_gene_is_versioned_approved_and_receipted() {
     let fixture = Fixture::new();
     fixture.setup();

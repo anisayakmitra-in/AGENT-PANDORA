@@ -73,6 +73,7 @@ targets.
 Local package admission is explicit:
 
 ```text
+pandora package scaffold domain-harness --output <new-directory>
 pandora package admit --manifest <manifest.json> --artifact <artifact>
 pandora package install <id> [version] --registry <url>
 pandora registry set --name m-place --registry-url <url> [--token-env <name>]
@@ -90,6 +91,19 @@ pandora package verify-lock
 pandora package remove <id> <version> --dry-run
 pandora package remove <id> <version> --yes
 ```
+
+The copyable reference package lives at
+[`sdk/domain-harness-starter`](../sdk/domain-harness-starter/README.md).
+`package scaffold domain-harness` produces the same four-part starter contract:
+a strict package manifest, a deterministic metadata-only artifact, a local
+lifecycle guide, and an authority note. The generator defaults to one exact
+built-in Gene and exact compatibility with the running Pandora version. It may
+add one optional canonical route hint, but it cannot declare capabilities.
+Unknown manifest fields, repeated dependency IDs, noncanonical route lists,
+invalid identities or hashes, incompatible SemVer, and unresolved required
+dependencies fail closed at their normal validation or admission boundary.
+The generator performs no admission, activation, credential access, or network
+request.
 
 The native desktop Package Manager includes a Manifest Workbench for Domain,
 Meta, and Gene envelopes. It produces a copyable, deterministic JSON preview

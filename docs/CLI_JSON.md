@@ -49,6 +49,7 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora package keygen --json` | `package keygen` | `publisher`, `key_id`, `secret_name`, `public_key`, `private_key_exposed`, `stored`, `vault_path` |
 | `pandora package sign --json` | `package sign` | `manifest`, `package`, `key_id`, `public_key`, `signature_present`, `private_key_exposed`, `vault_secret` |
 | `pandora package trust-root list --json` | `package trust-root list` | `roots`, `count`, `durability` |
+| `pandora package scaffold domain-harness --output <path> --json` | `package scaffold` | `scaffold`, `network_requested`, `credential_accessed`, `persisted_package`, `runtime_authority`, `next_steps` |
 | `pandora package validate --manifest <path> --artifact <path> --json` | `package validate` | `valid`, `package`, `execution_boundary`, `persisted` |
 | `pandora package enable <id> <version> --dry-run --json` | `package enable` | `dry_run`, `changed`, `ready`, `package`, `dependencies`, `enabled_dependents` |
 | `pandora package enable <id> <version> --yes --json` | `package enable` | `dry_run`, `changed`, `package`, `binding` |

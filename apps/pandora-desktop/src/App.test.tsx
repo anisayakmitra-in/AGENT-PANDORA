@@ -1858,13 +1858,21 @@ describe("Pandora desktop run state", () => {
 
     expect(await screen.findByRole("heading", { name: "Author a package envelope" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy JSON" })).toBeDisabled();
+    expect(screen.getByLabelText("Domain Harness starter kit")).toHaveTextContent("pandora package scaffold domain-harness");
+    expect(screen.getByLabelText("Domain Harness starter kit")).toHaveTextContent("/domain-starter");
     fireEvent.change(screen.getByLabelText("Authoring package ID"), { target: { value: "owner/image-domain" } });
     fireEvent.change(screen.getByLabelText("Authoring content hash"), { target: { value: `sha256:${"a".repeat(64)}` } });
     fireEvent.change(screen.getByLabelText("Authoring route hints"), { target: { value: "image generation, text to image" } });
+    fireEvent.change(screen.getByLabelText("Authoring dependencies"), { target: { value: "workspace.read@0.1.0\nworkspace.read@0.2.0" } });
+
+    expect(await screen.findByText("Dependency 'workspace.read' is declared more than once.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy JSON" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Authoring dependencies"), { target: { value: "workspace.read@0.1.0" } });
 
     expect(await screen.findByText("manifest ready")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy JSON" })).toBeEnabled();
     expect(screen.getByLabelText("Package manifest JSON")).toHaveTextContent('"kind": "domain_harness"');
+    expect(screen.getByLabelText("Package manifest JSON")).toHaveTextContent('"runtime": "pandora=2.0.0-beta.7"');
     expect(screen.getByLabelText("Package manifest JSON")).toHaveTextContent('"license": "Apache-2.0"');
     expect(screen.getByLabelText("Package manifest JSON")).toHaveTextContent('"hints": [');
     expect(screen.getByText(/never signs, admits, enables, publishes, stores keys/i)).toBeInTheDocument();

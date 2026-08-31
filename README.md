@@ -46,6 +46,9 @@ also present. For the audited shipped/open split, see
 The npm package also exports a typed TypeScript client for the stable JSON CLI
 contract. It forwards an argv array to the verified native binary and does not
 create a second runtime or permission path. See [TypeScript client](docs/TYPESCRIPT.md).
+Contributors can start a declarative Domain Harness with the local-only
+[`sdk/domain-harness-starter`](sdk/domain-harness-starter/README.md) reference
+package or `pandora package scaffold domain-harness --output <new-directory>`.
 
 For project context, contribution rules, and security reporting, see
 [Why Pandora?](docs/WHY_PANDORA.md), [CONTRIBUTING.md](CONTRIBUTING.md), and

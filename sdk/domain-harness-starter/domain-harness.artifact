@@ -1,0 +1,15 @@
+{
+  "format_version": 1,
+  "kind": "domain_harness_profile",
+  "id": "example/domain-starter",
+  "version": "1.0.0",
+  "owned_genes": [
+    {
+      "id": "workspace.read",
+      "version": "0.1.0"
+    }
+  ],
+  "route_hints": [
+    "starter domain"
+  ]
+}
