@@ -66,7 +66,7 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora memory promote ... --json` | `memory promote` | `promoted`, `approval_id`, `approval_consumed` |
 | `pandora memory synthesize ... --json` | `memory synthesize` | `dry_run`, `candidate` or `committed`, `snapshot_digest`, `evidence_ids`, `promotion_required` |
 | `pandora memory provenance ... --json` | `memory provenance` | `root_id`, `scope`, `nodes`, `edges`, `bounded`, `max_nodes`, `durability` |
-| `pandora memory consolidate ... --json` | `memory consolidate` | `dry_run`, `source`, `candidate` or `consolidated`, `policy`, `durability` |
+| `pandora memory consolidate ... --json` | `memory consolidate` | `dry_run`, `applied`, `source`, `candidate` or `consolidated`, compatibility `policy`, versioned `transfer_policy`, `conflict`, `durability` |
 | `pandora memory schedule ... --json` | `memory schedule` | create/list/disable: schedule identity, exact scope, interval, enabled state, and claim count; claim/run history: worker lease, status, snapshot digest, result memory ID or bounded failure, plus `durability`; successful run also returns the committed L1 candidate and `promotion_required` |
 | `pandora evaluation golden --input <path> --json` | `evaluation golden` | `total`, `passed`, `failed`, `digest`, `cases` |
 | `pandora evolution evaluate --id <proposal-id> --input <path> --json` | `evolution evaluate` | `proposal_id`, `total`, `passed`, `failed`, `trajectory_score`, `outcome_score`, `holdout_passed`, `policy_passed`, `regression_passed`, `digest`, `cases`, `durability` |

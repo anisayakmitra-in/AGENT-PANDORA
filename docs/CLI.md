@@ -844,7 +844,7 @@ pandora memory compact --session <id> --provider <name> --before <unix-seconds> 
 pandora memory promote --session <id> --provider <name> <memory-id> [--approval <id>]
 pandora memory synthesize --session <id> --provider <name> --id <memory-id> --summary <text> [--kind <kind>] [--classification <public|internal>] [--yes]
 pandora memory provenance --session <id> --provider <name> <memory-id>
-pandora memory consolidate --source-session <id> --target-session <id> --provider <name> --source-id <memory-id> --target-id <memory-id> [--yes]
+pandora memory consolidate --source-session <id> --target-session <id> --provider <name> --source-id <memory-id> --target-id <memory-id> [--source-workspace <id> --target-workspace <id> --conflict reject|keep-target] [--yes]
 pandora memory schedule create --id <id> --name <name> --session <id> --provider <name> --memory-id <memory-id> --summary <text> --interval-seconds <seconds> [--kind <kind>] [--classification <public|internal>]
 pandora memory schedule list | disable --id <id> | claim --worker <id> [--limit <n>] | run --id <id> --worker <id> | runs [--id <id>]
 pandora mcp set <id> --program <absolute-path> --arguments-json <json-array> --mode <auto|modern-only|legacy-only>
@@ -1052,13 +1052,19 @@ pages or WAL files, and it does not alter backup or storage-snapshot retention.
 L1 candidate by default. `--yes` commits it only after the snapshot is checked again;
 it never calls a provider, promotes the candidate, or grants runtime authority.
 `memory provenance` builds a bounded, read-only source graph for one L1 or L2 record.
-
-`memory consolidate` is an explicit cross-session L1 copy. It is limited to the
-same tenant, workspace, and provider, rejects sensitive records, preserves a
-hashed source-provenance reference, and requires `--yes` to write. It does not
-promote to L2, approve memory, or grant execution authority.
 It follows only evidence IDs present in the same exact scope, caps traversal at 64
 records, and never promotes, revokes, or changes memory state.
+
+`memory consolidate` is an explicit cross-session L1 copy. Same-workspace
+transfers retain the default `reject` collision policy. Cross-project transfers
+require both exact workspace IDs and `--conflict reject|keep-target`; they remain
+limited to the same tenant and provider. The dry run returns the versioned
+transfer policy and collision result. `--yes` writes only when no target identity
+exists. `keep-target` is a non-mutating success, while `reject` is fail-closed;
+neither can overwrite an active record or reuse a tombstoned identity. Sensitive
+records are denied, source provenance is hash-bound, and the operation cannot
+promote to L2, approve memory, or grant execution authority. The TUI exposes
+these rules through `/memory-transfer`, and the desktop shows the same boundary.
 
 `memory schedule` stores bounded, scoped synthesis schedules and durable run
 history. A worker claim has a lease, and `schedule run` re-reads the exact source

@@ -2081,7 +2081,7 @@ function MemoryWorkspace({
 type MemoryWorkspaceProps = Parameters<typeof MemoryWorkspace>[0];
 
 function MemoryView(props: MemoryWorkspaceProps) {
-  return <div className="memory-retention-shell"><MemoryWorkspace {...props} /><MemoryRetentionPanel selectedSession={props.selectedSession} providers={props.providers} native={props.native} onRefresh={props.onRefresh} /></div>;
+  return <div className="memory-retention-shell"><div className="engine-notice memory-transfer-boundary" aria-label="Cross-project memory policy"><Icon name="shield" size={16} /><span>Cross-project transfer is denied by default. The CLI requires exact source and target workspace IDs, the same tenant and provider, an explicit reject or keep-target conflict rule, a dry run, and <span className="mono">--yes</span>. It never overwrites or reuses a tombstoned memory ID.</span></div><MemoryWorkspace {...props} /><MemoryRetentionPanel selectedSession={props.selectedSession} providers={props.providers} native={props.native} onRefresh={props.onRefresh} /></div>;
 }
 
 function MemoryRetentionPanel({

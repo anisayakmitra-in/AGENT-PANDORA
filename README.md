@@ -59,6 +59,11 @@ already-revoked logical records. Tombstones and audit history remain; database
 pages, WAL files, backups, and storage snapshots need separate lifecycle
 controls. See [memory](docs/MEMORY.md).
 
+Cross-project L1 consolidation is explicit and fail-closed: it requires exact
+source and target workspace IDs, the same tenant and provider, a declared
+`reject` or `keep-target` conflict rule, a dry run, and `--yes`. It never
+overwrites an active record or reuses a tombstoned identity.
+
 The npm package also exports a typed TypeScript client for the stable JSON CLI
 contract. It forwards an argv array to the verified native binary and does not
 create a second runtime or permission path. See [TypeScript client](docs/TYPESCRIPT.md).

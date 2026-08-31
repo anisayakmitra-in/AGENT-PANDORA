@@ -93,12 +93,16 @@ copies. Operators must rotate or destroy encryption keys where applicable,
 expire backups under their storage policy, remove snapshots through the storage
 provider, and verify those lifecycle actions independently.
 
-`memory consolidate` is the explicit cross-session boundary. It copies one
-non-sensitive L1 record only when source and target share the exact tenant,
-workspace, and provider scope; it requires an explicit `--yes` write and gives
-the target a new identity with a hashed source-provenance reference. Cross-
-workspace, cross-provider, sensitive, L2, and automatic global consolidation
-remain denied by policy.
+`memory consolidate` is the explicit cross-session and cross-project boundary.
+Same-workspace copies retain the existing safe default. A cross-project copy
+requires exact source and target workspace IDs plus an explicit `reject` or
+`keep-target` conflict rule before the dry run can start. Policy version 1
+requires the same tenant and provider, distinct sessions, a non-sensitive L1
+source, a new target identity, and `--yes` before a write. `reject` fails when an
+active target identity exists; `keep-target` records a non-mutating outcome.
+Neither rule overwrites an existing record or reuses a tombstoned identity.
+Cross-tenant, cross-provider, sensitive, L2, and automatic global consolidation
+remain denied.
 
 Its approval object is an explicit memory contract; it does not replace Parliament approval or provide execution authority. Memory records do not grant permissions, activate packages, or execute tools.
 

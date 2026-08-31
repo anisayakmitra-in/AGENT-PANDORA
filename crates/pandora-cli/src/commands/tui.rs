@@ -332,6 +332,7 @@ impl App {
                     "/gene-pack  show the declarative Gene pack evaluation workflow",
                     "/canary-loop show the governed scheduled-canary workflow",
                     "/memory-retention show the scoped revoked-record compaction workflow",
+                    "/memory-transfer show the cross-project consolidation policy",
                     "/approve    approve and resume the pending task",
                     "/deny       deny the pending task",
                     "/coding     inspect the Coding Domain Harness",
@@ -397,6 +398,14 @@ impl App {
                 );
                 self.push_message(
                     "memory> --yes removes only logical records; tombstones and audit remain, and database pages, WAL files, backups, and snapshots need separate lifecycle controls",
+                );
+            }
+            "/memory-transfer" => {
+                self.push_message(
+                    "memory> cross-project consolidate requires exact source/target workspace IDs, the same tenant/provider, and --conflict reject|keep-target",
+                );
+                self.push_message(
+                    "memory> dry-run first; --yes copies only non-sensitive L1, never overwrites, and never reuses tombstoned IDs",
                 );
             }
             value if value.starts_with("/theme ") => {
@@ -910,6 +919,9 @@ mod tests {
         assert!(app.messages.iter().any(|message| {
             message == "/memory-retention show the scoped revoked-record compaction workflow"
         }));
+        assert!(app.messages.iter().any(|message| {
+            message == "/memory-transfer show the cross-project consolidation policy"
+        }));
     }
 
     #[test]
@@ -988,6 +1000,22 @@ mod tests {
         assert!(app.messages.iter().any(|message| {
             message.contains("tombstones and audit remain")
                 && message.contains("backups, and snapshots")
+        }));
+        assert_eq!(app.activity, TuiActivity::Idle);
+    }
+
+    #[test]
+    fn memory_transfer_command_is_guidance_only() {
+        let mut app = app();
+        app.input = "/memory-transfer".chars().collect();
+        app.submit();
+
+        assert!(app.messages.iter().any(|message| {
+            message.contains("exact source/target workspace IDs")
+                && message.contains("--conflict reject|keep-target")
+        }));
+        assert!(app.messages.iter().any(|message| {
+            message.contains("never overwrites") && message.contains("tombstoned IDs")
         }));
         assert_eq!(app.activity, TuiActivity::Idle);
     }

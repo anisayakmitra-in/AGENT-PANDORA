@@ -1001,6 +1001,8 @@ describe("Pandora desktop run state", () => {
     fireEvent.click(sessionButtons[sessionButtons.length - 1]);
     await waitFor(() => expect(runtime.inspectSession).toHaveBeenCalledWith("session-1"));
     fireEvent.click(await screen.findByRole("button", { name: "Memory" }));
+    expect(screen.getByLabelText("Cross-project memory policy")).toHaveTextContent("denied by default");
+    expect(screen.getByLabelText("Cross-project memory policy")).toHaveTextContent("never overwrites");
 
     const boundary = await screen.findByLabelText("Revoked before Unix seconds");
     fireEvent.change(boundary, { target: { value: "4102444800" } });

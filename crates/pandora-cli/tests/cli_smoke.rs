@@ -6,12 +6,13 @@ use pandora_runtime::{
 };
 use pandora_types::{
     ContextClassification, DomainRoutingProfile, EffectOutcome, EffectReceipt, EventType,
-    ExecutionId, GovernedOrchestrationPlan, Handoff, HarnessId, JobId, JobWorkerId, MemoryKind,
-    MemoryScope, MetaComposition, OrchestrationPlan, OrchestrationRole, OrchestrationRoleReceipt,
-    OrchestrationRunId, PackageCompatibility, PackageDependency, PackageKind, PackageManifest,
-    PermitId, PlanId, PrincipalId, ReceiptId, RepositoryBinding, RepositoryId, RequestDigest,
-    RoleAssignment, RoleId, RoleRepositoryBinding, Session, SessionId, SubagentBudgets, SubagentId,
-    SubagentRequest, TenantId, Timestamp, TrustEvidence, TrustLevel, WorkspaceId, hash_artifact,
+    ExecutionId, GovernedOrchestrationPlan, Handoff, HarnessId, JobId, JobWorkerId, MemoryId,
+    MemoryKind, MemoryScope, MetaComposition, OrchestrationPlan, OrchestrationRole,
+    OrchestrationRoleReceipt, OrchestrationRunId, PackageCompatibility, PackageDependency,
+    PackageKind, PackageManifest, PermitId, PlanId, PrincipalId, ReceiptId, RepositoryBinding,
+    RepositoryId, RequestDigest, RoleAssignment, RoleId, RoleRepositoryBinding, Session, SessionId,
+    SubagentBudgets, SubagentId, SubagentRequest, TenantId, Timestamp, TrustEvidence, TrustLevel,
+    WorkspaceId, hash_artifact,
 };
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -4200,6 +4201,254 @@ fn memory_cli_consolidates_l1_between_scoped_sessions() {
         .expect("consolidated memory recall should start");
     assert_success(&recalled);
     assert_eq!(parse_json(&recalled)["records"][0]["id"], "target-lesson");
+}
+
+#[test]
+fn memory_cli_cross_project_transfer_requires_policy_and_resolves_conflicts() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let source_session = Session::new(
+        SessionId::new("project-source-session").unwrap(),
+        PrincipalId::new("local-user").unwrap(),
+        TenantId::new("local-tenant").unwrap(),
+        WorkspaceId::new("project-a").unwrap(),
+        Timestamp::from_unix_seconds(10),
+    );
+    let target_session = Session::new(
+        SessionId::new("project-target-session").unwrap(),
+        PrincipalId::new("local-user").unwrap(),
+        TenantId::new("local-tenant").unwrap(),
+        WorkspaceId::new("project-b").unwrap(),
+        Timestamp::from_unix_seconds(11),
+    );
+    let sessions = SessionStore::open(fixture.data.join("sessions.sqlite3")).unwrap();
+    sessions.create(&source_session).unwrap();
+    sessions.create(&target_session).unwrap();
+    let memory = MemoryEngine::open(
+        fixture.data.join("sessions.sqlite3"),
+        64,
+        PrincipalId::new("local-user").unwrap(),
+    )
+    .unwrap();
+    memory
+        .distill_l1(
+            MemoryScope::new(
+                TenantId::new("local-tenant").unwrap(),
+                WorkspaceId::new("project-a").unwrap(),
+                SessionId::new("project-source-session").unwrap(),
+                "openai-compatible",
+            )
+            .unwrap(),
+            "project-source-memory",
+            MemoryKind::Lesson,
+            "retain the verified cross-project plan",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(12),
+            "evaluation:project-a",
+        )
+        .unwrap();
+
+    let missing_policy = fixture
+        .command(&[
+            "memory",
+            "consolidate",
+            "--source-session",
+            "project-source-session",
+            "--target-session",
+            "project-target-session",
+            "--source-workspace",
+            "project-a",
+            "--target-workspace",
+            "project-b",
+            "--provider",
+            "openai-compatible",
+            "--source-id",
+            "project-source-memory",
+            "--target-id",
+            "project-target-memory",
+            "--json",
+        ])
+        .output()
+        .expect("cross-project policy rejection should start");
+    assert_eq!(missing_policy.status.code(), Some(2));
+
+    let dry_run = fixture
+        .command(&[
+            "memory",
+            "consolidate",
+            "--source-session",
+            "project-source-session",
+            "--target-session",
+            "project-target-session",
+            "--source-workspace",
+            "project-a",
+            "--target-workspace",
+            "project-b",
+            "--provider",
+            "openai-compatible",
+            "--source-id",
+            "project-source-memory",
+            "--target-id",
+            "project-target-memory",
+            "--conflict",
+            "reject",
+            "--json",
+        ])
+        .output()
+        .expect("cross-project dry run should start");
+    assert_success(&dry_run);
+    let dry_run = parse_json(&dry_run);
+    assert_eq!(dry_run["dry_run"], true);
+    assert_eq!(dry_run["applied"], false);
+    assert_eq!(dry_run["transfer_policy"]["policy_version"], 1);
+    assert_eq!(dry_run["transfer_policy"]["boundary"], "cross_project");
+    assert_eq!(
+        dry_run["transfer_policy"]["source"]["workspace_id"],
+        "project-a"
+    );
+    assert_eq!(
+        dry_run["transfer_policy"]["target"]["workspace_id"],
+        "project-b"
+    );
+    assert_eq!(dry_run["conflict"]["rule"], "reject");
+    assert_eq!(dry_run["conflict"]["detected"], false);
+
+    let committed = fixture
+        .command(&[
+            "memory",
+            "consolidate",
+            "--source-session",
+            "project-source-session",
+            "--target-session",
+            "project-target-session",
+            "--source-workspace",
+            "project-a",
+            "--target-workspace",
+            "project-b",
+            "--provider",
+            "openai-compatible",
+            "--source-id",
+            "project-source-memory",
+            "--target-id",
+            "project-target-memory",
+            "--conflict",
+            "reject",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("cross-project transfer should start");
+    assert_success(&committed);
+    let committed = parse_json(&committed);
+    assert_eq!(committed["applied"], true);
+    assert_eq!(
+        committed["consolidated"]["scope"]["workspace_id"],
+        "project-b"
+    );
+    assert!(
+        committed["consolidated"]["provenance"]
+            .as_str()
+            .unwrap()
+            .contains("boundary=cross_project")
+    );
+
+    let kept = fixture
+        .command(&[
+            "memory",
+            "consolidate",
+            "--source-session",
+            "project-source-session",
+            "--target-session",
+            "project-target-session",
+            "--source-workspace",
+            "project-a",
+            "--target-workspace",
+            "project-b",
+            "--provider",
+            "openai-compatible",
+            "--source-id",
+            "project-source-memory",
+            "--target-id",
+            "project-target-memory",
+            "--conflict",
+            "keep-target",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("keep-target transfer should start");
+    assert_success(&kept);
+    let kept = parse_json(&kept);
+    assert_eq!(kept["applied"], false);
+    assert_eq!(kept["conflict"]["detected"], true);
+    assert_eq!(kept["conflict"]["resolution"], "keep_target");
+
+    let rejected = fixture
+        .command(&[
+            "memory",
+            "consolidate",
+            "--source-session",
+            "project-source-session",
+            "--target-session",
+            "project-target-session",
+            "--source-workspace",
+            "project-a",
+            "--target-workspace",
+            "project-b",
+            "--provider",
+            "openai-compatible",
+            "--source-id",
+            "project-source-memory",
+            "--target-id",
+            "project-target-memory",
+            "--conflict",
+            "reject",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("reject conflict transfer should start");
+    assert_eq!(rejected.status.code(), Some(30));
+
+    memory
+        .forget(
+            &MemoryScope::new(
+                TenantId::new("local-tenant").unwrap(),
+                WorkspaceId::new("project-b").unwrap(),
+                SessionId::new("project-target-session").unwrap(),
+                "openai-compatible",
+            )
+            .unwrap(),
+            &MemoryId::new("project-target-memory").unwrap(),
+            Timestamp::from_unix_seconds(20),
+        )
+        .unwrap();
+    let tombstoned = fixture
+        .command(&[
+            "memory",
+            "consolidate",
+            "--source-session",
+            "project-source-session",
+            "--target-session",
+            "project-target-session",
+            "--source-workspace",
+            "project-a",
+            "--target-workspace",
+            "project-b",
+            "--provider",
+            "openai-compatible",
+            "--source-id",
+            "project-source-memory",
+            "--target-id",
+            "project-target-memory",
+            "--conflict",
+            "keep-target",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("tombstoned identity rejection should start");
+    assert_eq!(tombstoned.status.code(), Some(30));
 }
 
 #[test]

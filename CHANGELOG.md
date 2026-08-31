@@ -44,6 +44,11 @@
   records included in their evidence. The bounded list is covered by the
   evidence digest, survives restart, remains backward compatible with older
   proposals, and is visible in CLI, service, and desktop lineage views.
+- Added versioned cross-project memory consolidation policy across the core
+  contract, CLI, TUI guidance, and desktop disclosure. Transfers require exact
+  workspace IDs, stay within one tenant and provider, reject sensitive or L2
+  sources, and resolve target collisions only as fail-closed `reject` or
+  non-mutating `keep-target`; overwrites and tombstoned-ID reuse remain denied.
 - Added verified, signed replacement of optional built-in Domain and Meta
   Harnesses with exact rollback to the compiled default. The constitutional
   Source Harness remains immutable.

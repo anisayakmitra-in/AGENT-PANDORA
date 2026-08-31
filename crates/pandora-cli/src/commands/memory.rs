@@ -6,8 +6,9 @@ use pandora_runtime::{
     MemorySynthesisScheduleError, MemorySynthesisScheduleStore,
 };
 use pandora_types::{
-    ContextClassification, ExecutionId, GeneId, JobWorkerId, MemoryApproval, MemoryId, MemoryKind,
-    MemoryRecord, MemoryScope, MemoryTier, RequestDigest, RunLoopId, Timestamp, hash_artifact,
+    ContextClassification, ExecutionId, GeneId, JobWorkerId, MemoryApproval, MemoryConflictRule,
+    MemoryConsolidationBoundary, MemoryConsolidationPolicy, MemoryId, MemoryKind, MemoryRecord,
+    MemoryScope, MemoryTier, RequestDigest, RunLoopId, Timestamp, WorkspaceId, hash_artifact,
 };
 use serde_json::json;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -400,8 +401,11 @@ fn consolidate(args: &[String]) -> Result<CommandResult, CliError> {
             "provider",
             "source-session",
             "target-session",
+            "source-workspace",
+            "target-workspace",
             "source-id",
             "target-id",
+            "conflict",
             "yes",
         ],
     )?;
@@ -438,26 +442,69 @@ fn consolidate(args: &[String]) -> Result<CommandResult, CliError> {
             .to_owned(),
     )
     .map_err(|_| CliError::usage("target memory ID is invalid"))?;
-    let (_, tenant, workspace) = session_scope();
+    let (principal, tenant, default_workspace) = session_scope();
+    let source_workspace = parsed
+        .value("source-workspace")
+        .map(|value| WorkspaceId::new(value.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("source workspace ID is invalid"))?
+        .unwrap_or_else(|| default_workspace.clone());
+    let target_workspace = parsed
+        .value("target-workspace")
+        .map(|value| WorkspaceId::new(value.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("target workspace ID is invalid"))?
+        .unwrap_or(default_workspace);
+    let crosses_project = source_workspace != target_workspace;
+    if crosses_project
+        && (parsed.value("source-workspace").is_none()
+            || parsed.value("target-workspace").is_none())
+    {
+        return Err(CliError::usage(
+            "cross-project memory consolidation requires exact '--source-workspace' and '--target-workspace' IDs",
+        ));
+    }
+    let conflict_rule = parse_memory_conflict_rule(parsed.value("conflict"), crosses_project)?;
     let source_scope = MemoryScope::new(
         tenant.clone(),
-        workspace.clone(),
+        source_workspace,
         source_session.clone(),
         provider.to_owned(),
     )
     .map_err(|error| CliError::usage(error.to_string()))?;
     let target_scope = MemoryScope::new(
         tenant,
-        workspace,
+        target_workspace,
         target_session.clone(),
         provider.to_owned(),
     )
     .map_err(|error| CliError::usage(error.to_string()))?;
+    let transfer_policy = if crosses_project {
+        MemoryConsolidationPolicy::cross_project(
+            source_scope.clone(),
+            target_scope.clone(),
+            conflict_rule,
+        )
+    } else {
+        MemoryConsolidationPolicy::cross_session(
+            source_scope.clone(),
+            target_scope.clone(),
+            conflict_rule,
+        )
+    }
+    .map_err(|error| CliError::policy(error.to_string(), json!({})))?;
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
-    let principal = session_scope().0;
     let session_store = SessionStore::open(config.data_dir().join("sessions.sqlite3"))
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    session_store
+        .resume(
+            &source_session,
+            &principal,
+            source_scope.tenant_id(),
+            source_scope.workspace_id(),
+        )
+        .map_err(|error| CliError::policy(error.to_string(), json!({"scope": "source"})))?;
     session_store
         .resume(
             &target_session,
@@ -479,8 +526,40 @@ fn consolidate(args: &[String]) -> Result<CommandResult, CliError> {
             json!({}),
         ));
     }
+    let target_records = engine
+        .try_recall(&target_scope, MemoryTier::L1, timestamp())
+        .map_err(memory_error)?;
+    let existing_target = target_records
+        .into_iter()
+        .find(|record| record.id() == &target_id);
+    let target_identity_seen = engine
+        .try_audit(&target_scope)
+        .map_err(memory_error)?
+        .iter()
+        .any(|entry| entry.memory_id() == &target_id);
+    if existing_target.is_none() && target_identity_seen {
+        return Err(CliError::policy(
+            "target memory ID is tombstoned and cannot be reused",
+            json!({
+                "target_id": target_id,
+                "transfer_policy": consolidation_policy_value(&transfer_policy),
+            }),
+        ));
+    }
+    if existing_target.is_some() && conflict_rule == MemoryConflictRule::Reject {
+        return Err(CliError::policy(
+            "target memory ID already exists and the conflict rule is reject",
+            json!({
+                "target_id": target_id,
+                "transfer_policy": consolidation_policy_value(&transfer_policy),
+            }),
+        ));
+    }
     let provenance = format!(
-        "consolidated-from:tenant={};workspace={};session={};provider={};memory={};source-provenance={}",
+        "consolidated-from:policy={};boundary={};conflict={};tenant={};workspace={};session={};provider={};memory={};source-provenance={}",
+        transfer_policy.policy_version(),
+        transfer_policy.boundary().as_str(),
+        transfer_policy.conflict_rule().as_str(),
         source_scope.tenant_id(),
         source_scope.workspace_id(),
         source_scope.session_id(),
@@ -506,13 +585,36 @@ fn consolidate(args: &[String]) -> Result<CommandResult, CliError> {
                 "dry_run": true,
                 "source": record_value(&source),
                 "candidate": record_value(&candidate),
-                "policy": "same-tenant-workspace-provider; L1 non-sensitive only",
+                "existing_target": existing_target.as_ref().map(record_value),
+                "policy": consolidation_policy_label(&transfer_policy),
+                "transfer_policy": consolidation_policy_value(&transfer_policy),
+                "conflict": consolidation_conflict_value(conflict_rule, existing_target.is_some()),
+                "applied": false,
                 "durability": "session-store",
             }),
             format!(
                 "Dry run: memory {} would be consolidated into {}",
                 source.id(),
                 candidate.id()
+            ),
+        ));
+    }
+    if let Some(existing_target) = existing_target {
+        return Ok(success(
+            "memory consolidate",
+            json!({
+                "dry_run": false,
+                "source": record_value(&source),
+                "consolidated": record_value(&existing_target),
+                "policy": consolidation_policy_label(&transfer_policy),
+                "transfer_policy": consolidation_policy_value(&transfer_policy),
+                "conflict": consolidation_conflict_value(conflict_rule, true),
+                "applied": false,
+                "durability": "session-store",
+            }),
+            format!(
+                "Kept existing target memory {} under the declared conflict rule",
+                existing_target.id()
             ),
         ));
     }
@@ -533,7 +635,10 @@ fn consolidate(args: &[String]) -> Result<CommandResult, CliError> {
             "dry_run": false,
             "source": record_value(&source),
             "consolidated": record_value(&consolidated),
-            "policy": "same-tenant-workspace-provider; L1 non-sensitive only",
+            "policy": consolidation_policy_label(&transfer_policy),
+            "transfer_policy": consolidation_policy_value(&transfer_policy),
+            "conflict": consolidation_conflict_value(conflict_rule, false),
+            "applied": true,
             "durability": "session-store",
         }),
         format!(
@@ -542,6 +647,59 @@ fn consolidate(args: &[String]) -> Result<CommandResult, CliError> {
             target_session
         ),
     ))
+}
+
+fn parse_memory_conflict_rule(
+    value: Option<&str>,
+    crosses_project: bool,
+) -> Result<MemoryConflictRule, CliError> {
+    match value {
+        Some("reject") => Ok(MemoryConflictRule::Reject),
+        Some("keep-target") => Ok(MemoryConflictRule::KeepTarget),
+        None if crosses_project => Err(CliError::usage(
+            "cross-project memory consolidation requires '--conflict reject|keep-target'",
+        )),
+        None => Ok(MemoryConflictRule::Reject),
+        Some(_) => Err(CliError::usage(
+            "memory consolidation conflict rule must be reject or keep-target",
+        )),
+    }
+}
+
+fn consolidation_policy_label(policy: &MemoryConsolidationPolicy) -> &'static str {
+    match policy.boundary() {
+        MemoryConsolidationBoundary::CrossSession => {
+            "same-tenant-workspace-provider; L1 non-sensitive only"
+        }
+        MemoryConsolidationBoundary::CrossProject => {
+            "same-tenant-provider; explicit cross-project; L1 non-sensitive only"
+        }
+    }
+}
+
+fn consolidation_policy_value(policy: &MemoryConsolidationPolicy) -> serde_json::Value {
+    json!({
+        "policy_version": policy.policy_version(),
+        "boundary": policy.boundary().as_str(),
+        "conflict_rule": policy.conflict_rule().as_str(),
+        "source": scope_value(policy.source_scope()),
+        "target": scope_value(policy.target_scope()),
+        "cross_tenant_allowed": false,
+        "cross_provider_allowed": false,
+        "sensitive_allowed": false,
+        "target_overwrite_allowed": false,
+    })
+}
+
+fn consolidation_conflict_value(
+    conflict_rule: MemoryConflictRule,
+    detected: bool,
+) -> serde_json::Value {
+    json!({
+        "rule": conflict_rule.as_str(),
+        "detected": detected,
+        "resolution": if detected { "keep_target" } else { "create_target" },
+    })
 }
 
 fn parse_session_option(

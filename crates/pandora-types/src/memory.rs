@@ -11,6 +11,37 @@ pub enum MemoryTier {
 }
 
 pub const MAX_MEMORY_SYNTHESIS_EVIDENCE: usize = 16;
+pub const MEMORY_CONSOLIDATION_POLICY_VERSION: u32 = 1;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MemoryConsolidationBoundary {
+    CrossSession,
+    CrossProject,
+}
+
+impl MemoryConsolidationBoundary {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CrossSession => "cross_session",
+            Self::CrossProject => "cross_project",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MemoryConflictRule {
+    Reject,
+    KeepTarget,
+}
+
+impl MemoryConflictRule {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Reject => "reject",
+            Self::KeepTarget => "keep_target",
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MemoryOrigin {
@@ -87,6 +118,10 @@ pub enum MemoryContractError {
     MissingEvidence,
     TooManyEvidenceItems,
     DuplicateEvidence,
+    SameConsolidationSession,
+    CrossTenantConsolidation,
+    CrossProviderConsolidation,
+    ConsolidationBoundaryMismatch,
     InvalidTier { kind: MemoryKind, tier: MemoryTier },
 }
 
@@ -108,6 +143,18 @@ impl fmt::Display for MemoryContractError {
             ),
             Self::DuplicateEvidence => {
                 formatter.write_str("synthesized memory contains duplicate evidence")
+            }
+            Self::SameConsolidationSession => {
+                formatter.write_str("memory consolidation requires distinct sessions")
+            }
+            Self::CrossTenantConsolidation => {
+                formatter.write_str("memory consolidation cannot cross tenants")
+            }
+            Self::CrossProviderConsolidation => {
+                formatter.write_str("memory consolidation cannot cross providers")
+            }
+            Self::ConsolidationBoundaryMismatch => {
+                formatter.write_str("memory consolidation boundary does not match its workspaces")
             }
             Self::InvalidTier { kind, tier } => {
                 write!(
@@ -166,6 +213,91 @@ impl MemoryScope {
 
     pub fn provider(&self) -> &str {
         &self.provider
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MemoryConsolidationPolicy {
+    policy_version: u32,
+    boundary: MemoryConsolidationBoundary,
+    conflict_rule: MemoryConflictRule,
+    source_scope: MemoryScope,
+    target_scope: MemoryScope,
+}
+
+impl MemoryConsolidationPolicy {
+    pub fn cross_session(
+        source_scope: MemoryScope,
+        target_scope: MemoryScope,
+        conflict_rule: MemoryConflictRule,
+    ) -> Result<Self, MemoryContractError> {
+        Self::new(
+            MemoryConsolidationBoundary::CrossSession,
+            source_scope,
+            target_scope,
+            conflict_rule,
+        )
+    }
+
+    pub fn cross_project(
+        source_scope: MemoryScope,
+        target_scope: MemoryScope,
+        conflict_rule: MemoryConflictRule,
+    ) -> Result<Self, MemoryContractError> {
+        Self::new(
+            MemoryConsolidationBoundary::CrossProject,
+            source_scope,
+            target_scope,
+            conflict_rule,
+        )
+    }
+
+    fn new(
+        boundary: MemoryConsolidationBoundary,
+        source_scope: MemoryScope,
+        target_scope: MemoryScope,
+        conflict_rule: MemoryConflictRule,
+    ) -> Result<Self, MemoryContractError> {
+        if source_scope.tenant_id() != target_scope.tenant_id() {
+            return Err(MemoryContractError::CrossTenantConsolidation);
+        }
+        if source_scope.provider() != target_scope.provider() {
+            return Err(MemoryContractError::CrossProviderConsolidation);
+        }
+        if source_scope.session_id() == target_scope.session_id() {
+            return Err(MemoryContractError::SameConsolidationSession);
+        }
+        let crosses_workspace = source_scope.workspace_id() != target_scope.workspace_id();
+        if crosses_workspace != (boundary == MemoryConsolidationBoundary::CrossProject) {
+            return Err(MemoryContractError::ConsolidationBoundaryMismatch);
+        }
+        Ok(Self {
+            policy_version: MEMORY_CONSOLIDATION_POLICY_VERSION,
+            boundary,
+            conflict_rule,
+            source_scope,
+            target_scope,
+        })
+    }
+
+    pub const fn policy_version(&self) -> u32 {
+        self.policy_version
+    }
+
+    pub const fn boundary(&self) -> MemoryConsolidationBoundary {
+        self.boundary
+    }
+
+    pub const fn conflict_rule(&self) -> MemoryConflictRule {
+        self.conflict_rule
+    }
+
+    pub fn source_scope(&self) -> &MemoryScope {
+        &self.source_scope
+    }
+
+    pub fn target_scope(&self) -> &MemoryScope {
+        &self.target_scope
     }
 }
 
@@ -565,4 +697,85 @@ fn validate_text(field: &'static str, value: String) -> Result<String, MemoryCon
         return Err(MemoryContractError::ControlCharacter(field));
     }
     Ok(trimmed.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scope(workspace: &str, session: &str, provider: &str) -> MemoryScope {
+        MemoryScope::new(
+            TenantId::new("tenant-a").unwrap(),
+            WorkspaceId::new(workspace).unwrap(),
+            SessionId::new(session).unwrap(),
+            provider,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn consolidation_policy_requires_an_exact_workspace_boundary() {
+        let cross_project = MemoryConsolidationPolicy::cross_project(
+            scope("project-a", "session-a", "provider-a"),
+            scope("project-b", "session-b", "provider-a"),
+            MemoryConflictRule::Reject,
+        )
+        .unwrap();
+        assert_eq!(
+            cross_project.policy_version(),
+            MEMORY_CONSOLIDATION_POLICY_VERSION
+        );
+        assert_eq!(
+            cross_project.boundary(),
+            MemoryConsolidationBoundary::CrossProject
+        );
+        assert_eq!(cross_project.conflict_rule(), MemoryConflictRule::Reject);
+
+        assert_eq!(
+            MemoryConsolidationPolicy::cross_session(
+                scope("project-a", "session-a", "provider-a"),
+                scope("project-b", "session-b", "provider-a"),
+                MemoryConflictRule::KeepTarget,
+            ),
+            Err(MemoryContractError::ConsolidationBoundaryMismatch)
+        );
+        assert_eq!(
+            MemoryConsolidationPolicy::cross_project(
+                scope("project-a", "session-a", "provider-a"),
+                scope("project-a", "session-b", "provider-a"),
+                MemoryConflictRule::KeepTarget,
+            ),
+            Err(MemoryContractError::ConsolidationBoundaryMismatch)
+        );
+    }
+
+    #[test]
+    fn consolidation_policy_denies_tenant_provider_and_session_crossings() {
+        let mut other_tenant = scope("project-b", "session-b", "provider-a");
+        other_tenant.tenant_id = TenantId::new("tenant-b").unwrap();
+        assert_eq!(
+            MemoryConsolidationPolicy::cross_project(
+                scope("project-a", "session-a", "provider-a"),
+                other_tenant,
+                MemoryConflictRule::Reject,
+            ),
+            Err(MemoryContractError::CrossTenantConsolidation)
+        );
+        assert_eq!(
+            MemoryConsolidationPolicy::cross_project(
+                scope("project-a", "session-a", "provider-a"),
+                scope("project-b", "session-b", "provider-b"),
+                MemoryConflictRule::Reject,
+            ),
+            Err(MemoryContractError::CrossProviderConsolidation)
+        );
+        assert_eq!(
+            MemoryConsolidationPolicy::cross_session(
+                scope("project-a", "session-a", "provider-a"),
+                scope("project-a", "session-a", "provider-a"),
+                MemoryConflictRule::Reject,
+            ),
+            Err(MemoryContractError::SameConsolidationSession)
+        );
+    }
 }
