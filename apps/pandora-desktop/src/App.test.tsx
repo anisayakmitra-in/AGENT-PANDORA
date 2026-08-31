@@ -334,6 +334,7 @@ describe("Pandora desktop run state", () => {
     expect(screen.queryByRole("complementary", { name: "Workspace inspector" })).not.toBeInTheDocument();
     const restore = screen.getByRole("button", { name: "Show workspace inspector" });
     expect(layout).toHaveAttribute("data-dock-placement", "closed");
+    await waitFor(() => expect(restore).toHaveFocus());
 
     fireEvent.click(restore);
     expect(await screen.findByRole("complementary", { name: "Workspace inspector" })).toBeInTheDocument();
@@ -360,10 +361,95 @@ describe("Pandora desktop run state", () => {
       expect(window.localStorage.getItem("pandora.desktop.dock.size")).toBe("expanded");
     });
 
+    fireEvent.click(screen.getByRole("button", { name: "Reset layout defaults" }));
+    await waitFor(() => {
+      expect(window.localStorage.getItem("pandora.desktop.dock.open")).toBe("true");
+      expect(window.localStorage.getItem("pandora.desktop.dock.placement")).toBe("right");
+      expect(window.localStorage.getItem("pandora.desktop.dock.size")).toBe("comfortable");
+    });
+
     fireEvent.click(screen.getByRole("button", { name: "Command" }));
     const layout = screen.getByRole("main", { name: "Command Center workspace" }).querySelector(".command-layout");
-    expect(layout).toHaveAttribute("data-dock-placement", "bottom");
-    expect(layout).toHaveClass("dock-size-expanded");
+    expect(layout).toHaveAttribute("data-dock-placement", "right");
+    expect(layout).toHaveClass("dock-size-comfortable");
+  });
+
+  it("recovers invalid persisted layout values without disrupting runtime work", async () => {
+    window.localStorage.setItem("pandora.desktop.dock.open", "not-a-boolean");
+    window.localStorage.setItem("pandora.desktop.dock.placement", "left");
+    window.localStorage.setItem("pandora.desktop.dock.size", "giant");
+    runtime.agentRun.mockResolvedValue({
+      mode: "agent",
+      session_id: "session-layout-recovery",
+      execution_id: "execution-layout-recovery",
+      selected_harness: "coding-domain",
+      selected_gene: null,
+      status: "completed",
+      status_detail: "Layout recovery left the governed run intact.",
+      output: "runtime work preserved",
+      receipt_count: 0,
+      event_count: 0,
+    });
+
+    render(<App />);
+
+    const layout = (await screen.findByRole("main", { name: "Command Center workspace" })).querySelector(".command-layout");
+    expect(layout).toHaveAttribute("data-dock-placement", "right");
+    expect(layout).toHaveClass("dock-size-comfortable");
+    const composer = screen.getByLabelText("Pandora task");
+    fireEvent.change(composer, { target: { value: "verify recovered layout" } });
+    fireEvent.submit(composer.closest("form")!);
+
+    expect(await screen.findByText("runtime work preserved")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(window.localStorage.getItem("pandora.desktop.dock.open")).toBe("true");
+      expect(window.localStorage.getItem("pandora.desktop.dock.placement")).toBe("right");
+      expect(window.localStorage.getItem("pandora.desktop.dock.size")).toBe("comfortable");
+    });
+  });
+
+  it("keeps exact approval controls visible and unresolved while the inspector is hidden", async () => {
+    const approval = {
+      approval_id: "approval-hidden-dock",
+      session_id: "session-hidden-dock",
+      execution_id: "execution-hidden-dock",
+      gene_id: "coding.patch",
+      request_digest: "pandora-request-v2:sha256:hidden-dock",
+      request_summary: "filesystem.write for patch on README.md",
+      status: "pending",
+      created_at_unix_seconds: 1,
+    };
+    runtime.agentRun.mockResolvedValue({
+      mode: "agent",
+      session_id: approval.session_id,
+      execution_id: approval.execution_id,
+      selected_harness: "coding-domain",
+      selected_gene: approval.gene_id,
+      status: "approval_required",
+      status_detail: "explicit approval is required",
+      output: "",
+      receipt_count: 0,
+      event_count: 1,
+      approval,
+    });
+    runtime.resolveApproval.mockResolvedValue({ ...approval, status: "denied", approver_id: "local-operator" });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Inspector options" }));
+    fireEvent.click(within(screen.getByRole("group", { name: "Inspector layout options" })).getByRole("button", { name: "Hide inspector" }));
+    const composer = screen.getByLabelText("Pandora task");
+    fireEvent.change(composer, { target: { value: "patch README" } });
+    fireEvent.submit(composer.closest("form")!);
+
+    const pending = await screen.findByRole("region", { name: "Pending approval" });
+    expect(screen.queryByRole("complementary", { name: "Workspace inspector" })).not.toBeInTheDocument();
+    expect(within(pending).getByText(approval.request_summary)).toBeInTheDocument();
+    expect(within(pending).getByText(approval.request_digest)).toBeInTheDocument();
+    expect(runtime.resolveApproval).not.toHaveBeenCalled();
+
+    fireEvent.click(within(pending).getByRole("button", { name: "Deny" }));
+    await waitFor(() => expect(runtime.resolveApproval).toHaveBeenCalledWith(approval.approval_id, false));
+    expect(runtime.agentResume).not.toHaveBeenCalled();
   });
 
   it("ships reduced-motion, scalable-type, and native high-contrast contracts", () => {
@@ -894,12 +980,18 @@ describe("Pandora desktop run state", () => {
     fireEvent.click(screen.getByRole("button", { name: /Working diff/ }));
     expect(await screen.findByText("Execute workspace.diff once")).toBeInTheDocument();
     expect(screen.getByText("sha256:diff")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
+    fireEvent.click(screen.getByRole("button", { name: "Hide workspace inspector" }));
+    const pending = await screen.findByRole("region", { name: "Pending approval" });
+    expect(within(pending).getByText("WORKSPACE APPROVAL")).toBeInTheDocument();
+    expect(within(pending).getByText("sha256:diff")).toBeInTheDocument();
+    expect(runtime.resolveApproval).not.toHaveBeenCalled();
+    fireEvent.click(within(pending).getByRole("button", { name: "Allow once" }));
 
     await waitFor(() => {
       expect(runtime.resolveApproval).toHaveBeenCalledWith("approval-diff", true);
       expect(runtime.resume).toHaveBeenCalledWith("approval-diff", "diff", "coding-domain");
     });
+    fireEvent.click(screen.getByRole("button", { name: "Show workspace inspector" }));
     expect(await screen.findByLabelText("Workspace inspection output")).toHaveTextContent("diff --git");
   });
 
@@ -1005,13 +1097,19 @@ describe("Pandora desktop run state", () => {
     fireEvent.click(screen.getByRole("button", { name: "Fetch source" }));
     expect(await screen.findByText("network.connect for fetch on example.com")).toBeInTheDocument();
     expect(screen.getByText("pandora-request-v2:sha256:browser")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
+    fireEvent.click(screen.getByRole("button", { name: "Hide workspace inspector" }));
+    const pending = await screen.findByRole("region", { name: "Pending approval" });
+    expect(within(pending).getByText("NETWORK APPROVAL")).toBeInTheDocument();
+    expect(within(pending).getByText("pandora-request-v2:sha256:browser")).toBeInTheDocument();
+    expect(runtime.resolveApproval).not.toHaveBeenCalled();
+    fireEvent.click(within(pending).getByRole("button", { name: "Allow once" }));
 
     await waitFor(() => {
       expect(runtime.run).toHaveBeenCalledWith("fetch:https://example.com/", "research-domain");
       expect(runtime.resolveApproval).toHaveBeenCalledWith("approval-browser", true);
       expect(runtime.resume).toHaveBeenCalledWith("approval-browser", "fetch:https://example.com/", "research-domain");
     });
+    fireEvent.click(screen.getByRole("button", { name: "Show workspace inspector" }));
     expect(await screen.findByLabelText("Browser evidence body")).toHaveTextContent("<h1>Pandora evidence</h1>");
     expect(screen.getByText("text/html; charset=utf-8")).toBeInTheDocument();
     expect(screen.queryByRole("iframe")).not.toBeInTheDocument();

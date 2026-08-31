@@ -121,4 +121,9 @@ The execution inspector is a persistent Witness Dock. It can sit on the right
 or below the Command Center, use three bounded sizes, or be hidden and restored.
 Flow, Evidence, Work, and Browser remain the same read-only inspection surfaces
 in every layout. Grouped, searchable Settings store these presentation choices
-on the device; they never select a Gene, approve an effect, or issue a permit.
+on the device and provide a one-click reset to the shown, right-side,
+comfortable default. Invalid stored values recover to those safe defaults. If
+the dock is hidden when a run pauses, the exact approval digest and explicit
+Deny/Allow once controls remain visible in the Command Center; hiding a panel
+never resolves an approval. Layout controls never select a Gene, approve an
+effect, or issue a permit.
