@@ -268,6 +268,8 @@ struct HeldToolProvider {
     server: thread::JoinHandle<usize>,
 }
 
+const HELD_PROVIDER_BARRIER_TIMEOUT: Duration = Duration::from_secs(60);
+
 impl HeldToolProvider {
     fn start(listener: TcpListener) -> Self {
         listener
@@ -279,7 +281,7 @@ impl HeldToolProvider {
         let calls = Arc::new(AtomicUsize::new(0));
         let server_calls = Arc::clone(&calls);
         let server = thread::spawn(move || {
-            let request_deadline = Instant::now() + Duration::from_secs(15);
+            let request_deadline = Instant::now() + HELD_PROVIDER_BARRIER_TIMEOUT;
             let (mut stream, _) = loop {
                 match listener.accept() {
                     Ok(connection) => break connection,
@@ -308,7 +310,7 @@ impl HeldToolProvider {
                 .send(())
                 .expect("provider request barrier should remain connected");
             release_response_rx
-                .recv_timeout(Duration::from_secs(15))
+                .recv_timeout(HELD_PROVIDER_BARRIER_TIMEOUT)
                 .expect("provider response release should arrive");
             write_provider_response(
                 &mut stream,
@@ -359,7 +361,7 @@ impl HeldToolProvider {
 
     fn wait_for_request(&self) {
         self.request_arrived
-            .recv_timeout(Duration::from_secs(15))
+            .recv_timeout(HELD_PROVIDER_BARRIER_TIMEOUT)
             .expect("subagent should reach the provider barrier");
     }
 
