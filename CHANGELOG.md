@@ -21,6 +21,10 @@
 - Added a deterministic local Domain Harness starter kit, CLI scaffolder, and
   TUI package discovery. Duplicate owned Gene IDs and undeclared package
   capability fields now fail closed before admission.
+- Added a deterministic, composition-only Meta Harness starter across the CLI,
+  TUI, and desktop inspector. Exact built-in Domain dependencies now resolve
+  correctly, while duplicate, self-cyclic, missing, disabled, wrong-kind, and
+  over-limit compositions fail closed without effect authority.
 - Added verified, signed replacement of optional built-in Domain and Meta
   Harnesses with exact rollback to the compiled default. The constitutional
   Source Harness remains immutable.

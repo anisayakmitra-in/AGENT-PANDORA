@@ -1841,6 +1841,50 @@ describe("Pandora desktop run state", () => {
     expect(runtime.previewPackageEnable).not.toHaveBeenCalled();
   });
 
+  it("inspects exact Meta composition, lifecycle, and trust evidence without authority", async () => {
+    runtime.capabilities.mockResolvedValue([{ id: "coordination-meta", version: "0.4.0", name: "Coordination Meta", kind: "meta", gene_count: 0, runnable: false, gene_ids: [] }]);
+    runtime.listLocalPackages.mockResolvedValue({
+      message: "1 local package available.",
+      restartRequired: false,
+      data: {
+        packages: [{
+          id: "example/meta-starter",
+          version: "2.0.0",
+          kind: "meta_harness",
+          publisher: "example",
+          content_hash: `sha256:${"b".repeat(64)}`,
+          dependencies: [
+            { id: "coding-domain", version: "0.1.0", optional: false },
+            { id: "research-domain", version: "0.1.0", optional: false },
+          ],
+          compatibility: "pandora=2.0.0-beta.7",
+          license: "Apache-2.0",
+          trust: { level: "unverified", has_signature: false, has_public_key: false },
+          meta_composition: { allowed_domains: ["coding-domain", "research-domain"], max_handoffs: 4 },
+          domain_routing: null,
+          replaces_builtin: false,
+          state: "admitted",
+          runtime_authority: false,
+          activation: { state: "enabled", active_version: "2.0.0", previous_version: "1.0.0", generation: 3, runtime_authority: false },
+        }],
+      },
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Harness Lab" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "packages" }));
+
+    const composition = await screen.findByLabelText("Meta composition inspection");
+    expect(composition).toHaveTextContent("coding-domain");
+    expect(composition).toHaveTextContent("research-domain");
+    expect(composition).toHaveTextContent("0.1.0 exact");
+    expect(composition).toHaveTextContent("4 handoffs max");
+    expect(composition).toHaveTextContent("fail before effect execution");
+    expect(screen.getByText("Active version").nextElementSibling).toHaveTextContent("2.0.0");
+    expect(screen.getByText("Rollback target").nextElementSibling).toHaveTextContent("1.0.0");
+    expect(screen.getByText("Generation").nextElementSibling).toHaveTextContent("3");
+    expect(screen.getByText("Runtime authority").nextElementSibling).toHaveTextContent("none");
+  });
+
   it("previews an admission-safe Domain manifest without mutating runtime state", async () => {
     runtime.capabilities.mockResolvedValue([{
       id: "coding-domain",
@@ -1860,6 +1904,8 @@ describe("Pandora desktop run state", () => {
     expect(screen.getByRole("button", { name: "Copy JSON" })).toBeDisabled();
     expect(screen.getByLabelText("Domain Harness starter kit")).toHaveTextContent("pandora package scaffold domain-harness");
     expect(screen.getByLabelText("Domain Harness starter kit")).toHaveTextContent("/domain-starter");
+    expect(screen.getByLabelText("Meta Harness starter kit")).toHaveTextContent("pandora package scaffold meta-harness");
+    expect(screen.getByLabelText("Meta Harness starter kit")).toHaveTextContent("/meta-starter");
     fireEvent.change(screen.getByLabelText("Authoring package ID"), { target: { value: "owner/image-domain" } });
     fireEvent.change(screen.getByLabelText("Authoring content hash"), { target: { value: `sha256:${"a".repeat(64)}` } });
     fireEvent.change(screen.getByLabelText("Authoring route hints"), { target: { value: "image generation, text to image" } });

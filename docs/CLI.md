@@ -358,6 +358,8 @@ arguments.
 activation state; it never displays package bytes or trust secrets.
 `/domain-starter` prints the local CLI scaffold command and safety sequence. It
 is guidance only and does not write files from the TUI.
+`/meta-starter` prints the composition-only Meta Harness scaffold command and
+its exact-Domain enablement boundary. It is also guidance-only.
 The
 in-memory transcript and task history are bounded; the session store remains
 the source for later resume. The TUI accepts the same Coding and Research slash
@@ -791,6 +793,7 @@ pandora skill remove <id> --dry-run
 pandora skill remove <id> --yes
 pandora skill restore <id>
 pandora package scaffold domain-harness --output <new-directory> [--id <id>] [--version <semver>] [--publisher <name>] [--gene <id>@<semver>] [--route-hint <hint>]
+pandora package scaffold meta-harness --output <new-directory> [--id <id>] [--version <semver>] [--publisher <name>] [--domains <id>@<semver>,...] [--max-handoffs <1-64>]
 pandora package admit --manifest <manifest.json> --artifact <artifact>
 pandora package validate --manifest <manifest.json> --artifact <artifact>
 pandora package keygen --publisher <name> --key-id <id> --secret-name <vault-name>
@@ -936,6 +939,18 @@ load configuration credentials, contact a network, admit or enable the package,
 execute the artifact, or grant runtime authority. The TUI exposes `/packages`
 for bounded local discovery and `/domain-starter` for this workflow; mutations
 remain explicit CLI commands with the existing dry-run and `--yes` boundaries.
+
+`package scaffold meta-harness` creates the equivalent deterministic four-file
+starter for composition-only coordination. Its default manifest binds
+`coding-domain@0.1.0` and `research-domain@0.1.0`, exact running-Pandora
+compatibility, and a four-handoff ceiling. `--domains` accepts a comma-separated
+set of exact Domain identities and `--max-handoffs` is bounded to 1-64. The
+runtime resolves exact built-in Domain dependencies, requires custom Domains to
+be enabled before the Meta profile, and refuses duplicate, self-cyclic,
+missing, disabled, wrong-kind, or incompatible members before execution. The
+TUI `/meta-starter` command is non-mutating guidance; the desktop inspector
+shows exact composition, dependencies, trust, active generation, and rollback
+evidence without granting authority.
 
 `package validate` performs the same bounded manifest and artifact identity checks
 without writing to the package store. Gene artifacts must also be valid import-free

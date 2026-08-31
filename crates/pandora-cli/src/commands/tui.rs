@@ -328,6 +328,7 @@ impl App {
                     "/activity   show the typed public TUI activity state",
                     "/packages   list locally admitted package identities",
                     "/domain-starter show the safe Domain Harness scaffold workflow",
+                    "/meta-starter show the safe Meta Harness scaffold workflow",
                     "/approve    approve and resume the pending task",
                     "/deny       deny the pending task",
                     "/coding     inspect the Coding Domain Harness",
@@ -361,6 +362,14 @@ impl App {
                 );
                 self.push_message(
                     "starter> generation is local-only; validate and dry-run enable before --yes",
+                );
+            }
+            "/meta-starter" => {
+                self.push_message(
+                    "starter> pandora package scaffold meta-harness --output <new-directory>",
+                );
+                self.push_message(
+                    "starter> composition-only; exact Domains must be enabled before --yes",
                 );
             }
             value if value.starts_with("/theme ") => {
@@ -862,6 +871,9 @@ mod tests {
         assert!(app.messages.iter().any(|message| {
             message == "/domain-starter show the safe Domain Harness scaffold workflow"
         }));
+        assert!(app.messages.iter().any(|message| {
+            message == "/meta-starter show the safe Meta Harness scaffold workflow"
+        }));
     }
 
     #[test]
@@ -872,6 +884,22 @@ mod tests {
 
         assert!(app.messages.iter().any(|message| {
             message == "starter> pandora package scaffold domain-harness --output <new-directory>"
+        }));
+        assert_eq!(app.activity, TuiActivity::Idle);
+        assert_eq!(app.run_args("inspect", None), ["--agent", "inspect"]);
+    }
+
+    #[test]
+    fn meta_starter_command_is_guidance_only() {
+        let mut app = app();
+        app.input = "/meta-starter".chars().collect();
+        app.submit();
+
+        assert!(app.messages.iter().any(|message| {
+            message == "starter> pandora package scaffold meta-harness --output <new-directory>"
+        }));
+        assert!(app.messages.iter().any(|message| {
+            message == "starter> composition-only; exact Domains must be enabled before --yes"
         }));
         assert_eq!(app.activity, TuiActivity::Idle);
         assert_eq!(app.run_args("inspect", None), ["--agent", "inspect"]);

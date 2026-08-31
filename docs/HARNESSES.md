@@ -74,6 +74,7 @@ Local package admission is explicit:
 
 ```text
 pandora package scaffold domain-harness --output <new-directory>
+pandora package scaffold meta-harness --output <new-directory>
 pandora package admit --manifest <manifest.json> --artifact <artifact>
 pandora package install <id> [version] --registry <url>
 pandora registry set --name m-place --registry-url <url> [--token-env <name>]
@@ -104,6 +105,15 @@ invalid identities or hashes, incompatible SemVer, and unresolved required
 dependencies fail closed at their normal validation or admission boundary.
 The generator performs no admission, activation, credential access, or network
 request.
+
+The copyable Meta reference lives at
+[`sdk/meta-harness-starter`](../sdk/meta-harness-starter/README.md). Its two
+exact built-in Domain dependencies, closed composition set, and bounded
+handoff ceiling are signed and inspected as package evidence. A custom Domain
+member must be admitted and exactly enabled first. Duplicate, self-cyclic,
+unknown, disabled, wrong-kind, incompatible, and over-limit compositions fail
+before effect execution. Meta profiles own no Genes and cannot add capability,
+approval, permit, trust, or activation authority.
 
 The native desktop Package Manager includes a Manifest Workbench for Domain,
 Meta, and Gene envelopes. It produces a copyable, deterministic JSON preview

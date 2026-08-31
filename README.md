@@ -49,6 +49,9 @@ create a second runtime or permission path. See [TypeScript client](docs/TYPESCR
 Contributors can start a declarative Domain Harness with the local-only
 [`sdk/domain-harness-starter`](sdk/domain-harness-starter/README.md) reference
 package or `pandora package scaffold domain-harness --output <new-directory>`.
+Composition authors can use the metadata-only
+[`sdk/meta-harness-starter`](sdk/meta-harness-starter/README.md) reference or
+`pandora package scaffold meta-harness --output <new-directory>`.
 
 For project context, contribution rules, and security reporting, see
 [Why Pandora?](docs/WHY_PANDORA.md), [CONTRIBUTING.md](CONTRIBUTING.md), and

@@ -361,6 +361,26 @@ impl HarnessRegistry {
                 .or_else(|| {
                     builtin_gene_available(dependency.id().as_str(), dependency.version())
                         .then_some(PackageKind::Gene)
+                })
+                .or_else(|| {
+                    (embedded.kind() == PackageKind::MetaHarness
+                        && embedded.meta_composition().is_some_and(|composition| {
+                            composition
+                                .allowed_domains()
+                                .iter()
+                                .any(|domain| domain.as_str() == dependency.id().as_str())
+                        }))
+                    .then(|| {
+                        builtin_harnesses()
+                            .into_iter()
+                            .find(|harness| {
+                                harness.manifest().id().as_str() == dependency.id().as_str()
+                                    && harness.manifest().version() == dependency.version()
+                                    && harness.manifest().kind() == HarnessKind::Domain
+                            })
+                            .map(|_| PackageKind::DomainHarness)
+                    })
+                    .flatten()
                 });
             match dependency_kind {
                 Some(kind) => {

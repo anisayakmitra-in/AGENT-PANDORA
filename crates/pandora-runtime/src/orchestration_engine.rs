@@ -410,6 +410,44 @@ mod tests {
     }
 
     #[test]
+    fn meta_registration_rejects_a_plan_above_its_handoff_ceiling() {
+        let plan = OrchestrationPlan::new(
+            PlanId::new("bounded-meta").unwrap(),
+            vec![
+                role("planner", OrchestrationRole::Planner, "coding-domain", &[]),
+                role("maker", OrchestrationRole::Maker, "coding-domain", &[]),
+                role("critic", OrchestrationRole::Critic, "coding-domain", &[]),
+            ],
+            2,
+            2,
+            vec![
+                Handoff::new(
+                    RoleId::new("planner").unwrap(),
+                    RoleId::new("maker").unwrap(),
+                    Some(HarnessId::new("example/meta-starter").unwrap()),
+                ),
+                Handoff::new(
+                    RoleId::new("maker").unwrap(),
+                    RoleId::new("critic").unwrap(),
+                    Some(HarnessId::new("example/meta-starter").unwrap()),
+                ),
+            ],
+        )
+        .unwrap();
+        let composition =
+            MetaComposition::new(vec![HarnessId::new("coding-domain").unwrap()], 1).unwrap();
+        let engine = OrchestrationEngine::new();
+
+        assert_eq!(
+            engine.register_for_meta(plan, &composition),
+            Err(OrchestrationError::Plan(
+                pandora_types::OrchestrationContractError::MetaHandoffLimitExceeded { limit: 1 }
+            ))
+        );
+        assert!(engine.list().is_empty());
+    }
+
+    #[test]
     fn dependencies_schedule_planner_maker_critic_verifier() {
         let engine = OrchestrationEngine::new();
         engine.register(plan()).unwrap();

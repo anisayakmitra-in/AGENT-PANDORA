@@ -1,0 +1,17 @@
+{
+  "format_version": 1,
+  "kind": "meta_harness_profile",
+  "id": "example/meta-starter",
+  "version": "1.0.0",
+  "allowed_domains": [
+    {
+      "id": "coding-domain",
+      "version": "0.1.0"
+    },
+    {
+      "id": "research-domain",
+      "version": "0.1.0"
+    }
+  ],
+  "max_handoffs": 4
+}

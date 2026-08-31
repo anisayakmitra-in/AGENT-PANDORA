@@ -8034,6 +8034,299 @@ fn tracked_domain_harness_reference_package_validates() {
 }
 
 #[test]
+fn tracked_meta_harness_reference_package_validates() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let starter = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("sdk/meta-harness-starter");
+    let output = fixture
+        .command(&[
+            "package",
+            "validate",
+            "--manifest",
+            starter.join("pandora.package.json").to_str().unwrap(),
+            "--artifact",
+            starter.join("meta-harness.artifact").to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("tracked Meta Harness starter validation should start");
+
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["package"]["id"], "example/meta-starter");
+    assert_eq!(response["package"]["kind"], "meta_harness");
+    assert_eq!(response["execution_boundary"], "metadata-only");
+    assert_eq!(response["persisted"], false);
+}
+
+#[test]
+fn meta_harness_scaffold_supports_exact_enable_inspect_disable_and_rollback() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    for version in ["1.0.0", "2.0.0"] {
+        let directory = fixture.root.join(format!("meta-starter-{version}"));
+        let output = fixture
+            .command(&[
+                "package",
+                "scaffold",
+                "meta-harness",
+                "--output",
+                directory.to_str().unwrap(),
+                "--id",
+                "example/starter-meta",
+                "--version",
+                version,
+                "--publisher",
+                "starter-test",
+                "--domains",
+                "coding-domain@0.1.0,research-domain@0.1.0",
+                "--max-handoffs",
+                "4",
+                "--json",
+            ])
+            .env("PANDORA_GITHUB_TOKEN", "must-not-be-read")
+            .output()
+            .expect("Meta Harness scaffold should start");
+        assert_success(&output);
+        let scaffolded = parse_json(&output);
+        assert_eq!(scaffolded["scaffold"]["kind"], "meta_harness");
+        assert_eq!(scaffolded["scaffold"]["package"]["version"], version);
+        assert_eq!(scaffolded["network_requested"], false);
+        assert_eq!(scaffolded["credential_accessed"], false);
+        assert_eq!(scaffolded["persisted_package"], false);
+        assert_eq!(scaffolded["runtime_authority"], false);
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("must-not-be-read"));
+
+        let manifest = directory.join("pandora.package.json");
+        let artifact = directory.join("meta-harness.artifact");
+        assert!(manifest.is_file());
+        assert!(artifact.is_file());
+        assert!(directory.join("README.md").is_file());
+        assert!(directory.join("ARCHITECTURE.md").is_file());
+
+        let admitted = fixture
+            .command(&[
+                "package",
+                "admit",
+                "--manifest",
+                manifest.to_str().unwrap(),
+                "--artifact",
+                artifact.to_str().unwrap(),
+                "--json",
+            ])
+            .output()
+            .expect("Meta Harness admission should start");
+        assert_success(&admitted);
+        let admitted = parse_json(&admitted);
+        assert_eq!(admitted["package"]["state"], "admitted");
+        assert_eq!(admitted["package"]["activation"]["state"], "disabled");
+        assert_eq!(admitted["package"]["runtime_authority"], false);
+    }
+
+    let preview = fixture
+        .command(&[
+            "package",
+            "enable",
+            "example/starter-meta",
+            "1.0.0",
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("Meta Harness enable preview should start");
+    assert_success(&preview);
+    let preview = parse_json(&preview);
+    assert_eq!(preview["ready"], true);
+    assert_eq!(preview["changed"], false);
+    let dependencies = preview["dependencies"].as_array().unwrap();
+    assert_eq!(dependencies.len(), 2);
+    assert!(
+        dependencies.iter().all(|dependency| {
+            dependency["source"] == "built_in" && dependency["enabled"] == true
+        })
+    );
+
+    for version in ["1.0.0", "2.0.0"] {
+        let enabled = fixture
+            .command(&[
+                "package",
+                "enable",
+                "example/starter-meta",
+                version,
+                "--yes",
+                "--json",
+            ])
+            .output()
+            .expect("Meta Harness enable should start");
+        assert_success(&enabled);
+        assert_eq!(parse_json(&enabled)["binding"]["active_version"], version);
+    }
+
+    let inspected = fixture
+        .command(&[
+            "package",
+            "inspect",
+            "example/starter-meta",
+            "2.0.0",
+            "--json",
+        ])
+        .output()
+        .expect("Meta Harness inspection should start");
+    assert_success(&inspected);
+    let inspected = parse_json(&inspected);
+    assert_eq!(inspected["package"]["meta_composition"]["max_handoffs"], 4);
+    assert_eq!(
+        inspected["package"]["meta_composition"]["allowed_domains"],
+        serde_json::json!(["coding-domain", "research-domain"])
+    );
+    assert_eq!(inspected["package"]["trust"]["level"], "unverified");
+    assert_eq!(
+        inspected["package"]["activation"]["active_version"],
+        "2.0.0"
+    );
+    assert_eq!(
+        inspected["package"]["activation"]["previous_version"],
+        "1.0.0"
+    );
+    assert_eq!(inspected["package"]["activation"]["generation"], 2);
+    assert_eq!(inspected["package"]["runtime_authority"], false);
+
+    let rolled_back = fixture
+        .command(&[
+            "package",
+            "rollback",
+            "example/starter-meta",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("Meta Harness rollback should start");
+    assert_success(&rolled_back);
+    assert_eq!(parse_json(&rolled_back)["active_version"], "1.0.0");
+
+    let disabled = fixture
+        .command(&[
+            "package",
+            "disable",
+            "example/starter-meta",
+            "1.0.0",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("Meta Harness disable should start");
+    assert_success(&disabled);
+    assert_eq!(parse_json(&disabled)["binding"]["state"], "disabled");
+}
+
+#[test]
+fn meta_harness_starter_rejects_duplicate_self_cyclic_unknown_and_over_limit_composition() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    for (name, domains, max_handoffs, expected) in [
+        (
+            "duplicate",
+            "coding-domain@0.1.0,coding-domain@0.1.0",
+            "4",
+            "unique",
+        ),
+        (
+            "self-cycle",
+            "example/self-cycle@1.0.0",
+            "4",
+            "cannot include itself",
+        ),
+        (
+            "over-limit",
+            "coding-domain@0.1.0",
+            "65",
+            "between 1 and 64",
+        ),
+    ] {
+        let directory = fixture.root.join(name);
+        let output = fixture
+            .command(&[
+                "package",
+                "scaffold",
+                "meta-harness",
+                "--output",
+                directory.to_str().unwrap(),
+                "--id",
+                if name == "self-cycle" {
+                    "example/self-cycle"
+                } else {
+                    "example/invalid-meta"
+                },
+                "--domains",
+                domains,
+                "--max-handoffs",
+                max_handoffs,
+                "--json",
+            ])
+            .output()
+            .expect("invalid Meta Harness scaffold should start");
+        assert!(!output.status.success());
+        assert!(
+            parse_json(&output)["message"]
+                .as_str()
+                .unwrap()
+                .contains(expected)
+        );
+        assert!(!directory.exists());
+    }
+
+    let unknown = fixture.root.join("unknown");
+    let scaffolded = fixture
+        .command(&[
+            "package",
+            "scaffold",
+            "meta-harness",
+            "--output",
+            unknown.to_str().unwrap(),
+            "--id",
+            "example/unknown-meta",
+            "--domains",
+            "example/missing-domain@1.0.0",
+            "--json",
+        ])
+        .output()
+        .expect("unknown Meta Harness scaffold should start");
+    assert_success(&scaffolded);
+    let refused = fixture
+        .command(&[
+            "package",
+            "admit",
+            "--manifest",
+            unknown.join("pandora.package.json").to_str().unwrap(),
+            "--artifact",
+            unknown.join("meta-harness.artifact").to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("unknown Domain admission should start");
+    assert!(!refused.status.success());
+    assert!(
+        parse_json(&refused)["message"]
+            .as_str()
+            .unwrap()
+            .contains("required package dependency")
+    );
+    let listed = fixture
+        .command(&["package", "list", "--json"])
+        .output()
+        .expect("package list should start");
+    assert_success(&listed);
+    assert!(
+        parse_json(&listed)["packages"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn domain_harness_scaffold_supports_the_full_local_lifecycle() {
     let fixture = Fixture::new();
     fixture.setup();

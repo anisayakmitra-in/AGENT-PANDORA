@@ -66,7 +66,9 @@ pub use execution_profile::{
 };
 pub use gene::{Gene, GeneError, GeneInput, GeneKind, GeneManifest};
 pub use governance::{ParliamentDecision, PolicyContext};
-pub use harness::{Harness, HarnessKind, HarnessManifest, MetaComposition};
+pub use harness::{
+    Harness, HarnessKind, HarnessManifest, MAX_META_DOMAINS, MAX_META_HANDOFFS, MetaComposition,
+};
 pub use ids::{
     ArtifactId, EventId, ExecutionId, FailureId, GeneId, HarnessId, IdError, JobId, JobWorkerId,
     MemoryId, OrchestrationRunId, PackageId, PermitId, PlanId, PopulationId, PrincipalId,

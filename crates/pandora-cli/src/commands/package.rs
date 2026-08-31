@@ -10,8 +10,9 @@ use pandora_runtime::{
     PackageStoreError, WasmExecutor,
 };
 use pandora_types::{
-    ArtifactId, DomainRoutingProfile, PackageCompatibility, PackageDependency, PackageId,
-    PackageKind, PackageManifest, TrustEvidence, hash_artifact,
+    ArtifactId, DomainRoutingProfile, HarnessId, MAX_META_HANDOFFS, MetaComposition,
+    PackageCompatibility, PackageDependency, PackageId, PackageKind, PackageManifest,
+    TrustEvidence, hash_artifact,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -532,17 +533,40 @@ struct DomainHarnessStarterArtifact<'a> {
     route_hints: Vec<&'a str>,
 }
 
+#[derive(Clone, Serialize)]
+struct MetaHarnessStarterDomain {
+    id: String,
+    version: String,
+}
+
+#[derive(Serialize)]
+struct MetaHarnessStarterArtifact<'a> {
+    format_version: u32,
+    kind: &'static str,
+    id: &'a str,
+    version: &'a str,
+    allowed_domains: Vec<MetaHarnessStarterDomain>,
+    max_handoffs: u32,
+}
+
 fn scaffold(args: &[String]) -> Result<CommandResult, CliError> {
-    let kind = args.first().ok_or_else(|| {
-        CliError::usage("package scaffold requires the 'domain-harness' starter kind")
+    let (kind, args) = args.split_first().ok_or_else(|| {
+        CliError::usage(
+            "package scaffold requires the 'domain-harness' or 'meta-harness' starter kind",
+        )
     })?;
-    if kind != "domain-harness" {
-        return Err(CliError::usage(format!(
-            "unsupported package scaffold kind '{kind}'; expected domain-harness"
-        )));
+    match kind.as_str() {
+        "domain-harness" => scaffold_domain_harness(args),
+        "meta-harness" => scaffold_meta_harness(args),
+        _ => Err(CliError::usage(format!(
+            "unsupported package scaffold kind '{kind}'; expected domain-harness or meta-harness"
+        ))),
     }
+}
+
+fn scaffold_domain_harness(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
-        &args[1..],
+        args,
         &[
             "output",
             "id",
@@ -672,10 +696,182 @@ fn scaffold(args: &[String]) -> Result<CommandResult, CliError> {
     ))
 }
 
+fn scaffold_meta_harness(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "output",
+            "id",
+            "version",
+            "publisher",
+            "domains",
+            "max-handoffs",
+            "license",
+        ],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "package scaffold meta-harness accepts only named options",
+        ));
+    }
+
+    let output = required_path(&parsed, "output")?;
+    let id = parsed.value("id").unwrap_or("example/meta-starter");
+    let version = parsed.value("version").unwrap_or("1.0.0");
+    let publisher = parsed.value("publisher").unwrap_or("local-contributor");
+    let license = parsed.value("license").unwrap_or("Apache-2.0");
+    let domains = parsed
+        .value("domains")
+        .unwrap_or("coding-domain@0.1.0,research-domain@0.1.0");
+    let max_handoffs = parsed
+        .value("max-handoffs")
+        .unwrap_or("4")
+        .parse::<u32>()
+        .map_err(|_| {
+            CliError::usage(format!(
+                "--max-handoffs requires an integer between 1 and {MAX_META_HANDOFFS}"
+            ))
+        })?;
+
+    let mut exact_domains = Vec::new();
+    for token in domains
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let (domain_id, domain_version) = token.rsplit_once('@').ok_or_else(|| {
+            CliError::usage(
+                "--domains requires a comma-separated list of exact '<domain-id>@<semver>' identities",
+            )
+        })?;
+        if domain_id.is_empty() || domain_version.is_empty() {
+            return Err(CliError::usage(
+                "--domains requires a comma-separated list of exact '<domain-id>@<semver>' identities",
+            ));
+        }
+        if domain_id == id {
+            return Err(CliError::usage(
+                "a Meta Harness cannot include itself in its Domain composition",
+            ));
+        }
+        PackageDependency::new(domain_id, domain_version, false).map_err(|error| {
+            CliError::usage(format!("starter Domain identity is invalid: {error}"))
+        })?;
+        HarnessId::new(domain_id.to_owned())
+            .map_err(|error| CliError::usage(format!("starter Domain ID is invalid: {error}")))?;
+        exact_domains.push(MetaHarnessStarterDomain {
+            id: domain_id.to_owned(),
+            version: domain_version.to_owned(),
+        });
+    }
+    exact_domains.sort_by(|left, right| {
+        left.id
+            .cmp(&right.id)
+            .then_with(|| left.version.cmp(&right.version))
+    });
+    let composition = MetaComposition::new(
+        exact_domains
+            .iter()
+            .map(|domain| HarnessId::new(domain.id.clone()).expect("validated Domain ID"))
+            .collect(),
+        max_handoffs,
+    )
+    .map_err(|error| CliError::usage(format!("starter composition is invalid: {error}")))?;
+    let dependencies = exact_domains
+        .iter()
+        .map(|domain| {
+            PackageDependency::new(domain.id.clone(), domain.version.clone(), false)
+                .expect("validated exact Domain dependency")
+        })
+        .collect::<Vec<_>>();
+
+    let artifact_value = MetaHarnessStarterArtifact {
+        format_version: 1,
+        kind: "meta_harness_profile",
+        id,
+        version,
+        allowed_domains: exact_domains.clone(),
+        max_handoffs,
+    };
+    let mut artifact = serde_json::to_vec_pretty(&artifact_value).map_err(|_| {
+        CliError::internal("could not encode Meta Harness starter artifact", json!({}))
+    })?;
+    artifact.push(b'\n');
+
+    let compatibility = PackageCompatibility::new(format!("pandora={}", env!("CARGO_PKG_VERSION")))
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let manifest = PackageManifest::new_meta(
+        id,
+        version,
+        publisher,
+        hash_artifact(&artifact),
+        dependencies,
+        compatibility,
+        license,
+        TrustEvidence::unsigned(),
+        composition,
+    )
+    .map_err(|error| CliError::usage(format!("starter manifest is invalid: {error}")))?;
+    let mut manifest_bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|_| CliError::internal("could not encode starter manifest", json!({})))?;
+    manifest_bytes.push(b'\n');
+    let readme = meta_harness_starter_readme(id, version, &exact_domains, max_handoffs);
+    let architecture = meta_harness_starter_architecture();
+    let files = [
+        ("pandora.package.json", manifest_bytes.as_slice()),
+        ("meta-harness.artifact", artifact.as_slice()),
+        ("README.md", readme.as_bytes()),
+        ("ARCHITECTURE.md", architecture.as_bytes()),
+    ];
+    write_scaffold_directory(&output, &files)?;
+
+    let manifest_path = output.join("pandora.package.json");
+    let artifact_path = output.join("meta-harness.artifact");
+    Ok(success(
+        "package scaffold",
+        json!({
+            "scaffold": {
+                "format_version": 1,
+                "kind": "meta_harness",
+                "directory": output,
+                "manifest": manifest_path,
+                "artifact": artifact_path,
+                "package": {
+                    "id": manifest.id().as_str(),
+                    "version": manifest.version(),
+                    "content_hash": manifest.content_hash(),
+                    "runtime_compatibility": manifest.compatibility().runtime(),
+                    "dependencies": manifest.dependencies().iter().map(|dependency| json!({
+                        "id": dependency.id().as_str(),
+                        "version": dependency.version(),
+                        "optional": dependency.optional(),
+                    })).collect::<Vec<_>>(),
+                    "allowed_domains": manifest.meta_composition().expect("Meta manifest composition").allowed_domains().iter().map(|domain| domain.as_str()).collect::<Vec<_>>(),
+                    "max_handoffs": max_handoffs,
+                },
+            },
+            "network_requested": false,
+            "credential_accessed": false,
+            "persisted_package": false,
+            "runtime_authority": false,
+            "next_steps": [
+                ["pandora", "package", "validate", "--manifest", "pandora.package.json", "--artifact", "meta-harness.artifact"],
+                ["pandora", "package", "admit", "--manifest", "pandora.package.json", "--artifact", "meta-harness.artifact"],
+                ["pandora", "package", "enable", manifest.id().as_str(), manifest.version(), "--dry-run"],
+                ["pandora", "package", "enable", manifest.id().as_str(), manifest.version(), "--yes"],
+            ],
+        }),
+        format!(
+            "Created a local Meta Harness starter at {} without admission or activation",
+            output.display()
+        ),
+    ))
+}
+
 fn write_scaffold_directory(output: &Path, files: &[(&str, &[u8])]) -> Result<(), CliError> {
     fs::create_dir(output).map_err(|error| {
         CliError::configuration(
-            "could not create the Domain Harness starter directory; choose a new path whose parent exists",
+            "could not create the package starter directory; choose a new path whose parent exists",
             json!({"path": output, "error": error.to_string()}),
         )
     })?;
@@ -694,7 +890,7 @@ fn write_scaffold_directory(output: &Path, files: &[(&str, &[u8])]) -> Result<()
                 }
                 let _ = fs::remove_dir(output);
                 return Err(CliError::configuration(
-                    "could not write the Domain Harness starter files",
+                    "could not write the package starter files",
                     json!({"path": path, "error": error.to_string()}),
                 ));
             }
@@ -707,7 +903,7 @@ fn write_scaffold_directory(output: &Path, files: &[(&str, &[u8])]) -> Result<()
             }
             let _ = fs::remove_dir(output);
             return Err(CliError::configuration(
-                "could not write the Domain Harness starter files",
+                "could not write the package starter files",
                 json!({"path": path, "error": error.to_string()}),
             ));
         }
@@ -728,6 +924,26 @@ fn domain_harness_starter_readme(
 
 fn domain_harness_starter_architecture() -> &'static str {
     "# Authority boundary\n\nThe Domain Harness package is declarative metadata. Its dependency list names the exact Genes it owns, and optional route hints only participate in Shadow Council selection. Equal best route claims fail closed and require explicit Harness selection.\n\nAdmission verifies the package identity, strict SemVer, exact artifact hash, runtime requirement, dependencies, and trust evidence. Admission and enablement do not execute the artifact, add an effect capability, approve an operation, or issue a permit.\n\nParliament remains the policy authority for a planned operation. ReferenceMonitor remains the sole issuer of scoped, one-shot effect permits. Neither component is replaceable or configurable through a Domain Harness manifest.\n"
+}
+
+fn meta_harness_starter_readme(
+    id: &str,
+    version: &str,
+    domains: &[MetaHarnessStarterDomain],
+    max_handoffs: u32,
+) -> String {
+    let exact_domains = domains
+        .iter()
+        .map(|domain| format!("{}@{}", domain.id, domain.version))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "# Pandora Meta Harness starter\n\nThis directory is a deterministic, composition-only Meta Harness profile for `{id}@{version}`. It coordinates only `{exact_domains}` with a ceiling of {max_handoffs} handoffs. Generation is local-only: it does not contact a network, read a credential, admit or enable a package, execute an effect, or grant runtime authority.\n\n## Local lifecycle\n\nRun from this directory:\n\n```text\npandora package validate --manifest pandora.package.json --artifact meta-harness.artifact\npandora package admit --manifest pandora.package.json --artifact meta-harness.artifact\npandora package enable <id> <version> --dry-run\npandora package enable <id> <version> --yes\npandora package inspect <id> <version>\npandora package disable <id> <version> --dry-run\npandora package disable <id> <version> --yes\n```\n\nTo exercise rollback, scaffold and admit a second exact version with the same ID, enable the first and then the second, and run `pandora package rollback <id> --dry-run` followed by `--yes`. Every required custom Domain must already be enabled at its exact dependency version. See `ARCHITECTURE.md`.\n"
+    )
+}
+
+fn meta_harness_starter_architecture() -> &'static str {
+    "# Authority boundary\n\nThis Meta Harness is declarative composition metadata. It may coordinate only the exact Domain Harness IDs listed in `meta_composition`, and every plan is rejected before execution when it names an undeclared Domain or exceeds `max_handoffs`.\n\nThe Meta Harness owns no Genes and executes no effects. It cannot add capabilities, approve an operation, issue a permit, activate itself, replace `core-source`, or change package trust. Parliament remains policy authority; ReferenceMonitor remains the sole one-shot permit issuer.\n\nAdmission validates identity, runtime compatibility, exact dependencies, composition kind, and artifact hash. Confirmed enablement changes only the exact package binding. Disable or rollback preserves the compiled fallback and grants no authority.\n"
 }
 
 fn validate(args: &[String]) -> Result<CommandResult, CliError> {
@@ -1436,7 +1652,21 @@ fn dependency_preview(
         let built_in = builtin_genes().into_iter().any(|gene| {
             gene.manifest().id().as_str() == dependency.id().as_str()
                 && gene.manifest().version() == dependency.version()
-        });
+        }) || (record.manifest().kind() == PackageKind::MetaHarness
+            && record
+                .manifest()
+                .meta_composition()
+                .is_some_and(|composition| {
+                    composition
+                        .allowed_domains()
+                        .iter()
+                        .any(|domain| domain.as_str() == dependency.id().as_str())
+                })
+            && builtin_harnesses().into_iter().any(|harness| {
+                harness.manifest().id().as_str() == dependency.id().as_str()
+                    && harness.manifest().version() == dependency.version()
+                    && harness.manifest().kind() == pandora_types::HarnessKind::Domain
+            }));
         let enabled = if installed.is_some() {
             store
                 .is_enabled(dependency.id(), dependency.version())
@@ -1455,6 +1685,14 @@ fn dependency_preview(
     if let Some(composition) = record.manifest().meta_composition() {
         let records = store.list().map_err(store_error)?;
         for domain in composition.allowed_domains() {
+            if record
+                .manifest()
+                .dependencies()
+                .iter()
+                .any(|dependency| dependency.id().as_str() == domain.as_str())
+            {
+                continue;
+            }
             let built_in = builtin_harnesses().into_iter().find(|harness| {
                 harness.manifest().id() == domain
                     && harness.manifest().kind() == pandora_types::HarnessKind::Domain

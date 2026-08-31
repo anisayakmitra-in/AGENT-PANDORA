@@ -1,0 +1,35 @@
+{
+  "id": "example/meta-starter",
+  "version": "1.0.0",
+  "kind": "meta_harness",
+  "publisher": "local-contributor",
+  "content_hash": "sha256:3c2de7999239ecab2ee2220d13a2e77b0cea77fd4d8a48a9d768ea8e94b5d169",
+  "dependencies": [
+    {
+      "id": "coding-domain",
+      "version": "0.1.0",
+      "optional": false
+    },
+    {
+      "id": "research-domain",
+      "version": "0.1.0",
+      "optional": false
+    }
+  ],
+  "compatibility": {
+    "runtime": "pandora=2.0.0-beta.7"
+  },
+  "license": "Apache-2.0",
+  "trust": {
+    "level": "unverified",
+    "signature": null,
+    "public_key": null
+  },
+  "meta_composition": {
+    "allowed_domains": [
+      "coding-domain",
+      "research-domain"
+    ],
+    "max_handoffs": 4
+  }
+}

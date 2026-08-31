@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fmt;
 
+pub const MAX_META_DOMAINS: usize = 32;
+pub const MAX_META_HANDOFFS: u32 = 64;
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum HarnessKind {
     Source,
@@ -34,6 +37,7 @@ pub enum ManifestError {
     MissingMetaComposition,
     UnexpectedMetaComposition,
     EmptyMetaDomainHarnesses,
+    TooManyMetaDomainHarnesses,
     DuplicateMetaDomainHarness,
     InvalidMetaHandoffLimit,
 }
@@ -65,11 +69,18 @@ impl fmt::Display for ManifestError {
             Self::EmptyMetaDomainHarnesses => {
                 formatter.write_str("meta composition requires at least one domain harness")
             }
+            Self::TooManyMetaDomainHarnesses => write!(
+                formatter,
+                "meta composition cannot contain more than {MAX_META_DOMAINS} domain harnesses"
+            ),
             Self::DuplicateMetaDomainHarness => {
                 formatter.write_str("meta composition domain harnesses must be unique")
             }
             Self::InvalidMetaHandoffLimit => {
-                formatter.write_str("meta composition handoff limit must be greater than zero")
+                write!(
+                    formatter,
+                    "meta composition handoff limit must be between 1 and {MAX_META_HANDOFFS}"
+                )
             }
         }
     }
@@ -103,7 +114,10 @@ impl MetaComposition {
         if self.allowed_domains.is_empty() {
             return Err(ManifestError::EmptyMetaDomainHarnesses);
         }
-        if self.max_handoffs == 0 {
+        if self.allowed_domains.len() > MAX_META_DOMAINS {
+            return Err(ManifestError::TooManyMetaDomainHarnesses);
+        }
+        if self.max_handoffs == 0 || self.max_handoffs > MAX_META_HANDOFFS {
             return Err(ManifestError::InvalidMetaHandoffLimit);
         }
 
@@ -337,7 +351,10 @@ fn validate_version(value: &str) -> Result<(), ManifestError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{HarnessKind, HarnessManifest, ManifestError, MetaComposition};
+    use super::{
+        HarnessKind, HarnessManifest, MAX_META_DOMAINS, MAX_META_HANDOFFS, ManifestError,
+        MetaComposition,
+    };
     use crate::HarnessId;
 
     #[test]
@@ -431,6 +448,25 @@ mod tests {
         assert_eq!(
             MetaComposition::new(vec![domain.clone(), domain], 8),
             Err(ManifestError::DuplicateMetaDomainHarness)
+        );
+    }
+
+    #[test]
+    fn meta_composition_enforces_domain_and_handoff_ceiling() {
+        let domains = (0..=MAX_META_DOMAINS)
+            .map(|index| HarnessId::new(format!("example/domain-{index}")).unwrap())
+            .collect();
+
+        assert_eq!(
+            MetaComposition::new(domains, 1),
+            Err(ManifestError::TooManyMetaDomainHarnesses)
+        );
+        assert_eq!(
+            MetaComposition::new(
+                vec![HarnessId::new("coding-domain").unwrap()],
+                MAX_META_HANDOFFS + 1,
+            ),
+            Err(ManifestError::InvalidMetaHandoffLimit)
         );
     }
 

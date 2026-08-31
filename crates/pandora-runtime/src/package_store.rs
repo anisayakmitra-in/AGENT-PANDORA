@@ -879,7 +879,21 @@ fn ensure_enableable(
         let built_in = builtin_genes().into_iter().any(|gene| {
             gene.manifest().id().as_str() == dependency.id().as_str()
                 && gene.manifest().version() == dependency.version()
-        });
+        }) || (record.manifest().kind() == PackageKind::MetaHarness
+            && record
+                .manifest()
+                .meta_composition()
+                .is_some_and(|composition| {
+                    composition
+                        .allowed_domains()
+                        .iter()
+                        .any(|domain| domain.as_str() == dependency.id().as_str())
+                })
+            && builtin_harnesses().into_iter().any(|harness| {
+                harness.manifest().id().as_str() == dependency.id().as_str()
+                    && harness.manifest().version() == dependency.version()
+                    && harness.manifest().kind() == pandora_types::HarnessKind::Domain
+            }));
         if !built_in
             && bindings.get(dependency.id().as_str()).map(String::as_str)
                 != Some(dependency.version())
@@ -1254,6 +1268,36 @@ mod tests {
         store.disable(domain.id(), domain.version()).unwrap();
         store.disable(gene.id(), gene.version()).unwrap();
         assert!(!store.is_enabled(gene.id(), gene.version()).unwrap());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn meta_activation_requires_custom_composition_domains_to_be_enabled() {
+        let gene_artifact = b"meta dependency gene";
+        let gene = gene_manifest("example/meta-gene", gene_artifact);
+        let domain_artifact = b"meta dependency domain";
+        let domain = domain_manifest(
+            "example/meta-domain",
+            vec![PackageDependency::new("example/meta-gene", "1.0.0", false).unwrap()],
+            domain_artifact,
+        );
+        let meta_artifact = b"bounded meta";
+        let meta = custom_meta_manifest(meta_artifact, &["example/meta-domain"]);
+        let (store, root) = store();
+        store.admit(&gene, &gene, gene_artifact).unwrap();
+        store.admit(&domain, &domain, domain_artifact).unwrap();
+        store.admit(&meta, &meta, meta_artifact).unwrap();
+
+        store.enable(gene.id(), gene.version()).unwrap();
+        assert!(matches!(
+            store.enable(meta.id(), meta.version()),
+            Err(PackageStoreError::MissingEnabledDomain { id })
+                if id == "example/meta-domain"
+        ));
+        store.enable(domain.id(), domain.version()).unwrap();
+        let binding = store.enable(meta.id(), meta.version()).unwrap();
+        assert_eq!(binding.active_version(), Some("1.0.0"));
+        assert_eq!(binding.generation(), 1);
         let _ = std::fs::remove_dir_all(root);
     }
 
