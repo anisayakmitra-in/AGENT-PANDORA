@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added an honest stable rollback closure record. RC and stable tags now validate
+  the four native accessibility manifests against their exact commit. Stable
+  publication waits for every published CLI and desktop lifecycle job, then
+  records the compatible stable predecessor and workflow run. The first stable
+  in a line is explicitly `pending_first_patch`; a patch without a compatible
+  stable predecessor fails closed instead of claiming synthetic rollback proof.
+
 - Hardened release-candidate and stable publication. Both channels now require
   explicit approval plus Windows and Apple signing/notarization credentials;
   the publish job accepts only `v*` tags through a protected human-reviewed

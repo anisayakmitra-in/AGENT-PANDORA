@@ -35,6 +35,18 @@ def platform_signing_required(tag: str) -> bool:
     return "-rc." in version or "-" not in version
 
 
+def stable_rollback_state(tag: str) -> str:
+    if _RELEASE_TAG.fullmatch(tag) is None:
+        raise ReleaseEvidenceError(f"invalid release tag: {tag}")
+    version = tag[1:]
+    if "-" in version:
+        return "not_applicable_prerelease"
+    patch = int(version.split(".")[2])
+    if patch == 0:
+        return "pending_first_patch"
+    return "requires_post_publication_verification"
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -132,6 +144,10 @@ def build_release_evidence(tag: str, dist: Path) -> dict[str, object]:
             "apple_codesign": signing_status,
             "apple_notarization": signing_status,
             "independent_published_verification_job": "smoke-desktop",
+        },
+        "stable_rollback": {
+            "state": stable_rollback_state(tag),
+            "post_publication_job": "stable-rollback-evidence",
         },
         "sbom": {
             "path": "pandora.spdx.json",

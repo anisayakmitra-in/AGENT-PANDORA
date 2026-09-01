@@ -63,6 +63,40 @@ def find_predecessor(changelog: str, current_tag: str) -> str:
     return predecessor_tag
 
 
+def find_stable_predecessor(changelog: str, current_tag: str) -> str:
+    current_version = _parse_tag(current_tag)
+    if current_version[3] != _STAGE_ORDER[None]:
+        raise ReleasePredecessorError(
+            f"stable predecessor selection requires a stable tag: {current_tag}"
+        )
+    releases: dict[str, tuple[int, int, int, int, int]] = {}
+    for line in changelog.splitlines():
+        match = _RELEASE_HEADING.fullmatch(line)
+        if match is None:
+            continue
+        tag = match.group(1)
+        version = _parse_tag(tag)
+        if tag in releases:
+            raise ReleasePredecessorError(f"duplicate release section: {tag}")
+        releases[tag] = version
+    if current_tag not in releases:
+        raise ReleasePredecessorError(
+            f"current release section is missing: {current_tag}"
+        )
+    candidates = [
+        (tag, version)
+        for tag, version in releases.items()
+        if version[3] == _STAGE_ORDER[None]
+        and version[:2] == current_version[:2]
+        and version < current_version
+    ]
+    if not candidates:
+        raise ReleasePredecessorError(
+            f"compatible stable predecessor is missing: {current_tag}"
+        )
+    return max(candidates, key=lambda candidate: candidate[1])[0]
+
+
 def main(arguments: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Select the previous Pandora release from the changelog"
@@ -73,10 +107,19 @@ def main(arguments: list[str] | None = None) -> int:
         type=Path,
         default=Path(__file__).resolve().parents[1] / "CHANGELOG.md",
     )
+    parser.add_argument(
+        "--stable-only",
+        action="store_true",
+        help="select the newest older stable release in the same major/minor line",
+    )
     options = parser.parse_args(arguments)
     try:
         changelog = options.changelog.read_text(encoding="utf-8")
-        predecessor = find_predecessor(changelog, options.current_tag)
+        predecessor = (
+            find_stable_predecessor(changelog, options.current_tag)
+            if options.stable_only
+            else find_predecessor(changelog, options.current_tag)
+        )
     except (OSError, ReleasePredecessorError) as error:
         print(f"release predecessor: {error}", file=sys.stderr)
         return 1

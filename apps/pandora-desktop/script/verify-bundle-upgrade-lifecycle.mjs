@@ -68,6 +68,28 @@ export function selectVersionedBundle(bundleRoot, platform, version) {
   );
 }
 
+export function resolveUpgradeSources(target, environment = process.env) {
+  const predecessorPath = environment.PANDORA_DESKTOP_PREDECESSOR_SIDECAR?.trim();
+  const currentPath = environment.PANDORA_DESKTOP_CURRENT_SIDECAR?.trim();
+  if (Boolean(predecessorPath) !== Boolean(currentPath)) {
+    throw new Error("published desktop rollback requires both predecessor and current sidecars");
+  }
+  if (!predecessorPath) {
+    const source = resolveSourceSidecar(target, true, environment);
+    return { predecessor: source, current: source };
+  }
+  return {
+    predecessor: resolveSourceSidecar(target, true, {
+      ...environment,
+      PANDORA_DESKTOP_SOURCE_SIDECAR: predecessorPath,
+    }),
+    current: resolveSourceSidecar(target, true, {
+      ...environment,
+      PANDORA_DESKTOP_SOURCE_SIDECAR: currentPath,
+    }),
+  };
+}
+
 async function verifyInstalledStage(contract, platform, target, source, expectedVersion, environment) {
   const actualVersion = contract.version().trim();
   if (actualVersion !== expectedVersion) {
@@ -93,7 +115,9 @@ async function main() {
   if (!manifestPath) throw new Error("PANDORA_DESKTOP_UPGRADE_MANIFEST is required");
   const manifest = readUpgradeManifest(manifestPath);
   const target = validateSidecarTarget(process.env.PANDORA_SIDECAR_TARGET ?? "");
-  const source = resolveSourceSidecar(target, true);
+  const sources = resolveUpgradeSources(target);
+  const predecessorSource = sources.predecessor;
+  const currentSource = sources.current;
   const bundleRoot = resolveBundleRoot();
   const predecessorBundle = selectVersionedBundle(bundleRoot, process.platform, manifest.predecessor_version);
   const currentBundle = selectVersionedBundle(bundleRoot, process.platform, manifest.current_version);
@@ -104,10 +128,10 @@ async function main() {
   let lifecycleEvidence;
   try {
     predecessor.install();
-    await verifyInstalledStage(predecessor, process.platform, target, source, manifest.predecessor_version, environment);
+    await verifyInstalledStage(predecessor, process.platform, target, predecessorSource, manifest.predecessor_version, environment);
 
     current.replace();
-    await verifyInstalledStage(current, process.platform, target, source, manifest.current_version, environment);
+    await verifyInstalledStage(current, process.platform, target, currentSource, manifest.current_version, environment);
 
     if (process.platform === "win32") {
       current.uninstall();
@@ -115,7 +139,7 @@ async function main() {
     } else {
       predecessor.replace();
     }
-    await verifyInstalledStage(predecessor, process.platform, target, source, manifest.predecessor_version, environment);
+    await verifyInstalledStage(predecessor, process.platform, target, predecessorSource, manifest.predecessor_version, environment);
 
     predecessor.uninstall();
     predecessor.assertUninstalled();
@@ -137,7 +161,8 @@ async function main() {
       release_identity: {
         predecessor_version: manifest.predecessor_version,
         current_version: manifest.current_version,
-        sidecar_sha256: sha256(source),
+        predecessor_sidecar_sha256: sha256(predecessorSource),
+        current_sidecar_sha256: sha256(currentSource),
       },
       lifecycle: {
         clean_install: true,

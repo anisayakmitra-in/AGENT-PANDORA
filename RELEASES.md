@@ -174,6 +174,20 @@ verify the CLI, notarization ticket, mounted application signature, and
 Gatekeeper assessment. Their signature and lifecycle records are retained as
 workflow artifacts.
 
+## Stable rollback closure
+
+The stable release index never claims rollback closure before published
+lifecycle jobs run. After every stable publication, the release workflow waits
+for all CLI and desktop install/update/backup/restore/rollback/uninstall jobs and
+then emits `stable-rollback-evidence.json` bound to the tag, commit, predecessor,
+and workflow run.
+
+The first stable release in a compatible line has no older stable artifact. Its
+evidence therefore records `pending_first_patch`, not success. For the 2.0 line,
+the stable-to-stable gate can close only when `v2.0.1` legitimately rolls back
+to the published `v2.0.0` artifacts. A patch tag without a compatible stable
+predecessor fails closed.
+
 All channels continue to require the signed checksum manifest, SPDX SBOM,
 GitHub provenance, release notes, cross-platform tests, and published
 install/update/rollback smoke tests described in

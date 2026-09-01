@@ -223,6 +223,8 @@ workflow signs native Windows and macOS binaries, signs Windows desktop
 installers, and gives Tauri the Apple identity and notarization credentials.
 Publication also waits at the protected `release-publication` environment, which
 accepts only `v*` tags and requires a human reviewer.
+RC and stable source verification also validates the four strict native
+accessibility manifests against the tag's exact commit before compilation.
 
 A production release also requires:
 
@@ -241,6 +243,12 @@ A production release also requires:
 Required RC and stable release secrets are documented by name in
 [the release policy](../RELEASES.md). Their values belong only in GitHub
 encrypted secrets and the corresponding platform account.
+
+After stable publication, a separate job runs only after every published CLI
+and desktop lifecycle matrix succeeds. It records the exact compatible stable
+predecessor. The first `v2.0.0` release remains explicitly
+`pending_first_patch`; only a legitimate `v2.0.1` rollback drill can close the
+stable-to-stable evidence gate.
 
 ### Linux desktop dependency patch
 

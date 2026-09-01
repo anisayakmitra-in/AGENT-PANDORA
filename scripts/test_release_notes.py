@@ -126,6 +126,8 @@ Older notes.
         self.assertIn('if [[ "$version" == *-rc.* ]]', workflow)
         self.assertIn('if [[ "$signing_required" = "1" ]]', workflow)
         self.assertIn("environment: release-publication", workflow)
+        self.assertIn("Validate required native accessibility evidence", workflow)
+        self.assertIn("scripts/accessibility_evidence.py", workflow)
 
     def test_release_workflow_smokes_published_installers_on_fresh_runners(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
@@ -226,6 +228,24 @@ Older notes.
         self.assertIn("xcrun stapler validate", workflow)
         self.assertIn("spctl --assess --type execute", workflow)
         self.assertIn("platform-signature-verification.json", workflow)
+
+    def test_stable_release_records_honest_post_publication_rollback_state(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("stable-rollback-evidence:", workflow)
+        self.assertIn("stable-desktop-rollback:", workflow)
+        self.assertIn(
+            "needs: [smoke-install, smoke-desktop, stable-desktop-rollback]",
+            workflow,
+        )
+        self.assertIn("scripts/stable_rollback_evidence.py", workflow)
+        self.assertIn("--stable-only", workflow)
+        self.assertIn("PANDORA_DESKTOP_PREDECESSOR_SIDECAR:", workflow)
+        self.assertIn("PANDORA_DESKTOP_CURRENT_SIDECAR:", workflow)
+        self.assertIn("npm run verify:bundle-upgrade-lifecycle", workflow)
+        self.assertIn("stable-rollback-${{ github.ref_name }}", workflow)
 
     def test_ci_runs_ephemeral_system_installer_lifecycle(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(

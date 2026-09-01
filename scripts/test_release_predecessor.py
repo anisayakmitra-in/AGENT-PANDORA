@@ -5,7 +5,11 @@ import unittest
 import shutil
 import uuid
 
-from scripts.release_predecessor import ReleasePredecessorError, find_predecessor
+from scripts.release_predecessor import (
+    ReleasePredecessorError,
+    find_predecessor,
+    find_stable_predecessor,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -17,6 +21,44 @@ def make_temp_root() -> Path:
 
 
 class ReleasePredecessorTests(unittest.TestCase):
+    def test_selects_the_newest_compatible_stable_predecessor(self) -> None:
+        changelog = """# Changelog
+
+## v2.0.2
+
+Current patch.
+
+## v2.0.1
+
+Previous patch.
+
+## v2.0.0-rc.2
+
+Ignored RC.
+
+## v2.0.0
+
+First stable.
+
+## v1.9.9
+
+Different line.
+"""
+        self.assertEqual(
+            find_stable_predecessor(changelog, "v2.0.2"), "v2.0.1"
+        )
+
+    def test_stable_predecessor_fails_for_first_stable_or_prerelease(self) -> None:
+        with self.assertRaisesRegex(ReleasePredecessorError, "is missing"):
+            find_stable_predecessor(
+                "## v2.0.0\n\nFirst stable.\n\n## v2.0.0-rc.1\n\nRC.\n",
+                "v2.0.0",
+            )
+        with self.assertRaisesRegex(ReleasePredecessorError, "requires a stable tag"):
+            find_stable_predecessor(
+                "## v2.0.0-rc.1\n\nRC.\n", "v2.0.0-rc.1"
+            )
+
     def test_finds_the_immediately_previous_release_section(self) -> None:
         changelog = """# Changelog
 

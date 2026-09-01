@@ -1,12 +1,39 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  resolveUpgradeSources,
   selectVersionedBundle,
   validateUpgradeManifest,
 } from "./verify-bundle-upgrade-lifecycle.mjs";
+
+test("requires an exact predecessor/current sidecar pair for published rollback", () => {
+  const root = mkdtempSync(join(tmpdir(), "pandora-published-sidecars-"));
+  const target = "x86_64-pc-windows-msvc";
+  const name = `pandora-${target}.exe`;
+  const predecessor = join(root, "predecessor", name);
+  const current = join(root, "current", name);
+  try {
+    mkdirSync(join(root, "predecessor"));
+    mkdirSync(join(root, "current"));
+    writeFileSync(predecessor, "predecessor");
+    writeFileSync(current, "current");
+    assert.deepEqual(resolveUpgradeSources(target, {
+      PANDORA_DESKTOP_PREDECESSOR_SIDECAR: predecessor,
+      PANDORA_DESKTOP_CURRENT_SIDECAR: current,
+    }), { predecessor, current });
+    assert.throws(
+      () => resolveUpgradeSources(target, {
+        PANDORA_DESKTOP_PREDECESSOR_SIDECAR: predecessor,
+      }),
+      /requires both predecessor and current sidecars/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("accepts only a newer stable upgrade pair with an exact schema", () => {
   assert.deepEqual(validateUpgradeManifest({

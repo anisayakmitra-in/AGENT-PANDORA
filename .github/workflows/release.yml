@@ -76,6 +76,26 @@ jobs:
             test -n "$APPLE_TEAM_ID"
           fi
 
+      - name: Validate required native accessibility evidence
+        if: contains(github.ref_name, '-rc.') || !contains(github.ref_name, '-')
+        run: >-
+          python scripts/accessibility_evidence.py
+          --root "$GITHUB_WORKSPACE"
+          --directory evidence/native-accessibility
+          --commit "$GITHUB_SHA"
+          --output "$RUNNER_TEMP/native-accessibility-index.json"
+
+      - name: Retain release-bound native accessibility evidence
+        if: contains(github.ref_name, '-rc.') || !contains(github.ref_name, '-')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-native-accessibility-${{ github.ref_name }}
+          path: |
+            evidence/native-accessibility
+            ${{ runner.temp }}/native-accessibility-index.json
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -907,4 +927,245 @@ jobs:
             ${{ runner.temp }}/published-desktop-lifecycle-evidence.json
             ${{ runner.temp }}/platform-signature-verification.json
           if-no-files-found: warn
+          retention-days: 90
+
+  stable-desktop-rollback:
+    name: Roll back published desktop ${{ matrix.platform }}
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+            target: x86_64-unknown-linux-gnu
+            native: pandora-x86_64-unknown-linux-gnu
+            bundle: desktop-linux-x64-*.deb
+          - os: macos-26-intel
+            platform: macos-x64
+            target: x86_64-apple-darwin
+            native: pandora-x86_64-apple-darwin
+            bundle: desktop-macos-x64-*.dmg
+          - os: macos-26
+            platform: macos-arm64
+            target: aarch64-apple-darwin
+            native: pandora-aarch64-apple-darwin
+            bundle: desktop-macos-arm64-*.dmg
+          - os: windows-latest
+            platform: windows-x64
+            target: x86_64-pc-windows-msvc
+            native: pandora-x86_64-pc-windows-msvc.exe
+            bundle: desktop-windows-x64-*.msi
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    env:
+      CI: "true"
+      GH_TOKEN: ${{ github.token }}
+      PANDORA_SIDECAR_TARGET: ${{ matrix.target }}
+    steps:
+      - name: Check out exact stable source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22"
+
+      - name: Install Linux lifecycle dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes xvfb
+
+      - name: Resolve compatible stable predecessor
+        id: predecessor
+        shell: bash
+        run: |
+          set -euo pipefail
+          if predecessor="$(python scripts/release_predecessor.py "$GITHUB_REF_NAME" --stable-only)"; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "tag=$predecessor" >> "$GITHUB_OUTPUT"
+          else
+            patch="${GITHUB_REF_NAME##*.}"
+            test "$patch" = "0"
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install desktop lifecycle dependencies
+        if: steps.predecessor.outputs.available == 'true'
+        working-directory: apps/pandora-desktop
+        run: npm ci --ignore-scripts
+
+      - name: Prepare published stable rollback inputs (Unix)
+        if: steps.predecessor.outputs.available == 'true' && runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          root="$RUNNER_TEMP/pandora-stable-rollback"
+          predecessor_root="$root/predecessor"
+          current_root="$root/current"
+          bundles_root="$root/bundles"
+          mkdir -p "$predecessor_root" "$current_root" "$bundles_root"
+          predecessor="${{ steps.predecessor.outputs.tag }}"
+          for pair in "$predecessor:$predecessor_root" "$GITHUB_REF_NAME:$current_root"; do
+            tag="${pair%%:*}"
+            destination="${pair#*:}"
+            for attempt in 1 2 3; do
+              if gh release download "$tag" \
+                --repo "$GITHUB_REPOSITORY" \
+                --dir "$destination" \
+                --clobber \
+                --pattern checksums.txt \
+                --pattern '${{ matrix.native }}' \
+                --pattern '${{ matrix.bundle }}'; then
+                break
+              fi
+              test "$attempt" -lt 3
+              sleep "$((10 * attempt))"
+            done
+          done
+          predecessor_bundles=("$predecessor_root"/${{ matrix.bundle }})
+          current_bundles=("$current_root"/${{ matrix.bundle }})
+          test "${#predecessor_bundles[@]}" -eq 1
+          test "${#current_bundles[@]}" -eq 1
+          python scripts/verify_release_downloads.py \
+            --manifest "$predecessor_root/checksums.txt" \
+            "$predecessor_root/${{ matrix.native }}" "${predecessor_bundles[0]}"
+          python scripts/verify_release_downloads.py \
+            --manifest "$current_root/checksums.txt" \
+            "$current_root/${{ matrix.native }}" "${current_bundles[0]}"
+          chmod 0755 "$predecessor_root/${{ matrix.native }}" "$current_root/${{ matrix.native }}"
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            codesign --verify --strict --verbose=2 "$predecessor_root/${{ matrix.native }}"
+            codesign --verify --strict --verbose=2 "$current_root/${{ matrix.native }}"
+            xcrun stapler validate "${predecessor_bundles[0]}"
+            xcrun stapler validate "${current_bundles[0]}"
+          fi
+          predecessor_name="$(basename "${predecessor_bundles[0]}")"
+          current_name="$(basename "${current_bundles[0]}")"
+          cp "${predecessor_bundles[0]}" "$bundles_root/${predecessor_name#desktop-${{ matrix.platform }}-}"
+          cp "${current_bundles[0]}" "$bundles_root/${current_name#desktop-${{ matrix.platform }}-}"
+          python - "$root/manifest.json" "${predecessor#v}" "${GITHUB_REF_NAME#v}" <<'PY'
+          import json
+          import pathlib
+          import sys
+          pathlib.Path(sys.argv[1]).write_text(json.dumps({
+              "schema_version": 1,
+              "predecessor_version": sys.argv[2],
+              "current_version": sys.argv[3],
+          }) + "\n", encoding="utf-8")
+          PY
+
+      - name: Prepare published stable rollback inputs (Windows)
+        if: steps.predecessor.outputs.available == 'true' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "pandora-stable-rollback"
+          $predecessorRoot = Join-Path $root "predecessor"
+          $currentRoot = Join-Path $root "current"
+          $bundlesRoot = Join-Path $root "bundles"
+          New-Item -ItemType Directory -Force -Path $predecessorRoot, $currentRoot, $bundlesRoot | Out-Null
+          $predecessor = '${{ steps.predecessor.outputs.tag }}'
+          foreach ($release in @(@($predecessor, $predecessorRoot), @($env:GITHUB_REF_NAME, $currentRoot))) {
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              gh release download $release[0] `
+                --repo $env:GITHUB_REPOSITORY `
+                --dir $release[1] `
+                --clobber `
+                --pattern checksums.txt `
+                --pattern '${{ matrix.native }}' `
+                --pattern '${{ matrix.bundle }}'
+              if ($LASTEXITCODE -eq 0) { break }
+              if ($attempt -eq 3) { throw "stable rollback artifact download failed" }
+              Start-Sleep -Seconds (10 * $attempt)
+            }
+          }
+          $predecessorBundles = @(Get-ChildItem -LiteralPath $predecessorRoot -Filter '${{ matrix.bundle }}' -File)
+          $currentBundles = @(Get-ChildItem -LiteralPath $currentRoot -Filter '${{ matrix.bundle }}' -File)
+          if ($predecessorBundles.Count -ne 1 -or $currentBundles.Count -ne 1) {
+            throw "expected one predecessor and one current Windows bundle"
+          }
+          $predecessorNative = Join-Path $predecessorRoot '${{ matrix.native }}'
+          $currentNative = Join-Path $currentRoot '${{ matrix.native }}'
+          python scripts/verify_release_downloads.py --manifest (Join-Path $predecessorRoot "checksums.txt") $predecessorNative $predecessorBundles[0].FullName
+          if ($LASTEXITCODE -ne 0) { throw "predecessor checksum verification failed" }
+          python scripts/verify_release_downloads.py --manifest (Join-Path $currentRoot "checksums.txt") $currentNative $currentBundles[0].FullName
+          if ($LASTEXITCODE -ne 0) { throw "current checksum verification failed" }
+          foreach ($artifact in @($predecessorNative, $predecessorBundles[0].FullName, $currentNative, $currentBundles[0].FullName)) {
+            if ((Get-AuthenticodeSignature -LiteralPath $artifact).Status -ne 'Valid') {
+              throw "stable rollback artifact signature is not valid: $artifact"
+            }
+          }
+          foreach ($bundle in @($predecessorBundles[0], $currentBundles[0])) {
+            $name = $bundle.Name -replace '^desktop-${{ matrix.platform }}-', ''
+            Copy-Item -LiteralPath $bundle.FullName -Destination (Join-Path $bundlesRoot $name)
+          }
+          @{
+            schema_version = 1
+            predecessor_version = $predecessor.Substring(1)
+            current_version = $env:GITHUB_REF_NAME.Substring(1)
+          } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $root "manifest.json")
+
+      - name: Exercise published stable desktop update and rollback
+        if: steps.predecessor.outputs.available == 'true'
+        working-directory: apps/pandora-desktop
+        env:
+          PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE: "1"
+          PANDORA_DESKTOP_BUNDLE_ROOT: ${{ runner.temp }}/pandora-stable-rollback/bundles
+          PANDORA_DESKTOP_UPGRADE_MANIFEST: ${{ runner.temp }}/pandora-stable-rollback/manifest.json
+          PANDORA_DESKTOP_PREDECESSOR_SIDECAR: ${{ runner.temp }}/pandora-stable-rollback/predecessor/${{ matrix.native }}
+          PANDORA_DESKTOP_CURRENT_SIDECAR: ${{ runner.temp }}/pandora-stable-rollback/current/${{ matrix.native }}
+          PANDORA_DESKTOP_UPGRADE_EVIDENCE_OUTPUT: ${{ runner.temp }}/published-stable-desktop-rollback.json
+        run: npm run verify:bundle-upgrade-lifecycle
+
+      - name: Retain published stable desktop rollback evidence
+        if: steps.predecessor.outputs.available == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stable-desktop-rollback-${{ matrix.platform }}-${{ github.ref_name }}
+          path: ${{ runner.temp }}/published-stable-desktop-rollback.json
+          if-no-files-found: error
+          retention-days: 90
+
+  stable-rollback-evidence:
+    name: Record stable rollback closure
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+    needs: [smoke-install, smoke-desktop, stable-desktop-rollback]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out exact stable source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.11"
+
+      - name: Build stable rollback evidence
+        run: >-
+          python scripts/stable_rollback_evidence.py "$GITHUB_REF_NAME"
+          --commit "$GITHUB_SHA"
+          --workflow-run-id "$GITHUB_RUN_ID"
+          --output "$RUNNER_TEMP/stable-rollback-evidence.json"
+
+      - name: Retain stable rollback evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stable-rollback-${{ github.ref_name }}
+          path: ${{ runner.temp }}/stable-rollback-evidence.json
+          if-no-files-found: error
           retention-days: 90

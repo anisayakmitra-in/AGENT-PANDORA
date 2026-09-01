@@ -9,6 +9,7 @@ from scripts.release_evidence import (
     ReleaseEvidenceError,
     build_release_evidence,
     platform_signing_required,
+    stable_rollback_state,
 )
 
 
@@ -56,6 +57,9 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 evidence["platform_signing"]["windows_authenticode"], "not_required"
             )
             self.assertEqual(
+                evidence["stable_rollback"]["state"], "not_applicable_prerelease"
+            )
+            self.assertEqual(
                 {item["path"] for item in evidence["artifacts"]},
                 set(artifacts),
             )
@@ -96,6 +100,18 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 evidence["platform_signing"]["apple_notarization"],
                 "verified_in_build",
             )
+
+    def test_stable_release_index_never_claims_first_release_rollback_closure(self) -> None:
+        self.assertEqual(
+            stable_rollback_state("v2.0.0"), "pending_first_patch"
+        )
+        self.assertEqual(
+            stable_rollback_state("v2.0.1"),
+            "requires_post_publication_verification",
+        )
+        self.assertEqual(
+            stable_rollback_state("v2.0.0-rc.1"), "not_applicable_prerelease"
+        )
 
 
 if __name__ == "__main__":
