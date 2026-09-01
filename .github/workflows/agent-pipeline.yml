@@ -36,9 +36,6 @@ jobs:
     name: Admission, evaluation, and canary evidence
     runs-on: ubuntu-latest
     env:
-      PANDORA_CONFIG: ${{ runner.temp }}/pandora-agent-pipeline/config.toml
-      PANDORA_DATA_DIR: ${{ runner.temp }}/pandora-agent-pipeline/data
-      PANDORA_WORKSPACE: ${{ runner.temp }}/pandora-agent-pipeline/workspace
       PIPELINE_CHANNEL: ${{ inputs.channel || 'beta' }}
       PROMOTION_INTENT: ${{ inputs.promotion_intent || false }}
 
@@ -47,6 +44,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+
+      - name: Bind isolated pipeline paths
+        shell: bash
+        run: |
+          echo "PANDORA_CONFIG=$RUNNER_TEMP/pandora-agent-pipeline/config.toml" >> "$GITHUB_ENV"
+          echo "PANDORA_DATA_DIR=$RUNNER_TEMP/pandora-agent-pipeline/data" >> "$GITHUB_ENV"
+          echo "PANDORA_WORKSPACE=$RUNNER_TEMP/pandora-agent-pipeline/workspace" >> "$GITHUB_ENV"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
