@@ -189,10 +189,13 @@ explicit repository and workspace identities:
 pandora orchestration submit --input plan.json
 pandora orchestration claim --worker worker-a --json
 pandora orchestration complete <run-id> --worker worker-a --role <role-id> --receipt receipt.json
+pandora orchestration reconcile-failed <run-id> --role <role-id> --usage usage.json --evidence-digest <digest> --yes
 ```
 
 Assignments remain coordination evidence; workers execute them through the
-existing governed run or subagent path. See [durable orchestration workers](docs/ORCHESTRATION.md).
+existing governed run or subagent path. Aggregate reservations and measured
+receipt usage are enforced transactionally across every dependent role and
+repository. See [durable orchestration workers](docs/ORCHESTRATION.md).
 
 Local isolated subagents use the same governed runtime path with durable,
 scoped records and exact-commit Git worktrees:

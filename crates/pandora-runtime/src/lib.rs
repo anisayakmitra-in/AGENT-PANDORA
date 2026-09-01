@@ -177,7 +177,9 @@ pub use orchestration_engine::{
     OrchestrationRunSnapshot,
 };
 pub use orchestration_store::{
-    OrchestrationRunRecord, OrchestrationRunStatus, OrchestrationStore, OrchestrationStoreError,
+    OrchestrationBudgetReservationRecord, OrchestrationBudgetReservationState,
+    OrchestrationBudgetSnapshot, OrchestrationRunRecord, OrchestrationRunStatus,
+    OrchestrationStore, OrchestrationStoreError,
 };
 pub use package_store::{
     MAX_PACKAGE_TRANSPARENCY_EVENTS, MAX_PACKAGE_TRANSPARENCY_LIST, MAX_PUBLISHER_TRUST_ROOTS,

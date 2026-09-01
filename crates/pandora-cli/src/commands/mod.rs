@@ -353,7 +353,7 @@ commands:
   approval list|inspect|resolve
   provider list|set|use|test
   mcp list|inspect|set|remove|catalog <server> --allow|call <server> <tool> --arguments-json <object> --idempotency-key <key> --allow
-  orchestration roles|submit|claim|complete|list|inspect|cancel|mark-interrupted|resume
+  orchestration roles|submit|claim|complete|list|inspect|cancel|mark-interrupted|reconcile-failed|resume
   strategies list | population list --state <path> | population inspect --state <path> --id <id>
   evaluation golden --input <path> [--fail-on-failure]
   evaluation suite register --id <id> --input <path> [--candidate <id>] | list | inspect --id <id> | run --id <id> [--harness <id>] [--fail-on-failure]
@@ -525,6 +525,9 @@ mod tests {
         let usage = result.data["usage"].as_str().unwrap();
 
         assert!(usage.contains("job submit|work|list|inspect|cancel|mark-interrupted"));
+        assert!(usage.contains(
+            "orchestration roles|submit|claim|complete|list|inspect|cancel|mark-interrupted|reconcile-failed|resume"
+        ));
         assert!(usage.contains("work accepts --max-jobs <1-64>"));
         assert!(usage.contains("evaluation golden --input <path> [--fail-on-failure]"));
         assert!(

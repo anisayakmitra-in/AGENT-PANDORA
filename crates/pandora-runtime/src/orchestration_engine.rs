@@ -254,6 +254,16 @@ impl OrchestrationRun {
         Ok(())
     }
 
+    pub fn release_active(&mut self, role_id: &RoleId) -> Result<(), OrchestrationError> {
+        if !self.active.remove(role_id) {
+            if self.plan.role(role_id).is_none() {
+                return Err(OrchestrationError::RoleNotFound(role_id.clone()));
+            }
+            return Err(OrchestrationError::RoleNotActive(role_id.clone()));
+        }
+        Ok(())
+    }
+
     pub fn handoff(&mut self, from: &RoleId, to: &RoleId) -> Result<(), OrchestrationError> {
         if self.plan.handoff(from, to).is_none() {
             return Err(OrchestrationError::HandoffNotDeclared {

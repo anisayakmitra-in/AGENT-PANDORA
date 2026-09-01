@@ -269,6 +269,13 @@ export type RuntimeOrchestrationRun = {
   updated_at_unix_seconds: number;
 };
 
+export type RuntimeAggregateBudgetAmount = {
+  tokens: number;
+  tools: number;
+  elapsed_ms: number;
+  cost_micros: number;
+};
+
 export type RuntimeFleetOperations = {
   generated_at: number;
   health: {
@@ -278,6 +285,7 @@ export type RuntimeFleetOperations = {
     stale_supervisors: number;
     overdue_active_leases: number;
     queued_without_capacity: boolean;
+    aggregate_budget_invariant_holds: boolean;
   };
   fleet: {
     nodes: { total: number; by_state: Record<string, number> };
@@ -323,10 +331,40 @@ export type RuntimeFleetOperations = {
     saturated: boolean;
     actual_spend_available: false;
   };
+  aggregate_budgets: {
+    run_count: number;
+    records: Array<{ run_id: string; budget: Record<string, unknown> }>;
+    records_truncated: boolean;
+    ceiling: RuntimeAggregateBudgetAmount;
+    reserved: RuntimeAggregateBudgetAmount;
+    consumed: {
+      tokens: number;
+      tools: number;
+      elapsed_ms: number;
+      cost_micros: number | null;
+      known_cost_micros: number;
+      unknown_cost_receipts: number;
+      enforced_cost_micros: number;
+    };
+    remaining: {
+      tokens: number;
+      tools: number;
+      elapsed_ms: number;
+      cost_micros: number | null;
+      enforced_cost_micros: number;
+    };
+    saturated: boolean;
+    invariant: {
+      holds: boolean;
+      expression: string;
+    };
+  };
   boundary: {
     read_only: true;
     runtime_authority: false;
     budgets_are_ceilings_not_spend: true;
+    aggregate_usage_available: boolean;
+    aggregate_cost_unknown_explicit: true;
     prompts_included: false;
     outputs_included: false;
     credentials_included: false;

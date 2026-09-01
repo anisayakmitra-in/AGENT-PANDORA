@@ -1,11 +1,12 @@
 use super::{load_config, parse_options, require_config_file, session_scope, timestamp};
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{
-    OrchestrationRunRecord, OrchestrationRunStatus, OrchestrationStore, OrchestrationStoreError,
+    OrchestrationBudgetSnapshot, OrchestrationRunRecord, OrchestrationRunStatus,
+    OrchestrationStore, OrchestrationStoreError,
 };
 use pandora_types::{
     GovernedOrchestrationPlan, JobWorkerId, OrchestrationRole, OrchestrationRoleReceipt,
-    OrchestrationRunId, RoleAssignment, RoleId,
+    OrchestrationRunId, OrchestrationUsage, RequestDigest, RoleAssignment, RoleId,
 };
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -27,6 +28,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "inspect" => inspect(&args[1..]),
         "cancel" => cancel(&args[1..]),
         "mark-interrupted" => mark_interrupted(&args[1..]),
+        "reconcile-failed" => reconcile_failed(&args[1..]),
         "resume" => resume(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown orchestration command '{unknown}'"
@@ -73,9 +75,10 @@ fn submit(args: &[String]) -> Result<CommandResult, CliError> {
     let record = store
         .submit(&run_id, &principal, &tenant, &workspace, &plan, timestamp())
         .map_err(store_error)?;
+    let budget = budget_for(&store, &record)?;
     Ok(success(
         "orchestration submit",
-        record_json(&record)?,
+        record_json(&record, budget.as_ref())?,
         format!("Queued orchestration {}", record.run_id()),
     ))
 }
@@ -119,10 +122,11 @@ fn claim(args: &[String]) -> Result<CommandResult, CliError> {
     let record = store
         .inspect(record.run_id(), &principal, &tenant, &workspace)
         .map_err(store_error)?;
+    let budget = budget_for(&store, &record)?;
     Ok(success(
         "orchestration claim",
         json!({
-            "run": record_json(&record)?,
+            "run": record_json(&record, budget.as_ref())?,
             "assignments": assignment_json(&assignments, record.plan())?,
         }),
         format!(
@@ -201,10 +205,11 @@ fn complete(args: &[String]) -> Result<CommandResult, CliError> {
     let record = store
         .inspect(&run_id, &principal, &tenant, &workspace)
         .map_err(store_error)?;
+    let budget = budget_for(&store, &record)?;
     Ok(success(
         "orchestration complete",
         json!({
-            "run": record_json(&record)?,
+            "run": record_json(&record, budget.as_ref())?,
             "assignments": assignment_json(&assignments, record.plan())?,
         }),
         format!(
@@ -227,11 +232,15 @@ fn list(args: &[String]) -> Result<CommandResult, CliError> {
     require_config_file(&config)?;
     let store = store(&config)?;
     let (principal, tenant, workspace) = session_scope();
-    let runs = store
+    let records = store
         .list(&principal, &tenant, &workspace)
-        .map_err(store_error)?
+        .map_err(store_error)?;
+    let runs = records
         .iter()
-        .map(record_json)
+        .map(|record| {
+            let budget = budget_for(&store, record)?;
+            record_json(record, budget.as_ref())
+        })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(success(
         "orchestration list",
@@ -255,9 +264,10 @@ fn inspect(args: &[String]) -> Result<CommandResult, CliError> {
     let record = store
         .inspect(&run_id, &principal, &tenant, &workspace)
         .map_err(store_error)?;
+    let budget = budget_for(&store, &record)?;
     Ok(success(
         "orchestration inspect",
-        record_json(&record)?,
+        record_json(&record, budget.as_ref())?,
         format!("{} is {}", run_id, record.status().as_str()),
     ))
 }
@@ -277,9 +287,10 @@ fn cancel(args: &[String]) -> Result<CommandResult, CliError> {
     let record = store
         .cancel(&run_id, &principal, &tenant, &workspace, timestamp())
         .map_err(store_error)?;
+    let budget = budget_for(&store, &record)?;
     Ok(success(
         "orchestration cancel",
-        record_json(&record)?,
+        record_json(&record, budget.as_ref())?,
         format!("Cancelled orchestration {run_id}"),
     ))
 }
@@ -317,10 +328,86 @@ fn mark_interrupted(args: &[String]) -> Result<CommandResult, CliError> {
             timestamp(),
         )
         .map_err(store_error)?;
+    let budget = budget_for(&store, &record)?;
     Ok(success(
         "orchestration mark-interrupted",
-        record_json(&record)?,
+        record_json(&record, budget.as_ref())?,
         format!("Marked orchestration {run_id} interrupted"),
+    ))
+}
+
+fn reconcile_failed(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "role",
+            "usage",
+            "evidence-digest",
+            "yes",
+        ],
+    )?;
+    if parsed.positionals.len() != 1 {
+        return Err(CliError::usage(
+            "orchestration reconcile-failed requires exactly one run ID",
+        ));
+    }
+    if parsed.value("yes").is_none() {
+        return Err(CliError::usage(
+            "orchestration reconcile-failed requires '--yes' after active effects are reconciled",
+        ));
+    }
+    let run_id = parse_run_id(&parsed.positionals[0])?;
+    let role_id = RoleId::new(
+        parsed
+            .value("role")
+            .ok_or_else(|| {
+                CliError::usage("orchestration reconcile-failed requires '--role <id>'")
+            })?
+            .to_owned(),
+    )
+    .map_err(|_| CliError::usage("orchestration role ID is invalid"))?;
+    let usage_path = parsed.value("usage").ok_or_else(|| {
+        CliError::usage("orchestration reconcile-failed requires '--usage <path>'")
+    })?;
+    let usage: OrchestrationUsage = read_json(Path::new(usage_path), "orchestration usage")?;
+    usage
+        .validate()
+        .map_err(|error| CliError::usage(error.to_string()))?;
+    let evidence_digest = RequestDigest::new(
+        parsed
+            .value("evidence-digest")
+            .ok_or_else(|| {
+                CliError::usage(
+                    "orchestration reconcile-failed requires '--evidence-digest <digest>'",
+                )
+            })?
+            .to_owned(),
+    )
+    .map_err(|_| CliError::usage("orchestration evidence digest is invalid"))?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = store(&config)?;
+    let (principal, tenant, workspace) = session_scope();
+    let record = store
+        .reconcile_interrupted_role(
+            &run_id,
+            &principal,
+            &tenant,
+            &workspace,
+            &role_id,
+            &usage,
+            &evidence_digest,
+            timestamp(),
+        )
+        .map_err(store_error)?;
+    let budget = budget_for(&store, &record)?;
+    Ok(success(
+        "orchestration reconcile-failed",
+        record_json(&record, budget.as_ref())?,
+        format!("Reconciled failed role {role_id} in orchestration {run_id}"),
     ))
 }
 
@@ -339,9 +426,10 @@ fn resume(args: &[String]) -> Result<CommandResult, CliError> {
     let record = store
         .resume(&run_id, &principal, &tenant, &workspace, timestamp())
         .map_err(store_error)?;
+    let budget = budget_for(&store, &record)?;
     Ok(success(
         "orchestration resume",
-        record_json(&record)?,
+        record_json(&record, budget.as_ref())?,
         format!("Requeued orchestration {run_id}"),
     ))
 }
@@ -383,7 +471,10 @@ fn read_json<T: DeserializeOwned>(path: &Path, label: &str) -> Result<T, CliErro
     serde_json::from_slice(&bytes).map_err(|_| CliError::usage(format!("{label} is invalid JSON")))
 }
 
-fn record_json(record: &OrchestrationRunRecord) -> Result<Value, CliError> {
+fn record_json(
+    record: &OrchestrationRunRecord,
+    budget: Option<&OrchestrationBudgetSnapshot>,
+) -> Result<Value, CliError> {
     let plan = serde_json::to_value(record.plan())
         .map_err(|_| CliError::internal("could not serialize orchestration plan", json!({})))?;
     let receipts = serde_json::to_value(record.role_receipts())
@@ -403,7 +494,81 @@ fn record_json(record: &OrchestrationRunRecord) -> Result<Value, CliError> {
         "interruption_reason": record.interruption_reason(),
         "created_at": record.created_at().as_unix_seconds(),
         "updated_at": record.updated_at().as_unix_seconds(),
+        "aggregate_budget": budget.map(budget_json),
     }))
+}
+
+fn budget_for(
+    store: &OrchestrationStore,
+    record: &OrchestrationRunRecord,
+) -> Result<Option<OrchestrationBudgetSnapshot>, CliError> {
+    match store.inspect_budget(
+        record.run_id(),
+        record.principal_id(),
+        record.tenant_id(),
+        record.coordinator_workspace_id(),
+    ) {
+        Ok(budget) => Ok(Some(budget)),
+        Err(OrchestrationStoreError::AggregateBudgetNotFound) => Ok(None),
+        Err(error) => Err(store_error(error)),
+    }
+}
+
+pub(super) fn budget_json(budget: &OrchestrationBudgetSnapshot) -> Value {
+    let ceiling = budget.ceiling();
+    let reserved = budget.reserved();
+    let consumed = budget.enforced_consumed();
+    let remaining = budget.enforced_remaining();
+    let committed = consumed.checked_add(reserved);
+    json!({
+        "ceiling": budget_amount_json(ceiling),
+        "reserved": budget_amount_json(reserved),
+        "consumed": {
+            "tokens": consumed.tokens(),
+            "tools": consumed.tools(),
+            "elapsed_ms": consumed.elapsed_ms(),
+            "cost_micros": budget.actual_cost_micros(),
+            "known_cost_micros": budget.known_cost_micros(),
+            "unknown_cost_receipts": budget.unknown_cost_receipts(),
+            "enforced_cost_micros": consumed.cost_micros(),
+        },
+        "remaining": {
+            "tokens": remaining.tokens(),
+            "tools": remaining.tools(),
+            "elapsed_ms": remaining.elapsed_ms(),
+            "cost_micros": budget.actual_cost_micros().map(|_| remaining.cost_micros()),
+            "enforced_cost_micros": remaining.cost_micros(),
+        },
+        "reservations": budget.reservations().iter().map(|reservation| json!({
+            "role_id": reservation.role_id(),
+            "state": reservation.state().as_str(),
+            "reservation": budget_amount_json(reservation.reservation()),
+            "completion_receipt_id": reservation.completion_receipt_id(),
+            "reconciliation_evidence_digest": reservation.reconciliation_evidence_digest(),
+            "usage": reservation.usage(),
+            "reserved_at": reservation.reserved_at().as_unix_seconds(),
+            "updated_at": reservation.updated_at().as_unix_seconds(),
+        })).collect::<Vec<_>>(),
+        "invariant": {
+            "holds": committed.is_some_and(|amount| amount.fits_within(ceiling)),
+            "expression": "enforced_consumed + active_reservations <= aggregate_ceiling",
+        },
+        "boundary": {
+            "prompts_included": false,
+            "outputs_included": false,
+            "credentials_included": false,
+            "hidden_reasoning_included": false,
+        },
+    })
+}
+
+fn budget_amount_json(amount: pandora_types::OrchestrationBudgetAmount) -> Value {
+    json!({
+        "tokens": amount.tokens(),
+        "tools": amount.tools(),
+        "elapsed_ms": amount.elapsed_ms(),
+        "cost_micros": amount.cost_micros(),
+    })
 }
 
 fn assignment_json(
@@ -435,15 +600,27 @@ fn assignment_json(
 fn store_error(error: OrchestrationStoreError) -> CliError {
     let message = error.to_string();
     match error {
-        OrchestrationStoreError::Contract(_) | OrchestrationStoreError::InvalidIdentifier => {
-            CliError::usage(message)
-        }
+        OrchestrationStoreError::Contract(_)
+        | OrchestrationStoreError::InvalidIdentifier
+        | OrchestrationStoreError::AggregateBudgetRequired
+        | OrchestrationStoreError::UsageRequired => CliError::usage(message),
         OrchestrationStoreError::RunNotFound
         | OrchestrationStoreError::RunOwnedByAnotherWorker
         | OrchestrationStoreError::DuplicateReceipt
+        | OrchestrationStoreError::BudgetReservationNotFound
+        | OrchestrationStoreError::BudgetReservationNotActive
+        | OrchestrationStoreError::UsageExceedsReservation(_)
+        | OrchestrationStoreError::AggregateBudgetExceeded(_)
         | OrchestrationStoreError::ActiveRolesRequireReconciliation
         | OrchestrationStoreError::InvalidTransition { .. }
         | OrchestrationStoreError::Orchestration(_) => CliError::execution(message, json!({})),
-        _ => CliError::internal(message, json!({})),
+        OrchestrationStoreError::AggregateBudgetNotFound
+        | OrchestrationStoreError::AggregateBudgetOverflow
+        | OrchestrationStoreError::Database(_)
+        | OrchestrationStoreError::Io(_)
+        | OrchestrationStoreError::Serialization(_)
+        | OrchestrationStoreError::CorruptRecord
+        | OrchestrationStoreError::RunAlreadyExists
+        | OrchestrationStoreError::LockPoisoned => CliError::internal(message, json!({})),
     }
 }

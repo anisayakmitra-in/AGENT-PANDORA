@@ -138,6 +138,7 @@ pub use subagent::{
     SubagentStatus, SubagentWorktreeState,
 };
 pub use workspace_orchestration::{
-    GovernedOrchestrationPlan, OrchestrationRoleReceipt, RepositoryBinding, RoleRepositoryBinding,
-    WorkspaceOrchestrationError,
+    GovernedOrchestrationPlan, OrchestrationAggregateBudget, OrchestrationBudgetAmount,
+    OrchestrationRoleBudget, OrchestrationRoleReceipt, OrchestrationUsage, RepositoryBinding,
+    RoleRepositoryBinding, WorkspaceOrchestrationError,
 };

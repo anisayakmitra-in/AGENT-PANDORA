@@ -203,6 +203,7 @@ beforeEach(() => {
         stale_supervisors: 0,
         overdue_active_leases: 0,
         queued_without_capacity: false,
+        aggregate_budget_invariant_holds: true,
       },
       fleet: {
         nodes: { total: 0, by_state: { ready: 0, quarantined: 0, revoked: 0, killed: 0 } },
@@ -215,7 +216,18 @@ beforeEach(() => {
       },
       failures: { count: 0, records: [], records_truncated: false },
       budget_ceilings: { active_lease_count: 0, max_tokens: 0, max_tools: 0, max_duration_seconds: 0, max_cost_micros: 0, saturated: false, actual_spend_available: false },
-      boundary: { read_only: true, runtime_authority: false, budgets_are_ceilings_not_spend: true, prompts_included: false, outputs_included: false, credentials_included: false, hidden_reasoning_included: false },
+      aggregate_budgets: {
+        run_count: 0,
+        records: [],
+        records_truncated: false,
+        ceiling: { tokens: 0, tools: 0, elapsed_ms: 0, cost_micros: 0 },
+        reserved: { tokens: 0, tools: 0, elapsed_ms: 0, cost_micros: 0 },
+        consumed: { tokens: 0, tools: 0, elapsed_ms: 0, cost_micros: 0, known_cost_micros: 0, unknown_cost_receipts: 0, enforced_cost_micros: 0 },
+        remaining: { tokens: 0, tools: 0, elapsed_ms: 0, cost_micros: 0, enforced_cost_micros: 0 },
+        saturated: false,
+        invariant: { holds: true, expression: "enforced_consumed + active_reservations <= aggregate_ceiling" },
+      },
+      boundary: { read_only: true, runtime_authority: false, budgets_are_ceilings_not_spend: true, aggregate_usage_available: false, aggregate_cost_unknown_explicit: true, prompts_included: false, outputs_included: false, credentials_included: false, hidden_reasoning_included: false },
     },
   });
   runtime.listLocalSkills.mockResolvedValue({
@@ -2399,12 +2411,12 @@ describe("Pandora desktop run state", () => {
     }));
   });
 
-  it("shows a privacy-safe Fleet operations snapshot with lease ages and budget ceilings", async () => {
+  it("shows a privacy-safe Fleet operations snapshot with aggregate usage", async () => {
     runtime.listFleetOperations.mockResolvedValue({
       message: "Local Fleet operations need attention.",
       data: {
         generated_at: 100,
-        health: { status: "attention", ready_nodes: 2, running_supervisors: 1, stale_supervisors: 1, overdue_active_leases: 0, queued_without_capacity: false },
+        health: { status: "attention", ready_nodes: 2, running_supervisors: 1, stale_supervisors: 1, overdue_active_leases: 0, queued_without_capacity: false, aggregate_budget_invariant_holds: true },
         fleet: {
           nodes: { total: 2, by_state: { ready: 2 } },
           supervisors: { total: 1, by_state: { running: 1 }, stale: [{ node_id: "node-a", state: "running", age_seconds: 45 }] },
@@ -2421,7 +2433,18 @@ describe("Pandora desktop run state", () => {
         },
         failures: { count: 1, records: [{ kind: "job", id: "job-failed", status: "failed", recorded_at: 90 }], records_truncated: false },
         budget_ceilings: { active_lease_count: 1, max_tokens: 4000, max_tools: 20, max_duration_seconds: 120, max_cost_micros: 25000, saturated: false, actual_spend_available: false },
-        boundary: { read_only: true, runtime_authority: false, budgets_are_ceilings_not_spend: true, prompts_included: false, outputs_included: false, credentials_included: false, hidden_reasoning_included: false },
+        aggregate_budgets: {
+          run_count: 1,
+          records: [{ run_id: "run-budget", budget: {} }],
+          records_truncated: false,
+          ceiling: { tokens: 4000, tools: 20, elapsed_ms: 120000, cost_micros: 25000 },
+          reserved: { tokens: 500, tools: 3, elapsed_ms: 10000, cost_micros: 5000 },
+          consumed: { tokens: 1500, tools: 7, elapsed_ms: 40000, cost_micros: null, known_cost_micros: 12000, unknown_cost_receipts: 1, enforced_cost_micros: 18000 },
+          remaining: { tokens: 2000, tools: 10, elapsed_ms: 70000, cost_micros: null, enforced_cost_micros: 2000 },
+          saturated: false,
+          invariant: { holds: true, expression: "enforced_consumed + active_reservations <= aggregate_ceiling" },
+        },
+        boundary: { read_only: true, runtime_authority: false, budgets_are_ceilings_not_spend: true, aggregate_usage_available: true, aggregate_cost_unknown_explicit: true, prompts_included: false, outputs_included: false, credentials_included: false, hidden_reasoning_included: false },
       },
     });
 
@@ -2434,6 +2457,8 @@ describe("Pandora desktop run state", () => {
     expect(screen.getByText("job-failed")).toBeInTheDocument();
     expect(screen.getByText(/Prompts, outputs, credentials, and hidden reasoning are excluded/)).toBeInTheDocument();
     expect(screen.getByText("4,000")).toBeInTheDocument();
+    expect(screen.getByText(/1,500 used · 500 reserved · 2,000 available \/ 4,000 ceiling/)).toBeInTheDocument();
+    expect(screen.getByText(/Unknown · 1 unknown receipt · 18,000 µ enforced/)).toBeInTheDocument();
     expect(runtime.listFleetOperations).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "Refresh snapshot" }));
     await waitFor(() => expect(runtime.listFleetOperations).toHaveBeenCalledTimes(2));

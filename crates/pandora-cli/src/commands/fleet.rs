@@ -4,7 +4,7 @@ use pandora_runtime::{
     FleetBudget, FleetEngine, FleetError, FleetLease, FleetLeaseState, FleetNode, FleetSupervisor,
     FleetSupervisorState, JobStore, OrchestrationStore,
 };
-use pandora_types::JobStatus;
+use pandora_types::{JobStatus, OrchestrationBudgetAmount};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -67,8 +67,9 @@ fn dashboard(args: &[String]) -> Result<CommandResult, CliError> {
     let fleet = FleetEngine::open(config.data_dir().join("fleet.sqlite3")).map_err(fleet_error)?;
     let jobs = JobStore::open(config.data_dir().join("jobs.sqlite3"))
         .map_err(|error| operations_error(error.to_string()))?;
-    let orchestrations = OrchestrationStore::open(config.data_dir().join("orchestration.sqlite3"))
-        .map_err(|error| operations_error(error.to_string()))?;
+    let orchestration_store =
+        OrchestrationStore::open(config.data_dir().join("orchestration.sqlite3"))
+            .map_err(|error| operations_error(error.to_string()))?;
     let nodes = fleet.list_nodes().map_err(fleet_error)?;
     let leases = fleet.list_leases().map_err(fleet_error)?;
     let supervisors = fleet.list_supervisors().map_err(fleet_error)?;
@@ -76,8 +77,11 @@ fn dashboard(args: &[String]) -> Result<CommandResult, CliError> {
     let jobs = jobs
         .list(&principal, &tenant, &workspace)
         .map_err(|error| operations_error(error.to_string()))?;
-    let orchestrations = orchestrations
+    let orchestrations = orchestration_store
         .list(&principal, &tenant, &workspace)
+        .map_err(|error| operations_error(error.to_string()))?;
+    let aggregate_budgets = orchestration_store
+        .list_budgets(&principal, &tenant, &workspace)
         .map_err(|error| operations_error(error.to_string()))?;
 
     let node_counts = count_states(
@@ -185,6 +189,53 @@ fn dashboard(args: &[String]) -> Result<CommandResult, CliError> {
             )
         },
     );
+    let mut aggregate_ceiling = OrchestrationBudgetAmount::default();
+    let mut aggregate_reserved = OrchestrationBudgetAmount::default();
+    let mut aggregate_consumed = OrchestrationBudgetAmount::default();
+    let mut aggregate_remaining = OrchestrationBudgetAmount::default();
+    let mut aggregate_known_cost_micros = 0_u64;
+    let mut aggregate_unknown_cost_receipts = 0_u64;
+    let mut aggregate_budget_saturated = false;
+    for budget in &aggregate_budgets {
+        let (next, saturated) = saturating_add_budget(aggregate_ceiling, budget.ceiling());
+        aggregate_ceiling = next;
+        aggregate_budget_saturated |= saturated;
+        let (next, saturated) = saturating_add_budget(aggregate_reserved, budget.reserved());
+        aggregate_reserved = next;
+        aggregate_budget_saturated |= saturated;
+        let (next, saturated) =
+            saturating_add_budget(aggregate_consumed, budget.enforced_consumed());
+        aggregate_consumed = next;
+        aggregate_budget_saturated |= saturated;
+        let (next, saturated) =
+            saturating_add_budget(aggregate_remaining, budget.enforced_remaining());
+        aggregate_remaining = next;
+        aggregate_budget_saturated |= saturated;
+        let (next, saturated) =
+            aggregate_known_cost_micros.overflowing_add(budget.known_cost_micros());
+        aggregate_known_cost_micros = if saturated { u64::MAX } else { next };
+        aggregate_budget_saturated |= saturated;
+        let (next, saturated) =
+            aggregate_unknown_cost_receipts.overflowing_add(budget.unknown_cost_receipts());
+        aggregate_unknown_cost_receipts = if saturated { u64::MAX } else { next };
+        aggregate_budget_saturated |= saturated;
+    }
+    let aggregate_invariant_holds = aggregate_budgets.iter().all(|budget| {
+        budget
+            .enforced_consumed()
+            .checked_add(budget.reserved())
+            .is_some_and(|committed| committed.fits_within(budget.ceiling()))
+    });
+    let aggregate_budget_records = aggregate_budgets
+        .iter()
+        .take(MAX_OPERATIONS_DETAIL_RECORDS)
+        .map(|budget| {
+            json!({
+                "run_id": budget.run_id(),
+                "budget": super::orchestration::budget_json(budget),
+            })
+        })
+        .collect::<Vec<_>>();
 
     let ready_nodes = count(&node_counts, "ready");
     let running_supervisors = count(&supervisor_counts, "running");
@@ -194,19 +245,22 @@ fn dashboard(args: &[String]) -> Result<CommandResult, CliError> {
     let running_orchestrations = count(&orchestration_counts, "running");
     let queued_without_capacity = queued_jobs.saturating_add(queued_orchestrations) > 0
         && (ready_nodes == 0 || running_supervisors == 0);
-    let health =
-        if !stale_supervisors.is_empty() || overdue_active_leases > 0 || queued_without_capacity {
-            "attention"
-        } else if nodes.is_empty()
-            && supervisors.is_empty()
-            && leases.is_empty()
-            && jobs.is_empty()
-            && orchestrations.is_empty()
-        {
-            "idle"
-        } else {
-            "healthy"
-        };
+    let health = if !stale_supervisors.is_empty()
+        || overdue_active_leases > 0
+        || queued_without_capacity
+        || !aggregate_invariant_holds
+    {
+        "attention"
+    } else if nodes.is_empty()
+        && supervisors.is_empty()
+        && leases.is_empty()
+        && jobs.is_empty()
+        && orchestrations.is_empty()
+    {
+        "idle"
+    } else {
+        "healthy"
+    };
 
     let mut failures = jobs
         .iter()
@@ -260,6 +314,7 @@ fn dashboard(args: &[String]) -> Result<CommandResult, CliError> {
                 "stale_supervisors": stale_supervisors.len(),
                 "overdue_active_leases": overdue_active_leases,
                 "queued_without_capacity": queued_without_capacity,
+                "aggregate_budget_invariant_holds": aggregate_invariant_holds,
             },
             "fleet": {
                 "nodes": {"total": nodes.len(), "by_state": node_counts},
@@ -305,10 +360,42 @@ fn dashboard(args: &[String]) -> Result<CommandResult, CliError> {
                 "saturated": budget_saturated,
                 "actual_spend_available": false,
             },
+            "aggregate_budgets": {
+                "run_count": aggregate_budgets.len(),
+                "records": aggregate_budget_records,
+                "records_truncated": aggregate_budgets.len() > MAX_OPERATIONS_DETAIL_RECORDS,
+                "ceiling": orchestration_budget_value(aggregate_ceiling),
+                "reserved": orchestration_budget_value(aggregate_reserved),
+                "consumed": {
+                    "tokens": aggregate_consumed.tokens(),
+                    "tools": aggregate_consumed.tools(),
+                    "elapsed_ms": aggregate_consumed.elapsed_ms(),
+                    "cost_micros": (aggregate_unknown_cost_receipts == 0)
+                        .then_some(aggregate_known_cost_micros),
+                    "known_cost_micros": aggregate_known_cost_micros,
+                    "unknown_cost_receipts": aggregate_unknown_cost_receipts,
+                    "enforced_cost_micros": aggregate_consumed.cost_micros(),
+                },
+                "remaining": {
+                    "tokens": aggregate_remaining.tokens(),
+                    "tools": aggregate_remaining.tools(),
+                    "elapsed_ms": aggregate_remaining.elapsed_ms(),
+                    "cost_micros": (aggregate_unknown_cost_receipts == 0)
+                        .then_some(aggregate_remaining.cost_micros()),
+                    "enforced_cost_micros": aggregate_remaining.cost_micros(),
+                },
+                "saturated": aggregate_budget_saturated,
+                "invariant": {
+                    "holds": aggregate_invariant_holds,
+                    "expression": "enforced_consumed + active_reservations <= aggregate_ceiling",
+                },
+            },
             "boundary": {
                 "read_only": true,
                 "runtime_authority": false,
                 "budgets_are_ceilings_not_spend": true,
+                "aggregate_usage_available": !aggregate_budgets.is_empty(),
+                "aggregate_cost_unknown_explicit": true,
                 "prompts_included": false,
                 "outputs_included": false,
                 "credentials_included": false,
@@ -347,6 +434,42 @@ fn budget_value(budget: &FleetBudget) -> Value {
         "max_duration_seconds": budget.max_duration_seconds(),
         "max_cost_micros": budget.max_cost_micros(),
     })
+}
+
+fn orchestration_budget_value(budget: OrchestrationBudgetAmount) -> Value {
+    json!({
+        "tokens": budget.tokens(),
+        "tools": budget.tools(),
+        "elapsed_ms": budget.elapsed_ms(),
+        "cost_micros": budget.cost_micros(),
+    })
+}
+
+fn saturating_add_budget(
+    left: OrchestrationBudgetAmount,
+    right: OrchestrationBudgetAmount,
+) -> (OrchestrationBudgetAmount, bool) {
+    let (tokens, tokens_saturated) = left.tokens().overflowing_add(right.tokens());
+    let (tools, tools_saturated) = left.tools().overflowing_add(right.tools());
+    let (elapsed_ms, elapsed_saturated) = left.elapsed_ms().overflowing_add(right.elapsed_ms());
+    let (cost_micros, cost_saturated) = left.cost_micros().overflowing_add(right.cost_micros());
+    (
+        OrchestrationBudgetAmount::new(
+            if tokens_saturated { u64::MAX } else { tokens },
+            if tools_saturated { u64::MAX } else { tools },
+            if elapsed_saturated {
+                u64::MAX
+            } else {
+                elapsed_ms
+            },
+            if cost_saturated {
+                u64::MAX
+            } else {
+                cost_micros
+            },
+        ),
+        tokens_saturated || tools_saturated || elapsed_saturated || cost_saturated,
+    )
 }
 
 fn operations_error(message: String) -> CliError {

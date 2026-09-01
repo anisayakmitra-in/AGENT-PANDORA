@@ -7,12 +7,13 @@ use pandora_runtime::{
 use pandora_types::{
     ContextClassification, DomainRoutingProfile, EffectOutcome, EffectReceipt, EventType,
     ExecutionId, GovernedOrchestrationPlan, Handoff, HarnessId, JobCommand, JobId, JobRequest,
-    JobStatus, JobWorkerId, MemoryId, MemoryKind, MemoryScope, MetaComposition, OrchestrationPlan,
-    OrchestrationRole, OrchestrationRoleReceipt, OrchestrationRunId, PackageCompatibility,
-    PackageDependency, PackageKind, PackageManifest, PermitId, PlanId, PrincipalId, ReceiptId,
-    RepositoryBinding, RepositoryId, RequestDigest, RoleAssignment, RoleId, RoleRepositoryBinding,
-    Session, SessionId, SubagentBudgets, SubagentId, SubagentRequest, TenantId, Timestamp,
-    TrustEvidence, TrustLevel, WorkspaceId, hash_artifact,
+    JobStatus, JobWorkerId, MemoryId, MemoryKind, MemoryScope, MetaComposition,
+    OrchestrationAggregateBudget, OrchestrationBudgetAmount, OrchestrationPlan, OrchestrationRole,
+    OrchestrationRoleBudget, OrchestrationRoleReceipt, OrchestrationRunId, OrchestrationUsage,
+    PackageCompatibility, PackageDependency, PackageKind, PackageManifest, PermitId, PlanId,
+    PrincipalId, ReceiptId, RepositoryBinding, RepositoryId, RequestDigest, RoleAssignment, RoleId,
+    RoleRepositoryBinding, Session, SessionId, SubagentBudgets, SubagentId, SubagentRequest,
+    TenantId, Timestamp, TrustEvidence, TrustLevel, WorkspaceId, hash_artifact,
 };
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -28,6 +29,23 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(1);
+
+fn two_role_aggregate_budget() -> OrchestrationAggregateBudget {
+    OrchestrationAggregateBudget::new(
+        OrchestrationBudgetAmount::new(200_000, 200, 600_000, 300_000),
+        vec![
+            OrchestrationRoleBudget::new(
+                RoleId::new("planner").unwrap(),
+                OrchestrationBudgetAmount::new(100_000, 100, 300_000, 100_000),
+            ),
+            OrchestrationRoleBudget::new(
+                RoleId::new("maker").unwrap(),
+                OrchestrationBudgetAmount::new(100_000, 100, 300_000, 100_000),
+            ),
+        ],
+    )
+    .unwrap()
+}
 
 struct Fixture {
     root: PathBuf,
@@ -1990,8 +2008,17 @@ fn fleet_dashboard_aggregates_operations_without_sensitive_payloads() {
     assert_eq!(response["budget_ceilings"]["max_tools"], 20);
     assert_eq!(response["budget_ceilings"]["max_cost_micros"], 50_000);
     assert_eq!(response["budget_ceilings"]["actual_spend_available"], false);
+    assert_eq!(response["aggregate_budgets"]["run_count"], 0);
+    assert_eq!(response["aggregate_budgets"]["consumed"]["tokens"], 0);
+    assert_eq!(response["aggregate_budgets"]["consumed"]["cost_micros"], 0);
+    assert_eq!(response["aggregate_budgets"]["invariant"]["holds"], true);
     assert_eq!(response["boundary"]["read_only"], true);
     assert_eq!(response["boundary"]["runtime_authority"], false);
+    assert_eq!(response["boundary"]["aggregate_usage_available"], false);
+    assert_eq!(
+        response["boundary"]["aggregate_cost_unknown_explicit"],
+        true
+    );
     assert_eq!(response["boundary"]["prompts_included"], false);
     assert_eq!(response["boundary"]["outputs_included"], false);
     assert_eq!(response["boundary"]["credentials_included"], false);
@@ -3779,6 +3806,8 @@ fn orchestration_cli_persists_partial_failure_across_processes() {
             ),
         ],
     )
+    .unwrap()
+    .with_aggregate_budget(two_role_aggregate_budget())
     .unwrap();
     let plan_path = fixture.root.join("process-plan.json");
     fs::write(&plan_path, serde_json::to_vec(&governed).unwrap()).unwrap();
@@ -3805,6 +3834,7 @@ fn orchestration_cli_persists_partial_failure_across_processes() {
     assert_success(&claimed);
     assert_eq!(parse_json(&claimed)["assignments"][0]["role_id"], "planner");
 
+    let planner_effect_receipt = ReceiptId::new("effect-planner-process").unwrap();
     let planner_receipt = OrchestrationRoleReceipt::new(
         ReceiptId::new("receipt-planner-process").unwrap(),
         OrchestrationRunId::new(run_id).unwrap(),
@@ -3812,8 +3842,12 @@ fn orchestration_cli_persists_partial_failure_across_processes() {
         RepositoryId::new("api").unwrap(),
         WorkspaceId::new("workspace-api").unwrap(),
         "commit-api",
-        Vec::new(),
+        vec![planner_effect_receipt.clone()],
         Some(RequestDigest::new("planner-evidence-process").unwrap()),
+    )
+    .unwrap()
+    .with_usage(
+        OrchestrationUsage::new(100, 1, 100, Some(10), vec![planner_effect_receipt]).unwrap(),
     )
     .unwrap();
     let receipt_path = fixture.root.join("planner-receipt.json");
@@ -3861,6 +3895,11 @@ fn orchestration_cli_persists_partial_failure_across_processes() {
     assert_eq!(inspected["completed_roles"].as_array().unwrap().len(), 1);
     assert_eq!(inspected["active_roles"].as_array().unwrap().len(), 1);
     assert_eq!(inspected["role_receipts"].as_array().unwrap().len(), 1);
+    assert_eq!(inspected["aggregate_budget"]["ceiling"]["tokens"], 200_000);
+    assert_eq!(inspected["aggregate_budget"]["consumed"]["tokens"], 100);
+    assert_eq!(inspected["aggregate_budget"]["reserved"]["tokens"], 100_000);
+    assert_eq!(inspected["aggregate_budget"]["remaining"]["tokens"], 99_900);
+    assert_eq!(inspected["aggregate_budget"]["invariant"]["holds"], true);
 
     let resumed = fixture
         .command(&["orchestration", "resume", run_id, "--json"])
@@ -3873,6 +3912,114 @@ fn orchestration_cli_persists_partial_failure_across_processes() {
             .unwrap()
             .contains("active roles that require receipt reconciliation")
     );
+
+    let maker_usage = OrchestrationUsage::new(
+        25,
+        1,
+        50,
+        None,
+        vec![ReceiptId::new("effect-maker-partial-process").unwrap()],
+    )
+    .unwrap();
+    let usage_path = fixture.root.join("maker-partial-usage.json");
+    fs::write(&usage_path, serde_json::to_vec(&maker_usage).unwrap()).unwrap();
+    let reconciled = fixture
+        .command(&[
+            "orchestration",
+            "reconcile-failed",
+            run_id,
+            "--role",
+            "maker",
+            "--usage",
+            usage_path.to_str().unwrap(),
+            "--evidence-digest",
+            "maker-partial-evidence-process",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("failed role reconciliation should start");
+    assert_success(&reconciled);
+    let reconciled = parse_json(&reconciled);
+    assert_eq!(reconciled["active_roles"].as_array().unwrap().len(), 0);
+    assert_eq!(reconciled["aggregate_budget"]["consumed"]["tokens"], 125);
+    assert_eq!(
+        reconciled["aggregate_budget"]["consumed"]["cost_micros"],
+        Value::Null
+    );
+    assert_eq!(
+        reconciled["aggregate_budget"]["consumed"]["unknown_cost_receipts"],
+        1
+    );
+    assert_eq!(reconciled["aggregate_budget"]["reserved"]["tokens"], 0);
+    let maker_reservation = reconciled["aggregate_budget"]["reservations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|reservation| reservation["role_id"] == "maker")
+        .unwrap();
+    assert_eq!(maker_reservation["state"], "released");
+
+    let duplicate_reconciliation = fixture
+        .command(&[
+            "orchestration",
+            "reconcile-failed",
+            run_id,
+            "--role",
+            "maker",
+            "--usage",
+            usage_path.to_str().unwrap(),
+            "--evidence-digest",
+            "maker-partial-evidence-process",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("duplicate failed role reconciliation should start");
+    assert_eq!(duplicate_reconciliation.status.code(), Some(50));
+
+    let resumed = fixture
+        .command(&["orchestration", "resume", run_id, "--json"])
+        .output()
+        .expect("reconciled orchestration resume should start");
+    assert_success(&resumed);
+    let retried = fixture
+        .command(&["orchestration", "claim", "--worker", "worker-b", "--json"])
+        .output()
+        .expect("reconciled orchestration retry should start");
+    assert_success_with_context(&retried, "reconciled orchestration retry claim");
+    let retried = parse_json(&retried);
+    assert_eq!(retried["assignments"][0]["role_id"], "maker");
+    assert_eq!(
+        retried["run"]["aggregate_budget"]["reserved"]["tokens"],
+        100_000
+    );
+    assert_eq!(
+        retried["run"]["aggregate_budget"]["consumed"]["tokens"],
+        125
+    );
+    assert_eq!(
+        retried["run"]["aggregate_budget"]["invariant"]["holds"],
+        true
+    );
+
+    let dashboard = fixture
+        .command(&["fleet", "dashboard", "--json"])
+        .output()
+        .expect("fleet aggregate budget dashboard should start");
+    assert_success(&dashboard);
+    let dashboard = parse_json(&dashboard);
+    assert_eq!(dashboard["aggregate_budgets"]["run_count"], 1);
+    assert_eq!(dashboard["aggregate_budgets"]["consumed"]["tokens"], 125);
+    assert_eq!(
+        dashboard["aggregate_budgets"]["reserved"]["tokens"],
+        100_000
+    );
+    assert_eq!(
+        dashboard["aggregate_budgets"]["consumed"]["cost_micros"],
+        Value::Null
+    );
+    assert_eq!(dashboard["aggregate_budgets"]["invariant"]["holds"], true);
 }
 
 #[test]
@@ -11304,6 +11451,8 @@ fn phase7_worker_operations_recover_without_replaying_durable_effects() {
             ),
         ],
     )
+    .unwrap()
+    .with_aggregate_budget(two_role_aggregate_budget())
     .unwrap();
     let plan_path = fixture.root.join("phase7-plan.json");
     fs::write(&plan_path, serde_json::to_vec(&governed).unwrap()).unwrap();
@@ -11352,6 +11501,11 @@ fn phase7_worker_operations_recover_without_replaying_durable_effects() {
         exact_commit.clone(),
         vec![governed_effect_receipt.clone()],
         None,
+    )
+    .unwrap()
+    .with_usage(
+        OrchestrationUsage::new(100, 1, 100, Some(10), vec![governed_effect_receipt.clone()])
+            .unwrap(),
     )
     .unwrap();
     let planner_receipt_path = fixture.root.join("phase7-planner-receipt.json");
@@ -11403,6 +11557,7 @@ fn phase7_worker_operations_recover_without_replaying_durable_effects() {
             .contains("duplicated")
     );
 
+    let maker_effect_receipt = ReceiptId::new("phase7-maker-effect").unwrap();
     let maker_receipt = OrchestrationRoleReceipt::new(
         ReceiptId::new("phase7-maker-receipt").unwrap(),
         OrchestrationRunId::new(run_id).unwrap(),
@@ -11410,9 +11565,11 @@ fn phase7_worker_operations_recover_without_replaying_durable_effects() {
         RepositoryId::new("desktop").unwrap(),
         WorkspaceId::new("workspace-desktop").unwrap(),
         "desktop-commit",
-        Vec::new(),
+        vec![maker_effect_receipt.clone()],
         Some(RequestDigest::new("phase7-maker-evidence").unwrap()),
     )
+    .unwrap()
+    .with_usage(OrchestrationUsage::new(50, 1, 50, Some(5), vec![maker_effect_receipt]).unwrap())
     .unwrap();
     let maker_receipt_path = fixture.root.join("phase7-maker-receipt.json");
     fs::write(

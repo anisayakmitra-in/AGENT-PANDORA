@@ -26,6 +26,16 @@ pub enum WorkspaceOrchestrationError {
     ReceiptRepositoryMismatch(RepositoryId),
     ReceiptWorkspaceMismatch(WorkspaceId),
     ReceiptCommitMismatch,
+    DuplicateRoleBudget(RoleId),
+    NonCanonicalRoleBudgets,
+    MissingRoleBudget(RoleId),
+    UnknownBudgetRole(RoleId),
+    RoleBudgetExceedsCeiling(RoleId),
+    AggregateBudgetOverflow,
+    DuplicateUsageReceipt(ReceiptId),
+    NonCanonicalUsageReceipts,
+    UsageReceiptNotGoverned(ReceiptId),
+    EmptyUsageEvidence,
 }
 
 impl fmt::Display for WorkspaceOrchestrationError {
@@ -74,6 +84,33 @@ impl fmt::Display for WorkspaceOrchestrationError {
             }
             Self::ReceiptCommitMismatch => {
                 formatter.write_str("role receipt does not match the exact repository commit")
+            }
+            Self::DuplicateRoleBudget(id) => write!(formatter, "role {id} has multiple budgets"),
+            Self::NonCanonicalRoleBudgets => {
+                formatter.write_str("role budgets are not in canonical order")
+            }
+            Self::MissingRoleBudget(id) => write!(formatter, "role {id} has no budget"),
+            Self::UnknownBudgetRole(id) => write!(formatter, "budget role {id} is unknown"),
+            Self::RoleBudgetExceedsCeiling(id) => {
+                write!(formatter, "role {id} budget exceeds the aggregate ceiling")
+            }
+            Self::AggregateBudgetOverflow => {
+                formatter.write_str("aggregate orchestration budget overflowed")
+            }
+            Self::DuplicateUsageReceipt(id) => {
+                write!(formatter, "usage receipt {id} is duplicated")
+            }
+            Self::NonCanonicalUsageReceipts => {
+                formatter.write_str("usage receipts are not in canonical order")
+            }
+            Self::UsageReceiptNotGoverned(id) => {
+                write!(
+                    formatter,
+                    "usage receipt {id} is not a governed effect receipt"
+                )
+            }
+            Self::EmptyUsageEvidence => {
+                formatter.write_str("measured usage requires receipt evidence")
             }
         }
     }
@@ -124,6 +161,230 @@ pub struct RoleRepositoryBinding {
     repository_id: RepositoryId,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct OrchestrationBudgetAmount {
+    tokens: u64,
+    tools: u64,
+    elapsed_ms: u64,
+    cost_micros: u64,
+}
+
+impl OrchestrationBudgetAmount {
+    pub const fn new(tokens: u64, tools: u64, elapsed_ms: u64, cost_micros: u64) -> Self {
+        Self {
+            tokens,
+            tools,
+            elapsed_ms,
+            cost_micros,
+        }
+    }
+
+    pub const fn tokens(self) -> u64 {
+        self.tokens
+    }
+
+    pub const fn tools(self) -> u64 {
+        self.tools
+    }
+
+    pub const fn elapsed_ms(self) -> u64 {
+        self.elapsed_ms
+    }
+
+    pub const fn cost_micros(self) -> u64 {
+        self.cost_micros
+    }
+
+    pub fn checked_add(self, other: Self) -> Option<Self> {
+        Some(Self {
+            tokens: self.tokens.checked_add(other.tokens)?,
+            tools: self.tools.checked_add(other.tools)?,
+            elapsed_ms: self.elapsed_ms.checked_add(other.elapsed_ms)?,
+            cost_micros: self.cost_micros.checked_add(other.cost_micros)?,
+        })
+    }
+
+    pub const fn fits_within(self, ceiling: Self) -> bool {
+        self.tokens <= ceiling.tokens
+            && self.tools <= ceiling.tools
+            && self.elapsed_ms <= ceiling.elapsed_ms
+            && self.cost_micros <= ceiling.cost_micros
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct OrchestrationRoleBudget {
+    role_id: RoleId,
+    reservation: OrchestrationBudgetAmount,
+}
+
+impl OrchestrationRoleBudget {
+    pub const fn new(role_id: RoleId, reservation: OrchestrationBudgetAmount) -> Self {
+        Self {
+            role_id,
+            reservation,
+        }
+    }
+
+    pub fn role_id(&self) -> &RoleId {
+        &self.role_id
+    }
+
+    pub const fn reservation(&self) -> OrchestrationBudgetAmount {
+        self.reservation
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct OrchestrationAggregateBudget {
+    ceiling: OrchestrationBudgetAmount,
+    roles: Vec<OrchestrationRoleBudget>,
+}
+
+impl OrchestrationAggregateBudget {
+    pub fn new(
+        ceiling: OrchestrationBudgetAmount,
+        mut roles: Vec<OrchestrationRoleBudget>,
+    ) -> Result<Self, WorkspaceOrchestrationError> {
+        roles.sort_by(|left, right| left.role_id().cmp(right.role_id()));
+        if let Some(duplicate) = roles
+            .windows(2)
+            .find(|pair| pair[0].role_id() == pair[1].role_id())
+        {
+            return Err(WorkspaceOrchestrationError::DuplicateRoleBudget(
+                duplicate[0].role_id().clone(),
+            ));
+        }
+        Ok(Self { ceiling, roles })
+    }
+
+    pub const fn ceiling(&self) -> OrchestrationBudgetAmount {
+        self.ceiling
+    }
+
+    pub fn roles(&self) -> &[OrchestrationRoleBudget] {
+        &self.roles
+    }
+
+    pub fn reservation_for_role(&self, role_id: &RoleId) -> Option<OrchestrationBudgetAmount> {
+        self.roles
+            .iter()
+            .find(|budget| budget.role_id() == role_id)
+            .map(OrchestrationRoleBudget::reservation)
+    }
+
+    fn validate_for_plan(
+        &self,
+        plan: &OrchestrationPlan,
+    ) -> Result<(), WorkspaceOrchestrationError> {
+        let rebuilt = Self::new(self.ceiling, self.roles.clone())?;
+        if rebuilt != *self {
+            return Err(WorkspaceOrchestrationError::NonCanonicalRoleBudgets);
+        }
+        let mut total = OrchestrationBudgetAmount::default();
+        for budget in &self.roles {
+            if plan.role(budget.role_id()).is_none() {
+                return Err(WorkspaceOrchestrationError::UnknownBudgetRole(
+                    budget.role_id().clone(),
+                ));
+            }
+            if !budget.reservation().fits_within(self.ceiling) {
+                return Err(WorkspaceOrchestrationError::RoleBudgetExceedsCeiling(
+                    budget.role_id().clone(),
+                ));
+            }
+            total = total
+                .checked_add(budget.reservation())
+                .ok_or(WorkspaceOrchestrationError::AggregateBudgetOverflow)?;
+        }
+        if let Some(role) = plan
+            .roles()
+            .iter()
+            .find(|role| self.reservation_for_role(role.id()).is_none())
+        {
+            return Err(WorkspaceOrchestrationError::MissingRoleBudget(
+                role.id().clone(),
+            ));
+        }
+        if !total.fits_within(self.ceiling) {
+            return Err(WorkspaceOrchestrationError::AggregateBudgetOverflow);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct OrchestrationUsage {
+    tokens: u64,
+    tools: u64,
+    elapsed_ms: u64,
+    cost_micros: Option<u64>,
+    source_receipts: Vec<ReceiptId>,
+}
+
+impl OrchestrationUsage {
+    pub fn new(
+        tokens: u64,
+        tools: u64,
+        elapsed_ms: u64,
+        cost_micros: Option<u64>,
+        mut source_receipts: Vec<ReceiptId>,
+    ) -> Result<Self, WorkspaceOrchestrationError> {
+        source_receipts.sort();
+        if let Some(duplicate) = source_receipts.windows(2).find(|pair| pair[0] == pair[1]) {
+            return Err(WorkspaceOrchestrationError::DuplicateUsageReceipt(
+                duplicate[0].clone(),
+            ));
+        }
+        if source_receipts.is_empty()
+            && (tokens != 0 || tools != 0 || elapsed_ms != 0 || cost_micros.is_none())
+        {
+            return Err(WorkspaceOrchestrationError::EmptyUsageEvidence);
+        }
+        Ok(Self {
+            tokens,
+            tools,
+            elapsed_ms,
+            cost_micros,
+            source_receipts,
+        })
+    }
+
+    pub fn validate(&self) -> Result<(), WorkspaceOrchestrationError> {
+        let rebuilt = Self::new(
+            self.tokens,
+            self.tools,
+            self.elapsed_ms,
+            self.cost_micros,
+            self.source_receipts.clone(),
+        )?;
+        if rebuilt != *self {
+            return Err(WorkspaceOrchestrationError::NonCanonicalUsageReceipts);
+        }
+        Ok(())
+    }
+
+    pub const fn tokens(&self) -> u64 {
+        self.tokens
+    }
+
+    pub const fn tools(&self) -> u64 {
+        self.tools
+    }
+
+    pub const fn elapsed_ms(&self) -> u64 {
+        self.elapsed_ms
+    }
+
+    pub const fn cost_micros(&self) -> Option<u64> {
+        self.cost_micros
+    }
+
+    pub fn source_receipts(&self) -> &[ReceiptId] {
+        &self.source_receipts
+    }
+}
+
 impl RoleRepositoryBinding {
     pub fn new(role_id: RoleId, repository_id: RepositoryId) -> Self {
         Self {
@@ -147,6 +408,8 @@ pub struct GovernedOrchestrationPlan {
     meta_composition: MetaComposition,
     repositories: Vec<RepositoryBinding>,
     role_repositories: Vec<RoleRepositoryBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    aggregate_budget: Option<OrchestrationAggregateBudget>,
 }
 
 impl GovernedOrchestrationPlan {
@@ -224,6 +487,7 @@ impl GovernedOrchestrationPlan {
             meta_composition,
             repositories,
             role_repositories,
+            aggregate_budget: None,
         })
     }
 
@@ -234,7 +498,13 @@ impl GovernedOrchestrationPlan {
             self.repositories.clone(),
             self.role_repositories.clone(),
         )
-        .map(|_| ())
+        .and_then(|mut rebuilt| {
+            rebuilt.aggregate_budget.clone_from(&self.aggregate_budget);
+            if let Some(budget) = &rebuilt.aggregate_budget {
+                budget.validate_for_plan(&rebuilt.plan)?;
+            }
+            Ok(())
+        })
     }
 
     pub fn plan(&self) -> &OrchestrationPlan {
@@ -251,6 +521,19 @@ impl GovernedOrchestrationPlan {
 
     pub fn role_repositories(&self) -> &[RoleRepositoryBinding] {
         &self.role_repositories
+    }
+
+    pub fn with_aggregate_budget(
+        mut self,
+        aggregate_budget: OrchestrationAggregateBudget,
+    ) -> Result<Self, WorkspaceOrchestrationError> {
+        aggregate_budget.validate_for_plan(&self.plan)?;
+        self.aggregate_budget = Some(aggregate_budget);
+        Ok(self)
+    }
+
+    pub fn aggregate_budget(&self) -> Option<&OrchestrationAggregateBudget> {
+        self.aggregate_budget.as_ref()
     }
 
     pub fn repository_for_role(&self, role_id: &RoleId) -> Option<&RepositoryBinding> {
@@ -309,6 +592,8 @@ pub struct OrchestrationRoleReceipt {
     exact_commit: String,
     governed_effect_receipts: Vec<ReceiptId>,
     evidence_digest: Option<RequestDigest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    usage: Option<OrchestrationUsage>,
 }
 
 impl OrchestrationRoleReceipt {
@@ -332,6 +617,7 @@ impl OrchestrationRoleReceipt {
             exact_commit: exact_commit.into(),
             governed_effect_receipts,
             evidence_digest,
+            usage: None,
         };
         receipt.validate()?;
         Ok(receipt)
@@ -353,6 +639,16 @@ impl OrchestrationRoleReceipt {
             return Err(WorkspaceOrchestrationError::DuplicateGovernedEffectReceipt(
                 (*receipt).clone(),
             ));
+        }
+        if let Some(usage) = &self.usage {
+            usage.validate()?;
+            for receipt in usage.source_receipts() {
+                if !receipts.contains(receipt) {
+                    return Err(WorkspaceOrchestrationError::UsageReceiptNotGoverned(
+                        receipt.clone(),
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -387,6 +683,19 @@ impl OrchestrationRoleReceipt {
 
     pub fn evidence_digest(&self) -> Option<&RequestDigest> {
         self.evidence_digest.as_ref()
+    }
+
+    pub fn with_usage(
+        mut self,
+        usage: OrchestrationUsage,
+    ) -> Result<Self, WorkspaceOrchestrationError> {
+        self.usage = Some(usage);
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn usage(&self) -> Option<&OrchestrationUsage> {
+        self.usage.as_ref()
     }
 }
 
@@ -508,6 +817,136 @@ mod tests {
             Err(WorkspaceOrchestrationError::ReceiptRepositoryMismatch(
                 RepositoryId::new("api").unwrap()
             ))
+        );
+    }
+
+    #[test]
+    fn governed_plan_requires_one_budget_for_every_role() {
+        let governed = governed_plan();
+        let budget = OrchestrationAggregateBudget::new(
+            OrchestrationBudgetAmount::new(100, 10, 1_000, 100),
+            vec![OrchestrationRoleBudget::new(
+                RoleId::new("planner").unwrap(),
+                OrchestrationBudgetAmount::new(50, 5, 500, 50),
+            )],
+        )
+        .unwrap();
+
+        assert_eq!(
+            governed.with_aggregate_budget(budget),
+            Err(WorkspaceOrchestrationError::MissingRoleBudget(
+                RoleId::new("maker").unwrap()
+            ))
+        );
+    }
+
+    #[test]
+    fn summed_role_reservations_must_fit_the_aggregate_ceiling() {
+        let governed = governed_plan();
+        let budget = OrchestrationAggregateBudget::new(
+            OrchestrationBudgetAmount::new(100, 10, 1_000, 100),
+            vec![
+                OrchestrationRoleBudget::new(
+                    RoleId::new("planner").unwrap(),
+                    OrchestrationBudgetAmount::new(60, 6, 600, 60),
+                ),
+                OrchestrationRoleBudget::new(
+                    RoleId::new("maker").unwrap(),
+                    OrchestrationBudgetAmount::new(60, 6, 600, 60),
+                ),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            governed.with_aggregate_budget(budget),
+            Err(WorkspaceOrchestrationError::AggregateBudgetOverflow)
+        );
+    }
+
+    #[test]
+    fn deserialized_role_budgets_must_keep_canonical_order() {
+        let mut value = serde_json::to_value(
+            governed_plan()
+                .with_aggregate_budget(
+                    OrchestrationAggregateBudget::new(
+                        OrchestrationBudgetAmount::new(100, 10, 1_000, 100),
+                        vec![
+                            OrchestrationRoleBudget::new(
+                                RoleId::new("planner").unwrap(),
+                                OrchestrationBudgetAmount::new(50, 5, 500, 50),
+                            ),
+                            OrchestrationRoleBudget::new(
+                                RoleId::new("maker").unwrap(),
+                                OrchestrationBudgetAmount::new(50, 5, 500, 50),
+                            ),
+                        ],
+                    )
+                    .unwrap(),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        value["aggregate_budget"]["roles"]
+            .as_array_mut()
+            .unwrap()
+            .reverse();
+        let decoded: GovernedOrchestrationPlan = serde_json::from_value(value).unwrap();
+
+        assert_eq!(
+            decoded.validate(),
+            Err(WorkspaceOrchestrationError::NonCanonicalRoleBudgets)
+        );
+    }
+
+    #[test]
+    fn usage_must_be_bound_to_a_governed_effect_receipt() {
+        let receipt = OrchestrationRoleReceipt::new(
+            ReceiptId::new("role-receipt-usage").unwrap(),
+            OrchestrationRunId::new("run-usage").unwrap(),
+            RoleId::new("planner").unwrap(),
+            RepositoryId::new("api").unwrap(),
+            WorkspaceId::new("workspace-api").unwrap(),
+            "commit-api",
+            vec![ReceiptId::new("effect-governed").unwrap()],
+            None,
+        )
+        .unwrap();
+        let usage = OrchestrationUsage::new(
+            10,
+            1,
+            50,
+            Some(5),
+            vec![ReceiptId::new("effect-unbound").unwrap()],
+        )
+        .unwrap();
+
+        assert_eq!(
+            receipt.with_usage(usage),
+            Err(WorkspaceOrchestrationError::UsageReceiptNotGoverned(
+                ReceiptId::new("effect-unbound").unwrap()
+            ))
+        );
+    }
+
+    #[test]
+    fn unknown_cost_is_explicit_and_survives_round_trip() {
+        let usage = OrchestrationUsage::new(
+            10,
+            1,
+            50,
+            None,
+            vec![ReceiptId::new("effect-cost-unknown").unwrap()],
+        )
+        .unwrap();
+        let encoded = serde_json::to_vec(&usage).unwrap();
+        let decoded: OrchestrationUsage = serde_json::from_slice(&encoded).unwrap();
+
+        assert_eq!(decoded, usage);
+        assert_eq!(decoded.cost_micros(), None);
+        assert_eq!(
+            decoded.source_receipts(),
+            &[ReceiptId::new("effect-cost-unknown").unwrap()]
         );
     }
 }

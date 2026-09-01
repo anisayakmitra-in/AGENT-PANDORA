@@ -936,12 +936,17 @@ pandora orchestration list
 pandora orchestration inspect <run-id>
 pandora orchestration cancel <run-id>
 pandora orchestration mark-interrupted <run-id> --reason <text> --yes
+pandora orchestration reconcile-failed <run-id> --role <role-id> --usage <usage.json> --evidence-digest <digest> --yes
 pandora orchestration resume <run-id>
 
 Orchestration commands use the durable, tenant-scoped coordination store
 described in [ORCHESTRATION.md](ORCHESTRATION.md). `claim` returns only ready
 role assignments and never executes them. Workers must use the normal governed
-run or subagent path and then submit a repository-bound role receipt.
+run or subagent path and then submit a repository-bound role receipt with
+receipt-linked measured usage. New plans require an aggregate token, tool,
+elapsed-time, and cost ceiling plus one reservation per role. An interrupted
+active role keeps its reservation until `reconcile-failed` records reviewed
+partial usage and evidence; only then can `resume` make the role retryable.
 
 pandora strategies list
 pandora evaluation golden --input <path> [--fail-on-failure]

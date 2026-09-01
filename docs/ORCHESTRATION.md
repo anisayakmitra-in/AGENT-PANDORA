@@ -59,7 +59,35 @@ Harness. The following abbreviated JSON shows the persisted input shape:
   "role_repositories": [
     {"role_id": "planner", "repository_id": "api"},
     {"role_id": "maker", "repository_id": "desktop"}
-  ]
+  ],
+  "aggregate_budget": {
+    "ceiling": {
+      "tokens": 200000,
+      "tools": 200,
+      "elapsed_ms": 600000,
+      "cost_micros": 300000
+    },
+    "roles": [
+      {
+        "role_id": "planner",
+        "reservation": {
+          "tokens": 100000,
+          "tools": 100,
+          "elapsed_ms": 300000,
+          "cost_micros": 100000
+        }
+      },
+      {
+        "role_id": "maker",
+        "reservation": {
+          "tokens": 100000,
+          "tools": 100,
+          "elapsed_ms": 300000,
+          "cost_micros": 100000
+        }
+      }
+    ]
+  }
 }
 ```
 
@@ -68,7 +96,9 @@ missing or duplicate role bindings, undeclared Domains, dependency cycles, and
 Meta Harness handoff-limit violations fail closed. The parser rejects unknown
 plan fields, invalid reconstructed IDs, more than 64 roles or 64 handoffs, a
 handoff list above its declared budget, and parallelism above the role count.
-The same parser is a seeded fuzz target.
+Every new durable submission also requires exactly one role reservation per
+role. Duplicate, missing, unknown, overflowing, and over-ceiling budgets fail
+closed. The same parser is a seeded fuzz target.
 
 Content carried between roles remains untrusted. Persisted handoff fragments
 are re-assessed at every hop; high-confidence instruction-shaped content is
@@ -106,12 +136,37 @@ receipts produced by the existing execution path:
   "workspace_id": "workspace-api",
   "exact_commit": "0123456789abcdef",
   "governed_effect_receipts": ["effect-receipt-1"],
-  "evidence_digest": "planner-evidence-digest"
+  "evidence_digest": "planner-evidence-digest",
+  "usage": {
+    "tokens": 1200,
+    "tools": 4,
+    "elapsed_ms": 8300,
+    "cost_micros": 4200,
+    "source_receipts": ["effect-receipt-1"]
+  }
 }
 ```
 
 Use one stable worker ID from claim through completion. Another worker cannot
-complete the claimed run.
+complete the claimed run. Completion requires measured token, tool, elapsed,
+and cost usage tied to a governed effect receipt. Set `cost_micros` to `null`
+when the provider does not report cost. The read model preserves that unknown
+value; enforcement charges the role's full cost reservation so missing
+telemetry can never create extra capacity.
+
+Ready-role dispatch and its reservation are committed in one SQLite
+transaction. Receipt settlement and completion are also one transaction. At
+all times the store enforces:
+
+```text
+enforced_consumed + active_reservations <= aggregate_ceiling
+```
+
+`orchestration inspect`, `orchestration list`, `fleet dashboard`, the TUI
+`/fleet-health` view, and desktop Background Runs expose ceiling, active
+reservations, measured use, enforceable remaining capacity, unknown-cost count,
+and the invariant result without including prompts, outputs, credentials, or
+hidden reasoning.
 
 ## Crash and resume semantics
 
@@ -120,17 +175,21 @@ external effect outcome may be unknown. Operators can record the interruption:
 
 ```text
 pandora orchestration mark-interrupted <run-id> --reason "worker exited" --yes
+pandora orchestration reconcile-failed <run-id> --role <role-id> --usage usage.json --evidence-digest <digest> --yes
 pandora orchestration resume <run-id>
 ```
 
 Resume succeeds only when the durable snapshot has no active roles. If roles
 were dispatched, Pandora requires their effect receipts to be reconciled first
-instead of guessing that retry is safe. There is intentionally no orchestration
-CLI reconciliation, retry, or restart transition for an interrupted snapshot
-with active roles: resume fails closed with the receipt reconciliation gate, and
-a replacement worker sees no claimable run. This avoids inventing a replay path
-for an uncertain external effect. Queued runs may be cancelled with
-`pandora orchestration cancel <run-id>`.
+instead of guessing that retry is safe. `reconcile-failed` is the explicit
+operator attestation that the uncertain attempt has been reviewed. It records
+partial measured usage and a stable evidence digest, releases only the unused
+reservation, and clears that role from the active snapshot. Exact duplicate
+reconciliation is rejected and cannot consume the ledger twice. After every
+active role has been reconciled, `resume` may requeue the run; a replacement
+worker can reserve the failed role again only when enough aggregate capacity
+remains. Queued runs may be cancelled with `pandora orchestration cancel
+<run-id>`.
 
 ## Desktop inspection and control
 
@@ -150,9 +209,9 @@ account or sign-in flow.
 ## Phase 7 recovery evidence
 
 The bounded worker-operations CLI acceptance regression uses fresh processes for
-submit, claim, complete, interruption, inspection, a replacement worker claim,
-two unsafe-resume attempts, and final inspection. It proves that a completed
-planner receipt remains exactly once while the maker stays active and uncertain.
-The current contract has no safe active-role reconciliation transition, so both
-resume attempts fail closed and the replacement worker remains idle. This is
-deliberate evidence of the no-replay gate, not a request to retry the maker.
+submit, claim, complete, interruption, inspection, reconciliation, resume, a
+replacement worker claim, and final inspection. It proves that a completed
+planner receipt remains exactly once while an uncertain maker attempt keeps its
+reservation. Resume fails before reconciliation. Partial maker usage is then
+persisted once, unused capacity is released, and a retry receives a fresh
+reservation only inside the remaining aggregate ceiling.

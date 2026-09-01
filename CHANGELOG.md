@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Added one durable aggregate execution budget across dependent orchestration
+  roles and repositories. SQLite now atomically reserves role capacity at
+  dispatch and settles receipt-linked token, tool, elapsed-time, and cost usage
+  with completion. Interrupted effects keep their reservation until explicit
+  evidence reconciliation; duplicate reconciliation cannot double-consume, and
+  retries require remaining headroom. Unknown provider cost stays visibly
+  unknown while enforcement conservatively charges the full reservation. CLI,
+  TUI, Fleet dashboard, and desktop Background Runs share the privacy-safe
+  ceiling/reserved/consumed/remaining view.
+
 - Added retained worker-stress campaigns with selectable ten-minute, two-hour,
   checkpointed eight-hour, and checkpointed twenty-four-hour profiles across
   all four desktop platforms. Segment evidence now combines cancellation races,

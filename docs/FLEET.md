@@ -123,9 +123,14 @@ and are not part of default CI.
 `pandora fleet dashboard --json` is the operations read model shared by the
 CLI, `/fleet-health` TUI command, and desktop Background Runs view. It reports
 Fleet health, queue depth, lease age and expiry, stale supervisor counts,
-failure identities, and active budget ceilings. It never includes job
-arguments, prompts, outputs, credentials, or hidden reasoning. The snapshot is
-read-only, and its budgets are scheduling limits rather than actual spend.
+failure identities, active Fleet lease ceilings, and the durable orchestration
+budget ledger. The orchestration section separates aggregate ceiling, active
+reservations, receipt-backed token/tool/elapsed usage, enforceable remaining
+capacity, known cost, and unknown-cost receipt count. A missing provider cost is
+rendered as `null`/`unknown` and is conservatively enforced at the full role
+reservation. It never includes job arguments, prompts, outputs, credentials,
+or hidden reasoning. The snapshot is read-only; Fleet lease budgets remain
+scheduling limits while orchestration usage is measured receipt evidence.
 
 Workers only claim and delegate the original governed command. Fleet leases and
 Orchestration role receipts remain scheduling and recovery evidence, not

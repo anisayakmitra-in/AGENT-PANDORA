@@ -1749,7 +1749,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--signal); box-sha
 .operations-metrics span, .operations-section-heading span { color: var(--text-muted); font-family: var(--font-mono); font-size: .625rem; text-transform: uppercase; }
 .operations-metrics strong { color: var(--text-primary); font-family: var(--font-display); font-size: 1.35rem; font-weight: 520; }
 .operations-metrics small { overflow: hidden; color: var(--text-muted); font-size: .6875rem; text-overflow: ellipsis; white-space: nowrap; }
-.operations-evidence-grid { display: grid; grid-template-columns: 1.15fr .8fr 1.15fr; gap: 12px; }
+.operations-evidence-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .operations-evidence-grid > section { min-width: 0; padding: 12px; border: 1px solid var(--line); background: var(--surface-1); }
 .operations-section-heading { display: grid; gap: 4px; margin-bottom: 10px; }
 .operations-section-heading strong { color: var(--text-secondary); font-size: .75rem; }
@@ -1763,7 +1763,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--signal); box-sha
 .operations-budget { display: grid; margin: 0; }
 .operations-budget > div { display: flex; justify-content: space-between; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); }
 .operations-budget dt { color: var(--text-muted); font-size: .6875rem; }
-.operations-budget dd { margin: 0; color: var(--text-secondary); font-family: var(--font-mono); font-size: .6875rem; }
+.operations-budget dd { margin: 0; color: var(--text-secondary); font-family: var(--font-mono); font-size: .6875rem; overflow-wrap: anywhere; text-align: right; }
 .operations-boundary { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: start; gap: 7px; margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--line); color: var(--text-muted); font-size: .6875rem; line-height: 1.5; }
 .operations-boundary svg { color: var(--green); }
 .operations-boundary time { font-family: var(--font-mono); white-space: nowrap; }

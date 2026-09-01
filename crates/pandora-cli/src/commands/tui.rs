@@ -535,7 +535,11 @@ impl App {
                 let jobs = &result.data["queue"]["jobs"];
                 let orchestrations = &result.data["queue"]["orchestrations"];
                 let leases = &result.data["fleet"]["leases"];
-                let budgets = &result.data["budget_ceilings"];
+                let budgets = &result.data["aggregate_budgets"];
+                let ceiling = &budgets["ceiling"];
+                let reserved = &budgets["reserved"];
+                let consumed = &budgets["consumed"];
+                let remaining = &budgets["remaining"];
                 self.push_message(format!(
                     "fleet> {} · {} ready nodes · {} running supervisors · {} stale supervisors",
                     health["status"].as_str().unwrap_or("unknown"),
@@ -551,11 +555,21 @@ impl App {
                     orchestrations["running"].as_u64().unwrap_or_default(),
                     leases["by_state"]["active"].as_u64().unwrap_or_default(),
                 ));
+                let cost = consumed["cost_micros"]
+                    .as_u64()
+                    .map_or_else(|| "unknown".to_owned(), |value| value.to_string());
                 self.push_message(format!(
-                    "budget> ceilings only: {} tokens · {} tools · {} cost micros; prompts, outputs, credentials, and hidden reasoning are excluded",
-                    budgets["max_tokens"].as_u64().unwrap_or_default(),
-                    budgets["max_tools"].as_u64().unwrap_or_default(),
-                    budgets["max_cost_micros"].as_u64().unwrap_or_default(),
+                    "budget> {} governed run(s) · tokens {} consumed / {} reserved / {} remaining / {} ceiling · tools {} / {} / {} / {} · actual cost {cost} micros ({} unknown receipt(s)); prompts, outputs, credentials, and hidden reasoning are excluded",
+                    budgets["run_count"].as_u64().unwrap_or_default(),
+                    consumed["tokens"].as_u64().unwrap_or_default(),
+                    reserved["tokens"].as_u64().unwrap_or_default(),
+                    remaining["tokens"].as_u64().unwrap_or_default(),
+                    ceiling["tokens"].as_u64().unwrap_or_default(),
+                    consumed["tools"].as_u64().unwrap_or_default(),
+                    reserved["tools"].as_u64().unwrap_or_default(),
+                    remaining["tools"].as_u64().unwrap_or_default(),
+                    ceiling["tools"].as_u64().unwrap_or_default(),
+                    consumed["unknown_cost_receipts"].as_u64().unwrap_or_default(),
                 ));
             }
             Err(error) => {
@@ -1154,7 +1168,8 @@ mod tests {
                 .any(|message| message.starts_with("fleet> idle"))
         );
         assert!(app.messages.iter().any(|message| {
-            message.contains("ceilings only")
+            message.contains("0 governed run(s)")
+                && message.contains("actual cost 0 micros")
                 && message
                     .contains("prompts, outputs, credentials, and hidden reasoning are excluded")
         }));
