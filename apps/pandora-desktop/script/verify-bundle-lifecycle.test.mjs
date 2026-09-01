@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,6 +9,7 @@ import {
   createLifecycleSandbox,
   createMacDiskImageMount,
   packagedSidecarName,
+  platformEvidenceId,
   removeLifecycleSandbox,
   resolveBundleRoot,
   resolveSourceSidecar,
@@ -16,6 +17,7 @@ import {
   systemInstallContract,
   systemInstallLifecycleEnabled,
   validateSidecarTarget,
+  writeLifecycleEvidence,
 } from "./verify-bundle-lifecycle.mjs";
 
 test("distinguishes staged and packaged sidecar filenames", () => {
@@ -23,6 +25,31 @@ test("distinguishes staged and packaged sidecar filenames", () => {
   assert.equal(sidecarName("x86_64-pc-windows-msvc"), "pandora-x86_64-pc-windows-msvc.exe");
   assert.equal(packagedSidecarName("x86_64-unknown-linux-gnu"), "pandora");
   assert.equal(packagedSidecarName("x86_64-pc-windows-msvc"), "pandora.exe");
+});
+
+test("maps every advertised desktop target to a stable evidence identity", () => {
+  assert.equal(platformEvidenceId("linux", "x86_64-unknown-linux-gnu"), "linux-x64");
+  assert.equal(platformEvidenceId("darwin", "x86_64-apple-darwin"), "macos-x64");
+  assert.equal(platformEvidenceId("darwin", "aarch64-apple-darwin"), "macos-arm64");
+  assert.equal(platformEvidenceId("win32", "x86_64-pc-windows-msvc"), "windows-x64");
+  assert.throws(
+    () => platformEvidenceId("linux", "aarch64-unknown-linux-gnu"),
+    /unsupported desktop lifecycle evidence target/,
+  );
+});
+
+test("writes a machine-readable lifecycle evidence record", () => {
+  const root = mkdtempSync(join(tmpdir(), "pandora-desktop-evidence-"));
+  const output = join(root, "nested", "lifecycle.json");
+  try {
+    writeLifecycleEvidence(output, { schema_version: 1, lifecycle: { install: true } });
+    assert.deepEqual(JSON.parse(readFileSync(output, "utf8")), {
+      schema_version: 1,
+      lifecycle: { install: true },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("accepts and removes only its exact lifecycle sandbox", () => {

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Added retained desktop-readiness evidence on all four CI platforms. The
+  rendered suite now covers keyboard-only visible focus, 100%, 150%, and 200%
+  scale equivalents, forced colors, increased contrast, reduced motion, and
+  reduced transparency, with screenshots retained for 90 days. Fresh-runner
+  package and synthetic upgrade drills emit privacy-safe JSON evidence for
+  install, start, exact desktop/CLI sidecar identity, update, rollback,
+  uninstall, and cleanup. A strict native-evidence validator and manual workflow
+  require exact-commit NVDA, VoiceOver, and Orca records for every advertised
+  platform; missing, substituted, traversing, tampered, or incomplete evidence
+  fails closed.
+
 - Added signed remote distribution for Gene, Domain Harness, Meta Harness, Skill,
   and Provider packages. Registry discovery and exact-version or pinned-commit
   GitHub downloads now verify the Official publisher root, Ed25519 signature,

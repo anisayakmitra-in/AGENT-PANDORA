@@ -288,6 +288,16 @@ jobs:
         working-directory: apps/pandora-desktop
         run: npm ci --ignore-scripts
 
+      - name: Install Chromium with Linux dependencies
+        if: runner.os == 'Linux'
+        working-directory: apps/pandora-desktop
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Chromium
+        if: runner.os != 'Linux'
+        working-directory: apps/pandora-desktop
+        run: npx playwright install chromium
+
       - name: Import Apple signing identity
         if: runner.os == 'macOS' && env.PANDORA_APPLE_CERTIFICATE_BASE64 != ''
         shell: bash
@@ -306,6 +316,10 @@ jobs:
       - name: Run desktop tests
         working-directory: apps/pandora-desktop
         run: npm test
+
+      - name: Run rendered accessibility and scaling evidence
+        working-directory: apps/pandora-desktop
+        run: npm run test:accessibility
 
       - name: Build desktop bundle
         working-directory: apps/pandora-desktop
@@ -352,7 +366,19 @@ jobs:
         env:
           CI: "true"
           PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE: "1"
+          PANDORA_DESKTOP_EVIDENCE_OUTPUT: ${{ runner.temp }}/pandora-desktop-lifecycle-evidence.json
         run: npm run verify:bundle-lifecycle
+
+      - name: Retain release accessibility and lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-readiness-${{ matrix.artifact }}-${{ github.ref_name }}
+          path: |
+            apps/pandora-desktop/test-results/accessibility
+            ${{ runner.temp }}/pandora-desktop-lifecycle-evidence.json
+          if-no-files-found: warn
+          retention-days: 90
 
       - name: Stage desktop artifacts (Unix)
         if: runner.os != 'Windows'
@@ -807,6 +833,7 @@ jobs:
           PANDORA_DESKTOP_SOURCE_SIDECAR="$native" \
           PANDORA_DESKTOP_BUNDLE_ROOT="$release" \
           PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE=1 \
+          PANDORA_DESKTOP_EVIDENCE_OUTPUT="$RUNNER_TEMP/published-desktop-lifecycle-evidence.json" \
             npm run verify:bundle-lifecycle
 
       - name: Exercise published desktop lifecycle (Windows)
@@ -825,4 +852,14 @@ jobs:
           $env:PANDORA_DESKTOP_SOURCE_SIDECAR = $native
           $env:PANDORA_DESKTOP_BUNDLE_ROOT = $release
           $env:PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE = "1"
+          $env:PANDORA_DESKTOP_EVIDENCE_OUTPUT = Join-Path $env:RUNNER_TEMP "published-desktop-lifecycle-evidence.json"
           npm run verify:bundle-lifecycle
+
+      - name: Retain published desktop lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: published-desktop-lifecycle-${{ matrix.platform }}-${{ github.ref_name }}
+          path: ${{ runner.temp }}/published-desktop-lifecycle-evidence.json
+          if-no-files-found: warn
+          retention-days: 90

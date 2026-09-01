@@ -1,9 +1,10 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page, type TestInfo } from "@playwright/test";
 
 const viewports = [
-  { label: "minimum desktop window", width: 1080, height: 720 },
-  { label: "200% zoom equivalent", width: 540, height: 360 },
+  { label: "100% scale", width: 1080, height: 720 },
+  { label: "150% scale", width: 720, height: 480 },
+  { label: "200% scale", width: 540, height: 360 },
 ];
 
 const layouts = [
@@ -12,7 +13,14 @@ const layouts = [
   { label: "hidden dock", open: false, placement: "right" },
 ] as const;
 
-test("Command Center has no automated accessibility violations", async ({ page }) => {
+async function retainScreenshot(page: Page, testInfo: TestInfo, label: string) {
+  const filename = `${label.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase()}.png`;
+  const path = testInfo.outputPath(filename);
+  await page.screenshot({ path, fullPage: true });
+  await testInfo.attach(label, { path, contentType: "image/png" });
+}
+
+test("Command Center has no automated accessibility violations", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1080, height: 720 });
   await page.goto("/");
 
@@ -22,6 +30,73 @@ test("Command Center has no automated accessibility violations", async ({ page }
 
   const results = await new AxeBuilder({ page }).analyze();
   expect(results.violations).toEqual([]);
+  await retainScreenshot(page, testInfo, "command-center-baseline");
+});
+
+test("keyboard-only navigation exposes the skip target and visible focus", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1080, height: 720 });
+  await page.goto("/");
+
+  await page.keyboard.press("Tab");
+  const skipLink = page.getByRole("link", { name: "Skip to workspace" });
+  await expect(skipLink).toBeFocused();
+  await expect(skipLink).toBeVisible();
+  expect(await skipLink.evaluate((element) => getComputedStyle(element).outlineStyle)).not.toBe("none");
+  await retainScreenshot(page, testInfo, "keyboard-skip-link-focus");
+
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("main")).toBeFocused();
+
+  const focusTrail: string[] = [];
+  for (let index = 0; index < 16; index += 1) {
+    await page.keyboard.press("Tab");
+    const focused = page.locator(":focus");
+    await expect(focused).toBeVisible();
+    const focusState = await focused.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        identity: element.getAttribute("aria-label") ?? element.textContent?.trim() ?? element.tagName,
+        outline: style.outlineStyle,
+        shadow: style.boxShadow,
+      };
+    });
+    expect(focusState.outline !== "none" || focusState.shadow !== "none").toBe(true);
+    focusTrail.push(focusState.identity.slice(0, 120));
+  }
+  expect(new Set(focusTrail).size).toBeGreaterThan(8);
+});
+
+test("forced colors, increased contrast, reduced motion, and reduced transparency take effect", async ({ page }, testInfo) => {
+  const session = await page.context().newCDPSession(page);
+  await session.send("Emulation.setEmulatedMedia", {
+    features: [
+      { name: "forced-colors", value: "active" },
+      { name: "prefers-contrast", value: "more" },
+      { name: "prefers-reduced-motion", value: "reduce" },
+      { name: "prefers-reduced-transparency", value: "reduce" },
+    ],
+  });
+  await page.setViewportSize({ width: 540, height: 360 });
+  await page.goto("/?platform=macos");
+
+  const preferences = await page.evaluate(() => ({
+    forcedColors: matchMedia("(forced-colors: active)").matches,
+    increasedContrast: matchMedia("(prefers-contrast: more)").matches,
+    reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
+    reducedTransparency: matchMedia("(prefers-reduced-transparency: reduce)").matches,
+    topBarBackdrop: getComputedStyle(document.querySelector(".top-bar")!).backdropFilter,
+    panelBorderWidth: getComputedStyle(document.querySelector(".panel")!).borderTopWidth,
+  }));
+  expect(preferences).toMatchObject({
+    forcedColors: true,
+    increasedContrast: true,
+    reducedMotion: true,
+    reducedTransparency: true,
+    topBarBackdrop: "none",
+    panelBorderWidth: "2px",
+  });
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await retainScreenshot(page, testInfo, "forced-colors-reduced-effects-200-percent");
 });
 
 test("grouped Settings has no automated accessibility violations", async ({ page }) => {
@@ -91,7 +166,7 @@ test("optional local companion is static, persistent, accessible, and immediatel
 
 for (const viewport of viewports) {
   for (const layout of layouts) {
-    test(`${layout.label} avoids horizontal clipping at ${viewport.label}`, async ({ page }) => {
+    test(`${layout.label} avoids horizontal clipping at ${viewport.label}`, async ({ page }, testInfo) => {
       await page.addInitScript(({ open, placement }) => {
         window.localStorage.setItem("pandora.desktop.dock.open", String(open));
         window.localStorage.setItem("pandora.desktop.dock.placement", placement);
@@ -109,6 +184,7 @@ for (const viewport of viewports) {
         scrollWidth: document.documentElement.scrollWidth,
       }));
       expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+      await retainScreenshot(page, testInfo, `${layout.label}-${viewport.label}`);
     });
   }
 }

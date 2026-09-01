@@ -7,6 +7,7 @@ import {
   findBundle,
   lifecycleEnvironment,
   packagedSidecarName,
+  platformEvidenceId,
   regularFile,
   removeLifecycleSandboxWithRetry,
   resolveBundleRoot,
@@ -16,6 +17,7 @@ import {
   systemInstallContract,
   systemInstallLifecycleEnabled,
   validateSidecarTarget,
+  writeLifecycleEvidence,
 } from "./verify-bundle-lifecycle.mjs";
 
 const stableVersion = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
@@ -99,6 +101,7 @@ async function main() {
   const environment = lifecycleEnvironment(sandbox);
   const predecessor = systemInstallContract(bundleRoot, sandbox, process.platform, predecessorBundle);
   const current = systemInstallContract(bundleRoot, sandbox, process.platform, currentBundle);
+  let lifecycleEvidence;
   try {
     predecessor.install();
     await verifyInstalledStage(predecessor, process.platform, target, source, manifest.predecessor_version, environment);
@@ -116,6 +119,37 @@ async function main() {
 
     predecessor.uninstall();
     predecessor.assertUninstalled();
+    lifecycleEvidence = {
+      schema_version: 1,
+      generated_at: new Date().toISOString(),
+      commit_sha: process.env.GITHUB_SHA ?? null,
+      platform: platformEvidenceId(process.platform, target),
+      target,
+      runner: {
+        os: process.env.RUNNER_OS ?? process.platform,
+        architecture: process.env.RUNNER_ARCH ?? process.arch,
+        ephemeral_ci: process.env.CI?.trim().toLowerCase() === "true",
+      },
+      artifacts: [
+        { name: basename(predecessorBundle), sha256: sha256(predecessorBundle) },
+        { name: basename(currentBundle), sha256: sha256(currentBundle) },
+      ],
+      release_identity: {
+        predecessor_version: manifest.predecessor_version,
+        current_version: manifest.current_version,
+        sidecar_sha256: sha256(source),
+      },
+      lifecycle: {
+        clean_install: true,
+        start_predecessor: true,
+        update: true,
+        start_current: true,
+        rollback: true,
+        start_rollback: true,
+        uninstall: true,
+        sandbox_cleanup: true,
+      },
+    };
     console.log(`verified ${process.platform} desktop install, update, rollback, and uninstall`);
   } finally {
     try {
@@ -125,6 +159,11 @@ async function main() {
     } finally {
       await removeLifecycleSandboxWithRetry(sandbox);
     }
+  }
+  const evidenceOutput = process.env.PANDORA_DESKTOP_UPGRADE_EVIDENCE_OUTPUT?.trim();
+  if (evidenceOutput && lifecycleEvidence) {
+    writeLifecycleEvidence(evidenceOutput, lifecycleEvidence);
+    console.log(`desktop upgrade lifecycle evidence written to ${evidenceOutput}`);
   }
 }
 

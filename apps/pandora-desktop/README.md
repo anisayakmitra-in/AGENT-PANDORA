@@ -99,12 +99,14 @@ through a polite live region.
 Typography uses scalable root-relative units. The stylesheet honors reduced
 motion, reduced transparency, increased contrast, and Windows forced-colors
 preferences. Every Desktop CI runner now performs a Chromium and axe audit of
-the rendered Command Center, including the 1080×720 minimum window and a
-540×360 viewport that represents 200% browser zoom; both must avoid horizontal
-clipping. Each runner also extracts, copies, or administratively installs its
-freshly built package in a temporary sandbox, verifies the bundled sidecar has
-the same SHA-256 as the release CLI it just built, starts a bounded smoke where
-the runner supports it, and removes that sandbox.
+the rendered Command Center at 100%, 150%, and 200% scale equivalents. It also
+checks keyboard-only visible focus, forced colors, increased contrast, reduced
+motion, and reduced transparency. All supported inspector layouts must avoid
+horizontal clipping. Each runner also extracts, copies, or administratively
+installs its freshly built package in a temporary sandbox, verifies the bundled
+sidecar has the same SHA-256 and version as the release CLI it just built,
+starts a bounded smoke where the runner supports it, and removes that sandbox.
+Screenshots and privacy-safe lifecycle JSON are retained for 90 days.
 
 The same Linux, macOS, and Windows jobs also build two synthetic stable package
 identities from the same commit. They install and launch the predecessor,
@@ -114,10 +116,11 @@ mechanics and stable product identity without publishing fake releases. It does
 not prove migration compatibility between two real releases or replace signed
 stable-release evidence.
 
-This is automated webview and package-lifecycle evidence, not native
-VoiceOver, Narrator, or Orca coverage. Signed release packages, real
-clean-machine user install/update/rollback evidence, native screen-reader
-checks, and clean-machine scaling checks remain release gates.
+This is automated webview and package-lifecycle evidence, not native NVDA,
+VoiceOver, or Orca coverage. A strict exact-commit evidence workflow admits the
+four real graphical-session records only after every asset checksum and required
+check passes. Signed release packages and those native screen-reader and OS
+scaling sessions remain release gates.
 The repeatable native test protocol and retained-evidence fields are documented
 in [Desktop accessibility evidence](../../docs/ACCESSIBILITY.md).
 

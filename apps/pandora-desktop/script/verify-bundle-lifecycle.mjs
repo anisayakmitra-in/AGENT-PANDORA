@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -150,6 +150,79 @@ export function resolveSourceSidecar(target, requestedTarget, environment = proc
 
 export function sha256(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+export function platformEvidenceId(platform, target) {
+  const identities = {
+    "linux:x86_64-unknown-linux-gnu": "linux-x64",
+    "darwin:x86_64-apple-darwin": "macos-x64",
+    "darwin:aarch64-apple-darwin": "macos-arm64",
+    "win32:x86_64-pc-windows-msvc": "windows-x64",
+  };
+  const identity = identities[`${platform}:${target}`];
+  if (!identity) throw new Error(`unsupported desktop lifecycle evidence target: ${platform}:${target}`);
+  return identity;
+}
+
+export function buildLifecycleEvidence({
+  target,
+  source,
+  bundledSidecar,
+  installer,
+  systemInstall,
+  environment = process.env,
+  platform = process.platform,
+}) {
+  const desktopVersion = JSON.parse(readFileSync(join(desktopRoot, "package.json"), "utf8")).version;
+  const expectedIdentity = `pandora ${desktopVersion}`;
+  const sourceIdentity = run(source, ["--version"]);
+  const bundledIdentity = run(bundledSidecar, ["--version"]);
+  if (sourceIdentity !== expectedIdentity || bundledIdentity !== expectedIdentity) {
+    throw new Error(
+      `desktop and CLI release identities differ: expected '${expectedIdentity}', source '${sourceIdentity}', bundled '${bundledIdentity}'`,
+    );
+  }
+  const sourceDigest = sha256(source);
+  const bundledDigest = sha256(bundledSidecar);
+  if (sourceDigest !== bundledDigest) {
+    throw new Error("bundled sidecar differs from the same-commit release binary");
+  }
+  return {
+    schema_version: 1,
+    generated_at: new Date().toISOString(),
+    commit_sha: environment.GITHUB_SHA ?? null,
+    platform: platformEvidenceId(platform, target),
+    target,
+    runner: {
+      os: environment.RUNNER_OS ?? platform,
+      architecture: environment.RUNNER_ARCH ?? process.arch,
+      ephemeral_ci: environment.CI?.trim().toLowerCase() === "true",
+    },
+    artifact: {
+      name: basename(installer),
+      sha256: sha256(installer),
+    },
+    release_identity: {
+      desktop_version: desktopVersion,
+      source_cli: sourceIdentity,
+      bundled_cli: bundledIdentity,
+      sidecar_sha256: sourceDigest,
+      exact_match: true,
+    },
+    lifecycle: {
+      system_install: systemInstall,
+      install: true,
+      start: true,
+      uninstall: true,
+      sandbox_cleanup: true,
+    },
+  };
+}
+
+export function writeLifecycleEvidence(path, evidence) {
+  const output = resolve(path);
+  mkdirSync(dirname(output), { recursive: true });
+  writeFileSync(output, `${JSON.stringify(evidence, null, 2)}\n`, { encoding: "utf8" });
 }
 
 function walk(path) {
@@ -517,6 +590,7 @@ async function main() {
   const systemInstall = systemInstallLifecycleEnabled();
   const sandbox = createLifecycleSandbox();
   let systemContract;
+  let lifecycleEvidence;
   try {
     const bundleRoot = resolveBundleRoot();
     systemContract = systemInstall
@@ -527,7 +601,16 @@ async function main() {
       ?? (process.platform === "linux" ? extractLinuxBundle(bundleRoot, sandbox) : process.platform === "darwin" ? copyMacBundle(bundleRoot, sandbox) : process.platform === "win32" ? installWindowsBundle(bundleRoot, sandbox) : (() => { throw new Error(`unsupported lifecycle platform: ${process.platform}`); })());
     const bundledSidecar = findBundle(installed, (path) => basename(path) === packagedSidecarName(target), "bundled sidecar");
     regularFile(bundledSidecar, "bundled sidecar");
-    if (sha256(source) !== sha256(bundledSidecar)) throw new Error("bundled sidecar differs from the same-commit release binary");
+    const installerExtension = process.platform === "linux" ? ".deb" : process.platform === "darwin" ? ".dmg" : process.platform === "win32" ? ".msi" : undefined;
+    if (!installerExtension) throw new Error(`unsupported lifecycle evidence platform: ${process.platform}`);
+    const installer = findBundle(bundleRoot, (path) => path.endsWith(installerExtension), `${process.platform} installer`);
+    lifecycleEvidence = buildLifecycleEvidence({
+      target,
+      source,
+      bundledSidecar,
+      installer,
+      systemInstall,
+    });
     await smokeInstalledBundle(installed, process.platform, target, lifecycleEnvironment(sandbox));
     console.log(`verified ${process.platform} bundle lifecycle with ${relative(sandbox, bundledSidecar)}`);
   } finally {
@@ -536,6 +619,11 @@ async function main() {
     } finally {
       await removeLifecycleSandboxWithRetry(sandbox);
     }
+  }
+  const evidenceOutput = process.env.PANDORA_DESKTOP_EVIDENCE_OUTPUT?.trim();
+  if (evidenceOutput && lifecycleEvidence) {
+    writeLifecycleEvidence(evidenceOutput, lifecycleEvidence);
+    console.log(`desktop lifecycle evidence written to ${evidenceOutput}`);
   }
 }
 
