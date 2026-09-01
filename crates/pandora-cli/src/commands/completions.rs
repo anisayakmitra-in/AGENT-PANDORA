@@ -54,8 +54,10 @@ fn powershell() -> &'static str {
         'list','resolve'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'skill') {
         'list','inspect','install','enable','disable','suspend','remove','restore'
+    } elseif ($elements.Count -gt 2 -and $elements[1] -eq 'package' -and $elements[2] -eq 'cache') {
+        'list','inspect','verify','events'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'package') {
-        'scaffold','admit','validate','sign','keygen','install','install-github','list','inspect','enable','disable','rollback','lock','verify-lock','trust-root','remove'
+        'scaffold','admit','admit-cached','validate','sign','keygen','discover','download','download-github','install','install-github','cache','list','inspect','enable','disable','rollback','lock','verify-lock','trust-root','remove'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'registry') {
         'list','set','use','remove'
     } elseif ($elements.Count -gt 2 -and $elements[1] -eq 'memory' -and $elements[2] -eq 'schedule') {
@@ -131,8 +133,10 @@ fn bash() -> &'static str {
         COMPREPLY=( $(compgen -W 'list resolve' -- "$current") )
     elif [[ "$previous" == "skill" ]]; then
         COMPREPLY=( $(compgen -W 'list inspect install enable disable suspend remove restore' -- "$current") )
+    elif [[ "${COMP_WORDS[1]}" == "package" && "$previous" == "cache" ]]; then
+        COMPREPLY=( $(compgen -W 'list inspect verify events' -- "$current") )
     elif [[ "$previous" == "package" ]]; then
-        COMPREPLY=( $(compgen -W 'scaffold admit validate sign keygen install install-github list inspect enable disable rollback lock verify-lock trust-root remove' -- "$current") )
+        COMPREPLY=( $(compgen -W 'scaffold admit admit-cached validate sign keygen discover download download-github install install-github cache list inspect enable disable rollback lock verify-lock trust-root remove' -- "$current") )
     elif [[ "$previous" == "registry" ]]; then
         COMPREPLY=( $(compgen -W 'list set use remove' -- "$current") )
     elif [[ "${COMP_WORDS[1]}" == "memory" && "$previous" == "schedule" ]]; then
@@ -206,8 +210,10 @@ elif [[ ${words[2]} == slash ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:slash command:(list resolve)'
 elif [[ ${words[2]} == skill ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:skill command:(list inspect install enable disable suspend remove restore)'
+elif [[ ${words[2]} == package && ${words[3]} == cache ]]; then
+    _arguments '3:package cache command:(list inspect verify events)'
 elif [[ ${words[2]} == package ]]; then
-    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:package command:(scaffold admit validate sign keygen install install-github list inspect enable disable rollback lock verify-lock trust-root remove)'
+    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:package command:(scaffold admit admit-cached validate sign keygen discover download download-github install install-github cache list inspect enable disable rollback lock verify-lock trust-root remove)'
 elif [[ ${words[2]} == registry ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies efficiency fleet completions migrate update uninstall doctor)' '2:registry command:(list set use remove)'
 elif [[ ${words[2]} == memory && ${words[3]} == schedule ]]; then
@@ -267,7 +273,8 @@ complete -c pandora -f -n '__fish_seen_subcommand_from rollout; and not __fish_s
 complete -c pandora -f -n '__fish_seen_subcommand_from job' -a 'submit work list inspect cancel mark-interrupted'
 complete -c pandora -f -n '__fish_seen_subcommand_from subagent' -a 'spawn work list inspect cancel mark-interrupted cleanup'
 complete -c pandora -f -n '__fish_seen_subcommand_from skill' -a 'list inspect install enable disable suspend remove restore'
-complete -c pandora -f -n '__fish_seen_subcommand_from package' -a 'scaffold admit validate sign keygen install install-github list inspect enable disable rollback lock verify-lock trust-root remove'
+complete -c pandora -f -n '__fish_seen_subcommand_from package; and not __fish_seen_subcommand_from cache' -a 'scaffold admit admit-cached validate sign keygen discover download download-github install install-github cache list inspect enable disable rollback lock verify-lock trust-root remove'
+complete -c pandora -f -n '__fish_seen_subcommand_from package; and __fish_seen_subcommand_from cache' -a 'list inspect verify events'
 complete -c pandora -f -n '__fish_seen_subcommand_from registry' -a 'list set use remove'
 complete -c pandora -f -n '__fish_seen_subcommand_from memory; and not __fish_seen_subcommand_from schedule' -a 'recall audit forget compact promote synthesize consolidate provenance schedule'
 complete -c pandora -f -n '__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from schedule' -a 'create list disable claim run runs'
@@ -317,7 +324,8 @@ mod tests {
             "'preview','record','list','inspect'",
             "'list','inspect','run'",
             "'list','resolve'",
-            "'scaffold','admit','validate','sign','keygen','install','install-github','list','inspect','enable','disable','rollback','lock','verify-lock','trust-root','remove'",
+            "'scaffold','admit','admit-cached','validate','sign','keygen','discover','download','download-github','install','install-github','cache','list','inspect','enable','disable','rollback','lock','verify-lock','trust-root','remove'",
+            "'list','inspect','verify','events'",
             "'list','set','use','remove'",
             "'recall','audit','forget','compact','promote','synthesize','consolidate','provenance','schedule'",
             "'list','inspect','resolve'",
@@ -341,7 +349,8 @@ mod tests {
                 "preview record list inspect",
                 "list inspect run",
                 "list resolve",
-                "scaffold admit validate sign keygen install install-github list inspect enable disable rollback lock verify-lock trust-root remove",
+                "scaffold admit admit-cached validate sign keygen discover download download-github install install-github cache list inspect enable disable rollback lock verify-lock trust-root remove",
+                "list inspect verify events",
                 "list set use remove",
                 "recall audit forget compact promote synthesize consolidate provenance schedule",
                 "list inspect resolve",

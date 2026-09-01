@@ -1,4 +1,4 @@
-use crate::{MAX_STORED_ARTIFACT_BYTES, PackageRecord, PackageStore, PackageStoreError};
+use crate::MAX_STORED_ARTIFACT_BYTES;
 use pandora_types::PackageManifest;
 use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::redirect::Policy;
@@ -25,7 +25,6 @@ pub enum GitHubPackageError {
     ManifestTooLarge,
     ArtifactTooLarge,
     InvalidManifest,
-    Admission(PackageStoreError),
 }
 
 impl fmt::Display for GitHubPackageError {
@@ -50,16 +49,29 @@ impl fmt::Display for GitHubPackageError {
             Self::InvalidManifest => {
                 formatter.write_str("GitHub package manifest is not valid Pandora package JSON")
             }
-            Self::Admission(error) => error.fmt(formatter),
         }
     }
 }
 
 impl std::error::Error for GitHubPackageError {}
 
-impl From<PackageStoreError> for GitHubPackageError {
-    fn from(error: PackageStoreError) -> Self {
-        Self::Admission(error)
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GitHubPackageDownload {
+    manifest: PackageManifest,
+    artifact: Vec<u8>,
+}
+
+impl GitHubPackageDownload {
+    pub fn manifest(&self) -> &PackageManifest {
+        &self.manifest
+    }
+
+    pub fn artifact(&self) -> &[u8] {
+        &self.artifact
+    }
+
+    pub fn into_parts(self) -> (PackageManifest, Vec<u8>) {
+        (self.manifest, self.artifact)
     }
 }
 
@@ -104,12 +116,11 @@ impl GitHubPackageClient {
         })
     }
 
-    pub fn install(
+    pub fn download(
         &self,
-        store: &PackageStore,
         manifest_path: &str,
         artifact_path: &str,
-    ) -> Result<PackageRecord, GitHubPackageError> {
+    ) -> Result<GitHubPackageDownload, GitHubPackageError> {
         let manifest_path = validate_repository_path(manifest_path, "manifest")?;
         let artifact_path = validate_repository_path(artifact_path, "artifact")?;
         if manifest_path == artifact_path {
@@ -129,9 +140,7 @@ impl GitHubPackageClient {
         )?;
         let manifest: PackageManifest = serde_json::from_slice(&manifest_bytes)
             .map_err(|_| GitHubPackageError::InvalidManifest)?;
-        store
-            .admit(&manifest, &manifest, &artifact)
-            .map_err(GitHubPackageError::Admission)
+        Ok(GitHubPackageDownload { manifest, artifact })
     }
 
     fn fetch(
@@ -323,7 +332,6 @@ fn read_limited(mut response: Response, limit: usize) -> Result<Vec<u8>, ReadLim
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::new_temp_dir;
     use pandora_types::{PackageCompatibility, PackageKind, TrustEvidence, hash_artifact};
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -381,6 +389,7 @@ mod tests {
         let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
+        let served_artifact = artifact.clone();
         let server = thread::spawn(move || {
             for (expected_path, body, content_type) in [
                 (
@@ -390,7 +399,7 @@ mod tests {
                 ),
                 (
                     format!("/owner/repo/{COMMIT}/dist/gene.wasm"),
-                    artifact,
+                    served_artifact,
                     "application/octet-stream",
                 ),
             ] {
@@ -419,8 +428,6 @@ mod tests {
             }
         });
 
-        let root = new_temp_dir("pandora-github-package").unwrap();
-        let store = PackageStore::open(root.join("packages.sqlite3")).unwrap();
         let client = GitHubPackageClient::new(
             "https://github.com/owner/repo",
             COMMIT,
@@ -429,13 +436,12 @@ mod tests {
         .unwrap()
         .with_raw_base(&format!("http://{address}/"))
         .unwrap();
-        let record = client
-            .install(&store, "pandora-package.json", "dist/gene.wasm")
+        let download = client
+            .download("pandora-package.json", "dist/gene.wasm")
             .unwrap();
 
-        assert_eq!(record.manifest().id().as_str(), "owner/gene");
-        assert!(!record.grants_runtime_authority());
+        assert_eq!(download.manifest().id().as_str(), "owner/gene");
+        assert_eq!(download.artifact(), artifact);
         server.join().unwrap();
-        let _ = std::fs::remove_dir_all(root);
     }
 }

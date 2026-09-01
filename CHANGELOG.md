@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Added signed remote distribution for Gene, Domain Harness, Meta Harness, Skill,
+  and Provider packages. Registry discovery and exact-version or pinned-commit
+  GitHub downloads now verify the Official publisher root, Ed25519 signature,
+  runtime compatibility, kind, and artifact digest into an inert durable cache.
+  Offline verification and append-only evidence expose the exact publisher/key,
+  source revision, manifest digest, artifact digest, dependencies, and admission
+  binding across CLI, TUI, and desktop. Admission is a separate dry-run/confirmed
+  boundary and leaves Skills disabled and Providers inactive; enablement,
+  Provider selection, approval, and effect permits remain separate. Identity
+  conflicts, signature substitution, downgrades, traversal, missing dependencies,
+  untrusted publishers, and revoked keys fail closed, while revocation suspends
+  matching managed Skills and quarantines matching Provider profiles.
+
 - Added durable governed rollout stages for canary, limited, expanded, and
   complete. Every stage carries explicit cost, duration, failure, quality,
   latency, and stability limits; records a durable scorecard; and requires a

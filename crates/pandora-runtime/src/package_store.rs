@@ -647,6 +647,26 @@ impl PackageStore {
              WHERE publisher = ?2 AND key_id = ?3 AND revoked_at IS NULL",
             params![revoked_at_i64, publisher, key_id],
         )?;
+        let affected_ids = {
+            let mut statement = transaction.prepare(
+                "SELECT manifest_json FROM package_records ORDER BY id ASC, version ASC",
+            )?;
+            let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+            let mut ids = BTreeSet::new();
+            for row in rows {
+                let manifest: PackageManifest =
+                    serde_json::from_str(&row?).map_err(|_| PackageStoreError::CorruptRecord)?;
+                if manifest.publisher() == publisher
+                    && manifest.trust().public_key() == Some(record.public_key())
+                {
+                    ids.insert(manifest.id().as_str().to_owned());
+                }
+            }
+            ids
+        };
+        for id in affected_ids {
+            transaction.execute("DELETE FROM package_bindings WHERE id = ?1", [id])?;
+        }
         append_transparency_event(
             &transaction,
             PackageTransparencyEventDraft {

@@ -43,6 +43,48 @@ Inspection reads the body and resource declarations only when requested.
 State is kept under `.pandora-state`; removed packages are held under
 `.pandora-removed` until a rollback receipt restores them.
 
+## Signed remote distribution
+
+A remotely distributed Skill uses a normal signed package manifest with kind
+`skill`. Its artifact is strict UTF-8 JSON:
+
+```json
+{
+  "format_version": 1,
+  "files": [
+    { "path": "SKILL.md", "content": "---\nid: example\nversion: 0.1.0\n..." },
+    { "path": "references/guide.md", "content": "Bounded guidance" }
+  ]
+}
+```
+
+The bundle must contain `SKILL.md`, contain no unknown fields, fit within the
+package artifact limit, and use at most 256 unique relative paths. Absolute
+paths, backslashes, drive prefixes, control characters, empty components, `.`,
+`..`, duplicates, and paths longer than 512 bytes fail before staging. The leaf
+of the signed package ID must equal the Skill manifest ID, version, and publisher.
+
+Remote operations deliberately cross separate boundaries:
+
+```text
+pandora package discover <publisher>/<skill> [version]
+pandora package download <publisher>/<skill> <exact-version>
+pandora package cache inspect <publisher>/<skill> <exact-version>
+pandora package cache verify <publisher>/<skill> <exact-version>
+pandora package admit-cached <publisher>/<skill> <exact-version> --dry-run
+pandora package admit-cached <publisher>/<skill> <exact-version> --yes
+pandora skill enable <skill-id>
+```
+
+Discovery changes nothing. Download verifies the Official publisher root,
+signature, runtime compatibility, artifact hash, and exact source revision, then
+writes only the inert cache. Admission rechecks trust and exact dependencies,
+materializes into exclusive staging, validates the normal Skill contract, and
+atomically installs the Skill as `disabled`. Enablement remains the existing
+separate Skill command. None of these steps executes a script or grants an
+effect. Revoking the signing root marks matching cache evidence revoked, removes
+its distribution binding, and suspends an admitted managed Skill.
+
 ## Agent use
 
 An enabled Skill contributes bounded guidance to agent context. Skills are

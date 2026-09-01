@@ -76,9 +76,14 @@ Local package admission is explicit:
 pandora package scaffold domain-harness --output <new-directory>
 pandora package scaffold meta-harness --output <new-directory>
 pandora package admit --manifest <manifest.json> --artifact <artifact>
-pandora package install <id> [version] --registry <url>
+pandora package discover <id> [version] --registry <url>
+pandora package download <id> [version] --registry <url>
 pandora registry set --name m-place --registry-url <url> [--token-env <name>]
-pandora package install <id> [version]
+pandora package download <id> [version]
+pandora package cache inspect <id> <version>
+pandora package cache verify <id> <version>
+pandora package admit-cached <id> <version> --dry-run
+pandora package admit-cached <id> <version> --yes
 pandora package list
 pandora package inspect <id> <version>
 pandora package enable <id> <version> --dry-run
@@ -141,20 +146,32 @@ commands now provide local signing through an encrypted-vault key boundary;
 they never accept, return, or write private key material.
 
 `package admit` uses one local manifest as both the declared and embedded record.
-Local hexadecimal trust evidence remains supported. `package install` consumes
-current or exact-version M-Place metadata, requests the direct exact-version bytes
-from the same configured registry, and retains the registry's base64 evidence
-without re-encoding it. The client follows no redirects and does not request the
-registry-controlled upstream `artifact_url`. Named registry profiles persist only
-the validated base URL and an optional secret reference; they do not add authority,
-change admission policy, or store a token in configuration.
+Local hexadecimal trust evidence remains supported. Remote `package download`
+consumes current or exact-version M-Place metadata, resolves a missing version,
+requests only the direct exact-version bytes from the same configured registry,
+and retains the registry's base64 evidence without re-encoding it. The client
+follows no redirects and does not request the registry-controlled upstream
+`artifact_url`. Named registry profiles persist only the validated base URL and
+an optional secret reference; they do not add authority, change admission policy,
+or store a token in configuration.
 
-Remote registry admission is Gene-only in this release. It requires an artifact,
-a canonical lowercase SHA-256 digest, no unresolved capability requirements,
-and one valid Pandora runtime requirement. Other recognized registry kinds fail
-before download or durable state change. Pinned GitHub and local admission use
-the same package checks and may admit the Domain and Meta profile kinds
-described below.
+Remote distribution supports Gene, Domain Harness, Meta Harness, Skill, and
+Provider kinds. Discovery is read-only. Download verifies the active publisher
+root, manifest signature, exact kind, canonical SHA-256 artifact digest, runtime
+compatibility, and bounded artifact before writing an inert cache record. It does
+not perform dependency admission, change an active binding, enable a Skill, select
+a Provider, or grant effect authority. `package install` and
+`package install-github` remain compatibility aliases for this cache-only behavior.
+
+`package cache inspect` exposes the publisher/key, canonical manifest digest,
+artifact digest, exact source revision, trust state, and admission binding. Offline
+verification repeats the retained signature, root, hash, and event-chain checks
+without a network call. Only `package admit-cached --yes` crosses the separate
+admission boundary after rechecking required exact dependencies; `--dry-run`
+changes nothing. Revoked publisher keys invalidate matching cache records and
+their bindings. Already-admitted Skills are suspended and Providers are
+quarantined so later discovery or configuration reload cannot silently restore
+their use.
 
 The signed payload starts with `pandora-package-signature-v2` and binds the
 package ID, version, kind, publisher, artifact hash, runtime compatibility,

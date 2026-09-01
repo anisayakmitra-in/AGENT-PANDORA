@@ -135,6 +135,42 @@ export type RuntimePackage = {
   };
 };
 
+export type RuntimeDistributedPackage = {
+  id: string;
+  version: string;
+  kind: RuntimePackage["kind"];
+  publisher: string;
+  publisher_key_id: string;
+  content_hash: string;
+  manifest_digest: string;
+  artifact_digest: string;
+  dependencies: RuntimePackage["dependencies"];
+  compatibility: string;
+  license: string;
+  trust: {
+    declared_level: "official";
+    verification: "verified" | "revoked" | "failed_closed";
+    signature_present: boolean;
+    publisher_key_present: boolean;
+  };
+  source: {
+    kind: "registry" | "github";
+    locator: string;
+    revision: string;
+  };
+  cached_at: number;
+  admitted_at: number | null;
+  state: "cached" | "admitted" | "revoked";
+  admission: {
+    active_version: string | null;
+    previous_version: string | null;
+    generation: number;
+    this_version_admitted: boolean;
+  };
+  download_authority: "cache_only";
+  runtime_authority: false;
+};
+
 export type RuntimePackageTransparencyEvent = {
   sequence: number;
   event_kind: "trust_root_added" | "trust_root_revoked" | "admission_decision";
@@ -267,6 +303,25 @@ export type RuntimeOrchestrationRun = {
   interruption_reason: string | null;
   created_at_unix_seconds: number;
   updated_at_unix_seconds: number;
+};
+
+export type NativePackageDistributionResult = {
+  message: string;
+  restartRequired: boolean;
+  data: {
+    packages?: RuntimeDistributedPackage[];
+    package?: RuntimeDistributedPackage;
+    count?: number;
+    dry_run?: boolean;
+    changed?: boolean;
+    verification?: "verified_offline";
+    network_used?: false;
+    admission_boundary?: string;
+    admission_performed?: false;
+    enablement_performed?: false;
+    effect_authority_granted?: false;
+    download_authority?: "cache_only";
+  };
 };
 
 export type RuntimeAggregateBudgetAmount = {
@@ -979,6 +1034,32 @@ export async function listLocalPackages(): Promise<NativePackageResult> {
   return invoke<NativePackageResult>("list_local_packages");
 }
 
+export async function listCachedPackages(): Promise<NativePackageDistributionResult> {
+  if (!isNativeRuntime()) {
+    return {
+      message: "Verified package downloads are available only in the Pandora desktop app.",
+      restartRequired: false,
+      data: { packages: [], count: 0, download_authority: "cache_only" },
+    };
+  }
+  return invoke<NativePackageDistributionResult>("list_cached_packages");
+}
+
+export async function verifyCachedPackage(packageId: string, version: string): Promise<NativePackageDistributionResult> {
+  if (!isNativeRuntime()) throw new Error("Offline package verification is available only in the Pandora desktop app");
+  return invoke<NativePackageDistributionResult>("verify_cached_package", { input: { packageId, version } });
+}
+
+export async function previewCachedPackageAdmission(packageId: string, version: string): Promise<NativePackageDistributionResult> {
+  if (!isNativeRuntime()) throw new Error("Package admission is available only in the Pandora desktop app");
+  return invoke<NativePackageDistributionResult>("preview_cached_package_admission", { input: { packageId, version } });
+}
+
+export async function admitCachedPackage(packageId: string, version: string): Promise<NativePackageDistributionResult> {
+  if (!isNativeRuntime()) throw new Error("Package admission is available only in the Pandora desktop app");
+  return invoke<NativePackageDistributionResult>("admit_cached_package", { input: { packageId, version } });
+}
+
 export async function listPackageTransparency(): Promise<NativePackageResult> {
   if (!isNativeRuntime()) {
     return {
@@ -1022,18 +1103,26 @@ export async function mutateLocalSkill(skillId: string, action: SkillMutationAct
   return invoke<NativeSkillResult>("mutate_local_skill", { input: { skillId, action, confirmation } });
 }
 
-export async function installRegistryPackage(input: RegistryPackageInstall): Promise<NativePackageResult> {
+export async function downloadRegistryPackage(input: RegistryPackageInstall): Promise<NativePackageDistributionResult> {
   if (!isNativeRuntime()) {
-    throw new Error("Registry package installation is available only in the Pandora desktop app");
+    throw new Error("Registry package download is available only in the Pandora desktop app");
   }
-  return invoke<NativePackageResult>("install_registry_package", { input });
+  return invoke<NativePackageDistributionResult>("download_registry_package", { input });
 }
 
-export async function installGitHubPackage(input: GitHubPackageInstall): Promise<NativePackageResult> {
+export async function installRegistryPackage(input: RegistryPackageInstall): Promise<NativePackageDistributionResult> {
+  return downloadRegistryPackage(input);
+}
+
+export async function downloadGitHubPackage(input: GitHubPackageInstall): Promise<NativePackageDistributionResult> {
   if (!isNativeRuntime()) {
-    throw new Error("GitHub package installation is available only in the Pandora desktop app");
+    throw new Error("GitHub package download is available only in the Pandora desktop app");
   }
-  return invoke<NativePackageResult>("install_github_package", { input });
+  return invoke<NativePackageDistributionResult>("download_github_package", { input });
+}
+
+export async function installGitHubPackage(input: GitHubPackageInstall): Promise<NativePackageDistributionResult> {
+  return downloadGitHubPackage(input);
 }
 
 export async function admitLocalPackage(input: LocalPackageAdmission): Promise<NativePackageResult> {

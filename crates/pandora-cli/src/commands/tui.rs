@@ -327,6 +327,7 @@ impl App {
                     "/theme      show or select auto, dark, light, or mono",
                     "/activity   show the typed public TUI activity state",
                     "/packages   list locally admitted package identities",
+                    "/distribution list verified downloads and their trust/admission state",
                     "/domain-starter show the safe Domain Harness scaffold workflow",
                     "/meta-starter show the safe Meta Harness scaffold workflow",
                     "/gene-pack  show the declarative Gene pack evaluation workflow",
@@ -364,6 +365,7 @@ impl App {
                 ));
             }
             "/packages" => self.show_packages(),
+            "/distribution" => self.show_distribution(),
             "/domain-starter" => {
                 self.push_message(
                     "starter> pandora package scaffold domain-harness --output <new-directory>",
@@ -518,6 +520,83 @@ impl App {
                         "packages> showing 50 of {total}; use the JSON CLI for the full list"
                     ));
                 }
+            }
+            Err(error) => {
+                self.activity = TuiActivity::Failure;
+                self.push_message(format!("error> {}", clean_text(&error.message)));
+            }
+        }
+    }
+
+    fn show_distribution(&mut self) {
+        self.activity = TuiActivity::Working;
+        let mut args = vec!["cache".to_owned(), "list".to_owned()];
+        for option in ["config", "data-dir", "workspace"] {
+            if let Some(value) = self.args.value(option) {
+                args.push(format!("--{option}"));
+                args.push(value.to_owned());
+            }
+        }
+        match super::package::execute(&args) {
+            Ok(result) => {
+                self.activity = TuiActivity::Success;
+                let packages = result
+                    .data
+                    .get("packages")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                if packages.is_empty() {
+                    self.push_message("distribution> no verified downloads cached");
+                    return;
+                }
+                let total = packages.len();
+                for package in packages.iter().take(50) {
+                    let id = package
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    let version = package
+                        .get("version")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    let kind = package
+                        .get("kind")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    let state = package
+                        .get("state")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    let verification = package
+                        .get("trust")
+                        .and_then(|trust| trust.get("verification"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("failed_closed");
+                    let publisher = package
+                        .get("publisher")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    let key_id = package
+                        .get("publisher_key_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    let digest = package
+                        .get("artifact_digest")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    self.push_message(format!(
+                        "distribution> {id}@{version} · {kind} · {state} · {verification} · publisher {publisher}/{key_id} · {digest} · authority none"
+                    ));
+                }
+                if total > 50 {
+                    self.push_message(format!(
+                        "distribution> showing 50 of {total}; use package cache list --json for the full evidence"
+                    ));
+                }
+                self.push_message(
+                    "distribution> admission, enablement, and effect authority always require separate commands",
+                );
             }
             Err(error) => {
                 self.activity = TuiActivity::Failure;
@@ -1077,6 +1156,9 @@ mod tests {
                 .any(|message| message == "/packages   list locally admitted package identities")
         );
         assert!(app.messages.iter().any(|message| {
+            message == "/distribution list verified downloads and their trust/admission state"
+        }));
+        assert!(app.messages.iter().any(|message| {
             message == "/domain-starter show the safe Domain Harness scaffold workflow"
         }));
         assert!(app.messages.iter().any(|message| {
@@ -1107,6 +1189,40 @@ mod tests {
         assert!(app.messages.iter().any(|message| {
             message == "/fleet-health show the local privacy-safe operations snapshot"
         }));
+    }
+
+    #[test]
+    fn distribution_command_exposes_the_inert_verified_cache() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("test clock must follow the Unix epoch")
+            .as_nanos();
+        let data_dir = std::env::temp_dir().join(format!(
+            "pandora-tui-distribution-{}-{nonce}",
+            std::process::id()
+        ));
+        let mut values = BTreeMap::new();
+        values.insert(
+            "data-dir".to_owned(),
+            data_dir.to_string_lossy().into_owned(),
+        );
+        let mut app = App::new(
+            ParsedArgs {
+                values,
+                positionals: Vec::new(),
+            },
+            TuiTheme::Auto,
+        );
+        app.input = "/distribution".chars().collect();
+        app.submit();
+
+        assert!(
+            app.messages
+                .iter()
+                .any(|message| message == "distribution> no verified downloads cached")
+        );
+        assert_eq!(app.activity, TuiActivity::Success);
+        let _ = std::fs::remove_dir_all(data_dir);
     }
 
     #[test]

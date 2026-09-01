@@ -96,6 +96,7 @@ impl FromStr for ProviderProtocol {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProviderManifest {
     id: ProviderId,
     name: String,
@@ -159,7 +160,7 @@ impl ProviderManifest {
         self.protocol
     }
 
-    pub(crate) fn base_url(&self) -> &str {
+    pub fn base_url(&self) -> &str {
         &self.base_url
     }
 
@@ -289,5 +290,20 @@ mod tests {
             serde_json::to_value(manifest).unwrap()["protocol"],
             "gemini_generate_content"
         );
+    }
+
+    #[test]
+    fn manifest_rejects_unknown_distribution_fields() {
+        let artifact = r#"{
+            "id":"provider",
+            "name":"Provider",
+            "protocol":"open_ai_compatible",
+            "base_url":"https://provider.example/v1",
+            "default_model":"model",
+            "api_key_env":"PANDORA_PROVIDER_KEY",
+            "api_key":"must-not-be-accepted"
+        }"#;
+
+        assert!(serde_json::from_str::<ProviderManifest>(artifact).is_err());
     }
 }

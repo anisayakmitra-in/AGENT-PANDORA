@@ -104,6 +104,10 @@ jobs:
           done < <(find sdk -type f -name pandora.package.json -print0 | sort -z)
           test -s "$evidence"
 
+      - name: Prove signed Skill and Provider authority separation
+        shell: bash
+        run: cargo test -p pandora-cli --test cli_smoke signed_skill_and_provider_distribution_keeps_every_authority_separate --locked -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/agent-pipeline-evidence/signed-distribution.log"
+
       - name: Run deterministic evaluation gate
         shell: bash
         run: target/debug/pandora evaluation golden --input scripts/fixtures/agent-pipeline-golden.json --fail-on-failure --json > "$RUNNER_TEMP/agent-pipeline-evidence/evaluation.json"
@@ -118,7 +122,7 @@ jobs:
       - name: Record the non-activating pipeline boundary
         shell: bash
         run: |
-          python -c 'import json, os, pathlib; pathlib.Path(os.environ["RUNNER_TEMP"], "agent-pipeline-evidence", "pipeline.json").write_text(json.dumps({"schema_version": 1, "commit": os.environ["GITHUB_SHA"], "channel": os.environ["PIPELINE_CHANNEL"], "promotion_intent": os.environ["PROMOTION_INTENT"] == "true", "package_admission_performed": False, "artifact_activation_performed": False, "release_tag_created": False, "authority": "evidence_only"}, sort_keys=True) + "\n", encoding="utf-8")'
+          python -c 'import json, os, pathlib; pathlib.Path(os.environ["RUNNER_TEMP"], "agent-pipeline-evidence", "pipeline.json").write_text(json.dumps({"schema_version": 1, "commit": os.environ["GITHUB_SHA"], "channel": os.environ["PIPELINE_CHANNEL"], "promotion_intent": os.environ["PROMOTION_INTENT"] == "true", "package_admission_performed": False, "signed_distribution_boundary_tested": True, "artifact_activation_performed": False, "release_tag_created": False, "authority": "evidence_only"}, sort_keys=True) + "\n", encoding="utf-8")'
 
       - name: Upload pipeline evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -518,6 +518,93 @@ fn list_local_packages() -> Result<NativePackageResult, String> {
 }
 
 #[tauri::command]
+fn list_cached_packages() -> Result<NativePackageResult, String> {
+    let args = vec![
+        "package".to_owned(),
+        "cache".to_owned(),
+        "list".to_owned(),
+        "--limit".to_owned(),
+        "64".to_owned(),
+        "--json".to_owned(),
+    ];
+    let data = run_cli_json(&args, "listing verified package downloads")?;
+    let count = data
+        .get("count")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    Ok(NativePackageResult {
+        message: format!("Loaded {count} inert verified package download(s)."),
+        restart_required: false,
+        data,
+    })
+}
+
+fn cached_package_admission(
+    input: PackageIdentity,
+    confirmed: bool,
+) -> Result<NativePackageResult, String> {
+    validate_package_identity(&input.package_id, &input.version)?;
+    let mut args = vec![
+        "package".to_owned(),
+        "admit-cached".to_owned(),
+        input.package_id.clone(),
+        input.version.clone(),
+    ];
+    args.push(if confirmed { "--yes" } else { "--dry-run" }.to_owned());
+    args.push("--json".to_owned());
+    let data = run_cli_json(&args, "checking cached package admission")?;
+    Ok(NativePackageResult {
+        message: if confirmed {
+            format!(
+                "Package {}@{} admitted locally and left disabled or inactive.",
+                input.package_id, input.version
+            )
+        } else {
+            format!(
+                "Admission preview verified for {}@{}; no local boundary changed.",
+                input.package_id, input.version
+            )
+        },
+        restart_required: confirmed,
+        data,
+    })
+}
+
+#[tauri::command]
+fn verify_cached_package(input: PackageIdentity) -> Result<NativePackageResult, String> {
+    validate_package_identity(&input.package_id, &input.version)?;
+    let args = vec![
+        "package".to_owned(),
+        "cache".to_owned(),
+        "verify".to_owned(),
+        input.package_id.clone(),
+        input.version.clone(),
+        "--json".to_owned(),
+    ];
+    let data = run_cli_json(&args, "verifying the cached package offline")?;
+    Ok(NativePackageResult {
+        message: format!(
+            "Package {}@{} verified from the local cache without network access.",
+            input.package_id, input.version
+        ),
+        restart_required: false,
+        data,
+    })
+}
+
+#[tauri::command]
+fn preview_cached_package_admission(
+    input: PackageIdentity,
+) -> Result<NativePackageResult, String> {
+    cached_package_admission(input, false)
+}
+
+#[tauri::command]
+fn admit_cached_package(input: PackageIdentity) -> Result<NativePackageResult, String> {
+    cached_package_admission(input, true)
+}
+
+#[tauri::command]
 fn list_package_transparency() -> Result<NativePackageResult, String> {
     let args = vec![
         "package".to_owned(),
@@ -615,7 +702,7 @@ fn mutate_local_skill(input: SkillMutation) -> Result<NativeSkillResult, String>
 }
 
 #[tauri::command]
-fn install_registry_package(
+fn download_registry_package(
     mut input: RegistryPackageInstall,
 ) -> Result<NativePackageResult, String> {
     validate_package_id(&input.package_id)?;
@@ -635,7 +722,7 @@ fn install_registry_package(
 
     let mut args = vec![
         "package".to_owned(),
-        "install".to_owned(),
+        "download".to_owned(),
         input.package_id.clone(),
     ];
     if let Some(version) = version {
@@ -648,7 +735,7 @@ fn install_registry_package(
     }
     args.push("--json".to_owned());
     let data = if token.is_empty() {
-        run_cli_json(&args, "installing the registry package")?
+        run_cli_json(&args, "downloading and verifying the registry package")?
     } else {
         const TOKEN_ENV: &str = "PANDORA_DESKTOP_REGISTRY_TOKEN";
         args.extend(["--token-env".to_owned(), TOKEN_ENV.to_owned()]);
@@ -656,19 +743,22 @@ fn install_registry_package(
             &args,
             TOKEN_ENV,
             &mut token,
-            "installing the registry package",
+            "downloading and verifying the registry package",
         )?
     };
     token.zeroize();
     Ok(NativePackageResult {
-        message: format!("Package {} admitted from the registry.", input.package_id),
-        restart_required: true,
+        message: format!(
+            "Package {} downloaded, verified, and cached without admission or enablement.",
+            input.package_id
+        ),
+        restart_required: false,
         data,
     })
 }
 
 #[tauri::command]
-fn install_github_package(mut input: GitHubPackageInstall) -> Result<NativePackageResult, String> {
+fn download_github_package(mut input: GitHubPackageInstall) -> Result<NativePackageResult, String> {
     validate_github_repository_url(&input.repository_url)?;
     validate_github_commit(&input.commit)?;
     validate_github_repository_path(&input.manifest_path, "manifest")?;
@@ -682,7 +772,7 @@ fn install_github_package(mut input: GitHubPackageInstall) -> Result<NativePacka
     }
     let mut args = vec![
         "package".to_owned(),
-        "install-github".to_owned(),
+        "download-github".to_owned(),
         "--repository".to_owned(),
         input.repository_url,
         "--commit".to_owned(),
@@ -694,7 +784,7 @@ fn install_github_package(mut input: GitHubPackageInstall) -> Result<NativePacka
         "--json".to_owned(),
     ];
     let data = if token.is_empty() {
-        run_cli_json(&args, "installing the GitHub package")?
+        run_cli_json(&args, "downloading and verifying the GitHub package")?
     } else {
         const TOKEN_ENV: &str = "PANDORA_DESKTOP_GITHUB_TOKEN";
         args.extend(["--token-env".to_owned(), TOKEN_ENV.to_owned()]);
@@ -702,13 +792,13 @@ fn install_github_package(mut input: GitHubPackageInstall) -> Result<NativePacka
             &args,
             TOKEN_ENV,
             &mut token,
-            "installing the GitHub package",
+            "downloading and verifying the GitHub package",
         )?
     };
     token.zeroize();
     Ok(NativePackageResult {
-        message: "Package admitted from the pinned GitHub source.".to_owned(),
-        restart_required: true,
+        message: "Package downloaded from the pinned GitHub source, verified, and cached without admission or enablement.".to_owned(),
+        restart_required: false,
         data,
     })
 }
@@ -1795,13 +1885,17 @@ fn main() {
             list_registry_profiles,
             configure_registry_profile,
             list_local_packages,
+            list_cached_packages,
+            verify_cached_package,
+            preview_cached_package_admission,
+            admit_cached_package,
             list_package_transparency,
             fleet_operations_dashboard,
             list_local_skills,
             install_local_skill,
             mutate_local_skill,
-            install_registry_package,
-            install_github_package,
+            download_registry_package,
+            download_github_package,
             admit_local_package,
             preview_package_enable,
             enable_local_package,

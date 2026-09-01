@@ -39,6 +39,7 @@ pub mod operations;
 pub mod orchestration_engine;
 pub mod orchestration_store;
 pub mod package_admission;
+pub mod package_distribution;
 pub mod package_store;
 pub mod parliament;
 pub mod permit_store;
@@ -131,7 +132,7 @@ pub use fleet::{
     FleetNode, FleetNodeState, FleetQuiescenceGuard, FleetSupervisor, FleetSupervisorState,
     MAX_FLEET_CAPABILITIES, MAX_FLEET_LEASES, MAX_FLEET_NODES,
 };
-pub use github_client::{GitHubPackageClient, GitHubPackageError};
+pub use github_client::{GitHubPackageClient, GitHubPackageDownload, GitHubPackageError};
 pub use graph_intelligence::{
     GraphEdge, GraphError, GraphInput, GraphIntelligenceEngine, GraphKind, GraphNode,
     GraphNodeKind, GraphScope, GraphSnapshot, GraphStore, GraphStoreError, MAX_GRAPH_EDGES,
@@ -181,6 +182,13 @@ pub use orchestration_store::{
     OrchestrationBudgetSnapshot, OrchestrationRunRecord, OrchestrationRunStatus,
     OrchestrationStore, OrchestrationStoreError,
 };
+pub use package_distribution::{
+    DistributionBinding, DistributionEvent, DistributionEventKind, DistributionMutation,
+    DistributionRecord, DistributionSource, DistributionSourceKind, DistributionState,
+    MAX_DISTRIBUTION_EVENTS, MAX_DISTRIBUTION_LIST, MAX_DISTRIBUTION_RECORDS,
+    PackageDistributionError, PackageDistributionStore, SkillDistributionBundle,
+    SkillDistributionFile, materialize_skill_bundle,
+};
 pub use package_store::{
     MAX_PACKAGE_TRANSPARENCY_EVENTS, MAX_PACKAGE_TRANSPARENCY_LIST, MAX_PUBLISHER_TRUST_ROOTS,
     MAX_STORED_ARTIFACT_BYTES, PackageBinding, PackageStore, PackageStoreError,
@@ -191,7 +199,7 @@ pub use parliament::Parliament;
 pub use permit_store::{ConsumedPermit, PermitError, PermitStore};
 pub use recovery_archive::{RecoveryArchive, RecoveryArchiveError, RecoveryBundle, RecoveryEntry};
 pub use reference_monitor::{AuthorizationError, ReferenceMonitor};
-pub use registry_client::{PackageRegistryClient, PackageRegistryError};
+pub use registry_client::{PackageRegistryClient, PackageRegistryError, RegistryPackageDownload};
 pub use replacement::{CANARY_POLICY_VERSION, CanaryPolicy, ReplacementEngine, ReplacementError};
 pub use research_artifact::{
     MAX_RESEARCH_ARTIFACT_BYTES, ResearchArtifactError, ResearchArtifactRecord,

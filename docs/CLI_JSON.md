@@ -46,7 +46,15 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora registry set ... --json` | `registry set` | `registry` |
 | `pandora registry use <name> --json` | `registry use` | `registry` |
 | `pandora registry remove <name> --yes --json` | `registry remove` | `registry`, `active_registry` |
-| `pandora package install <id> [version] --json` | `package install` | `registry`, `registry_profile`, `package` |
+| `pandora package discover <id> [version] --json` | `package discover` | `registry`, `registry_profile`, `resolved_version`, `package`, `downloaded`, `admitted`, `enabled` |
+| `pandora package download <id> [version] --json` | `package download` | `registry`, `registry_profile`, `changed`, verified cache-only `package` |
+| `pandora package download-github ... --json` | `package download-github` | exact GitHub `source`, `changed`, verified cache-only `package` |
+| `pandora package cache list --json` | `package cache list` | `packages`, `count`, `download_authority`, `admission_performed`, `enablement_performed` |
+| `pandora package cache inspect <id> <version> --json` | `package cache inspect` | exact `package`, matching `events`, `artifact_bytes`, `artifact_exposed` |
+| `pandora package cache verify <id> <version> --json` | `package cache verify` | exact `package`, `verification`, `network_used`, `admission_performed`, `enablement_performed` |
+| `pandora package cache events --json` | `package cache events` | `events`, `count`, `durability`, `integrity` |
+| `pandora package admit-cached <id> <version> --dry-run --json` | `package admit-cached` | `dry_run`, exact `package`, `admission_boundary`, `enablement_performed`, `effect_authority_granted` |
+| `pandora package admit-cached <id> <version> --yes --json` | `package admit-cached` | `dry_run`, `changed`, exact `package`, `admission_boundary`, `enablement_performed`, `effect_authority_granted` |
 | `pandora package keygen --json` | `package keygen` | `publisher`, `key_id`, `secret_name`, `public_key`, `private_key_exposed`, `stored`, `vault_path` |
 | `pandora package sign --json` | `package sign` | `manifest`, `package`, `key_id`, `public_key`, `signature_present`, `private_key_exposed`, `vault_secret` |
 | `pandora package trust-root list --json` | `package trust-root list` | `roots`, `count`, `durability` |
@@ -100,6 +108,15 @@ so compatible releases can add evidence without renaming existing fields.
 Paths use the operating system's native string representation. `doctor`
 reports evidence only; its containment object does not grant permissions or
 claim that an executor is sandboxed.
+
+Every distribution-cache `package` includes its exact ID, version, kind,
+publisher, publisher key ID, signed content hash, canonical manifest digest,
+retained artifact digest, exact dependencies, compatibility, license, trust
+verification, pinned source kind/locator/revision, timestamps, cache state,
+admission binding, `download_authority: "cache_only"`, and
+`runtime_authority: false`. Download and offline verification responses always
+report that admission and enablement were not performed. Cached admission always
+reports `enablement_performed: false` and `effect_authority_granted: false`.
 
 Memory records returned by `memory recall` include `origin` (`explicit` or
 `synthesized`) and `evidence_ids`. Synthesized records are L1 candidates only;

@@ -1,20 +1,27 @@
-use super::{load_config, parse_options};
+use super::{load_config, parse_options, timestamp, write_config};
 use crate::output::{CliError, CommandResult, success};
 use atomic_write_file::AtomicWriteFile;
 use ed25519_dalek::{Signer, SigningKey};
 use pandora_harnesses::{builtin_genes, builtin_harnesses, replaceable_builtin_harness_kind};
+use pandora_provider::ProviderManifest;
 use pandora_runtime::config::DEFAULT_REGISTRY_TOKEN_ENV;
+use pandora_runtime::config::ProviderProfile;
+use pandora_runtime::skill_engine::SkillEngine;
 use pandora_runtime::{
-    ArtifactCatalog, GitHubPackageClient, GitHubPackageError, MAX_PACKAGE_TRANSPARENCY_LIST,
-    MAX_STORED_ARTIFACT_BYTES, PackageBinding, PackageRecord, PackageRegistryClient,
+    ArtifactCatalog, DistributionEvent, DistributionRecord, DistributionSource,
+    DistributionSourceKind, GitHubPackageClient, GitHubPackageError, MAX_DISTRIBUTION_LIST,
+    MAX_PACKAGE_TRANSPARENCY_LIST, MAX_STORED_ARTIFACT_BYTES, PackageBinding,
+    PackageDistributionError, PackageDistributionStore, PackageRecord, PackageRegistryClient,
     PackageRegistryError, PackageStore, PackageStoreError, PackageTransparencyEvent,
     PackageTransparencyEventKind, PackageTransparencyOutcome, WasmExecutor,
+    materialize_skill_bundle,
 };
 use pandora_types::{
     ArtifactId, DomainRoutingProfile, HarnessId, MAX_META_HANDOFFS, MetaComposition,
     PackageCompatibility, PackageDependency, PackageId, PackageKind, PackageManifest,
     TrustEvidence, hash_artifact,
 };
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::fs;
@@ -27,17 +34,20 @@ const DEFAULT_GITHUB_TOKEN_ENV: &str = "PANDORA_GITHUB_TOKEN";
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "package requires 'scaffold', 'admit', 'validate', 'sign', 'keygen', 'install', 'install-github', 'list', 'inspect', 'enable', 'disable', 'rollback', 'lock', 'verify-lock', 'trust-root', 'transparency', or 'remove'",
+            "package requires 'scaffold', 'admit', 'admit-cached', 'validate', 'sign', 'keygen', 'discover', 'download', 'download-github', 'install', 'install-github', 'cache', 'list', 'inspect', 'enable', 'disable', 'rollback', 'lock', 'verify-lock', 'trust-root', 'transparency', or 'remove'",
         )
     })?;
     match subcommand.as_str() {
         "scaffold" => scaffold(&args[1..]),
         "admit" => admit(&args[1..]),
+        "admit-cached" => admit_cached(&args[1..]),
         "validate" => validate(&args[1..]),
         "sign" => sign(&args[1..]),
         "keygen" => keygen(&args[1..]),
-        "install" => install(&args[1..]),
-        "install-github" => install_github(&args[1..]),
+        "discover" => discover(&args[1..]),
+        "download" | "install" => download(&args[1..]),
+        "download-github" | "install-github" => install_github(&args[1..]),
+        "cache" => cache(&args[1..]),
         "list" => list(&args[1..]),
         "inspect" => inspect(&args[1..]),
         "enable" => enable(&args[1..]),
@@ -70,20 +80,20 @@ fn install_github(args: &[String]) -> Result<CommandResult, CliError> {
     )?;
     if !parsed.positionals.is_empty() {
         return Err(CliError::usage(
-            "package install-github does not accept positional arguments",
+            "package download-github does not accept positional arguments",
         ));
     }
     let repository = parsed.value("repository").ok_or_else(|| {
-        CliError::usage("package install-github requires '--repository <GitHub URL>'")
+        CliError::usage("package download-github requires '--repository <GitHub URL>'")
     })?;
     let commit = parsed
         .value("commit")
-        .ok_or_else(|| CliError::usage("package install-github requires '--commit <full SHA>'"))?;
+        .ok_or_else(|| CliError::usage("package download-github requires '--commit <full SHA>'"))?;
     let manifest_path = parsed.value("manifest").ok_or_else(|| {
-        CliError::usage("package install-github requires '--manifest <repository path>'")
+        CliError::usage("package download-github requires '--manifest <repository path>'")
     })?;
     let artifact_path = parsed.value("artifact").ok_or_else(|| {
-        CliError::usage("package install-github requires '--artifact <repository path>'")
+        CliError::usage("package download-github requires '--artifact <repository path>'")
     })?;
     let token_env = parsed.value("token-env");
     if token_env.is_some_and(str::is_empty) {
@@ -101,12 +111,23 @@ fn install_github(args: &[String]) -> Result<CommandResult, CliError> {
         Err(_) => None,
     };
     let client = GitHubPackageClient::new(repository, commit, token).map_err(github_error)?;
-    let store = store(&parsed)?;
-    let record = client
-        .install(&store, manifest_path, artifact_path)
+    let download = client
+        .download(manifest_path, artifact_path)
         .map_err(github_error)?;
+    let (manifest, artifact) = download.into_parts();
+    let config = load_config(&parsed)?;
+    let distribution = distribution_store(&config)?;
+    let source = DistributionSource::new(
+        DistributionSourceKind::GitHub,
+        repository,
+        commit.to_ascii_lowercase(),
+    )
+    .map_err(distribution_error)?;
+    let cached = distribution
+        .cache_verified(&manifest, &artifact, source, timestamp().as_unix_seconds())
+        .map_err(distribution_error)?;
     Ok(success(
-        "package install-github",
+        "package download-github",
         json!({
             "source": {
                 "kind": "github",
@@ -115,17 +136,18 @@ fn install_github(args: &[String]) -> Result<CommandResult, CliError> {
                 "manifest_path": manifest_path,
                 "artifact_path": artifact_path,
             },
-            "package": managed_package_value(&store, &record)?,
+            "changed": cached.changed(),
+            "package": distribution_record_value(&distribution, cached.record())?,
         }),
         format!(
-            "Package {}@{} admitted from pinned GitHub source",
-            record.manifest().id().as_str(),
-            record.manifest().version()
+            "Package {}@{} downloaded and verified from the pinned GitHub source; admission and enablement are unchanged",
+            manifest.id().as_str(),
+            manifest.version()
         ),
     ))
 }
 
-fn install(args: &[String]) -> Result<CommandResult, CliError> {
+fn download(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
         args,
         &[
@@ -139,83 +161,432 @@ fn install(args: &[String]) -> Result<CommandResult, CliError> {
     )?;
     if !(1..=2).contains(&parsed.positionals.len()) {
         return Err(CliError::usage(
-            "package install requires an ID and accepts one optional exact version",
+            "package download requires an ID and accepts one optional exact version",
+        ));
+    }
+    let id = PackageId::new(parsed.positionals[0].clone())
+        .map_err(|_| CliError::usage("package ID is invalid"))?;
+    let requested_version = parsed.positionals.get(1).map(String::as_str);
+    if let Some(version) = requested_version {
+        Version::parse(version)
+            .map_err(|_| CliError::usage("package version must be exact SemVer"))?;
+    }
+    let (config, registry, registry_profile, token) = registry_connection(&parsed)?;
+    let client = PackageRegistryClient::new(&registry, token).map_err(registry_error)?;
+    let resolved_version = match requested_version {
+        Some(version) => version.to_owned(),
+        None => client
+            .discover(&id, None)
+            .map_err(registry_error)?
+            .version()
+            .to_owned(),
+    };
+    let download = client
+        .download_exact(&id, &resolved_version)
+        .map_err(registry_error)?;
+    let (manifest, artifact) = download.into_parts();
+    let distribution = distribution_store(&config)?;
+    let source = DistributionSource::new(
+        DistributionSourceKind::Registry,
+        &registry,
+        &resolved_version,
+    )
+    .map_err(distribution_error)?;
+    let cached = distribution
+        .cache_verified(&manifest, &artifact, source, timestamp().as_unix_seconds())
+        .map_err(distribution_error)?;
+    Ok(success(
+        "package download",
+        json!({
+            "registry": registry,
+            "registry_profile": registry_profile,
+            "changed": cached.changed(),
+            "package": distribution_record_value(&distribution, cached.record())?,
+        }),
+        format!(
+            "Package {}@{} downloaded and verified; admission and enablement are unchanged",
+            manifest.id().as_str(),
+            manifest.version()
+        ),
+    ))
+}
+
+fn discover(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "registry",
+            "registry-profile",
+            "token-env",
+        ],
+    )?;
+    if !(1..=2).contains(&parsed.positionals.len()) {
+        return Err(CliError::usage(
+            "package discover requires an ID and accepts one optional exact version",
         ));
     }
     let id = PackageId::new(parsed.positionals[0].clone())
         .map_err(|_| CliError::usage("package ID is invalid"))?;
     let version = parsed.positionals.get(1).map(String::as_str);
-    if parsed.value("registry").is_some() && parsed.value("registry-profile").is_some() {
-        return Err(CliError::usage(
-            "package install accepts either '--registry' or '--registry-profile', not both",
-        ));
+    if let Some(version) = version {
+        Version::parse(version)
+            .map_err(|_| CliError::usage("package version must be exact SemVer"))?;
     }
-    let config = load_config(&parsed)?;
-    let selected_profile = parsed.value("registry-profile").or_else(|| {
-        parsed
-            .value("registry")
-            .is_none()
-            .then(|| config.active_registry())
-            .flatten()
-    });
-    let (registry, profile_token_env, registry_profile) = if let Some(name) = selected_profile {
-        let profile = config.registry_profile(name).ok_or_else(|| {
-            CliError::configuration(
-                "registry profile is not configured",
-                json!({"registry_profile": name}),
-            )
-        })?;
-        (
-            profile.base_url().to_owned(),
-            profile.token_env().map(str::to_owned),
-            Some(profile.name().to_owned()),
-        )
-    } else {
-        let registry = parsed
-            .value("registry")
-            .map(str::to_owned)
-            .or_else(|| std::env::var("PANDORA_REGISTRY_URL").ok())
-            .ok_or_else(|| {
-                CliError::configuration(
-                    "package install requires a registry profile, '--registry <url>', or PANDORA_REGISTRY_URL",
-                    json!({}),
-                )
-            })?;
-        (registry, None, None)
-    };
-    let token_env = parsed.value("token-env");
-    if token_env.is_some_and(str::is_empty) {
-        return Err(CliError::usage("--token-env requires a non-empty name"));
-    }
-    let token_name = token_env
-        .or(profile_token_env.as_deref())
-        .unwrap_or(DEFAULT_REGISTRY_TOKEN_ENV);
-    let token = super::provider::configured_credential(&config, token_name)?;
-    if token.is_none() && (token_env.is_some() || profile_token_env.is_some()) {
-        return Err(CliError::configuration(
-            "configured registry credential is unavailable",
-            json!({"token_env": token_name}),
-        ));
-    }
+    let (config, registry, profile, token) = registry_connection(&parsed)?;
     let client = PackageRegistryClient::new(&registry, token).map_err(registry_error)?;
-    let store =
-        PackageStore::open(config.data_dir().join("packages.sqlite3")).map_err(store_error)?;
-    let record = client
-        .install(&store, &id, version)
-        .map_err(registry_error)?;
+    let manifest = client.discover(&id, version).map_err(registry_error)?;
     Ok(success(
-        "package install",
+        "package discover",
         json!({
             "registry": registry,
-            "registry_profile": registry_profile,
-            "package": managed_package_value(&store, &record)?,
+            "registry_profile": profile,
+            "resolved_version": manifest.version(),
+            "package": manifest,
+            "downloaded": false,
+            "admitted": false,
+            "enabled": false,
+            "data_dir": config.data_dir(),
         }),
         format!(
-            "Package {}@{} installed from the registry",
-            record.manifest().id().as_str(),
-            record.manifest().version()
+            "Resolved {}@{} without downloading, admitting, or enabling it",
+            id,
+            manifest.version()
         ),
     ))
+}
+
+fn cache(args: &[String]) -> Result<CommandResult, CliError> {
+    let (command, rest) = args.split_first().ok_or_else(|| {
+        CliError::usage("package cache requires 'list', 'inspect', 'verify', or 'events'")
+    })?;
+    match command.as_str() {
+        "list" => cache_list(rest),
+        "inspect" => cache_inspect(rest),
+        "verify" => cache_verify(rest),
+        "events" => cache_events(rest),
+        unknown => Err(CliError::usage(format!(
+            "unknown package cache command '{unknown}'"
+        ))),
+    }
+}
+
+fn cache_list(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "limit"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "package cache list does not accept positional arguments",
+        ));
+    }
+    let limit = distribution_limit(parsed.value("limit"))?;
+    let config = load_config(&parsed)?;
+    let store = distribution_store(&config)?;
+    let packages = store
+        .list(limit)
+        .map_err(distribution_error)?
+        .iter()
+        .map(|record| distribution_record_value(&store, record))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(success(
+        "package cache list",
+        json!({
+            "packages": packages,
+            "count": packages.len(),
+            "download_authority": "cache_only",
+            "admission_performed": false,
+            "enablement_performed": false,
+        }),
+        format!("{} verified package download(s) cached", packages.len()),
+    ))
+}
+
+fn cache_inspect(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace"])?;
+    let (id, version) = distribution_identity(&parsed, "package cache inspect")?;
+    let config = load_config(&parsed)?;
+    let store = distribution_store(&config)?;
+    let record = store
+        .get(&id, &version)
+        .map_err(distribution_error)?
+        .ok_or_else(|| distribution_error(PackageDistributionError::NotFound))?;
+    let events = store
+        .list_events(MAX_DISTRIBUTION_LIST)
+        .map_err(distribution_error)?
+        .into_iter()
+        .filter(|event| event.package_id() == id.as_str() && event.package_version() == version)
+        .map(|event| distribution_event_value(&event))
+        .collect::<Vec<_>>();
+    Ok(success(
+        "package cache inspect",
+        json!({
+            "package": distribution_record_value(&store, &record)?,
+            "events": events,
+            "artifact_bytes": record.artifact().len(),
+            "artifact_exposed": false,
+        }),
+        format!("Inspected cached package {id}@{version}"),
+    ))
+}
+
+fn cache_verify(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace"])?;
+    let (id, version) = distribution_identity(&parsed, "package cache verify")?;
+    let config = load_config(&parsed)?;
+    let store = distribution_store(&config)?;
+    let record = store
+        .verify_offline(&id, &version, timestamp().as_unix_seconds())
+        .map_err(distribution_error)?;
+    Ok(success(
+        "package cache verify",
+        json!({
+            "package": distribution_record_value(&store, &record)?,
+            "verification": "verified_offline",
+            "network_used": false,
+            "admission_performed": false,
+            "enablement_performed": false,
+        }),
+        format!("Verified {id}@{version} from the local cache without network access"),
+    ))
+}
+
+fn cache_events(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "limit"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "package cache events does not accept positional arguments",
+        ));
+    }
+    let limit = distribution_limit(parsed.value("limit"))?;
+    let config = load_config(&parsed)?;
+    let events = distribution_store(&config)?
+        .list_events(limit)
+        .map_err(distribution_error)?
+        .iter()
+        .map(distribution_event_value)
+        .collect::<Vec<_>>();
+    Ok(success(
+        "package cache events",
+        json!({
+            "events": events,
+            "count": events.len(),
+            "durability": "append-only-sqlite",
+            "integrity": "sha256-event-chain",
+        }),
+        format!("Loaded {} package distribution event(s)", events.len()),
+    ))
+}
+
+fn admit_cached(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "dry-run", "yes"])?;
+    let (id, version) = distribution_identity(&parsed, "package admit-cached")?;
+    let dry_run = parsed.value("dry-run").is_some();
+    let confirmed = parsed.value("yes").is_some();
+    if dry_run == confirmed {
+        return Err(CliError::usage(
+            "package admit-cached requires exactly one of '--dry-run' or '--yes'",
+        ));
+    }
+    let mut config = load_config(&parsed)?;
+    let distribution = distribution_store(&config)?;
+    let record = distribution
+        .prepare_admission(&id, &version)
+        .map_err(distribution_error)?;
+    if dry_run {
+        return Ok(success(
+            "package admit-cached",
+            json!({
+                "dry_run": true,
+                "package": distribution_record_value(&distribution, &record)?,
+                "admission_boundary": package_admission_boundary(record.manifest().kind()),
+                "enablement_performed": false,
+                "effect_authority_granted": false,
+            }),
+            format!("Verified the admission plan for {id}@{version}; no local boundary changed"),
+        ));
+    }
+
+    let already_admitted = record.state().as_str() == "admitted"
+        && distribution
+            .binding(&id)
+            .map_err(distribution_error)?
+            .is_some_and(|binding| binding.active_version() == version);
+    if !already_admitted {
+        match record.manifest().kind() {
+            PackageKind::Gene | PackageKind::DomainHarness | PackageKind::MetaHarness => {
+                admit_cached_harness(&config, &record)?;
+            }
+            PackageKind::Skill => {
+                admit_cached_skill(&config, &record)?;
+            }
+            PackageKind::Provider => {
+                admit_cached_provider(&mut config, &record)?;
+                write_config(&config)?;
+            }
+            kind => {
+                return Err(CliError::execution(
+                    "cached package kind has no local admission boundary",
+                    json!({"kind": kind.as_str()}),
+                ));
+            }
+        }
+    }
+    let admitted = distribution
+        .record_admission(
+            &id,
+            &version,
+            &record.artifact_digest(),
+            timestamp().as_unix_seconds(),
+        )
+        .map_err(distribution_error)?;
+    Ok(success(
+        "package admit-cached",
+        json!({
+            "dry_run": false,
+            "changed": admitted.changed(),
+            "package": distribution_record_value(&distribution, admitted.record())?,
+            "admission_boundary": package_admission_boundary(record.manifest().kind()),
+            "enablement_performed": false,
+            "effect_authority_granted": false,
+        }),
+        format!(
+            "Package {id}@{version} admitted to its local boundary but left disabled or inactive"
+        ),
+    ))
+}
+
+fn admit_cached_harness(
+    config: &pandora_runtime::config::RuntimeConfig,
+    record: &DistributionRecord,
+) -> Result<(), CliError> {
+    let store =
+        PackageStore::open(config.data_dir().join("packages.sqlite3")).map_err(store_error)?;
+    if let Some(existing) = store
+        .get(record.manifest().id(), record.manifest().version())
+        .map_err(store_error)?
+    {
+        if existing.manifest() == record.manifest() {
+            return Ok(());
+        }
+        return Err(CliError::execution(
+            "local package identity conflicts with the cached artifact",
+            json!({}),
+        ));
+    }
+    store
+        .admit(record.manifest(), record.manifest(), record.artifact())
+        .map_err(store_error)?;
+    Ok(())
+}
+
+fn admit_cached_skill(
+    config: &pandora_runtime::config::RuntimeConfig,
+    record: &DistributionRecord,
+) -> Result<(), CliError> {
+    let skill_id = package_leaf_id(record.manifest().id())?;
+    let skills_root = config.data_dir().join("skills");
+    fs::create_dir_all(&skills_root).map_err(|_| {
+        CliError::configuration(
+            "could not create the skill directory",
+            json!({"root": skills_root}),
+        )
+    })?;
+    let engine = SkillEngine::discover(&skills_root)
+        .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+    if let Ok(existing) = engine.inspect(skill_id) {
+        if existing.manifest().version() == record.manifest().version()
+            && existing.manifest().publisher() == Some(record.manifest().publisher())
+        {
+            return Ok(());
+        }
+        return Err(CliError::execution(
+            "a different Skill version is already admitted; remove it before applying this update",
+            json!({
+                "skill_id": skill_id,
+                "installed_version": existing.manifest().version(),
+                "requested_version": record.manifest().version(),
+            }),
+        ));
+    }
+    let staging_parent = config.data_dir().join("package-admission-staging");
+    fs::create_dir_all(&staging_parent).map_err(|_| {
+        CliError::configuration("could not create package admission staging", json!({}))
+    })?;
+    let suffix = record.artifact_digest().replace(':', "-");
+    let staging_root = staging_parent.join(format!(
+        "{}-{}-{}",
+        std::process::id(),
+        timestamp().as_unix_seconds(),
+        &suffix[..suffix.len().min(24)]
+    ));
+    let skill_root = materialize_skill_bundle(record.artifact(), &staging_root, skill_id)
+        .map_err(distribution_error)?;
+    let result = (|| {
+        let manifest = engine
+            .validate_source(&skill_root)
+            .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+        if manifest.id().as_str() != skill_id
+            || manifest.version() != record.manifest().version()
+            || manifest.publisher() != Some(record.manifest().publisher())
+        {
+            return Err(CliError::execution(
+                "Skill bundle identity does not match its signed package manifest",
+                json!({
+                    "package_id": record.manifest().id().as_str(),
+                    "skill_id": manifest.id().as_str(),
+                    "package_version": record.manifest().version(),
+                    "skill_version": manifest.version(),
+                }),
+            ));
+        }
+        engine
+            .install_from(&skill_root)
+            .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&staging_root);
+    result
+}
+
+fn admit_cached_provider(
+    config: &mut pandora_runtime::config::RuntimeConfig,
+    record: &DistributionRecord,
+) -> Result<(), CliError> {
+    let provider: ProviderManifest = serde_json::from_slice(record.artifact()).map_err(|_| {
+        CliError::execution(
+            "Provider package artifact is not valid provider JSON",
+            json!({}),
+        )
+    })?;
+    let provider_id = package_leaf_id(record.manifest().id())?;
+    if provider.id().as_str() != provider_id {
+        return Err(CliError::execution(
+            "Provider artifact identity does not match its signed package manifest",
+            json!({
+                "package_id": record.manifest().id().as_str(),
+                "provider_id": provider.id().as_str(),
+            }),
+        ));
+    }
+    let profile = ProviderProfile::new_with_protocol(
+        provider.id().as_str(),
+        provider.protocol(),
+        provider.base_url(),
+        provider.default_model().as_str(),
+        provider.api_key_env(),
+    )
+    .map_err(|error| CliError::configuration(error.to_string(), json!({})))?;
+    if config.active_provider() == Some(provider_id)
+        && config.provider_profile(provider_id) != Some(&profile)
+    {
+        return Err(CliError::execution(
+            "an active Provider cannot be replaced during admission; select another Provider first",
+            json!({"provider": provider_id}),
+        ));
+    }
+    config.admit_provider_profile(profile);
+    Ok(())
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1451,16 +1822,63 @@ fn trust_root_revoke(args: &[String]) -> Result<CommandResult, CliError> {
     let key_id = parsed
         .value("key-id")
         .ok_or_else(|| CliError::usage("package trust-root revoke requires '--key-id <id>'"))?;
-    let root = store(&parsed)?
-        .revoke_publisher_trust_root(
-            publisher,
-            key_id,
-            crate::commands::timestamp().as_unix_seconds(),
-        )
+    let mut config = load_config(&parsed)?;
+    let distribution = distribution_store(&config)?;
+    let affected = distribution
+        .records_for_publisher_key(publisher, key_id)
+        .map_err(distribution_error)?;
+    let skills_root = config.data_dir().join("skills");
+    fs::create_dir_all(&skills_root)
+        .map_err(|_| CliError::configuration("could not open the managed Skill root", json!({})))?;
+    let skill_engine = SkillEngine::discover(&skills_root)
+        .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+    let mut quarantined_skills = Vec::new();
+    let mut quarantined_providers = Vec::new();
+    for record in affected
+        .iter()
+        .filter(|record| record.admitted_at().is_some())
+    {
+        let local_id = package_leaf_id(record.manifest().id())?;
+        match record.manifest().kind() {
+            PackageKind::Skill if skill_engine.inspect(local_id).is_ok() => {
+                skill_engine
+                    .suspend(local_id)
+                    .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+                quarantined_skills.push(local_id.to_owned());
+            }
+            PackageKind::Provider if config.quarantine_provider_profile(local_id) => {
+                quarantined_providers.push(local_id.to_owned());
+            }
+            _ => {}
+        }
+    }
+    if !quarantined_providers.is_empty() {
+        write_config(&config)?;
+    }
+    let occurred_at = crate::commands::timestamp().as_unix_seconds();
+    let root = PackageStore::open(config.data_dir().join("packages.sqlite3"))
+        .map_err(store_error)?
+        .revoke_publisher_trust_root(publisher, key_id, occurred_at)
         .map_err(store_error)?;
+    let revoked_packages = distribution
+        .revoke_publisher_key(publisher, key_id, occurred_at)
+        .map_err(distribution_error)?;
+    let mut value = trust_root_value(&root);
+    value["revoked_distributions"] = json!(
+        revoked_packages
+            .iter()
+            .map(|record| json!({
+                "id": record.manifest().id().as_str(),
+                "version": record.manifest().version(),
+                "kind": record.manifest().kind().as_str(),
+            }))
+            .collect::<Vec<_>>()
+    );
+    value["quarantined_skills"] = json!(quarantined_skills);
+    value["quarantined_providers"] = json!(quarantined_providers);
     Ok(success(
         "package trust-root revoke",
-        trust_root_value(&root),
+        value,
         format!(
             "Revoked publisher trust root {} for {}",
             root.key_id(),
@@ -2007,6 +2425,209 @@ pub(super) fn package_value(record: &PackageRecord) -> serde_json::Value {
         "state": record.state().as_str(),
         "runtime_authority": record.grants_runtime_authority(),
     })
+}
+
+fn registry_connection(
+    parsed: &super::ParsedArgs,
+) -> Result<
+    (
+        pandora_runtime::config::RuntimeConfig,
+        String,
+        Option<String>,
+        Option<String>,
+    ),
+    CliError,
+> {
+    if parsed.value("registry").is_some() && parsed.value("registry-profile").is_some() {
+        return Err(CliError::usage(
+            "package registry access accepts either '--registry' or '--registry-profile', not both",
+        ));
+    }
+    let config = load_config(parsed)?;
+    let selected_profile = parsed.value("registry-profile").or_else(|| {
+        parsed
+            .value("registry")
+            .is_none()
+            .then(|| config.active_registry())
+            .flatten()
+    });
+    let (registry, profile_token_env, profile_name) = if let Some(name) = selected_profile {
+        let profile = config.registry_profile(name).ok_or_else(|| {
+            CliError::configuration(
+                "registry profile is not configured",
+                json!({"registry_profile": name}),
+            )
+        })?;
+        (
+            profile.base_url().to_owned(),
+            profile.token_env().map(str::to_owned),
+            Some(profile.name().to_owned()),
+        )
+    } else {
+        let registry = parsed
+            .value("registry")
+            .map(str::to_owned)
+            .or_else(|| std::env::var("PANDORA_REGISTRY_URL").ok())
+            .ok_or_else(|| {
+                CliError::configuration(
+                    "package registry access requires a profile, '--registry <url>', or PANDORA_REGISTRY_URL",
+                    json!({}),
+                )
+            })?;
+        (registry, None, None)
+    };
+    let token_env = parsed.value("token-env");
+    if token_env.is_some_and(str::is_empty) {
+        return Err(CliError::usage("--token-env requires a non-empty name"));
+    }
+    let token_name = token_env
+        .or(profile_token_env.as_deref())
+        .unwrap_or(DEFAULT_REGISTRY_TOKEN_ENV);
+    let token = super::provider::configured_credential(&config, token_name)?;
+    if token.is_none() && (token_env.is_some() || profile_token_env.is_some()) {
+        return Err(CliError::configuration(
+            "configured registry credential is unavailable",
+            json!({"token_env": token_name}),
+        ));
+    }
+    Ok((config, registry, profile_name, token))
+}
+
+fn distribution_store(
+    config: &pandora_runtime::config::RuntimeConfig,
+) -> Result<PackageDistributionStore, CliError> {
+    PackageDistributionStore::open(config.data_dir().join("packages.sqlite3"))
+        .map_err(distribution_error)
+}
+
+fn distribution_identity(
+    parsed: &super::ParsedArgs,
+    command: &str,
+) -> Result<(PackageId, String), CliError> {
+    if parsed.positionals.len() != 2 {
+        return Err(CliError::usage(format!(
+            "{command} requires an ID and exact version"
+        )));
+    }
+    let id = PackageId::new(parsed.positionals[0].clone())
+        .map_err(|_| CliError::usage("package ID is invalid"))?;
+    let version = parsed.positionals[1].clone();
+    Version::parse(&version)
+        .map_err(|_| CliError::usage("package version must be exact SemVer"))?;
+    Ok((id, version))
+}
+
+fn distribution_limit(value: Option<&str>) -> Result<usize, CliError> {
+    let limit = value
+        .unwrap_or("64")
+        .parse::<usize>()
+        .map_err(|_| CliError::usage("--limit must be a positive integer"))?;
+    if !(1..=MAX_DISTRIBUTION_LIST).contains(&limit) {
+        return Err(CliError::usage(format!(
+            "--limit must be between 1 and {MAX_DISTRIBUTION_LIST}"
+        )));
+    }
+    Ok(limit)
+}
+
+fn distribution_record_value(
+    store: &PackageDistributionStore,
+    record: &DistributionRecord,
+) -> Result<Value, CliError> {
+    let manifest = record.manifest();
+    let verification = match store.verify_current(manifest.id(), manifest.version()) {
+        Ok(_) => "verified",
+        Err(PackageDistributionError::Revoked | PackageDistributionError::RevokedPublisher) => {
+            "revoked"
+        }
+        Err(_) => "failed_closed",
+    };
+    let binding = store.binding(manifest.id()).map_err(distribution_error)?;
+    Ok(json!({
+        "id": manifest.id().as_str(),
+        "version": manifest.version(),
+        "kind": manifest.kind().as_str(),
+        "publisher": manifest.publisher(),
+        "publisher_key_id": record.publisher_key_id(),
+        "content_hash": manifest.content_hash(),
+        "manifest_digest": record.manifest_digest().map_err(distribution_error)?,
+        "artifact_digest": record.artifact_digest(),
+        "dependencies": manifest.dependencies().iter().map(|dependency| json!({
+            "id": dependency.id().as_str(),
+            "version": dependency.version(),
+            "optional": dependency.optional(),
+        })).collect::<Vec<_>>(),
+        "compatibility": manifest.compatibility().runtime(),
+        "license": manifest.license(),
+        "trust": {
+            "declared_level": manifest.trust().level(),
+            "verification": verification,
+            "signature_present": manifest.trust().signature().is_some(),
+            "publisher_key_present": manifest.trust().public_key().is_some(),
+        },
+        "source": {
+            "kind": record.source().kind().as_str(),
+            "locator": record.source().locator(),
+            "revision": record.source().revision(),
+        },
+        "cached_at": record.cached_at(),
+        "admitted_at": record.admitted_at(),
+        "state": record.state().as_str(),
+        "admission": {
+            "active_version": binding.as_ref().map(|binding| binding.active_version()),
+            "previous_version": binding.as_ref().and_then(|binding| binding.previous_version()),
+            "generation": binding.as_ref().map_or(0, |binding| binding.generation()),
+            "this_version_admitted": binding.as_ref().is_some_and(|binding| binding.active_version() == manifest.version()),
+        },
+        "download_authority": "cache_only",
+        "runtime_authority": false,
+    }))
+}
+
+fn distribution_event_value(event: &DistributionEvent) -> Value {
+    json!({
+        "sequence": event.sequence(),
+        "event_kind": event.event_kind().as_str(),
+        "occurred_at": event.occurred_at(),
+        "package_id": event.package_id(),
+        "package_version": event.package_version(),
+        "package_kind": event.package_kind().as_str(),
+        "publisher": event.publisher(),
+        "publisher_key_id": event.publisher_key_id(),
+        "manifest_digest": event.manifest_digest(),
+        "artifact_digest": event.artifact_digest(),
+        "source": {
+            "kind": event.source_kind().as_str(),
+            "locator": event.source_locator(),
+            "revision": event.source_revision(),
+        },
+        "previous_event_digest": event.previous_event_digest(),
+        "event_digest": event.event_digest(),
+    })
+}
+
+fn package_leaf_id(id: &PackageId) -> Result<&str, CliError> {
+    id.as_str()
+        .rsplit('/')
+        .next()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| CliError::execution("package ID has no local boundary identity", json!({})))
+}
+
+const fn package_admission_boundary(kind: PackageKind) -> &'static str {
+    match kind {
+        PackageKind::Gene | PackageKind::DomainHarness | PackageKind::MetaHarness => {
+            "harness_registry"
+        }
+        PackageKind::Skill => "skill_engine_disabled",
+        PackageKind::Provider => "provider_catalog_inactive",
+        PackageKind::SourceHarness => "constitutional_source",
+        PackageKind::Package => "data_only",
+    }
+}
+
+fn distribution_error(error: PackageDistributionError) -> CliError {
+    CliError::execution(error.to_string(), json!({}))
 }
 
 pub(super) fn store_error(error: PackageStoreError) -> CliError {

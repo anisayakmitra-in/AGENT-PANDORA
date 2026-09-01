@@ -934,14 +934,21 @@ pandora package admit --manifest <manifest.json> --artifact <artifact>
 pandora package validate --manifest <manifest.json> --artifact <artifact>
 pandora package keygen --publisher <name> --key-id <id> --secret-name <vault-name>
 pandora package sign --manifest <manifest.json> --artifact <artifact> --secret-name <vault-name> --output <signed-manifest.json> [--yes]
-pandora package install <id> [version] --registry <url>
-pandora package install <id> [version] --registry <url> --token-env <name>
+pandora package discover <id> [version] --registry <url>
+pandora package download <id> [version] --registry <url>
+pandora package download <id> [version] --registry <url> --token-env <name>
 pandora registry set --name <name> --registry-url <url> [--token-env <name>]
 pandora registry list
 pandora registry use <name>
 pandora registry remove <name> --yes
-pandora package install <id> [version] [--registry-profile <name>]
-pandora package install-github --repository https://github.com/<owner>/<repo> --commit <full-sha> --manifest <repo-path> --artifact <repo-path>
+pandora package download <id> [version] [--registry-profile <name>]
+pandora package download-github --repository https://github.com/<owner>/<repo> --commit <full-sha> --manifest <repo-path> --artifact <repo-path>
+pandora package cache list [--limit <1-256>]
+pandora package cache inspect <id> <version>
+pandora package cache verify <id> <version>
+pandora package cache events [--limit <1-256>]
+pandora package admit-cached <id> <version> --dry-run
+pandora package admit-cached <id> <version> --yes
 pandora package trust-root add --publisher <name> --key-id <id> --public-key <hex-or-base64>
 pandora package trust-root list
 pandora package trust-root revoke --publisher <name> --key-id <id> --yes
@@ -1087,8 +1094,9 @@ accepts one exact Gene identity, and `--route-hint` adds one optional canonical
 Auto Route claim. The output path must not already exist. Scaffolding does not
 load configuration credentials, contact a network, admit or enable the package,
 execute the artifact, or grant runtime authority. The TUI exposes `/packages`
-for bounded local discovery and `/domain-starter` for this workflow; mutations
-remain explicit CLI commands with the existing dry-run and `--yes` boundaries.
+for bounded admitted-package discovery, `/distribution` for exact cache trust
+and admission state, and `/domain-starter` for this workflow; mutations remain
+explicit CLI commands with the existing dry-run and `--yes` boundaries.
 
 `package scaffold meta-harness` creates the equivalent deterministic four-file
 starter for composition-only coordination. Its default manifest binds
@@ -1121,17 +1129,23 @@ required ABI; Domain and Meta Harness artifacts are
 reported as metadata-only because their package records do not execute artifact
 bytes directly.
 
-`package install` reads current or exact-version metadata from an M-Place-compatible
-registry, then downloads that release from the registry's exact-version endpoint.
-The client follows no redirects, never contacts the package's `artifact_url`, and
-reads at most the artifact limit plus one byte. Registry URLs must use HTTPS;
-loopback HTTP is allowed for local development. Set `PANDORA_REGISTRY_URL` instead
-of `--registry` if preferred.
+`package discover` resolves current or exact-version metadata from an
+M-Place-compatible registry without downloading or changing local package state.
+`package download` resolves a missing version first, then requests only that exact
+release from the registry's exact-version endpoint. The signed manifest and
+artifact are verified and stored in the inert distribution cache. Download never
+admits, enables, selects, or executes a package. `package install` remains a
+compatibility alias with these same cache-only semantics.
+
+The registry client follows no redirects, never contacts the package's
+`artifact_url`, and reads at most the artifact limit plus one byte. Registry URLs
+must use HTTPS; loopback HTTP is allowed for local development. Set
+`PANDORA_REGISTRY_URL` instead of `--registry` if preferred.
 
 `registry set` persists a named base URL and optional credential-variable
 reference in Pandora's existing configuration. It never stores the credential
 value. The most recently configured or explicitly selected profile is active;
-`package install` uses that active profile when neither `--registry` nor
+`package download` uses that active profile when neither `--registry` nor
 `--registry-profile` is supplied. An explicit URL and profile cannot be combined.
 `registry remove` requires `--yes` and deterministically selects the next
 remaining profile if the active one is removed.
@@ -1141,15 +1155,48 @@ Public reads need no token. For a protected registry, put the token in
 or store the profile's named secret through Pandora's encrypted vault. Tokens are
 not accepted as command-line values and profile listings expose only the reference.
 
-`package install-github` admits a manifest and artifact from one GitHub repository
-at a full 40-character commit SHA. Branches, tags, abbreviated commits, redirects,
-non-GitHub hosts, path traversal, and unbounded responses are refused. The command
-fetches only the two declared repository-relative paths and then uses the same local
-hash, compatibility, dependency, signature, and admission checks as `package admit`.
-For a private repository, place the token in `PANDORA_GITHUB_TOKEN` or identify a
-different environment variable with `--token-env`; the token is never accepted as a
-command-line value or included in command output. Admission still grants no runtime
-authority and does not enable the package.
+`package download-github` fetches a manifest and artifact from one GitHub
+repository at a full 40-character commit SHA. Branches, tags, abbreviated commits,
+redirects, non-GitHub hosts, path traversal, and unbounded responses are refused.
+The command fetches only the two declared repository-relative paths, verifies the
+same signed manifest, exact kind, compatibility, artifact hash, and active publisher
+root as registry download, and writes only the inert cache. `package install-github`
+is a compatibility alias with the same behavior. For a private repository, place
+the token in `PANDORA_GITHUB_TOKEN` or identify a different environment variable
+with `--token-env`; the token is never accepted as a command-line value or included
+in command output.
+
+`package cache list` and `inspect` expose the exact publisher, publisher key ID,
+manifest digest, artifact digest, source locator, pinned source revision,
+dependencies, compatibility, verification state, and admission binding. `cache
+verify` revalidates the retained artifact, signature, active trust root, and event
+chain without network access. `cache events` returns the append-only SHA-256 chain
+for verified downloads, offline verification, admission, and publisher revocation.
+
+`package admit-cached <id> <version> --dry-run` rechecks trust and all required exact
+dependencies without changing a local boundary. `--yes` is the only remote-package
+admission path. Gene and Harness records enter the local package store; a Skill
+bundle is atomically installed under the managed Skill root in the `disabled`
+state; a Provider manifest enters the configuration catalog but remains inactive.
+Admission never enables a package, enables a Skill, selects a Provider, executes
+content, or grants effect authority. Use the existing lifecycle or Provider
+selection command as a separate operator decision.
+
+Remote distribution supports `gene`, `domain_harness`, `meta_harness`, `skill`, and
+`provider`. Every manifest must declare `official` trust, carry a valid Ed25519
+signature and public key, match an active publisher root, bind a canonical SHA-256
+artifact digest, declare exact SemVer dependencies, and match the running runtime.
+Untrusted, revoked, substituted, replay-conflicting, downgraded, wrong-kind,
+incompatible, oversized, or dependency-incomplete records fail closed.
+
+A Skill artifact is strict UTF-8 JSON with `format_version: 1` and a non-empty
+`files` array of `{ "path": "...", "content": "..." }` objects. It must contain
+`SKILL.md`; duplicate, absolute, backslash, drive-prefixed, empty-component, `.`,
+and `..` paths are rejected before exclusive staging. A Provider artifact is the
+strict `ProviderManifest` JSON object with `id`, `name`, `protocol`, `base_url`,
+`default_model`, and `api_key_env`. The leaf of the signed package ID must match the
+Skill or Provider ID. Provider packages carry only a credential environment name,
+never the credential value.
 
 `package keygen` creates a publisher-scoped Ed25519 key inside Pandora's encrypted vault and returns only its public key and stable key ID. `package sign` reads that key inside the local signing boundary, validates the artifact hash, and atomically writes a signed manifest. Private key material is never accepted as a command-line value, returned in output, or written to the manifest. The signed manifest is still unverified until its public key is admitted with `package trust-root add`.
 

@@ -5,6 +5,7 @@ import pandoraCss from "./pandora.css?raw";
 
 const runtime = vi.hoisted(() => ({
   activateProvider: vi.fn(),
+  admitCachedPackage: vi.fn(),
   admitLocalPackage: vi.fn(),
   activateEvolution: vi.fn(),
   agentResume: vi.fn(),
@@ -25,9 +26,10 @@ const runtime = vi.hoisted(() => ({
   inspectMemoryProvenance: vi.fn(),
   inspectOrchestration: vi.fn(),
   inspectSession: vi.fn(),
-  installGitHubPackage: vi.fn(),
+  downloadGitHubPackage: vi.fn(),
   installLocalSkill: vi.fn(),
-  installRegistryPackage: vi.fn(),
+  downloadRegistryPackage: vi.fn(),
+  listCachedPackages: vi.fn(),
   listLocalPackages: vi.fn(),
   listFleetOperations: vi.fn(),
   listPackageTransparency: vi.fn(),
@@ -49,6 +51,7 @@ const runtime = vi.hoisted(() => ({
   previewPackageDisable: vi.fn(),
   previewPackageEnable: vi.fn(),
   previewPackageRollback: vi.fn(),
+  previewCachedPackageAdmission: vi.fn(),
   previewMemoryForget: vi.fn(),
   previewMemoryCompaction: vi.fn(),
   removeLocalPackage: vi.fn(),
@@ -62,10 +65,12 @@ const runtime = vi.hoisted(() => ({
   sessions: vi.fn(),
   tools: vi.fn(),
   transitionEvolutionRollout: vi.fn(),
+  verifyCachedPackage: vi.fn(),
 }));
 
 vi.mock("./runtimeClient", () => ({
   activateProvider: runtime.activateProvider,
+  admitCachedPackage: runtime.admitCachedPackage,
   nativeEndpoint: "tauri://pandora",
   isNativeRuntime: () => true,
   loadRuntimeEndpoint: () => "tauri://pandora",
@@ -76,9 +81,10 @@ vi.mock("./runtimeClient", () => ({
   disableLocalPackage: runtime.disableLocalPackage,
   enableLocalPackage: runtime.enableLocalPackage,
   admitLocalPackage: runtime.admitLocalPackage,
-  installGitHubPackage: runtime.installGitHubPackage,
+  downloadGitHubPackage: runtime.downloadGitHubPackage,
   installLocalSkill: runtime.installLocalSkill,
-  installRegistryPackage: runtime.installRegistryPackage,
+  downloadRegistryPackage: runtime.downloadRegistryPackage,
+  listCachedPackages: runtime.listCachedPackages,
   listLocalPackages: runtime.listLocalPackages,
   listFleetOperations: runtime.listFleetOperations,
   listPackageTransparency: runtime.listPackageTransparency,
@@ -95,10 +101,12 @@ vi.mock("./runtimeClient", () => ({
   previewPackageDisable: runtime.previewPackageDisable,
   previewPackageEnable: runtime.previewPackageEnable,
   previewPackageRollback: runtime.previewPackageRollback,
+  previewCachedPackageAdmission: runtime.previewCachedPackageAdmission,
   previewMemoryForget: runtime.previewMemoryForget,
   previewMemoryCompaction: runtime.previewMemoryCompaction,
   removeLocalPackage: runtime.removeLocalPackage,
   rollbackLocalPackage: runtime.rollbackLocalPackage,
+  verifyCachedPackage: runtime.verifyCachedPackage,
   startLocalService: vi.fn(),
   stopLocalService: vi.fn(),
   RuntimeClient: class {
@@ -173,10 +181,30 @@ beforeEach(() => {
   runtime.activateProvider.mockResolvedValue({ message: "Provider design selected.", restartRequired: true });
   runtime.configureMcp.mockResolvedValue({ message: "MCP server local-tools configured.", restartRequired: true });
   runtime.configureRegistryProfile.mockResolvedValue({ message: "Registry m-place configured.", restartRequired: false });
-  runtime.installGitHubPackage.mockResolvedValue({
-    message: "Package admitted from the pinned GitHub source.",
-    restartRequired: true,
+  runtime.downloadGitHubPackage.mockResolvedValue({
+    message: "Package downloaded from the pinned GitHub source, verified, and cached without admission or enablement.",
+    restartRequired: false,
     data: {},
+  });
+  runtime.listCachedPackages.mockResolvedValue({
+    message: "Loaded 0 inert verified package download(s).",
+    restartRequired: false,
+    data: { packages: [], count: 0, download_authority: "cache_only" },
+  });
+  runtime.previewCachedPackageAdmission.mockResolvedValue({
+    message: "Admission preview verified; no local boundary changed.",
+    restartRequired: false,
+    data: { dry_run: true, enablement_performed: false, effect_authority_granted: false },
+  });
+  runtime.admitCachedPackage.mockResolvedValue({
+    message: "Package admitted locally and left disabled or inactive.",
+    restartRequired: true,
+    data: { changed: true, enablement_performed: false, effect_authority_granted: false },
+  });
+  runtime.verifyCachedPackage.mockResolvedValue({
+    message: "Package verified from the local cache without network access.",
+    restartRequired: false,
+    data: { verification: "verified_offline", network_used: false, admission_performed: false, enablement_performed: false },
   });
   runtime.listLocalPackages.mockResolvedValue({
     message: "0 local package(s) available.",
@@ -2082,9 +2110,9 @@ describe("Pandora desktop run state", () => {
         runtime_authority: false,
       },
     });
-    runtime.installRegistryPackage.mockResolvedValue({
-      message: "Package owner/new-gene admitted from the registry.",
-      restartRequired: true,
+    runtime.downloadRegistryPackage.mockResolvedValue({
+      message: "Package owner/new-gene downloaded and verified into the inert cache.",
+      restartRequired: false,
       data: { package: localPackage },
     });
     runtime.previewPackageRemoval.mockResolvedValue({
@@ -2123,15 +2151,15 @@ describe("Pandora desktop run state", () => {
     expect(screen.getByLabelText("Package transparency evidence")).toHaveTextContent("allowed");
     expect(screen.getByText(/Read-only SHA-256 chain evidence/)).toBeInTheDocument();
     expect(screen.getByText("Runtime authority").nextElementSibling).toHaveTextContent("none");
-    expect(screen.getByText(/cannot replace Parliament, Shadow Council, ReferenceMonitor/)).toBeInTheDocument();
+    expect(screen.getByText(/No package operation replaces Parliament, Shadow Council, ReferenceMonitor/)).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Registry package ID"), { target: { value: "owner/new-gene" } });
     fireEvent.change(screen.getByLabelText("Registry package version"), { target: { value: "2.0.0" } });
     fireEvent.change(screen.getByLabelText("Package registry URL"), { target: { value: "https://registry.example.test" } });
     fireEvent.change(screen.getByLabelText("Package registry token"), { target: { value: "process-secret" } });
-    fireEvent.click(screen.getByRole("button", { name: "Fetch and admit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Download and verify" }));
 
-    await waitFor(() => expect(runtime.installRegistryPackage).toHaveBeenCalledWith({
+    await waitFor(() => expect(runtime.downloadRegistryPackage).toHaveBeenCalledWith({
       packageId: "owner/new-gene",
       version: "2.0.0",
       registryProfile: "",
@@ -2139,7 +2167,8 @@ describe("Pandora desktop run state", () => {
       token: "process-secret",
     }));
     expect(screen.getByLabelText("Package registry token")).toHaveValue("");
-    expect(await screen.findByRole("status")).toHaveTextContent("Restart the local service");
+    expect(await screen.findByRole("status")).toHaveTextContent("inert cache");
+    expect(runtime.admitCachedPackage).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Preview enable" }));
     expect(await screen.findByText("workspace.read")).toBeInTheDocument();
@@ -2165,6 +2194,85 @@ describe("Pandora desktop run state", () => {
       "1.2.3",
       "example/refactor@1.2.3",
     ));
+  });
+
+  it("keeps verified downloads inert until a separate exact admission is confirmed", async () => {
+    const cachedPackage = {
+      id: "example/remote-skill",
+      version: "2.3.4",
+      kind: "skill",
+      publisher: "example",
+      publisher_key_id: "release-2026",
+      content_hash: `sha256:${"a".repeat(64)}`,
+      manifest_digest: `sha256:${"b".repeat(64)}`,
+      artifact_digest: `sha256:${"c".repeat(64)}`,
+      dependencies: [],
+      compatibility: "pandora=2.0.0-beta.7",
+      license: "Apache-2.0",
+      trust: {
+        declared_level: "official",
+        verification: "verified",
+        signature_present: true,
+        publisher_key_present: true,
+      },
+      source: {
+        kind: "github",
+        locator: "https://github.com/example/remote-skill",
+        revision: "0123456789abcdef0123456789abcdef01234567",
+      },
+      cached_at: 1_788_192_000,
+      admitted_at: null,
+      state: "cached",
+      admission: {
+        active_version: null,
+        previous_version: null,
+        generation: 0,
+        this_version_admitted: false,
+      },
+      download_authority: "cache_only",
+      runtime_authority: false,
+    } as const;
+    runtime.capabilities.mockResolvedValue([{
+      id: "coding-domain",
+      version: "1.2.0",
+      name: "Coding Domain",
+      kind: "domain",
+      gene_count: 0,
+      runnable: true,
+      gene_ids: [],
+    }]);
+    runtime.listCachedPackages.mockResolvedValue({
+      message: "Loaded 1 inert verified package download(s).",
+      restartRequired: false,
+      data: { packages: [cachedPackage], count: 1, download_authority: "cache_only" },
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Harness Lab" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "packages" }));
+
+    const cache = await screen.findByLabelText("Verified download cache");
+    expect(cache).toHaveTextContent("example/remote-skill");
+    expect(cache).toHaveTextContent("example / release-2026");
+    expect(cache).toHaveTextContent(cachedPackage.source.revision);
+    expect(cache).toHaveTextContent(cachedPackage.manifest_digest);
+    expect(cache).toHaveTextContent(cachedPackage.artifact_digest);
+    expect(within(cache).getByText("Runtime authority").nextElementSibling).toHaveTextContent("none");
+    expect(runtime.admitCachedPackage).not.toHaveBeenCalled();
+
+    fireEvent.click(within(cache).getByRole("button", { name: "Verify offline" }));
+    await waitFor(() => expect(runtime.verifyCachedPackage).toHaveBeenCalledWith("example/remote-skill", "2.3.4"));
+    await waitFor(() => expect(within(cache).getByRole("button", { name: "Preview admission" })).toBeEnabled());
+    fireEvent.click(within(cache).getByRole("button", { name: "Preview admission" }));
+    await waitFor(() => expect(runtime.previewCachedPackageAdmission).toHaveBeenCalledWith("example/remote-skill", "2.3.4"));
+    expect(runtime.admitCachedPackage).not.toHaveBeenCalled();
+
+    fireEvent.change(await screen.findByLabelText("Confirm admission example/remote-skill@2.3.4"), {
+      target: { value: "example/remote-skill@2.3.4" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm admission" }));
+    await waitFor(() => expect(runtime.admitCachedPackage).toHaveBeenCalledWith("example/remote-skill", "2.3.4"));
+    expect(runtime.enableLocalPackage).not.toHaveBeenCalled();
   });
 
   it("previews Domain auto-route overlap without changing lifecycle state", async () => {
@@ -2343,7 +2451,7 @@ describe("Pandora desktop run state", () => {
       runnable: true,
       gene_ids: [],
     }]);
-    runtime.installRegistryPackage.mockRejectedValue(new Error("registry refused the release"));
+    runtime.downloadRegistryPackage.mockRejectedValue(new Error("registry refused the release"));
 
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Harness Lab" }));
@@ -2352,13 +2460,13 @@ describe("Pandora desktop run state", () => {
     fireEvent.change(screen.getByLabelText("Registry package ID"), { target: { value: "owner/bad-gene" } });
     fireEvent.change(screen.getByLabelText("Package registry URL"), { target: { value: "https://registry.example.test" } });
     fireEvent.change(screen.getByLabelText("Package registry token"), { target: { value: "discard-me" } });
-    fireEvent.click(screen.getByRole("button", { name: "Fetch and admit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Download and verify" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("registry refused the release");
     expect(screen.getByLabelText("Package registry token")).toHaveValue("");
   });
 
-  it("admits a GitHub package only from a pinned commit and clears its token", async () => {
+  it("downloads a GitHub package only from a pinned commit and clears its token", async () => {
     const commit = "0123456789abcdef0123456789abcdef01234567";
     runtime.capabilities.mockResolvedValue([{
       id: "coding-domain",
@@ -2375,15 +2483,15 @@ describe("Pandora desktop run state", () => {
     fireEvent.click(await screen.findByRole("tab", { name: "packages" }));
     fireEvent.click(await screen.findByRole("tab", { name: "GitHub commit" }));
 
-    expect(screen.getByRole("button", { name: "Fetch pinned source" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Download pinned source" })).toBeDisabled();
     fireEvent.change(screen.getByLabelText("GitHub package repository"), { target: { value: "https://github.com/owner/repository" } });
     fireEvent.change(screen.getByLabelText("GitHub package commit"), { target: { value: commit } });
     fireEvent.change(screen.getByLabelText("GitHub package manifest path"), { target: { value: "packages/domain.json" } });
     fireEvent.change(screen.getByLabelText("GitHub package artifact path"), { target: { value: "dist/domain.artifact" } });
     fireEvent.change(screen.getByLabelText("GitHub package token"), { target: { value: "github-secret" } });
-    fireEvent.click(screen.getByRole("button", { name: "Fetch pinned source" }));
+    fireEvent.click(screen.getByRole("button", { name: "Download pinned source" }));
 
-    await waitFor(() => expect(runtime.installGitHubPackage).toHaveBeenCalledWith({
+    await waitFor(() => expect(runtime.downloadGitHubPackage).toHaveBeenCalledWith({
       repositoryUrl: "https://github.com/owner/repository",
       commit,
       manifestPath: "packages/domain.json",
@@ -2487,7 +2595,7 @@ describe("Pandora desktop run state", () => {
     expect(Object.values(window.localStorage)).not.toContain("registry-secret");
   });
 
-  it("installs through the active saved registry profile without resending its URL", async () => {
+  it("downloads through the active saved registry profile without resending its URL", async () => {
     runtime.capabilities.mockResolvedValue([{
       id: "coding-domain",
       version: "1.2.0",
@@ -2515,9 +2623,9 @@ describe("Pandora desktop run state", () => {
     expect(await screen.findByLabelText("Saved registry profile")).toHaveValue("m-place");
     expect(screen.getByLabelText("Package registry URL")).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Registry package ID"), { target: { value: "owner/gene" } });
-    fireEvent.click(screen.getByRole("button", { name: "Fetch and admit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Download and verify" }));
 
-    await waitFor(() => expect(runtime.installRegistryPackage).toHaveBeenCalledWith({
+    await waitFor(() => expect(runtime.downloadRegistryPackage).toHaveBeenCalledWith({
       packageId: "owner/gene",
       version: "",
       registryProfile: "m-place",

@@ -25,6 +25,7 @@ import {
 } from "./companion";
 import {
   activateProvider,
+  admitCachedPackage,
   admitLocalPackage,
   configureMcp,
   configureProvider,
@@ -32,13 +33,14 @@ import {
   compactMemory,
   disableLocalPackage,
   enableLocalPackage,
-  installGitHubPackage,
+  downloadGitHubPackage,
   installLocalSkill,
-  installRegistryPackage,
+  downloadRegistryPackage,
   inspectMemoryAudit,
   inspectMemoryProvenance,
   forgetMemory,
   listLocalPackages,
+  listCachedPackages,
   listLocalSkills,
   listFleetOperations,
   listPackageTransparency,
@@ -53,6 +55,7 @@ import {
   previewPackageDisable,
   previewPackageEnable,
   previewPackageRollback,
+  previewCachedPackageAdmission,
   previewMemoryForget,
   previewMemoryCompaction,
   removeLocalPackage,
@@ -61,6 +64,7 @@ import {
   saveRuntimeEndpoint,
   startLocalService,
   stopLocalService,
+  verifyCachedPackage,
   type RuntimeApproval,
   type RuntimeArtifactActivation,
   type RuntimeContextAttachment,
@@ -83,6 +87,7 @@ import {
   type RuntimeMemoryAuditEntry,
   type RuntimeOrchestrationRun,
   type RuntimePackage,
+  type RuntimeDistributedPackage,
   type RuntimePackageTransparencyEvent,
   type RuntimeProvider,
   type RegistryProfile,
@@ -2519,12 +2524,14 @@ function PackageAuthoring() {
 
 function PackageManager({ native }: { native: boolean }) {
   const [packages, setPackages] = useState<RuntimePackage[]>([]);
+  const [downloads, setDownloads] = useState<RuntimeDistributedPackage[]>([]);
   const [transparencyEvents, setTransparencyEvents] = useState<RuntimePackageTransparencyEvent[]>([]);
   const [transparencyBusy, setTransparencyBusy] = useState(false);
   const [transparencyError, setTransparencyError] = useState("");
   const [registryProfiles, setRegistryProfiles] = useState<RegistryProfile[]>([]);
   const [registryProfile, setRegistryProfile] = useState("");
   const [selectedIdentity, setSelectedIdentity] = useState("");
+  const [selectedDownloadIdentity, setSelectedDownloadIdentity] = useState("");
   const [sourceTab, setSourceTab] = useState<PackageSourceTab>("registry");
   const [packageId, setPackageId] = useState("");
   const [version, setVersion] = useState("");
@@ -2542,10 +2549,13 @@ function PackageManager({ native }: { native: boolean }) {
   const [lifecycleTarget, setLifecycleTarget] = useState<{ operation: "enable" | "disable" | "rollback"; package: RuntimePackage } | null>(null);
   const [lifecycleConfirmation, setLifecycleConfirmation] = useState("");
   const [lifecyclePreview, setLifecyclePreview] = useState<NativePackageResult["data"] | null>(null);
+  const [admissionTarget, setAdmissionTarget] = useState<RuntimeDistributedPackage | null>(null);
+  const [admissionConfirmation, setAdmissionConfirmation] = useState("");
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const selectedPackage = packages.find((item) => `${item.id}@${item.version}` === selectedIdentity) ?? packages[0] ?? null;
+  const selectedDownload = downloads.find((item) => `${item.id}@${item.version}` === selectedDownloadIdentity) ?? downloads[0] ?? null;
   const selectedRegistryProfile = registryProfiles.find((profile) => profile.name === registryProfile) ?? null;
 
   const routePreview = useMemo(() => {
@@ -2577,6 +2587,20 @@ function PackageManager({ native }: { native: boolean }) {
     const records = result.data.packages ?? [];
     setPackages(records);
     setSelectedIdentity((current) => records.some((item) => `${item.id}@${item.version}` === current) ? current : records[0] ? `${records[0].id}@${records[0].version}` : "");
+  };
+
+  const refreshDownloads = async () => {
+    if (!native) {
+      setDownloads([]);
+      return;
+    }
+    const result = await listCachedPackages();
+    if (result.data.download_authority !== "cache_only") {
+      throw new Error("Verified downloads did not preserve the cache-only authority boundary");
+    }
+    const records = result.data.packages ?? [];
+    setDownloads(records);
+    setSelectedDownloadIdentity((current) => records.some((item) => `${item.id}@${item.version}` === current) ? current : records[0] ? `${records[0].id}@${records[0].version}` : "");
   };
 
   const refreshTransparency = async () => {
@@ -2633,6 +2657,12 @@ function PackageManager({ native }: { native: boolean }) {
   }, [native]);
 
   useEffect(() => {
+    void refreshDownloads().catch((reason: unknown) => {
+      setError(reason instanceof Error ? reason.message : "Could not load verified package downloads");
+    });
+  }, [native]);
+
+  useEffect(() => {
     let cancelled = false;
     if (!native) {
       setRegistryProfiles([]);
@@ -2666,6 +2696,7 @@ function PackageManager({ native }: { native: boolean }) {
       const result = await operation();
       setMessage(`${result.message}${result.restartRequired ? " Restart the local service to load the new catalog." : ""}`);
       await refreshPackages();
+      await refreshDownloads();
       await refreshTransparency();
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : "Package operation failed");
@@ -2679,7 +2710,7 @@ function PackageManager({ native }: { native: boolean }) {
     if (!packageId.trim() || (!registryProfile && !registryUrl.trim()) || busy) return;
     setBusy("install");
     try {
-      await completeOperation(() => installRegistryPackage({
+      await completeOperation(() => downloadRegistryPackage({
         packageId: packageId.trim(),
         version: version.trim(),
         registryProfile,
@@ -2706,7 +2737,7 @@ function PackageManager({ native }: { native: boolean }) {
     if (!githubRepository.trim() || !githubCommit.trim() || !githubManifestPath.trim() || !githubArtifactPath.trim() || busy) return;
     setBusy("github");
     try {
-      await completeOperation(() => installGitHubPackage({
+      await completeOperation(() => downloadGitHubPackage({
         repositoryUrl: githubRepository.trim(),
         commit: githubCommit.trim(),
         manifestPath: githubManifestPath.trim(),
@@ -2722,6 +2753,44 @@ function PackageManager({ native }: { native: boolean }) {
     if (busy) return;
     setBusy("lock");
     await completeOperation(lockLocalPackages);
+  };
+
+  const verifyDownload = async (target: RuntimeDistributedPackage) => {
+    if (busy) return;
+    setBusy("verify-download");
+    await completeOperation(() => verifyCachedPackage(target.id, target.version));
+  };
+
+  const previewDownloadAdmission = async (target: RuntimeDistributedPackage) => {
+    if (busy) return;
+    setBusy("preview-admission");
+    setError("");
+    setMessage("");
+    try {
+      const result = await previewCachedPackageAdmission(target.id, target.version);
+      if (result.data.dry_run !== true || result.data.enablement_performed !== false || result.data.effect_authority_granted !== false) {
+        throw new Error("Admission preview widened the declared authority boundary");
+      }
+      setAdmissionTarget(target);
+      setAdmissionConfirmation("");
+      setMessage(result.message);
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "Package admission preview failed");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const confirmDownloadAdmission = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!admissionTarget || busy) return;
+    setBusy("admit-download");
+    await completeOperation(async () => {
+      const result = await admitCachedPackage(admissionTarget.id, admissionTarget.version);
+      setAdmissionTarget(null);
+      setAdmissionConfirmation("");
+      return result;
+    });
   };
 
   const previewLifecycle = async (target: RuntimePackage, operation: "enable" | "disable" | "rollback") => {
@@ -2801,8 +2870,13 @@ function PackageManager({ native }: { native: boolean }) {
   }
 
   return <div className="package-manager">
-    <div className="package-manager-heading"><div><span className="eyebrow">MODULAR ECOSYSTEM</span><h3>Signed package manager</h3><p>Install and inspect exact Gene, Domain Harness, and Meta Harness records without granting them authority.</p></div><div><button className="button button-secondary" type="button" disabled={Boolean(busy)} onClick={() => void writeLock()}>{busy === "lock" ? "Locking…" : "Write lockfile"}</button><button className="icon-button" type="button" aria-label="Refresh local packages" disabled={Boolean(busy)} onClick={() => { setBusy("refresh"); void completeOperation(async () => ({ message: "Local package catalog refreshed.", restartRequired: false })); }}><Icon name="activity" size={15} /></button></div></div>
-    <div className="package-boundary"><Icon name="shield" size={14} /><span>Admission verifies identity, artifact hash, dependencies, compatibility, and available signature evidence. Package records cannot replace Parliament, Shadow Council, ReferenceMonitor, permits, or the constitutional service.</span></div>
+    <div className="package-manager-heading"><div><span className="eyebrow">MODULAR ECOSYSTEM</span><h3>Signed package manager</h3><p>Download, inspect, and explicitly admit exact Gene, Domain Harness, Meta Harness, Skill, and Provider records without granting runtime authority.</p></div><div><button className="button button-secondary" type="button" disabled={Boolean(busy)} onClick={() => void writeLock()}>{busy === "lock" ? "Locking…" : "Write lockfile"}</button><button className="icon-button" type="button" aria-label="Refresh package evidence" disabled={Boolean(busy)} onClick={() => { setBusy("refresh"); void completeOperation(async () => ({ message: "Package evidence refreshed.", restartRequired: false })); }}><Icon name="activity" size={15} /></button></div></div>
+    <div className="package-boundary"><Icon name="shield" size={14} /><span>Remote download verifies and caches only. Admission is a separate confirmed boundary; enablement or Provider selection is separate again. No package operation replaces Parliament, Shadow Council, ReferenceMonitor, permits, or the constitutional service.</span></div>
+    <div className="package-transparency-panel" aria-label="Verified download cache">
+      <div className="package-section-heading"><div><span className="eyebrow">VERIFIED DOWNLOAD CACHE</span><h4>{downloads.length} inert exact artifact{downloads.length === 1 ? "" : "s"}</h4></div><Chip tone={downloads.some((item) => item.state === "revoked" || item.trust.verification !== "verified") ? "gold" : downloads.length ? "green" : "neutral"}>{downloads.length ? "cache only" : "empty"}</Chip></div>
+      <p>Downloading cannot admit, enable, select, execute, or grant an effect. Exact publisher, signing key, source revision, manifest digest, and artifact digest remain inspectable.</p>
+      {downloads.length ? <div className="package-manager-grid"><div className="package-list" aria-label="Cached verified packages">{downloads.map((item) => <button type="button" className={`package-row ${selectedDownload?.id === item.id && selectedDownload.version === item.version ? "is-selected" : ""}`} aria-pressed={selectedDownload?.id === item.id && selectedDownload.version === item.version} onClick={() => { setSelectedDownloadIdentity(`${item.id}@${item.version}`); setAdmissionTarget(null); setAdmissionConfirmation(""); }} key={`${item.id}@${item.version}`}><span className="package-kind-icon"><Icon name={item.kind === "provider" ? "stack" : item.kind === "skill" ? "spark" : "box"} size={15} /></span><span><strong>{item.id}</strong><small>{item.kind.replaceAll("_", " ")} · v{item.version} · {item.state}</small></span><Chip tone={item.trust.verification === "verified" ? "green" : "gold"}>{item.trust.verification.replaceAll("_", " ")}</Chip></button>)}</div>{selectedDownload ? <div className="package-inspection"><div className="package-section-heading"><div><span className="eyebrow">EXACT TRUST EVIDENCE</span><h4>{selectedDownload.id}@{selectedDownload.version}</h4></div><Chip tone={selectedDownload.state === "admitted" ? "blue" : selectedDownload.state === "revoked" ? "gold" : "neutral"}>{selectedDownload.state}</Chip></div><div className="package-facts"><div><span>Publisher / key</span><strong>{selectedDownload.publisher} / {selectedDownload.publisher_key_id}</strong></div><div><span>Source</span><strong>{selectedDownload.source.kind} · {selectedDownload.source.revision}</strong></div><div><span>Manifest digest</span><strong className="mono">{selectedDownload.manifest_digest}</strong></div><div><span>Artifact digest</span><strong className="mono">{selectedDownload.artifact_digest}</strong></div><div><span>Offline verification</span><strong>{selectedDownload.trust.verification}</strong></div><div><span>Runtime authority</span><strong className="authority-denied">{selectedDownload.runtime_authority ? "unexpected" : "none"}</strong></div></div><div className="package-lifecycle-actions"><button className="button button-secondary" type="button" disabled={Boolean(busy) || selectedDownload.state === "revoked"} onClick={() => void verifyDownload(selectedDownload)}>{busy === "verify-download" ? "Verifying…" : "Verify offline"}</button><button className="button button-primary" type="button" disabled={Boolean(busy) || selectedDownload.state !== "cached"} onClick={() => void previewDownloadAdmission(selectedDownload)}>{busy === "preview-admission" ? "Checking…" : selectedDownload.state === "admitted" ? "Already admitted" : "Preview admission"}</button></div>{admissionTarget?.id === selectedDownload.id && admissionTarget.version === selectedDownload.version ? <form className="package-lifecycle-confirm" onSubmit={confirmDownloadAdmission}><div className="package-lifecycle-preview"><div><span className="eyebrow">ADMISSION PREVIEW</span><strong>Trust and exact dependencies verified</strong></div><Chip tone="green">ready</Chip></div><p>Type <span className="mono">{selectedDownload.id}@{selectedDownload.version}</span> to admit this exact artifact. It will remain disabled or inactive and gain no effect authority.</p><input aria-label={`Confirm admission ${selectedDownload.id}@${selectedDownload.version}`} value={admissionConfirmation} onChange={(event) => setAdmissionConfirmation(event.target.value)} autoComplete="off" spellCheck={false} /><div><button className="button button-secondary" type="button" onClick={() => { setAdmissionTarget(null); setAdmissionConfirmation(""); }}>Close</button><button className="button button-primary" type="submit" disabled={Boolean(busy) || admissionConfirmation !== `${selectedDownload.id}@${selectedDownload.version}`}>{busy === "admit-download" ? "Admitting…" : "Confirm admission"}</button></div></form> : null}</div> : null}</div> : <p className="connection-note">No verified downloads are cached. A remote download appears here before any admission decision.</p>}
+    </div>
     <div className="package-transparency-panel">
       <div className="package-section-heading"><div><span className="eyebrow">TRUST TRANSPARENCY</span><h4>Trust changes and admission decisions</h4></div><button className="button button-secondary" type="button" disabled={transparencyBusy} onClick={() => void refreshTransparency()}>{transparencyBusy ? "Loading…" : "Refresh trust evidence"}</button></div>
       <p>Read-only SHA-256 chain evidence. Events record allow/deny outcomes and grant no runtime authority.</p>
@@ -2858,11 +2932,11 @@ function PackageManager({ native }: { native: boolean }) {
         <div id="package-source-panel" role="tabpanel" aria-labelledby={"package-source-tab-" + sourceTab}>{sourceTab === "registry" ? (
           <form className="package-form" onSubmit={submitRegistry}>
             <label><span>Package ID</span><input aria-label="Registry package ID" value={packageId} onChange={(event) => setPackageId(event.target.value)} placeholder="publisher/gene" maxLength={256} autoComplete="off" spellCheck={false} /></label>
-            <label><span>Exact version <small>optional current release</small></span><input aria-label="Registry package version" value={version} onChange={(event) => setVersion(event.target.value)} placeholder="1.0.0" maxLength={128} autoComplete="off" spellCheck={false} /></label>
+            <label><span>Exact version <small>optional · discovery pins the resolved release</small></span><input aria-label="Registry package version" value={version} onChange={(event) => setVersion(event.target.value)} placeholder="1.0.0" maxLength={128} autoComplete="off" spellCheck={false} /></label>
             <label className="package-form-wide"><span>Saved registry <small>optional · configured on this device</small></span><select aria-label="Saved registry profile" value={registryProfile} onChange={(event) => setRegistryProfile(event.target.value)}><option value="">Custom URL for this install</option>{registryProfiles.map((profile) => <option value={profile.name} key={profile.name}>{profile.name}{profile.active ? " · active" : ""}</option>)}</select></label>
             <label className="package-form-wide"><span>M-Place registry URL</span><input aria-label="Package registry URL" value={selectedRegistryProfile?.base_url ?? registryUrl} onChange={(event) => setRegistryUrl(event.target.value)} placeholder="https://registry.example.com" maxLength={2048} autoComplete="url" spellCheck={false} disabled={Boolean(selectedRegistryProfile)} /></label>
             <label className="package-form-wide"><span>Registry token <small>optional · process-scoped only</small></span><input aria-label="Package registry token" type="password" value={registryToken} onChange={(event) => setRegistryToken(event.target.value)} autoComplete="new-password" /></label>
-            <div className="package-form-footer"><p>Saved profiles contain only the URL and a secret reference. Redirects and registry-controlled artifact URLs are refused by the existing client.</p><button className="button button-primary" type="submit" disabled={Boolean(busy) || !packageId.trim() || (!registryProfile && !registryUrl.trim())}>{busy === "install" ? "Installing…" : "Fetch and admit"}</button></div>
+            <div className="package-form-footer"><p>Saved profiles contain only the URL and a secret reference. The signed artifact is verified into the inert cache; no admission or enablement follows.</p><button className="button button-primary" type="submit" disabled={Boolean(busy) || !packageId.trim() || (!registryProfile && !registryUrl.trim())}>{busy === "install" ? "Downloading…" : "Download and verify"}</button></div>
           </form>
         ) : sourceTab === "github" ? (
           <form className="package-form" onSubmit={submitGitHub}>
@@ -2871,7 +2945,7 @@ function PackageManager({ native }: { native: boolean }) {
             <label><span>Manifest repository path</span><input aria-label="GitHub package manifest path" value={githubManifestPath} onChange={(event) => setGithubManifestPath(event.target.value)} maxLength={1024} autoComplete="off" spellCheck={false} /></label>
             <label><span>Artifact repository path</span><input aria-label="GitHub package artifact path" value={githubArtifactPath} onChange={(event) => setGithubArtifactPath(event.target.value)} maxLength={1024} autoComplete="off" spellCheck={false} /></label>
             <label className="package-form-wide"><span>GitHub token <small>optional · private repositories · process-scoped only</small></span><input aria-label="GitHub package token" type="password" value={githubToken} onChange={(event) => setGithubToken(event.target.value)} autoComplete="new-password" /></label>
-            <div className="package-form-footer"><p>Pandora fetches only these two paths at the pinned commit, follows no redirects, and runs the normal signed-admission checks.</p><button className="button button-primary" type="submit" disabled={Boolean(busy) || !githubRepository.trim() || githubCommit.trim().length !== 40 || !githubManifestPath.trim() || !githubArtifactPath.trim()}>{busy === "github" ? "Fetching…" : "Fetch pinned source"}</button></div>
+            <div className="package-form-footer"><p>Pandora fetches only these two paths at the pinned commit, follows no redirects, and verifies the signed artifact into the inert cache without admission.</p><button className="button button-primary" type="submit" disabled={Boolean(busy) || !githubRepository.trim() || githubCommit.trim().length !== 40 || !githubManifestPath.trim() || !githubArtifactPath.trim()}>{busy === "github" ? "Downloading…" : "Download pinned source"}</button></div>
           </form>
         ) : sourceTab === "local" ? (
           <form className="package-form" onSubmit={submitLocal}>

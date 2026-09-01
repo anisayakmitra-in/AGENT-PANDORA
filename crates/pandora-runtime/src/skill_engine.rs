@@ -210,27 +210,7 @@ impl SkillEngine {
     }
 
     pub fn install_from(&self, source: impl AsRef<Path>) -> Result<SkillRecord, SkillError> {
-        let source = source.as_ref();
-        let metadata = fs::symlink_metadata(source)?;
-        if metadata.file_type().is_symlink() {
-            return Err(SkillError::SymlinkRejected);
-        }
-        if !metadata.is_dir() {
-            return Err(SkillError::InvalidRoot);
-        }
-        let source = fs::canonicalize(source)?;
-        let (manifest, _) = read_skill_document(&source)?;
-        PackageAdmission::validate_skill(&manifest).map_err(|_| SkillError::InvalidManifest)?;
-        let directory_name = source
-            .file_name()
-            .and_then(|value| value.to_str())
-            .ok_or(SkillError::InvalidManifest)?;
-        if manifest.id().as_str() != directory_name {
-            return Err(SkillError::InvalidManifest);
-        }
-        let mut scripts = Vec::new();
-        collect_scripts(&source, &source.join("scripts"), &mut scripts)?;
-
+        let (source, manifest) = self.validated_source(source.as_ref())?;
         let destination = self.root.join(manifest.id().as_str());
         let _lock = self.acquire_install_lock(manifest.id())?;
         match fs::symlink_metadata(&destination) {
@@ -267,6 +247,34 @@ impl SkillEngine {
             return Err(error);
         }
         self.find_record(manifest.id().as_str())
+    }
+
+    pub fn validate_source(&self, source: impl AsRef<Path>) -> Result<SkillManifest, SkillError> {
+        self.validated_source(source.as_ref())
+            .map(|(_, manifest)| manifest)
+    }
+
+    fn validated_source(&self, source: &Path) -> Result<(PathBuf, SkillManifest), SkillError> {
+        let metadata = fs::symlink_metadata(source)?;
+        if metadata.file_type().is_symlink() {
+            return Err(SkillError::SymlinkRejected);
+        }
+        if !metadata.is_dir() {
+            return Err(SkillError::InvalidRoot);
+        }
+        let source = fs::canonicalize(source)?;
+        let (manifest, _) = read_skill_document(&source)?;
+        PackageAdmission::validate_skill(&manifest).map_err(|_| SkillError::InvalidManifest)?;
+        let directory_name = source
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or(SkillError::InvalidManifest)?;
+        if manifest.id().as_str() != directory_name {
+            return Err(SkillError::InvalidManifest);
+        }
+        let mut scripts = Vec::new();
+        collect_scripts(&source, &source.join("scripts"), &mut scripts)?;
+        Ok((source, manifest))
     }
 
     pub fn list(&self) -> Result<Vec<SkillRecord>, SkillError> {

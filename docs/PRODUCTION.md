@@ -123,6 +123,41 @@ and persisted effect-receipt parsers. See
 [adversarial resilience](ADVERSARIAL_RESILIENCE.md) for the exact boundary and
 replay commands.
 
+### Signed Skill and Provider distribution
+
+Remote package discovery, download, admission, enablement or Provider selection,
+and effect authorization are distinct boundaries. Registry and pinned-commit
+GitHub downloads accept only Official manifests signed by an active
+publisher-scoped Ed25519 root, verify the canonical manifest and artifact SHA-256
+digests, enforce the running-runtime requirement and supported kind, and retain
+the exact source revision. A successful download writes only the inert cache in
+`packages.sqlite3` and cannot admit or enable anything.
+
+Operators should inspect and offline-verify the exact cached record before a
+dry-run and confirmed `package admit-cached`. Required dependencies are exact
+SemVer identities and must already be admitted. Gene and Harness artifacts enter
+the package store disabled; Skill bundles enter the managed Skill root disabled;
+Provider JSON enters the profile catalog inactive. Enabling a package or Skill,
+selecting a Provider, approving an effect, and issuing a one-shot permit remain
+their existing separate decisions.
+
+A Provider artifact is strict JSON containing only `id`, `name`, `protocol`,
+`base_url`, `default_model`, and `api_key_env`. It contains a credential reference,
+never a credential value. Its ID must equal the leaf of the signed package ID. An
+active Provider cannot be replaced by admission. An operator must select the
+profile explicitly after admission, and normal secret resolution still happens
+inside the scoped encrypted-vault/environment boundary.
+
+Exact replay of identical cached evidence is idempotent. An identity collision,
+manifest or signature substitution, hash mismatch, downgrade through the normal
+admission path, untrusted publisher, revoked key, unsupported kind, missing exact
+dependency, malformed bundle, or traversal attempt fails closed. Trust-root
+revocation marks matching cache records revoked, removes distribution bindings,
+suspends admitted managed Skills, and quarantines admitted Provider profiles.
+The cache and its SHA-256 event chain are included in normal recovery state; an
+offline cache is usable only while all retained trust and integrity checks still
+pass.
+
 ## Telemetry and crash records
 
 Operational telemetry is local-only under data/operations/telemetry.jsonl. It

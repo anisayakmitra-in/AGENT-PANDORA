@@ -300,6 +300,7 @@ pub struct RuntimeConfig {
     config_path: PathBuf,
     provider_profiles: BTreeMap<String, ProviderProfile>,
     active_provider: Option<String>,
+    provider_activation_disabled: bool,
     provider_url: Option<String>,
     provider_model: Option<String>,
     registry_profiles: BTreeMap<String, RegistryProfile>,
@@ -347,6 +348,7 @@ impl RuntimeConfig {
         {
             return Err(ConfigError::InvalidFile);
         }
+        let provider_activation_disabled = file.provider_activation_disabled;
 
         let provider_url = overrides
             .provider_url
@@ -396,17 +398,23 @@ impl RuntimeConfig {
                 entry.insert(profile);
             }
         }
-        let active_provider = overrides
+        let requested_provider = overrides
             .provider_name
             .clone()
-            .or_else(|| environment.get("PANDORA_PROVIDER").cloned())
-            .or(file.active_provider)
-            .or_else(|| {
-                provider_profiles
-                    .contains_key(DEFAULT_PROVIDER_NAME)
-                    .then(|| DEFAULT_PROVIDER_NAME.to_owned())
-            })
-            .or_else(|| provider_profiles.keys().next().cloned());
+            .or_else(|| environment.get("PANDORA_PROVIDER").cloned());
+        let active_provider = if requested_provider.is_some() {
+            requested_provider
+        } else if provider_activation_disabled {
+            None
+        } else {
+            file.active_provider
+                .or_else(|| {
+                    provider_profiles
+                        .contains_key(DEFAULT_PROVIDER_NAME)
+                        .then(|| DEFAULT_PROVIDER_NAME.to_owned())
+                })
+                .or_else(|| provider_profiles.keys().next().cloned())
+        };
         if let Some(name) = active_provider.as_ref()
             && !provider_profiles.contains_key(name)
         {
@@ -472,6 +480,7 @@ impl RuntimeConfig {
                 .unwrap_or_else(|| config_path.to_path_buf()),
             provider_profiles,
             active_provider,
+            provider_activation_disabled,
             provider_url,
             provider_model,
             registry_profiles,
@@ -508,6 +517,7 @@ impl RuntimeConfig {
                 })
                 .collect(),
             active_provider: self.active_provider.clone(),
+            provider_activation_disabled: self.provider_activation_disabled,
             registries: self
                 .registry_profiles
                 .iter()
@@ -583,9 +593,39 @@ impl RuntimeConfig {
         }
         if self.active_provider.is_none() {
             self.active_provider = Some(profile.name().to_owned());
+            self.provider_activation_disabled = false;
         }
         self.provider_profiles
             .insert(profile.name().to_owned(), profile);
+    }
+
+    pub fn admit_provider_profile(&mut self, profile: ProviderProfile) {
+        if self.active_provider.is_none() {
+            self.provider_activation_disabled = true;
+        }
+        self.provider_profiles
+            .insert(profile.name().to_owned(), profile);
+    }
+
+    pub fn quarantine_provider_profile(&mut self, name: &str) -> bool {
+        let removed = self.provider_profiles.remove(name).is_some();
+        if !removed {
+            return false;
+        }
+        for profile in self.provider_profiles.values_mut() {
+            if profile.fallback_provider.as_deref() == Some(name) {
+                profile.fallback_provider = None;
+            }
+        }
+        if self.active_provider.as_deref() == Some(name) {
+            self.active_provider = None;
+            self.provider_activation_disabled = true;
+        }
+        if name == DEFAULT_PROVIDER_NAME {
+            self.provider_url = None;
+            self.provider_model = None;
+        }
+        true
     }
 
     pub fn set_active_provider(&mut self, name: impl Into<String>) -> Result<(), ConfigError> {
@@ -594,6 +634,7 @@ impl RuntimeConfig {
             return Err(ConfigError::UnknownProvider);
         }
         self.active_provider = Some(name);
+        self.provider_activation_disabled = false;
         Ok(())
     }
 
@@ -698,6 +739,8 @@ struct FileConfig {
     #[serde(default)]
     providers: BTreeMap<String, FileProviderProfile>,
     active_provider: Option<String>,
+    #[serde(default)]
+    provider_activation_disabled: bool,
     #[serde(default)]
     registries: BTreeMap<String, FileRegistryProfile>,
     active_registry: Option<String>,

@@ -1,8 +1,10 @@
 use base64::Engine as _;
 use ed25519_dalek::{Signer, SigningKey};
 use pandora_runtime::{
-    DeviceKeyStore, DeviceProofRequest, EfficiencyStore, FleetBudget, FleetEngine, FleetNode,
-    JobStore, MemoryEngine, SessionStore, SubagentPreparation, SubagentScope, SubagentStore,
+    DeviceKeyStore, DeviceProofRequest, DistributionSource, DistributionSourceKind,
+    EfficiencyStore, FleetBudget, FleetEngine, FleetNode, JobStore, MemoryEngine,
+    PackageDistributionStore, PackageStore, SessionStore, SubagentPreparation, SubagentScope,
+    SubagentStore,
 };
 use pandora_types::{
     ContextClassification, DomainRoutingProfile, EffectOutcome, EffectReceipt, EventType,
@@ -8031,10 +8033,37 @@ fn registry_profiles_are_persistent_selectable_and_removable() {
 }
 
 #[test]
-fn package_install_fetches_and_admits_one_exact_registry_release() {
+fn package_download_verifies_one_exact_release_without_admission_or_enablement() {
     let artifact = b"registry gene artifact\n";
     let content_hash = hash_artifact(artifact);
+    let signing_key = SigningKey::from_bytes(&[89_u8; 32]);
+    let public_key = signing_key
+        .verifying_key()
+        .to_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let unsigned = PackageManifest::new(
+        "owner/package",
+        "1.0.0-beta.1+build.5",
+        PackageKind::Gene,
+        "owner",
+        content_hash.clone(),
+        Vec::new(),
+        PackageCompatibility::new("pandora>=2.0.0-alpha.1").unwrap(),
+        "MIT",
+        TrustEvidence::unsigned(),
+    )
+    .unwrap();
+    let signature = signing_key
+        .sign(unsigned.signing_message().as_bytes())
+        .to_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
     let server_content_hash = content_hash.clone();
+    let server_public_key = public_key.clone();
+    let server_signature = signature.clone();
     let listener = TcpListener::bind("127.0.0.1:0").expect("registry fixture should bind");
     let address = listener
         .local_addr()
@@ -8052,9 +8081,9 @@ fn package_install_fetches_and_admits_one_exact_registry_release() {
                     "author": "owner",
                     "license": "MIT",
                     "trust": {
-                        "level": "community",
-                        "signature": null,
-                        "public_key": null,
+                        "level": "official",
+                        "signature": server_signature,
+                        "public_key": server_public_key,
                         "content_hash": server_content_hash,
                         "publisher": "owner"
                     },
@@ -8116,6 +8145,22 @@ fn package_install_fetches_and_admits_one_exact_registry_release() {
 
     let fixture = Fixture::new();
     let registry = format!("http://{address}");
+    let trusted = fixture
+        .command(&[
+            "package",
+            "trust-root",
+            "add",
+            "--publisher",
+            "owner",
+            "--key-id",
+            "owner-key-1",
+            "--public-key",
+            &public_key,
+            "--json",
+        ])
+        .output()
+        .expect("publisher trust setup should start");
+    assert_success_with_context(&trusted, "package trust-root add");
     let configured = fixture
         .command(&[
             "registry",
@@ -8134,24 +8179,68 @@ fn package_install_fetches_and_admits_one_exact_registry_release() {
     let output = fixture
         .command(&[
             "package",
-            "install",
+            "download",
             "owner/package",
             "1.0.0-beta.1+build.5",
             "--json",
         ])
         .env("PANDORA_TEST_REGISTRY_TOKEN", "registry-secret")
         .output()
-        .expect("registry installation should start");
-    assert_success_with_context(&output, "package install");
+        .expect("registry download should start");
+    assert_success_with_context(&output, "package download");
     assert!(!String::from_utf8_lossy(&output.stdout).contains("registry-secret"));
     let response = parse_json(&output);
     assert_eq!(response["package"]["id"], "owner/package");
     assert_eq!(response["package"]["version"], "1.0.0-beta.1+build.5");
     assert_eq!(response["package"]["kind"], "gene");
-    assert_eq!(response["package"]["state"], "installed");
+    assert_eq!(response["package"]["state"], "cached");
+    assert_eq!(response["package"]["trust"]["verification"], "verified");
     assert_eq!(response["package"]["runtime_authority"], false);
+    assert_eq!(
+        response["package"]["admission"]["this_version_admitted"],
+        false
+    );
+
+    let local = fixture
+        .command(&["package", "list", "--json"])
+        .output()
+        .expect("local package list should start");
+    assert_success(&local);
+    assert!(
+        parse_json(&local)["packages"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
 
     let output = fixture
+        .command(&[
+            "package",
+            "cache",
+            "verify",
+            "owner/package",
+            "1.0.0-beta.1+build.5",
+            "--json",
+        ])
+        .output()
+        .expect("offline package verification should start");
+    assert_success(&output);
+    assert_eq!(parse_json(&output)["package"]["content_hash"], content_hash);
+
+    let admitted = fixture
+        .command(&[
+            "package",
+            "admit-cached",
+            "owner/package",
+            "1.0.0-beta.1+build.5",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("cached package admission should start");
+    assert_success_with_context(&admitted, "package admit-cached");
+    assert_eq!(parse_json(&admitted)["enablement_performed"], false);
+    let local = fixture
         .command(&[
             "package",
             "inspect",
@@ -8160,10 +8249,227 @@ fn package_install_fetches_and_admits_one_exact_registry_release() {
             "--json",
         ])
         .output()
-        .expect("installed package inspection should start");
-    assert_success(&output);
-    assert_eq!(parse_json(&output)["package"]["content_hash"], content_hash);
+        .expect("admitted package inspection should start");
+    assert_success(&local);
     server.join().expect("registry fixture should finish");
+}
+
+#[test]
+fn signed_skill_and_provider_distribution_keeps_every_authority_separate() {
+    let fixture = Fixture::new();
+    fs::create_dir_all(&fixture.data).unwrap();
+    let database = fixture.data.join("packages.sqlite3");
+    let signing_key = SigningKey::from_bytes(&[97_u8; 32]);
+    let public_key = signing_key
+        .verifying_key()
+        .to_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let packages = PackageStore::open(&database).unwrap();
+    packages
+        .add_publisher_trust_root("signed-publisher", "publisher-key-1", &public_key, 1)
+        .unwrap();
+    let distribution = PackageDistributionStore::open(&database).unwrap();
+    let signed_manifest = |id: &str, version: &str, kind: PackageKind, artifact: &[u8]| {
+        let unsigned = PackageManifest::new(
+            id,
+            version,
+            kind,
+            "signed-publisher",
+            hash_artifact(artifact),
+            Vec::new(),
+            PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+            "MIT",
+            TrustEvidence::unsigned(),
+        )
+        .unwrap();
+        let signature = signing_key
+            .sign(unsigned.signing_message().as_bytes())
+            .to_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        PackageManifest::new(
+            id,
+            version,
+            kind,
+            "signed-publisher",
+            hash_artifact(artifact),
+            Vec::new(),
+            PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+            "MIT",
+            TrustEvidence::new(
+                TrustLevel::Official,
+                Some(signature),
+                Some(public_key.clone()),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    };
+
+    let skill_artifact = serde_json::to_vec(&serde_json::json!({
+        "format_version": 1,
+        "files": [{
+            "path": "SKILL.md",
+            "content": "---\nid: review-skill\nversion: 1.0.0\nname: Review Skill\ndescription: Reviews exact evidence\npublisher: signed-publisher\nresources: workspace.read\n---\nReview only admitted evidence.\n"
+        }]
+    }))
+    .unwrap();
+    let skill_manifest = signed_manifest(
+        "signed-publisher/review-skill",
+        "1.0.0",
+        PackageKind::Skill,
+        &skill_artifact,
+    );
+    distribution
+        .cache_verified(
+            &skill_manifest,
+            &skill_artifact,
+            DistributionSource::new(
+                DistributionSourceKind::Registry,
+                "https://registry.example",
+                "1.0.0",
+            )
+            .unwrap(),
+            2,
+        )
+        .unwrap();
+
+    let provider_artifact = serde_json::to_vec(&serde_json::json!({
+        "id": "signed-provider",
+        "name": "Signed Provider",
+        "protocol": "open_ai_compatible",
+        "base_url": "https://provider.example/v1",
+        "default_model": "model-v1",
+        "api_key_env": "PANDORA_SIGNED_PROVIDER_KEY"
+    }))
+    .unwrap();
+    let provider_manifest = signed_manifest(
+        "signed-publisher/signed-provider",
+        "2.0.0",
+        PackageKind::Provider,
+        &provider_artifact,
+    );
+    distribution
+        .cache_verified(
+            &provider_manifest,
+            &provider_artifact,
+            DistributionSource::new(
+                DistributionSourceKind::Registry,
+                "https://registry.example",
+                "2.0.0",
+            )
+            .unwrap(),
+            3,
+        )
+        .unwrap();
+
+    for (id, version, boundary) in [
+        (
+            "signed-publisher/review-skill",
+            "1.0.0",
+            "skill_engine_disabled",
+        ),
+        (
+            "signed-publisher/signed-provider",
+            "2.0.0",
+            "provider_catalog_inactive",
+        ),
+    ] {
+        let admitted = fixture
+            .command(&["package", "admit-cached", id, version, "--yes", "--json"])
+            .output()
+            .expect("signed package admission should start");
+        assert_success_with_context(&admitted, "package admit-cached");
+        let admitted = parse_json(&admitted);
+        assert_eq!(admitted["admission_boundary"], boundary);
+        assert_eq!(admitted["enablement_performed"], false);
+        assert_eq!(admitted["effect_authority_granted"], false);
+    }
+
+    let skill = fixture
+        .command(&["skill", "inspect", "review-skill", "--json"])
+        .output()
+        .expect("distributed Skill inspection should start");
+    assert_success(&skill);
+    assert_eq!(parse_json(&skill)["skill"]["state"], "disabled");
+    let providers = fixture
+        .command(&["provider", "list", "--json"])
+        .output()
+        .expect("distributed Provider list should start");
+    assert_success(&providers);
+    assert_eq!(parse_json(&providers)["providers"][0]["active"], false);
+
+    assert_success_with_context(
+        &fixture
+            .command(&["skill", "enable", "review-skill", "--json"])
+            .output()
+            .unwrap(),
+        "explicit Skill enablement",
+    );
+    assert_success_with_context(
+        &fixture
+            .command(&["provider", "use", "signed-provider", "--json"])
+            .output()
+            .unwrap(),
+        "explicit Provider selection",
+    );
+
+    let revoked = fixture
+        .command(&[
+            "package",
+            "trust-root",
+            "revoke",
+            "--publisher",
+            "signed-publisher",
+            "--key-id",
+            "publisher-key-1",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .expect("publisher revocation should start");
+    assert_success_with_context(&revoked, "package trust-root revoke");
+    let revoked = parse_json(&revoked);
+    assert_eq!(
+        revoked["quarantined_skills"],
+        serde_json::json!(["review-skill"])
+    );
+    assert_eq!(
+        revoked["quarantined_providers"],
+        serde_json::json!(["signed-provider"])
+    );
+    let skill = fixture
+        .command(&["skill", "inspect", "review-skill", "--json"])
+        .output()
+        .unwrap();
+    assert_success(&skill);
+    assert_eq!(parse_json(&skill)["skill"]["state"], "suspended");
+    let providers = fixture
+        .command(&["provider", "list", "--json"])
+        .output()
+        .unwrap();
+    assert_success(&providers);
+    assert!(
+        parse_json(&providers)["providers"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let rejected = fixture
+        .command(&[
+            "package",
+            "cache",
+            "verify",
+            "signed-publisher/review-skill",
+            "1.0.0",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
 }
 
 #[test]

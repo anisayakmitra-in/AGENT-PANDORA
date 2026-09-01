@@ -1,6 +1,7 @@
-use crate::{MAX_STORED_ARTIFACT_BYTES, PackageRecord, PackageStore, PackageStoreError};
+use crate::MAX_STORED_ARTIFACT_BYTES;
 use pandora_types::{
-    PackageCompatibility, PackageId, PackageKind, PackageManifest, TrustEvidence, TrustLevel,
+    PackageCompatibility, PackageDependency, PackageId, PackageKind, PackageManifest,
+    TrustEvidence, TrustLevel,
 };
 use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::redirect::Policy;
@@ -30,7 +31,6 @@ pub enum PackageRegistryError {
     UnsupportedKind(&'static str),
     CapabilityDependenciesUnsupported,
     IncompatiblePlatform,
-    Admission(PackageStoreError),
 }
 
 impl fmt::Display for PackageRegistryError {
@@ -56,16 +56,29 @@ impl fmt::Display for PackageRegistryError {
             Self::IncompatiblePlatform => {
                 formatter.write_str("registry package does not support this platform")
             }
-            Self::Admission(error) => error.fmt(formatter),
         }
     }
 }
 
 impl std::error::Error for PackageRegistryError {}
 
-impl From<PackageStoreError> for PackageRegistryError {
-    fn from(error: PackageStoreError) -> Self {
-        Self::Admission(error)
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegistryPackageDownload {
+    manifest: PackageManifest,
+    artifact: Vec<u8>,
+}
+
+impl RegistryPackageDownload {
+    pub fn manifest(&self) -> &PackageManifest {
+        &self.manifest
+    }
+
+    pub fn artifact(&self) -> &[u8] {
+        &self.artifact
+    }
+
+    pub fn into_parts(self) -> (PackageManifest, Vec<u8>) {
+        (self.manifest, self.artifact)
     }
 }
 
@@ -96,18 +109,24 @@ impl PackageRegistryClient {
         })
     }
 
-    pub fn install(
+    pub fn discover(
         &self,
-        store: &PackageStore,
         id: &PackageId,
         version: Option<&str>,
-    ) -> Result<PackageRecord, PackageRegistryError> {
+    ) -> Result<PackageManifest, PackageRegistryError> {
         let package = self.fetch_metadata(id, version)?;
-        let manifest = package.to_manifest(id, version)?;
+        package.to_manifest(id, version)
+    }
+
+    pub fn download_exact(
+        &self,
+        id: &PackageId,
+        version: &str,
+    ) -> Result<RegistryPackageDownload, PackageRegistryError> {
+        let package = self.fetch_metadata(id, Some(version))?;
+        let manifest = package.to_manifest(id, Some(version))?;
         let artifact = self.fetch_artifact(id, manifest.version())?;
-        store
-            .admit(&manifest, &manifest, &artifact)
-            .map_err(PackageRegistryError::Admission)
+        Ok(RegistryPackageDownload { manifest, artifact })
     }
 
     fn fetch_metadata(
@@ -342,6 +361,8 @@ struct RegistryPackage {
     license: String,
     trust: RegistryTrust,
     capabilities: RegistryCapabilities,
+    #[serde(default)]
+    dependencies: Vec<PackageDependency>,
     compatibility: RegistryCompatibility,
     artifact_url: Option<String>,
     #[serde(default)]
@@ -372,9 +393,12 @@ impl RegistryPackage {
                 "package has no published artifact",
             ));
         }
-        if !matches!(self.kind, RemoteArtifactKind::Gene) {
-            return Err(PackageRegistryError::UnsupportedKind(self.kind.as_str()));
-        }
+        let kind = match self.kind {
+            RemoteArtifactKind::Gene => PackageKind::Gene,
+            RemoteArtifactKind::Provider => PackageKind::Provider,
+            RemoteArtifactKind::Skill => PackageKind::Skill,
+            _ => return Err(PackageRegistryError::UnsupportedKind(self.kind.as_str())),
+        };
         if !self.capabilities.requires.is_empty() {
             return Err(PackageRegistryError::CapabilityDependenciesUnsupported);
         }
@@ -421,7 +445,7 @@ impl RegistryPackage {
         }
         let trust = match (&self.trust.signature, &self.trust.public_key) {
             (Some(signature), Some(public_key)) => TrustEvidence::new(
-                TrustLevel::Verified,
+                TrustLevel::Official,
                 Some(signature.clone()),
                 Some(public_key.clone()),
             )
@@ -436,10 +460,10 @@ impl RegistryPackage {
         PackageManifest::new(
             self.id.clone(),
             self.version.clone(),
-            PackageKind::Gene,
+            kind,
             self.trust.publisher.clone(),
             content_hash,
-            Vec::new(),
+            self.dependencies.clone(),
             compatibility,
             self.license.clone(),
             trust,

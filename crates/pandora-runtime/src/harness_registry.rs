@@ -485,7 +485,7 @@ fn verify_package_signature(manifest: &PackageManifest) -> Result<(), HarnessReg
     verify_package_signature_with_key(manifest, public_key)
 }
 
-fn verify_package_signature_with_key(
+pub(crate) fn verify_package_signature_with_key(
     manifest: &PackageManifest,
     public_key: &str,
 ) -> Result<(), HarnessRegistryError> {
