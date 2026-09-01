@@ -1,6 +1,8 @@
 use pandora_types::{
-    ArtifactSignature, EvolutionContractError, EvolutionPolicy, EvolutionState, HoldoutEvaluation,
-    MutationProposal, ParliamentApproval, ProposalId,
+    ArtifactSignature, EvolutionContractError, EvolutionPolicy, EvolutionPromotionApproval,
+    EvolutionRollout, EvolutionRolloutBinding, EvolutionScorecard, EvolutionStageLimits,
+    EvolutionState, HoldoutEvaluation, MutationProposal, ParliamentApproval, PrincipalId,
+    ProposalId, RequestDigest, Timestamp,
 };
 use rusqlite::{Connection, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
@@ -27,6 +29,9 @@ pub enum EvolutionError {
     SignatureMismatch,
     ApprovalMismatch,
     PolicyVersionMismatch,
+    RolloutAlreadyConfigured,
+    RolloutRequired,
+    RolloutIncomplete,
     StoreUnavailable,
 }
 
@@ -54,6 +59,13 @@ impl fmt::Display for EvolutionError {
             }
             Self::ApprovalMismatch => formatter.write_str("Parliament approval does not match"),
             Self::PolicyVersionMismatch => formatter.write_str("policy version does not match"),
+            Self::RolloutAlreadyConfigured => {
+                formatter.write_str("governed rollout is already configured")
+            }
+            Self::RolloutRequired => formatter.write_str("governed rollout is not configured"),
+            Self::RolloutIncomplete => {
+                formatter.write_str("governed rollout has not completed every approved stage")
+            }
             Self::StoreUnavailable => formatter.write_str("evolution store is unavailable"),
         }
     }
@@ -75,6 +87,8 @@ struct StoredProposal {
     approval: Option<ParliamentApproval>,
     signature: Option<ArtifactSignature>,
     canary: Option<pandora_types::CanaryResult>,
+    #[serde(default)]
+    rollout: Option<EvolutionRollout>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -85,6 +99,7 @@ pub struct EvolutionRecord {
     approval: Option<ParliamentApproval>,
     signature: Option<ArtifactSignature>,
     canary: Option<pandora_types::CanaryResult>,
+    rollout: Option<EvolutionRollout>,
 }
 
 impl EvolutionRecord {
@@ -111,6 +126,10 @@ impl EvolutionRecord {
     pub fn canary(&self) -> Option<&pandora_types::CanaryResult> {
         self.canary.as_ref()
     }
+
+    pub fn rollout(&self) -> Option<&EvolutionRollout> {
+        self.rollout.as_ref()
+    }
 }
 
 impl StoredProposal {
@@ -122,6 +141,7 @@ impl StoredProposal {
             approval: self.approval.clone(),
             signature: self.signature.clone(),
             canary: self.canary.clone(),
+            rollout: self.rollout.clone(),
         }
     }
 
@@ -164,6 +184,18 @@ impl StoredProposal {
             && canary.proposal_id() != self.proposal.proposal_id()
         {
             return Err(EvolutionStoreError::CorruptRecord);
+        }
+        if let Some(rollout) = &self.rollout {
+            rollout
+                .validate()
+                .map_err(|_| EvolutionStoreError::CorruptRecord)?;
+            if rollout.binding().evidence_digest() != self.proposal.evidence_digest()
+                || rollout
+                    .pending_approval()
+                    .is_some_and(|approval| approval.proposal_id() != self.proposal.proposal_id())
+            {
+                return Err(EvolutionStoreError::CorruptRecord);
+            }
         }
         Ok(())
     }
@@ -330,6 +362,7 @@ impl EvolutionEngine {
                 approval: None,
                 signature: None,
                 canary: None,
+                rollout: None,
             },
         )?;
         Ok(())
@@ -468,6 +501,149 @@ impl EvolutionEngine {
         Ok(())
     }
 
+    pub fn configure_rollout(
+        &self,
+        proposal_id: &ProposalId,
+        binding: EvolutionRolloutBinding,
+        limits: Vec<EvolutionStageLimits>,
+        transition_id: RequestDigest,
+        actor: PrincipalId,
+        now: Timestamp,
+    ) -> Result<bool, EvolutionError> {
+        let mut proposals = self.lock()?;
+        let record = proposals.get(proposal_id).ok_or(EvolutionError::NotFound)?;
+        if record.state != EvolutionState::CanaryPassed {
+            return Err(EvolutionError::InvalidTransition(record.state));
+        }
+        if let Some(rollout) = &record.rollout {
+            if rollout.configuration_replay(&binding, &limits, &transition_id, &actor, now)? {
+                return Ok(false);
+            }
+            return Err(EvolutionError::RolloutAlreadyConfigured);
+        }
+        if binding.evidence_digest() != record.proposal.evidence_digest() {
+            return Err(EvolutionError::ProposalMismatch);
+        }
+        let mut updated = record.clone();
+        updated.rollout = Some(EvolutionRollout::new(
+            binding,
+            limits,
+            transition_id,
+            actor,
+            now,
+        )?);
+        self.save_and_replace(&mut proposals, updated)?;
+        Ok(true)
+    }
+
+    pub fn record_rollout_scorecard(
+        &self,
+        proposal_id: &ProposalId,
+        scorecard: EvolutionScorecard,
+        transition_id: RequestDigest,
+        actor: PrincipalId,
+    ) -> Result<bool, EvolutionError> {
+        self.mutate_rollout(proposal_id, |rollout| {
+            rollout.record_scorecard(scorecard, transition_id, actor)
+        })
+    }
+
+    pub fn approve_rollout_promotion(
+        &self,
+        proposal_id: &ProposalId,
+        approval: EvolutionPromotionApproval,
+        transition_id: RequestDigest,
+        now: Timestamp,
+    ) -> Result<bool, EvolutionError> {
+        self.mutate_rollout(proposal_id, |rollout| {
+            rollout.approve(proposal_id, approval, transition_id, now)
+        })
+    }
+
+    pub fn promote_rollout(
+        &self,
+        proposal_id: &ProposalId,
+        transition_id: RequestDigest,
+        actor: PrincipalId,
+        now: Timestamp,
+        reason: impl Into<String>,
+    ) -> Result<bool, EvolutionError> {
+        let reason = reason.into();
+        self.mutate_rollout(proposal_id, |rollout| {
+            rollout.promote(transition_id, actor, now, reason)
+        })
+    }
+
+    pub fn pause_rollout(
+        &self,
+        proposal_id: &ProposalId,
+        transition_id: RequestDigest,
+        actor: PrincipalId,
+        now: Timestamp,
+        reason: impl Into<String>,
+    ) -> Result<bool, EvolutionError> {
+        let reason = reason.into();
+        self.mutate_rollout(proposal_id, |rollout| {
+            rollout.pause(transition_id, actor, now, reason)
+        })
+    }
+
+    pub fn resume_rollout(
+        &self,
+        proposal_id: &ProposalId,
+        transition_id: RequestDigest,
+        actor: PrincipalId,
+        now: Timestamp,
+        reason: impl Into<String>,
+    ) -> Result<bool, EvolutionError> {
+        let reason = reason.into();
+        self.mutate_rollout(proposal_id, |rollout| {
+            rollout.resume(transition_id, actor, now, reason)
+        })
+    }
+
+    pub fn reject_rollout_promotion(
+        &self,
+        proposal_id: &ProposalId,
+        transition_id: RequestDigest,
+        actor: PrincipalId,
+        now: Timestamp,
+        reason: impl Into<String>,
+    ) -> Result<bool, EvolutionError> {
+        let reason = reason.into();
+        self.mutate_rollout(proposal_id, |rollout| {
+            rollout.reject(transition_id, actor, now, reason)
+        })
+    }
+
+    pub fn retry_rollout_stage(
+        &self,
+        proposal_id: &ProposalId,
+        transition_id: RequestDigest,
+        actor: PrincipalId,
+        now: Timestamp,
+        reason: impl Into<String>,
+    ) -> Result<bool, EvolutionError> {
+        let reason = reason.into();
+        self.mutate_rollout(proposal_id, |rollout| {
+            rollout.retry(transition_id, actor, now, reason)
+        })
+    }
+
+    pub fn rollback_rollout(
+        &self,
+        proposal_id: &ProposalId,
+        transition_id: RequestDigest,
+        actor: PrincipalId,
+        now: Timestamp,
+        reason: impl Into<String>,
+    ) -> Result<bool, EvolutionError> {
+        let reason = reason.into();
+        self.mutate_rollout(proposal_id, |rollout| {
+            rollout.mark_rolled_back(transition_id, actor, now, reason)
+        })
+    }
+
     pub(crate) fn activate(
         &self,
         proposal_id: &ProposalId,
@@ -481,6 +657,13 @@ impl EvolutionEngine {
         };
         if record.state != valid_state {
             return Err(EvolutionError::InvalidTransition(record.state));
+        }
+        if record
+            .rollout
+            .as_ref()
+            .is_some_and(|rollout| !rollout.activation_ready())
+        {
+            return Err(EvolutionError::RolloutIncomplete);
         }
         let mut updated = record.clone();
         updated.state = EvolutionState::Active;
@@ -519,6 +702,31 @@ impl EvolutionEngine {
         Ok(())
     }
 
+    fn mutate_rollout<F>(
+        &self,
+        proposal_id: &ProposalId,
+        mutation: F,
+    ) -> Result<bool, EvolutionError>
+    where
+        F: FnOnce(&mut EvolutionRollout) -> Result<bool, EvolutionContractError>,
+    {
+        let mut proposals = self.lock()?;
+        let record = proposals.get(proposal_id).ok_or(EvolutionError::NotFound)?;
+        if record.state != EvolutionState::CanaryPassed {
+            return Err(EvolutionError::InvalidTransition(record.state));
+        }
+        let mut updated = record.clone();
+        let rollout = updated
+            .rollout
+            .as_mut()
+            .ok_or(EvolutionError::RolloutRequired)?;
+        let changed = mutation(rollout)?;
+        if changed {
+            self.save_and_replace(&mut proposals, updated)?;
+        }
+        Ok(changed)
+    }
+
     fn lock(
         &self,
     ) -> Result<std::sync::MutexGuard<'_, BTreeMap<ProposalId, StoredProposal>>, EvolutionError>
@@ -533,7 +741,9 @@ impl EvolutionEngine {
 mod tests {
     use super::*;
     use pandora_types::{
-        ArtifactId, CanaryResult, EvolutionSource, MemoryId, PrincipalId, RequestDigest, Timestamp,
+        ArtifactId, CanaryResult, EvolutionReleaseChannel, EvolutionRolloutBinding,
+        EvolutionRolloutStage, EvolutionScorecard, EvolutionSource, EvolutionStageLimits, MemoryId,
+        PrincipalId, RequestDigest, Timestamp,
     };
     use rusqlite::{Connection, params};
 
@@ -713,6 +923,138 @@ mod tests {
             EvolutionEngine::open(&path, EvolutionPolicy::production(1)),
             Err(EvolutionError::StoreUnavailable)
         ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn durable_rollout_blocks_activation_until_every_stage_is_complete() {
+        fn digest(value: u64) -> RequestDigest {
+            RequestDigest::new(format!("sha256:{value:064x}")).unwrap()
+        }
+        let root = crate::test_support::new_temp_dir("pandora-evolution-rollout").unwrap();
+        let path = root.join("evolution.sqlite3");
+        let engine = EvolutionEngine::open(&path, EvolutionPolicy::production(1)).unwrap();
+        let proposal_id = ProposalId::new("proposal-rollout").unwrap();
+        engine
+            .submit(
+                MutationProposal::new(
+                    proposal_id.as_str(),
+                    EvolutionSource::Gepa,
+                    ArtifactId::new("base-rollout").unwrap(),
+                    ArtifactId::new("candidate-rollout").unwrap(),
+                    digest(2),
+                    "governed rollout",
+                    Timestamp::from_unix_seconds(10),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        engine
+            .record_evaluation(HoldoutEvaluation::new(
+                proposal_id.clone(),
+                99,
+                99,
+                true,
+                true,
+                true,
+                Timestamp::from_unix_seconds(11),
+            ))
+            .unwrap();
+        engine
+            .approve(
+                &proposal_id,
+                ParliamentApproval::new(
+                    proposal_id.clone(),
+                    PrincipalId::new("parliament-1").unwrap(),
+                    1,
+                    Timestamp::from_unix_seconds(12),
+                ),
+                ArtifactSignature::new(
+                    ArtifactId::new("candidate-rollout").unwrap(),
+                    PrincipalId::new("signer-1").unwrap(),
+                    "signed-rollout-candidate",
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        engine.stage(&proposal_id).unwrap();
+        engine
+            .record_canary(
+                CanaryResult::new(
+                    proposal_id.clone(),
+                    true,
+                    0,
+                    "legacy canary passed before staged rollout",
+                    Timestamp::from_unix_seconds(13),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let limits = [
+            EvolutionRolloutStage::Canary,
+            EvolutionRolloutStage::Limited,
+            EvolutionRolloutStage::Expanded,
+            EvolutionRolloutStage::Complete,
+        ]
+        .into_iter()
+        .map(|stage| EvolutionStageLimits::new(stage, 10_000, 600, 0, 90, 500, 95).unwrap())
+        .collect();
+        engine
+            .configure_rollout(
+                &proposal_id,
+                EvolutionRolloutBinding::new(
+                    "0123456789abcdef0123456789abcdef01234567",
+                    digest(1),
+                    EvolutionReleaseChannel::Beta,
+                    digest(2),
+                )
+                .unwrap(),
+                limits,
+                digest(3),
+                PrincipalId::new("release-manager-1").unwrap(),
+                Timestamp::from_unix_seconds(14),
+            )
+            .unwrap();
+        engine
+            .record_rollout_scorecard(
+                &proposal_id,
+                EvolutionScorecard::new(
+                    EvolutionRolloutStage::Canary,
+                    99,
+                    100,
+                    99,
+                    1_000,
+                    60,
+                    0,
+                    digest(4),
+                    digest(5),
+                    PrincipalId::new("evaluator-1").unwrap(),
+                    Timestamp::from_unix_seconds(15),
+                )
+                .unwrap(),
+                digest(6),
+                PrincipalId::new("evaluator-1").unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            engine.activate(&proposal_id),
+            Err(EvolutionError::RolloutIncomplete)
+        );
+        drop(engine);
+        let reopened = EvolutionEngine::open(&path, EvolutionPolicy::production(1)).unwrap();
+        let rollout = reopened
+            .inspect(&proposal_id)
+            .unwrap()
+            .rollout()
+            .cloned()
+            .unwrap();
+        assert_eq!(rollout.current_stage(), EvolutionRolloutStage::Canary);
+        assert_eq!(
+            rollout.status(),
+            pandora_types::EvolutionRolloutStatus::AwaitingApproval
+        );
+        assert_eq!(rollout.transitions().len(), 2);
         let _ = std::fs::remove_dir_all(root);
     }
 }

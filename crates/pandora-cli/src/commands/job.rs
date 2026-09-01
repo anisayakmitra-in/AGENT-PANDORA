@@ -460,7 +460,6 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
     };
     let heartbeat_failed = heartbeat.failed() && !heartbeat.stop_requested();
     drop(heartbeat);
-    drop(context);
     supervisor.shutdown().map_err(|error| {
         CliError::execution(
             "job worker supervisor shutdown failed",

@@ -19,10 +19,30 @@ on:
           - stable
         default: beta
       promotion_intent:
-        description: Validate promotion readiness without creating a tag or activating an artifact
+        description: Request an environment-approved tag after rollout evidence is complete
         required: true
         type: boolean
         default: false
+      release_tag:
+        description: Exact SemVer tag to create after approval (required for promotion)
+        required: false
+        type: string
+      exact_commit:
+        description: Exact 40-character commit bound by the rollout approval
+        required: false
+        type: string
+      artifact_digest:
+        description: Exact sha256 artifact digest bound by the rollout approval
+        required: false
+        type: string
+      evidence_digest:
+        description: Exact sha256 rollout evidence digest bound by the approval
+        required: false
+        type: string
+      approval_id:
+        description: Unique sha256 human approval identity
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -109,14 +129,79 @@ jobs:
           retention-days: 90
 
   promotion-gate:
-    name: Promotion readiness (${{ inputs.channel }})
+    name: Approved tag creation (${{ inputs.channel }})
     if: github.event_name == 'workflow_dispatch' && inputs.promotion_intent
     needs: validate
     runs-on: ubuntu-latest
+    concurrency:
+      group: approved-tag-ledger
+      cancel-in-progress: false
+    environment:
+      name: promotion-${{ inputs.channel }}
+    permissions:
+      contents: write
+    env:
+      PIPELINE_CHANNEL: ${{ inputs.channel }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      APPROVED_COMMIT: ${{ inputs.exact_commit }}
+      ARTIFACT_DIGEST: ${{ inputs.artifact_digest }}
+      EVIDENCE_DIGEST: ${{ inputs.evidence_digest }}
+      APPROVAL_ID: ${{ inputs.approval_id }}
     steps:
+      - name: Check out the exact approved source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+
       - name: Require the main branch
         shell: bash
-        run: test "$GITHUB_REF" = "refs/heads/main"
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$APPROVED_COMMIT" = "$GITHUB_SHA"
+          [[ "$APPROVED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$EVIDENCE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$APPROVAL_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ -n "$RELEASE_TAG" ]]
+          [[ "$GITHUB_ACTOR" != *"[bot]" ]]
+          test "$GITHUB_ACTOR" != "github-actions"
+          case "$PIPELINE_CHANNEL" in
+            stable) [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] ;;
+            release-candidate) [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]] ;;
+            beta) [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+$ ]] && [[ "$RELEASE_TAG" != *"-rc."* ]] ;;
+            *) exit 1 ;;
+          esac
+          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            echo "The approved tag already exists; approval identities are one-shot." >&2
+            exit 1
+          fi
+          if git for-each-ref refs/tags --format='%(contents)' | grep -Fq "\"approval_id\": \"$APPROVAL_ID\""; then
+            echo "The rollout approval ID is already bound to another immutable tag." >&2
+            exit 1
+          fi
 
-      - name: Keep promotion explicit
-        run: echo "Evidence is ready for an approved ${{ inputs.channel }} tag; this workflow does not create tags, publish releases, or activate artifacts."
+      - name: Record exact approved tag evidence
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/promotion-evidence"
+          python -c 'import json, os, pathlib; pathlib.Path(os.environ["RUNNER_TEMP"], "promotion-evidence", "approved-tag.json").write_text(json.dumps({"schema_version": 1, "approval_id": os.environ["APPROVAL_ID"], "requested_by": os.environ["GITHUB_ACTOR"], "approval_environment": "promotion-" + os.environ["PIPELINE_CHANNEL"], "commit": os.environ["APPROVED_COMMIT"], "artifact_digest": os.environ["ARTIFACT_DIGEST"], "channel": os.environ["PIPELINE_CHANNEL"], "evidence_digest": os.environ["EVIDENCE_DIGEST"], "release_tag": os.environ["RELEASE_TAG"], "artifact_activation_performed": False, "authority": "tag_creation_only"}, sort_keys=True) + "\n", encoding="utf-8")'
+
+      - name: Create the one approved tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR_ID+$GITHUB_ACTOR@users.noreply.github.com"
+          git tag -a "$RELEASE_TAG" "$APPROVED_COMMIT" -F "$RUNNER_TEMP/promotion-evidence/approved-tag.json"
+          git push origin "refs/tags/$RELEASE_TAG"
+
+      - name: Upload approved tag evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: approved-tag-evidence-${{ inputs.release_tag }}
+          path: ${{ runner.temp }}/promotion-evidence/approved-tag.json
+          if-no-files-found: error
+          retention-days: 90

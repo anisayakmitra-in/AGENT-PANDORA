@@ -20,16 +20,17 @@ use pandora_provider::{ModelId, Provider};
 use pandora_types::{
     ContextClassification, ContextFragment, ContextOrigin, ContextSource, ContextTrust,
     EvaluationContractError, EvaluationReceipt, EvaluationRequest, EventPayload, EventType,
-    IdError, MemoryTier, PrincipalId, ProposalId, ResearchArtifactKind, ServiceAgentResumeRequest,
-    ServiceAgentRunRequest, ServiceAgentRunResult, ServiceApprovalSummary,
-    ServiceArtifactActivation, ServiceContextAttachment, ServiceContractError,
-    ServiceEngineSummary, ServiceEventPage, ServiceEvolutionApproval, ServiceEvolutionCanary,
-    ServiceEvolutionCandidate, ServiceEvolutionEvaluation, ServiceEvolutionPreview,
-    ServiceEvolutionSummary, ServiceHarnessSummary, ServiceHealth, ServiceMemoryPage,
-    ServiceMemoryRecord, ServiceOrchestrationRoleSummary, ServiceOrchestrationRunSummary,
-    ServiceProviderSummary, ServiceRequest, ServiceResponse, ServiceRunRequest, ServiceRunResult,
-    ServiceRunResumeRequest, ServiceSessionDetail, ServiceSessionSummary, ServiceToolSummary,
-    Session, SessionId, TaskIntent, TenantId, Timestamp, WorkspaceId,
+    IdError, MemoryTier, PrincipalId, ProposalId, RequestDigest, ResearchArtifactKind,
+    ServiceAgentResumeRequest, ServiceAgentRunRequest, ServiceAgentRunResult,
+    ServiceApprovalSummary, ServiceArtifactActivation, ServiceContextAttachment,
+    ServiceContractError, ServiceEngineSummary, ServiceEventPage, ServiceEvolutionApproval,
+    ServiceEvolutionCanary, ServiceEvolutionCandidate, ServiceEvolutionEvaluation,
+    ServiceEvolutionPreview, ServiceEvolutionSummary, ServiceHarnessSummary, ServiceHealth,
+    ServiceMemoryPage, ServiceMemoryRecord, ServiceOrchestrationRoleSummary,
+    ServiceOrchestrationRunSummary, ServiceProviderSummary, ServiceRequest, ServiceResponse,
+    ServiceRunRequest, ServiceRunResult, ServiceRunResumeRequest, ServiceSessionDetail,
+    ServiceSessionSummary, ServiceToolSummary, Session, SessionId, TaskIntent, TenantId, Timestamp,
+    WorkspaceId,
 };
 use rusqlite::Connection;
 use std::collections::BTreeMap;
@@ -574,6 +575,20 @@ impl RuntimeService {
                 reason,
                 ..
             } => self.rollback_evolution(scope, proposal_id, reason, now),
+            ServiceRequest::EvolutionRolloutTransition {
+                proposal_id,
+                operation,
+                transition_id,
+                reason,
+                ..
+            } => self.transition_evolution_rollout(
+                scope,
+                proposal_id,
+                operation,
+                transition_id,
+                reason,
+                now,
+            ),
             ServiceRequest::Run { request, .. } => {
                 self.ensure_execution_owner(scope)?;
                 self.run(scope, request, now)
@@ -2114,6 +2129,60 @@ impl RuntimeService {
         ))
     }
 
+    fn transition_evolution_rollout(
+        &self,
+        scope: &RuntimeServiceScope,
+        proposal_id: &ProposalId,
+        operation: &str,
+        transition_id: &RequestDigest,
+        reason: &str,
+        now: Timestamp,
+    ) -> Result<ServiceResponse, RuntimeServiceError> {
+        self.ensure_evolution_owner(scope)?;
+        let evolution = self
+            .evolution
+            .as_ref()
+            .ok_or(RuntimeServiceError::EvolutionUnavailable)?;
+        let actor = scope.principal_id().clone();
+        match operation {
+            "promote" => {
+                evolution.promote_rollout(proposal_id, transition_id.clone(), actor, now, reason)?
+            }
+            "pause" => {
+                evolution.pause_rollout(proposal_id, transition_id.clone(), actor, now, reason)?
+            }
+            "resume" => {
+                evolution.resume_rollout(proposal_id, transition_id.clone(), actor, now, reason)?
+            }
+            "reject" => evolution.reject_rollout_promotion(
+                proposal_id,
+                transition_id.clone(),
+                actor,
+                now,
+                reason,
+            )?,
+            "retry" => evolution.retry_rollout_stage(
+                proposal_id,
+                transition_id.clone(),
+                actor,
+                now,
+                reason,
+            )?,
+            "rollback" => evolution.rollback_rollout(
+                proposal_id,
+                transition_id.clone(),
+                actor,
+                now,
+                reason,
+            )?,
+            _ => unreachable!("rollout operation is validated by the service contract"),
+        };
+        let proposal = service_evolution_summary(evolution.inspect(proposal_id)?);
+        Ok(ServiceResponse::evolution_rollout_mutation(
+            operation, proposal,
+        ))
+    }
+
     fn run(
         &self,
         scope: &RuntimeServiceScope,
@@ -2620,7 +2689,9 @@ fn orchestration_summary(
 
 fn authorize_role(role: AccessRole, request: &ServiceRequest) -> Result<(), RuntimeServiceError> {
     let allowed = match request {
-        ServiceRequest::EvolutionActivate { .. } | ServiceRequest::EvolutionRollback { .. } => {
+        ServiceRequest::EvolutionActivate { .. }
+        | ServiceRequest::EvolutionRollback { .. }
+        | ServiceRequest::EvolutionRolloutTransition { .. } => {
             matches!(role, AccessRole::Administrator)
         }
         ServiceRequest::ApprovalResolve { .. }
@@ -2898,6 +2969,7 @@ fn service_evolution_summary(record: EvolutionRecord) -> ServiceEvolutionSummary
         canary,
     )
     .with_memory_evidence_ids(proposal.memory_evidence_ids().to_vec())
+    .with_rollout(record.rollout().cloned())
 }
 
 fn service_session_summary(session: Session) -> ServiceSessionSummary {

@@ -421,6 +421,17 @@ fn service_request(request: &JsonRpcRequest) -> Result<Option<ServiceRequest>, (
             )
             .map_err(|_| ())?
         }
+        "evolution.rollout.transition" => {
+            let params: EvolutionRolloutTransitionParams = deserialize_params(params)?;
+            ServiceRequest::evolution_rollout_transition(
+                params.proposal_id,
+                params.confirmation,
+                params.operation,
+                params.transition_id,
+                params.reason,
+            )
+            .map_err(|_| ())?
+        }
         "run.execute" => {
             let params: ServiceRunRequest = deserialize_params(params)?;
             ServiceRequest::run(params)
@@ -528,6 +539,15 @@ struct EvolutionActivateParams {
 struct EvolutionRollbackParams {
     proposal_id: String,
     confirmation: String,
+    reason: String,
+}
+
+#[derive(Clone, Deserialize)]
+struct EvolutionRolloutTransitionParams {
+    proposal_id: String,
+    confirmation: String,
+    operation: String,
+    transition_id: String,
     reason: String,
 }
 
@@ -985,6 +1005,29 @@ mod tests {
         )
         .await;
         let body = to_bytes(rollback_without_reason.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"]["code"], -32602);
+
+        let invalid_rollout_transition = post(
+            &fixture,
+            Some(&fixture.token),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "evolution.rollout.transition",
+                "params": {
+                    "proposal_id": "proposal-a",
+                    "confirmation": "proposal-a",
+                    "operation": "pause",
+                    "transition_id": "not-a-digest",
+                    "reason": "operator pause"
+                }
+            }),
+        )
+        .await;
+        let body = to_bytes(invalid_rollout_transition.into_body(), usize::MAX)
             .await
             .unwrap();
         let body: Value = serde_json::from_slice(&body).unwrap();

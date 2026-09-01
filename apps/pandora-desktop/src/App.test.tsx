@@ -61,6 +61,7 @@ const runtime = vi.hoisted(() => ({
   run: vi.fn(),
   sessions: vi.fn(),
   tools: vi.fn(),
+  transitionEvolutionRollout: vi.fn(),
 }));
 
 vi.mock("./runtimeClient", () => ({
@@ -128,6 +129,7 @@ vi.mock("./runtimeClient", () => ({
     run = runtime.run;
     sessions = runtime.sessions;
     tools = runtime.tools;
+    transitionEvolutionRollout = runtime.transitionEvolutionRollout;
   },
 }));
 
@@ -1584,6 +1586,119 @@ describe("Pandora desktop run state", () => {
     await waitFor(() => {
       expect(runtime.activateEvolution).toHaveBeenCalledWith("proposal-canary", "proposal-canary");
       expect(screen.getByText("Candidate activated")).toBeInTheDocument();
+    });
+  });
+
+  it("shows exact staged rollout budgets and applies a human-approved promotion", async () => {
+    const digest = (character: string) => `sha256:${character.repeat(64)}`;
+    const proposal = {
+      proposal_id: "proposal-rollout",
+      source: "gepa",
+      base_artifact: "base-rollout",
+      candidate_artifact: "candidate-rollout",
+      evidence_digest: digest("2"),
+      expected_outcome: "Promote with bounded evidence",
+      created_at_unix_seconds: 20,
+      state: "canary_passed",
+      evaluation: null,
+      approval: null,
+      canary: { passed: true, failure_count: 0, note: "passed", evaluated_at_unix_seconds: 21 },
+      rollout: {
+        binding: {
+          exact_commit: "0123456789abcdef0123456789abcdef01234567",
+          artifact_digest: digest("1"),
+          channel: "beta" as const,
+          evidence_digest: digest("2"),
+        },
+        limits: ["canary", "limited", "expanded", "complete"].map((stage) => ({
+          stage,
+          max_cost_micros: 10000,
+          max_duration_seconds: 600,
+          max_failure_count: 0,
+          min_quality_score: 90,
+          max_p95_latency_millis: 500,
+          min_stability_score: 95,
+        })),
+        current_stage: "canary" as const,
+        status: "awaiting_approval" as const,
+        scorecards: [{
+          stage: "canary" as const,
+          quality_score: 98,
+          p95_latency_millis: 210,
+          stability_score: 99,
+          cost_micros: 1200,
+          duration_seconds: 60,
+          failure_count: 0,
+          evidence_digest: digest("3"),
+          scorecard_digest: digest("4"),
+          evaluator: "evaluator-1",
+          recorded_at: 22,
+        }],
+        pending_approval: {
+          approval_id: digest("5"),
+          proposal_id: "proposal-rollout",
+          from_stage: "canary" as const,
+          to_stage: "limited" as const,
+          binding: {
+            exact_commit: "0123456789abcdef0123456789abcdef01234567",
+            artifact_digest: digest("1"),
+            channel: "beta" as const,
+            evidence_digest: digest("2"),
+          },
+          scorecard_digest: digest("4"),
+          approver: "principal-1",
+          authority: "human" as const,
+          approved_at: 23,
+          expires_at: 4102444800,
+        },
+        consumed_approval_ids: [],
+        retry_count: 0,
+        transitions: [{
+          transition_id: digest("6"),
+          request_fingerprint: digest("7"),
+          action: "scorecard",
+          from_stage: "canary",
+          to_stage: "canary",
+          from_status: "running",
+          to_status: "awaiting_approval",
+          actor: "evaluator-1",
+          evidence_digest: digest("4"),
+          occurred_at: 22,
+          reason: "passed limits",
+        }],
+      },
+    };
+    runtime.evolution.mockResolvedValue([proposal]);
+    runtime.transitionEvolutionRollout.mockResolvedValue({
+      ...proposal,
+      rollout: {
+        ...proposal.rollout,
+        current_stage: "limited",
+        status: "running",
+        pending_approval: null,
+      },
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Evolution/ }));
+
+    const rollout = await screen.findByLabelText("Governed rollout proposal-rollout");
+    expect(within(rollout).getByText("canary · awaiting approval")).toBeInTheDocument();
+    expect(within(rollout).getByText("Cost ≤ 10,000 μ")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Activate candidate" })).not.toBeInTheDocument();
+    fireEvent.click(within(rollout).getByRole("button", { name: "Promote stage" }));
+    fireEvent.change(screen.getByLabelText("Confirm rollout promote proposal-rollout"), { target: { value: "proposal-rollout" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm promote" }));
+
+    await waitFor(() => {
+      expect(runtime.transitionEvolutionRollout).toHaveBeenCalledWith(
+        "proposal-rollout",
+        "proposal-rollout",
+        "promote",
+        expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+        "Apply the exact approved promotion",
+      );
+      expect(screen.getByText("limited · running")).toBeInTheDocument();
     });
   });
 

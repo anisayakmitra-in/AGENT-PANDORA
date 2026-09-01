@@ -18,7 +18,7 @@ Pandora records improvement evidence without allowing the improvement system to 
 - `pandora evolution generate` is the research-only intake path for prompt, Skill, workflow, and WASM Gene candidates. It sends a bounded base artifact, structured evaluation/feedback summaries, and explicitly approved internal memories to the configured provider. Every included memory carries its exact stable ID; the canonical ID list is hashed into evidence and persisted on the proposal. The provider response must be exact JSON, cannot contain tool calls, and becomes only a proposed artifact with exact-byte provenance in `research-artifacts.sqlite3`.
 - `pandora evolution approve --input <path>` records Parliament approval and candidate signature evidence after evaluation gates pass. Approval does not activate a candidate.
 - Approval requires policy, regression, and holdout evidence, Parliament approval, and candidate-artifact signature evidence.
-- `pandora evolution stage`, `pandora evolution canary`, `pandora evolution activate`, and `pandora evolution rollback` expose the remaining governed lifecycle to operators.
+- `pandora evolution stage` and `pandora evolution canary` establish the production candidate boundary. `pandora evolution rollout` then persists canary, limited, expanded, and complete rollout stages before the existing activation command can run.
 - Activation requires both the base and candidate content hashes to exist in the admitted package store for package and WASM Gene candidates. Prompt, Skill, and workflow research candidates validate their durable exact-byte provenance instead; their catalog activation remains non-executable until a future runtime consumer explicitly reads that artifact class. Admission still grants no runtime authority.
 - `ArtifactCatalog` persists active base-to-candidate bindings, resolves bounded replacement chains, rejects cycles and duplicate bases, and requires dependent replacements to roll back first.
 - `ReplacementEngine` requires a passed canary and an idle execution boundary registered with that engine before activation. Activation and rollback produce typed receipts, and failed catalog changes compensate by rolling evolution state back closed.
@@ -36,6 +36,16 @@ Ed25519 signature evidence before recording a package. It does not establish
 publisher trust, grant permissions, or make the artifact executable.
 
 The `ReplacementEngine` serializes its local lifecycle transition behind an idle boundary. A failed canary or an artifact absent from the admitted package store cannot activate, and an active replacement can be rolled back to its recorded base artifact. Chained replacements unwind from the tip so rollback cannot strand an active dependent. Runtime consumption uses immutable execution-profile snapshots: concurrent custom Wasm runs observe either the catalog state before or after a committed transition, never a mid-run substitution.
+
+## Governed staged rollout
+
+A rollout is an optional strict gate added after the existing canary result. Once configured, it is durable and cannot be replaced. Its binding contains the exact source commit, candidate artifact digest, release channel, and proposal evidence digest. The evidence digest must match the proposal, and the channel uses the same closed `beta`, `release-candidate`, or `stable` vocabulary as release promotion.
+
+Every rollout contains exactly four ordered stages: `canary`, `limited`, `expanded`, and `complete`. Each stage has explicit maximum cost, elapsed duration, failure count, and p95 latency plus minimum quality and stability scores. A recorded scorecard either moves the stage to `awaiting_approval` or fails it closed. Failed or rejected stages have at most three explicit retries.
+
+Promotion requires a non-expired human approval bound to the proposal, current and next stage, exact rollout binding, and latest scorecard digest. The scorecard actor must be its named evaluator, and that evaluator principal cannot be the approver. Approval identities and transition identities are SHA-256 values. Every transition also stores an internally computed request fingerprint: an exact payload retry is idempotent, while using the same identity for another action or changed payload is rejected. Pause, resume, reject, retry, promotion, and rollback each append bounded transition evidence to the same SQLite proposal record. Rejection and rollback consume any pending approval so it can never be reused.
+
+The final `complete` stage also needs a passing scorecard and separate human approval. Its promotion sets `activation_ready`; it does not activate the artifact. `pandora evolution activate` remains the only artifact-catalog activation path, with its existing quiescence, admission, backup, and replacement receipts. A rollout rollback changes the rollout state only and cannot replay an uncertain artifact effect.
 
 ## Not shipped
 

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Added durable governed rollout stages for canary, limited, expanded, and
+  complete. Every stage carries explicit cost, duration, failure, quality,
+  latency, and stability limits; records a durable scorecard; and requires a
+  separate non-expired human approval bound to the exact proposal, commit,
+  artifact, channel, evidence, and scorecard. CLI, TUI, service, and desktop
+  surfaces expose pause, resume, reject, bounded retry, promotion, and rollback
+  evidence. Protected release environments may create one approved tag while
+  preserving the existing artifact activation and tag-driven publication paths.
+
 - Added one durable aggregate execution budget across dependent orchestration
   roles and repositories. SQLite now atomically reserves role capacity at
   dispatch and settles receipt-linked token, tool, elapsed-time, and cost usage

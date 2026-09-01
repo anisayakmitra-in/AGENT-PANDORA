@@ -1574,6 +1574,7 @@ fn pandora_rpc(
             | "evolution.activations"
             | "evolution.activate"
             | "evolution.rollback"
+            | "evolution.rollout.transition"
             | "run.execute"
             | "run.resume"
             | "agent.execute"

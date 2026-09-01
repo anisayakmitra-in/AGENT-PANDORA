@@ -362,6 +362,7 @@ commands:
   evaluation scorecard --session <id> [--fail-on-non-passed]
   evaluation schedule create --id <id> --name <name> --suite <id> [--proposal <proposal-id>] --interval-seconds <seconds> | list | disable --id <id> | claim --worker <id> [--limit <1-16>] | run --id <id> --worker <id> [--input <path>] [--harness <id>] [--fail-on-failure] | runs [--id <id>] [--limit <1-256>]
   evolution generate --session <id> [--provider <name>] [--model <id>] --kind prompt|skill|workflow|wasm_gene --target-id <id> --base <path> --output <path> | list [--limit <1-256>] | inspect --id <proposal-id> | submit --input <path> | evaluate --id <proposal-id> --input <path> [--fail-on-failure] | approve --input <path> | stage --id <proposal-id> | canary --input <path> | activate --id <proposal-id> | rollback --id <proposal-id> --reason <text>
+  evolution rollout configure --input <path> | score --input <path> | approve --input <path> | promote|pause|resume|reject|retry|rollback --id <proposal-id> --transition-id <sha256:digest> --actor <principal-id> [--reason <text>]
   feedback coding --session <id> --execution <id> --request-digest <digest> --expected-output <text> --output <text> [--terminal-failure <text>] [--retryable]
   evolution inspect --id <proposal-id>
   rollout inspect --session <id> [--execution <id>]
@@ -543,6 +544,8 @@ mod tests {
         assert!(usage.contains("evolution generate --session <id>"));
         assert!(usage.contains("list [--limit <1-256>]"));
         assert!(usage.contains("evolution inspect --id <proposal-id>"));
+        assert!(usage.contains("evolution rollout configure --input <path>"));
+        assert!(usage.contains("promote|pause|resume|reject|retry|rollback"));
         assert!(usage.contains("graph code|knowledge|review|architecture --input <path>"));
     }
 }

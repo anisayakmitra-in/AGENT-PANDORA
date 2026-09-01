@@ -583,6 +583,7 @@ export type RuntimeEvolutionProposal = {
     note: string;
     evaluated_at_unix_seconds: number;
   } | null;
+  rollout?: RuntimeEvolutionRollout | null;
   candidate?: {
     kind: string;
     target_id: string;
@@ -601,6 +602,66 @@ export type RuntimeEvolutionProposal = {
       truncated: boolean;
     } | null;
   } | null;
+};
+
+export type RuntimeEvolutionRollout = {
+  binding: {
+    exact_commit: string;
+    artifact_digest: string;
+    channel: "beta" | "release-candidate" | "stable";
+    evidence_digest: string;
+  };
+  limits: Array<{
+    stage: "canary" | "limited" | "expanded" | "complete";
+    max_cost_micros: number;
+    max_duration_seconds: number;
+    max_failure_count: number;
+    min_quality_score: number;
+    max_p95_latency_millis: number;
+    min_stability_score: number;
+  }>;
+  current_stage: "canary" | "limited" | "expanded" | "complete";
+  status: "running" | "awaiting_approval" | "paused" | "failed" | "rejected" | "complete" | "rolled_back";
+  scorecards: Array<{
+    stage: "canary" | "limited" | "expanded" | "complete";
+    quality_score: number;
+    p95_latency_millis: number;
+    stability_score: number;
+    cost_micros: number;
+    duration_seconds: number;
+    failure_count: number;
+    evidence_digest: string;
+    scorecard_digest: string;
+    evaluator: string;
+    recorded_at: number;
+  }>;
+  pending_approval: {
+    approval_id: string;
+    proposal_id: string;
+    from_stage: "canary" | "limited" | "expanded" | "complete";
+    to_stage: "limited" | "expanded" | "complete" | null;
+    binding: RuntimeEvolutionRollout["binding"];
+    scorecard_digest: string;
+    approver: string;
+    authority: "human" | "automated_evaluator";
+    approved_at: number;
+    expires_at: number;
+  } | null;
+  consumed_approval_ids: string[];
+  retry_count: number;
+  transitions: Array<{
+    transition_id: string;
+    request_fingerprint: string;
+    action: string;
+    from_stage: string;
+    to_stage: string;
+    from_status: string;
+    to_status: string;
+    actor: string;
+    evidence_digest: string;
+    occurred_at: number;
+    reason: string;
+  }>;
 };
 
 export type RuntimeArtifactActivation = {
@@ -779,6 +840,12 @@ type EvolutionActivationsResponse = {
 type EvolutionMutationResponse = {
   kind: "evolution_mutation";
   mutation: RuntimeEvolutionMutation;
+};
+
+type EvolutionRolloutMutationResponse = {
+  kind: "evolution_rollout_mutation";
+  operation: string;
+  proposal: RuntimeEvolutionProposal;
 };
 
 const endpointStorageKey = "pandora.runtime.endpoint";
@@ -1266,6 +1333,23 @@ export class RuntimeClient {
       reason,
     });
     return response.mutation;
+  }
+
+  async transitionEvolutionRollout(
+    proposalId: string,
+    confirmation: string,
+    operation: "promote" | "pause" | "resume" | "reject" | "retry" | "rollback",
+    transitionId: string,
+    reason: string,
+  ): Promise<RuntimeEvolutionProposal> {
+    const response = await this.call<EvolutionRolloutMutationResponse>("evolution.rollout.transition", {
+      proposal_id: proposalId,
+      confirmation,
+      operation,
+      transition_id: transitionId,
+      reason,
+    });
+    return response.proposal;
   }
 
   async events(sessionId: string, limit = 256): Promise<RuntimeEvent[]> {

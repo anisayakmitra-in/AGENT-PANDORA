@@ -69,3 +69,48 @@ fn orchestration_mutations_require_the_exact_run_identifier() {
     assert!(ServiceRequest::orchestration_cancel("run-1", "run-2").is_err());
     assert!(ServiceRequest::orchestration_resume("run-1", "run-1").is_ok());
 }
+
+#[test]
+fn rollout_transitions_require_exact_confirmation_and_sha256_identity() {
+    let digest = format!("sha256:{}", "a".repeat(64));
+    assert!(
+        ServiceRequest::evolution_rollout_transition(
+            "proposal-1",
+            "proposal-2",
+            "pause",
+            digest.clone(),
+            "operator pause",
+        )
+        .is_err()
+    );
+    assert!(
+        ServiceRequest::evolution_rollout_transition(
+            "proposal-1",
+            "proposal-1",
+            "self-approve",
+            digest.clone(),
+            "invalid operation",
+        )
+        .is_err()
+    );
+    assert!(
+        ServiceRequest::evolution_rollout_transition(
+            "proposal-1",
+            "proposal-1",
+            "pause",
+            "not-a-digest",
+            "operator pause",
+        )
+        .is_err()
+    );
+    assert!(
+        ServiceRequest::evolution_rollout_transition(
+            "proposal-1",
+            "proposal-1",
+            "pause",
+            digest,
+            "operator pause",
+        )
+        .is_ok()
+    );
+}

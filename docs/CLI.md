@@ -654,6 +654,45 @@ pandora evolution activate --id proposal-1 --json
 pandora evolution rollback --id proposal-1 --reason "regression observed" --json
 ```
 
+After the existing canary passes, `evolution rollout configure` can add the
+strict four-stage production gate. The configuration JSON contains
+`proposal_id`, a 40- or 64-character lowercase `exact_commit`,
+`artifact_digest`, `channel`, `evidence_digest`, `transition_id`, `actor`, and
+exactly four `limits` entries for `canary`, `limited`, `expanded`, and
+`complete`. Digests use `sha256:<64 lowercase hexadecimal characters>`. Each
+limit supplies `max_cost_micros`, `max_duration_seconds`,
+`max_failure_count`, `min_quality_score`, `max_p95_latency_millis`, and
+`min_stability_score`. `configured_at` is required so an exact retry carries
+the same evidence timestamp.
+
+```text
+pandora evolution rollout configure --input rollout.json --json
+pandora evolution rollout score --input canary-scorecard.json --json
+pandora evolution rollout approve --input canary-approval.json --json
+pandora evolution rollout promote --id proposal-1 --transition-id sha256:<digest> --actor release-manager-1 --json
+pandora evolution rollout pause --id proposal-1 --transition-id sha256:<digest> --actor operator-1 --reason "error budget review" --json
+pandora evolution rollout resume --id proposal-1 --transition-id sha256:<digest> --actor operator-1 --reason "review complete" --json
+pandora evolution rollout reject --id proposal-1 --transition-id sha256:<digest> --actor release-manager-1 --reason "quality regression" --json
+pandora evolution rollout retry --id proposal-1 --transition-id sha256:<digest> --actor operator-1 --reason "fresh bounded evidence" --json
+pandora evolution rollout rollback --id proposal-1 --transition-id sha256:<digest> --actor operator-1 --reason "stop rollout" --json
+```
+
+Scorecard JSON binds one current stage and records `quality_score`,
+`p95_latency_millis`, `stability_score`, `cost_micros`, `duration_seconds`,
+`failure_count`, `evidence_digest`, `scorecard_digest`, `evaluator`,
+`transition_id`, `actor`, and `recorded_at`. The actor must equal the evaluator,
+and the explicit timestamp makes an exact retry stable. A failing scorecard is
+retained and moves the stage to `failed`.
+
+Approval JSON contains `approval_id`, `proposal_id`, `from_stage`, `to_stage`
+(`null` only for the final `complete` stage), the same exact commit, artifact,
+channel, and evidence binding, the latest `scorecard_digest`, `approver`,
+`authority: "human"`, `approved_at`, `expires_at`, and a unique
+`transition_id`. An automated evaluator, self-approval, an expired approval,
+an already consumed identity, or any binding mismatch fails closed. Promotion
+must be performed by the exact approver. The final promotion only opens the
+existing activation gate; it does not create a second activation path.
+
 The canary document contains proposal_id, failure_count, note, and an
 optional evaluated_at Unix timestamp. The legacy passed field is optional and,
 when present, must agree with the versioned evidence-derived production policy
@@ -962,6 +1001,10 @@ pandora evolution evaluate --id <proposal-id> --input <path> [--fail-on-failure]
 pandora evolution approve --input <path>
 pandora evolution stage --id <proposal-id>
 pandora evolution canary --input <path>
+pandora evolution rollout configure --input <path>
+pandora evolution rollout score --input <path>
+pandora evolution rollout approve --input <path>
+pandora evolution rollout promote|pause|resume|reject|retry|rollback --id <proposal-id> --transition-id <sha256:digest> --actor <principal-id> [--reason <text>]
 pandora evolution activate --id <proposal-id>
 pandora evolution rollback --id <proposal-id> --reason <text>
 pandora rollout inspect --session <id> [--execution <id>]

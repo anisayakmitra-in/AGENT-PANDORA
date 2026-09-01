@@ -1109,6 +1109,27 @@ function App() {
     return mutation;
   };
 
+  const mutateEvolutionRollout = async (
+    operation: "promote" | "pause" | "resume" | "reject" | "retry" | "rollback",
+    proposalId: string,
+    confirmation: string,
+    reason: string,
+  ): Promise<RuntimeEvolutionProposal> => {
+    if (!client) {
+      throw new Error("Connect to the local Pandora service first");
+    }
+    const transitionId = await evolutionTransitionId(proposalId, operation);
+    const proposal = await client.transitionEvolutionRollout(
+      proposalId,
+      confirmation,
+      operation,
+      transitionId,
+      reason,
+    );
+    setEvolutionProposals((current) => current.map((candidate) => candidate.proposal_id === proposalId ? proposal : candidate));
+    return proposal;
+  };
+
   const inspectEvolutionCandidate = async (proposalId: string): Promise<RuntimeEvolutionProposal> => {
     if (!client) {
       throw new Error("Connect to the local Pandora service first");
@@ -1276,7 +1297,7 @@ function App() {
         ) : activeView === "tools" ? (
           <ToolsView tools={tools} runtimeStatus={runtimeStatus} onOpenView={selectView} />
         ) : activeView === "evolution" ? (
-          <EvolutionView proposals={evolutionProposals} activations={artifactActivations} runtimeStatus={runtimeStatus} onInspect={inspectEvolutionCandidate} onMutate={mutateEvolution} />
+          <EvolutionView proposals={evolutionProposals} activations={artifactActivations} runtimeStatus={runtimeStatus} onInspect={inspectEvolutionCandidate} onMutate={mutateEvolution} onRolloutMutate={mutateEvolutionRollout} />
         ) : (
           <SettingsView appearance={appearance} onAppearanceChange={setAppearance} companion={companion} onCompanionChange={setCompanion} runtimeStatus={runtimeStatus} health={runtimeHealth} native={native} endpoint={endpoint} dockOpen={dockOpen} dockPlacement={dockPlacement} dockSize={dockSize} onDockOpenChange={setDockOpen} onDockPlacementChange={setDockPlacement} onDockSizeChange={setDockSize} onResetDockLayout={resetDockLayout} onOpenView={selectView} />
         )}
@@ -3204,13 +3225,28 @@ function ConnectionView({ endpoint, runtimeStatus, runtimeError, health, provide
     </div>
   </div>;
 }
-function EvolutionView({ proposals, activations, runtimeStatus, onInspect, onMutate }: { proposals: RuntimeEvolutionProposal[]; activations: RuntimeArtifactActivation[]; runtimeStatus: RuntimeStatus; onInspect: (proposalId: string) => Promise<RuntimeEvolutionProposal>; onMutate: (operation: "activate" | "rollback", proposalId: string, confirmation: string, reason: string) => Promise<RuntimeEvolutionMutation> }) {
+async function evolutionTransitionId(proposalId: string, operation: string): Promise<string> {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error("Secure transition identity is unavailable");
+  }
+  const nonce = globalThis.crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  const bytes = new TextEncoder().encode(`${proposalId}\0${operation}\0${nonce}`);
+  const digest = new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", bytes));
+  return `sha256:${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function EvolutionView({ proposals, activations, runtimeStatus, onInspect, onMutate, onRolloutMutate }: { proposals: RuntimeEvolutionProposal[]; activations: RuntimeArtifactActivation[]; runtimeStatus: RuntimeStatus; onInspect: (proposalId: string) => Promise<RuntimeEvolutionProposal>; onMutate: (operation: "activate" | "rollback", proposalId: string, confirmation: string, reason: string) => Promise<RuntimeEvolutionMutation>; onRolloutMutate: (operation: "promote" | "pause" | "resume" | "reject" | "retry" | "rollback", proposalId: string, confirmation: string, reason: string) => Promise<RuntimeEvolutionProposal> }) {
   const [pending, setPending] = useState<{ operation: "activate" | "rollback"; proposalId: string } | null>(null);
   const [confirmation, setConfirmation] = useState("");
   const [reason, setReason] = useState("");
   const [mutationError, setMutationError] = useState("");
   const [mutationInFlight, setMutationInFlight] = useState(false);
   const [receipt, setReceipt] = useState<RuntimeEvolutionMutation | null>(null);
+  const [pendingRollout, setPendingRollout] = useState<{ operation: "promote" | "pause" | "resume" | "reject" | "retry" | "rollback"; proposalId: string } | null>(null);
+  const [rolloutConfirmation, setRolloutConfirmation] = useState("");
+  const [rolloutReason, setRolloutReason] = useState("");
+  const [rolloutError, setRolloutError] = useState("");
+  const [rolloutInFlight, setRolloutInFlight] = useState(false);
   const [inspectInFlight, setInspectInFlight] = useState<string | null>(null);
   const [inspectError, setInspectError] = useState<{ proposalId: string; message: string } | null>(null);
   const stateTone = (state: string): "neutral" | "green" | "amber" | "blue" | "gold" => state === "active" ? "green" : state.includes("failed") || state === "rolled_back" ? "amber" : state === "approved" || state === "staged" || state === "canary_passed" ? "gold" : state === "evaluated" ? "blue" : "neutral";
@@ -3255,6 +3291,37 @@ function EvolutionView({ proposals, activations, runtimeStatus, onInspect, onMut
     }
   };
 
+  const beginRolloutMutation = (operation: "promote" | "pause" | "resume" | "reject" | "retry" | "rollback", proposalId: string) => {
+    setPendingRollout({ operation, proposalId });
+    setRolloutConfirmation("");
+    setRolloutReason(operation === "promote" ? "Apply the exact approved promotion" : "");
+    setRolloutError("");
+  };
+
+  const submitRolloutMutation = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!pendingRollout || rolloutConfirmation !== pendingRollout.proposalId || !rolloutReason.trim()) {
+      return;
+    }
+    setRolloutInFlight(true);
+    setRolloutError("");
+    try {
+      await onRolloutMutate(
+        pendingRollout.operation,
+        pendingRollout.proposalId,
+        rolloutConfirmation,
+        rolloutReason.trim(),
+      );
+      setPendingRollout(null);
+      setRolloutConfirmation("");
+      setRolloutReason("");
+    } catch (error: unknown) {
+      setRolloutError(error instanceof Error ? error.message : "Rollout transition failed");
+    } finally {
+      setRolloutInFlight(false);
+    }
+  };
+
   return <div className="full-view"><PageHeader eyebrow="Governed improvement" title="Evolution" description="Inspect evidence, release gates, admitted bindings, and guarded activation or rollback receipts." actions={<Chip tone={activations.length ? "green" : proposals.length ? "gold" : runtimeStatus === "connected" ? "neutral" : "amber"} icon="shield">{activations.length ? `${activations.length} active binding${activations.length === 1 ? "" : "s"}` : proposals.length ? `${proposals.length} proposal${proposals.length === 1 ? "" : "s"}` : "No proposals"}</Chip>} />
     <div className="engine-notice evolution-boundary"><Icon name="lock" size={16} /><span>Activation never grants new authority. Pandora blocks mutation while executions are active, validates admitted artifacts, snapshots every evolution database, and requires the exact proposal ID.</span></div>
     <div className="engine-notice evolution-boundary" aria-label="Scheduled canary loop"><Icon name="clock" size={16} /><span>A proposal-bound evaluation schedule is one-shot: it runs the registered suite through the governed evaluation path, records its digest and case counts, and stops at canary evidence. Activation remains a separate exact-confirmation action.</span></div>
@@ -3262,15 +3329,52 @@ function EvolutionView({ proposals, activations, runtimeStatus, onInspect, onMut
     {proposals.length || activations.length ? <div className="secondary-grid evolution-grid">{activations.map((activation) => <Panel className="secondary-card evolution-card" key={`active-${activation.proposal_id}`}><div className="panel-heading"><div><span className="eyebrow">ACTIVE ARTIFACT · {activation.proposal_id}</span><h3>Admitted artifact binding</h3></div><Chip tone="green">catalog active</Chip></div><div className="secondary-icon secondary-icon-0"><Icon name="stack" size={20} /></div><div className="settings-facts"><div><span>Base artifact</span><strong className="mono">{activation.base_artifact}</strong></div><div><span>Resolved artifact</span><strong className="mono">{activation.candidate_artifact}</strong></div><div><span>Activated</span><strong>{new Date(activation.activated_at_unix_seconds * 1000).toLocaleString()}</strong></div><div><span>Runtime authority</span><strong>Unchanged</strong></div></div></Panel>)}
       {proposals.map((proposal, index) => {
         const activation = activations.find((candidate) => candidate.proposal_id === proposal.proposal_id);
-        const canActivate = !activation && proposal.state === "canary_passed";
+        const rolloutReady = !proposal.rollout || (proposal.rollout.current_stage === "complete" && proposal.rollout.status === "complete");
+        const canActivate = !activation && proposal.state === "canary_passed" && rolloutReady;
         const isPending = pending?.proposalId === proposal.proposal_id;
+        const isRolloutPending = pendingRollout?.proposalId === proposal.proposal_id;
         return <Panel className="secondary-card evolution-card" key={proposal.proposal_id}><div className="panel-heading"><div><span className="eyebrow">{proposal.source} · {proposal.proposal_id}</span><h3>{proposal.expected_outcome}</h3></div><Chip tone={stateTone(proposal.state)}>{proposal.state.replaceAll("_", " ")}</Chip></div><div className={`secondary-icon secondary-icon-${index % 3}`}><Icon name="evolution" size={20} /></div><div className="settings-facts"><div><span>Artifact transition</span><strong>{proposal.base_artifact} → {proposal.candidate_artifact}</strong></div><div><span>Evidence digest</span><strong className="mono">{proposal.evidence_digest}</strong></div><div><span>Memory evidence</span><strong className="mono">{proposal.memory_evidence_ids?.length ? proposal.memory_evidence_ids.join(", ") : "No memory records bound"}</strong></div><div><span>Why proposed</span><strong>{proposal.expected_outcome}</strong></div><div><span>Holdout gate</span><strong>{proposal.evaluation ? `${proposal.evaluation.holdout_passed ? "Passed" : "Failed"} · ${proposal.evaluation.trajectory_score}/${proposal.evaluation.outcome_score}` : "Not evaluated"}</strong></div><div><span>Policy / regression</span><strong>{proposal.evaluation ? `${proposal.evaluation.policy_passed ? "Pass" : "Fail"} / ${proposal.evaluation.regression_passed ? "Pass" : "Fail"}` : "Pending"}</strong></div><div><span>Who approved</span><strong>{proposal.approval ? `${proposal.approval.approver_id} · policy v${proposal.approval.policy_version}` : "Not approved"}</strong></div><div><span>Signed artifact</span><strong>{proposal.approval?.signature_present ? `Verified · ${proposal.approval.signer_id}` : "Absent"}</strong></div><div><span>Canary</span><strong>{proposal.canary ? `${proposal.canary.passed ? "Passed" : "Failed"} · ${proposal.canary.failure_count} failures` : "Not run"}</strong></div><div><span>Candidate diff</span><strong>{proposal.candidate ? `${proposal.candidate.changed_units} changed · +${proposal.candidate.added_units} / −${proposal.candidate.removed_units} ${proposal.candidate.unit} · ${proposal.candidate.base_bytes} → ${proposal.candidate.candidate_bytes} bytes` : "Structural diff unavailable"}</strong></div><div><span>Provenance</span><strong>{proposal.candidate ? `${proposal.candidate.kind} · ${proposal.candidate.target_id} · ${proposal.candidate.provider_id}` : `${proposal.source} · ${proposal.evidence_digest}`}</strong></div></div><div className="evolution-lineage"><span className="eyebrow">LINEAGE</span><div className="lineage-chain"><div><small>Parent</small><strong className="mono">{proposal.base_artifact}</strong></div><Icon name="arrow" size={14} /><div><small>Candidate</small><strong className="mono">{proposal.candidate_artifact}</strong></div><Icon name="arrow" size={14} /><div><small>State</small><strong>{proposal.state.replaceAll("_", " ")}</strong></div></div><p>Bound by evidence <span className="mono">{proposal.evidence_digest}</span>{proposal.candidate ? ` · proposed by ${proposal.candidate.provider_id}` : ""}.</p>{!proposal.candidate ? <button className="text-link lineage-inspect" type="button" disabled={inspectInFlight !== null} onClick={() => void inspectCandidate(proposal.proposal_id)}>{inspectInFlight === proposal.proposal_id ? "Inspecting candidate…" : "Inspect candidate diff"} <Icon name="arrow" size={13} /></button> : null}{inspectError?.proposalId === proposal.proposal_id ? <p className="connection-error" role="alert">{inspectError.message}</p> : null}</div>
-          {canActivate || activation ? <div className="evolution-actions"><button className={activation ? "button button-secondary" : "button button-primary"} type="button" disabled={mutationInFlight} onClick={() => beginMutation(activation ? "rollback" : "activate", proposal.proposal_id)}>{activation ? "Rollback binding" : "Activate candidate"} <Icon name={activation ? "archive" : "arrow"} size={14} /></button></div> : <p className="evolution-gate-note"><Icon name="shield" size={13} /> Activation stays unavailable until evaluation, approval, signature, admission, and canary gates pass.</p>}
+          <GovernedRolloutPanel proposalId={proposal.proposal_id} rollout={proposal.rollout ?? null} disabled={rolloutInFlight || mutationInFlight} onBegin={beginRolloutMutation} />
+          {isRolloutPending ? <form className="evolution-confirm rollout-confirm" onSubmit={submitRolloutMutation}><div><span className="eyebrow">GOVERNED ROLLOUT CONFIRMATION</span><strong>{pendingRollout.operation.replaceAll("_", " ")}</strong><p>Type <span className="mono">{proposal.proposal_id}</span> to bind this transition to the exact proposal. Every accepted transition receives a unique SHA-256 identity.</p></div><label><span>Proposal ID</span><input aria-label={`Confirm rollout ${pendingRollout.operation} ${proposal.proposal_id}`} value={rolloutConfirmation} onChange={(event) => setRolloutConfirmation(event.target.value)} autoComplete="off" spellCheck={false} /></label><label><span>Operator reason</span><textarea aria-label={`Rollout reason ${proposal.proposal_id}`} value={rolloutReason} onChange={(event) => setRolloutReason(event.target.value)} rows={2} maxLength={1024} /></label><div className="evolution-confirm-actions"><button className="button button-secondary" type="button" onClick={() => setPendingRollout(null)} disabled={rolloutInFlight}>Cancel</button><button className="button button-primary" type="submit" disabled={rolloutInFlight || rolloutConfirmation !== proposal.proposal_id || !rolloutReason.trim()}>{rolloutInFlight ? "Applying…" : `Confirm ${pendingRollout.operation}`}</button></div>{rolloutError ? <p className="connection-error" role="alert">{rolloutError}</p> : null}</form> : null}
+          {canActivate || activation ? <div className="evolution-actions"><button className={activation ? "button button-secondary" : "button button-primary"} type="button" disabled={mutationInFlight || rolloutInFlight} onClick={() => beginMutation(activation ? "rollback" : "activate", proposal.proposal_id)}>{activation ? "Rollback binding" : "Activate candidate"} <Icon name={activation ? "archive" : "arrow"} size={14} /></button></div> : <p className="evolution-gate-note"><Icon name="shield" size={13} /> Activation stays unavailable until evaluation, approval, signature, admission, canary, and every configured rollout stage pass.</p>}
           {isPending ? <form className="evolution-confirm" onSubmit={submitMutation}><div><span className="eyebrow">EXACT CONFIRMATION</span><strong>{pending.operation === "activate" ? "Activate admitted candidate" : "Restore previous binding"}</strong><p>Type <span className="mono">{proposal.proposal_id}</span> to confirm this exact mutation. A verified backup is created first.</p></div><label><span>Proposal ID</span><input aria-label={`Confirm ${pending.operation} ${proposal.proposal_id}`} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="off" spellCheck={false} /></label>{pending.operation === "rollback" ? <label><span>Rollback reason</span><textarea aria-label={`Rollback reason ${proposal.proposal_id}`} value={reason} onChange={(event) => setReason(event.target.value)} rows={2} maxLength={500} /></label> : null}<div className="evolution-confirm-actions"><button className="button button-secondary" type="button" onClick={() => setPending(null)} disabled={mutationInFlight}>Cancel</button><button className="button button-primary" type="submit" disabled={mutationInFlight || confirmation !== proposal.proposal_id || (pending.operation === "rollback" && !reason.trim())}>{mutationInFlight ? "Applying…" : pending.operation === "activate" ? "Confirm activation" : "Confirm rollback"}</button></div>{mutationError ? <p className="connection-error" role="alert">{mutationError}</p> : null}</form> : null}
           {proposal.candidate?.preview ? <div className="artifact-inspector"><div className="artifact-inspector-heading"><div><span className="eyebrow">ARTIFACT INSPECTOR</span><strong>Exact stored text evidence</strong></div><Chip tone="blue">{proposal.candidate.preview.format}</Chip></div><div className="artifact-preview-grid"><section><div><span>BASE</span><small className="mono">{proposal.base_artifact}</small></div><pre aria-label={`Base artifact ${proposal.proposal_id}`}>{proposal.candidate.preview.base}</pre></section><section><div><span>CANDIDATE</span><small className="mono">{proposal.candidate_artifact}</small></div><pre aria-label={`Candidate artifact ${proposal.proposal_id}`}>{proposal.candidate.preview.candidate}</pre></section></div>{proposal.candidate.preview.truncated ? <p className="artifact-preview-note">Preview bounded to 32 KiB per artifact. Hash identity still covers the complete stored bytes.</p> : null}<p className="artifact-preview-boundary"><Icon name="lock" size={12} /> Read-only evidence. Inspecting bytes cannot activate a candidate or widen its authority.</p></div> : null}
         </Panel>;
       })}</div> : <div className="workflow-empty"><div className="empty-emblem"><Icon name="evolution" size={25} /></div><h2>No evolution proposals</h2><p>{runtimeStatus === "connected" ? "The durable evolution and artifact catalogs are available. Self-improvement begins with measured evidence; permission remains separate." : "Connect the local Pandora service to inspect the durable evolution store."}</p></div>}
   </div>;
+}
+
+function GovernedRolloutPanel({ proposalId, rollout, disabled, onBegin }: { proposalId: string; rollout: NonNullable<RuntimeEvolutionProposal["rollout"]> | null; disabled: boolean; onBegin: (operation: "promote" | "pause" | "resume" | "reject" | "retry" | "rollback", proposalId: string) => void }) {
+  if (!rollout) {
+    return <div className="governed-rollout is-unconfigured"><div className="panel-heading"><div><span className="eyebrow">STAGED ROLLOUT</span><h4>Not configured</h4></div><Chip tone="neutral">legacy canary path</Chip></div><p>Use the evidence-importing CLI to bind an exact commit, artifact digest, channel, four stage budgets, and the first transition identity.</p></div>;
+  }
+
+  const stages = ["canary", "limited", "expanded", "complete"] as const;
+  const currentIndex = stages.indexOf(rollout.current_stage);
+  const latestScorecard = rollout.scorecards.at(-1);
+  const currentLimits = rollout.limits.find((limits) => limits.stage === rollout.current_stage);
+  const controls: Array<{ operation: "promote" | "pause" | "resume" | "reject" | "retry" | "rollback"; label: string; primary?: boolean }> = [];
+  if (rollout.status === "running") {
+    controls.push({ operation: "pause", label: "Pause stage" }, { operation: "rollback", label: "Rollback rollout" });
+  } else if (rollout.status === "awaiting_approval") {
+    if (rollout.pending_approval?.authority === "human") {
+      controls.push({ operation: "promote", label: rollout.current_stage === "complete" ? "Complete rollout" : "Promote stage", primary: true });
+    }
+    controls.push({ operation: "reject", label: "Reject promotion" }, { operation: "rollback", label: "Rollback rollout" });
+  } else if (rollout.status === "paused") {
+    controls.push({ operation: "resume", label: "Resume stage", primary: true }, { operation: "rollback", label: "Rollback rollout" });
+  } else if (rollout.status === "failed" || rollout.status === "rejected") {
+    controls.push({ operation: "retry", label: "Retry stage", primary: true }, { operation: "rollback", label: "Rollback rollout" });
+  }
+
+  return <section className="governed-rollout" aria-label={`Governed rollout ${proposalId}`}>
+    <div className="panel-heading"><div><span className="eyebrow">STAGED ROLLOUT · {rollout.binding.channel}</span><h4>{rollout.current_stage} · {rollout.status.replaceAll("_", " ")}</h4></div><Chip tone={rollout.status === "complete" ? "green" : rollout.status === "failed" || rollout.status === "rejected" || rollout.status === "rolled_back" ? "amber" : rollout.status === "awaiting_approval" ? "gold" : "blue"}>{rollout.transitions.length} evidence event{rollout.transitions.length === 1 ? "" : "s"}</Chip></div>
+    <div className="rollout-stage-rail">{stages.map((stage, index) => <div className={index < currentIndex || rollout.status === "complete" ? "is-complete" : index === currentIndex ? "is-current" : ""} key={stage}><span>{index + 1}</span><strong>{stage}</strong></div>)}</div>
+    <div className="settings-facts rollout-binding"><div><span>Exact commit</span><strong className="mono">{rollout.binding.exact_commit}</strong></div><div><span>Artifact digest</span><strong className="mono">{rollout.binding.artifact_digest}</strong></div><div><span>Evidence digest</span><strong className="mono">{rollout.binding.evidence_digest}</strong></div><div><span>Approval</span><strong>{rollout.pending_approval ? `${rollout.pending_approval.authority} · expires ${new Date(rollout.pending_approval.expires_at * 1000).toLocaleString()}` : "No pending approval"}</strong></div></div>
+    {currentLimits ? <div className="rollout-budget" aria-label={`${rollout.current_stage} rollout limits`}><span>Cost ≤ {currentLimits.max_cost_micros.toLocaleString()} μ</span><span>Duration ≤ {currentLimits.max_duration_seconds}s</span><span>Failures ≤ {currentLimits.max_failure_count}</span><span>Quality ≥ {currentLimits.min_quality_score}</span><span>p95 ≤ {currentLimits.max_p95_latency_millis}ms</span><span>Stability ≥ {currentLimits.min_stability_score}</span></div> : null}
+    {latestScorecard ? <div className="rollout-scorecard"><span className="eyebrow">LATEST SCORECARD · {latestScorecard.stage}</span><div><strong>{latestScorecard.quality_score}</strong><small>quality</small></div><div><strong>{latestScorecard.stability_score}</strong><small>stability</small></div><div><strong>{latestScorecard.p95_latency_millis}ms</strong><small>p95 latency</small></div><div><strong>{latestScorecard.failure_count}</strong><small>failures</small></div><div><strong>{latestScorecard.cost_micros.toLocaleString()} μ</strong><small>cost</small></div></div> : <p className="evolution-gate-note"><Icon name="clock" size={13} /> Waiting for a digest-bound scorecard for the current stage.</p>}
+    {controls.length ? <div className="rollout-actions">{controls.map((control) => <button className={control.primary ? "button button-primary" : "button button-secondary"} type="button" disabled={disabled} key={control.operation} onClick={() => onBegin(control.operation, proposalId)}>{control.label}</button>)}</div> : <p className="evolution-gate-note"><Icon name="shield" size={13} /> {rollout.status === "complete" ? "All four stages passed exact human promotion gates. Existing activation is now available." : "This rollout is closed; transition evidence remains inspectable."}</p>}
+  </section>;
 }
 
 function PageHeader({ eyebrow, title, description, actions }: { eyebrow: string; title: string; description: string; actions: ReactNode }) {

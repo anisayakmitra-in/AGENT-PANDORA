@@ -732,9 +732,18 @@ fn scheduled_canary_binds_a_reviewed_suite_and_stops_before_activation() {
     let fixture = Fixture::new();
     fixture.setup();
     let proposal = fixture.root.join("scheduled-proposal.json");
+    let proposal_evidence = format!("sha256:{}", "1".repeat(64));
     fs::write(
         &proposal,
-        br#"{"proposal_id":"proposal-scheduled","source":"gepa","base_artifact":"base-scheduled","candidate_artifact":"candidate-scheduled","evidence_digest":"evidence-scheduled","expected_outcome":"improve scheduled verification"}"#,
+        serde_json::to_vec(&serde_json::json!({
+            "proposal_id": "proposal-scheduled",
+            "source": "gepa",
+            "base_artifact": "base-scheduled",
+            "candidate_artifact": "candidate-scheduled",
+            "evidence_digest": proposal_evidence,
+            "expected_outcome": "improve scheduled verification",
+        }))
+        .unwrap(),
     )
     .unwrap();
     assert_success_with_context(
@@ -904,6 +913,173 @@ fn scheduled_canary_binds_a_reviewed_suite_and_stops_before_activation() {
         .unwrap();
     assert_success_with_context(&inspected, "scheduled proposal inspection");
     assert_eq!(parse_json(&inspected)["state"], "canary_passed");
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("rollout clock should be available")
+        .as_secs();
+    let exact_commit = "a".repeat(40);
+    let artifact_digest = format!("sha256:{}", "2".repeat(64));
+    let configure_transition = format!("sha256:{}", "3".repeat(64));
+    let rollout_config = fixture.root.join("scheduled-rollout.json");
+    fs::write(
+        &rollout_config,
+        serde_json::to_vec(&serde_json::json!({
+            "proposal_id": "proposal-scheduled",
+            "exact_commit": exact_commit,
+            "artifact_digest": artifact_digest,
+            "channel": "beta",
+            "evidence_digest": proposal_evidence,
+            "transition_id": configure_transition,
+            "actor": "release-operator-scheduled",
+            "configured_at": now.saturating_sub(3),
+            "limits": [
+                {"stage":"canary","max_cost_micros":10000,"max_duration_seconds":600,"max_failure_count":0,"min_quality_score":90,"max_p95_latency_millis":500,"min_stability_score":95},
+                {"stage":"limited","max_cost_micros":20000,"max_duration_seconds":1200,"max_failure_count":0,"min_quality_score":92,"max_p95_latency_millis":450,"min_stability_score":96},
+                {"stage":"expanded","max_cost_micros":40000,"max_duration_seconds":1800,"max_failure_count":0,"min_quality_score":94,"max_p95_latency_millis":400,"min_stability_score":97},
+                {"stage":"complete","max_cost_micros":80000,"max_duration_seconds":3600,"max_failure_count":0,"min_quality_score":96,"max_p95_latency_millis":350,"min_stability_score":98}
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let configured = fixture
+        .command(&[
+            "evolution",
+            "rollout",
+            "configure",
+            "--input",
+            rollout_config.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_success_with_context(&configured, "staged rollout configuration");
+    let configured = parse_json(&configured);
+    assert_eq!(configured["changed"], true);
+    assert_eq!(configured["rollout"]["current_stage"], "canary");
+    assert_eq!(configured["rollout"]["status"], "running");
+    let configure_retry = fixture
+        .command(&[
+            "evolution",
+            "rollout",
+            "configure",
+            "--input",
+            rollout_config.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_success_with_context(&configure_retry, "staged rollout configuration retry");
+    assert_eq!(parse_json(&configure_retry)["changed"], false);
+
+    let scorecard_digest = format!("sha256:{}", "5".repeat(64));
+    let rollout_scorecard = fixture.root.join("scheduled-rollout-scorecard.json");
+    fs::write(
+        &rollout_scorecard,
+        serde_json::to_vec(&serde_json::json!({
+            "proposal_id": "proposal-scheduled",
+            "stage": "canary",
+            "quality_score": 99,
+            "p95_latency_millis": 100,
+            "stability_score": 99,
+            "cost_micros": 1000,
+            "duration_seconds": 60,
+            "failure_count": 0,
+            "evidence_digest": format!("sha256:{}", "4".repeat(64)),
+            "scorecard_digest": scorecard_digest,
+            "evaluator": "evaluator-scheduled",
+            "transition_id": format!("sha256:{}", "6".repeat(64)),
+            "actor": "evaluator-scheduled",
+            "recorded_at": now.saturating_sub(2)
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let scored = fixture
+        .command(&[
+            "evolution",
+            "rollout",
+            "score",
+            "--input",
+            rollout_scorecard.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_success_with_context(&scored, "staged rollout scorecard");
+    assert_eq!(
+        parse_json(&scored)["rollout"]["status"],
+        "awaiting_approval"
+    );
+
+    let rollout_approval = fixture.root.join("scheduled-rollout-approval.json");
+    fs::write(
+        &rollout_approval,
+        serde_json::to_vec(&serde_json::json!({
+            "approval_id": format!("sha256:{}", "7".repeat(64)),
+            "proposal_id": "proposal-scheduled",
+            "from_stage": "canary",
+            "to_stage": "limited",
+            "exact_commit": exact_commit,
+            "artifact_digest": artifact_digest,
+            "channel": "beta",
+            "evidence_digest": proposal_evidence,
+            "scorecard_digest": scorecard_digest,
+            "approver": "release-manager-scheduled",
+            "authority": "human",
+            "approved_at": now.saturating_sub(1),
+            "expires_at": now.saturating_add(120),
+            "transition_id": format!("sha256:{}", "8".repeat(64))
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let approved = fixture
+        .command(&[
+            "evolution",
+            "rollout",
+            "approve",
+            "--input",
+            rollout_approval.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_success_with_context(&approved, "staged rollout human approval");
+    assert_eq!(
+        parse_json(&approved)["rollout"]["pending_approval"]["approver"],
+        "release-manager-scheduled"
+    );
+
+    let promote_transition = format!("sha256:{}", "9".repeat(64));
+    let promoted = fixture
+        .command(&[
+            "evolution",
+            "rollout",
+            "promote",
+            "--id",
+            "proposal-scheduled",
+            "--transition-id",
+            &promote_transition,
+            "--actor",
+            "release-manager-scheduled",
+            "--reason",
+            "approved canary promotion",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_success_with_context(&promoted, "staged rollout promotion");
+    let promoted = parse_json(&promoted);
+    assert_eq!(promoted["rollout"]["current_stage"], "limited");
+    assert_eq!(promoted["rollout"]["status"], "running");
+    assert_eq!(promoted["rollout"]["activation_ready"], false);
+    assert_eq!(
+        promoted["rollout"]["transitions"].as_array().unwrap().len(),
+        4
+    );
+
     let history = fixture
         .command(&[
             "evaluation",

@@ -1,5 +1,6 @@
 use crate::effect::{RequestError, Timestamp};
 use crate::events::RuntimeEvent;
+use crate::evolution::EvolutionRollout;
 use crate::ids::{
     ArtifactId, ExecutionId, GeneId, HarnessId, IdError, JobWorkerId, MemoryId, OrchestrationRunId,
     PlanId, PrincipalId, ProposalId, RepositoryId, RequestDigest, RoleId, SessionId, TenantId,
@@ -26,6 +27,7 @@ pub enum ServiceContractError {
     InvalidApprovalSummary,
     InvalidEvolutionConfirmation,
     InvalidEvolutionReason,
+    InvalidEvolutionRolloutTransition,
     InvalidOrchestrationConfirmation,
     InvalidPageLimit { limit: u16, maximum: u16 },
 }
@@ -49,6 +51,9 @@ impl fmt::Display for ServiceContractError {
                 .write_str("evolution confirmation must match the exact proposal identifier"),
             Self::InvalidEvolutionReason => {
                 formatter.write_str("evolution rollback reason is invalid")
+            }
+            Self::InvalidEvolutionRolloutTransition => {
+                formatter.write_str("evolution rollout transition request is invalid")
             }
             Self::InvalidOrchestrationConfirmation => formatter
                 .write_str("orchestration confirmation must match the exact run identifier"),
@@ -893,6 +898,8 @@ pub struct ServiceEvolutionSummary {
     approval: Option<ServiceEvolutionApproval>,
     canary: Option<ServiceEvolutionCanary>,
     #[serde(default)]
+    rollout: Option<EvolutionRollout>,
+    #[serde(default)]
     candidate: Option<ServiceEvolutionCandidate>,
 }
 
@@ -924,6 +931,7 @@ impl ServiceEvolutionSummary {
             evaluation,
             approval,
             canary,
+            rollout: None,
             candidate: None,
         }
     }
@@ -935,6 +943,11 @@ impl ServiceEvolutionSummary {
 
     pub fn with_memory_evidence_ids(mut self, memory_evidence_ids: Vec<MemoryId>) -> Self {
         self.memory_evidence_ids = memory_evidence_ids;
+        self
+    }
+
+    pub fn with_rollout(mut self, rollout: Option<EvolutionRollout>) -> Self {
+        self.rollout = rollout;
         self
     }
 
@@ -973,6 +986,9 @@ impl ServiceEvolutionSummary {
     }
     pub const fn canary(&self) -> Option<&ServiceEvolutionCanary> {
         self.canary.as_ref()
+    }
+    pub const fn rollout(&self) -> Option<&EvolutionRollout> {
+        self.rollout.as_ref()
     }
     pub const fn candidate(&self) -> Option<&ServiceEvolutionCandidate> {
         self.candidate.as_ref()
@@ -1359,6 +1375,14 @@ pub enum ServiceRequest {
         confirmation: String,
         reason: String,
     },
+    EvolutionRolloutTransition {
+        protocol_version: u16,
+        proposal_id: ProposalId,
+        confirmation: String,
+        operation: String,
+        transition_id: RequestDigest,
+        reason: String,
+    },
     Run {
         protocol_version: u16,
         request: ServiceRunRequest,
@@ -1571,6 +1595,25 @@ impl ServiceRequest {
         Ok(request)
     }
 
+    pub fn evolution_rollout_transition(
+        proposal_id: impl Into<String>,
+        confirmation: impl Into<String>,
+        operation: impl Into<String>,
+        transition_id: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Result<Self, ServiceContractError> {
+        let request = Self::EvolutionRolloutTransition {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            proposal_id: ProposalId::new(proposal_id)?,
+            confirmation: confirmation.into(),
+            operation: operation.into(),
+            transition_id: RequestDigest::new(transition_id)?,
+            reason: reason.into(),
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
     pub const fn run_resume(request: ServiceRunResumeRequest) -> Self {
         Self::RunResume {
             protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
@@ -1645,6 +1688,9 @@ impl ServiceRequest {
                 protocol_version, ..
             }
             | Self::EvolutionRollback {
+                protocol_version, ..
+            }
+            | Self::EvolutionRolloutTransition {
                 protocol_version, ..
             }
             | Self::Run {
@@ -1730,6 +1776,27 @@ impl ServiceRequest {
                 reason,
                 ..
             } => validate_evolution_confirmation(proposal_id, confirmation, Some(reason)),
+            Self::EvolutionRolloutTransition {
+                proposal_id,
+                confirmation,
+                operation,
+                transition_id,
+                reason,
+                ..
+            } => {
+                validate_evolution_confirmation(proposal_id, confirmation, None)?;
+                if !matches!(
+                    operation.as_str(),
+                    "promote" | "pause" | "resume" | "reject" | "retry" | "rollback"
+                ) || reason.trim().is_empty()
+                    || reason.len() > 1024
+                    || reason.chars().any(char::is_control)
+                    || !valid_sha256_digest(transition_id.as_str())
+                {
+                    return Err(ServiceContractError::InvalidEvolutionRolloutTransition);
+                }
+                Ok(())
+            }
             Self::Run { request, .. } => request.validate(),
             Self::RunResume { request, .. } => request.validate(),
             Self::AgentRun { request, .. } => request.validate(),
@@ -2366,6 +2433,11 @@ pub enum ServiceResponse {
         backup_directory: String,
         reconciled_bindings: usize,
     },
+    EvolutionRolloutMutation {
+        protocol_version: u16,
+        operation: String,
+        proposal: ServiceEvolutionSummary,
+    },
     Run {
         protocol_version: u16,
         run: ServiceRunResult,
@@ -2528,6 +2600,17 @@ impl ServiceResponse {
         }
     }
 
+    pub fn evolution_rollout_mutation(
+        operation: impl Into<String>,
+        proposal: ServiceEvolutionSummary,
+    ) -> Self {
+        Self::EvolutionRolloutMutation {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            operation: operation.into(),
+            proposal,
+        }
+    }
+
     pub const fn run(run: ServiceRunResult) -> Self {
         Self::Run {
             protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
@@ -2601,6 +2684,9 @@ impl ServiceResponse {
             | Self::EvolutionMutation {
                 protocol_version, ..
             }
+            | Self::EvolutionRolloutMutation {
+                protocol_version, ..
+            }
             | Self::Run {
                 protocol_version, ..
             }
@@ -2616,6 +2702,16 @@ fn validate_page_limit(limit: u16, maximum: u16) -> Result<(), ServiceContractEr
         return Err(ServiceContractError::InvalidPageLimit { limit, maximum });
     }
     Ok(())
+}
+
+fn valid_sha256_digest(value: &str) -> bool {
+    let Some(hex) = value.strip_prefix("sha256:") else {
+        return false;
+    };
+    hex.len() == 64
+        && hex
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
 fn supported_context_media_type(media_type: &str) -> bool {

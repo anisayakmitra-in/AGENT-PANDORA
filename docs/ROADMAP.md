@@ -18,7 +18,7 @@ fleet-operations evidence, and signed native releases.
 | 6. Production readiness | 85-90% | scoped identity, automatic local device trust, encrypted secrets, local telemetry and crash records, encrypted backup and restore, fresh-runner install/update/rollback/backup/restore/uninstall drills, synthetic two-version native installer upgrade and rollback drills, update channels, release workflows, checksum signature verification, release evidence index, CodeQL, dependency audits | signed stable artifacts, real clean-machine release proof on every advertised platform, installer rollback exercises between real stable artifacts |
 | 7. Runtime scale and orchestration | 94-97% | persistent prompt-context cache, headless jobs, bounded parallel subagents, exact-commit worktrees, durable orchestration claims and receipts, interruption and evidence-bound reconciliation rules, multi-repository plans, transactionally enforced aggregate token/tool/time/cost budgets, atomic role reservations and receipt-linked usage settlement, conservative unknown-cost enforcement, fleet leases, execution-bound lease renewal, durable supervisor state with PID-bound worker heartbeats, process-wide execution leases for headless jobs and subagents, lease gating, stale-supervisor reconciliation without replay, bounded stale reaping, atomic PID-bound restart handoff, atomic cross-process quiescence guards, bounded independently launched job watch windows, long-lived local daemon workers with explicit drain/stop protocol, cross-process crash reconciliation/restart evidence, bounded staggered-producer soak coverage, cancellation/provider-return restart evidence, combined cross-process worker-operations recovery acceptance, and selectable ten-minute, two-hour, checkpointed eight-hour, and checkpointed twenty-four-hour four-platform retained campaigns with operational metrics and fail-closed summaries | successful retained multi-hour worker soak campaigns on every advertised platform |
 | 8. Agent experience and disclosure | 96-98% | cross-platform Tauri desktop app, same-commit CLI sidecar packaging, clean-runner Linux/macOS x64/macOS arm64/Windows bundle and system-installer register/copy/install/start/remove evidence, synthetic native install/update/rollback/uninstall evidence, Chromium and axe checks at the minimum desktop window and 200%-zoom-equivalent viewport, Command and Council inspection, background runs, runtime inventory, Harness Lab, package lifecycle, package manifest workbench, local Skill lifecycle, BYOK provider creation and selection, MCP configuration, pinned GitHub packages, active custom Domain and Meta Harnesses, deterministic local Domain and composition-only Meta starter kits across app/CLI/TUI, validated declarative Gene examples and inspector fixtures, WebAssembly Genes, custom Auto Route contracts, optional built-in Domain and Meta replacement, encrypted-vault package key generation and atomic local manifest signing, explicit fail-closed Source/Provider/Skill/generic package admission boundaries, macOS 26 Liquid Glass with older-mac vibrancy fallback, reduced-transparency and forced-colors regressions | remote or signed Skill and Provider package distribution, native screen-reader and clean-machine scaling evidence, signed desktop installer release proof |
-| 9. Evaluation-driven loops | 88-92% | trajectory, outcome, policy, regression, adversarial, golden, and holdout evaluation; coding feedback; research-only mutation and population strategies; durable evolution state; canary activation and rollback; versioned evidence-derived zero-failure canary policy; read-only durable per-session evaluation scorecards with a fail-on-non-passed CI gate; durable schedules with a bounded local registry of validated suite definitions; typed prompt/Skill/workflow/WebAssembly Gene target metadata; durable failure-derived regression candidates; explicit review-gated suite admission; governed scheduled execution of evidence-backed and task-backed suites; proposal-bound one-shot canary scheduling with durable report evidence and a separate activation gate | self-healing test generation beyond metadata candidates; multi-stage rollout budgets and pause/resume policy; cost and latency scorecards; quality gates for every artifact class |
+| 9. Evaluation-driven loops | 94-96% | trajectory, outcome, policy, regression, adversarial, golden, and holdout evaluation; coding feedback; research-only mutation and population strategies; durable evolution state; canary activation and rollback; versioned evidence-derived zero-failure canary policy; read-only durable per-session evaluation scorecards with a fail-on-non-passed CI gate; durable schedules with a bounded local registry of validated suite definitions; typed prompt/Skill/workflow/WebAssembly Gene target metadata; durable failure-derived regression candidates; explicit review-gated suite admission; governed scheduled execution of evidence-backed and task-backed suites; proposal-bound one-shot canary scheduling; exact-bound canary, limited, expanded, and complete rollout stages with cost, duration, failure, quality, latency, and stability limits; human approval; pause/resume/reject/retry/rollback evidence; CLI/TUI/desktop controls; and protected tag creation on the existing activation and publication paths | self-healing test generation beyond reviewed metadata candidates; automatic artifact-class-specific production scorecard emitters |
 | 10. Memory consolidation | 100% | scoped L0, L1, and L2 records; durable recall; approval-gated promotion; revocation and audit; deterministic evidence-bound synthesis with stale-snapshot checks; bounded provenance graphs; versioned same-tenant/provider cross-session and explicit cross-project L1 consolidation with reject/keep-target conflict rules; durable leased synthesis schedules and run history; exact digest-bound memory IDs on evolution candidates; desktop source, promotion, provenance, audit, revocation, schedule, transfer-policy disclosure, and typed retention-compaction controls; logical compaction that retains tombstones and audit evidence with explicit secure-erasure guidance; versioned local/AWS/Azure/GCP backup-expiry, snapshot-removal, and key-destruction manifests; non-mutating preview; append-only idempotent operator-attested receipts; CLI/TUI workflow and desktop evidence view | none in the defined Phase 10 source-tree scope; provider control-plane actions and independent verification remain external by design |
 | 11. Adversarial resilience | 100% | path confinement, symlink checks, secret redaction, replay protection, exact signatures and hashes, fail-closed package and permit checks, adversarial evaluation primitives, typed context-origin metadata, one shared revalidating quarantine boundary across all adapter origins, replayable hostile and benign corpus coverage, hostile multi-hop handoff persistence tests, append-only hash-chained publisher and admission transparency evidence, and six bounded production-parser fuzz targets with CI smoke runs | none in the defined Phase 11 source-tree scope; corpus growth and longer fuzz campaigns remain continuous assurance work |
 | 12. Agent operations | 80-86% | three-platform CI, desktop CI, release and security workflows, bounded agent workers, orchestration receipts, supervisor controls, local fleet records, transactionally enforced multi-repository budgets with measured receipt usage and explicit unknown-cost accounting, one privacy-safe CLI/TUI/desktop Fleet dashboard, a staged SDK package/evaluation/canary pipeline, and beta/release-candidate/stable selection over the same tag-driven evidence path | approved channel promotion runs and stable publication with real signing credentials |
@@ -160,14 +160,20 @@ suite report digest and case counts, derives the production zero-failure
 canary result, and stops at `canary_passed`. Evaluation still cannot approve or
 activate its own candidate.
 
+The governed rollout now starts after the existing one-shot canary. It records
+four explicit stages with cost, duration, failure, quality, latency, and
+stability limits. Every stage needs passing evidence and a separate exact-bound
+human approval; automated evaluation cannot approve its own scorecard. Pause,
+resume, rejection, bounded retry, promotion, and rollback are durable,
+idempotent transitions. Completion opens the existing activation gate rather
+than adding another activation path.
+
 Next work:
 
-- typed target bindings, bounded task labels, and durable failure-derived regression candidates now cover prompt, Skill, workflow, and WebAssembly Gene cases; explicit review is required before a candidate can register a suite, while the runner still evaluates redacted evidence and does not execute target tasks;
-- generate regression tests from verified failures and require review before
-  they enter a suite;
-- record cost, latency, stability, and quality scorecards per candidate;
-- extend the one-shot canary into explicit multi-stage rollout budgets with durable pause and resume policy;
-- expose every rejection, retry, and rollback as durable evidence.
+- generate executable regression tests from verified failures and require
+  review before they enter a suite;
+- add automatic artifact-class-specific production scorecard emitters while
+  preserving the same manual human promotion boundary.
 
 ## Phase 10: make memory useful across work
 
@@ -250,11 +256,10 @@ system for local agents.
 
 Next work:
 
-- extend the staged agent artifact pipeline from validation evidence to
-  explicitly approved package admission and tag creation without adding a
-  second activation path;
-- execute approved beta, release-candidate, and stable promotions from the same
-  signed evidence set with real platform credentials.
+- configure required reviewers on all three protected promotion environments
+  and execute retained beta, release-candidate, and stable promotion drills;
+- add explicitly approved package admission without adding a second activation
+  path, then run the shared evidence chain with real platform credentials.
 
 The aggregate execution-budget gate is source-complete. Every submitted role
 has a durable reservation, dispatch and settlement are atomic, token/tool/time

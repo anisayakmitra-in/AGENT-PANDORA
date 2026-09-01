@@ -38,6 +38,8 @@ fn powershell() -> &'static str {
         'create','inspect','restore','lifecycle'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'service') {
         'start'
+    } elseif ($elements.Count -gt 2 -and $elements[1] -eq 'evolution' -and $elements[2] -eq 'rollout') {
+        'configure','score','approve','promote','pause','resume','reject','retry','rollback'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'rollout') {
         'inspect'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'session') {
@@ -79,7 +81,7 @@ fn powershell() -> &'static str {
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'strategies') {
         'list','population'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'evolution') {
-        'generate','list','inspect','submit','evaluate','approve','stage','canary','activate','rollback'
+        'generate','list','inspect','submit','evaluate','approve','stage','canary','rollout','activate','rollback'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'efficiency') {
         'rank'
     } elseif ($elements.Count -gt 2 -and $elements[1] -eq 'evaluation' -and $elements[2] -eq 'schedule') {
@@ -113,6 +115,8 @@ fn bash() -> &'static str {
         COMPREPLY=( $(compgen -W 'create inspect restore lifecycle' -- "$current") )
     elif [[ "$previous" == "service" ]]; then
         COMPREPLY=( $(compgen -W 'start' -- "$current") )
+    elif [[ "${COMP_WORDS[1]}" == "evolution" && "$previous" == "rollout" ]]; then
+        COMPREPLY=( $(compgen -W 'configure score approve promote pause resume reject retry rollback' -- "$current") )
     elif [[ "$previous" == "rollout" ]]; then
         COMPREPLY=( $(compgen -W 'inspect' -- "$current") )
     elif [[ "$previous" == "session" ]]; then
@@ -164,7 +168,7 @@ fn bash() -> &'static str {
     elif [[ "$previous" == "evaluation" ]]; then
         COMPREPLY=( $(compgen -W 'golden inspect scorecard suite regression schedule' -- "$current") )
     elif [[ "$previous" == "evolution" ]]; then
-        COMPREPLY=( $(compgen -W 'generate list inspect submit evaluate approve stage canary activate rollback' -- "$current") )
+        COMPREPLY=( $(compgen -W 'generate list inspect submit evaluate approve stage canary rollout activate rollback' -- "$current") )
     elif [[ "$previous" == "graph" ]]; then
         COMPREPLY=( $(compgen -W 'code knowledge review architecture' -- "$current") )
     elif [[ "$previous" == "supervisor" && "${COMP_WORDS[1]}" == "fleet" ]]; then
@@ -234,8 +238,10 @@ elif [[ ${words[2]} == evaluation && ${words[3]} == schedule ]]; then
     _arguments '3:evaluation schedule command:(create list disable claim run runs)'
 elif [[ ${words[2]} == evaluation ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet graph completions migrate update uninstall doctor)' '2:evaluation command:(golden inspect scorecard suite regression schedule)'
+elif [[ ${words[2]} == evolution && ${words[3]} == rollout ]]; then
+    _arguments '3:evolution rollout command:(configure score approve promote pause resume reject retry rollback)'
 elif [[ ${words[2]} == evolution ]]; then
-    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet graph completions migrate update uninstall doctor)' '2:evolution command:(generate list inspect submit evaluate approve stage canary activate rollback)'
+    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet graph completions migrate update uninstall doctor)' '2:evolution command:(generate list inspect submit evaluate approve stage canary rollout activate rollback)'
 elif [[ ${words[2]} == graph ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet graph completions migrate update uninstall doctor)' '2:graph command:(code knowledge review architecture)'
 elif [[ ${words[2]} == fleet && ${words[3]} == supervisor ]]; then
@@ -257,7 +263,7 @@ complete -c pandora -f -n '__fish_seen_subcommand_from harness' -a 'list inspect
 complete -c pandora -f -n '__fish_seen_subcommand_from slash' -a 'list resolve'
 complete -c pandora -f -n '__fish_seen_subcommand_from session' -a 'list resume inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from service' -a 'start'
-complete -c pandora -f -n '__fish_seen_subcommand_from rollout' -a 'inspect'
+complete -c pandora -f -n '__fish_seen_subcommand_from rollout; and not __fish_seen_subcommand_from evolution' -a 'inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from job' -a 'submit work list inspect cancel mark-interrupted'
 complete -c pandora -f -n '__fish_seen_subcommand_from subagent' -a 'spawn work list inspect cancel mark-interrupted cleanup'
 complete -c pandora -f -n '__fish_seen_subcommand_from skill' -a 'list inspect install enable disable suspend remove restore'
@@ -278,7 +284,8 @@ complete -c pandora -f -n '__fish_seen_subcommand_from strategies; and __fish_se
 complete -c pandora -f -n '__fish_seen_subcommand_from efficiency' -a 'rank'
 complete -c pandora -f -n '__fish_seen_subcommand_from evaluation; and not __fish_seen_subcommand_from schedule' -a 'golden inspect scorecard suite regression schedule'
 complete -c pandora -f -n '__fish_seen_subcommand_from evaluation; and __fish_seen_subcommand_from schedule' -a 'create list disable claim run runs'
-complete -c pandora -f -n '__fish_seen_subcommand_from evolution' -a 'generate list inspect submit evaluate approve stage canary activate rollback'
+complete -c pandora -f -n '__fish_seen_subcommand_from evolution; and not __fish_seen_subcommand_from rollout' -a 'generate list inspect submit evaluate approve stage canary rollout activate rollback'
+complete -c pandora -f -n '__fish_seen_subcommand_from evolution; and __fish_seen_subcommand_from rollout' -a 'configure score approve promote pause resume reject retry rollback'
 complete -c pandora -f -n '__fish_seen_subcommand_from graph' -a 'code knowledge review architecture'
 complete -c pandora -f -n '__fish_seen_subcommand_from fleet; and __fish_seen_subcommand_from supervisor' -a 'list start drain stop recover heartbeat reconcile reap restart'
 complete -c pandora -f -n '__fish_seen_subcommand_from fleet' -a 'dashboard list register dispatch lease renew release expire supervisor quarantine revoke kill'
@@ -362,7 +369,15 @@ mod tests {
         assert!(powershell.contains("'inspect'"));
         assert!(bash.contains("compgen -W 'inspect'"));
         assert!(zsh.contains("'2:rollout command:(inspect)'"));
-        assert!(fish.contains("__fish_seen_subcommand_from rollout' -a 'inspect'"));
+        assert!(fish.contains("__fish_seen_subcommand_from rollout; and not __fish_seen_subcommand_from evolution' -a 'inspect'"));
+        for script in [powershell, bash, zsh, fish] {
+            assert!(
+                script.contains("configure")
+                    && script.contains("promote")
+                    && script.contains("rollback"),
+                "missing governed rollout completions in {script}"
+            );
+        }
     }
 
     #[test]

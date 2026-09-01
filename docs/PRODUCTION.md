@@ -157,9 +157,26 @@ checksum-verified artifact to its signature, SBOM, and provenance subjects.
 The `Agent artifact pipeline` workflow validates every tracked SDK package,
 runs a deterministic evaluation gate, proves the scheduled canary stops before
 activation, and checks the shared release identity. A manual promotion intent
-may pass only from `main`; it remains evidence-only and never creates a tag,
-publishes a release, admits a package, or activates an artifact. The tag-driven
-release workflow remains the sole publication path.
+may run only from `main` and only through the protected
+`promotion-beta`, `promotion-release-candidate`, or `promotion-stable`
+environment. Repository administrators must configure each environment with
+required human reviewers and restrict it to `main`. Enable self-review
+prevention when a second eligible release reviewer exists. A single-reviewer
+repository must leave that option disabled or every promotion deadlocks; the
+evolution contract still independently forbids a scorecard evaluator from
+approving its own promotion. The request supplies the
+exact commit, artifact digest, rollout evidence digest, one-shot approval ID,
+channel, and channel-valid SemVer tag. After validation and environment
+approval, the workflow creates that one annotated tag and retains an
+`approved-tag.json` evidence artifact. Existing tag annotations are checked so
+the same approval ID cannot authorize another tag or channel.
+
+This promotion job grants only tag-creation authority. It does not publish a
+release, admit a package, or activate an artifact. The tag-driven release
+workflow remains the sole publication path, and the existing evolution
+activation command remains the sole artifact activation path. GitHub's
+protected-environment deployment record is the authoritative reviewer audit;
+the retained JSON records the exact request binding and requester.
 
 ## Release boundary
 

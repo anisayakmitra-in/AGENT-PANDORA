@@ -57,10 +57,14 @@ pub use evaluation::{
 };
 pub use events::{EventContext, EventPayload, EventType, RuntimeEvent};
 pub use evolution::{
-    ArtifactSignature, CanaryResult, EvolutionContractError, EvolutionMode, EvolutionPolicy,
-    EvolutionSource, EvolutionState, HoldoutEvaluation, MAX_EVOLUTION_MEMORY_EVIDENCE_IDS,
-    MutationProposal, ParliamentApproval, ReflexionArtifact, ReplacementReceipt,
-    ResearchArtifactKind, RollbackReceipt,
+    ArtifactSignature, CanaryResult, EvolutionApprovalAuthority, EvolutionContractError,
+    EvolutionMode, EvolutionPolicy, EvolutionPromotionApproval, EvolutionReleaseChannel,
+    EvolutionRollout, EvolutionRolloutBinding, EvolutionRolloutStage, EvolutionRolloutStatus,
+    EvolutionScorecard, EvolutionSource, EvolutionStageLimits, EvolutionState,
+    EvolutionTransitionEvidence, HoldoutEvaluation, MAX_EVOLUTION_MEMORY_EVIDENCE_IDS,
+    MAX_EVOLUTION_ROLLOUT_RETRIES, MAX_EVOLUTION_ROLLOUT_SCORECARDS,
+    MAX_EVOLUTION_ROLLOUT_TRANSITIONS, MutationProposal, ParliamentApproval, ReflexionArtifact,
+    ReplacementReceipt, ResearchArtifactKind, RollbackReceipt,
 };
 pub use execution_profile::{
     EXECUTION_PROFILE_VERSION, ExecutionProfile, ExecutionProfileBinding,

@@ -16,10 +16,12 @@ use pandora_runtime::{
 };
 use pandora_types::{
     ArtifactId, ArtifactSignature, CanaryResult, Capability, ContextClassification,
-    EvaluationRequest, EvolutionPolicy, EvolutionSource, ExecutionId, HoldoutEvaluation, MemoryId,
-    MemoryKind, MemoryScope, MemoryTier, MutationProposal, ParliamentApproval, PolicyContext,
-    PrincipalId, ProposalId, RequestDigest, ResearchArtifactKind, SessionId, Timestamp,
-    hash_artifact,
+    EvaluationRequest, EvolutionApprovalAuthority, EvolutionContractError, EvolutionPolicy,
+    EvolutionPromotionApproval, EvolutionReleaseChannel, EvolutionRollout, EvolutionRolloutBinding,
+    EvolutionRolloutStage, EvolutionScorecard, EvolutionSource, EvolutionStageLimits, ExecutionId,
+    HoldoutEvaluation, MemoryId, MemoryKind, MemoryScope, MemoryTier, MutationProposal,
+    ParliamentApproval, PolicyContext, PrincipalId, ProposalId, RequestDigest,
+    ResearchArtifactKind, SessionId, Timestamp, hash_artifact,
 };
 use rusqlite::Connection;
 use serde::Deserialize;
@@ -78,6 +80,70 @@ struct CanaryInput {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RolloutConfigureInput {
+    proposal_id: String,
+    exact_commit: String,
+    artifact_digest: String,
+    channel: String,
+    evidence_digest: String,
+    transition_id: String,
+    actor: String,
+    limits: Vec<RolloutStageLimitsInput>,
+    configured_at: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RolloutStageLimitsInput {
+    stage: String,
+    max_cost_micros: u64,
+    max_duration_seconds: u64,
+    max_failure_count: u32,
+    min_quality_score: u8,
+    max_p95_latency_millis: u64,
+    min_stability_score: u8,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RolloutScorecardInput {
+    proposal_id: String,
+    stage: String,
+    quality_score: u8,
+    p95_latency_millis: u64,
+    stability_score: u8,
+    cost_micros: u64,
+    duration_seconds: u64,
+    failure_count: u32,
+    evidence_digest: String,
+    scorecard_digest: String,
+    evaluator: String,
+    transition_id: String,
+    actor: String,
+    recorded_at: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RolloutPromotionApprovalInput {
+    approval_id: String,
+    proposal_id: String,
+    from_stage: String,
+    to_stage: Option<String>,
+    exact_commit: String,
+    artifact_digest: String,
+    channel: String,
+    evidence_digest: String,
+    scorecard_digest: String,
+    approver: String,
+    authority: String,
+    approved_at: u64,
+    expires_at: u64,
+    transition_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct HoldoutCaseInput {
     id: String,
     execution_id: String,
@@ -102,7 +168,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         .first()
         .ok_or_else(|| {
             CliError::usage(
-                "evolution requires 'generate', 'list', 'inspect', 'submit', 'evaluate', 'approve', 'stage', 'canary', 'activate', or 'rollback'",
+                "evolution requires 'generate', 'list', 'inspect', 'submit', 'evaluate', 'approve', 'stage', 'canary', 'rollout', 'activate', or 'rollback'",
             )
         })?;
     match subcommand.as_str() {
@@ -114,10 +180,11 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "approve" => approve(&args[1..]),
         "stage" => stage(&args[1..]),
         "canary" => canary(&args[1..]),
+        "rollout" => rollout(&args[1..]),
         "activate" => activate(&args[1..]),
         "rollback" => rollback(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown evolution command '{unknown}', expected 'generate', 'list', 'inspect', 'submit', 'evaluate', 'approve', 'stage', 'canary', 'activate', or 'rollback'"
+            "unknown evolution command '{unknown}', expected 'generate', 'list', 'inspect', 'submit', 'evaluate', 'approve', 'stage', 'canary', 'rollout', 'activate', or 'rollback'"
         ))),
     }
 }
@@ -375,6 +442,304 @@ fn canary(args: &[String]) -> Result<CommandResult, CliError> {
             "durability": "sqlite",
         }),
         format!("Recorded canary result for evolution proposal {proposal_id}"),
+    ))
+}
+
+fn rollout(args: &[String]) -> Result<CommandResult, CliError> {
+    let subcommand = args.first().ok_or_else(|| {
+        CliError::usage(
+            "evolution rollout requires 'configure', 'score', 'approve', 'promote', 'pause', 'resume', 'reject', 'retry', or 'rollback'",
+        )
+    })?;
+    match subcommand.as_str() {
+        "configure" => rollout_configure(&args[1..]),
+        "score" => rollout_score(&args[1..]),
+        "approve" => rollout_approve(&args[1..]),
+        "promote" => rollout_transition(&args[1..], "promote", false),
+        "pause" => rollout_transition(&args[1..], "pause", true),
+        "resume" => rollout_transition(&args[1..], "resume", true),
+        "reject" => rollout_transition(&args[1..], "reject", true),
+        "retry" => rollout_transition(&args[1..], "retry", true),
+        "rollback" => rollout_transition(&args[1..], "rollback", true),
+        unknown => Err(CliError::usage(format!(
+            "unknown evolution rollout command '{unknown}', expected 'configure', 'score', 'approve', 'promote', 'pause', 'resume', 'reject', 'retry', or 'rollback'"
+        ))),
+    }
+}
+
+fn rollout_configure(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "input"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evolution rollout configure does not accept positional arguments",
+        ));
+    }
+    let input = parsed
+        .value("input")
+        .ok_or_else(|| CliError::usage("evolution rollout configure requires '--input <path>'"))?;
+    let document: RolloutConfigureInput = serde_json::from_slice(&read_bounded(Path::new(input))?)
+        .map_err(|error| CliError::usage(format!("invalid rollout configuration JSON: {error}")))?;
+    let proposal_id = rollout_proposal_id(&document.proposal_id)?;
+    let binding = EvolutionRolloutBinding::new(
+        document.exact_commit,
+        rollout_digest(document.artifact_digest, "artifact digest")?,
+        rollout_channel(&document.channel)?,
+        rollout_digest(document.evidence_digest, "evidence digest")?,
+    )
+    .map_err(evolution_contract_error)?;
+    let limits = document
+        .limits
+        .into_iter()
+        .map(|limits| {
+            EvolutionStageLimits::new(
+                rollout_stage(&limits.stage)?,
+                limits.max_cost_micros,
+                limits.max_duration_seconds,
+                limits.max_failure_count,
+                limits.min_quality_score,
+                limits.max_p95_latency_millis,
+                limits.min_stability_score,
+            )
+            .map_err(evolution_contract_error)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let transition_id = rollout_digest(document.transition_id, "transition ID")?;
+    let actor = rollout_principal(document.actor, "actor")?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let engine = open_engine(&config)?;
+    let changed = engine
+        .configure_rollout(
+            &proposal_id,
+            binding,
+            limits,
+            transition_id,
+            actor,
+            Timestamp::from_unix_seconds(document.configured_at),
+        )
+        .map_err(evolution_error)?;
+    rollout_result(
+        "configure",
+        &engine,
+        &proposal_id,
+        changed,
+        "Configured governed rollout",
+    )
+}
+
+fn rollout_score(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "input"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evolution rollout score does not accept positional arguments",
+        ));
+    }
+    let input = parsed
+        .value("input")
+        .ok_or_else(|| CliError::usage("evolution rollout score requires '--input <path>'"))?;
+    let document: RolloutScorecardInput = serde_json::from_slice(&read_bounded(Path::new(input))?)
+        .map_err(|error| CliError::usage(format!("invalid rollout scorecard JSON: {error}")))?;
+    let proposal_id = rollout_proposal_id(&document.proposal_id)?;
+    let scorecard = EvolutionScorecard::new(
+        rollout_stage(&document.stage)?,
+        document.quality_score,
+        document.p95_latency_millis,
+        document.stability_score,
+        document.cost_micros,
+        document.duration_seconds,
+        document.failure_count,
+        rollout_digest(document.evidence_digest, "evidence digest")?,
+        rollout_digest(document.scorecard_digest, "scorecard digest")?,
+        rollout_principal(document.evaluator, "evaluator")?,
+        Timestamp::from_unix_seconds(document.recorded_at),
+    )
+    .map_err(evolution_contract_error)?;
+    let transition_id = rollout_digest(document.transition_id, "transition ID")?;
+    let actor = rollout_principal(document.actor, "actor")?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let engine = open_engine(&config)?;
+    let changed = engine
+        .record_rollout_scorecard(&proposal_id, scorecard, transition_id, actor)
+        .map_err(evolution_error)?;
+    rollout_result(
+        "score",
+        &engine,
+        &proposal_id,
+        changed,
+        "Recorded governed rollout scorecard",
+    )
+}
+
+fn rollout_approve(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "input"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evolution rollout approve does not accept positional arguments",
+        ));
+    }
+    let input = parsed
+        .value("input")
+        .ok_or_else(|| CliError::usage("evolution rollout approve requires '--input <path>'"))?;
+    let document: RolloutPromotionApprovalInput =
+        serde_json::from_slice(&read_bounded(Path::new(input))?).map_err(|error| {
+            CliError::usage(format!("invalid rollout promotion approval JSON: {error}"))
+        })?;
+    let proposal_id = rollout_proposal_id(&document.proposal_id)?;
+    let binding = EvolutionRolloutBinding::new(
+        document.exact_commit,
+        rollout_digest(document.artifact_digest, "artifact digest")?,
+        rollout_channel(&document.channel)?,
+        rollout_digest(document.evidence_digest, "evidence digest")?,
+    )
+    .map_err(evolution_contract_error)?;
+    let authority = match document.authority.as_str() {
+        "human" => EvolutionApprovalAuthority::Human,
+        "automated_evaluator" => EvolutionApprovalAuthority::AutomatedEvaluator,
+        _ => {
+            return Err(CliError::usage(
+                "rollout approval authority must be 'human' or 'automated_evaluator'",
+            ));
+        }
+    };
+    let approval = EvolutionPromotionApproval::new(
+        rollout_digest(document.approval_id, "approval ID")?,
+        proposal_id.clone(),
+        rollout_stage(&document.from_stage)?,
+        document
+            .to_stage
+            .as_deref()
+            .map(rollout_stage)
+            .transpose()?,
+        binding,
+        rollout_digest(document.scorecard_digest, "scorecard digest")?,
+        rollout_principal(document.approver, "approver")?,
+        authority,
+        Timestamp::from_unix_seconds(document.approved_at),
+        Timestamp::from_unix_seconds(document.expires_at),
+    )
+    .map_err(evolution_contract_error)?;
+    let transition_id = rollout_digest(document.transition_id, "transition ID")?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let engine = open_engine(&config)?;
+    let changed = engine
+        .approve_rollout_promotion(&proposal_id, approval, transition_id, timestamp())
+        .map_err(evolution_error)?;
+    rollout_result(
+        "approve",
+        &engine,
+        &proposal_id,
+        changed,
+        "Recorded exact human promotion approval",
+    )
+}
+
+fn rollout_transition(
+    args: &[String],
+    operation: &'static str,
+    requires_reason: bool,
+) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "id",
+            "transition-id",
+            "actor",
+            "reason",
+        ],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(format!(
+            "evolution rollout {operation} does not accept positional arguments"
+        )));
+    }
+    let proposal_id = parsed
+        .value("id")
+        .ok_or_else(|| {
+            CliError::usage(format!(
+                "evolution rollout {operation} requires '--id <proposal-id>'"
+            ))
+        })
+        .and_then(rollout_proposal_id)?;
+    let transition_id = parsed
+        .value("transition-id")
+        .ok_or_else(|| {
+            CliError::usage(format!(
+                "evolution rollout {operation} requires '--transition-id <sha256:digest>'"
+            ))
+        })
+        .and_then(|value| rollout_digest(value.to_owned(), "transition ID"))?;
+    let actor = parsed
+        .value("actor")
+        .ok_or_else(|| {
+            CliError::usage(format!(
+                "evolution rollout {operation} requires '--actor <principal-id>'"
+            ))
+        })
+        .and_then(|value| rollout_principal(value.to_owned(), "actor"))?;
+    let reason = parsed.value("reason").unwrap_or("approved promotion");
+    if requires_reason && reason.trim().is_empty() {
+        return Err(CliError::usage(format!(
+            "evolution rollout {operation} requires a non-empty '--reason <text>'"
+        )));
+    }
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let engine = open_engine(&config)?;
+    let now = timestamp();
+    let changed = match operation {
+        "promote" => engine.promote_rollout(&proposal_id, transition_id, actor, now, reason),
+        "pause" => engine.pause_rollout(&proposal_id, transition_id, actor, now, reason),
+        "resume" => engine.resume_rollout(&proposal_id, transition_id, actor, now, reason),
+        "reject" => {
+            engine.reject_rollout_promotion(&proposal_id, transition_id, actor, now, reason)
+        }
+        "retry" => engine.retry_rollout_stage(&proposal_id, transition_id, actor, now, reason),
+        "rollback" => engine.rollback_rollout(&proposal_id, transition_id, actor, now, reason),
+        _ => unreachable!("rollout operation is matched by the caller"),
+    }
+    .map_err(evolution_error)?;
+    rollout_result(
+        operation,
+        &engine,
+        &proposal_id,
+        changed,
+        "Applied governed rollout transition",
+    )
+}
+
+fn rollout_result(
+    operation: &'static str,
+    engine: &EvolutionEngine,
+    proposal_id: &ProposalId,
+    changed: bool,
+    message: &'static str,
+) -> Result<CommandResult, CliError> {
+    let record = engine.inspect(proposal_id).map_err(evolution_error)?;
+    let command = match operation {
+        "configure" => "evolution rollout configure",
+        "score" => "evolution rollout score",
+        "approve" => "evolution rollout approve",
+        "promote" => "evolution rollout promote",
+        "pause" => "evolution rollout pause",
+        "resume" => "evolution rollout resume",
+        "reject" => "evolution rollout reject",
+        "retry" => "evolution rollout retry",
+        "rollback" => "evolution rollout rollback",
+        _ => unreachable!("rollout operation is matched by the caller"),
+    };
+    Ok(success(
+        command,
+        json!({
+            "proposal_id": proposal_id,
+            "changed": changed,
+            "rollout": record.rollout().map(rollout_value),
+            "durability": "sqlite",
+        }),
+        format!("{message} for {proposal_id}"),
     ))
 }
 
@@ -1206,6 +1571,7 @@ fn summary_value(record: &EvolutionRecord) -> Value {
         "memory_evidence_ids": proposal.memory_evidence_ids(),
         "state": record.state().as_str(),
         "created_at": proposal.created_at().as_unix_seconds(),
+        "rollout": record.rollout().map(rollout_value),
     })
 }
 
@@ -1248,8 +1614,125 @@ fn record_value(record: &EvolutionRecord) -> Value {
             "note": canary.note(),
             "evaluated_at": canary.evaluated_at().as_unix_seconds(),
         })),
+        "rollout": record.rollout().map(rollout_value),
         "durability": "sqlite",
     })
+}
+
+fn rollout_value(rollout: &EvolutionRollout) -> Value {
+    let binding = rollout.binding();
+    json!({
+        "binding": {
+            "exact_commit": binding.exact_commit(),
+            "artifact_digest": binding.artifact_digest(),
+            "channel": binding.channel().as_str(),
+            "evidence_digest": binding.evidence_digest(),
+        },
+        "current_stage": rollout.current_stage().as_str(),
+        "status": rollout.status().as_str(),
+        "activation_ready": rollout.activation_ready(),
+        "retry_count": rollout.retry_count(),
+        "limits": rollout.limits().iter().map(|limits| json!({
+            "stage": limits.stage().as_str(),
+            "max_cost_micros": limits.max_cost_micros(),
+            "max_duration_seconds": limits.max_duration_seconds(),
+            "max_failure_count": limits.max_failure_count(),
+            "min_quality_score": limits.min_quality_score(),
+            "max_p95_latency_millis": limits.max_p95_latency_millis(),
+            "min_stability_score": limits.min_stability_score(),
+        })).collect::<Vec<_>>(),
+        "scorecards": rollout.scorecards().iter().map(|scorecard| json!({
+            "stage": scorecard.stage().as_str(),
+            "quality_score": scorecard.quality_score(),
+            "p95_latency_millis": scorecard.p95_latency_millis(),
+            "stability_score": scorecard.stability_score(),
+            "cost_micros": scorecard.cost_micros(),
+            "duration_seconds": scorecard.duration_seconds(),
+            "failure_count": scorecard.failure_count(),
+            "evidence_digest": scorecard.evidence_digest(),
+            "scorecard_digest": scorecard.scorecard_digest(),
+            "evaluator": scorecard.evaluator(),
+            "recorded_at": scorecard.recorded_at().as_unix_seconds(),
+        })).collect::<Vec<_>>(),
+        "pending_approval": rollout.pending_approval().map(|approval| json!({
+            "approval_id": approval.approval_id(),
+            "proposal_id": approval.proposal_id(),
+            "from_stage": approval.from_stage().as_str(),
+            "to_stage": approval.to_stage().map(EvolutionRolloutStage::as_str),
+            "scorecard_digest": approval.scorecard_digest(),
+            "approver": approval.approver(),
+            "authority": match approval.authority() {
+                EvolutionApprovalAuthority::Human => "human",
+                EvolutionApprovalAuthority::AutomatedEvaluator => "automated_evaluator",
+            },
+            "approved_at": approval.approved_at().as_unix_seconds(),
+            "expires_at": approval.expires_at().as_unix_seconds(),
+        })),
+        "consumed_approval_ids": rollout.consumed_approval_ids(),
+        "transitions": rollout.transitions().iter().map(|transition| json!({
+            "transition_id": transition.transition_id(),
+            "request_fingerprint": transition.request_fingerprint(),
+            "action": transition.action(),
+            "from_stage": transition.from_stage().as_str(),
+            "to_stage": transition.to_stage().as_str(),
+            "from_status": transition.from_status().as_str(),
+            "to_status": transition.to_status().as_str(),
+            "actor": transition.actor(),
+            "evidence_digest": transition.evidence_digest(),
+            "occurred_at": transition.occurred_at().as_unix_seconds(),
+            "reason": transition.reason(),
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn rollout_stage(value: &str) -> Result<EvolutionRolloutStage, CliError> {
+    match value {
+        "canary" => Ok(EvolutionRolloutStage::Canary),
+        "limited" => Ok(EvolutionRolloutStage::Limited),
+        "expanded" => Ok(EvolutionRolloutStage::Expanded),
+        "complete" => Ok(EvolutionRolloutStage::Complete),
+        _ => Err(CliError::usage(
+            "rollout stage must be canary, limited, expanded, or complete",
+        )),
+    }
+}
+
+fn rollout_channel(value: &str) -> Result<EvolutionReleaseChannel, CliError> {
+    match value {
+        "beta" => Ok(EvolutionReleaseChannel::Beta),
+        "release-candidate" => Ok(EvolutionReleaseChannel::ReleaseCandidate),
+        "stable" => Ok(EvolutionReleaseChannel::Stable),
+        _ => Err(CliError::usage(
+            "rollout channel must be beta, release-candidate, or stable",
+        )),
+    }
+}
+
+fn rollout_digest(value: String, field: &'static str) -> Result<RequestDigest, CliError> {
+    if !value.starts_with("sha256:")
+        || value.len() != 71
+        || !value[7..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return Err(CliError::usage(format!(
+            "rollout {field} must use sha256:<64 lowercase hexadecimal characters>"
+        )));
+    }
+    RequestDigest::new(value).map_err(|_| CliError::usage(format!("rollout {field} is invalid")))
+}
+
+fn rollout_principal(value: String, field: &'static str) -> Result<PrincipalId, CliError> {
+    PrincipalId::new(value)
+        .map_err(|_| CliError::usage(format!("rollout {field} principal ID is invalid")))
+}
+
+fn rollout_proposal_id(value: &str) -> Result<ProposalId, CliError> {
+    ProposalId::new(value.to_owned()).map_err(|_| CliError::usage("proposal ID is invalid"))
+}
+
+fn evolution_contract_error(error: EvolutionContractError) -> CliError {
+    CliError::usage(error.to_string())
 }
 
 fn holdout_report_value(proposal_id: &ProposalId, report: &HoldoutSetReport) -> Value {
@@ -1348,7 +1831,8 @@ fn research_memory_error(error: pandora_runtime::MemoryError) -> CliError {
 mod tests {
     use super::{
         parse_approval, parse_canary, parse_generated_candidate, parse_holdout_cases, parse_limit,
-        parse_proposal, required_proposal_id, required_research_kind,
+        parse_proposal, required_proposal_id, required_research_kind, rollout_channel,
+        rollout_digest, rollout_stage,
     };
 
     #[test]
@@ -1459,5 +1943,24 @@ mod tests {
         assert!(required_research_kind(Some("workflow")).is_ok());
         assert!(required_research_kind(Some("wasm_gene")).is_ok());
         assert!(required_research_kind(Some("shell")).is_err());
+    }
+
+    #[test]
+    fn governed_rollout_vocabulary_and_digests_fail_closed() {
+        for stage in ["canary", "limited", "expanded", "complete"] {
+            assert_eq!(rollout_stage(stage).unwrap().as_str(), stage);
+        }
+        assert!(rollout_stage("production").is_err());
+        for channel in ["beta", "release-candidate", "stable"] {
+            assert_eq!(rollout_channel(channel).unwrap().as_str(), channel);
+        }
+        assert!(rollout_channel("nightly").is_err());
+        let valid = format!("sha256:{}", "a".repeat(64));
+        assert_eq!(
+            rollout_digest(valid.clone(), "test").unwrap().as_str(),
+            valid
+        );
+        assert!(rollout_digest(format!("sha256:{}", "A".repeat(64)), "test").is_err());
+        assert!(rollout_digest(format!("sha256:{}", "a".repeat(63)), "test").is_err());
     }
 }

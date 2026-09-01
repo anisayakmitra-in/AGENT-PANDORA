@@ -331,6 +331,7 @@ impl App {
                     "/meta-starter show the safe Meta Harness scaffold workflow",
                     "/gene-pack  show the declarative Gene pack evaluation workflow",
                     "/canary-loop show the governed scheduled-canary workflow",
+                    "/rollout ID inspect staged rollout budgets, scorecards, approvals, and evidence",
                     "/memory-retention show the scoped revoked-record compaction workflow",
                     "/memory-transfer show the cross-project consolidation policy",
                     "/storage-lifecycle show provider lifecycle evidence commands",
@@ -394,6 +395,12 @@ impl App {
                 self.push_message(
                     "canary> the one-shot run records report evidence and stops before explicit evolution activate",
                 );
+            }
+            "/rollout" => {
+                self.push_message("usage> /rollout <proposal-id>");
+            }
+            value if value.starts_with("/rollout ") => {
+                self.show_evolution_rollout(value.trim_start_matches("/rollout ").trim())
             }
             "/memory-retention" => {
                 self.push_message(
@@ -515,6 +522,91 @@ impl App {
             Err(error) => {
                 self.activity = TuiActivity::Failure;
                 self.push_message(format!("error> {}", clean_text(&error.message)));
+            }
+        }
+    }
+
+    fn show_evolution_rollout(&mut self, proposal_id: &str) {
+        if proposal_id.is_empty() || proposal_id.chars().any(char::is_whitespace) {
+            self.push_message("usage> /rollout <proposal-id>");
+            return;
+        }
+        self.activity = TuiActivity::Working;
+        let mut args = vec![
+            "inspect".to_owned(),
+            "--id".to_owned(),
+            proposal_id.to_owned(),
+        ];
+        for option in ["config", "data-dir"] {
+            if let Some(value) = self.args.value(option) {
+                args.push(format!("--{option}"));
+                args.push(value.to_owned());
+            }
+        }
+        match super::evolution::execute(&args) {
+            Ok(result) => {
+                self.activity = TuiActivity::Success;
+                let Some(rollout) = result.data.get("rollout").filter(|value| !value.is_null())
+                else {
+                    self.push_message(format!(
+                        "rollout> {proposal_id}: not configured; legacy canary gate remains"
+                    ));
+                    return;
+                };
+                let stage = rollout
+                    .get("current_stage")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                let status = rollout
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                let channel = rollout
+                    .pointer("/binding/channel")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                let transitions = rollout
+                    .get("transitions")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len);
+                let scorecards = rollout
+                    .get("scorecards")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len);
+                self.push_message(format!(
+                    "rollout> {proposal_id}: {channel} · {stage} · {status} · {scorecards} scorecard(s) · {transitions} evidence event(s)"
+                ));
+                if let Some(limits) =
+                    rollout
+                        .get("limits")
+                        .and_then(Value::as_array)
+                        .and_then(|limits| {
+                            limits.iter().find(|limits| {
+                                limits.get("stage").and_then(Value::as_str) == Some(stage)
+                            })
+                        })
+                {
+                    self.push_message(format!(
+                        "rollout> limits: cost≤{}μ duration≤{}s failures≤{} quality≥{} p95≤{}ms stability≥{}",
+                        limits.get("max_cost_micros").and_then(Value::as_u64).unwrap_or(0),
+                        limits.get("max_duration_seconds").and_then(Value::as_u64).unwrap_or(0),
+                        limits.get("max_failure_count").and_then(Value::as_u64).unwrap_or(0),
+                        limits.get("min_quality_score").and_then(Value::as_u64).unwrap_or(0),
+                        limits.get("max_p95_latency_millis").and_then(Value::as_u64).unwrap_or(0),
+                        limits.get("min_stability_score").and_then(Value::as_u64).unwrap_or(0),
+                    ));
+                }
+                let approval = rollout
+                    .get("pending_approval")
+                    .filter(|value| !value.is_null())
+                    .and_then(|approval| approval.get("approver"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("none");
+                self.push_message(format!("rollout> pending human approval: {approval}"));
+            }
+            Err(error) => {
+                self.activity = TuiActivity::Failure;
+                self.push_message(format!("rollout> {}", error.message));
             }
         }
     }
@@ -997,6 +1089,10 @@ mod tests {
             message == "/canary-loop show the governed scheduled-canary workflow"
         }));
         assert!(app.messages.iter().any(|message| {
+            message
+                == "/rollout ID inspect staged rollout budgets, scorecards, approvals, and evidence"
+        }));
+        assert!(app.messages.iter().any(|message| {
             message == "/memory-retention show the scoped revoked-record compaction workflow"
         }));
         assert!(app.messages.iter().any(|message| {
@@ -1011,6 +1107,20 @@ mod tests {
         assert!(app.messages.iter().any(|message| {
             message == "/fleet-health show the local privacy-safe operations snapshot"
         }));
+    }
+
+    #[test]
+    fn rollout_command_requires_an_exact_proposal_id() {
+        let mut app = app();
+        app.input = "/rollout".chars().collect();
+        app.submit();
+
+        assert!(
+            app.messages
+                .iter()
+                .any(|message| message == "usage> /rollout <proposal-id>")
+        );
+        assert_eq!(app.activity, TuiActivity::Idle);
     }
 
     #[test]
