@@ -43,7 +43,10 @@ impl Fixture {
             .expect("system clock should be available")
             .as_nanos();
         let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!(
+        let temp_root = std::env::temp_dir()
+            .canonicalize()
+            .expect("temporary directory should have a canonical path");
+        let root = temp_root.join(format!(
             "pandora-cli-smoke-{}-{suffix}-{sequence}",
             std::process::id()
         ));
