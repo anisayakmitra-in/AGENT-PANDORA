@@ -257,6 +257,22 @@ Older notes.
         self.assertIn('PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE: "1"', workflow)
         self.assertIn("npm run verify:bundle-lifecycle", workflow)
 
+    def test_ci_retains_exact_commit_unsigned_native_test_packages(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+
+        stage = workflow.index("- name: Preserve exact native accessibility test package")
+        rollback = workflow.index("- name: Verify desktop install, update, rollback, and uninstall")
+        upload = workflow.index("- name: Retain exact native accessibility test package")
+
+        self.assertLess(stage, rollback)
+        self.assertLess(rollback, upload)
+        self.assertIn("stage-native-test-package.mjs", workflow)
+        self.assertIn("github.ref == 'refs/heads/main'", workflow)
+        self.assertIn("native-test-package-${{ matrix.platform }}-${{ github.sha }}", workflow)
+        self.assertIn("retention-days: 30", workflow[upload:])
+
     def test_ci_runs_synthetic_desktop_upgrade_rollback_drill(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
             encoding="utf-8"

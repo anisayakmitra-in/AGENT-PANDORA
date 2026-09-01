@@ -78,6 +78,27 @@ assistive-technology version, tester, and UTC test time. Also record whether the
 artifact was signed and, for macOS, notarized. Signing is mandatory at the
 release-candidate gate, not inferred from accessibility evidence.
 
+### Exact-commit native test packages
+
+A successful `main` CI run retains one explicitly unsigned native test package
+for each platform for 30 days. Artifact names use this exact form:
+
+```text
+native-test-package-<platform>-<40-character-commit>
+```
+
+Each artifact contains one packaged desktop installer, the same-commit CLI
+sidecar, `native-test-package.json` with SHA-256 digests and release identity,
+and `UNSIGNED-NATIVE-TEST-ONLY.txt`. Download only from a completely successful
+CI run for the exact commit under review. Verify every recorded digest before
+copying the package to the clean graphical test machine.
+
+These packages exist only to make the native NVDA, VoiceOver, and Orca sessions
+reproducible. They are not releases, are not signed release evidence, must not
+be published, and do not satisfy any native accessibility check by themselves.
+Release-candidate and stable publication continue to require the independent
+vendor-signing gates in `RELEASES.md`.
+
 ## Native test protocol
 
 1. Verify the installer SHA-256 and install it on a machine without a previous

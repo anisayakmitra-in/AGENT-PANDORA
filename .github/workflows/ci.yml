@@ -196,6 +196,15 @@ jobs:
           PANDORA_DESKTOP_EVIDENCE_OUTPUT: ${{ runner.temp }}/pandora-desktop-lifecycle-evidence.json
         run: npm run verify:bundle-lifecycle
 
+      - name: Preserve exact native accessibility test package
+        if: github.ref == 'refs/heads/main'
+        working-directory: apps/pandora-desktop
+        run: >-
+          node script/stage-native-test-package.mjs
+          --commit "${{ github.sha }}"
+          --platform "${{ matrix.platform }}"
+          --output-dir "${{ runner.temp }}/pandora-native-test-package"
+
       - name: Create synthetic desktop upgrade identities
         working-directory: apps/pandora-desktop
         run: node script/create-upgrade-drill-configs.mjs --output-dir "${{ runner.temp }}/pandora-desktop-upgrade"
@@ -225,6 +234,15 @@ jobs:
           PANDORA_DESKTOP_UPGRADE_MANIFEST: ${{ runner.temp }}/pandora-desktop-upgrade/manifest.json
           PANDORA_DESKTOP_UPGRADE_EVIDENCE_OUTPUT: ${{ runner.temp }}/pandora-desktop-upgrade-evidence.json
         run: npm run verify:bundle-upgrade-lifecycle
+
+      - name: Retain exact native accessibility test package
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-test-package-${{ matrix.platform }}-${{ github.sha }}
+          path: ${{ runner.temp }}/pandora-native-test-package
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Retain automated accessibility and clean-runner lifecycle evidence
         if: always()
