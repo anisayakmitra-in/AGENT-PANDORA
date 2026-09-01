@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -23,7 +23,10 @@ test("requires an exact predecessor/current sidecar pair for published rollback"
     assert.deepEqual(resolveUpgradeSources(target, {
       PANDORA_DESKTOP_PREDECESSOR_SIDECAR: predecessor,
       PANDORA_DESKTOP_CURRENT_SIDECAR: current,
-    }), { predecessor, current });
+    }), {
+      predecessor: realpathSync(predecessor),
+      current: realpathSync(current),
+    });
     assert.throws(
       () => resolveUpgradeSources(target, {
         PANDORA_DESKTOP_PREDECESSOR_SIDECAR: predecessor,
