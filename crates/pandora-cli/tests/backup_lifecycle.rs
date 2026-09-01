@@ -2,7 +2,10 @@ use serde_json::{Value, json};
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Output};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(1);
 
 struct Fixture {
     root: PathBuf,
@@ -14,12 +17,13 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let root = std::env::temp_dir().join(format!(
-            "pandora-backup-lifecycle-{}-{}",
+            "pandora-backup-lifecycle-{}-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            NEXT_FIXTURE_ID.fetch_add(1, Ordering::Relaxed),
         ));
         let workspace = root.join("workspace");
         fs::create_dir_all(&workspace).unwrap();
