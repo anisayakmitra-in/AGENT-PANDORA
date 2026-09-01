@@ -20,7 +20,7 @@ for the supported 1080x720 minimum window at these effective scales:
 The suite covers right, bottom, and hidden inspector layouts. It also checks the
 skip target, keyboard-only focus traversal, visible focus, forced colors,
 increased contrast, reduced motion, and reduced transparency. The screenshots
-and traces are retained in the `desktop-readiness-<platform>-<commit>` workflow
+and traces are retained in the `readiness-<platform>-<commit>` workflow
 artifact for 90 days.
 
 These checks detect shared webview regressions. They do not prove what NVDA,

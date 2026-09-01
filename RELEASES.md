@@ -139,14 +139,23 @@ AgentLoop, session, approval, and governed effect path.
 - Prereleases use `-alpha.N`, `-beta.N`, or `-rc.N` suffixes.
 - Release tags are immutable. Each release must publish notes, checksums, a signature, an SBOM, a release evidence index, supported-platform results, and rollback instructions.
 - A release is not considered stable until local and GitHub checks pass on Windows, macOS, and Linux.
+- Release-candidate and stable publication must pass the protected
+  `release-publication` environment. Only `v*` tags may deploy through it, and a
+  configured human reviewer must approve the publication job.
+- A release candidate is signed with the same Windows Authenticode, Apple code
+  signing, and Apple notarization controls as stable. Alpha and beta packages may
+  remain unsigned and must not be described as release candidates.
+- Stable requires accepted exact-commit native NVDA, VoiceOver, and Orca evidence
+  for every advertised desktop platform.
 
 ## Stable release credentials
 
-Prerelease tags may publish unsigned platform packages and are marked as
-prereleases. A plain SemVer stable tag fails before compilation unless all of
-these encrypted GitHub secrets are present:
+Alpha and beta tags may publish unsigned platform packages and are marked as
+prereleases. A release-candidate tag fails before compilation unless
+`PANDORA_RELEASE_CANDIDATE_APPROVED` is exactly `1`. A plain SemVer stable tag
+likewise requires `PANDORA_STABLE_RELEASE_APPROVED` to be exactly `1`. Both RC
+and stable tags also require all of these encrypted GitHub secrets:
 
-- PANDORA_STABLE_RELEASE_APPROVED with the exact value 1;
 - PANDORA_WINDOWS_CERTIFICATE_BASE64 and
   PANDORA_WINDOWS_CERTIFICATE_PASSWORD;
 - PANDORA_APPLE_CERTIFICATE_BASE64 and
@@ -158,6 +167,12 @@ native Windows and macOS executables, sign Windows desktop installers, and
 provide the Apple identity and notarization credentials to the Tauri bundler.
 Certificate values and account credentials must never be committed, printed,
 placed in an artifact, or copied into recovery archives.
+
+The four published-package smoke jobs independently re-download checksum-bound
+artifacts. Windows verifies Authenticode on the CLI and MSI. Both macOS runners
+verify the CLI, notarization ticket, mounted application signature, and
+Gatekeeper assessment. Their signature and lifecycle records are retained as
+workflow artifacts.
 
 All channels continue to require the signed checksum manifest, SPDX SBOM,
 GitHub provenance, release notes, cross-platform tests, and published

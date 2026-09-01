@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Hardened release-candidate and stable publication. Both channels now require
+  explicit approval plus Windows and Apple signing/notarization credentials;
+  the publish job accepts only `v*` tags through a protected human-reviewed
+  environment. Release evidence records the vendor-signing requirement, and
+  clean published-package jobs independently verify Windows Authenticode,
+  Apple code signatures, notarization tickets, and Gatekeeper before retaining
+  signature and lifecycle evidence.
+
 - Added retained desktop-readiness evidence on all four CI platforms. The
   rendered suite now covers keyboard-only visible focus, 100%, 150%, and 200%
   scale equivalents, forced colors, increased contrast, reduced motion, and

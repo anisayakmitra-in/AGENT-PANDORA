@@ -30,6 +30,11 @@ class ReleaseEvidenceError(ValueError):
     pass
 
 
+def platform_signing_required(tag: str) -> bool:
+    version = tag[1:]
+    return "-rc." in version or "-" not in version
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -103,6 +108,8 @@ def build_release_evidence(tag: str, dist: Path) -> dict[str, object]:
             }
         )
 
+    signing_required = platform_signing_required(tag)
+    signing_status = "verified_in_build" if signing_required else "not_required"
     return {
         "schema_version": 1,
         "release_tag": tag,
@@ -118,6 +125,13 @@ def build_release_evidence(tag: str, dist: Path) -> dict[str, object]:
             "certificate_sha256": sha256_file(files["checksums.txt.pem"]),
             "verified_in_workflow": True,
             "oidc_issuer": "https://token.actions.githubusercontent.com",
+        },
+        "platform_signing": {
+            "required": signing_required,
+            "windows_authenticode": signing_status,
+            "apple_codesign": signing_status,
+            "apple_notarization": signing_status,
+            "independent_published_verification_job": "smoke-desktop",
         },
         "sbom": {
             "path": "pandora.spdx.json",

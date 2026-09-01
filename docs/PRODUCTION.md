@@ -215,12 +215,14 @@ the retained JSON records the exact request binding and requester.
 
 ## Release boundary
 
-Prerelease tags may publish unsigned platform packages for testing, and GitHub
-marks them as prereleases. A stable tag fails closed unless the repository has
-an explicit stable-release approval plus a Windows code-signing certificate
-and Apple signing/notarization credentials. The release workflow signs native
-Windows and macOS binaries when credentials are present, signs Windows desktop
+Alpha and beta tags may publish unsigned platform packages for testing, and
+GitHub marks them as prereleases. Release-candidate and stable tags fail closed
+unless the repository has their exact approval secret plus a Windows
+code-signing certificate and Apple signing/notarization credentials. The release
+workflow signs native Windows and macOS binaries, signs Windows desktop
 installers, and gives Tauri the Apple identity and notarization credentials.
+Publication also waits at the protected `release-publication` environment, which
+accepts only `v*` tags and requires a human reviewer.
 
 A production release also requires:
 
@@ -229,23 +231,22 @@ A production release also requires:
 - CodeQL and dependency-audit success;
 - clean-machine install, update, rollback, setup, doctor, and uninstall smoke
   tests on every advertised platform;
+- accepted exact-commit NVDA, VoiceOver, and Orca evidence for every advertised
+  desktop platform;
 - checksums, signature certificate, SBOM, provenance, release notes, recovery
   instructions, and security reporting instructions;
 - verification that no signing key, provider secret, master key, device key, or
   recovery passphrase entered source control or build logs.
 
-Required stable-release secrets are documented by name in
+Required RC and stable release secrets are documented by name in
 [the release policy](../RELEASES.md). Their values belong only in GitHub
 encrypted secrets and the corresponding platform account.
 
-### Linux desktop dependency exception
+### Linux desktop dependency patch
 
 Tauri's current Linux webview stack still resolves the archived GTK3 bindings
-and `glib` 0.18.5. RustSec RUSTSEC-2024-0429 affects only
-`glib::VariantStrIter` string-iterator methods. Pandora and the resolved Tauri,
-Wry, WebKitGTK, and GTK runtime sources do not call those methods, so the
-desktop audit records that advisory as a reviewed exception while continuing
-to fail on vulnerabilities and yanked crates. Remove the exception as soon as
-Tauri's supported Linux stack moves to `glib` 0.20 or newer. The Linux desktop
-artifact remains an explicitly monitored platform, not an implied waiver for
-new advisories.
+and `glib` 0.18.5. The repository carries the reviewed upstream fix for RustSec
+RUSTSEC-2024-0429 as an exact local source override with bound crates.io
+provenance and a validated source digest. Dependency audit therefore evaluates
+the patched source rather than accepting an advisory waiver. Remove the local
+override as soon as Tauri's supported Linux stack moves to `glib` 0.20 or newer.

@@ -41,9 +41,10 @@ jobs:
       - name: Check release identity
         run: python scripts/release_identity.py "$GITHUB_REF_NAME"
 
-      - name: Enforce stable release signing policy
+      - name: Enforce release-candidate and stable signing policy
         shell: bash
         env:
+          PANDORA_RELEASE_CANDIDATE_APPROVED: ${{ secrets.PANDORA_RELEASE_CANDIDATE_APPROVED }}
           PANDORA_STABLE_RELEASE_APPROVED: ${{ secrets.PANDORA_STABLE_RELEASE_APPROVED }}
           PANDORA_WINDOWS_CERTIFICATE_BASE64: ${{ secrets.PANDORA_WINDOWS_CERTIFICATE_BASE64 }}
           PANDORA_WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.PANDORA_WINDOWS_CERTIFICATE_PASSWORD }}
@@ -56,8 +57,15 @@ jobs:
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          if [[ "$version" != *-* ]]; then
+          signing_required=0
+          if [[ "$version" == *-rc.* ]]; then
+            test "$PANDORA_RELEASE_CANDIDATE_APPROVED" = "1"
+            signing_required=1
+          elif [[ "$version" != *-* ]]; then
             test "$PANDORA_STABLE_RELEASE_APPROVED" = "1"
+            signing_required=1
+          fi
+          if [[ "$signing_required" = "1" ]]; then
             test -n "$PANDORA_WINDOWS_CERTIFICATE_BASE64"
             test -n "$PANDORA_WINDOWS_CERTIFICATE_PASSWORD"
             test -n "$PANDORA_APPLE_CERTIFICATE_BASE64"
@@ -373,7 +381,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: desktop-readiness-${{ matrix.artifact }}-${{ github.ref_name }}
+          name: readiness-release-${{ matrix.artifact }}-${{ github.ref_name }}
           path: |
             apps/pandora-desktop/test-results/accessibility
             ${{ runner.temp }}/pandora-desktop-lifecycle-evidence.json
@@ -415,6 +423,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [build, build-desktop]
     runs-on: ubuntu-latest
+    environment: release-publication
     permissions:
       contents: write
       id-token: write
@@ -830,6 +839,25 @@ jobs:
             --manifest "$release/checksums.txt" \
             "$native" "${bundles[0]}"
           chmod 0755 "$native"
+          version="${GITHUB_REF_NAME#v}"
+          signing_required=0
+          if [[ "$version" == *-rc.* || "$version" != *-* ]]; then signing_required=1; fi
+          if [[ "$RUNNER_OS" == "macOS" && "$signing_required" = "1" ]]; then
+            codesign --verify --strict --verbose=2 "$native"
+            xcrun stapler validate "${bundles[0]}"
+            mount="$RUNNER_TEMP/pandora-signature-mount"
+            mkdir -p "$mount"
+            hdiutil attach -readonly -nobrowse -quiet -mountpoint "$mount" "${bundles[0]}"
+            apps=("$mount"/*.app)
+            test "${#apps[@]}" -eq 1
+            codesign --verify --deep --strict --verbose=2 "${apps[0]}"
+            spctl --assess --type execute --verbose=4 "${apps[0]}"
+            hdiutil detach -quiet "$mount"
+            rmdir "$mount"
+            printf '{"platform":"%s","required":true,"verified":true}\n' "${{ matrix.platform }}" > "$RUNNER_TEMP/platform-signature-verification.json"
+          else
+            printf '{"platform":"%s","required":false,"verified":true}\n' "${{ matrix.platform }}" > "$RUNNER_TEMP/platform-signature-verification.json"
+          fi
           PANDORA_DESKTOP_SOURCE_SIDECAR="$native" \
           PANDORA_DESKTOP_BUNDLE_ROOT="$release" \
           PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE=1 \
@@ -849,6 +877,21 @@ jobs:
             --manifest (Join-Path $release "checksums.txt") `
             $native ($bundles[0].FullName)
           if ($LASTEXITCODE -ne 0) { throw "published desktop checksum verification failed" }
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $signingRequired = $version -match '-rc\.[0-9]+$' -or $version -notmatch '-'
+          if ($signingRequired) {
+            foreach ($artifact in @($native, $bundles[0].FullName)) {
+              $signature = Get-AuthenticodeSignature -LiteralPath $artifact
+              if ($signature.Status -ne 'Valid') {
+                throw "published Windows signature is not valid for $artifact"
+              }
+            }
+          }
+          @{
+            platform = '${{ matrix.platform }}'
+            required = $signingRequired
+            verified = $true
+          } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "platform-signature-verification.json")
           $env:PANDORA_DESKTOP_SOURCE_SIDECAR = $native
           $env:PANDORA_DESKTOP_BUNDLE_ROOT = $release
           $env:PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE = "1"
@@ -860,6 +903,8 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: published-desktop-lifecycle-${{ matrix.platform }}-${{ github.ref_name }}
-          path: ${{ runner.temp }}/published-desktop-lifecycle-evidence.json
+          path: |
+            ${{ runner.temp }}/published-desktop-lifecycle-evidence.json
+            ${{ runner.temp }}/platform-signature-verification.json
           if-no-files-found: warn
           retention-days: 90

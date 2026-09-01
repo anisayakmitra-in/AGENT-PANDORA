@@ -5,7 +5,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.release_evidence import ReleaseEvidenceError, build_release_evidence
+from scripts.release_evidence import (
+    ReleaseEvidenceError,
+    build_release_evidence,
+    platform_signing_required,
+)
 
 
 class ReleaseEvidenceTests(unittest.TestCase):
@@ -47,6 +51,10 @@ class ReleaseEvidenceTests(unittest.TestCase):
             self.assertEqual(evidence["checksum_manifest"]["entries"], len(artifacts))
             self.assertTrue(evidence["signature"]["verified_in_workflow"])
             self.assertTrue(evidence["provenance"]["verified_in_workflow"])
+            self.assertFalse(evidence["platform_signing"]["required"])
+            self.assertEqual(
+                evidence["platform_signing"]["windows_authenticode"], "not_required"
+            )
             self.assertEqual(
                 {item["path"] for item in evidence["artifacts"]},
                 set(artifacts),
@@ -74,6 +82,20 @@ class ReleaseEvidenceTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ReleaseEvidenceError, "invalid release tag"):
                 build_release_evidence("latest", dist)
+
+    def test_release_candidate_and_stable_require_vendor_platform_signing(self) -> None:
+        self.assertFalse(platform_signing_required("v2.0.0-beta.7"))
+        self.assertTrue(platform_signing_required("v2.0.0-rc.1"))
+        self.assertTrue(platform_signing_required("v2.0.0"))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            dist, _ = self._write_dist(Path(temporary))
+            evidence = build_release_evidence("v2.0.0-rc.1", dist)
+            self.assertTrue(evidence["platform_signing"]["required"])
+            self.assertEqual(
+                evidence["platform_signing"]["apple_notarization"],
+                "verified_in_build",
+            )
 
 
 if __name__ == "__main__":

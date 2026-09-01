@@ -115,6 +115,18 @@ Older notes.
         self.assertIn("Verify desktop system install lifecycle", workflow)
         self.assertIn("PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE: \"1\"", workflow)
 
+    def test_release_candidate_and_stable_fail_closed_on_signing_and_publication(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("Enforce release-candidate and stable signing policy", workflow)
+        self.assertIn("PANDORA_RELEASE_CANDIDATE_APPROVED:", workflow)
+        self.assertIn("PANDORA_STABLE_RELEASE_APPROVED:", workflow)
+        self.assertIn('if [[ "$version" == *-rc.* ]]', workflow)
+        self.assertIn('if [[ "$signing_required" = "1" ]]', workflow)
+        self.assertIn("environment: release-publication", workflow)
+
     def test_release_workflow_smokes_published_installers_on_fresh_runners(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
             encoding="utf-8"
@@ -209,6 +221,11 @@ Older notes.
         self.assertIn("PANDORA_DESKTOP_BUNDLE_ROOT", workflow)
         self.assertIn("PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE", workflow)
         self.assertIn("npm run verify:bundle-lifecycle", workflow)
+        self.assertIn("Get-AuthenticodeSignature", workflow)
+        self.assertIn('codesign --verify --strict --verbose=2 "$native"', workflow)
+        self.assertIn("xcrun stapler validate", workflow)
+        self.assertIn("spctl --assess --type execute", workflow)
+        self.assertIn("platform-signature-verification.json", workflow)
 
     def test_ci_runs_ephemeral_system_installer_lifecycle(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
