@@ -15,6 +15,7 @@ const MAX_DRAIN_JOBS: usize = 64;
 const JOB_WORKER_LEASE_DURATION_SECONDS: u64 = 3_600;
 const JOB_WORKER_HEARTBEAT_SECONDS: u64 = 10;
 const JOB_WORKER_RESTART_STALE_AFTER_SECONDS: u64 = 30;
+const JOB_WORKER_SHUTDOWN_RETRIES: usize = 5;
 static NEXT_JOB_SUPERVISOR_NONCE: AtomicU64 = AtomicU64::new(1);
 
 struct ActiveJobSupervisor {
@@ -22,6 +23,7 @@ struct ActiveJobSupervisor {
     node_id: String,
     lease_id: String,
     execution_id: String,
+    shutdown_complete: bool,
 }
 
 impl ActiveJobSupervisor {
@@ -117,14 +119,39 @@ impl ActiveJobSupervisor {
             handle: Some(handle),
         }
     }
+
+    fn shutdown(&mut self) -> Result<(), FleetError> {
+        if self.shutdown_complete {
+            return Ok(());
+        }
+        let mut last_database_error = None;
+        for attempt in 0..JOB_WORKER_SHUTDOWN_RETRIES {
+            match self.fleet.shutdown_supervisor_for_process(
+                &self.node_id,
+                std::process::id(),
+                &self.lease_id,
+                timestamp().as_unix_seconds(),
+            ) {
+                Ok(_) => {
+                    self.shutdown_complete = true;
+                    return Ok(());
+                }
+                Err(error @ FleetError::Database(_))
+                    if attempt + 1 < JOB_WORKER_SHUTDOWN_RETRIES =>
+                {
+                    last_database_error = Some(error);
+                    thread::sleep(Duration::from_millis(100 * (attempt as u64 + 1)));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(last_database_error.expect("a bounded shutdown retry retains its database error"))
+    }
 }
 
 impl Drop for ActiveJobSupervisor {
     fn drop(&mut self) {
-        let now = timestamp().as_unix_seconds();
-        let _ = self.fleet.release_lease(&self.lease_id);
-        let _ = self.fleet.drain_supervisor(&self.node_id, now);
-        let _ = self.fleet.stop_supervisor(&self.node_id, now);
+        let _ = self.shutdown();
     }
 }
 
@@ -206,6 +233,7 @@ fn start_job_supervisor(config: &super::RuntimeConfig) -> Result<ActiveJobSuperv
         node_id,
         lease_id,
         execution_id,
+        shutdown_complete: false,
     })
 }
 
@@ -386,7 +414,7 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
     }
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
-    let supervisor = start_job_supervisor(&config)?;
+    let mut supervisor = start_job_supervisor(&config)?;
     let heartbeat = supervisor.start_heartbeat();
     supervisor.heartbeat().map_err(fleet_error)?;
     let store = JobStore::open(config.data_dir().join("jobs.sqlite3")).map_err(job_store_error)?;
@@ -432,6 +460,16 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
     };
     let heartbeat_failed = heartbeat.failed() && !heartbeat.stop_requested();
     drop(heartbeat);
+    drop(context);
+    supervisor.shutdown().map_err(|error| {
+        CliError::execution(
+            "job worker supervisor shutdown failed",
+            json!({
+                "code": "worker_supervisor_shutdown_failed",
+                "reason": error.to_string(),
+            }),
+        )
+    })?;
     if heartbeat_failed {
         return Err(CliError::execution(
             "job worker supervisor heartbeat failed",

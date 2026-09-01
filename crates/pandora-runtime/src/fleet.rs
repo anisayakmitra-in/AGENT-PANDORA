@@ -913,6 +913,63 @@ impl FleetEngine {
         Ok(supervisor)
     }
 
+    pub fn shutdown_supervisor_for_process(
+        &self,
+        node_id: &str,
+        process_id: u32,
+        lease_id: &str,
+        now: u64,
+    ) -> Result<FleetSupervisor, FleetError> {
+        let node_id = validate_text("node ID", node_id.to_owned(), 256)?;
+        let lease_id = validate_text("lease ID", lease_id.to_owned(), 256)?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current =
+            load_supervisor(&transaction, &node_id)?.ok_or(FleetError::SupervisorNotFound)?;
+        if current.process_id != Some(process_id) {
+            return Err(FleetError::SupervisorProcessMismatch);
+        }
+        let lease = transaction
+            .query_row(
+                "SELECT id, node_id, execution_id, budget_json, issued_at,
+                        expires_at, state
+                 FROM fleet_leases WHERE id = ?1",
+                params![lease_id],
+                decode_lease,
+            )
+            .optional()?
+            .ok_or(FleetError::LeaseNotFound)?;
+        if lease.node_id != node_id {
+            return Err(FleetError::LeaseExecutionMismatch);
+        }
+        if lease.state == FleetLeaseState::Active {
+            transaction.execute(
+                "UPDATE fleet_leases SET state = ?1 WHERE id = ?2 AND state = ?3",
+                params![
+                    FleetLeaseState::Released.as_str(),
+                    lease_id,
+                    FleetLeaseState::Active.as_str(),
+                ],
+            )?;
+        }
+        if active_lease_count(&transaction, &node_id)? > 0 {
+            return Err(FleetError::ActiveLeasesPresent);
+        }
+        if current.state == FleetSupervisorState::Stopped {
+            transaction.commit()?;
+            return Ok(current);
+        }
+        let supervisor = FleetSupervisor {
+            state: FleetSupervisorState::Stopped,
+            reason: Some("process_shutdown".to_owned()),
+            updated_at: now,
+            ..current
+        };
+        save_supervisor(&transaction, &supervisor)?;
+        transaction.commit()?;
+        Ok(supervisor)
+    }
+
     pub fn recover_supervisor(
         &self,
         node_id: &str,
@@ -1578,6 +1635,61 @@ mod tests {
         let restarted = fleet.start_supervisor("node-a", 4).unwrap();
         assert_eq!(restarted.state(), FleetSupervisorState::Running);
         assert_eq!(restarted.generation(), 2);
+    }
+
+    #[test]
+    fn process_shutdown_releases_its_lease_and_stops_atomically_and_idempotently() {
+        let fleet = engine("pandora-fleet-atomic-process-shutdown");
+        fleet.register_node(&node("node-a", &["coding"])).unwrap();
+        fleet.start_supervisor_for_process("node-a", 42, 1).unwrap();
+        for (lease_id, execution_id) in [("lease-a", "execution-a"), ("lease-b", "execution-b")] {
+            fleet
+                .acquire_lease(
+                    lease_id,
+                    "node-a",
+                    execution_id,
+                    FleetBudget::new(1, 1, 10, 1),
+                    1,
+                    10,
+                )
+                .unwrap();
+        }
+
+        assert!(matches!(
+            fleet.shutdown_supervisor_for_process("node-a", 42, "lease-a", 2),
+            Err(FleetError::ActiveLeasesPresent)
+        ));
+        assert!(
+            fleet
+                .list_leases()
+                .unwrap()
+                .iter()
+                .all(|lease| lease.state() == FleetLeaseState::Active)
+        );
+        assert!(matches!(
+            fleet.shutdown_supervisor_for_process("node-a", 7, "lease-a", 2),
+            Err(FleetError::SupervisorProcessMismatch)
+        ));
+
+        fleet.release_lease("lease-b").unwrap();
+        let stopped = fleet
+            .shutdown_supervisor_for_process("node-a", 42, "lease-a", 3)
+            .unwrap();
+        assert_eq!(stopped.state(), FleetSupervisorState::Stopped);
+        assert_eq!(
+            fleet
+                .list_leases()
+                .unwrap()
+                .into_iter()
+                .find(|lease| lease.id() == "lease-a")
+                .unwrap()
+                .state(),
+            FleetLeaseState::Released
+        );
+        let replayed = fleet
+            .shutdown_supervisor_for_process("node-a", 42, "lease-a", 4)
+            .unwrap();
+        assert_eq!(replayed.state(), FleetSupervisorState::Stopped);
     }
 
     #[test]
