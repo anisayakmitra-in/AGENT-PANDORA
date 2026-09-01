@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -24,6 +26,20 @@ RELEASE_TRAIN_TAG = re.compile(
     r"^v[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)\.[0-9]+)?$"
 )
 CHANGELOG_RELEASE_HEADING = re.compile(r"(?m)^##\s+(v\S+)\s*$")
+GLIB_PATCH_ROOT = Path("third_party/glib-0.18.5-patched")
+GLIB_PATCH_SOURCE = GLIB_PATCH_ROOT / "src" / "variant_iter.rs"
+GLIB_PATCH_SOURCE_SHA256 = (
+    "a0f5ee8acb8faa089bcdfbc9a57372609fce7654026ccef7d9a224d05a654ccc"
+)
+GLIB_PATCH_VCS_SHA = "42b9caf98e03ded086362d9653ca58fe94dc8658"
+GLIB_PATCH_OVERRIDE = (
+    'glib = { path = "../../../third_party/glib-0.18.5-patched" }'
+)
+GLIB_LOCK_PACKAGE = re.compile(
+    r'\[\[package\]\]\r?\nname = "glib"\r?\nversion = "0\.18\.5"\r?\n'
+    r"(?P<body>.*?)(?=\r?\n\[\[package\]\])",
+    re.DOTALL,
+)
 
 
 def validate_content(relative: Path, content: bytes) -> list[str]:
@@ -98,6 +114,78 @@ def validate_release_changelog(changelog: str, tags: list[str]) -> list[str]:
     return findings
 
 
+def validate_patched_glib(root: Path) -> list[str]:
+    findings: list[str] = []
+    manifest = root / "apps" / "pandora-desktop" / "src-tauri" / "Cargo.toml"
+    lockfile = root / "apps" / "pandora-desktop" / "src-tauri" / "Cargo.lock"
+    source = root / GLIB_PATCH_SOURCE
+    provenance = root / GLIB_PATCH_ROOT / ".cargo_vcs_info.json"
+    patch_record = root / GLIB_PATCH_ROOT / "PANDORA-PATCH.md"
+
+    if not manifest.is_file() or GLIB_PATCH_OVERRIDE not in manifest.read_text(
+        encoding="utf-8"
+    ):
+        findings.append(
+            f"{manifest.relative_to(root)}: patched glib source override is missing"
+        )
+
+    if not lockfile.is_file():
+        findings.append(f"{lockfile.relative_to(root)}: desktop lockfile is missing")
+    else:
+        match = GLIB_LOCK_PACKAGE.search(lockfile.read_text(encoding="utf-8"))
+        if match is None:
+            findings.append(
+                f"{lockfile.relative_to(root)}: patched glib lock entry is missing"
+            )
+        elif "source =" in match.group("body") or "checksum =" in match.group("body"):
+            findings.append(
+                f"{lockfile.relative_to(root)}: glib must resolve through the reviewed path override"
+            )
+
+    if not source.is_file():
+        findings.append(f"{GLIB_PATCH_SOURCE}: patched source is missing")
+    else:
+        source_bytes = source.read_bytes()
+        digest = hashlib.sha256(source_bytes).hexdigest()
+        if digest != GLIB_PATCH_SOURCE_SHA256:
+            findings.append(
+                f"{GLIB_PATCH_SOURCE}: patched source digest does not match the reviewed fix"
+            )
+        source_text = source_bytes.decode("utf-8")
+        if "let mut p: *mut libc::c_char" not in source_text or "&mut p," not in source_text:
+            findings.append(
+                f"{GLIB_PATCH_SOURCE}: mutable out-argument fix is missing"
+            )
+        if "let p: *mut libc::c_char" in source_text:
+            findings.append(
+                f"{GLIB_PATCH_SOURCE}: vulnerable immutable out-argument remains"
+            )
+
+    if not provenance.is_file():
+        findings.append(
+            f"{provenance.relative_to(root)}: crates.io source provenance is missing"
+        )
+    else:
+        try:
+            vcs = json.loads(provenance.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            findings.append(
+                f"{provenance.relative_to(root)}: source provenance is invalid"
+            )
+        else:
+            if vcs.get("git", {}).get("sha1") != GLIB_PATCH_VCS_SHA:
+                findings.append(
+                    f"{provenance.relative_to(root)}: source revision is not the reviewed crates.io revision"
+                )
+
+    if not patch_record.is_file():
+        findings.append(
+            f"{patch_record.relative_to(root)}: security patch record is missing"
+        )
+
+    return findings
+
+
 def tracked_paths(root: Path) -> list[Path]:
     result = subprocess.run(
         ["git", "-C", str(root), "ls-files", "-z"],
@@ -123,6 +211,7 @@ def main() -> int:
     arguments = parser.parse_args()
     root = arguments.root.resolve()
     findings = validate_paths(root, tracked_paths(root))
+    findings.extend(validate_patched_glib(root))
     changelog_path = root / "CHANGELOG.md"
     if not changelog_path.is_file():
         findings.append("CHANGELOG.md: tracked changelog is missing")

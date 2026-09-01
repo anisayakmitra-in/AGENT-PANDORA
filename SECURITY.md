@@ -68,3 +68,22 @@ focused regression suite, the workspace tests, dependency auditing, and the
 platform checks listed in [the release documentation](RELEASES.md). A release
 must not claim support for a platform or execution mode that has not passed
 those checks.
+
+## Reviewed dependency backports
+
+Tauri 2.11.5 and Wry 0.55.1 currently bind the supported Linux desktop to the
+final GTK3 `gtk 0.18` dependency line. That line cannot resolve the published
+`glib 0.20` fix for RUSTSEC-2024-0429 while Tauri's GTK4 migration remains
+unreleased.
+
+The repository therefore vendors the exact crates.io `glib 0.18.5` source and
+applies the upstream one-line mutable out-argument fix from gtk-rs/gtk-rs-core
+pull request 1343. The desktop manifest uses a Cargo source override; it does
+not edit the lockfile version to hide the dependency. Repository validation
+binds the reviewed source digest, crates.io revision, Cargo override, and fixed
+code shape. The source provenance and retirement condition are recorded in
+`third_party/glib-0.18.5-patched/PANDORA-PATCH.md`.
+
+This override must be removed as soon as the supported Tauri/Wry release moves
+Linux to `glib 0.20` or newer. The version-based RustSec exception is limited to
+RUSTSEC-2024-0429; new advisories remain release-blocking.

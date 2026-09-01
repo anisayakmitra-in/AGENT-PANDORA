@@ -34,6 +34,9 @@ jobs:
         run: cargo audit --deny warnings
 
       - name: Audit desktop Rust dependencies
+        # cargo-audit keys advisories by the published package version. The
+        # repository validator proves that glib resolves to the reviewed
+        # crates.io source with the upstream VariantStrIter fix backported.
         run: >-
           cargo audit
           --file apps/pandora-desktop/src-tauri/Cargo.lock

@@ -8,6 +8,12 @@ license = "Apache-2.0"
 
 [workspace]
 
+[patch.crates-io]
+# Tauri 2.11/Wry 0.55 still require the final gtk-rs 0.18 line on Linux.
+# This exact crates.io source carries the upstream VariantStrIter UB fix until
+# Tauri's GTK4 migration makes glib 0.20+ reachable.
+glib = { path = "../../../third_party/glib-0.18.5-patched" }
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

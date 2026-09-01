@@ -1,10 +1,20 @@
 import unittest
 from pathlib import Path
 
-from scripts.validate_docs import validate_text
+from scripts.validate_docs import is_project_documentation, validate_text
 
 
 class ValidateDocumentationTests(unittest.TestCase):
+    def test_only_project_owned_third_party_patch_records_are_documentation(self) -> None:
+        self.assertFalse(
+            is_project_documentation(Path("third_party/glib-0.18.5-patched/README.md"))
+        )
+        self.assertTrue(
+            is_project_documentation(
+                Path("third_party/glib-0.18.5-patched/PANDORA-PATCH.md")
+            )
+        )
+
     def test_accepts_clear_status_documentation(self) -> None:
         findings = validate_text(
             Path("docs/ARCHITECTURE.md"),

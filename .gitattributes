@@ -1,3 +1,4 @@
 # Package manifests bind these reference artifacts byte-for-byte.
 sdk/**/*.artifact text eol=lf
 sdk/**/*.wasm binary
+third_party/glib-0.18.5-patched/** text eol=lf -whitespace

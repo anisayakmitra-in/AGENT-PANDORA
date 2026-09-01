@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Backported the upstream RUSTSEC-2024-0429 `glib::VariantStrIter` fix onto the
+  exact crates.io `glib 0.18.5` source required by Tauri's Linux GTK3 stack.
+  Cargo now resolves the reviewed local source, and repository validation
+  binds its provenance, fixed source digest, and lockfile override until the
+  upstream GTK4 migration makes `glib 0.20` reachable.
+
 - Added one privacy-safe Fleet operations snapshot across CLI, TUI, and
   desktop, with queue depth, lease age, stale supervisor, failure, and budget
   ceiling views that exclude prompts, outputs, credentials, and hidden
