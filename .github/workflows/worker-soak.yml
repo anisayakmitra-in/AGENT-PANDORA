@@ -44,9 +44,9 @@ jobs:
       profile: ${{ inputs.profile }}
       segment: 1
       duration_seconds: ${{ inputs.profile == 'ten-minute' && 600 || inputs.profile == 'two-hour' && 7200 || 14400 }}
-      jobs: ${{ inputs.jobs }}
-      producers: ${{ inputs.producers }}
-      rounds: ${{ inputs.rounds }}
+      jobs: ${{ fromJSON(inputs.jobs) }}
+      producers: ${{ fromJSON(inputs.producers) }}
+      rounds: ${{ fromJSON(inputs.rounds) }}
 
   segment_2:
     name: Segment 2
@@ -57,9 +57,9 @@ jobs:
       profile: ${{ inputs.profile }}
       segment: 2
       duration_seconds: 14400
-      jobs: ${{ inputs.jobs }}
-      producers: ${{ inputs.producers }}
-      rounds: ${{ inputs.rounds }}
+      jobs: ${{ fromJSON(inputs.jobs) }}
+      producers: ${{ fromJSON(inputs.producers) }}
+      rounds: ${{ fromJSON(inputs.rounds) }}
 
   segment_3:
     name: Segment 3
@@ -70,9 +70,9 @@ jobs:
       profile: ${{ inputs.profile }}
       segment: 3
       duration_seconds: 14400
-      jobs: ${{ inputs.jobs }}
-      producers: ${{ inputs.producers }}
-      rounds: ${{ inputs.rounds }}
+      jobs: ${{ fromJSON(inputs.jobs) }}
+      producers: ${{ fromJSON(inputs.producers) }}
+      rounds: ${{ fromJSON(inputs.rounds) }}
 
   segment_4:
     name: Segment 4
@@ -83,9 +83,9 @@ jobs:
       profile: ${{ inputs.profile }}
       segment: 4
       duration_seconds: 14400
-      jobs: ${{ inputs.jobs }}
-      producers: ${{ inputs.producers }}
-      rounds: ${{ inputs.rounds }}
+      jobs: ${{ fromJSON(inputs.jobs) }}
+      producers: ${{ fromJSON(inputs.producers) }}
+      rounds: ${{ fromJSON(inputs.rounds) }}
 
   segment_5:
     name: Segment 5
@@ -96,9 +96,9 @@ jobs:
       profile: ${{ inputs.profile }}
       segment: 5
       duration_seconds: 14400
-      jobs: ${{ inputs.jobs }}
-      producers: ${{ inputs.producers }}
-      rounds: ${{ inputs.rounds }}
+      jobs: ${{ fromJSON(inputs.jobs) }}
+      producers: ${{ fromJSON(inputs.producers) }}
+      rounds: ${{ fromJSON(inputs.rounds) }}
 
   segment_6:
     name: Segment 6
@@ -109,9 +109,9 @@ jobs:
       profile: ${{ inputs.profile }}
       segment: 6
       duration_seconds: 14400
-      jobs: ${{ inputs.jobs }}
-      producers: ${{ inputs.producers }}
-      rounds: ${{ inputs.rounds }}
+      jobs: ${{ fromJSON(inputs.jobs) }}
+      producers: ${{ fromJSON(inputs.producers) }}
+      rounds: ${{ fromJSON(inputs.rounds) }}
 
   campaign_evidence:
     name: Retain campaign evidence

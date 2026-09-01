@@ -221,6 +221,13 @@ def validate_worker_soak_workflows(root: Path) -> list[str]:
         findings.append(
             f"{campaign_path.relative_to(root)}: six checkpointed segment jobs are required"
         )
+    for numeric_input in ("jobs", "producers", "rounds"):
+        conversion = f"fromJSON(inputs.{numeric_input})"
+        if campaign.count(conversion) != 6:
+            findings.append(
+                f"{campaign_path.relative_to(root)}: dispatch input {numeric_input} "
+                "must be converted for all six numeric reusable-workflow inputs"
+            )
     for dependency in ("needs: segment_1", "needs: segment_2", "needs: segment_3", "needs: segment_4", "needs: segment_5"):
         if dependency not in campaign:
             findings.append(
