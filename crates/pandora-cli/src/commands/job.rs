@@ -79,7 +79,7 @@ impl ActiveJobSupervisor {
                     break;
                 }
                 let now = timestamp().as_unix_seconds();
-                if fleet
+                let heartbeat_result = fleet
                     .heartbeat_supervisor_for_process(&node_id, std::process::id(), now)
                     .and_then(|_| {
                         fleet.renew_lease(
@@ -88,10 +88,24 @@ impl ActiveJobSupervisor {
                             now,
                             JOB_WORKER_LEASE_DURATION_SECONDS,
                         )
-                    })
-                    .is_err()
-                {
-                    failed_for_thread.store(true, Ordering::Release);
+                    });
+                if heartbeat_result.is_err() {
+                    let drain_won = fleet
+                        .list_supervisors()
+                        .ok()
+                        .and_then(|supervisors| {
+                            supervisors
+                                .into_iter()
+                                .find(|supervisor| supervisor.node_id() == node_id)
+                        })
+                        .is_some_and(|supervisor| {
+                            supervisor.state() != FleetSupervisorState::Running
+                        });
+                    if drain_won {
+                        stop_requested_for_thread.store(true, Ordering::Release);
+                    } else {
+                        failed_for_thread.store(true, Ordering::Release);
+                    }
                     break;
                 }
             }

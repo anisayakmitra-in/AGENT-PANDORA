@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 pub const FLEET_SCHEMA_VERSION: u32 = 3;
 pub const MAX_FLEET_NODES: usize = 256;
@@ -411,6 +412,12 @@ impl FleetEngine {
             })?;
         }
         let connection = Connection::open(path)?;
+        connection.busy_timeout(Duration::from_secs(5))?;
+        let journal_mode =
+            connection.query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0))?;
+        if !journal_mode.eq_ignore_ascii_case("wal") {
+            connection.execute_batch("PRAGMA journal_mode = WAL;")?;
+        }
         connection.pragma_update(None, "user_version", FLEET_SCHEMA_VERSION)?;
         connection.execute_batch(
             "CREATE TABLE IF NOT EXISTS fleet_nodes (
@@ -1385,6 +1392,21 @@ mod tests {
                 .join("fleet.sqlite3"),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn database_uses_wal_and_a_bounded_busy_wait() {
+        let fleet = engine("pandora-fleet-concurrency");
+        let connection = fleet.connection.lock().unwrap();
+        let journal_mode = connection
+            .query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0))
+            .unwrap();
+        let busy_timeout = connection
+            .query_row("PRAGMA busy_timeout", [], |row| row.get::<_, u64>(0))
+            .unwrap();
+
+        assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
+        assert_eq!(busy_timeout, 5_000);
     }
 
     #[test]

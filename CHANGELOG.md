@@ -19,7 +19,9 @@
   metrics, clean shutdown, and partial multi-repository failures into one
   fail-closed campaign summary. Current job stores also reopen through a
   read-only schema fast path so concurrent producers do not contend on an
-  already-complete migration.
+  already-complete migration. Fleet persistence now uses WAL with a bounded
+  busy wait, and a drain that wins a heartbeat race is classified as a normal
+  stop request while cleanup still must release every lease.
 
 - Backported the upstream RUSTSEC-2024-0429 `glib::VariantStrIter` fix onto the
   exact crates.io `glib 0.18.5` source required by Tauri's Linux GTK3 stack.
