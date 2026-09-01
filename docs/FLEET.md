@@ -72,10 +72,10 @@ Run the bounded profile with:
 cargo test -p pandora-cli --test cli_smoke phase7_worker_operations_recover_without_replaying_durable_effects --locked -- --exact --nocapture
 ```
 
-The explicit soak profile keeps normal CI bounded. By default it uses four
-independent producers, eight warm-up jobs, 504 recovery jobs, and a 600-second
-recovery submission window. It allows another bounded 180 seconds for the final
-drain. On a POSIX shell:
+The explicit soak profile keeps normal CI bounded. A segment uses four
+independent producers by default, eight warm-up jobs, 504 recovery jobs, and a
+bounded recovery submission window. It allows another 180 seconds for the
+final drain. On a POSIX shell, a ten-minute diagnostic segment is:
 
 ```sh
 PANDORA_PHASE7_SOAK=1 \
@@ -83,22 +83,42 @@ PANDORA_PHASE7_SOAK_SECONDS=600 \
 PANDORA_PHASE7_SOAK_JOBS=512 \
 PANDORA_PHASE7_SOAK_PRODUCERS=4 \
 PANDORA_PHASE7_SOAK_ROUNDS=1 \
+PANDORA_PHASE7_SOAK_EVIDENCE_PATH=/tmp/worker-soak-runtime.json \
 cargo test -p pandora-cli --test cli_smoke phase7_worker_operations_recover_without_replaying_durable_effects --locked -- --exact --nocapture
 ```
 
 PowerShell uses the same values through PANDORA_PHASE7_SOAK,
 PANDORA_PHASE7_SOAK_SECONDS, PANDORA_PHASE7_SOAK_JOBS,
-PANDORA_PHASE7_SOAK_PRODUCERS, and PANDORA_PHASE7_SOAK_ROUNDS. Producers may
-be 2-8, jobs may be from four per producer through 4,096, rounds may be 1-16,
-and the submission window may be 60-86,400 seconds. Each round creates another
-bounded recovery batch; normal CI remains one 18-job round. Long-duration runs
-remain an operator/release evidence gate and are not part of the default CI profile.
+PANDORA_PHASE7_SOAK_PRODUCERS, PANDORA_PHASE7_SOAK_ROUNDS, and
+PANDORA_PHASE7_SOAK_EVIDENCE_PATH. Producers may be 2-8, jobs may be from four
+per producer through 4,096, rounds may be 1-16, and the submission window may
+be 60-86,400 seconds. Each round creates another bounded recovery batch;
+normal CI remains one 18-job round. The evidence file records queue depth,
+running jobs, process RSS and CPU, memory growth, active lease count and age,
+stale supervisors, exact job/session/execution/receipt counts, supervisor
+generations, and final shutdown state. The retained gate fails if resource or
+state sampling is absent, a job or receipt is lost or duplicated, a lease or
+supervisor remains active, the intended stale supervisor is not observed, or a
+worker grows by more than 256 MiB during one segment.
 
 The manually dispatched `Worker operations soak` workflow runs this same
-profile on Linux x64, macOS x64, macOS arm64, and Windows x64. Its bounded
-inputs default to the documented ten-minute profile, and each platform uploads
-the exact test log as a 90-day artifact. A workflow definition is not operating
-proof by itself: only successful retained runs count toward the Phase 7 gate.
+profile on Linux x64, macOS x64, macOS arm64, and Windows x64. Operators select
+the ten-minute diagnostic, two-hour, eight-hour, or twenty-four-hour campaign.
+The two-hour profile is one uninterrupted segment. Because GitHub-hosted jobs
+have a [six-hour execution limit](https://docs.github.com/en/actions/reference/limits),
+the longer hosted campaigns use sequential four-hour checkpointed segments;
+every segment starts from the same exact commit and repeats crash, restart,
+stale-lease, exact-once, cancellation-race, clean-drain, and partial
+multi-repository failure evidence. Separate jobs also avoid the 24-hour
+workflow-token limit.
+
+Each platform segment retains its full log and fail-closed JSON evidence for 90
+days. A final campaign job requires every platform/segment pair, checks the
+exact commit and requested elapsed time, revalidates every runtime gate, and
+uploads one JSON and Markdown summary. A workflow definition is not operating
+proof by itself: only a successful retained campaign counts toward the worker
+operations gate. Long-duration runs remain an operator/release evidence gate
+and are not part of default CI.
 
 `pandora fleet dashboard --json` is the operations read model shared by the
 CLI, `/fleet-health` TUI command, and desktop Background Runs view. It reports

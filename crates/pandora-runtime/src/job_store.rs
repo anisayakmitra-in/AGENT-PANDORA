@@ -10,6 +10,8 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 pub const MAX_JOB_RESULT_BYTES: usize = 1024 * 1024;
+const JOB_STORE_SCHEMA_COMPONENT: &str = "job_store";
+const JOB_STORE_SCHEMA_VERSION: i64 = 1;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JobRecord {
@@ -485,9 +487,16 @@ pub(crate) fn open_job_connection(path: &Path) -> Result<Connection, JobStoreErr
     let mut connection = Connection::open(path)?;
     set_private_permissions(path)?;
     connection.busy_timeout(Duration::from_secs(5))?;
+    let journal_mode =
+        connection.query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0))?;
+    if !journal_mode.eq_ignore_ascii_case("wal") {
+        connection.execute_batch("PRAGMA journal_mode = WAL;")?;
+    }
+    if current_job_schema_version(&connection)? == Some(JOB_STORE_SCHEMA_VERSION) {
+        return Ok(connection);
+    }
     connection.execute_batch(
-        "PRAGMA journal_mode = WAL;
-         CREATE TABLE IF NOT EXISTS jobs (
+        "CREATE TABLE IF NOT EXISTS jobs (
              id TEXT PRIMARY KEY,
              submission_sequence INTEGER NOT NULL CHECK (submission_sequence > 0),
              principal_id TEXT NOT NULL,
@@ -515,7 +524,60 @@ pub(crate) fn open_job_connection(path: &Path) -> Result<Connection, JobStoreErr
              ON jobs(job_kind, principal_id, tenant_id, workspace_id, status, submission_sequence);
          DROP INDEX IF EXISTS jobs_scope_queue_idx;",
     )?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    transaction.execute_batch(
+        "CREATE TABLE IF NOT EXISTS pandora_schema_versions (
+             component TEXT PRIMARY KEY,
+             version INTEGER NOT NULL CHECK (version > 0)
+         );",
+    )?;
+    transaction.execute(
+        "INSERT INTO pandora_schema_versions (component, version)
+         VALUES (?1, ?2)
+         ON CONFLICT(component) DO UPDATE SET version = excluded.version",
+        params![JOB_STORE_SCHEMA_COMPONENT, JOB_STORE_SCHEMA_VERSION],
+    )?;
+    transaction.commit()?;
     Ok(connection)
+}
+
+fn current_job_schema_version(connection: &Connection) -> Result<Option<i64>, JobStoreError> {
+    let marker_exists = connection.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM sqlite_master
+             WHERE type = 'table' AND name = 'pandora_schema_versions'
+         )",
+        [],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !marker_exists {
+        return Ok(None);
+    }
+    let version = connection
+        .query_row(
+            "SELECT version FROM pandora_schema_versions WHERE component = ?1",
+            params![JOB_STORE_SCHEMA_COMPONENT],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    if let Some(version) = version
+        && version != JOB_STORE_SCHEMA_VERSION
+    {
+        return Err(JobStoreError::CorruptRecord);
+    }
+    if version.is_some() {
+        let jobs_exist = connection.query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'jobs'
+             )",
+            [],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !jobs_exist {
+            return Err(JobStoreError::CorruptRecord);
+        }
+    }
+    Ok(version)
 }
 
 fn ensure_submission_sequence(connection: &mut Connection) -> Result<(), JobStoreError> {
@@ -776,6 +838,21 @@ mod tests {
 
     fn worker(id: &str) -> JobWorkerId {
         JobWorkerId::new(id).unwrap()
+    }
+
+    #[test]
+    fn current_schema_reopens_without_waiting_for_a_writer_lock() {
+        let root = crate::test_support::new_temp_dir("pandora-job-schema-fast-path").unwrap();
+        let database = root.join("jobs.sqlite3");
+        drop(JobStore::open(&database).unwrap());
+        let writer = Connection::open(&database).unwrap();
+        writer.execute_batch("BEGIN IMMEDIATE;").unwrap();
+
+        let reopened = JobStore::open(&database).unwrap();
+
+        drop(reopened);
+        writer.execute_batch("COMMIT;").unwrap();
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

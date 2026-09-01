@@ -3,22 +3,31 @@ name: Worker operations soak
 on:
   workflow_dispatch:
     inputs:
-      duration_seconds:
-        description: Recovery submission window in seconds (60-86400)
+      profile:
+        description: Retained campaign duration on every platform
         required: true
-        default: "600"
+        default: two-hour
+        type: choice
+        options:
+          - ten-minute
+          - two-hour
+          - eight-hour
+          - twenty-four-hour
       jobs:
-        description: Total governed jobs (4 per producer through 4096)
+        description: Governed jobs per checkpointed segment
         required: true
-        default: "512"
+        default: 512
+        type: number
       producers:
-        description: Independent producers (2-8)
+        description: Independent concurrent producers (2-8)
         required: true
-        default: "4"
+        default: 4
+        type: number
       rounds:
-        description: Recovery rounds (1-16)
+        description: Recovery rounds per segment (1-16)
         required: true
-        default: "1"
+        default: 1
+        type: number
 
 permissions:
   contents: read
@@ -28,59 +37,123 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  soak:
-    name: Soak (${{ matrix.platform }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 180
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            platform: linux-x64
-          - os: macos-26-intel
-            platform: macos-x64
-          - os: macos-26
-            platform: macos-arm64
-          - os: windows-latest
-            platform: windows-x64
-    env:
-      PANDORA_PHASE7_SOAK: "1"
-      PANDORA_PHASE7_SOAK_SECONDS: ${{ inputs.duration_seconds }}
-      PANDORA_PHASE7_SOAK_JOBS: ${{ inputs.jobs }}
-      PANDORA_PHASE7_SOAK_PRODUCERS: ${{ inputs.producers }}
-      PANDORA_PHASE7_SOAK_ROUNDS: ${{ inputs.rounds }}
+  segment_1:
+    name: Segment 1
+    uses: ./.github/workflows/worker-soak-segment.yml
+    with:
+      profile: ${{ inputs.profile }}
+      segment: 1
+      duration_seconds: ${{ inputs.profile == 'ten-minute' && 600 || inputs.profile == 'two-hour' && 7200 || 14400 }}
+      jobs: ${{ inputs.jobs }}
+      producers: ${{ inputs.producers }}
+      rounds: ${{ inputs.rounds }}
 
+  segment_2:
+    name: Segment 2
+    needs: segment_1
+    if: inputs.profile == 'eight-hour' || inputs.profile == 'twenty-four-hour'
+    uses: ./.github/workflows/worker-soak-segment.yml
+    with:
+      profile: ${{ inputs.profile }}
+      segment: 2
+      duration_seconds: 14400
+      jobs: ${{ inputs.jobs }}
+      producers: ${{ inputs.producers }}
+      rounds: ${{ inputs.rounds }}
+
+  segment_3:
+    name: Segment 3
+    needs: segment_2
+    if: inputs.profile == 'twenty-four-hour'
+    uses: ./.github/workflows/worker-soak-segment.yml
+    with:
+      profile: ${{ inputs.profile }}
+      segment: 3
+      duration_seconds: 14400
+      jobs: ${{ inputs.jobs }}
+      producers: ${{ inputs.producers }}
+      rounds: ${{ inputs.rounds }}
+
+  segment_4:
+    name: Segment 4
+    needs: segment_3
+    if: inputs.profile == 'twenty-four-hour'
+    uses: ./.github/workflows/worker-soak-segment.yml
+    with:
+      profile: ${{ inputs.profile }}
+      segment: 4
+      duration_seconds: 14400
+      jobs: ${{ inputs.jobs }}
+      producers: ${{ inputs.producers }}
+      rounds: ${{ inputs.rounds }}
+
+  segment_5:
+    name: Segment 5
+    needs: segment_4
+    if: inputs.profile == 'twenty-four-hour'
+    uses: ./.github/workflows/worker-soak-segment.yml
+    with:
+      profile: ${{ inputs.profile }}
+      segment: 5
+      duration_seconds: 14400
+      jobs: ${{ inputs.jobs }}
+      producers: ${{ inputs.producers }}
+      rounds: ${{ inputs.rounds }}
+
+  segment_6:
+    name: Segment 6
+    needs: segment_5
+    if: inputs.profile == 'twenty-four-hour'
+    uses: ./.github/workflows/worker-soak-segment.yml
+    with:
+      profile: ${{ inputs.profile }}
+      segment: 6
+      duration_seconds: 14400
+      jobs: ${{ inputs.jobs }}
+      producers: ${{ inputs.producers }}
+      rounds: ${{ inputs.rounds }}
+
+  campaign_evidence:
+    name: Retain campaign evidence
+    needs: [segment_1, segment_2, segment_3, segment_4, segment_5, segment_6]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Check out exact source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
-          toolchain: 1.97.1
+          python-version: "3.11"
 
-      - name: Run retained worker-operations soak (Unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          set -o pipefail
-          cargo test -p pandora-cli --test cli_smoke phase7_worker_operations_recover_without_replaying_durable_effects --locked -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/worker-soak-${{ matrix.platform }}.log"
+      - name: Download segment evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: worker-soak-*-${{ github.run_id }}
+          path: ${{ runner.temp }}/worker-soak-inputs
+          merge-multiple: true
 
-      - name: Run retained worker-operations soak (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          cargo test -p pandora-cli --test cli_smoke phase7_worker_operations_recover_without_replaying_durable_effects --locked -- --exact --nocapture 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/worker-soak-${{ matrix.platform }}.log"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify and summarize the complete campaign
+        if: always()
+        run: >-
+          python scripts/worker_soak.py aggregate
+          --profile "${{ inputs.profile }}"
+          --commit "${{ github.sha }}"
+          --evidence-root "${{ runner.temp }}/worker-soak-inputs"
+          --output "${{ runner.temp }}/worker-soak-campaign.json"
+          --markdown-output "${{ runner.temp }}/worker-soak-campaign.md"
 
-      - name: Retain platform evidence
+      - name: Retain campaign summary
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: worker-soak-${{ matrix.platform }}-${{ github.run_id }}
-          path: ${{ runner.temp }}/worker-soak-${{ matrix.platform }}.log
+          name: worker-soak-campaign-${{ inputs.profile }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/worker-soak-campaign.json
+            ${{ runner.temp }}/worker-soak-campaign.md
           if-no-files-found: error
           retention-days: 90

@@ -6,6 +6,7 @@ from scripts.validate_repo import (
     validate_patched_glib,
     validate_paths,
     validate_release_changelog,
+    validate_worker_soak_workflows,
 )
 
 
@@ -15,6 +16,9 @@ ROOT = Path(__file__).resolve().parents[1]
 class ValidateRepositoryTests(unittest.TestCase):
     def test_repository_contains_reviewed_glib_security_patch(self) -> None:
         self.assertEqual(validate_patched_glib(ROOT), [])
+
+    def test_repository_contains_fail_closed_worker_soak_campaigns(self) -> None:
+        self.assertEqual(validate_worker_soak_workflows(ROOT), [])
 
     def test_clean_fixture_passes(self) -> None:
         self.assertEqual(validate_paths(Path("."), [Path("README.md")]), [])

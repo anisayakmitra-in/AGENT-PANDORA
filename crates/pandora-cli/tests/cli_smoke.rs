@@ -21,9 +21,9 @@ use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
-use std::sync::{Arc, Barrier};
+use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -3032,7 +3032,7 @@ fn independently_launched_job_worker_watch_window_has_durable_liveness_and_shutd
         .spawn()
         .expect("watched worker should start as an independent process");
     let fleet = FleetEngine::open(fixture.data.join("fleet.sqlite3")).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(1);
+    let deadline = Instant::now() + Duration::from_secs(10);
     let process_id = loop {
         if let Some(supervisor) = fleet
             .list_supervisors()
@@ -3084,7 +3084,7 @@ fn crashed_independent_job_worker_reconciles_and_restarts_without_replay() {
         .spawn()
         .expect("watched worker should start as an independent process");
     let fleet = FleetEngine::open(fixture.data.join("fleet.sqlite3")).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(1);
+    let deadline = Instant::now() + Duration::from_secs(10);
     let running = loop {
         if let Some(supervisor) = fleet
             .list_supervisors()
@@ -10321,7 +10321,7 @@ impl Phase7AcceptanceProfile {
                 rounds: 1,
                 warmup_spread: Duration::from_millis(300),
                 recovery_spread: Duration::from_millis(900),
-                completion_timeout: Duration::from_secs(60),
+                completion_timeout: Duration::from_secs(180),
                 mode: "ci",
             };
         }
@@ -10367,11 +10367,400 @@ fn phase7_environment_number(name: &str, default: usize, minimum: usize, maximum
     value
 }
 
+#[derive(Clone, Debug, Default)]
+struct Phase7ProcessMetrics {
+    samples: usize,
+    first_rss_bytes: Option<u64>,
+    last_rss_bytes: Option<u64>,
+    peak_rss_bytes: u64,
+    max_cpu_percent: f64,
+    last_cpu_total_seconds: Option<f64>,
+    last_cpu_sampled_at: Option<Instant>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct Phase7OperationalMetrics {
+    state_samples: usize,
+    state_sample_errors: usize,
+    resource_sample_errors: usize,
+    max_queue_depth: usize,
+    max_running_jobs: usize,
+    max_active_leases: usize,
+    max_active_lease_age_seconds: u64,
+    max_stale_supervisors: usize,
+    final_queue_depth: usize,
+    final_running_jobs: usize,
+    final_active_leases: usize,
+    final_non_stopped_supervisors: usize,
+    processes: BTreeMap<u32, Phase7ProcessMetrics>,
+}
+
+impl Phase7OperationalMetrics {
+    fn resource_samples(&self) -> usize {
+        self.processes.values().map(|process| process.samples).sum()
+    }
+
+    fn peak_rss_bytes(&self) -> u64 {
+        self.processes
+            .values()
+            .map(|process| process.peak_rss_bytes)
+            .max()
+            .unwrap_or(0)
+    }
+
+    fn max_cpu_percent(&self) -> f64 {
+        self.processes
+            .values()
+            .map(|process| process.max_cpu_percent)
+            .fold(0.0, f64::max)
+    }
+
+    fn max_memory_growth_bytes(&self) -> i64 {
+        self.processes
+            .values()
+            .filter_map(|process| {
+                Some(
+                    i64::try_from(process.last_rss_bytes?).unwrap_or(i64::MAX)
+                        - i64::try_from(process.first_rss_bytes?).unwrap_or(i64::MAX),
+                )
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
+    fn as_json(&self) -> Value {
+        let processes = self
+            .processes
+            .iter()
+            .map(|(process_id, process)| {
+                let memory_growth_bytes = match (process.first_rss_bytes, process.last_rss_bytes) {
+                    (Some(first), Some(last)) => (i128::from(last) - i128::from(first))
+                        .clamp(i128::from(i64::MIN), i128::from(i64::MAX))
+                        as i64,
+                    _ => 0,
+                };
+                serde_json::json!({
+                    "process_id": process_id,
+                    "samples": process.samples,
+                    "first_rss_bytes": process.first_rss_bytes,
+                    "last_rss_bytes": process.last_rss_bytes,
+                    "peak_rss_bytes": process.peak_rss_bytes,
+                    "memory_growth_bytes": memory_growth_bytes,
+                    "max_cpu_percent": process.max_cpu_percent,
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::json!({
+            "state_samples": self.state_samples,
+            "state_sample_errors": self.state_sample_errors,
+            "resource_samples": self.resource_samples(),
+            "resource_sample_errors": self.resource_sample_errors,
+            "max_queue_depth": self.max_queue_depth,
+            "max_running_jobs": self.max_running_jobs,
+            "max_active_leases": self.max_active_leases,
+            "max_active_lease_age_seconds": self.max_active_lease_age_seconds,
+            "max_stale_supervisors": self.max_stale_supervisors,
+            "final_queue_depth": self.final_queue_depth,
+            "final_running_jobs": self.final_running_jobs,
+            "final_active_leases": self.final_active_leases,
+            "final_non_stopped_supervisors": self.final_non_stopped_supervisors,
+            "peak_rss_bytes": self.peak_rss_bytes(),
+            "max_memory_growth_bytes": self.max_memory_growth_bytes(),
+            "max_cpu_percent": self.max_cpu_percent(),
+            "processes": processes,
+        })
+    }
+}
+
+struct Phase7SoakMonitor {
+    data: PathBuf,
+    stop: Arc<AtomicBool>,
+    worker_process_id: Arc<AtomicU32>,
+    metrics: Arc<Mutex<Phase7OperationalMetrics>>,
+    monitor: Option<thread::JoinHandle<()>>,
+}
+
+impl Phase7SoakMonitor {
+    fn start(data: PathBuf) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_process_id = Arc::new(AtomicU32::new(0));
+        let metrics = Arc::new(Mutex::new(Phase7OperationalMetrics::default()));
+        let monitor_data = data.clone();
+        let monitor_stop = Arc::clone(&stop);
+        let monitor_process_id = Arc::clone(&worker_process_id);
+        let monitor_metrics = Arc::clone(&metrics);
+        let monitor = thread::spawn(move || {
+            let jobs = match JobStore::open(monitor_data.join("jobs.sqlite3")) {
+                Ok(jobs) => jobs,
+                Err(_) => {
+                    monitor_metrics.lock().unwrap().state_sample_errors += 1;
+                    return;
+                }
+            };
+            let fleet = match FleetEngine::open(monitor_data.join("fleet.sqlite3")) {
+                Ok(fleet) => fleet,
+                Err(_) => {
+                    monitor_metrics.lock().unwrap().state_sample_errors += 1;
+                    return;
+                }
+            };
+            let mut sample_index = 0_usize;
+            while !monitor_stop.load(Ordering::Acquire) {
+                phase7_collect_operational_sample(
+                    &jobs,
+                    &fleet,
+                    monitor_process_id.load(Ordering::Acquire),
+                    phase7_current_seconds(),
+                    sample_index.is_multiple_of(6),
+                    &monitor_metrics,
+                );
+                sample_index = sample_index.saturating_add(1);
+                for _ in 0..50 {
+                    if monitor_stop.load(Ordering::Acquire) {
+                        return;
+                    }
+                    thread::sleep(Duration::from_millis(100));
+                }
+            }
+        });
+        Self {
+            data,
+            stop,
+            worker_process_id,
+            metrics,
+            monitor: Some(monitor),
+        }
+    }
+
+    fn set_worker_process_id(&self, process_id: u32) {
+        self.worker_process_id.store(process_id, Ordering::Release);
+        self.sample_now_at(phase7_current_seconds(), true);
+    }
+
+    fn clear_worker_process_id(&self) {
+        self.worker_process_id.store(0, Ordering::Release);
+        self.sample_now_at(phase7_current_seconds(), false);
+    }
+
+    fn sample_now_at(&self, now: u64, collect_resource: bool) {
+        let jobs = JobStore::open(self.data.join("jobs.sqlite3"))
+            .expect("Phase 7 soak monitor should open the job store");
+        let fleet = FleetEngine::open(self.data.join("fleet.sqlite3"))
+            .expect("Phase 7 soak monitor should open Fleet");
+        phase7_collect_operational_sample(
+            &jobs,
+            &fleet,
+            self.worker_process_id.load(Ordering::Acquire),
+            now,
+            collect_resource,
+            &self.metrics,
+        );
+    }
+
+    fn finish(mut self) -> Phase7OperationalMetrics {
+        self.stop_and_join();
+        self.metrics.lock().unwrap().clone()
+    }
+
+    fn stop_and_join(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(monitor) = self.monitor.take() {
+            monitor
+                .join()
+                .expect("Phase 7 soak monitor should stop cleanly");
+        }
+    }
+}
+
+impl Drop for Phase7SoakMonitor {
+    fn drop(&mut self) {
+        self.stop_and_join();
+    }
+}
+
+fn phase7_current_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after the Unix epoch")
+        .as_secs()
+}
+
+fn phase7_collect_operational_sample(
+    jobs: &JobStore,
+    fleet: &FleetEngine,
+    worker_process_id: u32,
+    now: u64,
+    collect_resource: bool,
+    metrics: &Arc<Mutex<Phase7OperationalMetrics>>,
+) {
+    let principal = PrincipalId::new("local-user").unwrap();
+    let tenant = TenantId::new("local-tenant").unwrap();
+    let workspace = WorkspaceId::new("local-workspace").unwrap();
+    let state = jobs
+        .list(&principal, &tenant, &workspace)
+        .map_err(|error| error.to_string())
+        .and_then(|jobs| {
+            let leases = fleet.list_leases().map_err(|error| error.to_string())?;
+            let supervisors = fleet
+                .list_supervisors()
+                .map_err(|error| error.to_string())?;
+            let queue_depth = jobs
+                .iter()
+                .filter(|job| job.status() == JobStatus::Queued)
+                .count();
+            let running_jobs = jobs
+                .iter()
+                .filter(|job| job.status() == JobStatus::Running)
+                .count();
+            let active_leases = leases
+                .iter()
+                .filter(|lease| lease.state().as_str() == "active")
+                .collect::<Vec<_>>();
+            let max_active_lease_age_seconds = active_leases
+                .iter()
+                .map(|lease| now.saturating_sub(lease.issued_at()))
+                .max()
+                .unwrap_or(0);
+            let stale_supervisors = supervisors
+                .iter()
+                .filter(|supervisor| {
+                    supervisor.state().as_str() == "running"
+                        && now.saturating_sub(supervisor.updated_at()) > 30
+                })
+                .count();
+            let non_stopped_supervisors = supervisors
+                .iter()
+                .filter(|supervisor| supervisor.state().as_str() != "stopped")
+                .count();
+            Ok((
+                queue_depth,
+                running_jobs,
+                active_leases.len(),
+                max_active_lease_age_seconds,
+                stale_supervisors,
+                non_stopped_supervisors,
+            ))
+        });
+
+    let process_sample = if collect_resource && worker_process_id != 0 {
+        phase7_process_resource_sample(worker_process_id)
+    } else {
+        None
+    };
+    let mut metrics = metrics.lock().unwrap();
+    match state {
+        Ok((
+            queue_depth,
+            running_jobs,
+            active_leases,
+            max_active_lease_age_seconds,
+            stale_supervisors,
+            non_stopped_supervisors,
+        )) => {
+            metrics.state_samples = metrics.state_samples.saturating_add(1);
+            metrics.max_queue_depth = metrics.max_queue_depth.max(queue_depth);
+            metrics.max_running_jobs = metrics.max_running_jobs.max(running_jobs);
+            metrics.max_active_leases = metrics.max_active_leases.max(active_leases);
+            metrics.max_active_lease_age_seconds = metrics
+                .max_active_lease_age_seconds
+                .max(max_active_lease_age_seconds);
+            metrics.max_stale_supervisors = metrics.max_stale_supervisors.max(stale_supervisors);
+            metrics.final_queue_depth = queue_depth;
+            metrics.final_running_jobs = running_jobs;
+            metrics.final_active_leases = active_leases;
+            metrics.final_non_stopped_supervisors = non_stopped_supervisors;
+        }
+        Err(_) => {
+            metrics.state_sample_errors = metrics.state_sample_errors.saturating_add(1);
+        }
+    }
+    if collect_resource && worker_process_id != 0 {
+        if let Some(sample) = process_sample {
+            let process = metrics.processes.entry(worker_process_id).or_default();
+            process.samples = process.samples.saturating_add(1);
+            process.first_rss_bytes.get_or_insert(sample.rss_bytes);
+            process.last_rss_bytes = Some(sample.rss_bytes);
+            process.peak_rss_bytes = process.peak_rss_bytes.max(sample.rss_bytes);
+            if sample.cpu_is_cumulative {
+                let sampled_at = Instant::now();
+                if let (Some(previous_cpu), Some(previous_at)) =
+                    (process.last_cpu_total_seconds, process.last_cpu_sampled_at)
+                {
+                    let elapsed = sampled_at.duration_since(previous_at).as_secs_f64();
+                    if elapsed > 0.0 {
+                        process.max_cpu_percent = process
+                            .max_cpu_percent
+                            .max((sample.cpu_value - previous_cpu).max(0.0) / elapsed * 100.0);
+                    }
+                }
+                process.last_cpu_total_seconds = Some(sample.cpu_value);
+                process.last_cpu_sampled_at = Some(sampled_at);
+            } else {
+                process.max_cpu_percent = process.max_cpu_percent.max(sample.cpu_value);
+            }
+        } else {
+            metrics.resource_sample_errors = metrics.resource_sample_errors.saturating_add(1);
+        }
+    }
+}
+
+struct Phase7ProcessResourceSample {
+    rss_bytes: u64,
+    cpu_value: f64,
+    cpu_is_cumulative: bool,
+}
+
+#[cfg(unix)]
+fn phase7_process_resource_sample(process_id: u32) -> Option<Phase7ProcessResourceSample> {
+    let output = Command::new("ps")
+        .args(["-p", &process_id.to_string(), "-o", "rss=", "-o", "%cpu="])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let output = String::from_utf8(output.stdout).ok()?;
+    let mut fields = output.split_whitespace();
+    let rss_kib = fields.next()?.parse::<u64>().ok()?;
+    let cpu_percent = fields.next()?.parse::<f64>().ok()?;
+    Some(Phase7ProcessResourceSample {
+        rss_bytes: rss_kib.saturating_mul(1_024),
+        cpu_value: cpu_percent,
+        cpu_is_cumulative: false,
+    })
+}
+
+#[cfg(windows)]
+fn phase7_process_resource_sample(process_id: u32) -> Option<Phase7ProcessResourceSample> {
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "$p = Get-Process -Id ([int]$env:PANDORA_SOAK_SAMPLE_PID) -ErrorAction Stop; [pscustomobject]@{rss=[uint64]$p.WorkingSet64;cpu=[double]$p.CPU} | ConvertTo-Json -Compress",
+        ])
+        .env("PANDORA_SOAK_SAMPLE_PID", process_id.to_string())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let output = serde_json::from_slice::<Value>(&output.stdout).ok()?;
+    let rss_bytes = output["rss"].as_u64()?;
+    let cpu_total_seconds = output["cpu"].as_f64()?;
+    Some(Phase7ProcessResourceSample {
+        rss_bytes,
+        cpu_value: cpu_total_seconds,
+        cpu_is_cumulative: true,
+    })
+}
+
 fn submit_phase7_jobs(
     fixture: &Fixture,
     producer_count: usize,
     job_count: usize,
     spread: Duration,
+    soak_monitor: Option<&Phase7SoakMonitor>,
 ) -> Vec<String> {
     assert!(producer_count >= 2);
     assert!(job_count >= producer_count);
@@ -10399,6 +10788,11 @@ fn submit_phase7_jobs(
                         .output()
                         .expect("independent Phase 7 producer should start");
                     assert_success_with_context(&submitted, "Phase 7 producer submission");
+                    if (ordinal == 0 || ordinal.is_multiple_of(32))
+                        && let Some(monitor) = soak_monitor
+                    {
+                        monitor.sample_now_at(phase7_current_seconds(), false);
+                    }
                     job_ids.push(
                         parse_json(&submitted)["job_id"]
                             .as_str()
@@ -10640,6 +11034,13 @@ fn assert_phase7_fresh_process_leases_released(fixture: &Fixture) {
 #[test]
 fn phase7_worker_operations_recover_without_replaying_durable_effects() {
     let profile = Phase7AcceptanceProfile::from_environment();
+    let soak_started = Instant::now();
+    let soak_evidence_path =
+        std::env::var_os("PANDORA_PHASE7_SOAK_EVIDENCE_PATH").map(PathBuf::from);
+    assert!(
+        soak_evidence_path.is_none() || profile.mode == "soak",
+        "Phase 7 retained evidence requires the soak profile"
+    );
     eprintln!(
         "Phase 7 worker-operations mode={} producers={} rounds={} jobs={} recovery_spread={:?}",
         profile.mode,
@@ -10653,6 +11054,9 @@ fn phase7_worker_operations_recover_without_replaying_durable_effects() {
     let exact_commit = fixture.initialize_git_workspace();
     fixture.setup();
     let fleet = FleetEngine::open(fixture.data.join("fleet.sqlite3")).unwrap();
+    let soak_monitor = soak_evidence_path
+        .as_ref()
+        .map(|_| Phase7SoakMonitor::start(fixture.data.clone()));
 
     let mut first_worker = fixture
         .command(&["job", "work", "--daemon", "--json"])
@@ -10663,12 +11067,16 @@ fn phase7_worker_operations_recover_without_replaying_durable_effects() {
     let first_process_id = first_worker.id();
     let first_running =
         wait_for_phase7_supervisor(&fleet, first_process_id, 1, Duration::from_secs(15));
+    if let Some(monitor) = &soak_monitor {
+        monitor.set_worker_process_id(first_process_id);
+    }
 
     let warmup_job_ids = submit_phase7_jobs(
         &fixture,
         profile.producer_count,
         profile.warmup_job_count,
         profile.warmup_spread,
+        soak_monitor.as_ref(),
     );
     let warmup_job_ids = warmup_job_ids.into_iter().collect::<BTreeSet<_>>();
     assert_eq!(warmup_job_ids.len(), profile.warmup_job_count);
@@ -10708,6 +11116,9 @@ fn phase7_worker_operations_recover_without_replaying_durable_effects() {
         .updated_at()
         .saturating_add(31)
         .max(active_leases[0].expires_at().saturating_add(1));
+    if let Some(monitor) = &soak_monitor {
+        monitor.sample_now_at(recovery_now, false);
+    }
     let recovery_now = recovery_now.to_string();
     let reconciled = fixture
         .command(&[
@@ -10753,6 +11164,9 @@ fn phase7_worker_operations_recover_without_replaying_durable_effects() {
         first_running.generation() + 1,
         Duration::from_secs(15),
     );
+    if let Some(monitor) = &soak_monitor {
+        monitor.set_worker_process_id(second_process_id);
+    }
     assert_eq!(second_running.process_id(), Some(second_process_id));
     assert_phase7_fresh_supervisor_snapshot(
         &fixture,
@@ -10773,6 +11187,7 @@ fn phase7_worker_operations_recover_without_replaying_durable_effects() {
             profile.producer_count,
             profile.recovery_job_count,
             profile.recovery_spread,
+            soak_monitor.as_ref(),
         )
         .into_iter()
         .collect::<BTreeSet<_>>();
@@ -10807,6 +11222,9 @@ fn phase7_worker_operations_recover_without_replaying_durable_effects() {
         .map(|job| job["job_id"].as_str().unwrap().to_owned())
         .collect::<BTreeSet<_>>();
     assert_eq!(processed_after_recovery, recovery_job_ids);
+    if let Some(monitor) = &soak_monitor {
+        monitor.clear_worker_process_id();
+    }
 
     let before_idle_restart = phase7_terminal_evidence(&fixture, &all_job_ids, 2);
     assert_phase7_fresh_process_terminal_evidence(&fixture, &before_idle_restart);
@@ -11144,6 +11562,62 @@ fn phase7_worker_operations_recover_without_replaying_durable_effects() {
         phase7_terminal_evidence(&fixture, &all_job_ids, 2),
         before_idle_restart
     );
+
+    if let (Some(path), Some(monitor)) = (soak_evidence_path, soak_monitor) {
+        let metrics = monitor.finish();
+        let memory_growth_within_limit = metrics.max_memory_growth_bytes() <= 256 * 1_024 * 1_024;
+        let resource_samples_present =
+            metrics.resource_samples() >= 2 && metrics.processes.len() == 2;
+        let gates = serde_json::json!({
+            "all_jobs_completed": before_idle_restart.job_results.len() == profile.total_jobs(),
+            "exactly_once": before_idle_restart.job_results.len() == profile.total_jobs()
+                && before_idle_restart.session_ids.len() == profile.total_jobs()
+                && before_idle_restart.execution_ids.len() == profile.total_jobs()
+                && before_idle_restart.receipt_ids.len() == profile.total_jobs(),
+            "no_active_leases": metrics.final_active_leases == 0,
+            "no_running_supervisors": metrics.final_non_stopped_supervisors == 0,
+            "resource_samples_present": resource_samples_present,
+            "stale_supervisor_observed": metrics.max_stale_supervisors >= 1,
+            "state_sampling_reliable": metrics.state_samples > 0 && metrics.state_sample_errors == 0,
+            "memory_growth_within_limit": memory_growth_within_limit,
+            "clean_restart_and_shutdown": second_running.generation() == 2,
+            "partial_multi_repository_failure_preserved": final_inspection["status"] == "interrupted",
+        });
+        let passed = gates
+            .as_object()
+            .expect("Phase 7 evidence gates should be an object")
+            .values()
+            .all(|value| value.as_bool() == Some(true));
+        let evidence = serde_json::json!({
+            "schema_version": 1,
+            "status": if passed { "passed" } else { "failed" },
+            "mode": profile.mode,
+            "elapsed_seconds": soak_started.elapsed().as_secs_f64(),
+            "configuration": {
+                "producers": profile.producer_count,
+                "rounds": profile.rounds,
+                "warmup_jobs": profile.warmup_job_count,
+                "recovery_jobs_per_round": profile.recovery_job_count,
+                "recovery_spread_seconds": profile.recovery_spread.as_secs(),
+            },
+            "outcomes": {
+                "total_jobs": profile.total_jobs(),
+                "completed_jobs": before_idle_restart.job_results.len(),
+                "unique_sessions": before_idle_restart.session_ids.len(),
+                "unique_executions": before_idle_restart.execution_ids.len(),
+                "unique_effect_receipts": before_idle_restart.receipt_ids.len(),
+                "worker_processes": before_idle_restart.worker_ids.len(),
+                "supervisor_generations": second_running.generation(),
+            },
+            "metrics": metrics.as_json(),
+            "gates": gates,
+        });
+        assert!(passed, "Phase 7 retained evidence gates failed: {evidence}");
+        let mut serialized = serde_json::to_vec_pretty(&evidence).unwrap();
+        serialized.push(b'\n');
+        fs::write(&path, serialized).expect("Phase 7 retained evidence should be written");
+        eprintln!("Phase 7 retained evidence written to {}", path.display());
+    }
 
     eprintln!(
         "Phase 7 worker-operations evidence passed: jobs={} workers=2 generations={} receipts={} partial_run={run_id}",

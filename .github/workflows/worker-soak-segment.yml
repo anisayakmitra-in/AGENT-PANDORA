@@ -1,0 +1,86 @@
+name: Worker soak segment
+
+on:
+  workflow_call:
+    inputs:
+      profile:
+        required: true
+        type: string
+      segment:
+        required: true
+        type: number
+      duration_seconds:
+        required: true
+        type: number
+      jobs:
+        required: true
+        type: number
+      producers:
+        required: true
+        type: number
+      rounds:
+        required: true
+        type: number
+
+permissions:
+  contents: read
+
+jobs:
+  soak:
+    name: ${{ matrix.platform }} / segment ${{ inputs.segment }}
+    runs-on: ${{ matrix.os }}
+    # Four-hour segments leave two hours for compilation, drain, verification,
+    # and artifact upload before the hosted-runner six-hour hard limit.
+    timeout-minutes: 345
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+          - os: macos-26-intel
+            platform: macos-x64
+          - os: macos-26
+            platform: macos-arm64
+          - os: windows-latest
+            platform: windows-x64
+
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: 1.97.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.11"
+
+      - name: Run crash, restart, cancellation, and exact-once evidence
+        run: >-
+          python scripts/worker_soak.py run-segment
+          --profile "${{ inputs.profile }}"
+          --segment "${{ inputs.segment }}"
+          --duration-seconds "${{ inputs.duration_seconds }}"
+          --jobs "${{ inputs.jobs }}"
+          --producers "${{ inputs.producers }}"
+          --rounds "${{ inputs.rounds }}"
+          --platform "${{ matrix.platform }}"
+          --log "${{ runner.temp }}/worker-soak-${{ matrix.platform }}-segment-${{ inputs.segment }}.log"
+          --output "${{ runner.temp }}/worker-soak-evidence-${{ matrix.platform }}-segment-${{ inputs.segment }}.json"
+
+      - name: Retain platform segment evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: worker-soak-${{ matrix.platform }}-segment-${{ inputs.segment }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/worker-soak-${{ matrix.platform }}-segment-${{ inputs.segment }}.log
+            ${{ runner.temp }}/worker-soak-evidence-${{ matrix.platform }}-segment-${{ inputs.segment }}.json
+          if-no-files-found: error
+          retention-days: 90

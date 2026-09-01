@@ -40,6 +40,18 @@ GLIB_LOCK_PACKAGE = re.compile(
     r"(?P<body>.*?)(?=\r?\n\[\[package\]\])",
     re.DOTALL,
 )
+WORKER_SOAK_PROFILES = (
+    "ten-minute",
+    "two-hour",
+    "eight-hour",
+    "twenty-four-hour",
+)
+WORKER_SOAK_PLATFORMS = (
+    "linux-x64",
+    "macos-x64",
+    "macos-arm64",
+    "windows-x64",
+)
 
 
 def validate_content(relative: Path, content: bytes) -> list[str]:
@@ -186,6 +198,61 @@ def validate_patched_glib(root: Path) -> list[str]:
     return findings
 
 
+def validate_worker_soak_workflows(root: Path) -> list[str]:
+    findings: list[str] = []
+    campaign_path = root / ".github" / "workflows" / "worker-soak.yml"
+    segment_path = root / ".github" / "workflows" / "worker-soak-segment.yml"
+    runner_path = root / "scripts" / "worker_soak.py"
+    for path in (campaign_path, segment_path, runner_path):
+        if not path.is_file():
+            findings.append(f"{path.relative_to(root)}: worker soak component is missing")
+    if findings:
+        return findings
+
+    campaign = campaign_path.read_text(encoding="utf-8")
+    segment = segment_path.read_text(encoding="utf-8")
+    runner = runner_path.read_text(encoding="utf-8")
+    for profile in WORKER_SOAK_PROFILES:
+        if profile not in campaign or f'"{profile}"' not in runner:
+            findings.append(
+                f"{campaign_path.relative_to(root)}: worker soak profile {profile} is incomplete"
+            )
+    if campaign.count("uses: ./.github/workflows/worker-soak-segment.yml") != 6:
+        findings.append(
+            f"{campaign_path.relative_to(root)}: six checkpointed segment jobs are required"
+        )
+    for dependency in ("needs: segment_1", "needs: segment_2", "needs: segment_3", "needs: segment_4", "needs: segment_5"):
+        if dependency not in campaign:
+            findings.append(
+                f"{campaign_path.relative_to(root)}: sequential checkpoint {dependency} is missing"
+            )
+    for platform in WORKER_SOAK_PLATFORMS:
+        if f"platform: {platform}" not in segment:
+            findings.append(
+                f"{segment_path.relative_to(root)}: platform {platform} is missing"
+            )
+    for required in (
+        "timeout-minutes: 345",
+        "scripts/worker_soak.py run-segment",
+        "if: always()",
+        "retention-days: 90",
+    ):
+        if required not in segment:
+            findings.append(
+                f"{segment_path.relative_to(root)}: required evidence control {required} is missing"
+            )
+    for required in (
+        "scripts/worker_soak.py aggregate",
+        "merge-multiple: true",
+        "worker-soak-campaign",
+    ):
+        if required not in campaign:
+            findings.append(
+                f"{campaign_path.relative_to(root)}: required campaign control {required} is missing"
+            )
+    return findings
+
+
 def tracked_paths(root: Path) -> list[Path]:
     result = subprocess.run(
         ["git", "-C", str(root), "ls-files", "-z"],
@@ -212,6 +279,7 @@ def main() -> int:
     root = arguments.root.resolve()
     findings = validate_paths(root, tracked_paths(root))
     findings.extend(validate_patched_glib(root))
+    findings.extend(validate_worker_soak_workflows(root))
     changelog_path = root / "CHANGELOG.md"
     if not changelog_path.is_file():
         findings.append("CHANGELOG.md: tracked changelog is missing")

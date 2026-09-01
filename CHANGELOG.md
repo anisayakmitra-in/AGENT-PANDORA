@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Added retained worker-stress campaigns with selectable ten-minute, two-hour,
+  checkpointed eight-hour, and checkpointed twenty-four-hour profiles across
+  all four desktop platforms. Segment evidence now combines cancellation races,
+  crash and stale-lease recovery, exact-once receipts, queue and process
+  metrics, clean shutdown, and partial multi-repository failures into one
+  fail-closed campaign summary. Current job stores also reopen through a
+  read-only schema fast path so concurrent producers do not contend on an
+  already-complete migration.
+
 - Backported the upstream RUSTSEC-2024-0429 `glib::VariantStrIter` fix onto the
   exact crates.io `glib 0.18.5` source required by Tauri's Linux GTK3 stack.
   Cargo now resolves the reviewed local source, and repository validation
