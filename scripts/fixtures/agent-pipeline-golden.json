@@ -1,0 +1,13 @@
+{
+  "suite_id": "agent-pipeline-smoke",
+  "cases": [
+    {
+      "id": "exact-output",
+      "execution_id": "agent-pipeline-execution",
+      "output": "verified",
+      "expected_output": "verified",
+      "policy_violations": [],
+      "terminal_failure": null
+    }
+  ]
+}

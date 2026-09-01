@@ -35,6 +35,7 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora job work --daemon --json` | `job work` | `daemon`, `processed_count`, `stop_reason`, `jobs` |
 | `pandora doctor --json` | `doctor` | `healthy`, `version`, `platform`, `config_path`, `storage_path`, `workspace_path`, `provider`, `policy`, `containment`, `checks` |
 | `pandora fleet list --json` | `fleet list` | `nodes`, `leases` |
+| `pandora fleet dashboard --json` | `fleet dashboard` | `generated_at`, aggregate `health`, `fleet`, `queue`, bounded `failures`, active-lease `budget_ceilings`, and the non-authorizing privacy `boundary` |
 | `pandora fleet dispatch <capability> --json` | `fleet dispatch` | `capability`, `node` |
 | `pandora fleet lease <id> ... --json` | `fleet lease` | `lease` |
 | `pandora fleet renew <id> ... --json` | `fleet renew` | `lease` |

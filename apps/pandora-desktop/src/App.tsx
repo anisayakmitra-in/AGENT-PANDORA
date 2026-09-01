@@ -40,6 +40,7 @@ import {
   forgetMemory,
   listLocalPackages,
   listLocalSkills,
+  listFleetOperations,
   listPackageTransparency,
   listRegistryProfiles,
   listStorageLifecycleEvidence,
@@ -69,6 +70,7 @@ import {
   type RuntimeEngine,
   type RuntimeEvolutionMutation,
   type RuntimeEvolutionProposal,
+  type RuntimeFleetOperations,
   type RuntimeHarness,
   type RuntimeHealth,
   type RuntimeMemoryRecord,
@@ -1857,10 +1859,43 @@ function RunsView({ runs, runtimeStatus, onMutate }: { runs: RuntimeOrchestratio
   const [mutationError, setMutationError] = useState("");
   const [mutationInFlight, setMutationInFlight] = useState(false);
   const [mutationReceipt, setMutationReceipt] = useState<RuntimeOrchestrationRun | null>(null);
+  const [operations, setOperations] = useState<RuntimeFleetOperations | null>(null);
+  const [operationsBusy, setOperationsBusy] = useState(true);
+  const [operationsError, setOperationsError] = useState("");
   const selected = runs.find((run) => run.run_id === selectedRunId) ?? runs[0] ?? null;
   const connected = runtimeStatus === "connected";
   const statusTone = (status: RuntimeOrchestrationRun["status"]): "neutral" | "green" | "amber" | "blue" | "gold" => status === "completed" ? "green" : status === "running" ? "blue" : status === "interrupted" ? "amber" : status === "queued" ? "gold" : "neutral";
   const statusCounts = runs.reduce<Record<string, number>>((counts, run) => ({ ...counts, [run.status]: (counts[run.status] ?? 0) + 1 }), {});
+
+  useEffect(() => {
+    let active = true;
+    listFleetOperations()
+      .then((result) => {
+        if (active) {
+          setOperations(result.data);
+          setOperationsError("");
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) setOperationsError(error instanceof Error ? error.message : "Could not load Fleet operations");
+      })
+      .finally(() => {
+        if (active) setOperationsBusy(false);
+      });
+    return () => { active = false; };
+  }, []);
+
+  const refreshOperations = async () => {
+    setOperationsBusy(true);
+    setOperationsError("");
+    try {
+      setOperations((await listFleetOperations()).data);
+    } catch (error: unknown) {
+      setOperationsError(error instanceof Error ? error.message : "Could not load Fleet operations");
+    } finally {
+      setOperationsBusy(false);
+    }
+  };
 
   const beginMutation = (operation: "cancel" | "resume") => {
     setPendingOperation(operation);
@@ -1889,6 +1924,23 @@ function RunsView({ runs, runtimeStatus, onMutate }: { runs: RuntimeOrchestratio
   };
 
   return <div className="full-view runs-view"><PageHeader eyebrow="Durable orchestration" title="Background Runs" description={connected ? "Inspect scoped multi-agent work without creating a second execution path. Workers coordinate; Harnesses and ReferenceMonitor retain authority." : "Connect the local runtime to inspect background work."} actions={<div className="run-status-summary"><Chip tone="gold">{statusCounts.queued ?? 0} queued</Chip><Chip tone="blue">{statusCounts.running ?? 0} running</Chip><Chip tone="amber">{statusCounts.interrupted ?? 0} interrupted</Chip></div>} />
+    <Panel className="operations-overview">
+      <div className="panel-heading"><div><span className="eyebrow">LOCAL OPERATIONS</span><h3>Fleet health and bounded capacity</h3></div><div className="operations-actions">{operations ? <Chip tone={operations.health.status === "healthy" ? "green" : operations.health.status === "attention" ? "amber" : "neutral"}>{operations.health.status}</Chip> : null}<button className="button button-secondary" type="button" disabled={operationsBusy} onClick={() => void refreshOperations()}>{operationsBusy ? "Loading…" : "Refresh snapshot"}</button></div></div>
+      {operations ? <>
+        <div className="operations-metrics" aria-label="Fleet operations metrics">
+          <div><span>Ready nodes</span><strong>{operations.health.ready_nodes}</strong><small>{operations.health.running_supervisors} supervisors running</small></div>
+          <div><span>Queued work</span><strong>{operations.queue.jobs.queued + operations.queue.orchestrations.queued}</strong><small>{operations.queue.jobs.running + operations.queue.orchestrations.running} currently running</small></div>
+          <div><span>Active leases</span><strong>{operations.budget_ceilings.active_lease_count}</strong><small>{operations.health.overdue_active_leases} overdue</small></div>
+          <div><span>Failure records</span><strong>{operations.failures.count}</strong><small>{operations.health.stale_supervisors} stale supervisors</small></div>
+        </div>
+        <div className="operations-evidence-grid">
+          <section><div className="operations-section-heading"><span className="eyebrow">LEASE AGE</span><strong>Current bounded work</strong></div>{operations.fleet.leases.active.length ? <div className="operations-records">{operations.fleet.leases.active.slice(0, 6).map((lease) => <article key={lease.lease_id}><span className={`run-state-dot ${lease.overdue ? "state-interrupted" : "state-running"}`} /><div><strong className="mono">{lease.lease_id}</strong><small>{lease.node_id} · age {lease.age_seconds}s · expires in {lease.expires_in_seconds}s</small></div><Chip tone={lease.overdue ? "amber" : "blue"}>{lease.overdue ? "overdue" : "active"}</Chip></article>)}</div> : <p className="operations-empty">No active leases. The snapshot remains read-only.</p>}</section>
+          <section><div className="operations-section-heading"><span className="eyebrow">BUDGET CEILINGS</span><strong>Reserved limits, not spend</strong></div><dl className="operations-budget"><div><dt>Tokens</dt><dd>{operations.budget_ceilings.max_tokens.toLocaleString()}</dd></div><div><dt>Tools</dt><dd>{operations.budget_ceilings.max_tools.toLocaleString()}</dd></div><div><dt>Duration</dt><dd>{operations.budget_ceilings.max_duration_seconds.toLocaleString()}s</dd></div><div><dt>Cost</dt><dd>{operations.budget_ceilings.max_cost_micros.toLocaleString()} µ</dd></div></dl></section>
+          <section><div className="operations-section-heading"><span className="eyebrow">FAILURE VIEW</span><strong>Identifiers and state only</strong></div>{operations.failures.records.length ? <div className="operations-records">{operations.failures.records.slice(0, 6).map((failure) => <article key={`${failure.kind}-${failure.id}-${failure.recorded_at}`}><span className="run-state-dot state-interrupted" /><div><strong className="mono">{failure.id}</strong><small>{failure.kind} · {new Date(failure.recorded_at * 1000).toLocaleString()}</small></div><Chip tone="amber">{failure.status}</Chip></article>)}</div> : <p className="operations-empty">No failed or interrupted records in this scope.</p>}</section>
+        </div>
+        <div className="operations-boundary"><Icon name="lock" size={14} /><span>Local read-only evidence. Prompts, outputs, credentials, and hidden reasoning are excluded. Fleet records cannot approve effects or issue permits.</span><time dateTime={new Date(operations.generated_at * 1000).toISOString()}>{new Date(operations.generated_at * 1000).toLocaleTimeString()}</time></div>
+      </> : <div className="operations-loading"><Icon name={operationsError ? "lock" : "activity"} size={18} /><span>{operationsError || "Loading the local Fleet snapshot…"}</span></div>}
+    </Panel>
     <div className="runs-workbench">
       <Panel className="runs-browser"><div className="panel-heading"><div><span className="eyebrow">SCOPED QUEUE</span><h3>{runs.length} orchestration runs</h3></div><Chip tone={connected ? "green" : "neutral"}>{connected ? "Live" : "Offline"}</Chip></div><div className="runs-list">{runs.length ? runs.map((run) => <button type="button" className={`run-browser-row ${selected?.run_id === run.run_id ? "is-selected" : ""}`} onClick={() => { setSelectedRunId(run.run_id); setPendingOperation(null); setMutationReceipt(null); }} key={run.run_id}><span className={`run-state-dot state-${run.status}`} /><span><strong>{run.plan_id}</strong><small className="mono">{run.run_id}</small><small>{run.roles.length} roles · {run.coordinator_workspace_id}</small></span><Chip tone={statusTone(run.status)}>{run.status}</Chip></button>) : <div className="runs-empty"><Icon name={connected ? "stack" : "lock"} size={24} /><h3>{connected ? "No background runs" : "Runtime connection required"}</h3><p>{connected ? "Submit a governed orchestration plan through the CLI or headless runner; it will appear here." : "This surface does not fabricate queue state."}</p></div>}</div></Panel>
       <Panel className="run-inspection">{selected ? <><div className="run-hero"><span className={`run-hero-icon state-${selected.status}`}><Icon name={selected.status === "completed" ? "check" : selected.status === "interrupted" ? "clock" : "stack"} size={21} /></span><div><span className="eyebrow">{selected.status === "running" ? "WORKER OWNED" : selected.status === "interrupted" ? "RECONCILIATION BOUNDARY" : "DURABLE RUN"}</span><h2>{selected.plan_id}</h2><p className="mono">{selected.run_id}</p></div><Chip tone={statusTone(selected.status)} icon={selected.status === "completed" ? "check" : selected.status === "interrupted" ? "clock" : "activity"}>{selected.status}</Chip></div>

@@ -1,7 +1,7 @@
 # Pandora roadmap
 
-Pandora is roughly 65-75% complete against the local agent platform described
-in this roadmap. The center of that range is about 70%. This is a planning
+Pandora is roughly 70-80% complete against the local agent platform described
+in this roadmap. The center of that range is about 75%. This is a planning
 estimate from the source tree, tests, desktop, workflows, and documented release
 gates on 2026-09-01. It is not a release claim.
 
@@ -16,12 +16,12 @@ fleet-operations evidence, and signed native releases.
 | Phase | Estimate | Shipped in the source tree | Work still open |
 | --- | ---: | --- | --- |
 | 6. Production readiness | 85-90% | scoped identity, automatic local device trust, encrypted secrets, local telemetry and crash records, encrypted backup and restore, fresh-runner install/update/rollback/backup/restore/uninstall drills, synthetic two-version native installer upgrade and rollback drills, update channels, release workflows, checksum signature verification, release evidence index, CodeQL, dependency audits | signed stable artifacts, real clean-machine release proof on every advertised platform, installer rollback exercises between real stable artifacts |
-| 7. Runtime scale and orchestration | 90-95% | persistent prompt-context cache, headless jobs, bounded parallel subagents, exact-commit worktrees, durable orchestration claims and receipts, interruption and resume rules, multi-repository plans, fleet leases, budgets, execution-bound lease renewal, and durable supervisor state with PID-bound worker heartbeats, process-wide execution leases for headless jobs and subagents, lease gating, stale-supervisor reconciliation without replay, bounded stale reaping, atomic PID-bound restart handoff, atomic cross-process quiescence guards, bounded independently launched job watch windows, long-lived local daemon workers with explicit drain/stop protocol, cross-process crash reconciliation/restart evidence, bounded staggered-producer soak coverage, cancellation/provider-return restart evidence, and combined cross-process worker-operations recovery acceptance | retained long-duration and multi-platform worker soak evidence |
+| 7. Runtime scale and orchestration | 92-96% | persistent prompt-context cache, headless jobs, bounded parallel subagents, exact-commit worktrees, durable orchestration claims and receipts, interruption and resume rules, multi-repository plans, fleet leases, budgets, execution-bound lease renewal, durable supervisor state with PID-bound worker heartbeats, process-wide execution leases for headless jobs and subagents, lease gating, stale-supervisor reconciliation without replay, bounded stale reaping, atomic PID-bound restart handoff, atomic cross-process quiescence guards, bounded independently launched job watch windows, long-lived local daemon workers with explicit drain/stop protocol, cross-process crash reconciliation/restart evidence, bounded staggered-producer soak coverage, cancellation/provider-return restart evidence, combined cross-process worker-operations recovery acceptance, and a manually dispatched four-platform retained-soak workflow | successful retained 10-minute and multi-hour worker soak runs on every advertised platform |
 | 8. Agent experience and disclosure | 96-98% | cross-platform Tauri desktop app, same-commit CLI sidecar packaging, clean-runner Linux/macOS x64/macOS arm64/Windows bundle and system-installer register/copy/install/start/remove evidence, synthetic native install/update/rollback/uninstall evidence, Chromium and axe checks at the minimum desktop window and 200%-zoom-equivalent viewport, Command and Council inspection, background runs, runtime inventory, Harness Lab, package lifecycle, package manifest workbench, local Skill lifecycle, BYOK provider creation and selection, MCP configuration, pinned GitHub packages, active custom Domain and Meta Harnesses, deterministic local Domain and composition-only Meta starter kits across app/CLI/TUI, validated declarative Gene examples and inspector fixtures, WebAssembly Genes, custom Auto Route contracts, optional built-in Domain and Meta replacement, encrypted-vault package key generation and atomic local manifest signing, explicit fail-closed Source/Provider/Skill/generic package admission boundaries, macOS 26 Liquid Glass with older-mac vibrancy fallback, reduced-transparency and forced-colors regressions | remote or signed Skill and Provider package distribution, native screen-reader and clean-machine scaling evidence, signed desktop installer release proof |
 | 9. Evaluation-driven loops | 88-92% | trajectory, outcome, policy, regression, adversarial, golden, and holdout evaluation; coding feedback; research-only mutation and population strategies; durable evolution state; canary activation and rollback; versioned evidence-derived zero-failure canary policy; read-only durable per-session evaluation scorecards with a fail-on-non-passed CI gate; durable schedules with a bounded local registry of validated suite definitions; typed prompt/Skill/workflow/WebAssembly Gene target metadata; durable failure-derived regression candidates; explicit review-gated suite admission; governed scheduled execution of evidence-backed and task-backed suites; proposal-bound one-shot canary scheduling with durable report evidence and a separate activation gate | self-healing test generation beyond metadata candidates; multi-stage rollout budgets and pause/resume policy; cost and latency scorecards; quality gates for every artifact class |
 | 10. Memory consolidation | 100% | scoped L0, L1, and L2 records; durable recall; approval-gated promotion; revocation and audit; deterministic evidence-bound synthesis with stale-snapshot checks; bounded provenance graphs; versioned same-tenant/provider cross-session and explicit cross-project L1 consolidation with reject/keep-target conflict rules; durable leased synthesis schedules and run history; exact digest-bound memory IDs on evolution candidates; desktop source, promotion, provenance, audit, revocation, schedule, transfer-policy disclosure, and typed retention-compaction controls; logical compaction that retains tombstones and audit evidence with explicit secure-erasure guidance; versioned local/AWS/Azure/GCP backup-expiry, snapshot-removal, and key-destruction manifests; non-mutating preview; append-only idempotent operator-attested receipts; CLI/TUI workflow and desktop evidence view | none in the defined Phase 10 source-tree scope; provider control-plane actions and independent verification remain external by design |
 | 11. Adversarial resilience | 100% | path confinement, symlink checks, secret redaction, replay protection, exact signatures and hashes, fail-closed package and permit checks, adversarial evaluation primitives, typed context-origin metadata, one shared revalidating quarantine boundary across all adapter origins, replayable hostile and benign corpus coverage, hostile multi-hop handoff persistence tests, append-only hash-chained publisher and admission transparency evidence, and six bounded production-parser fuzz targets with CI smoke runs | none in the defined Phase 11 source-tree scope; corpus growth and longer fuzz campaigns remain continuous assurance work |
-| 12. Agent operations | 45-55% | three-platform CI, desktop CI, release and security workflows, bounded agent workers, orchestration receipts, local fleet records | agent CI/CD as a Pandora workflow, supervisor controls, fleet dashboards, multi-repository budget enforcement, stable channel promotion with real signing credentials |
+| 12. Agent operations | 72-80% | three-platform CI, desktop CI, release and security workflows, bounded agent workers, orchestration receipts, supervisor controls, local fleet records, one privacy-safe CLI/TUI/desktop Fleet dashboard, a staged SDK package/evaluation/canary pipeline, and beta/release-candidate/stable selection over the same tag-driven evidence path | multi-repository dependent-role budget enforcement, actual cost accounting, approved channel promotion runs, and stable publication with real signing credentials |
 
 The ranges separate code presence from operating proof. A component can be
 implemented and tested locally while its clean-machine release, failure
@@ -248,15 +248,13 @@ system for local agents.
 
 Next work:
 
-- add agent CI/CD pipelines for package admission, tests, evaluations, canaries,
-  and release promotion;
-- let agents manage agents only through explicit budgets, leases, scopes, and
-  review gates;
-- add fleet health, queue depth, lease age, cost, and failure views without
-  uploading prompts, outputs, secrets, or hidden reasoning;
-- enforce budgets across repositories and dependent orchestration roles;
-- promote beta, release-candidate, and stable channels from the same signed
-  evidence set.
+- extend the staged agent artifact pipeline from validation evidence to
+  explicitly approved package admission and tag creation without adding a
+  second activation path;
+- enforce one aggregate budget across repositories and dependent orchestration
+  roles, then add measured cost accounting separately from lease ceilings;
+- execute approved beta, release-candidate, and stable promotions from the same
+  signed evidence set with real platform credentials.
 
 ## Issue-sized contribution areas
 

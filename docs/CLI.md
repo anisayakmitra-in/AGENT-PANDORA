@@ -786,6 +786,8 @@ allocate workers; they do not connect to remote nodes or execute work.
 
 ```text
 pandora fleet register node-a --version 2.0.0-beta.7 --worker-class local --capabilities-json '["coding","review"]'
+pandora fleet dashboard --json
+pandora fleet dashboard --stale-after 30 --json
 pandora fleet list --json
 pandora fleet dispatch coding --json
 pandora fleet lease lease-a --node node-a --execution execution-a --max-tokens 10000 --max-tools 20 --max-duration 900 --max-cost 500000 --duration 600
@@ -798,7 +800,7 @@ pandora fleet supervisor recover node-a
 pandora fleet supervisor heartbeat node-a
 pandora fleet supervisor reconcile node-a --stale-after 30
 pandora fleet supervisor reap --stale-after 30
-pandora fleet supervisor restart --node node-a --process-id 42 --stale-after 30 --stale-after 30
+pandora fleet supervisor restart --node node-a --process-id 42 --stale-after 30
 pandora fleet release lease-a
 pandora fleet expire
 pandora fleet quarantine node-a --yes
@@ -810,6 +812,16 @@ Leases are scheduling records, not effect permits. Every actual operation still
 uses Parliament, the ReferenceMonitor, one-shot permit consumption, and the
 EffectExecutor. Quarantine, revoke, and kill require `--yes` and transition
 active leases in the same local database transaction.
+
+`fleet dashboard` joins the scoped job queue, orchestration queue, Fleet nodes,
+supervisors, and leases into one deterministic read-only snapshot. It reports
+queue depth, lease age and expiry, stale supervisors, bounded failure
+identities, and the sum of active lease ceilings. Those ceilings are limits,
+not measured spend. The response deliberately excludes job arguments, prompts,
+results, provider output, credentials, and hidden reasoning. Its records cannot
+approve an effect, issue a permit, activate a package, or mutate Fleet state.
+The TUI exposes the same bounded summary through `/fleet-health`, and the
+desktop shows it above Background Runs.
 
 Enabled Skills contribute bounded guidance to the rebuilt system instruction.
 Only Skills explicitly in the `enabled` state are included. Their text is
@@ -1214,6 +1226,7 @@ untouched, and migration is one-way.
 pandora update --release v<version>
 pandora update --release v<version> --channel stable
 pandora update --release v<version>-beta.<n> --channel beta
+pandora update --release v<version>-rc.<n> --channel release-candidate
 pandora update --release v<version> --dry-run
 pandora update --artifact <path> --sha256 sha256:<64-hex-digits>
 pandora update --artifact <path> --sha256 sha256:<64-hex-digits> --dry-run
@@ -1229,8 +1242,9 @@ resolves an ambiguous latest release. Use `--dry-run` to verify a tag without
 changing files.
 
 The optional channel must match the explicit tag: stable accepts a plain
-SemVer version and beta accepts a prerelease. Pandora still does not choose a
-latest release implicitly.
+SemVer version, release-candidate accepts an `-rc.<n>` prerelease, and beta
+accepts other prereleases (including alpha and beta tags for backward
+compatibility). Pandora still does not choose a latest release implicitly.
 
 `update --artifact` verifies a local artifact before staging it under the
 Pandora data directory. A detached Ed25519 signature can be checked with

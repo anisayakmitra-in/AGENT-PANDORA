@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added one privacy-safe Fleet operations snapshot across CLI, TUI, and
+  desktop, with queue depth, lease age, stale supervisor, failure, and budget
+  ceiling views that exclude prompts, outputs, credentials, and hidden
+  reasoning. Added retained four-platform worker-soak automation, a staged SDK
+  package/evaluation/canary pipeline, and a distinct release-candidate update
+  channel on the existing signed release evidence path.
+
 - Added a self-contained Tauri desktop app for Windows, macOS, and Linux.
   Release builds stage the same-commit `pandora` CLI as a native sidecar;
   release launchers fail closed when that sidecar is missing or unsafe.

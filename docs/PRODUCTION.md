@@ -140,16 +140,26 @@ records. No telemetry or crash record is uploaded automatically.
 Updates remain explicit and never resolve an ambiguous latest tag:
 
     pandora update --release v2.0.0-beta.8 --channel beta --dry-run
+    pandora update --release v2.0.0-rc.1 --channel release-candidate --dry-run
     pandora update --release v2.0.0 --channel stable --dry-run
     pandora update --rollback
 
-Stable channels accept plain SemVer releases; beta channels accept prerelease
-tags. The downloaded binary must match the release checksum manifest before
+Stable channels accept plain SemVer releases, release-candidate accepts
+`-rc.<n>` tags, and beta accepts the remaining prerelease tags. All channels
+use the same release workflow and evidence set. The downloaded binary must
+match the release checksum manifest before
 staging. Local artifacts can additionally require a detached Ed25519
 signature. Release assets include a keyless Cosign signature for the checksum
 manifest, an SPDX SBOM, and GitHub build provenance.
 The publish job also generates release-evidence.json, tying every
 checksum-verified artifact to its signature, SBOM, and provenance subjects.
+
+The `Agent artifact pipeline` workflow validates every tracked SDK package,
+runs a deterministic evaluation gate, proves the scheduled canary stops before
+activation, and checks the shared release identity. A manual promotion intent
+may pass only from `main`; it remains evidence-only and never creates a tag,
+publishes a release, admits a package, or activates an artifact. The tag-driven
+release workflow remains the sole publication path.
 
 ## Release boundary
 

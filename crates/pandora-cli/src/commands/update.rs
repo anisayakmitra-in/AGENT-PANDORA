@@ -220,6 +220,8 @@ fn validate_release_channel(
         .ok_or(UpdateError::InvalidRelease)?;
     let inferred = if version.pre.is_empty() {
         "stable"
+    } else if version.pre.as_str() == "rc" || version.pre.as_str().starts_with("rc.") {
+        "release-candidate"
     } else {
         "beta"
     };
@@ -596,6 +598,14 @@ mod tests {
         );
         assert!(matches!(
             validate_release_channel("v2.0.0-beta.8", Some("stable")),
+            Err(UpdateError::InvalidChannel)
+        ));
+        assert_eq!(
+            validate_release_channel("v2.0.0-rc.1", Some("release-candidate")).unwrap(),
+            "release-candidate"
+        );
+        assert!(matches!(
+            validate_release_channel("v2.0.0-rc.1", Some("beta")),
             Err(UpdateError::InvalidChannel)
         ));
     }

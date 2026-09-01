@@ -269,6 +269,76 @@ export type RuntimeOrchestrationRun = {
   updated_at_unix_seconds: number;
 };
 
+export type RuntimeFleetOperations = {
+  generated_at: number;
+  health: {
+    status: "idle" | "healthy" | "attention";
+    ready_nodes: number;
+    running_supervisors: number;
+    stale_supervisors: number;
+    overdue_active_leases: number;
+    queued_without_capacity: boolean;
+  };
+  fleet: {
+    nodes: { total: number; by_state: Record<string, number> };
+    supervisors: {
+      total: number;
+      by_state: Record<string, number>;
+      stale: Array<{ node_id: string; state: string; age_seconds: number }>;
+    };
+    leases: {
+      total: number;
+      by_state: Record<string, number>;
+      active: Array<{
+        lease_id: string;
+        node_id: string;
+        age_seconds: number;
+        expires_in_seconds: number;
+        overdue: boolean;
+        budget_ceiling: {
+          max_tokens: number;
+          max_tools: number;
+          max_duration_seconds: number;
+          max_cost_micros: number;
+        };
+      }>;
+      active_details_truncated: boolean;
+    };
+  };
+  queue: {
+    jobs: { total: number; by_status: Record<string, number>; queued: number; running: number; failure_count: number };
+    orchestrations: { total: number; by_status: Record<string, number>; queued: number; running: number; failure_count: number };
+  };
+  failures: {
+    count: number;
+    records: Array<{ kind: "job" | "orchestration"; id: string; status: string; recorded_at: number }>;
+    records_truncated: boolean;
+  };
+  budget_ceilings: {
+    active_lease_count: number;
+    max_tokens: number;
+    max_tools: number;
+    max_duration_seconds: number;
+    max_cost_micros: number;
+    saturated: boolean;
+    actual_spend_available: false;
+  };
+  boundary: {
+    read_only: true;
+    runtime_authority: false;
+    budgets_are_ceilings_not_spend: true;
+    prompts_included: false;
+    outputs_included: false;
+    credentials_included: false;
+    hidden_reasoning_included: false;
+  };
+};
+
+export type NativeFleetOperationsResult = {
+  message: string;
+  data: RuntimeFleetOperations;
+};
+
 export type RuntimeSession = {
   session_id: string;
   principal_id: string;
@@ -813,6 +883,13 @@ export async function listPackageTransparency(): Promise<NativePackageResult> {
     };
   }
   return invoke<NativePackageResult>("list_package_transparency");
+}
+
+export async function listFleetOperations(): Promise<NativeFleetOperationsResult> {
+  if (!isNativeRuntime()) {
+    throw new Error("Fleet operations are available only in the Pandora desktop app");
+  }
+  return invoke<NativeFleetOperationsResult>("fleet_operations_dashboard");
 }
 
 export async function listLocalSkills(): Promise<NativeSkillResult> {

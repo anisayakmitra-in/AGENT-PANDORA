@@ -335,6 +335,7 @@ impl App {
                     "/memory-transfer show the cross-project consolidation policy",
                     "/storage-lifecycle show provider lifecycle evidence commands",
                     "/trust-transparency show trust and admission evidence commands",
+                    "/fleet-health show the local privacy-safe operations snapshot",
                     "/approve    approve and resume the pending task",
                     "/deny       deny the pending task",
                     "/coding     inspect the Coding Domain Harness",
@@ -426,6 +427,7 @@ impl App {
                     "trust> package transparency inspect --sequence <id> verifies one append-only event; evidence is read-only and grants no runtime authority",
                 );
             }
+            "/fleet-health" => self.show_fleet_health(),
             value if value.starts_with("/theme ") => {
                 match TuiTheme::parse(Some(value.trim_start_matches("/theme ").trim())) {
                     Ok(theme) => {
@@ -509,6 +511,52 @@ impl App {
                         "packages> showing 50 of {total}; use the JSON CLI for the full list"
                     ));
                 }
+            }
+            Err(error) => {
+                self.activity = TuiActivity::Failure;
+                self.push_message(format!("error> {}", clean_text(&error.message)));
+            }
+        }
+    }
+
+    fn show_fleet_health(&mut self) {
+        self.activity = TuiActivity::Working;
+        let mut args = vec!["dashboard".to_owned()];
+        for option in ["config", "data-dir"] {
+            if let Some(value) = self.args.value(option) {
+                args.push(format!("--{option}"));
+                args.push(value.to_owned());
+            }
+        }
+        match super::fleet::execute(&args) {
+            Ok(result) => {
+                self.activity = TuiActivity::Success;
+                let health = &result.data["health"];
+                let jobs = &result.data["queue"]["jobs"];
+                let orchestrations = &result.data["queue"]["orchestrations"];
+                let leases = &result.data["fleet"]["leases"];
+                let budgets = &result.data["budget_ceilings"];
+                self.push_message(format!(
+                    "fleet> {} · {} ready nodes · {} running supervisors · {} stale supervisors",
+                    health["status"].as_str().unwrap_or("unknown"),
+                    health["ready_nodes"].as_u64().unwrap_or_default(),
+                    health["running_supervisors"].as_u64().unwrap_or_default(),
+                    health["stale_supervisors"].as_u64().unwrap_or_default(),
+                ));
+                self.push_message(format!(
+                    "queue> jobs {} queued / {} running · orchestrations {} queued / {} running · {} active leases",
+                    jobs["queued"].as_u64().unwrap_or_default(),
+                    jobs["running"].as_u64().unwrap_or_default(),
+                    orchestrations["queued"].as_u64().unwrap_or_default(),
+                    orchestrations["running"].as_u64().unwrap_or_default(),
+                    leases["by_state"]["active"].as_u64().unwrap_or_default(),
+                ));
+                self.push_message(format!(
+                    "budget> ceilings only: {} tokens · {} tools · {} cost micros; prompts, outputs, credentials, and hidden reasoning are excluded",
+                    budgets["max_tokens"].as_u64().unwrap_or_default(),
+                    budgets["max_tools"].as_u64().unwrap_or_default(),
+                    budgets["max_cost_micros"].as_u64().unwrap_or_default(),
+                ));
             }
             Err(error) => {
                 self.activity = TuiActivity::Failure;
@@ -946,6 +994,9 @@ mod tests {
         assert!(app.messages.iter().any(|message| {
             message == "/trust-transparency show trust and admission evidence commands"
         }));
+        assert!(app.messages.iter().any(|message| {
+            message == "/fleet-health show the local privacy-safe operations snapshot"
+        }));
     }
 
     #[test]
@@ -1076,6 +1127,39 @@ mod tests {
                 && message.contains("grants no runtime authority")
         }));
         assert_eq!(app.activity, TuiActivity::Idle);
+    }
+
+    #[test]
+    fn fleet_health_command_renders_only_the_bounded_operations_summary() {
+        let data_dir =
+            std::env::temp_dir().join(format!("pandora-tui-fleet-health-{}", std::process::id()));
+        let mut values = BTreeMap::new();
+        values.insert(
+            "data-dir".to_owned(),
+            data_dir.to_string_lossy().into_owned(),
+        );
+        let mut app = App::new(
+            ParsedArgs {
+                values,
+                positionals: Vec::new(),
+            },
+            TuiTheme::Auto,
+        );
+        app.input = "/fleet-health".chars().collect();
+        app.submit();
+
+        assert!(
+            app.messages
+                .iter()
+                .any(|message| message.starts_with("fleet> idle"))
+        );
+        assert!(app.messages.iter().any(|message| {
+            message.contains("ceilings only")
+                && message
+                    .contains("prompts, outputs, credentials, and hidden reasoning are excluded")
+        }));
+        assert_eq!(app.activity, TuiActivity::Success);
+        let _ = std::fs::remove_dir_all(data_dir);
     }
 
     #[test]

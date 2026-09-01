@@ -366,11 +366,11 @@ commands:
   evolution inspect --id <proposal-id>
   rollout inspect --session <id> [--execution <id>]
   efficiency rank [--task-class <name>] [--objective <cost|latency|tokens|certainty>]
-  fleet list|register|dispatch|lease|renew|release|expire|supervisor [list|start|drain|stop|recover|heartbeat|reconcile]|quarantine|revoke|kill
+  fleet dashboard [--now <unix-seconds>] [--stale-after <1-86400>] | list|register|dispatch|lease|renew|release|expire|supervisor [list|start|drain|stop|recover|heartbeat|reconcile|reap|restart]|quarantine|revoke|kill
   graph code|knowledge|review|architecture --input <path> [--store <path>] [--tenant <id>] [--workspace <id>]
   completions <powershell|bash|zsh|fish>
   migrate config
-  update [--release <tag> [--channel <stable|beta>] | --artifact <path> --sha256 <digest> | --rollback]
+  update [--release <tag> [--channel <stable|beta|release-candidate>] | --artifact <path> --sha256 <digest> | --rollback]
   uninstall [--dry-run|--yes]
   doctor"#
 }

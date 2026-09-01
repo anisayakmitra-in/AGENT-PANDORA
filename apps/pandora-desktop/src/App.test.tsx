@@ -29,6 +29,7 @@ const runtime = vi.hoisted(() => ({
   installLocalSkill: vi.fn(),
   installRegistryPackage: vi.fn(),
   listLocalPackages: vi.fn(),
+  listFleetOperations: vi.fn(),
   listPackageTransparency: vi.fn(),
   listLocalSkills: vi.fn(),
   listRegistryProfiles: vi.fn(),
@@ -78,6 +79,7 @@ vi.mock("./runtimeClient", () => ({
   installLocalSkill: runtime.installLocalSkill,
   installRegistryPackage: runtime.installRegistryPackage,
   listLocalPackages: runtime.listLocalPackages,
+  listFleetOperations: runtime.listFleetOperations,
   listPackageTransparency: runtime.listPackageTransparency,
   listLocalSkills: runtime.listLocalSkills,
   listRegistryProfiles: runtime.listRegistryProfiles,
@@ -188,6 +190,32 @@ beforeEach(() => {
       durability: "append-only-sqlite",
       integrity: "sha256-event-chain",
       runtime_authority: false,
+    },
+  });
+  runtime.listFleetOperations.mockResolvedValue({
+    message: "Local Fleet operations are idle.",
+    data: {
+      generated_at: 1,
+      health: {
+        status: "idle",
+        ready_nodes: 0,
+        running_supervisors: 0,
+        stale_supervisors: 0,
+        overdue_active_leases: 0,
+        queued_without_capacity: false,
+      },
+      fleet: {
+        nodes: { total: 0, by_state: { ready: 0, quarantined: 0, revoked: 0, killed: 0 } },
+        supervisors: { total: 0, by_state: { stopped: 0, running: 0, draining: 0, recovering: 0 }, stale: [] },
+        leases: { total: 0, by_state: { active: 0, released: 0, expired: 0, revoked: 0, killed: 0 }, active: [], active_details_truncated: false },
+      },
+      queue: {
+        jobs: { total: 0, by_status: {}, queued: 0, running: 0, failure_count: 0 },
+        orchestrations: { total: 0, by_status: {}, queued: 0, running: 0, failure_count: 0 },
+      },
+      failures: { count: 0, records: [], records_truncated: false },
+      budget_ceilings: { active_lease_count: 0, max_tokens: 0, max_tools: 0, max_duration_seconds: 0, max_cost_micros: 0, saturated: false, actual_spend_available: false },
+      boundary: { read_only: true, runtime_authority: false, budgets_are_ceilings_not_spend: true, prompts_included: false, outputs_included: false, credentials_included: false, hidden_reasoning_included: false },
     },
   });
   runtime.listLocalSkills.mockResolvedValue({
@@ -2369,6 +2397,46 @@ describe("Pandora desktop run state", () => {
       registryUrl: "",
       token: "",
     }));
+  });
+
+  it("shows a privacy-safe Fleet operations snapshot with lease ages and budget ceilings", async () => {
+    runtime.listFleetOperations.mockResolvedValue({
+      message: "Local Fleet operations need attention.",
+      data: {
+        generated_at: 100,
+        health: { status: "attention", ready_nodes: 2, running_supervisors: 1, stale_supervisors: 1, overdue_active_leases: 0, queued_without_capacity: false },
+        fleet: {
+          nodes: { total: 2, by_state: { ready: 2 } },
+          supervisors: { total: 1, by_state: { running: 1 }, stale: [{ node_id: "node-a", state: "running", age_seconds: 45 }] },
+          leases: {
+            total: 1,
+            by_state: { active: 1 },
+            active: [{ lease_id: "lease-a", node_id: "node-a", age_seconds: 25, expires_in_seconds: 95, overdue: false, budget_ceiling: { max_tokens: 4000, max_tools: 20, max_duration_seconds: 120, max_cost_micros: 25000 } }],
+            active_details_truncated: false,
+          },
+        },
+        queue: {
+          jobs: { total: 4, by_status: { queued: 2, running: 1, failed: 1 }, queued: 2, running: 1, failure_count: 1 },
+          orchestrations: { total: 1, by_status: { queued: 1 }, queued: 1, running: 0, failure_count: 0 },
+        },
+        failures: { count: 1, records: [{ kind: "job", id: "job-failed", status: "failed", recorded_at: 90 }], records_truncated: false },
+        budget_ceilings: { active_lease_count: 1, max_tokens: 4000, max_tools: 20, max_duration_seconds: 120, max_cost_micros: 25000, saturated: false, actual_spend_available: false },
+        boundary: { read_only: true, runtime_authority: false, budgets_are_ceilings_not_spend: true, prompts_included: false, outputs_included: false, credentials_included: false, hidden_reasoning_included: false },
+      },
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Background Runs" }));
+
+    expect(await screen.findByRole("heading", { name: "Fleet health and bounded capacity" })).toBeInTheDocument();
+    expect(screen.getByText("lease-a")).toBeInTheDocument();
+    expect(screen.getByText(/age 25s/)).toBeInTheDocument();
+    expect(screen.getByText("job-failed")).toBeInTheDocument();
+    expect(screen.getByText(/Prompts, outputs, credentials, and hidden reasoning are excluded/)).toBeInTheDocument();
+    expect(screen.getByText("4,000")).toBeInTheDocument();
+    expect(runtime.listFleetOperations).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh snapshot" }));
+    await waitFor(() => expect(runtime.listFleetOperations).toHaveBeenCalledTimes(2));
   });
 
   it("inspects and exactly cancels a queued background orchestration", async () => {

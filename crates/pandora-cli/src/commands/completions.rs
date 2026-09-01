@@ -91,7 +91,7 @@ fn powershell() -> &'static str {
     } elseif ($elements.Count -gt 2 -and $elements[1] -eq "fleet" -and $elements[2] -eq "supervisor") {
         "list","start","drain","stop","recover","heartbeat","reconcile"
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'fleet') {
-        'list','register','dispatch','lease','renew','release','expire','supervisor','quarantine','revoke','kill'
+        'dashboard','list','register','dispatch','lease','renew','release','expire','supervisor','quarantine','revoke','kill'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'feedback') {
         'coding'
     } else {
@@ -170,7 +170,7 @@ fn bash() -> &'static str {
     elif [[ "$previous" == "supervisor" && "${COMP_WORDS[1]}" == "fleet" ]]; then
         COMPREPLY=( $(compgen -W 'list start drain stop recover heartbeat reconcile reap restart' -- "$current") )
     elif [[ "$previous" == "fleet" ]]; then
-        COMPREPLY=( $(compgen -W 'list register dispatch lease renew release expire supervisor quarantine revoke kill' -- "$current") )
+        COMPREPLY=( $(compgen -W 'dashboard list register dispatch lease renew release expire supervisor quarantine revoke kill' -- "$current") )
     elif [[ "$previous" == "feedback" ]]; then
         COMPREPLY=( $(compgen -W 'coding' -- "$current") )
     else
@@ -241,7 +241,7 @@ elif [[ ${words[2]} == graph ]]; then
 elif [[ ${words[2]} == fleet && ${words[3]} == supervisor ]]; then
     _arguments '3:supervisor command:(list start drain stop recover heartbeat reconcile reap restart)'
 elif [[ ${words[2]} == fleet ]]; then
-    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet completions migrate update uninstall doctor)' '2:fleet command:(list register dispatch lease renew release expire supervisor quarantine revoke kill)'
+    _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry approval provider mcp tool orchestration strategies evaluation evolution efficiency fleet completions migrate update uninstall doctor)' '2:fleet command:(dashboard list register dispatch lease renew release expire supervisor quarantine revoke kill)'
 elif [[ ${words[2]} == feedback ]]; then
     _arguments '1:command:(help setup run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:feedback command:(coding)'
 else
@@ -281,7 +281,7 @@ complete -c pandora -f -n '__fish_seen_subcommand_from evaluation; and __fish_se
 complete -c pandora -f -n '__fish_seen_subcommand_from evolution' -a 'generate list inspect submit evaluate approve stage canary activate rollback'
 complete -c pandora -f -n '__fish_seen_subcommand_from graph' -a 'code knowledge review architecture'
 complete -c pandora -f -n '__fish_seen_subcommand_from fleet; and __fish_seen_subcommand_from supervisor' -a 'list start drain stop recover heartbeat reconcile reap restart'
-complete -c pandora -f -n '__fish_seen_subcommand_from fleet' -a 'list register dispatch lease renew release expire supervisor quarantine revoke kill'
+complete -c pandora -f -n '__fish_seen_subcommand_from fleet' -a 'dashboard list register dispatch lease renew release expire supervisor quarantine revoke kill'
 complete -c pandora -f -n '__fish_seen_subcommand_from feedback' -a 'coding'"#
 }
 
@@ -345,10 +345,10 @@ mod tests {
                 "list start drain stop recover heartbeat reconcile reap restart",
                 "submit work list inspect cancel mark-interrupted",
                 "spawn work list inspect cancel mark-interrupted cleanup",
-                "list register dispatch lease renew release expire supervisor quarantine revoke kill",
+                "dashboard list register dispatch lease renew release expire supervisor quarantine revoke kill",
                 "roles",
                 "rank",
-                "list register dispatch lease renew release expire supervisor quarantine revoke kill",
+                "dashboard list register dispatch lease renew release expire supervisor quarantine revoke kill",
             ] {
                 assert!(script.contains(expected), "missing {expected} in {script}");
             }

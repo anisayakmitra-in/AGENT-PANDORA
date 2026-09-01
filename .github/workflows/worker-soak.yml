@@ -1,0 +1,86 @@
+name: Worker operations soak
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration_seconds:
+        description: Recovery submission window in seconds (60-86400)
+        required: true
+        default: "600"
+      jobs:
+        description: Total governed jobs (4 per producer through 4096)
+        required: true
+        default: "512"
+      producers:
+        description: Independent producers (2-8)
+        required: true
+        default: "4"
+      rounds:
+        description: Recovery rounds (1-16)
+        required: true
+        default: "1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worker-soak-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  soak:
+    name: Soak (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+          - os: macos-26-intel
+            platform: macos-x64
+          - os: macos-26
+            platform: macos-arm64
+          - os: windows-latest
+            platform: windows-x64
+    env:
+      PANDORA_PHASE7_SOAK: "1"
+      PANDORA_PHASE7_SOAK_SECONDS: ${{ inputs.duration_seconds }}
+      PANDORA_PHASE7_SOAK_JOBS: ${{ inputs.jobs }}
+      PANDORA_PHASE7_SOAK_PRODUCERS: ${{ inputs.producers }}
+      PANDORA_PHASE7_SOAK_ROUNDS: ${{ inputs.rounds }}
+
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: 1.97.1
+
+      - name: Run retained worker-operations soak (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p pandora-cli --test cli_smoke phase7_worker_operations_recover_without_replaying_durable_effects --locked -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/worker-soak-${{ matrix.platform }}.log"
+
+      - name: Run retained worker-operations soak (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo test -p pandora-cli --test cli_smoke phase7_worker_operations_recover_without_replaying_durable_effects --locked -- --exact --nocapture 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/worker-soak-${{ matrix.platform }}.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Retain platform evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: worker-soak-${{ matrix.platform }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/worker-soak-${{ matrix.platform }}.log
+          if-no-files-found: error
+          retention-days: 90

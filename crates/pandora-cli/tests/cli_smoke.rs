@@ -1,18 +1,18 @@
 use base64::Engine as _;
 use ed25519_dalek::{Signer, SigningKey};
 use pandora_runtime::{
-    DeviceKeyStore, DeviceProofRequest, EfficiencyStore, FleetEngine, FleetNode, JobStore,
-    MemoryEngine, SessionStore, SubagentPreparation, SubagentScope, SubagentStore,
+    DeviceKeyStore, DeviceProofRequest, EfficiencyStore, FleetBudget, FleetEngine, FleetNode,
+    JobStore, MemoryEngine, SessionStore, SubagentPreparation, SubagentScope, SubagentStore,
 };
 use pandora_types::{
     ContextClassification, DomainRoutingProfile, EffectOutcome, EffectReceipt, EventType,
-    ExecutionId, GovernedOrchestrationPlan, Handoff, HarnessId, JobId, JobWorkerId, MemoryId,
-    MemoryKind, MemoryScope, MetaComposition, OrchestrationPlan, OrchestrationRole,
-    OrchestrationRoleReceipt, OrchestrationRunId, PackageCompatibility, PackageDependency,
-    PackageKind, PackageManifest, PermitId, PlanId, PrincipalId, ReceiptId, RepositoryBinding,
-    RepositoryId, RequestDigest, RoleAssignment, RoleId, RoleRepositoryBinding, Session, SessionId,
-    SubagentBudgets, SubagentId, SubagentRequest, TenantId, Timestamp, TrustEvidence, TrustLevel,
-    WorkspaceId, hash_artifact,
+    ExecutionId, GovernedOrchestrationPlan, Handoff, HarnessId, JobCommand, JobId, JobRequest,
+    JobStatus, JobWorkerId, MemoryId, MemoryKind, MemoryScope, MetaComposition, OrchestrationPlan,
+    OrchestrationRole, OrchestrationRoleReceipt, OrchestrationRunId, PackageCompatibility,
+    PackageDependency, PackageKind, PackageManifest, PermitId, PlanId, PrincipalId, ReceiptId,
+    RepositoryBinding, RepositoryId, RequestDigest, RoleAssignment, RoleId, RoleRepositoryBinding,
+    Session, SessionId, SubagentBudgets, SubagentId, SubagentRequest, TenantId, Timestamp,
+    TrustEvidence, TrustLevel, WorkspaceId, hash_artifact,
 };
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -1881,6 +1881,134 @@ fn fleet_supervisor_reap_is_exposed_as_a_bounded_cli_operation() {
     assert_eq!(response["reaped"], 1);
     assert_eq!(response["supervisors"][0]["node_id"], "node-reap");
     assert_eq!(response["supervisors"][0]["state"], "recovering");
+}
+
+#[test]
+fn fleet_dashboard_aggregates_operations_without_sensitive_payloads() {
+    let fixture = Fixture::new();
+    fixture.setup();
+    let fleet = FleetEngine::open(fixture.data.join("fleet.sqlite3")).unwrap();
+    let node = FleetNode::new(
+        "node-dashboard".to_owned(),
+        "2.0.0-beta.7",
+        "local",
+        vec!["job.work".to_owned()],
+        1,
+    )
+    .unwrap();
+    fleet.register_node(&node).unwrap();
+    fleet
+        .start_supervisor_for_process("node-dashboard", 41, 10)
+        .unwrap();
+    fleet
+        .acquire_lease(
+            "lease-dashboard".to_owned(),
+            "node-dashboard",
+            "execution-dashboard",
+            FleetBudget::new(1_000, 20, 300, 50_000),
+            10,
+            100,
+        )
+        .unwrap();
+
+    let principal = PrincipalId::new("local-user").unwrap();
+    let tenant = TenantId::new("local-tenant").unwrap();
+    let workspace = WorkspaceId::new("local-workspace").unwrap();
+    let jobs = JobStore::open(fixture.data.join("jobs.sqlite3")).unwrap();
+    let failed_id = JobId::new("job-dashboard-failed").unwrap();
+    jobs.submit(
+        &failed_id,
+        &principal,
+        &tenant,
+        &workspace,
+        &JobRequest::new(
+            JobCommand::Run,
+            vec!["private prompt must not appear".to_owned()],
+        )
+        .unwrap(),
+        Timestamp::from_unix_seconds(1),
+    )
+    .unwrap();
+    let worker = JobWorkerId::new("worker-dashboard").unwrap();
+    jobs.claim_next(
+        &principal,
+        &tenant,
+        &workspace,
+        &worker,
+        Timestamp::from_unix_seconds(2),
+    )
+    .unwrap()
+    .unwrap();
+    jobs.finish(
+        &failed_id,
+        &principal,
+        &tenant,
+        &workspace,
+        &worker,
+        JobStatus::Failed,
+        &serde_json::json!({"output": "private provider output must not appear"}),
+        Timestamp::from_unix_seconds(3),
+    )
+    .unwrap();
+    jobs.submit(
+        &JobId::new("job-dashboard-queued").unwrap(),
+        &principal,
+        &tenant,
+        &workspace,
+        &JobRequest::new(JobCommand::Run, vec!["another private prompt".to_owned()]).unwrap(),
+        Timestamp::from_unix_seconds(4),
+    )
+    .unwrap();
+
+    let output = fixture
+        .command(&[
+            "fleet",
+            "dashboard",
+            "--now",
+            "80",
+            "--stale-after",
+            "30",
+            "--json",
+        ])
+        .output()
+        .expect("fleet dashboard should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["command"], "fleet dashboard");
+    assert_eq!(response["health"]["status"], "attention");
+    assert_eq!(response["health"]["ready_nodes"], 1);
+    assert_eq!(response["health"]["stale_supervisors"], 1);
+    assert_eq!(response["fleet"]["leases"]["by_state"]["active"], 1);
+    assert_eq!(response["fleet"]["leases"]["active"][0]["age_seconds"], 70);
+    assert_eq!(response["queue"]["jobs"]["queued"], 1);
+    assert_eq!(response["queue"]["jobs"]["failure_count"], 1);
+    assert_eq!(response["failures"]["records"][0]["id"], failed_id.as_str());
+    assert_eq!(response["budget_ceilings"]["max_tokens"], 1_000);
+    assert_eq!(response["budget_ceilings"]["max_tools"], 20);
+    assert_eq!(response["budget_ceilings"]["max_cost_micros"], 50_000);
+    assert_eq!(response["budget_ceilings"]["actual_spend_available"], false);
+    assert_eq!(response["boundary"]["read_only"], true);
+    assert_eq!(response["boundary"]["runtime_authority"], false);
+    assert_eq!(response["boundary"]["prompts_included"], false);
+    assert_eq!(response["boundary"]["outputs_included"], false);
+    assert_eq!(response["boundary"]["credentials_included"], false);
+    assert_eq!(response["boundary"]["hidden_reasoning_included"], false);
+    let serialized = response.to_string();
+    assert!(!serialized.contains("private prompt"));
+    assert!(!serialized.contains("private provider output"));
+}
+
+#[test]
+fn fleet_dashboard_rejects_unbounded_staleness_windows() {
+    let fixture = Fixture::new();
+    for value in ["0", "86401", "invalid"] {
+        let output = fixture
+            .command(&["fleet", "dashboard", "--stale-after", value, "--json"])
+            .output()
+            .expect("invalid fleet dashboard should start");
+        assert_eq!(output.status.code(), Some(2));
+        assert_eq!(parse_json(&output)["code"], "usage_error");
+    }
 }
 
 #[test]

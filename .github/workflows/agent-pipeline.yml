@@ -1,0 +1,118 @@
+name: Agent artifact pipeline
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/agent-pipeline.yml"
+      - "crates/**"
+      - "sdk/**"
+      - "scripts/fixtures/agent-pipeline-golden.json"
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Evidence channel to prepare
+        required: true
+        type: choice
+        options:
+          - beta
+          - release-candidate
+          - stable
+        default: beta
+      promotion_intent:
+        description: Validate promotion readiness without creating a tag or activating an artifact
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-artifact-pipeline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Admission, evaluation, and canary evidence
+    runs-on: ubuntu-latest
+    env:
+      PANDORA_CONFIG: ${{ runner.temp }}/pandora-agent-pipeline/config.toml
+      PANDORA_DATA_DIR: ${{ runner.temp }}/pandora-agent-pipeline/data
+      PANDORA_WORKSPACE: ${{ runner.temp }}/pandora-agent-pipeline/workspace
+      PIPELINE_CHANNEL: ${{ inputs.channel || 'beta' }}
+      PROMOTION_INTENT: ${{ inputs.promotion_intent || false }}
+
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: 1.97.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.11"
+
+      - name: Build the governed CLI boundary
+        run: cargo build --locked -p pandora-cli
+
+      - name: Initialize isolated pipeline state
+        shell: bash
+        run: |
+          mkdir -p "$PANDORA_WORKSPACE" "$RUNNER_TEMP/agent-pipeline-evidence"
+          target/debug/pandora setup --provider-url http://127.0.0.1:4317/v1 --json > "$RUNNER_TEMP/agent-pipeline-evidence/setup.json"
+
+      - name: Validate every tracked SDK package without admission
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/agent-pipeline-evidence/package-validation.jsonl"
+          while IFS= read -r -d '' manifest; do
+            directory="$(dirname "$manifest")"
+            mapfile -t artifacts < <(find "$directory" -maxdepth 1 -type f \( -name '*.artifact' -o -name '*.wasm' \) -print | sort)
+            test "${#artifacts[@]}" -eq 1
+            target/debug/pandora package validate --manifest "$manifest" --artifact "${artifacts[0]}" --json >> "$evidence"
+          done < <(find sdk -type f -name pandora.package.json -print0 | sort -z)
+          test -s "$evidence"
+
+      - name: Run deterministic evaluation gate
+        shell: bash
+        run: target/debug/pandora evaluation golden --input scripts/fixtures/agent-pipeline-golden.json --fail-on-failure --json > "$RUNNER_TEMP/agent-pipeline-evidence/evaluation.json"
+
+      - name: Prove canary stops before activation
+        shell: bash
+        run: cargo test -p pandora-cli --test cli_smoke scheduled_canary_binds_a_reviewed_suite_and_stops_before_activation --locked -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/agent-pipeline-evidence/canary.log"
+
+      - name: Verify shared channel release identity
+        run: python scripts/release_identity.py
+
+      - name: Record the non-activating pipeline boundary
+        shell: bash
+        run: |
+          python -c 'import json, os, pathlib; pathlib.Path(os.environ["RUNNER_TEMP"], "agent-pipeline-evidence", "pipeline.json").write_text(json.dumps({"schema_version": 1, "commit": os.environ["GITHUB_SHA"], "channel": os.environ["PIPELINE_CHANNEL"], "promotion_intent": os.environ["PROMOTION_INTENT"] == "true", "package_admission_performed": False, "artifact_activation_performed": False, "release_tag_created": False, "authority": "evidence_only"}, sort_keys=True) + "\n", encoding="utf-8")'
+
+      - name: Upload pipeline evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: agent-pipeline-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/agent-pipeline-evidence
+          if-no-files-found: error
+          retention-days: 90
+
+  promotion-gate:
+    name: Promotion readiness (${{ inputs.channel }})
+    if: github.event_name == 'workflow_dispatch' && inputs.promotion_intent
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the main branch
+        shell: bash
+        run: test "$GITHUB_REF" = "refs/heads/main"
+
+      - name: Keep promotion explicit
+        run: echo "Evidence is ready for an approved ${{ inputs.channel }} tag; this workflow does not create tags, publish releases, or activate artifacts."

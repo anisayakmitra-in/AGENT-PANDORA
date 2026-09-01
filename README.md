@@ -127,6 +127,7 @@ verification:
 
 ```text
 pandora update --release v2.0.0-beta.7
+pandora fleet dashboard --json
 ```
 
 ### Desktop app

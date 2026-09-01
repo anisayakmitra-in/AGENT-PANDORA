@@ -323,6 +323,12 @@ struct NativeStorageLifecycleResult {
     data: Value,
 }
 
+#[derive(Serialize)]
+struct NativeFleetOperationsResult {
+    message: String,
+    data: Value,
+}
+
 #[tauri::command]
 fn configure_provider(
     mut input: ProviderConfiguration,
@@ -522,10 +528,34 @@ fn list_package_transparency() -> Result<NativePackageResult, String> {
         "--json".to_owned(),
     ];
     let data = run_cli_json(&args, "loading package trust transparency evidence")?;
-    let count = data.get("count").and_then(Value::as_u64).unwrap_or_default();
+    let count = data
+        .get("count")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
     Ok(NativePackageResult {
         message: format!("Loaded {count} append-only package transparency event(s)."),
         restart_required: false,
+        data,
+    })
+}
+
+#[tauri::command]
+fn fleet_operations_dashboard() -> Result<NativeFleetOperationsResult, String> {
+    let args = vec![
+        "fleet".to_owned(),
+        "dashboard".to_owned(),
+        "--stale-after".to_owned(),
+        "30".to_owned(),
+        "--json".to_owned(),
+    ];
+    let data = run_cli_json(&args, "loading the local Fleet operations snapshot")?;
+    let health = data
+        .get("health")
+        .and_then(|value| value.get("status"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    Ok(NativeFleetOperationsResult {
+        message: format!("Local Fleet operations are {health}."),
         data,
     })
 }
@@ -1090,7 +1120,10 @@ fn list_storage_lifecycle_evidence() -> Result<NativeStorageLifecycleResult, Str
         "--json".to_owned(),
     ];
     let data = run_cli_json(&args, "loading storage lifecycle evidence")?;
-    let count = data.get("count").and_then(Value::as_u64).unwrap_or_default();
+    let count = data
+        .get("count")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
     Ok(NativeStorageLifecycleResult {
         message: format!("Loaded {count} append-only storage lifecycle receipt(s)."),
         data,
@@ -1762,6 +1795,7 @@ fn main() {
             configure_registry_profile,
             list_local_packages,
             list_package_transparency,
+            fleet_operations_dashboard,
             list_local_skills,
             install_local_skill,
             mutate_local_skill,

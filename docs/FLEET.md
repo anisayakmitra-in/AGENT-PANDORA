@@ -31,6 +31,7 @@ The local supervisor is an optional operational layer over Fleet. It keeps a dur
 `job work --watch --idle-timeout <1-3600>` is the bounded independently launched worker window. The child process owns the same PID-bound supervisor record, process-wide lease, and heartbeat boundary as a normal worker, then exits after the idle window, an external drain request, or an optional `--max-jobs` cap. `job work --daemon` uses the same boundary for a long-lived local worker. It polls the durable supervisor state and treats `pandora fleet supervisor drain job-worker` as the graceful external-stop protocol: no new claim is admitted, the current claim finishes, the lease is released, and the worker records `stopped`. If the process is killed, its durable running record remains visible until an operator reconciles it; expired leases are cleared and a later worker may bind a new PID, but no previously claimed effect is replayed. The supervisor never launches child processes or grants effects.
 
 Supervisor commands:
+  pandora fleet dashboard --json
   pandora fleet supervisor start node-a
   pandora fleet supervisor drain node-a
   pandora fleet supervisor stop node-a --yes
@@ -92,6 +93,19 @@ be 2-8, jobs may be from four per producer through 4,096, rounds may be 1-16,
 and the submission window may be 60-86,400 seconds. Each round creates another
 bounded recovery batch; normal CI remains one 18-job round. Long-duration runs
 remain an operator/release evidence gate and are not part of the default CI profile.
+
+The manually dispatched `Worker operations soak` workflow runs this same
+profile on Linux x64, macOS x64, macOS arm64, and Windows x64. Its bounded
+inputs default to the documented ten-minute profile, and each platform uploads
+the exact test log as a 90-day artifact. A workflow definition is not operating
+proof by itself: only successful retained runs count toward the Phase 7 gate.
+
+`pandora fleet dashboard --json` is the operations read model shared by the
+CLI, `/fleet-health` TUI command, and desktop Background Runs view. It reports
+Fleet health, queue depth, lease age and expiry, stale supervisor counts,
+failure identities, and active budget ceilings. It never includes job
+arguments, prompts, outputs, credentials, or hidden reasoning. The snapshot is
+read-only, and its budgets are scheduling limits rather than actual spend.
 
 Workers only claim and delegate the original governed command. Fleet leases and
 Orchestration role receipts remain scheduling and recovery evidence, not
