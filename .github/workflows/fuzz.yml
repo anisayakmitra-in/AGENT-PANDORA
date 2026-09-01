@@ -18,6 +18,8 @@ jobs:
     name: Bounded parser fuzzing
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      RUSTUP_TOOLCHAIN: nightly-2026-08-30
 
     steps:
       - name: Check out source
@@ -26,7 +28,7 @@ jobs:
       - name: Install nightly Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
-          toolchain: nightly
+          toolchain: nightly-2026-08-30
 
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --version 0.13.2 --locked
