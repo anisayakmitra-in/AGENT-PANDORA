@@ -1316,7 +1316,7 @@ function Sidebar({ activeView, onSelect, runtimeStatus, sessions, selectedSessio
   return (
     <aside className="sidebar" aria-label="Pandora sidebar">
       <div className="brand-lockup" data-tauri-drag-region>
-        <button className="brand-mark" type="button" aria-label="Open Command" onClick={() => onSelect("command")}><span>P</span></button>
+        <button className="brand-mark glass-button" type="button" aria-label="Open Command" onClick={() => onSelect("command")}><span>P</span></button>
         <div><strong>Pandora</strong><span>local control plane</span></div>
         <span className="brand-edition">β7</span>
       </div>
