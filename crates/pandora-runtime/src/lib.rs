@@ -100,7 +100,7 @@ pub use device_trust::{
 pub use efficiency_engine::{DEFAULT_MAX_SAMPLES_PER_TARGET, EfficiencyEngine, EfficiencyError};
 pub use efficiency_store::{EfficiencyStore, EfficiencyStoreError};
 pub use evaluation_engine::{
-    EvaluationAdapterError, EvaluationEngine, EvaluationError, EvaluationTarget,
+    ArtifactScorecard, EvaluationAdapterError, EvaluationEngine, EvaluationError, EvaluationTarget,
     EvaluationTargetKind, EvaluationTaskAdapter, EvaluationTaskResult, GoldenCase,
     GoldenCaseResult, GoldenSetReport, HoldoutCase, HoldoutCaseResult, HoldoutSetReport,
     MAX_EVALUATION_TARGET_ID_BYTES, MAX_EVALUATION_TASK_BYTES, MAX_GOLDEN_CASE_ID_BYTES,

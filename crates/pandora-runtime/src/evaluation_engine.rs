@@ -2,7 +2,7 @@ use pandora_types::{
     EffectOutcome, EvaluationKind, EvaluationRequest, EvaluationResult, EvaluationStatus,
 };
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 pub const MAX_GOLDEN_CASES: usize = 256;
@@ -369,6 +369,60 @@ pub struct GoldenSetReport {
     cases: Vec<GoldenCaseResult>,
 }
 
+/// A deterministic, read-only production view grouped by the artifact class
+/// bound to each evaluation case. The scorecard is evidence only: it cannot
+/// approve, activate, or authorize a candidate.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArtifactScorecard {
+    target_kind: EvaluationTargetKind,
+    total: usize,
+    passed: usize,
+    failed: usize,
+    score_sum: u64,
+    average_score: u8,
+    pass_rate_percent: u8,
+    digest: String,
+    case_ids: Vec<String>,
+}
+
+impl ArtifactScorecard {
+    pub const fn target_kind(&self) -> EvaluationTargetKind {
+        self.target_kind
+    }
+
+    pub const fn total(&self) -> usize {
+        self.total
+    }
+
+    pub const fn passed(&self) -> usize {
+        self.passed
+    }
+
+    pub const fn failed(&self) -> usize {
+        self.failed
+    }
+
+    pub const fn score_sum(&self) -> u64 {
+        self.score_sum
+    }
+
+    pub const fn average_score(&self) -> u8 {
+        self.average_score
+    }
+
+    pub const fn pass_rate_percent(&self) -> u8 {
+        self.pass_rate_percent
+    }
+
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+
+    pub fn case_ids(&self) -> &[String] {
+        &self.case_ids
+    }
+}
+
 impl GoldenSetReport {
     pub const fn total(&self) -> usize {
         self.total
@@ -388,6 +442,50 @@ impl GoldenSetReport {
 
     pub fn cases(&self) -> &[GoldenCaseResult] {
         &self.cases
+    }
+
+    /// Emit stable scorecards for every typed artifact class represented in
+    /// this report. Legacy untyped cases stay in the aggregate report and are
+    /// intentionally omitted because they have no safe artifact class.
+    pub fn artifact_scorecards(&self) -> Vec<ArtifactScorecard> {
+        let mut grouped = BTreeMap::<EvaluationTargetKind, Vec<&GoldenCaseResult>>::new();
+        for case in &self.cases {
+            if let Some(target) = case.target() {
+                grouped.entry(target.kind()).or_default().push(case);
+            }
+        }
+
+        grouped
+            .into_iter()
+            .map(|(target_kind, cases)| {
+                let total = cases.len();
+                let passed = cases.iter().filter(|case| case.result().passed()).count();
+                let failed = total.saturating_sub(passed);
+                let score_sum = cases
+                    .iter()
+                    .map(|case| u64::from(case.result().score()))
+                    .sum::<u64>();
+                let average_score = u8::try_from(score_sum / total as u64).unwrap_or(0);
+                let pass_rate_percent = u8::try_from((passed * 100) / total).unwrap_or(0);
+                let case_ids = cases
+                    .iter()
+                    .map(|case| case.id().to_owned())
+                    .collect::<Vec<_>>();
+                let digest = artifact_scorecard_digest(self.digest(), target_kind, &cases);
+
+                ArtifactScorecard {
+                    target_kind,
+                    total,
+                    passed,
+                    failed,
+                    score_sum,
+                    average_score,
+                    pass_rate_percent,
+                    digest,
+                    case_ids,
+                }
+            })
+            .collect()
     }
 }
 
@@ -840,6 +938,23 @@ fn golden_set_digest(cases: &[GoldenCaseResult]) -> String {
     format!("sha256:{:x}", hasher.finalize())
 }
 
+fn artifact_scorecard_digest(
+    report_digest: &str,
+    target_kind: EvaluationTargetKind,
+    cases: &[&GoldenCaseResult],
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"pandora.artifact-scorecard.v1");
+    digest_text(&mut hasher, report_digest);
+    digest_text(&mut hasher, target_kind.as_str());
+    for case in cases {
+        digest_text(&mut hasher, case.id());
+        digest_text(&mut hasher, case.result().status().as_str());
+        hasher.update([case.result().score()]);
+    }
+    format!("sha256:{:x}", hasher.finalize())
+}
+
 fn holdout_set_digest(cases: &[HoldoutCaseResult]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"pandora.holdout-set.v1");
@@ -1021,6 +1136,46 @@ mod tests {
         );
         assert_eq!(first.cases()[0].target().unwrap().id(), "prompt-1");
         assert_ne!(first.digest(), second.digest());
+    }
+
+    #[test]
+    fn artifact_scorecards_group_typed_cases_without_authority() {
+        let engine = EvaluationEngine::new();
+        let prompt = EvaluationTarget::new(EvaluationTargetKind::Prompt, "prompt-1").unwrap();
+        let workflow = EvaluationTarget::new(EvaluationTargetKind::Workflow, "workflow-1").unwrap();
+        let report = engine
+            .evaluate_golden_set([
+                GoldenCase::new("prompt-pass", input("done"), "done")
+                    .unwrap()
+                    .with_target(prompt),
+                GoldenCase::new("prompt-fail", input("wrong"), "done")
+                    .unwrap()
+                    .with_target(
+                        EvaluationTarget::new(EvaluationTargetKind::Prompt, "prompt-2").unwrap(),
+                    ),
+                GoldenCase::new("workflow-pass", input("done"), "done")
+                    .unwrap()
+                    .with_target(workflow),
+                GoldenCase::new("legacy", input("done"), "done").unwrap(),
+            ])
+            .unwrap();
+
+        let scorecards = report.artifact_scorecards();
+        assert_eq!(scorecards.len(), 2);
+        assert_eq!(scorecards[0].target_kind(), EvaluationTargetKind::Prompt);
+        assert_eq!(scorecards[0].total(), 2);
+        assert_eq!(scorecards[0].passed(), 1);
+        assert_eq!(scorecards[0].failed(), 1);
+        assert_eq!(scorecards[0].pass_rate_percent(), 50);
+        assert_eq!(scorecards[0].average_score(), 50);
+        assert_eq!(scorecards[0].case_ids(), &["prompt-fail", "prompt-pass"]);
+        assert_eq!(scorecards[1].target_kind(), EvaluationTargetKind::Workflow);
+        assert_eq!(scorecards[1].pass_rate_percent(), 100);
+        assert!(
+            scorecards
+                .iter()
+                .all(|scorecard| !scorecard.digest().is_empty())
+        );
     }
 
     struct RecordingAdapter {

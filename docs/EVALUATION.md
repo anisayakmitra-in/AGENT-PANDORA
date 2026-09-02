@@ -20,6 +20,14 @@ files, or persist results. Callers that need durable release evidence must
 persist the resulting digest through the existing session and receipt
 authority.
 
+Every typed report also emits deterministic artifact scorecards grouped by
+`prompt`, `skill`, `workflow`, and `wasm_gene`. Each scorecard includes bounded
+case IDs, pass/fail counts, average score, pass rate, and its own digest derived
+from the parent report. Untyped legacy cases remain in the aggregate report but
+are omitted from artifact scorecards because they have no safe class binding.
+These views are read-only evidence and cannot approve, activate, or authorize a
+candidate.
+
 A case may also carry a typed target binding and a bounded task label. Supported
 target kinds are prompt, skill, workflow, and wasm_gene. Target IDs are
 trimmed, non-empty, control-character-free, and limited to 256 bytes. Task

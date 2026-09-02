@@ -1667,6 +1667,17 @@ fn report_value(report: &GoldenSetReport) -> Value {
         "passed": report.passed(),
         "failed": report.failed(),
         "digest": report.digest(),
+        "artifact_scorecards": report.artifact_scorecards().iter().map(|scorecard| json!({
+            "artifact_class": scorecard.target_kind().as_str(),
+            "total": scorecard.total(),
+            "passed": scorecard.passed(),
+            "failed": scorecard.failed(),
+            "score_sum": scorecard.score_sum(),
+            "average_score": scorecard.average_score(),
+            "pass_rate_percent": scorecard.pass_rate_percent(),
+            "digest": scorecard.digest(),
+            "case_ids": scorecard.case_ids(),
+        })).collect::<Vec<_>>(),
         "cases": report.cases().iter().map(|case| {
             let result = case.result();
             json!({
@@ -1693,6 +1704,38 @@ mod tests {
         EvaluationKind, EvaluationReceipt, EvaluationResult, EvaluationStatus, ExecutionId,
         SessionId, Timestamp,
     };
+
+    #[test]
+    fn report_value_emits_artifact_scorecards() {
+        let target = pandora_runtime::EvaluationTarget::new(
+            pandora_runtime::EvaluationTargetKind::Workflow,
+            "workflow-1",
+        )
+        .unwrap();
+        let request = pandora_types::EvaluationRequest::new(
+            ExecutionId::new("execution-report").unwrap(),
+            Vec::new(),
+            "done",
+            Vec::new(),
+        )
+        .unwrap();
+        let report = pandora_runtime::EvaluationEngine::new()
+            .evaluate_golden_set([pandora_runtime::GoldenCase::new(
+                "workflow-case",
+                request,
+                "done",
+            )
+            .unwrap()
+            .with_target(target)])
+            .unwrap();
+
+        let value = super::report_value(&report);
+        assert_eq!(
+            value["artifact_scorecards"][0]["artifact_class"],
+            "workflow"
+        );
+        assert_eq!(value["artifact_scorecards"][0]["pass_rate_percent"], 100);
+    }
 
     #[test]
     fn parses_bounded_golden_case_shape() {
