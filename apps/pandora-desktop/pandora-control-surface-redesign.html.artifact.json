@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "kind": "html",
+  "title": "pandora-control-surface-redesign.html",
+  "entry": "pandora-control-surface-redesign.html",
+  "renderer": "html",
+  "status": "complete",
+  "exports": [
+    "html",
+    "pdf",
+    "zip"
+  ],
+  "createdAt": "2026-09-02T16:47:37.026Z",
+  "updatedAt": "2026-09-02T16:47:37.026Z",
+  "metadata": {
+    "inferred": true,
+    "reconciled": true
+  }
+}
