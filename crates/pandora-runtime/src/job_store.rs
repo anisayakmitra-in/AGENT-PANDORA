@@ -486,7 +486,12 @@ pub(crate) fn open_job_connection(path: &Path) -> Result<Connection, JobStoreErr
     }
     let mut connection = Connection::open(path)?;
     set_private_permissions(path)?;
-    connection.busy_timeout(Duration::from_secs(5))?;
+    // Worker operations intentionally use short, immediate transactions. On
+    // Windows, process-level SQLite scheduling can briefly hold the write
+    // lock while another CLI producer is starting up. Give those bounded
+    // transactions enough time to yield instead of surfacing SQLITE_BUSY as
+    // an internal submission failure during the Phase 7 soak workload.
+    connection.busy_timeout(Duration::from_secs(30))?;
     let journal_mode =
         connection.query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0))?;
     if !journal_mode.eq_ignore_ascii_case("wal") {
