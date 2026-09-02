@@ -86,6 +86,8 @@ fn powershell() -> &'static str {
         'generate','list','inspect','submit','evaluate','approve','stage','canary','rollout','activate','rollback'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'efficiency') {
         'rank'
+    } elseif ($elements.Count -gt 2 -and $elements[1] -eq 'evaluation' -and $elements[2] -eq 'regression') {
+        'propose','generate','list','inspect','review'
     } elseif ($elements.Count -gt 2 -and $elements[1] -eq 'evaluation' -and $elements[2] -eq 'schedule') {
         'create','list','disable','claim','run','runs'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'evaluation') {
@@ -167,6 +169,8 @@ fn bash() -> &'static str {
         COMPREPLY=( $(compgen -W 'list population' -- "$current") )
     elif [[ "$previous" == "efficiency" ]]; then
         COMPREPLY=( $(compgen -W 'rank' -- "$current") )
+    elif [[ "${COMP_WORDS[1]}" == "evaluation" && "${COMP_WORDS[2]}" == "regression" && "$previous" == "regression" ]]; then
+        COMPREPLY=( $(compgen -W 'propose generate list inspect review' -- "$current") )
     elif [[ "${COMP_WORDS[1]}" == "evaluation" && "$previous" == "schedule" ]]; then
         COMPREPLY=( $(compgen -W 'create list disable claim run runs' -- "$current") )
     elif [[ "$previous" == "evaluation" ]]; then
@@ -190,7 +194,9 @@ complete -F _pandora_complete pandora"#
 
 fn zsh() -> &'static str {
     r#"#compdef pandora
-if [[ ${words[2]} == backup && ${words[3]} == lifecycle ]]; then
+if [[ ${words[2]} == evaluation && ${words[3]} == regression ]]; then
+    _arguments '3:evaluation regression command:(propose generate list inspect review)'
+elif [[ ${words[2]} == backup && ${words[3]} == lifecycle ]]; then
     _arguments '3:backup lifecycle command:(preview record list inspect)'
 elif [[ ${words[2]} == backup ]]; then
     _arguments '1:command:(help setup backup service rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:backup command:(create inspect restore lifecycle)'
@@ -290,6 +296,7 @@ complete -c pandora -f -n '__fish_seen_subcommand_from strategies; and __fish_se
 complete -c pandora -f -n '__fish_seen_subcommand_from strategies; and __fish_seen_subcommand_from population; and __fish_seen_subcommand_from inspect' -l id -r
 complete -c pandora -f -n '__fish_seen_subcommand_from efficiency' -a 'rank'
 complete -c pandora -f -n '__fish_seen_subcommand_from evaluation; and not __fish_seen_subcommand_from schedule' -a 'golden inspect scorecard suite regression schedule'
+complete -c pandora -f -n '__fish_seen_subcommand_from evaluation; and __fish_seen_subcommand_from regression' -a 'propose generate list inspect review'
 complete -c pandora -f -n '__fish_seen_subcommand_from evaluation; and __fish_seen_subcommand_from schedule' -a 'create list disable claim run runs'
 complete -c pandora -f -n '__fish_seen_subcommand_from evolution; and not __fish_seen_subcommand_from rollout' -a 'generate list inspect submit evaluate approve stage canary rollout activate rollback'
 complete -c pandora -f -n '__fish_seen_subcommand_from evolution; and __fish_seen_subcommand_from rollout' -a 'configure score approve promote pause resume reject retry rollback'
@@ -357,6 +364,7 @@ mod tests {
                 "list set use test",
                 "list inspect set remove",
                 "golden inspect",
+                "propose generate list inspect review",
                 "create list disable claim run runs",
                 "list inspect submit evaluate",
                 "list start drain stop recover heartbeat reconcile reap restart",

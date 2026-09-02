@@ -562,12 +562,18 @@ must be explicitly reviewed before it can be used to register a suite:
     pandora evaluation regression list --json
     pandora evaluation regression inspect --id candidate-1 --json
     pandora evaluation regression review --id candidate-1 --decision accept --json
+    pandora evaluation regression generate --id candidate-1 --input failed.json --suite generated-regression --json
     pandora evaluation suite register --id reviewed-suite --input failed.json --candidate candidate-1 --json
 
 A candidate binds the source execution, case ID, target identity, bounded task
 label, and a hash of the failure evidence. Rejected or still-proposed
 candidates fail closed at suite registration. Candidate creation and review
 never execute a provider, tool, workflow, Skill, or Gene.
+
+After explicit acceptance, `evaluation regression generate` revalidates the
+exact failed source case and emits an inert task-backed suite fixture. The
+fixture can be registered and later run through the governed evaluation adapter;
+generation itself changes no runtime authority and writes no suite state.
 
 `evolution evaluate` runs the same deterministic evaluator against a bounded
 holdout JSON file and records the evidence on one existing evolution proposal.
@@ -996,7 +1002,7 @@ partial usage and evidence; only then can `resume` make the role retryable.
 
 pandora strategies list
 pandora evaluation golden --input <path> [--fail-on-failure]
-pandora evaluation regression propose --id <id> --input <path> --case <case-id> | list | inspect --id <id> | review --id <id> --decision <accept|reject>
+pandora evaluation regression propose --id <id> --input <path> --case <case-id> | generate --id <id> --input <path> --suite <suite-id> | list | inspect --id <id> | review --id <id> --decision <accept|reject>
 pandora evaluation inspect --session <id> [--execution <id>]
 pandora evaluation scorecard --session <id>
 pandora evaluation schedule create --id <id> --name <name> --suite <id> [--proposal <proposal-id>] --interval-seconds <seconds> | list | disable --id <id> | claim --worker <id> [--limit <1-16>] | run --id <id> --worker <id> [--input <path>] [--harness <id>] [--fail-on-failure] | runs [--id <id>] [--limit <1-256>]

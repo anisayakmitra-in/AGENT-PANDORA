@@ -450,10 +450,13 @@ fn suite_inspect(args: &[String]) -> Result<CommandResult, CliError> {
 
 fn regression(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
-        CliError::usage("evaluation regression requires 'propose', 'list', 'inspect', or 'review'")
+        CliError::usage(
+            "evaluation regression requires 'propose', 'generate', 'list', 'inspect', or 'review'",
+        )
     })?;
     match subcommand.as_str() {
         "propose" => regression_propose(&args[1..]),
+        "generate" => regression_generate(&args[1..]),
         "list" => regression_list(&args[1..]),
         "inspect" => regression_inspect(&args[1..]),
         "review" => regression_review(&args[1..]),
@@ -533,6 +536,98 @@ fn regression_propose(args: &[String]) -> Result<CommandResult, CliError> {
         "evaluation regression propose",
         candidate_value(&candidate),
         format!("Proposed regression candidate {}", candidate.id()),
+    ))
+}
+
+fn regression_generate(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "id", "input", "suite"],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evaluation regression generate does not accept positional arguments",
+        ));
+    }
+    let candidate_id = required_option(
+        &parsed,
+        "id",
+        "evaluation regression generate requires '--id <candidate-id>'",
+    )?;
+    let input = required_option(
+        &parsed,
+        "input",
+        "evaluation regression generate requires '--input <path>'",
+    )?;
+    let suite_id = required_option(
+        &parsed,
+        "suite",
+        "evaluation regression generate requires '--suite <suite-id>'",
+    )?;
+    if suite_id.trim().is_empty()
+        || suite_id.len() > pandora_runtime::MAX_EVALUATION_SUITE_ID_BYTES
+        || suite_id.chars().any(char::is_control)
+    {
+        return Err(CliError::usage("generated regression suite ID is invalid"));
+    }
+
+    let config = schedule_config(&parsed)?;
+    let candidate = suite_store(&config)?
+        .require_approved_regression_candidate(candidate_id)
+        .map_err(suite_error)?;
+    let bytes = read_bounded(Path::new(input))?;
+    let cases = parse_cases(&bytes)?;
+    let report = EvaluationEngine::new()
+        .evaluate_golden_set(cases.clone())
+        .map_err(|error| CliError::usage(format!("invalid golden set: {error:?}")))?;
+    let case = cases
+        .iter()
+        .find(|case| {
+            case.id() == candidate.case_id()
+                && case.evaluation().execution_id() == candidate.source_execution_id()
+                && case.target() == Some(candidate.target())
+                && case.task() == Some(candidate.task())
+        })
+        .ok_or_else(|| {
+            CliError::usage(
+                "source input does not contain the exact accepted regression candidate case",
+            )
+        })?;
+    let result = report
+        .cases()
+        .iter()
+        .find(|result| result.id() == case.id())
+        .ok_or_else(|| {
+            CliError::execution("regression case evidence was not produced", json!({}))
+        })?;
+    if result.result().passed() {
+        return Err(CliError::usage(
+            "regression generation requires the source case to remain a verified failure",
+        ));
+    }
+
+    let generated = json!({
+        "suite_id": suite_id.trim(),
+        "cases": [{
+            "id": case.id(),
+            "target": {"kind": candidate.target().kind().as_str(), "id": candidate.target().id()},
+            "task": candidate.task(),
+            "expected_output": case.expected_output(),
+        }],
+    });
+    Ok(success(
+        "evaluation regression generate",
+        json!({
+            "candidate_id": candidate.id(),
+            "review_gate": "accepted-regression-candidate",
+            "generated_suite": generated,
+            "runtime_authority_changed": false,
+            "durability": "ephemeral-generated-fixture",
+        }),
+        format!(
+            "Generated executable regression fixture for {}",
+            candidate.id()
+        ),
     ))
 }
 

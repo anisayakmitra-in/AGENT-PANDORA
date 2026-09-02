@@ -5349,6 +5349,30 @@ fn evaluation_regression_candidates_require_review_before_suite_registration() {
     assert_success(&reviewed);
     assert_eq!(parse_json(&reviewed)["status"], "accepted");
 
+    let generated = fixture
+        .command(&[
+            "evaluation",
+            "regression",
+            "generate",
+            "--id",
+            "candidate-1",
+            "--input",
+            input.to_str().unwrap(),
+            "--suite",
+            "generated-regression",
+            "--json",
+        ])
+        .output()
+        .expect("regression fixture generation should start");
+    assert_success(&generated);
+    let generated = parse_json(&generated);
+    assert_eq!(generated["review_gate"], "accepted-regression-candidate");
+    assert_eq!(generated["runtime_authority_changed"], false);
+    assert_eq!(
+        generated["generated_suite"]["cases"][0]["target"]["kind"],
+        "workflow"
+    );
+
     let registered = fixture
         .command(&[
             "evaluation",

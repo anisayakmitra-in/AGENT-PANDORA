@@ -256,6 +256,10 @@ impl GoldenCase {
         &self.evaluation
     }
 
+    pub fn expected_output(&self) -> &str {
+        &self.expected_output
+    }
+
     pub fn with_target(mut self, target: EvaluationTarget) -> Self {
         self.target = Some(target);
         self
