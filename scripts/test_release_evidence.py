@@ -143,12 +143,8 @@ class ReleaseEvidenceTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             dist, _ = self._write_dist(Path(temporary))
-            evidence = build_release_evidence("v2.0.0-rc.1", dist)
-            self.assertTrue(evidence["platform_signing"]["required"])
-            self.assertEqual(
-                evidence["platform_signing"]["apple_notarization"],
-                "verified_in_build",
-            )
+            with self.assertRaisesRegex(ReleaseEvidenceError, "requires a commit"):
+                build_release_evidence("v2.0.0-rc.1", dist)
 
     def test_stable_release_index_never_claims_first_release_rollback_closure(self) -> None:
         self.assertEqual(

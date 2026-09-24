@@ -44,6 +44,7 @@ _VERIFIERS_BY_CHECK = {
     "codesign": "codesign-verify-v1",
     "notarization": "stapler-validate-v1",
 }
+_MAX_RECEIPT_BYTES = 64 * 1024
 
 
 class SigningReceiptError(ValueError):
@@ -153,6 +154,32 @@ def receipt_digest(receipt: Mapping[str, object]) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
+def read_platform_signing_receipt(path: Path) -> tuple[object, str]:
+    try:
+        if path.is_symlink() or not path.is_file():
+            raise SigningReceiptError(f"signing receipt is not a regular file: {path}")
+        raw = path.read_bytes()
+    except SigningReceiptError:
+        raise
+    except OSError as error:
+        raise SigningReceiptError(f"could not read signing receipt: {path}") from error
+    if len(raw) > _MAX_RECEIPT_BYTES:
+        raise SigningReceiptError("signing receipt exceeds the size limit")
+    try:
+        document = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_reject_duplicate_json_keys,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise SigningReceiptError(f"could not decode signing receipt: {path}") from error
+    return document, hashlib.sha256(raw).hexdigest()
+
+
+def load_platform_signing_receipt(path: Path) -> object:
+    document, _ = read_platform_signing_receipt(path)
+    return document
+
+
 def validate_platform_signing_receipt(
     receipt: object,
     artifact_path: Path,
@@ -245,10 +272,7 @@ def main() -> int:
     arguments = parser.parse_args()
 
     try:
-        receipt = json.loads(
-            arguments.receipt.read_text(encoding="utf-8"),
-            object_pairs_hook=_reject_duplicate_json_keys,
-        )
+        receipt = load_platform_signing_receipt(arguments.receipt)
         validate_platform_signing_receipt(
             receipt,
             arguments.artifact,
