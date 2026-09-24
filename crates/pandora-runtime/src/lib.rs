@@ -128,9 +128,10 @@ pub use executors::{
     WorktreeResult,
 };
 pub use fleet::{
-    FLEET_SCHEMA_VERSION, FleetBudget, FleetEngine, FleetError, FleetLease, FleetLeaseState,
-    FleetNode, FleetNodeState, FleetQuiescenceGuard, FleetSupervisor, FleetSupervisorState,
-    MAX_FLEET_CAPABILITIES, MAX_FLEET_LEASES, MAX_FLEET_NODES,
+    FLEET_SCHEMA_VERSION, FleetBudget, FleetEngine, FleetError, FleetFenceState, FleetLease,
+    FleetLeaseFence, FleetLeaseState, FleetNode, FleetNodeState, FleetQuiescenceGuard,
+    FleetSupervisor, FleetSupervisorState, MAX_FLEET_CAPABILITIES, MAX_FLEET_FENCES,
+    MAX_FLEET_LEASES, MAX_FLEET_NODES,
 };
 pub use github_client::{GitHubPackageClient, GitHubPackageDownload, GitHubPackageError};
 pub use graph_intelligence::{

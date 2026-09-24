@@ -1,13 +1,16 @@
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
+use subtle::ConstantTimeEq;
 
-pub const FLEET_SCHEMA_VERSION: u32 = 3;
+pub const FLEET_SCHEMA_VERSION: u32 = 4;
 pub const MAX_FLEET_NODES: usize = 256;
 pub const MAX_FLEET_LEASES: usize = 4_096;
+pub const MAX_FLEET_FENCES: usize = 4_096;
 pub const MAX_FLEET_CAPABILITIES: usize = 64;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -48,6 +51,24 @@ impl FleetLeaseState {
             Self::Expired => "expired",
             Self::Revoked => "revoked",
             Self::Killed => "killed",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FleetFenceState {
+    Active,
+    Released,
+    Expired,
+}
+
+impl FleetFenceState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Released => "released",
+            Self::Expired => "expired",
         }
     }
 }
@@ -284,6 +305,57 @@ impl FleetLease {
     }
 }
 
+pub struct FleetLeaseFence {
+    key: String,
+    owner_id: String,
+    generation: u64,
+    token: String,
+    issued_at: u64,
+    expires_at: u64,
+    state: FleetFenceState,
+}
+
+impl FleetLeaseFence {
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    pub fn owner_id(&self) -> &str {
+        &self.owner_id
+    }
+
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub const fn issued_at(&self) -> u64 {
+        self.issued_at
+    }
+
+    pub const fn expires_at(&self) -> u64 {
+        self.expires_at
+    }
+
+    pub const fn state(&self) -> FleetFenceState {
+        self.state
+    }
+}
+
+impl fmt::Debug for FleetLeaseFence {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("FleetLeaseFence")
+            .field("key", &self.key)
+            .field("owner_id", &self.owner_id)
+            .field("generation", &self.generation)
+            .field("issued_at", &self.issued_at)
+            .field("expires_at", &self.expires_at)
+            .field("state", &self.state)
+            .field("token", &"[REDACTED]")
+            .finish()
+    }
+}
+
 #[derive(Debug)]
 pub enum FleetError {
     Database(rusqlite::Error),
@@ -312,6 +384,13 @@ pub enum FleetError {
     QuiescenceHeld,
     QuiescenceActive,
     InvalidLeaseDuration,
+    InvalidFenceDuration,
+    FenceAlreadyActive,
+    FenceNotFound,
+    FenceExpired,
+    FenceMismatch,
+    FenceLimitExceeded,
+    Random,
     FleetNodeLimitExceeded,
     FleetLeaseLimitExceeded,
     CorruptRecord,
@@ -370,6 +449,13 @@ impl fmt::Display for FleetError {
             Self::QuiescenceHeld => formatter.write_str("fleet quiescence is already held"),
             Self::QuiescenceActive => formatter.write_str("fleet quiescence blocks new work"),
             Self::InvalidLeaseDuration => formatter.write_str("fleet lease duration is invalid"),
+            Self::InvalidFenceDuration => formatter.write_str("fleet fence duration is invalid"),
+            Self::FenceAlreadyActive => formatter.write_str("fleet fence is already active"),
+            Self::FenceNotFound => formatter.write_str("fleet fence was not found"),
+            Self::FenceExpired => formatter.write_str("fleet fence has expired"),
+            Self::FenceMismatch => formatter.write_str("fleet fence ownership does not match"),
+            Self::FenceLimitExceeded => formatter.write_str("fleet fence limit was exceeded"),
+            Self::Random => formatter.write_str("fleet fence token generation failed"),
             Self::FleetNodeLimitExceeded => formatter.write_str("fleet node limit was exceeded"),
             Self::FleetLeaseLimitExceeded => formatter.write_str("fleet lease limit was exceeded"),
             Self::CorruptRecord => formatter.write_str("fleet database contains an invalid record"),
@@ -439,6 +525,17 @@ impl FleetEngine {
              );
              CREATE INDEX IF NOT EXISTS fleet_leases_node_idx
                  ON fleet_leases(node_id, state);
+             CREATE TABLE IF NOT EXISTS fleet_fences (
+                 fence_key TEXT PRIMARY KEY,
+                 owner_id TEXT NOT NULL,
+                 generation INTEGER NOT NULL CHECK (generation > 0),
+                 token_hash TEXT NOT NULL,
+                 issued_at INTEGER NOT NULL,
+                 expires_at INTEGER NOT NULL,
+                 state TEXT NOT NULL CHECK (state IN ('active', 'released', 'expired'))
+             );
+             CREATE INDEX IF NOT EXISTS fleet_fences_state_idx
+                 ON fleet_fences(state, expires_at);
              CREATE TABLE IF NOT EXISTS fleet_supervisors (
                  node_id TEXT PRIMARY KEY,
                  state TEXT NOT NULL CHECK (state IN ('stopped', 'running', 'draining', 'recovering')),
@@ -1090,6 +1187,154 @@ impl FleetEngine {
         }
     }
 
+    pub fn acquire_fence(
+        &self,
+        key: impl Into<String>,
+        owner_id: impl Into<String>,
+        now: u64,
+        duration_seconds: u64,
+    ) -> Result<FleetLeaseFence, FleetError> {
+        if duration_seconds == 0 {
+            return Err(FleetError::InvalidFenceDuration);
+        }
+        let key = validate_text("fence key", key.into(), 256)?;
+        let owner_id = validate_text("fence owner", owner_id.into(), 256)?;
+        let expires_at = now
+            .checked_add(duration_seconds)
+            .ok_or(FleetError::InvalidFenceDuration)?;
+        let token = generate_fence_token()?;
+        let token_hash = fence_token_hash(&token);
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        ensure_work_permitted(&transaction, now)?;
+        let existing = transaction
+            .query_row(
+                "SELECT generation, state, expires_at
+                 FROM fleet_fences WHERE fence_key = ?1",
+                params![key],
+                |row| {
+                    Ok((
+                        decode_u64(row.get(0)?)?,
+                        row.get::<_, String>(1)?,
+                        decode_u64(row.get(2)?)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let generation = match existing {
+            None => {
+                let count: i64 =
+                    transaction
+                        .query_row("SELECT COUNT(*) FROM fleet_fences", [], |row| row.get(0))?;
+                if usize::try_from(count).map_err(|_| FleetError::CorruptRecord)?
+                    >= MAX_FLEET_FENCES
+                {
+                    return Err(FleetError::FenceLimitExceeded);
+                }
+                1
+            }
+            Some((generation, state, current_expires_at)) => {
+                let state = decode_fence_state(&state)?;
+                if state == FleetFenceState::Active && current_expires_at > now {
+                    return Err(FleetError::FenceAlreadyActive);
+                }
+                generation.checked_add(1).ok_or(FleetError::CorruptRecord)?
+            }
+        };
+        transaction.execute(
+            "INSERT INTO fleet_fences
+                (fence_key, owner_id, generation, token_hash, issued_at, expires_at, state)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active')
+             ON CONFLICT(fence_key) DO UPDATE SET
+                owner_id = excluded.owner_id,
+                generation = excluded.generation,
+                token_hash = excluded.token_hash,
+                issued_at = excluded.issued_at,
+                expires_at = excluded.expires_at,
+                state = excluded.state",
+            params![
+                key,
+                owner_id,
+                to_i64(generation)?,
+                token_hash,
+                to_i64(now)?,
+                to_i64(expires_at)?,
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(FleetLeaseFence {
+            key,
+            owner_id,
+            generation,
+            token,
+            issued_at: now,
+            expires_at,
+            state: FleetFenceState::Active,
+        })
+    }
+
+    pub fn renew_fence(
+        &self,
+        fence: &FleetLeaseFence,
+        now: u64,
+        duration_seconds: u64,
+    ) -> Result<FleetLeaseFence, FleetError> {
+        if duration_seconds == 0 {
+            return Err(FleetError::InvalidFenceDuration);
+        }
+        let expires_at = now
+            .checked_add(duration_seconds)
+            .ok_or(FleetError::InvalidFenceDuration)?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        validate_fence(&transaction, fence, now)?;
+        transaction.execute(
+            "UPDATE fleet_fences SET expires_at = ?1
+             WHERE fence_key = ?2 AND generation = ?3 AND state = 'active'",
+            params![to_i64(expires_at)?, fence.key, to_i64(fence.generation)?],
+        )?;
+        transaction.commit()?;
+        Ok(FleetLeaseFence {
+            key: fence.key.clone(),
+            owner_id: fence.owner_id.clone(),
+            generation: fence.generation,
+            token: fence.token.clone(),
+            issued_at: fence.issued_at,
+            expires_at,
+            state: FleetFenceState::Active,
+        })
+    }
+
+    pub fn assert_fence(&self, fence: &FleetLeaseFence, now: u64) -> Result<(), FleetError> {
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        validate_fence(&transaction, fence, now)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn release_fence(&self, fence: &FleetLeaseFence, now: u64) -> Result<(), FleetError> {
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        validate_fence(&transaction, fence, now)?;
+        transaction.execute(
+            "UPDATE fleet_fences SET state = 'released'
+             WHERE fence_key = ?1 AND generation = ?2 AND state = 'active'",
+            params![fence.key, to_i64(fence.generation)?],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn expire_fences(&self, now: u64) -> Result<usize, FleetError> {
+        let connection = self.lock()?;
+        Ok(connection.execute(
+            "UPDATE fleet_fences SET state = 'expired'
+             WHERE state = 'active' AND expires_at <= ?1",
+            params![to_i64(now)?],
+        )?)
+    }
+
     pub fn renew_lease(
         &self,
         lease_id: &str,
@@ -1332,6 +1577,76 @@ fn active_lease_count(connection: &Connection, node_id: &str) -> Result<u64, Fle
     u64::try_from(count).map_err(|_| FleetError::CorruptRecord)
 }
 
+fn generate_fence_token() -> Result<String, FleetError> {
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).map_err(|_| FleetError::Random)?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn fence_token_hash(token: &str) -> String {
+    format!("{:x}", Sha256::digest(token.as_bytes()))
+}
+
+fn fence_token_matches(expected: &str, actual: &str) -> bool {
+    expected.as_bytes().ct_eq(actual.as_bytes()).into()
+}
+
+fn validate_fence(
+    connection: &Connection,
+    fence: &FleetLeaseFence,
+    now: u64,
+) -> Result<(), FleetError> {
+    let record = connection
+        .query_row(
+            "SELECT owner_id, generation, token_hash, issued_at, expires_at, state
+             FROM fleet_fences WHERE fence_key = ?1",
+            params![fence.key],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    decode_u64(row.get(1)?)?,
+                    row.get::<_, String>(2)?,
+                    decode_u64(row.get(3)?)?,
+                    decode_u64(row.get(4)?)?,
+                    row.get::<_, String>(5)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((owner_id, generation, token_hash, issued_at, expires_at, state)) = record else {
+        return Err(FleetError::FenceNotFound);
+    };
+    let state = decode_fence_state(&state)?;
+    if state != FleetFenceState::Active {
+        return Err(FleetError::FenceMismatch);
+    }
+    if expires_at <= now {
+        connection.execute(
+            "UPDATE fleet_fences SET state = 'expired'
+             WHERE fence_key = ?1 AND generation = ?2 AND state = 'active'",
+            params![fence.key, to_i64(generation)?],
+        )?;
+        return Err(FleetError::FenceExpired);
+    }
+    if issued_at > now
+        || owner_id != fence.owner_id
+        || generation != fence.generation
+        || !fence_token_matches(&token_hash, &fence_token_hash(&fence.token))
+    {
+        return Err(FleetError::FenceMismatch);
+    }
+    Ok(())
+}
+
+fn decode_fence_state(value: &str) -> Result<FleetFenceState, FleetError> {
+    match value {
+        "active" => Ok(FleetFenceState::Active),
+        "released" => Ok(FleetFenceState::Released),
+        "expired" => Ok(FleetFenceState::Expired),
+        _ => Err(FleetError::CorruptRecord),
+    }
+}
+
 fn decode_supervisor(row: &rusqlite::Row<'_>) -> rusqlite::Result<FleetSupervisor> {
     Ok(FleetSupervisor {
         node_id: row.get(0)?,
@@ -1535,6 +1850,71 @@ mod tests {
         assert_eq!(
             fleet.list_leases().unwrap()[0].state(),
             FleetLeaseState::Expired
+        );
+    }
+
+    #[test]
+    fn fenced_lease_renewal_and_reclaim_are_generation_bound() {
+        let fleet = engine("pandora-fleet-fence-generation");
+        let first = fleet.acquire_fence("job-1", "worker-a", 10, 20).unwrap();
+        assert_eq!(first.generation(), 1);
+        let renewed = fleet.renew_fence(&first, 15, 20).unwrap();
+        assert_eq!(renewed.expires_at(), 35);
+        fleet.assert_fence(&renewed, 34).unwrap();
+
+        assert!(matches!(
+            fleet.assert_fence(&renewed, 35),
+            Err(FleetError::FenceExpired)
+        ));
+        let replacement = fleet.acquire_fence("job-1", "worker-b", 35, 20).unwrap();
+        assert_eq!(replacement.generation(), 2);
+        assert!(matches!(
+            fleet.renew_fence(&renewed, 36, 20),
+            Err(FleetError::FenceMismatch)
+        ));
+        fleet.assert_fence(&replacement, 36).unwrap();
+    }
+
+    #[test]
+    fn fenced_lease_survives_restart_and_rejects_a_stale_owner() {
+        let root = crate::test_support::new_temp_dir("pandora-fleet-fence-restart").unwrap();
+        let path = root.join("fleet.sqlite3");
+        let first = FleetEngine::open(&path).unwrap();
+        let fence = first.acquire_fence("job-1", "worker-a", 10, 20).unwrap();
+        drop(first);
+
+        let second = FleetEngine::open(&path).unwrap();
+        second.assert_fence(&fence, 11).unwrap();
+        assert!(matches!(second.release_fence(&fence, 12), Ok(())));
+        assert!(matches!(
+            second.assert_fence(&fence, 12),
+            Err(FleetError::FenceMismatch)
+        ));
+    }
+
+    #[test]
+    fn only_one_concurrent_fence_acquisition_wins() {
+        let root = crate::test_support::new_temp_dir("pandora-fleet-fence-race").unwrap();
+        let path = root.join("fleet.sqlite3");
+        let fleet = Arc::new(FleetEngine::open(&path).unwrap());
+        let mut handles = Vec::new();
+        for owner in ["worker-a", "worker-b"] {
+            let fleet = Arc::clone(&fleet);
+            handles.push(std::thread::spawn(move || {
+                fleet.acquire_fence("job-1", owner, 10, 20)
+            }));
+        }
+        let outcomes: Vec<_> = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect();
+        assert_eq!(outcomes.iter().filter(|outcome| outcome.is_ok()).count(), 1);
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|outcome| matches!(outcome, Err(FleetError::FenceAlreadyActive)))
+                .count(),
+            1
         );
     }
 
