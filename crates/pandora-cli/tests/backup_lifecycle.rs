@@ -1,3 +1,5 @@
+use pandora_runtime::RecoveryArchive;
+use rusqlite::Connection;
 use serde_json::{Value, json};
 use std::fs;
 use std::path::PathBuf;
@@ -137,6 +139,57 @@ fn encrypted_backup_restores_state_and_rejects_wrong_key() {
     assert_eq!(restored["command"], "backup restore");
     assert_eq!(restored["authenticated"], true);
     assert_eq!(fs::read(marker).unwrap(), b"before");
+}
+
+#[test]
+fn backup_captures_wal_only_sqlite_state_in_a_consistent_snapshot() {
+    let fixture = Fixture::new();
+    parse_success(fixture.command(&["setup", "--json"], "correct horse battery staple"));
+    let source = fixture.data.join("wal.sqlite3");
+    let connection = Connection::open(&source).unwrap();
+    connection
+        .execute_batch(
+            "PRAGMA journal_mode = WAL;
+             PRAGMA wal_autocheckpoint = 0;
+             CREATE TABLE records (id INTEGER PRIMARY KEY, value TEXT NOT NULL);
+             INSERT INTO records (id, value) VALUES (1, 'committed');",
+        )
+        .unwrap();
+    let archive_path = fixture.root.join("wal-backup.json");
+    let created = parse_success(fixture.command(
+        &[
+            "backup",
+            "create",
+            "--output",
+            archive_path.to_str().unwrap(),
+            "--json",
+        ],
+        "correct horse battery staple",
+    ));
+    assert_eq!(created["encrypted"], true);
+
+    let encoded = fs::read(&archive_path).unwrap();
+    let bundle = RecoveryArchive::open(&encoded, "correct horse battery staple").unwrap();
+    let entry = bundle
+        .entries()
+        .iter()
+        .find(|entry| entry.path() == "data/wal.sqlite3")
+        .expect("SQLite snapshot should be present");
+    let snapshot = fixture.root.join("wal-snapshot.sqlite3");
+    fs::write(&snapshot, entry.bytes()).unwrap();
+    let snapshot_connection = Connection::open(&snapshot).unwrap();
+    let value: String = snapshot_connection
+        .query_row("SELECT value FROM records WHERE id = 1", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(value, "committed");
+    assert!(
+        !bundle
+            .entries()
+            .iter()
+            .any(|entry| entry.path().ends_with("-wal") || entry.path().ends_with("-shm"))
+    );
 }
 
 #[test]

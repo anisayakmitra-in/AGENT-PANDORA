@@ -5,12 +5,13 @@ use pandora_runtime::{
     StorageLifecycleReceipt, StorageLifecycleStore, StorageLifecycleStoreError,
 };
 use pandora_types::{StorageLifecycleAction, StorageLifecycleManifest, StorageLifecycleProvider};
-use rusqlite::Connection;
+use rusqlite::{Connection, DatabaseName};
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
 use zeroize::Zeroizing;
 
 const MAX_ARCHIVE_FILE_BYTES: u64 = 192 * 1024 * 1024;
@@ -354,6 +355,72 @@ fn restore(args: &[String]) -> Result<CommandResult, CliError> {
     ))
 }
 
+fn is_sqlite_sidecar(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            name.ends_with("-wal") || name.ends_with("-shm") || name.ends_with("-journal")
+        })
+}
+
+fn sqlite_snapshot_bytes(source: &Path) -> Result<Vec<u8>, CliError> {
+    let snapshot_directory = create_sqlite_snapshot_directory()?;
+    let snapshot = snapshot_directory.join("snapshot.sqlite3");
+    let result = (|| {
+        let connection = Connection::open(source).map_err(sqlite_error)?;
+        connection
+            .busy_timeout(Duration::from_secs(5))
+            .map_err(sqlite_error)?;
+        connection
+            .backup(DatabaseName::Main, &snapshot, None)
+            .map_err(sqlite_error)?;
+        let metadata = fs::symlink_metadata(&snapshot).map_err(io_error)?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(CliError::configuration(
+                "SQLite snapshot path is unsafe",
+                json!({"path": snapshot}),
+            ));
+        }
+        fs::read(&snapshot).map_err(io_error)
+    })();
+    let _ = fs::remove_dir_all(&snapshot_directory);
+    result
+}
+
+fn create_sqlite_snapshot_directory() -> Result<PathBuf, CliError> {
+    for _ in 0..4 {
+        let mut random = [0u8; 16];
+        getrandom::fill(&mut random).map_err(|_| {
+            CliError::internal(
+                "could not create a private SQLite snapshot directory",
+                json!({}),
+            )
+        })?;
+        let name = random
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let path = std::env::temp_dir().join(format!("pandora-sqlite-snapshot-{name}"));
+        match fs::create_dir(&path) {
+            Ok(()) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
+                        .map_err(io_error)?;
+                }
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(io_error(error)),
+        }
+    }
+    Err(CliError::internal(
+        "could not allocate a private SQLite snapshot directory",
+        json!({}),
+    ))
+}
+
 fn collect_entries(
     config_path: &Path,
     data_dir: &Path,
@@ -370,7 +437,12 @@ fn collect_entries(
     files
         .into_iter()
         .map(|(archive_path, source)| {
-            let bytes = fs::read(&source).map_err(io_error)?;
+            let bytes =
+                if source.extension().and_then(|extension| extension.to_str()) == Some("sqlite3") {
+                    sqlite_snapshot_bytes(&source)?
+                } else {
+                    fs::read(&source).map_err(io_error)?
+                };
             RecoveryEntry::new(archive_path, bytes).map_err(recovery_error)
         })
         .collect()
@@ -389,7 +461,7 @@ fn collect_data_files(
     entries.sort_by_key(fs::DirEntry::file_name);
     for entry in entries {
         let path = entry.path();
-        if path == output {
+        if path == output || is_sqlite_sidecar(&path) {
             continue;
         }
         let metadata = fs::symlink_metadata(&path).map_err(io_error)?;
@@ -736,6 +808,10 @@ fn read_archive(path: &Path) -> Result<Vec<u8>, CliError> {
 
 fn recovery_error(error: RecoveryArchiveError) -> CliError {
     CliError::configuration(error.to_string(), json!({}))
+}
+
+fn sqlite_error(error: rusqlite::Error) -> CliError {
+    CliError::configuration(format!("SQLite backup snapshot failed: {error}"), json!({}))
 }
 
 fn io_error(error: std::io::Error) -> CliError {
