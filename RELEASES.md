@@ -16,6 +16,31 @@ The canonical prerelease tags for this line are `v2.0.0-alpha.1` through
 `v2.0.0-beta.3`, `v2.0.0-beta.4`, `v2.0.0-beta.5`, `v2.0.0-beta.6`, and
 `v2.0.0-beta.7`.
 
+## Source-bound release scope
+
+Every new tag is evaluated against the exact tracked `release-scope.json` at its
+source commit. This is a release contract, not a mutable workflow input:
+
+- `cli-only` is permitted only for alpha and beta tags. It publishes the native
+  CLI, launcher, installers, checksums, signature, SBOM, provenance, notes, and
+  CLI lifecycle evidence. It does not claim desktop parity, and its release
+  evidence must not contain desktop artifacts.
+- `full` is permitted for alpha, beta, release-candidate, and stable tags. It
+  requires desktop build, publication, smoke, and (for stable) rollback evidence
+  in addition to the CLI evidence.
+
+The workflow skips desktop build, desktop artifact download and attestation,
+desktop smoke, and desktop rollback closure only when the validated scope is
+`cli-only`. A skipped desktop job is never treated as successful full-scope
+evidence. Release-candidate and stable cannot use `cli-only`; the current
+secretless desktop-signing gate also keeps both channels fail-closed until an
+isolated Tauri signing design is approved and implemented.
+
+The checked-in policy currently selects `cli-only` for the next prerelease line.
+A change to `full` is an explicit source change and must include the desktop
+signing and evidence prerequisites documented in
+[production readiness](docs/PRODUCTION.md).
+
 ## v2.0.0-beta.7
 
 This beta groups bounded self-healing feedback, composition provenance,
@@ -146,26 +171,31 @@ AgentLoop, session, approval, and governed effect path.
   unsigned build output. Verification, native build, and desktop build jobs do
   not receive platform-signing secrets.
 - A future release candidate must have the same Windows Authenticode and Apple
-  code-signing controls as stable. Alpha and beta packages may remain unsigned
-  and must not be described as release candidates.
+  code-signing controls as stable. `full` alpha and beta packages may remain
+  unsigned and must not be described as release candidates; `cli-only` packages
+  contain native artifacts only.
 - RC and stable publication currently fail closed before public release because
   isolated Tauri desktop signing is not yet configured. Desktop feature parity
-  remains deferred, but the existing tag workflow still builds and publishes
-  desktop assets, so desktop artifact generation remains a publication blocker.
+  remains deferred. A `cli-only` source does not build or publish desktop assets;
+  a `full` source keeps desktop artifact generation a publication blocker until
+  the isolated signing path is available.
 - The published-package signature and notarization smoke checks are not reachable
-  in the current workflow while RC and stable remain blocked; alpha and beta
-  publish unsigned artifacts, and the RC/stable path stops at the secretless gate.
+  in the current workflow while RC and stable remain blocked. `cli-only` alpha
+  and beta releases intentionally skip desktop smoke, while a future `full`
+  alpha or beta release can exercise only unsigned desktop lifecycle; neither
+  path currently provides platform-signature or notarization evidence.
 - Stable requires accepted exact-commit native NVDA, VoiceOver, and Orca evidence
   for every advertised desktop platform.
 
 ## Stable release credentials
 
-Alpha and beta tags may publish unsigned native and desktop packages and are
-marked as prereleases. A future release-candidate tag enters the protected
-native signing job only when `PANDORA_RELEASE_CANDIDATE_APPROVED` is exactly
-`1`; a plain SemVer stable tag likewise requires
-`PANDORA_STABLE_RELEASE_APPROVED` to be exactly `1`. Native signing consumes
-only these environment-scoped secrets:
+Alpha and beta tags use their source-bound scope and are marked as prereleases.
+A `cli-only` release publishes native artifacts only; a `full` release may
+publish unsigned native and desktop packages. A future release-candidate tag
+enters the protected native signing job only when
+`PANDORA_RELEASE_CANDIDATE_APPROVED` is exactly `1`; a plain SemVer stable tag
+likewise requires `PANDORA_STABLE_RELEASE_APPROVED` to be exactly `1`. Native
+signing consumes only these environment-scoped secrets:
 
 - PANDORA_WINDOWS_CERTIFICATE_BASE64 and
   PANDORA_WINDOWS_CERTIFICATE_PASSWORD;
@@ -184,11 +214,12 @@ otherwise isolated Tauri desktop signing design is implemented and receives its
 own protected credentials. Certificate values and account credentials must never
 be committed, printed, placed in an artifact, or copied into recovery archives.
 
-Published-package smoke jobs still re-download checksum-bound artifacts, but
-their Windows Authenticode, Apple signature, notarization, and Gatekeeper checks
-are not reachable in the current workflow while RC and stable remain blocked.
-They therefore provide lifecycle evidence for currently publishable unsigned
-alpha/beta artifacts, not platform-signature or notarization evidence.
+Published-package smoke jobs still re-download checksum-bound artifacts. The
+CLI lifecycle runs for both scopes, while desktop smoke runs only for `full`
+scope. Windows Authenticode, Apple signature, notarization, and Gatekeeper
+checks are not reachable in the current workflow while RC and stable remain
+blocked. Current evidence therefore covers native lifecycle, and any permitted
+unsigned desktop lifecycle, but not platform-signature or notarization evidence.
 
 ## Stable rollback closure
 

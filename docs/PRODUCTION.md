@@ -181,13 +181,34 @@ Updates remain explicit and never resolve an ambiguous latest tag:
 
 Stable channels accept plain SemVer releases, release-candidate accepts
 `-rc.<n>` tags, and beta accepts the remaining prerelease tags. All channels
-use the same release workflow and evidence set. The downloaded binary must
+use the same release workflow and evidence contract; the validated source scope
+controls which artifact classes are admissible. The downloaded binary must
 match the release checksum manifest before
 staging. Local artifacts can additionally require a detached Ed25519
 signature. Release assets include a keyless Cosign signature for the checksum
 manifest, an SPDX SBOM, and GitHub build provenance.
 The publish job also generates release-evidence.json, tying every
 checksum-verified artifact to its signature, SBOM, and provenance subjects.
+
+## Source-bound release scope
+
+The tracked `release-scope.json` file is the release policy bound to the exact
+tagged source commit. The workflow validates it before any build or publication
+job and exposes only the validated `scope`, `channel`, and
+`desktop_required` values to later jobs. It never infers a broader scope from a
+release tag.
+
+- `cli-only` is valid for alpha and beta tags only. It requires native CLI
+  artifacts and the full evidence set, but it does not build, download,
+  attest, smoke-test, or publish desktop artifacts. CLI-only evidence must not contain desktop artifacts and does not claim desktop parity.
+- `full` is valid for every supported channel. It requires desktop build and
+  evidence paths, including desktop smoke and stable rollback closure where the
+  channel calls for them.
+
+The checked-in policy currently selects `cli-only` for the next prerelease line.
+Changing the file is an explicit source change, not a workflow override. The
+`full` path remains fail-closed for release-candidate and stable until the
+isolated desktop-signing gate is complete.
 
 The `Agent artifact pipeline` workflow validates every tracked SDK package,
 runs a deterministic evaluation gate, proves the scheduled canary stops before
@@ -230,13 +251,15 @@ the retained JSON records the exact request binding and requester.
 
 ## Release boundary
 
-Alpha and beta tags may publish unsigned native and desktop packages for
-testing, and GitHub marks them as prereleases. The verification, native build,
-and desktop build jobs receive no platform-signing secrets. A future
-release-candidate and stable path would use a protected `sign-native` job to
-download the immutable unsigned CLI artifact, verify release approval, sign and
-verify Windows Authenticode or Apple code signing, and upload a separately named
-signed artifact.
+Alpha and beta tags use the source-bound scope selected by `release-scope.json`.
+A `cli-only` alpha or beta publishes the verified native CLI, launcher,
+installers, and evidence set without desktop artifacts. A `full` alpha or beta
+may publish unsigned native and desktop packages for testing, and GitHub marks
+both as prereleases. The verification, native build, and desktop build jobs
+receive no platform-signing secrets. A future release-candidate and stable path
+would use a protected `sign-native` job to download the immutable unsigned CLI
+artifact, verify release approval, sign and verify Windows Authenticode or Apple
+code signing, and upload a separately named signed artifact.
 
 RC and stable currently fail before public release because isolated Tauri desktop
 signing is not configured. Tauri normally consumes Apple signing/notarization
@@ -244,15 +267,18 @@ credentials during its build/bundle phase; exposing those credentials to the
 current desktop build job would recreate the supply-chain boundary this workflow
 is intended to remove. A future RC/stable path requires a separately reviewed
 remote/HSM-backed or otherwise isolated desktop signing design. Desktop feature
-parity remains deferred, but the existing tag workflow still builds and
-publishes desktop assets, so desktop artifact generation remains a publication
-blocker.
+parity remains deferred. With the current `cli-only` source policy, the workflow
+does not build or publish desktop assets; changing to `full` keeps desktop
+artifact generation a publication blocker until that isolated signing path is
+available.
 
 The published-package signature and notarization smoke checks are not reachable
-in the current workflow while RC and stable remain blocked: alpha and beta
-publish unsigned artifacts, and the RC/stable path stops at the secretless gate.
-They therefore do not provide current platform-signature or notarization
-evidence.
+in the current workflow while RC and stable remain blocked. For `cli-only`
+alpha and beta releases, desktop smoke is intentionally skipped; for a future
+`full` alpha or beta release it can exercise unsigned desktop lifecycle without
+providing platform-signature evidence. The RC/stable path stops at the
+secretless gate, so neither path currently provides platform-signature or
+notarization evidence.
 
 Publication also waits at the protected `release-publication` environment, which
 accepts only `v*` tags and requires a human reviewer. RC and stable source

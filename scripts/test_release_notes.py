@@ -241,7 +241,7 @@ Older notes.
         self.assertIn("APPLE_TEAM_ID:", signing)
         self.assertNotIn("APPLE_ID", signing)
         self.assertIn("needs: [verify, build, release-gate]", signing)
-        self.assertIn("needs: [release-gate, stage-native, build-desktop]", publish)
+        self.assertIn("needs: [verify, release-gate, stage-native, build-desktop]", publish)
         self.assertNotIn("Block RC and stable", publish)
         self.assertIn("environment: release-publication", workflow)
         self.assertIn("Validate required native accessibility evidence", workflow)
@@ -355,7 +355,7 @@ Older notes.
         self.assertIn("stable-rollback-evidence:", workflow)
         self.assertIn("stable-desktop-rollback:", workflow)
         self.assertIn(
-            "needs: [smoke-install, smoke-desktop, stable-desktop-rollback]",
+            "needs: [verify, smoke-install, smoke-desktop, stable-desktop-rollback]",
             workflow,
         )
         self.assertIn("scripts/stable_rollback_evidence.py", workflow)

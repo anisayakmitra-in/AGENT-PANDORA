@@ -80,7 +80,7 @@ class ReleaseSigningIsolationTests(unittest.TestCase):
         self.assertIn("needs: [verify, build, release-gate]", signing)
         self.assertIn("needs: [verify, build, release-gate]", desktop)
         self.assertIn("needs: [build, sign-native, release-gate]", staging)
-        self.assertIn("needs: [release-gate, stage-native, build-desktop]", publish)
+        self.assertIn("needs: [verify, release-gate, stage-native, build-desktop]", publish)
         self.assertNotIn("Block RC and stable", publish)
 
     def test_signer_never_executes_untrusted_build_output(self) -> None:
@@ -178,7 +178,7 @@ class ReleaseSigningIsolationTests(unittest.TestCase):
         self.assertIn("needs.release-gate.result == 'success'", staging)
         self.assertIn("pattern: native-unsigned-*", staging)
         self.assertIn("name: release-native-${{ github.sha }}", staging)
-        self.assertIn("needs: [release-gate, stage-native, build-desktop]", publish)
+        self.assertIn("needs: [verify, release-gate, stage-native, build-desktop]", publish)
         self.assertIn("name: release-native-${{ github.sha }}", publish)
         self.assertNotIn("pattern: native-*", publish)
 

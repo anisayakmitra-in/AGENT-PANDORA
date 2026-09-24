@@ -16,6 +16,10 @@ jobs:
   verify:
     name: Verify release source
     runs-on: ubuntu-latest
+    outputs:
+      scope: ${{ steps.release-scope.outputs.scope }}
+      channel: ${{ steps.release-scope.outputs.channel }}
+      desktop_required: ${{ steps.release-scope.outputs.desktop_required }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -40,6 +44,10 @@ jobs:
 
       - name: Check release identity
         run: python scripts/release_identity.py "$GITHUB_REF_NAME"
+
+      - name: Resolve source-bound release scope
+        id: release-scope
+        run: python scripts/release_scope.py "$GITHUB_REF_NAME" --github-output "$GITHUB_OUTPUT"
 
       - name: Validate required native accessibility evidence
         if: contains(github.ref_name, '-rc.') || !contains(github.ref_name, '-')
@@ -358,6 +366,7 @@ jobs:
   build-desktop:
     name: Build desktop ${{ matrix.platform }}
     needs: [verify, build, release-gate]
+    if: needs.verify.outputs.desktop_required == 'true' && needs.release-gate.result == 'success'
     strategy:
       fail-fast: false
       matrix:
@@ -498,8 +507,17 @@ jobs:
 
   publish:
     name: Publish release assets
-    if: startsWith(github.ref, 'refs/tags/v') && needs.release-gate.result == 'success'
-    needs: [release-gate, stage-native, build-desktop]
+    needs: [verify, release-gate, stage-native, build-desktop]
+    if: >-
+      !cancelled() &&
+      startsWith(github.ref, 'refs/tags/v') &&
+      needs.verify.result == 'success' &&
+      needs.release-gate.result == 'success' &&
+      needs.stage-native.result == 'success' &&
+      (
+        (needs.build-desktop.result == 'success' && needs.verify.outputs.desktop_required == 'true') ||
+        (needs.build-desktop.result == 'skipped' && needs.verify.outputs.scope == 'cli-only' && needs.verify.outputs.desktop_required == 'false')
+      )
     runs-on: ubuntu-latest
     environment: release-publication
     permissions:
@@ -530,6 +548,7 @@ jobs:
           merge-multiple: true
 
       - name: Download unsigned desktop artifacts
+        if: needs.verify.outputs.desktop_required == 'true'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: desktop-unsigned-*
@@ -604,13 +623,14 @@ jobs:
           subject-path: "dist/pandora-*"
 
       - name: Attest desktop artifacts
+        if: needs.verify.outputs.desktop_required == 'true'
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: "dist/desktop-*"
 
       - name: Generate release evidence index
         shell: bash
-        run: python scripts/release_evidence.py "$GITHUB_REF_NAME" --dist dist --output dist/release-evidence.json
+        run: python scripts/release_evidence.py "$GITHUB_REF_NAME" --dist dist --scope "${{ needs.verify.outputs.scope }}" --output dist/release-evidence.json
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
@@ -813,7 +833,8 @@ jobs:
 
   smoke-desktop:
     name: Exercise published desktop package on ${{ matrix.platform }}
-    needs: publish
+    needs: [publish, verify]
+    if: needs.verify.outputs.desktop_required == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -994,8 +1015,8 @@ jobs:
 
   stable-desktop-rollback:
     name: Roll back published desktop ${{ matrix.platform }}
-    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
-    needs: publish
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') && needs.verify.outputs.desktop_required == 'true'
+    needs: [publish, verify]
     strategy:
       fail-fast: false
       matrix:
@@ -1202,8 +1223,8 @@ jobs:
 
   stable-rollback-evidence:
     name: Record stable rollback closure
-    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
-    needs: [smoke-install, smoke-desktop, stable-desktop-rollback]
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') && needs.verify.outputs.desktop_required == 'true'
+    needs: [verify, smoke-install, smoke-desktop, stable-desktop-rollback]
     runs-on: ubuntu-latest
     permissions:
       contents: read
