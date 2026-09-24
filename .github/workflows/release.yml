@@ -118,6 +118,22 @@ jobs:
       - name: Test TypeScript client
         run: node scripts/test_typescript_client.js
 
+      - name: Package verified npm launcher
+        shell: bash
+        working-directory: npm/pandora-cli
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pandora-npm"
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/pandora-npm"
+
+      - name: Upload verified npm launcher
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-launcher-${{ github.sha }}
+          path: ${{ runner.temp }}/pandora-npm/pandora-agent-*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Run Python tests
         run: python -m unittest discover -s scripts -p "test_*.py" -v
 
@@ -478,17 +494,22 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Download verified npm launcher
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: npm-launcher-${{ github.sha }}
+          path: ${{ runner.temp }}/pandora-npm
+
       - name: Copy bootstrap installers
         shell: bash
         run: |
           set -euo pipefail
           cp scripts/install.sh dist/install.sh
           cp scripts/install.ps1 dist/install.ps1
-
-      - name: Build npm launcher package
-        shell: bash
-        working-directory: npm/pandora-cli
-        run: npm pack --ignore-scripts --pack-destination "$GITHUB_WORKSPACE/dist"
+          shopt -s nullglob
+          npm_packages=("$RUNNER_TEMP"/pandora-npm/pandora-agent-*.tgz)
+          test "${#npm_packages[@]}" -eq 1
+          cp "${npm_packages[0]}" dist/
 
       - name: Generate dependency inventory
         shell: bash

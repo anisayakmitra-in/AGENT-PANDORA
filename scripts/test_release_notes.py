@@ -67,6 +67,37 @@ Older notes.
         self.assertIn("body_path: ${{ runner.temp }}/release-notes.md", workflow)
         self.assertNotIn("body_path: CHANGELOG.md", workflow)
 
+    def test_publish_uses_the_exact_npm_tarball_built_by_the_verified_job(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+
+        verify_start = workflow.index("  verify:")
+        build_start = workflow.index("\n  build:", verify_start)
+        verify = workflow[verify_start:build_start]
+        publish_start = workflow.index("  publish:")
+        publish_end = workflow.find("\n  smoke-install:", publish_start)
+        if publish_end == -1:
+            publish_end = len(workflow)
+        publish = workflow[publish_start:publish_end]
+
+        build = verify.index("- name: Build TypeScript launcher boundary")
+        pack = verify.index("- name: Package verified npm launcher")
+        upload = verify.index("- name: Upload verified npm launcher")
+        self.assertLess(build, pack)
+        self.assertLess(pack, upload)
+        self.assertIn("npm pack --ignore-scripts", verify)
+        self.assertIn("name: npm-launcher-${{ github.sha }}", verify)
+        self.assertIn("npm ci --ignore-scripts && npm run build", verify)
+
+        download = publish.index("- name: Download verified npm launcher")
+        copy = publish.index('npm_packages=("$RUNNER_TEMP"/pandora-npm/pandora-agent-*.tgz)')
+        checksums = publish.index("- name: Generate checksums")
+        self.assertLess(download, copy)
+        self.assertLess(copy, checksums)
+        self.assertIn('test "${#npm_packages[@]}" -eq 1', publish)
+        self.assertNotIn("npm pack", publish)
+
     def test_release_workflow_smokes_native_cli_before_uploading_assets(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
             encoding="utf-8"
