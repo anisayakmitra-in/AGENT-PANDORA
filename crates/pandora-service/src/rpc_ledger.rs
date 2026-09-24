@@ -1,3 +1,9 @@
+//! Durable reservation and replay storage for authenticated mutating RPCs.
+//!
+//! The ledger stores request identity and completed response bytes. It does not
+//! claim that an interrupted request succeeded: pending rows remain blocked
+//! after restart until an operator or recovery path explicitly resolves them.
+
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -124,6 +130,10 @@ impl RpcRequestKey {
         }
         Ok(())
     }
+}
+
+pub fn digest_bytes(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
 }
 
 pub fn digest_request(method: &str, params: &Value) -> String {

@@ -314,6 +314,14 @@ never printed. Read it from `token_path` and send it as `Authorization: Bearer
 the foreground until Ctrl-C; it does not listen on LAN addresses, daemonize,
 or expose provider, MCP, package, or remote-execution methods.
 
+Mutating JSON-RPC methods require a non-null, stable request ID. The service
+persists reservations and completed responses in
+`<data-dir>/rpc-idempotency.sqlite3`; an exact retry replays the stored response,
+a changed body conflicts, and an interrupted pending request is not
+automatically re-executed after restart. Clients should reuse the same request
+ID and body for a retry and treat `idempotency_in_progress`,
+`idempotency_conflict`, and `idempotency_unavailable` as fail-closed errors.
+
 Read-only work can complete without approval. Writes and process effects stop at
 the approval boundary and expose an inspectable, redacted request subject.
 `--harness` selects a built-in Harness or an admitted package profile by ID;

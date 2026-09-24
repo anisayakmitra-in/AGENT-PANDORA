@@ -10,7 +10,7 @@ use pandora_runtime::{
     ExecutionController, FleetEngine, IdentityEnrollmentRequest, IdentityStore, OrchestrationStore,
     RuntimeService, RuntimeServiceScope,
 };
-use pandora_service::{LocalService, LocalServiceConfig};
+use pandora_service::{LocalService, LocalServiceConfig, rpc_ledger::DurableRpcLedger};
 use pandora_types::{
     Capability, EvolutionPolicy, Operation, PolicyContext, ServiceProviderSummary,
 };
@@ -55,13 +55,16 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
     let (token_path, device_key_path, device_id) =
         prepare_service_identity(&config, &identities, &parsed)?;
+    let rpc_ledger = DurableRpcLedger::open(config.data_dir().join("rpc-idempotency.sqlite3"))
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
     let service = LocalService::new(
         LocalServiceConfig::with_identities(
             SocketAddr::from((Ipv4Addr::LOCALHOST, port)),
             runtime,
             identities,
         )
-        .map_err(|_| CliError::internal("could not configure the local service", json!({})))?,
+        .map_err(|_| CliError::internal("could not configure the local service", json!({})))?
+        .with_rpc_ledger(Arc::new(rpc_ledger)),
     );
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()

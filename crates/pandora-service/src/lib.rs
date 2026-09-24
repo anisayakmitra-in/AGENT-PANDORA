@@ -2,6 +2,7 @@
 
 pub mod rpc_ledger;
 
+use crate::rpc_ledger::{DurableRpcLedger, RpcBegin, RpcRequestKey, digest_bytes};
 use axum::{
     Json, Router,
     body::{Body, Bytes, to_bytes},
@@ -40,6 +41,7 @@ pub struct LocalServiceConfig {
     bind_addr: SocketAddr,
     runtime: RuntimeService,
     authentication: AuthenticationConfig,
+    rpc_ledger: Option<Arc<DurableRpcLedger>>,
 }
 
 enum AuthenticationConfig {
@@ -61,6 +63,7 @@ impl LocalServiceConfig {
             bind_addr,
             runtime,
             authentication: AuthenticationConfig::Legacy(token_store),
+            rpc_ledger: None,
         })
     }
 
@@ -76,7 +79,17 @@ impl LocalServiceConfig {
             bind_addr,
             runtime,
             authentication: AuthenticationConfig::Identities(identities),
+            rpc_ledger: None,
         })
+    }
+
+    /// Attach the durable ledger required by mutating JSON-RPC methods.
+    ///
+    /// Without this builder, mutating methods fail closed with a stable
+    /// `idempotency_unavailable` response; read-only methods remain available.
+    pub fn with_rpc_ledger(mut self, ledger: Arc<DurableRpcLedger>) -> Self {
+        self.rpc_ledger = Some(ledger);
+        self
     }
 }
 
@@ -92,6 +105,7 @@ impl LocalService {
             state: Arc::new(TransportState {
                 runtime: Arc::new(config.runtime),
                 authentication: config.authentication,
+                rpc_ledger: config.rpc_ledger,
                 replay_nonces: Mutex::new(BTreeMap::new()),
             }),
         }
@@ -175,6 +189,7 @@ impl std::error::Error for ServiceTransportError {
 struct TransportState {
     runtime: Arc<RuntimeService>,
     authentication: AuthenticationConfig,
+    rpc_ledger: Option<Arc<DurableRpcLedger>>,
     replay_nonces: Mutex<BTreeMap<String, u64>>,
 }
 
@@ -297,20 +312,110 @@ async fn handle_rpc(
         _ => return Json(JsonRpcResponse::invalid_request()),
     };
     let id = request.id.clone();
-
-    let response = match service_request(&request) {
-        Ok(Some(request)) => match state
-            .runtime
-            .handle_scoped(&scope, &request, now_timestamp())
-        {
-            Ok(response) => JsonRpcResponse::success(id, response),
-            Err(error) => JsonRpcResponse::runtime_error(id, error),
-        },
+    let parsed = service_request(&request);
+    let response = match parsed {
+        Ok(Some(service_request)) if is_mutating_method(&request.method) => {
+            handle_mutating_rpc(&state, &scope, &id, &body, &request.method, service_request)
+        }
+        Ok(Some(service_request)) => dispatch_service_request(&state, &scope, id, &service_request),
         Ok(None) => JsonRpcResponse::method_not_found(id),
         Err(()) => JsonRpcResponse::invalid_params(id),
     };
 
     Json(response)
+}
+
+fn dispatch_service_request(
+    state: &TransportState,
+    scope: &RuntimeServiceScope,
+    id: Value,
+    request: &ServiceRequest,
+) -> JsonRpcResponse {
+    match state.runtime.handle_scoped(scope, request, now_timestamp()) {
+        Ok(response) => JsonRpcResponse::success(id, response),
+        Err(error) => JsonRpcResponse::runtime_error(id, error),
+    }
+}
+
+fn handle_mutating_rpc(
+    state: &TransportState,
+    runtime_scope: &RuntimeServiceScope,
+    id: &Value,
+    body: &[u8],
+    method: &str,
+    request: ServiceRequest,
+) -> JsonRpcResponse {
+    let Some(ledger) = state.rpc_ledger.as_ref() else {
+        return JsonRpcResponse::idempotency_error(id.clone(), "idempotency_unavailable");
+    };
+    let Some(request_id) = canonical_request_id(id) else {
+        return JsonRpcResponse::idempotency_error(id.clone(), "idempotency_key_required");
+    };
+    let scope_material = serde_json::to_vec(&(
+        runtime_scope.principal_id().as_str(),
+        runtime_scope.tenant_id().as_str(),
+        runtime_scope.workspace_id().as_str(),
+        runtime_scope.role().as_str(),
+    ))
+    .expect("scope serialization cannot fail");
+    let scope_key = digest_bytes(&scope_material);
+    let key = match RpcRequestKey::new(scope_key, request_id, method, digest_bytes(body)) {
+        Ok(key) => key,
+        Err(_) => return JsonRpcResponse::idempotency_error(id.clone(), "idempotency_key_invalid"),
+    };
+    let now = now_timestamp().as_unix_seconds();
+    match ledger.begin(&key, now) {
+        Ok(RpcBegin::Execute) => {
+            let response = dispatch_service_request(state, runtime_scope, id.clone(), &request);
+            let Ok(serialized) = serde_json::to_string(&response) else {
+                return JsonRpcResponse::idempotency_error(
+                    id.clone(),
+                    "idempotency_completion_failed",
+                );
+            };
+            if ledger.complete(&key, &serialized, now).is_err() {
+                return JsonRpcResponse::idempotency_error(
+                    id.clone(),
+                    "idempotency_completion_failed",
+                );
+            }
+            response
+        }
+        Ok(RpcBegin::Replay { response }) => serde_json::from_str(&response).unwrap_or_else(|_| {
+            JsonRpcResponse::idempotency_error(id.clone(), "idempotency_replay_invalid")
+        }),
+        Ok(RpcBegin::InProgress) => {
+            JsonRpcResponse::idempotency_error(id.clone(), "idempotency_in_progress")
+        }
+        Ok(RpcBegin::Conflict) => {
+            JsonRpcResponse::idempotency_error(id.clone(), "idempotency_conflict")
+        }
+        Err(_) => JsonRpcResponse::idempotency_error(id.clone(), "idempotency_unavailable"),
+    }
+}
+
+fn canonical_request_id(id: &Value) -> Option<String> {
+    match id {
+        Value::String(value) if !value.is_empty() => serde_json::to_string(value).ok(),
+        Value::Number(_) => serde_json::to_string(id).ok(),
+        _ => None,
+    }
+}
+
+fn is_mutating_method(method: &str) -> bool {
+    matches!(
+        method,
+        "orchestration.cancel"
+            | "orchestration.resume"
+            | "approval.resolve"
+            | "evolution.activate"
+            | "evolution.rollback"
+            | "evolution.rollout.transition"
+            | "run.execute"
+            | "run.resume"
+            | "agent.execute"
+            | "agent.resume"
+    )
 }
 
 fn service_request(request: &JsonRpcRequest) -> Result<Option<ServiceRequest>, ()> {
@@ -569,9 +674,9 @@ struct EvolutionInspectParams {
     proposal_id: String,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 struct JsonRpcResponse {
-    jsonrpc: &'static str,
+    jsonrpc: String,
     id: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     result: Option<ServiceResponse>,
@@ -582,7 +687,7 @@ struct JsonRpcResponse {
 impl JsonRpcResponse {
     fn success(id: Value, result: ServiceResponse) -> Self {
         Self {
-            jsonrpc: "2.0",
+            jsonrpc: "2.0".to_owned(),
             id,
             result: Some(result),
             error: None,
@@ -605,6 +710,10 @@ impl JsonRpcResponse {
         Self::error(id, -32603, "runtime error", Some(error.code()))
     }
 
+    fn idempotency_error(id: Value, code: &'static str) -> Self {
+        Self::error(id, -32001, "idempotency error", Some(code))
+    }
+
     fn error(
         id: Value,
         code: i32,
@@ -612,34 +721,37 @@ impl JsonRpcResponse {
         runtime_code: Option<&'static str>,
     ) -> Self {
         Self {
-            jsonrpc: "2.0",
+            jsonrpc: "2.0".to_owned(),
             id,
             result: None,
             error: Some(JsonRpcError {
                 code,
-                message,
-                data: runtime_code.map(|code| JsonRpcErrorData { code }),
+                message: message.to_owned(),
+                data: runtime_code.map(|code| JsonRpcErrorData {
+                    code: code.to_owned(),
+                }),
             }),
         }
     }
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 struct JsonRpcError {
     code: i32,
-    message: &'static str,
+    message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     data: Option<JsonRpcErrorData>,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 struct JsonRpcErrorData {
-    code: &'static str,
+    code: String,
 }
 
 #[cfg(test)]
 mod tests {
     use super::{LocalService, LocalServiceConfig};
+    use crate::rpc_ledger::DurableRpcLedger;
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode, header};
     use pandora_runtime::{
@@ -721,13 +833,15 @@ mod tests {
                 cross_operator_device.public_key(),
             )
             .unwrap();
+        let rpc_ledger = DurableRpcLedger::open(root.root.join("rpc-idempotency.sqlite3")).unwrap();
         let service = LocalService::new(
             LocalServiceConfig::with_identities(
                 "127.0.0.1:0".parse().unwrap(),
                 runtime(&root.root),
                 identities,
             )
-            .unwrap(),
+            .unwrap()
+            .with_rpc_ledger(Arc::new(rpc_ledger)),
         );
 
         let wrong_device = post_identity(
@@ -1150,6 +1264,113 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mutating_rpc_replays_the_exact_response_without_reexecution() {
+        let fixture = Fixture::new();
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 700,
+            "method": "run.execute",
+            "params": {"task": "guide"}
+        });
+
+        let first = post(&fixture, Some(&fixture.token), request.clone()).await;
+        let first_body = to_bytes(first.into_body(), usize::MAX).await.unwrap();
+        let first_json: Value = serde_json::from_slice(&first_body).unwrap();
+        assert_eq!(first_json["result"]["kind"], "run");
+        let second = post(&fixture, Some(&fixture.token), request).await;
+        let second_body = to_bytes(second.into_body(), usize::MAX).await.unwrap();
+        let second_json: Value = serde_json::from_slice(&second_body).unwrap();
+
+        assert_eq!(first_json, second_json);
+    }
+
+    #[tokio::test]
+    async fn mutating_rpc_replays_deterministic_runtime_errors() {
+        let fixture = Fixture::new();
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 703,
+            "method": "run.execute",
+            "params": {"task": "not-a-supported-action"}
+        });
+        let first = post(&fixture, Some(&fixture.token), request.clone()).await;
+        let first_body = to_bytes(first.into_body(), usize::MAX).await.unwrap();
+        let first_json: Value = serde_json::from_slice(&first_body).unwrap();
+        assert!(first_json.get("error").is_some());
+        let second = post(&fixture, Some(&fixture.token), request).await;
+        let second_body = to_bytes(second.into_body(), usize::MAX).await.unwrap();
+        let second_json: Value = serde_json::from_slice(&second_body).unwrap();
+        assert_eq!(first_json, second_json);
+    }
+
+    #[tokio::test]
+    async fn mutating_rpc_rejects_id_reuse_with_changed_payload() {
+        let fixture = Fixture::new();
+        let first = post(
+            &fixture,
+            Some(&fixture.token),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 701,
+                "method": "run.execute",
+                "params": {"task": "guide"}
+            }),
+        )
+        .await;
+        assert_eq!(first.status(), StatusCode::OK);
+
+        let second = post(
+            &fixture,
+            Some(&fixture.token),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 701,
+                "method": "run.execute",
+                "params": {"task": "second"}
+            }),
+        )
+        .await;
+        let body = to_bytes(second.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"]["data"]["code"], "idempotency_conflict");
+    }
+
+    #[tokio::test]
+    async fn mutating_rpc_fails_closed_without_a_durable_ledger() {
+        let root = FixtureRoot::new();
+        let token_store = ServiceTokenStore::load_or_create(&root).unwrap();
+        let token = std::fs::read_to_string(token_store.path()).unwrap();
+        let service = LocalService::new(
+            LocalServiceConfig::new(
+                "127.0.0.1:0".parse().unwrap(),
+                runtime(&root.root),
+                token_store,
+            )
+            .unwrap(),
+        );
+
+        let fixture = Fixture {
+            _root: root,
+            service,
+            token,
+        };
+        let response = post(
+            &fixture,
+            Some(&fixture.token),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 702,
+                "method": "run.execute",
+                "params": {"task": "no-ledger"}
+            }),
+        )
+        .await;
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"]["data"]["code"], "idempotency_unavailable");
+    }
+
+    #[tokio::test]
     async fn rpc_returns_the_runtime_harness_catalog() {
         let fixture = Fixture::new();
         let response = post(
@@ -1439,13 +1660,16 @@ mod tests {
             let root = FixtureRoot::new();
             let token_store = ServiceTokenStore::load_or_create(&root).unwrap();
             let token = std::fs::read_to_string(token_store.path()).unwrap();
+            let rpc_ledger =
+                DurableRpcLedger::open(root.root.join("rpc-idempotency.sqlite3")).unwrap();
             let service = LocalService::new(
                 LocalServiceConfig::new(
                     "127.0.0.1:0".parse().unwrap(),
                     runtime(&root.root),
                     token_store,
                 )
-                .unwrap(),
+                .unwrap()
+                .with_rpc_ledger(Arc::new(rpc_ledger)),
             );
             Self {
                 _root: root,
