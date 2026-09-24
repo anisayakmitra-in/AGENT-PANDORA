@@ -1274,6 +1274,41 @@ impl FleetEngine {
         })
     }
 
+    /// Invalidate a logical fence after the owning supervisor has been fenced.
+    ///
+    /// The next acquisition of the same key receives a new generation. The
+    /// method intentionally does not accept a claim token; callers use it only
+    /// after the fleet supervisor lifecycle has established takeover authority.
+    pub fn invalidate_fence(&self, key: &str, owner_id: &str) -> Result<bool, FleetError> {
+        let key = validate_text("fence key", key.to_owned(), 256)?;
+        let owner_id = validate_text("fence owner", owner_id.to_owned(), 256)?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let record = transaction
+            .query_row(
+                "SELECT owner_id, state FROM fleet_fences WHERE fence_key = ?1",
+                params![key],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+        let Some((current_owner, state)) = record else {
+            transaction.commit()?;
+            return Ok(false);
+        };
+        if current_owner != owner_id {
+            return Err(FleetError::FenceMismatch);
+        }
+        if decode_fence_state(&state)? == FleetFenceState::Active {
+            transaction.execute(
+                "UPDATE fleet_fences SET state = 'released'
+                 WHERE fence_key = ?1 AND owner_id = ?2 AND state = 'active'",
+                params![key, owner_id],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(true)
+    }
+
     pub fn renew_fence(
         &self,
         fence: &FleetLeaseFence,
@@ -1852,6 +1887,19 @@ mod tests {
             fleet.list_leases().unwrap()[0].state(),
             FleetLeaseState::Expired
         );
+    }
+
+    #[test]
+    fn invalidated_fence_is_reclaimed_with_the_next_generation() {
+        let fleet = engine("pandora-fleet-fence-invalidation");
+        let first = fleet.acquire_fence("job-1", "worker-a", 10, 20).unwrap();
+        assert!(fleet.invalidate_fence("job-1", "worker-a").unwrap());
+        let replacement = fleet.acquire_fence("job-1", "worker-a", 11, 20).unwrap();
+        assert_eq!(replacement.generation(), 2);
+        assert!(matches!(
+            fleet.assert_fence(&first, 12),
+            Err(FleetError::FenceMismatch)
+        ));
     }
 
     #[test]

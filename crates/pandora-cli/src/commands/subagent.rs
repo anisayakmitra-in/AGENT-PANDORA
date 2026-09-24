@@ -6,10 +6,10 @@ use crate::output::{CliError, CommandResult, success};
 use pandora_harnesses::{CODING_HARNESS_ID, canonical_harness_binding_digest};
 use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::{
-    ApprovalStore, ExecutionController, FleetBudget, FleetEngine, FleetError, FleetNode,
-    GitWorktreeExecutor, SubagentCleanupContext, SubagentCoordinator, SubagentCoordinatorError,
-    SubagentRecord, SubagentRunControl, SubagentScope, SubagentSpawnContext, SubagentStore,
-    SubagentStoreError,
+    ApprovalStore, ExecutionController, FleetBudget, FleetEngine, FleetError, FleetLeaseFence,
+    FleetNode, GitWorktreeExecutor, SubagentCleanupContext, SubagentCoordinator,
+    SubagentCoordinatorError, SubagentRecord, SubagentRunControl, SubagentScope,
+    SubagentSpawnContext, SubagentStore, SubagentStoreError,
 };
 use pandora_types::{
     Capability, EffectOutcome, EffectReceipt, ExecutionId, HarnessId, JobId, JobWorkerId,
@@ -42,12 +42,22 @@ struct ActiveSubagentSupervisor {
     node_id: String,
     lease_id: String,
     execution_id: String,
+    fence: FleetLeaseFence,
+}
+
+impl ActiveSubagentSupervisor {
+    fn assert_current(&self, now: u64) -> Result<(), FleetError> {
+        self.fleet.assert_fence(&self.fence, now)
+    }
 }
 
 impl Drop for ActiveSubagentSupervisor {
     fn drop(&mut self) {
         let now = timestamp().as_unix_seconds();
         let _ = self.fleet.release_lease(&self.lease_id);
+        let _ = self
+            .fleet
+            .release_fence(&self.fence, self.fence.expires_at().saturating_sub(1));
         let _ = self.fleet.drain_supervisor(&self.node_id, now);
         let _ = self.fleet.stop_supervisor(&self.node_id, now);
     }
@@ -99,11 +109,32 @@ fn start_subagent_supervisor(config: &RuntimeConfig) -> Result<ActiveSubagentSup
         let _ = fleet.stop_supervisor(&node_id, now);
         return Err(fleet_error(error));
     }
+    let fence_key = format!("subagent-worker:{node_id}");
+    if let Err(error) = fleet.invalidate_fence(&fence_key, &node_id) {
+        let _ = fleet.drain_supervisor(&node_id, now);
+        let _ = fleet.stop_supervisor(&node_id, now);
+        return Err(fleet_error(error));
+    }
+    let fence = match fleet.acquire_fence(
+        fence_key,
+        node_id.clone(),
+        now,
+        SUBAGENT_WORKER_LEASE_DURATION_SECONDS,
+    ) {
+        Ok(fence) => fence,
+        Err(error) => {
+            let _ = fleet.release_lease(&lease_id);
+            let _ = fleet.drain_supervisor(&node_id, now);
+            let _ = fleet.stop_supervisor(&node_id, now);
+            return Err(fleet_error(error));
+        }
+    };
     Ok(ActiveSubagentSupervisor {
         fleet,
         node_id,
         lease_id,
         execution_id,
+        fence,
     })
 }
 
@@ -155,6 +186,7 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
     let heartbeat_node = supervisor.node_id.clone();
     let heartbeat_lease = supervisor.lease_id.clone();
     let heartbeat_execution = supervisor.execution_id.clone();
+    let heartbeat_fence = supervisor.fence.clone();
     let heartbeat_thread = thread::spawn(move || {
         while heartbeat.load(Ordering::Acquire) {
             thread::sleep(Duration::from_secs(SUBAGENT_WORKER_HEARTBEAT_SECONDS));
@@ -165,12 +197,20 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
             if heartbeat_fleet
                 .heartbeat_supervisor_for_process(&heartbeat_node, worker_process_id, now)
                 .and_then(|_| {
-                    heartbeat_fleet.renew_lease(
-                        &heartbeat_lease,
-                        &heartbeat_execution,
-                        now,
-                        SUBAGENT_WORKER_LEASE_DURATION_SECONDS,
-                    )
+                    heartbeat_fleet
+                        .renew_lease(
+                            &heartbeat_lease,
+                            &heartbeat_execution,
+                            now,
+                            SUBAGENT_WORKER_LEASE_DURATION_SECONDS,
+                        )
+                        .and_then(|_| {
+                            heartbeat_fleet.renew_fence(
+                                &heartbeat_fence,
+                                now,
+                                SUBAGENT_WORKER_LEASE_DURATION_SECONDS,
+                            )
+                        })
                 })
                 .is_err()
             {
@@ -240,6 +280,13 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
                         outcome.1,
                         claimed.request().budgets().max_result_bytes(),
                     );
+                    if let Err(error) = supervisor.assert_current(timestamp().as_unix_seconds()) {
+                        *failures
+                            .lock()
+                            .expect("worker failure mutex should not poison") =
+                            Some(fleet_error(error));
+                        return;
+                    }
                     let finished = match store.finish(
                         claimed.id(),
                         &worker,
@@ -959,6 +1006,60 @@ fn subagent_store_error(error: SubagentStoreError) -> CliError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subagent_supervisor_fence_rejects_expired_completion() {
+        let root =
+            std::env::temp_dir().join(format!("pandora-subagent-fence-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let fleet = Arc::new(FleetEngine::open(root.join("fleet.sqlite3")).unwrap());
+        let node = FleetNode::new(
+            "subagent-fence-test",
+            env!("CARGO_PKG_VERSION"),
+            SUBAGENT_FLEET_WORKER_CLASS,
+            vec!["subagent.execute".to_owned()],
+            10,
+        )
+        .unwrap();
+        fleet.register_node(&node).unwrap();
+        fleet
+            .start_supervisor_for_process("subagent-fence-test", std::process::id(), 10)
+            .unwrap();
+        let lease_id = "subagent-fence-lease";
+        fleet
+            .acquire_lease(
+                lease_id,
+                "subagent-fence-test",
+                "subagent-process:test",
+                FleetBudget::new(0, 0, 3_600, 0),
+                10,
+                3_600,
+            )
+            .unwrap();
+        let fence = fleet
+            .acquire_fence(
+                "subagent-worker:subagent-fence-test",
+                "subagent-fence-test",
+                10,
+                3_600,
+            )
+            .unwrap();
+        let supervisor = ActiveSubagentSupervisor {
+            fleet,
+            node_id: "subagent-fence-test".to_owned(),
+            lease_id: lease_id.to_owned(),
+            execution_id: "subagent-process:test".to_owned(),
+            fence,
+        };
+        supervisor.assert_current(10).unwrap();
+        assert!(matches!(
+            supervisor.assert_current(3_610),
+            Err(FleetError::FenceExpired)
+        ));
+        drop(supervisor);
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     #[test]
     fn terminal_result_removes_approval_payloads_and_provider_details() {

@@ -253,8 +253,14 @@ fn start_job_supervisor(config: &super::RuntimeConfig) -> Result<ActiveJobSuperv
         let _ = fleet.stop_supervisor(&node_id, now);
         return Err(fleet_error(error));
     }
+    let fence_key = format!("job-worker:{node_id}");
+    if let Err(error) = fleet.invalidate_fence(&fence_key, &node_id) {
+        let _ = fleet.drain_supervisor(&node_id, now);
+        let _ = fleet.stop_supervisor(&node_id, now);
+        return Err(fleet_error(error));
+    }
     let fence = match fleet.acquire_fence(
-        format!("job-worker:{node_id}"),
+        fence_key,
         node_id.clone(),
         now,
         JOB_WORKER_LEASE_DURATION_SECONDS,
