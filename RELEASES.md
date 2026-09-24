@@ -142,31 +142,43 @@ AgentLoop, session, approval, and governed effect path.
 - Release-candidate and stable publication must pass the protected
   `release-publication` environment. Only `v*` tags may deploy through it, and a
   configured human reviewer must approve the publication job.
-- A release candidate is signed with the same Windows Authenticode, Apple code
-  signing, and Apple notarization controls as stable. Alpha and beta packages may
-  remain unsigned and must not be described as release candidates.
+- Native CLI signing runs in a protected job that downloads immutable unsigned
+  build output. Verification, native build, and desktop build jobs do not receive
+  platform-signing secrets.
+- A release candidate must have the same Windows Authenticode and Apple code
+  signing controls as stable. Alpha and beta packages may remain unsigned and
+  must not be described as release candidates.
+- RC and stable publication currently fail closed before public release because
+  isolated Tauri desktop signing is not yet configured. Desktop feature parity
+  remains deferred, but the existing tag workflow still builds and publishes
+  desktop assets, so desktop artifact generation remains a publication blocker.
 - Stable requires accepted exact-commit native NVDA, VoiceOver, and Orca evidence
   for every advertised desktop platform.
 
 ## Stable release credentials
 
-Alpha and beta tags may publish unsigned platform packages and are marked as
-prereleases. A release-candidate tag fails before compilation unless
-`PANDORA_RELEASE_CANDIDATE_APPROVED` is exactly `1`. A plain SemVer stable tag
-likewise requires `PANDORA_STABLE_RELEASE_APPROVED` to be exactly `1`. Both RC
-and stable tags also require all of these encrypted GitHub secrets:
+Alpha and beta tags may publish unsigned native and desktop packages and are
+marked as prereleases. A release-candidate tag enters the protected native
+signing job only when `PANDORA_RELEASE_CANDIDATE_APPROVED` is exactly `1`; a
+plain SemVer stable tag likewise requires `PANDORA_STABLE_RELEASE_APPROVED` to
+be exactly `1`. Native signing consumes only these environment-scoped secrets:
 
 - PANDORA_WINDOWS_CERTIFICATE_BASE64 and
   PANDORA_WINDOWS_CERTIFICATE_PASSWORD;
 - PANDORA_APPLE_CERTIFICATE_BASE64 and
   PANDORA_APPLE_CERTIFICATE_PASSWORD;
-- APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD, and APPLE_TEAM_ID.
+- APPLE_SIGNING_IDENTITY.
 
-The release jobs keep certificate material in runner-temporary files, sign
-native Windows and macOS executables, sign Windows desktop installers, and
-provide the Apple identity and notarization credentials to the Tauri bundler.
-Certificate values and account credentials must never be committed, printed,
-placed in an artifact, or copied into recovery archives.
+The protected job keeps certificate material in runner-temporary files, signs the
+downloaded native Windows or macOS executable, verifies the signature, and
+uploads a separately named signed artifact. The unsigned build job never imports
+or receives the certificate. Apple notarization account credentials are not
+exposed to the native signer.
+
+RC and stable remain blocked until a separately reviewed remote/HSM-backed or
+otherwise isolated Tauri desktop signing design is implemented and receives its
+own protected credentials. Certificate values and account credentials must never
+be committed, printed, placed in an artifact, or copied into recovery archives.
 
 The four published-package smoke jobs independently re-download checksum-bound
 artifacts. Windows verifies Authenticode on the CLI and MSI. Both macOS runners

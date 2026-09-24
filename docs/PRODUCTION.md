@@ -230,16 +230,27 @@ the retained JSON records the exact request binding and requester.
 
 ## Release boundary
 
-Alpha and beta tags may publish unsigned platform packages for testing, and
-GitHub marks them as prereleases. Release-candidate and stable tags fail closed
-unless the repository has their exact approval secret plus a Windows
-code-signing certificate and Apple signing/notarization credentials. The release
-workflow signs native Windows and macOS binaries, signs Windows desktop
-installers, and gives Tauri the Apple identity and notarization credentials.
+Alpha and beta tags may publish unsigned native and desktop packages for
+testing, and GitHub marks them as prereleases. The verification, native build,
+and desktop build jobs receive no platform-signing secrets. For release-candidate
+and stable tags, a protected `sign-native` job downloads the immutable unsigned
+CLI artifact, verifies release approval, signs and verifies Windows Authenticode
+or Apple code signing, and uploads a separately named signed artifact.
+
+RC and stable currently fail before public release because isolated Tauri desktop
+signing is not configured. Tauri normally consumes Apple signing/notarization
+credentials during its build/bundle phase; exposing those credentials to the
+current desktop build job would recreate the supply-chain boundary this workflow
+is intended to remove. A future RC/stable path requires a separately reviewed
+remote/HSM-backed or otherwise isolated desktop signing design. Desktop feature
+parity remains deferred, but the existing tag workflow still builds and
+publishes desktop assets, so desktop artifact generation remains a publication
+blocker.
+
 Publication also waits at the protected `release-publication` environment, which
-accepts only `v*` tags and requires a human reviewer.
-RC and stable source verification also validates the four strict native
-accessibility manifests against the tag's exact commit before compilation.
+accepts only `v*` tags and requires a human reviewer. RC and stable source
+verification validates the four strict native accessibility manifests against the
+tag's exact commit before compilation.
 
 A production release also requires:
 
@@ -255,9 +266,11 @@ A production release also requires:
 - verification that no signing key, provider secret, master key, device key, or
   recovery passphrase entered source control or build logs.
 
-Required RC and stable release secrets are documented by name in
-[the release policy](../RELEASES.md). Their values belong only in GitHub
-encrypted secrets and the corresponding platform account.
+Native RC/stable secrets and the currently blocked desktop-signing requirement
+are documented in [the release policy](../RELEASES.md). Values belong only in
+GitHub environment-scoped encrypted secrets and the corresponding platform
+account; no future desktop signing secret may be added to an ordinary build
+job.
 
 After stable publication, a separate job runs only after every published CLI
 and desktop lifecycle matrix succeeds. It records the exact compatible stable

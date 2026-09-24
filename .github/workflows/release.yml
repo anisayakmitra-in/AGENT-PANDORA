@@ -41,41 +41,6 @@ jobs:
       - name: Check release identity
         run: python scripts/release_identity.py "$GITHUB_REF_NAME"
 
-      - name: Enforce release-candidate and stable signing policy
-        shell: bash
-        env:
-          PANDORA_RELEASE_CANDIDATE_APPROVED: ${{ secrets.PANDORA_RELEASE_CANDIDATE_APPROVED }}
-          PANDORA_STABLE_RELEASE_APPROVED: ${{ secrets.PANDORA_STABLE_RELEASE_APPROVED }}
-          PANDORA_WINDOWS_CERTIFICATE_BASE64: ${{ secrets.PANDORA_WINDOWS_CERTIFICATE_BASE64 }}
-          PANDORA_WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.PANDORA_WINDOWS_CERTIFICATE_PASSWORD }}
-          PANDORA_APPLE_CERTIFICATE_BASE64: ${{ secrets.PANDORA_APPLE_CERTIFICATE_BASE64 }}
-          PANDORA_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.PANDORA_APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          signing_required=0
-          if [[ "$version" == *-rc.* ]]; then
-            test "$PANDORA_RELEASE_CANDIDATE_APPROVED" = "1"
-            signing_required=1
-          elif [[ "$version" != *-* ]]; then
-            test "$PANDORA_STABLE_RELEASE_APPROVED" = "1"
-            signing_required=1
-          fi
-          if [[ "$signing_required" = "1" ]]; then
-            test -n "$PANDORA_WINDOWS_CERTIFICATE_BASE64"
-            test -n "$PANDORA_WINDOWS_CERTIFICATE_PASSWORD"
-            test -n "$PANDORA_APPLE_CERTIFICATE_BASE64"
-            test -n "$PANDORA_APPLE_CERTIFICATE_PASSWORD"
-            test -n "$APPLE_SIGNING_IDENTITY"
-            test -n "$APPLE_ID"
-            test -n "$APPLE_PASSWORD"
-            test -n "$APPLE_TEAM_ID"
-          fi
-
       - name: Validate required native accessibility evidence
         if: contains(github.ref_name, '-rc.') || !contains(github.ref_name, '-')
         run: >-
@@ -167,12 +132,6 @@ jobs:
             binary: pandora.exe
             artifact: pandora-x86_64-pc-windows-msvc.exe
     runs-on: ${{ matrix.os }}
-    env:
-      PANDORA_WINDOWS_CERTIFICATE_BASE64: ${{ secrets.PANDORA_WINDOWS_CERTIFICATE_BASE64 }}
-      PANDORA_WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.PANDORA_WINDOWS_CERTIFICATE_PASSWORD }}
-      PANDORA_APPLE_CERTIFICATE_BASE64: ${{ secrets.PANDORA_APPLE_CERTIFICATE_BASE64 }}
-      PANDORA_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.PANDORA_APPLE_CERTIFICATE_PASSWORD }}
-      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
     permissions:
       contents: read
     steps:
@@ -189,33 +148,6 @@ jobs:
 
       - name: Build native CLI
         run: cargo build --locked --release -p pandora-cli --target ${{ matrix.target }}
-
-      - name: Sign native CLI (macOS)
-        if: runner.os == 'macOS' && env.PANDORA_APPLE_CERTIFICATE_BASE64 != ''
-        shell: bash
-        run: |
-          set -euo pipefail
-          certificate="$RUNNER_TEMP/pandora-signing.p12"
-          keychain="$RUNNER_TEMP/pandora-signing.keychain-db"
-          printf '%s' "$PANDORA_APPLE_CERTIFICATE_BASE64" | base64 --decode > "$certificate"
-          security create-keychain -p "$GITHUB_RUN_ID" "$keychain"
-          security unlock-keychain -p "$GITHUB_RUN_ID" "$keychain"
-          security import "$certificate" -k "$keychain" -P "$PANDORA_APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$GITHUB_RUN_ID" "$keychain"
-          security list-keychains -d user -s "$keychain"
-          codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "target/${{ matrix.target }}/release/${{ matrix.binary }}"
-          codesign --verify --strict --verbose=2 "target/${{ matrix.target }}/release/${{ matrix.binary }}"
-          rm -f "$certificate"
-
-      - name: Sign native CLI (Windows)
-        if: runner.os == 'Windows' && env.PANDORA_WINDOWS_CERTIFICATE_BASE64 != ''
-        shell: pwsh
-        run: |
-          $certificate = Join-Path $env:RUNNER_TEMP "pandora-signing.pfx"
-          [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:PANDORA_WINDOWS_CERTIFICATE_BASE64))
-          & signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f $certificate /p $env:PANDORA_WINDOWS_CERTIFICATE_PASSWORD "target/${{ matrix.target }}/release/${{ matrix.binary }}"
-          if ($LASTEXITCODE -ne 0) { throw "Windows CLI signing failed" }
-          Remove-Item -LiteralPath $certificate -Force
 
       - name: Smoke test native CLI (Unix)
         if: runner.os != 'Windows'
@@ -254,9 +186,165 @@ jobs:
       - name: Upload native artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: native-${{ matrix.target }}
+          name: native-unsigned-${{ matrix.target }}
           path: dist/${{ matrix.artifact }}
           if-no-files-found: error
+
+  sign-native:
+    name: Sign native CLI ${{ matrix.target }}
+    needs: [verify, build]
+    if: contains(github.ref_name, '-rc.') || !contains(github.ref_name, '-')
+    environment: release-publication
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: pandora-x86_64-unknown-linux-gnu
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            artifact: pandora-x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: pandora-aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: pandora-x86_64-pc-windows-msvc.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Enforce release approval
+        shell: bash
+        env:
+          PANDORA_RELEASE_CANDIDATE_APPROVED: ${{ secrets.PANDORA_RELEASE_CANDIDATE_APPROVED }}
+          PANDORA_STABLE_RELEASE_APPROVED: ${{ secrets.PANDORA_STABLE_RELEASE_APPROVED }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if [[ "$version" == *-rc.* ]]; then
+            test "$PANDORA_RELEASE_CANDIDATE_APPROVED" = "1"
+          else
+            test "$PANDORA_STABLE_RELEASE_APPROVED" = "1"
+          fi
+
+      - name: Download unsigned native artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: native-unsigned-${{ matrix.target }}
+          path: ${{ runner.temp }}/native-unsigned
+
+      - name: Sign native CLI (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          PANDORA_APPLE_CERTIFICATE_BASE64: ${{ secrets.PANDORA_APPLE_CERTIFICATE_BASE64 }}
+          PANDORA_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.PANDORA_APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          artifact="$RUNNER_TEMP/native-unsigned/${{ matrix.artifact }}"
+          certificate="$RUNNER_TEMP/pandora-signing.p12"
+          keychain="$RUNNER_TEMP/pandora-signing.keychain-db"
+          cleanup() {
+            security delete-keychain "$keychain" >/dev/null 2>&1 || true
+            rm -f "$certificate"
+          }
+          trap cleanup EXIT
+          printf '%s' "$PANDORA_APPLE_CERTIFICATE_BASE64" | base64 --decode > "$certificate"
+          security create-keychain -p "$GITHUB_RUN_ID" "$keychain"
+          security unlock-keychain -p "$GITHUB_RUN_ID" "$keychain"
+          security import "$certificate" -k "$keychain" -P "$PANDORA_APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$GITHUB_RUN_ID" "$keychain"
+          security list-keychains -d user -s "$keychain"
+          codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$artifact"
+          codesign --verify --strict --verbose=2 "$artifact"
+          test "$("$artifact" --version)" = "pandora ${GITHUB_REF_NAME#v}"
+
+      - name: Sign native CLI (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          PANDORA_WINDOWS_CERTIFICATE_BASE64: ${{ secrets.PANDORA_WINDOWS_CERTIFICATE_BASE64 }}
+          PANDORA_WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.PANDORA_WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $artifact = Join-Path $env:RUNNER_TEMP "native-unsigned\${{ matrix.artifact }}"
+          $certificatePath = Join-Path $env:RUNNER_TEMP "pandora-signing.pfx"
+          $certificate = $null
+          try {
+            [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:PANDORA_WINDOWS_CERTIFICATE_BASE64))
+            $securePassword = ConvertTo-SecureString -String $env:PANDORA_WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+            $certificate = Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\My -Password $securePassword -Exportable:$false
+            & signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /sha1 $certificate.Thumbprint $artifact
+            if ($LASTEXITCODE -ne 0) { throw "Windows CLI signing failed" }
+            & signtool verify /pa /all /v $artifact
+            if ($LASTEXITCODE -ne 0) { throw "Windows CLI signature verification failed" }
+            $actual = (& $artifact --version).Trim()
+            if ($LASTEXITCODE -ne 0) { throw "signed Windows CLI smoke test failed" }
+            if ($actual -ne "pandora " + $env:GITHUB_REF_NAME.Substring(1)) { throw "signed Windows CLI version mismatch" }
+          } finally {
+            if ($null -ne $certificate) {
+              Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($certificate.Thumbprint)" -DeleteKey -ErrorAction SilentlyContinue
+            }
+            Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Stage signed native artifact (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/native-release"
+          cp "$RUNNER_TEMP/native-unsigned/${{ matrix.artifact }}" "$RUNNER_TEMP/native-release/${{ matrix.artifact }}"
+          chmod 0755 "$RUNNER_TEMP/native-release/${{ matrix.artifact }}"
+
+      - name: Stage signed native artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path (Join-Path $env:RUNNER_TEMP "native-release") | Out-Null
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP "native-unsigned\${{ matrix.artifact }}") -Destination (Join-Path $env:RUNNER_TEMP "native-release\${{ matrix.artifact }}")
+
+      - name: Upload signed native artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-signed-${{ matrix.target }}
+          path: ${{ runner.temp }}/native-release/${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 7
+
+  stage-native:
+    name: Stage native release artifacts
+    needs: [build, sign-native]
+    if: always() && needs.build.result == 'success' && (needs.sign-native.result == 'success' || needs.sign-native.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Download unsigned native artifacts for beta
+        if: contains(github.ref_name, '-') && !contains(github.ref_name, '-rc.')
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: native-unsigned-*
+          path: ${{ runner.temp }}/native-release
+          merge-multiple: true
+
+      - name: Download signed native artifacts for RC and stable
+        if: contains(github.ref_name, '-rc.') || !contains(github.ref_name, '-')
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: native-signed-*
+          path: ${{ runner.temp }}/native-release
+          merge-multiple: true
+
+      - name: Upload staged native release artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-native-${{ github.sha }}
+          path: ${{ runner.temp }}/native-release/*
+          if-no-files-found: error
+          retention-days: 7
 
   build-desktop:
     name: Build desktop ${{ matrix.platform }}
@@ -287,14 +375,6 @@ jobs:
             native: pandora-x86_64-pc-windows-msvc.exe
     runs-on: ${{ matrix.os }}
     env:
-      PANDORA_WINDOWS_CERTIFICATE_BASE64: ${{ secrets.PANDORA_WINDOWS_CERTIFICATE_BASE64 }}
-      PANDORA_WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.PANDORA_WINDOWS_CERTIFICATE_PASSWORD }}
-      PANDORA_APPLE_CERTIFICATE_BASE64: ${{ secrets.PANDORA_APPLE_CERTIFICATE_BASE64 }}
-      PANDORA_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.PANDORA_APPLE_CERTIFICATE_PASSWORD }}
-      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       PANDORA_SIDECAR_TARGET: ${{ matrix.target }}
       PANDORA_SIDECAR_SOURCE: ${{ github.workspace }}/.pandora-native/${{ matrix.native }}
       PANDORA_DESKTOP_SOURCE_SIDECAR: ${{ github.workspace }}/.pandora-native/${{ matrix.native }}
@@ -325,7 +405,7 @@ jobs:
       - name: Download verified native sidecar
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: native-${{ matrix.target }}
+          name: native-unsigned-${{ matrix.target }}
           path: ${{ github.workspace }}/.pandora-native
 
       - name: Install desktop dependencies
@@ -342,21 +422,6 @@ jobs:
         working-directory: apps/pandora-desktop
         run: npx playwright install chromium
 
-      - name: Import Apple signing identity
-        if: runner.os == 'macOS' && env.PANDORA_APPLE_CERTIFICATE_BASE64 != ''
-        shell: bash
-        run: |
-          set -euo pipefail
-          certificate="$RUNNER_TEMP/pandora-desktop-signing.p12"
-          keychain="$RUNNER_TEMP/pandora-desktop-signing.keychain-db"
-          printf '%s' "$PANDORA_APPLE_CERTIFICATE_BASE64" | base64 --decode > "$certificate"
-          security create-keychain -p "$GITHUB_RUN_ID" "$keychain"
-          security unlock-keychain -p "$GITHUB_RUN_ID" "$keychain"
-          security import "$certificate" -k "$keychain" -P "$PANDORA_APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$GITHUB_RUN_ID" "$keychain"
-          security list-keychains -d user -s "$keychain"
-          rm -f "$certificate"
-
       - name: Run desktop tests
         working-directory: apps/pandora-desktop
         run: npm test
@@ -368,38 +433,6 @@ jobs:
       - name: Build desktop bundle
         working-directory: apps/pandora-desktop
         run: npm run tauri:build
-
-      - name: Verify signed and notarized desktop bundle (macOS)
-        if: runner.os == 'macOS' && env.PANDORA_APPLE_CERTIFICATE_BASE64 != ''
-        shell: bash
-        run: |
-          set -euo pipefail
-          bundle_root="target/release/bundle"
-          apps=("$bundle_root"/macos/*.app)
-          test "${#apps[@]}" -eq 1
-          test -d "${apps[0]}"
-          codesign --verify --deep --strict --verbose=2 "${apps[0]}"
-          spctl --assess --type execute --verbose=4 "${apps[0]}"
-          images=("$bundle_root"/dmg/*.dmg)
-          test "${#images[@]}" -eq 1
-          test -f "${images[0]}"
-          xcrun stapler validate "${images[0]}"
-
-      - name: Sign desktop bundles (Windows)
-        if: runner.os == 'Windows' && env.PANDORA_WINDOWS_CERTIFICATE_BASE64 != ''
-        shell: pwsh
-        run: |
-          $certificate = Join-Path $env:RUNNER_TEMP "pandora-desktop-signing.pfx"
-          [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:PANDORA_WINDOWS_CERTIFICATE_BASE64))
-          $artifacts = Get-ChildItem -Path "target/release/bundle" -File -Recurse | Where-Object { $_.Extension -in @(".exe", ".msi") }
-          if ($artifacts.Count -eq 0) { throw "no Windows desktop bundles found to sign" }
-          foreach ($artifact in $artifacts) {
-            & signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f $certificate /p $env:PANDORA_WINDOWS_CERTIFICATE_PASSWORD $artifact.FullName
-            if ($LASTEXITCODE -ne 0) { throw "Windows desktop signing failed" }
-            & signtool verify /pa /all /v $artifact.FullName
-            if ($LASTEXITCODE -ne 0) { throw "Windows desktop signature verification failed" }
-          }
-          Remove-Item -LiteralPath $certificate -Force
 
       - name: Verify desktop bundle lifecycle
         working-directory: apps/pandora-desktop
@@ -450,14 +483,14 @@ jobs:
       - name: Upload desktop artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: desktop-${{ matrix.artifact }}
+          name: desktop-unsigned-${{ matrix.artifact }}
           path: dist/*
           if-no-files-found: error
 
   publish:
     name: Publish release assets
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, build-desktop]
+    needs: [stage-native, build-desktop]
     runs-on: ubuntu-latest
     environment: release-publication
     permissions:
@@ -480,19 +513,26 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Download native artifacts
+      - name: Download staged native artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: native-*
+          name: release-native-${{ github.sha }}
           path: dist
           merge-multiple: true
 
-      - name: Download desktop artifacts
+      - name: Download unsigned desktop artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: desktop-*
+          pattern: desktop-unsigned-*
           path: dist
           merge-multiple: true
+
+      - name: Block RC and stable until isolated desktop signing is configured
+        if: contains(github.ref_name, '-rc.') || !contains(github.ref_name, '-')
+        shell: bash
+        run: |
+          echo "RC/stable release blocked: isolated desktop platform signing is not configured" >&2
+          exit 1
 
       - name: Download verified npm launcher
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
