@@ -1,5 +1,5 @@
 use super::restore_journal::{
-    RestoreJournal, RestoreJournalEntry, RestoreJournalError, RestoreJournalState,
+    RestoreJournal, RestoreJournalEntry, RestoreJournalError, RestoreJournalState, RestoreSidecar,
 };
 use super::{load_config, parse_options, timestamp};
 use crate::output::{CliError, CommandResult, success};
@@ -336,21 +336,43 @@ fn restore(args: &[String]) -> Result<CommandResult, CliError> {
         let original_relative =
             backup_relative_path(target, config.config_path(), config.data_dir())?;
         let original_relative = portable_relative_path(&original_relative);
-        let original = if target.is_file() {
+        let main_backup = if target.is_file() {
             let backup = recovery_root.join(&original_relative);
             if let Some(parent) = backup.parent() {
                 fs::create_dir_all(parent).map_err(io_error)?;
             }
             fs::copy(target, &backup).map_err(io_error)?;
-            originals.insert(target.clone(), Some(backup));
-            Some(original_relative)
+            Some(backup)
         } else {
-            originals.insert(target.clone(), None);
             None
         };
+        let sidecar_backups = backup_restore_sidecars(target, &recovery_root, &original_relative)?;
+        let sidecar_records = sidecar_backups
+            .iter()
+            .map(|(suffix, backup)| {
+                let relative = backup.strip_prefix(&recovery_root).map_err(|_| {
+                    CliError::internal("restore sidecar escaped recovery root", json!({}))
+                })?;
+                let relative = portable_relative_path(relative);
+                RestoreSidecar::new(suffix.clone(), Some(relative)).map_err(journal_error)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        originals.insert(
+            target.clone(),
+            RestoreOriginal {
+                main: main_backup.clone(),
+                sidecars: sidecar_backups.into_iter().collect(),
+            },
+        );
         journal_entries.push(
-            RestoreJournalEntry::new(entry.path(), format!("staged/{}", entry.path()), original)
-                .map_err(journal_error)?,
+            RestoreJournalEntry::new(
+                entry.path(),
+                format!("staged/{}", entry.path()),
+                main_backup.as_ref().map(|_| original_relative.clone()),
+            )
+            .map_err(journal_error)?
+            .with_sidecars(sidecar_records)
+            .map_err(journal_error)?,
         );
     }
     let journal_path = recovery_root.join("journal.json");
@@ -362,6 +384,17 @@ fn restore(args: &[String]) -> Result<CommandResult, CliError> {
 
     let mut written = Vec::new();
     for (entry, target) in &targets {
+        written.push(target.clone());
+        if let Err(error) = remove_restore_sidecars(target) {
+            return Err(rollback_failed_restore(
+                &mut journal,
+                &journal_path,
+                &written,
+                &originals,
+                &recovery_root,
+                error,
+            ));
+        }
         if let Err(error) = write_private_atomic(target, entry.bytes()) {
             return Err(rollback_failed_restore(
                 &mut journal,
@@ -372,7 +405,6 @@ fn restore(args: &[String]) -> Result<CommandResult, CliError> {
                 error,
             ));
         }
-        written.push(target.clone());
         if let Err(error) = journal.mark_applied(&journal_path, entry.path()) {
             return Err(rollback_failed_restore(
                 &mut journal,
@@ -402,6 +434,68 @@ fn restore(args: &[String]) -> Result<CommandResult, CliError> {
             recovery_root.display()
         ),
     ))
+}
+
+struct RestoreOriginal {
+    main: Option<PathBuf>,
+    sidecars: BTreeMap<String, PathBuf>,
+}
+
+fn restore_sidecar_path(target: &Path, suffix: &str) -> PathBuf {
+    PathBuf::from(format!("{}-{}", target.display(), suffix))
+}
+
+fn existing_sidecar_metadata(path: &Path) -> Result<Option<fs::Metadata>, CliError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(Some(metadata)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(io_error(error)),
+    }
+}
+
+fn backup_restore_sidecars(
+    target: &Path,
+    recovery_root: &Path,
+    original_relative: &str,
+) -> Result<Vec<(String, PathBuf)>, CliError> {
+    let mut backed_up = Vec::new();
+    for suffix in ["wal", "shm", "journal"] {
+        let source = restore_sidecar_path(target, suffix);
+        let Some(metadata) = existing_sidecar_metadata(&source)? else {
+            continue;
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(CliError::configuration(
+                "restore sidecar path is unsafe",
+                json!({"path": source}),
+            ));
+        }
+        let original_relative = format!("{original_relative}-{suffix}");
+        let destination = recovery_root.join(&original_relative);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(io_error)?;
+        }
+        fs::copy(&source, &destination).map_err(io_error)?;
+        backed_up.push((suffix.to_owned(), destination));
+    }
+    Ok(backed_up)
+}
+
+fn remove_restore_sidecars(target: &Path) -> Result<(), CliError> {
+    for suffix in ["wal", "shm", "journal"] {
+        let sidecar = restore_sidecar_path(target, suffix);
+        let Some(metadata) = existing_sidecar_metadata(&sidecar)? else {
+            continue;
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(CliError::configuration(
+                "restore sidecar path is unsafe",
+                json!({"path": sidecar}),
+            ));
+        }
+        fs::remove_file(&sidecar).map_err(io_error)?;
+    }
+    Ok(())
 }
 
 fn ensure_no_incomplete_restore(data_dir: &Path) -> Result<(), CliError> {
@@ -437,6 +531,17 @@ fn ensure_no_incomplete_restore(data_dir: &Path) -> Result<(), CliError> {
                     "first_target": journal.entries().first().map(|entry| entry.target()),
                     "first_staged": journal.entries().first().map(|entry| entry.staged()),
                     "first_original": journal.entries().first().and_then(RestoreJournalEntry::original),
+                    "sidecars": journal
+                        .entries()
+                        .iter()
+                        .flat_map(RestoreJournalEntry::sidecars)
+                        .map(RestoreSidecar::suffix)
+                        .collect::<Vec<_>>(),
+                    "first_sidecar_original": journal
+                        .entries()
+                        .first()
+                        .and_then(|entry| entry.sidecars().first())
+                        .and_then(RestoreSidecar::original),
                 }),
             ));
         }
@@ -456,7 +561,7 @@ fn rollback_failed_restore(
     journal: &mut RestoreJournal,
     journal_path: &Path,
     written: &[PathBuf],
-    originals: &BTreeMap<PathBuf, Option<PathBuf>>,
+    originals: &BTreeMap<PathBuf, RestoreOriginal>,
     recovery_root: &Path,
     error: CliError,
 ) -> CliError {
@@ -749,19 +854,37 @@ fn unsafe_target(path: &Path) -> Result<(), CliError> {
 
 fn rollback_restore(
     written: &[PathBuf],
-    originals: &BTreeMap<PathBuf, Option<PathBuf>>,
+    originals: &BTreeMap<PathBuf, RestoreOriginal>,
 ) -> Result<(), CliError> {
     for target in written.iter().rev() {
-        match originals.get(target) {
-            Some(Some(backup)) => {
+        let Some(original) = originals.get(target) else {
+            continue;
+        };
+        match &original.main {
+            Some(backup) => {
                 fs::copy(backup, target).map_err(io_error)?;
             }
-            Some(None) => {
+            None => {
                 if target.exists() {
                     fs::remove_file(target).map_err(io_error)?;
                 }
             }
-            None => {}
+        }
+        for suffix in ["wal", "shm", "journal"] {
+            let sidecar = restore_sidecar_path(target, suffix);
+            match original.sidecars.get(suffix) {
+                Some(backup) => {
+                    if let Some(parent) = sidecar.parent() {
+                        fs::create_dir_all(parent).map_err(io_error)?;
+                    }
+                    fs::copy(backup, &sidecar).map_err(io_error)?;
+                }
+                None => {
+                    if sidecar.exists() {
+                        fs::remove_file(&sidecar).map_err(io_error)?;
+                    }
+                }
+            }
         }
     }
     Ok(())

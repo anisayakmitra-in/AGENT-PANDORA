@@ -58,10 +58,53 @@ impl std::error::Error for RestoreJournalError {}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct RestoreSidecar {
+    suffix: String,
+    original: Option<String>,
+}
+
+impl RestoreSidecar {
+    pub(crate) fn new(
+        suffix: impl Into<String>,
+        original: Option<String>,
+    ) -> Result<Self, RestoreJournalError> {
+        let sidecar = Self {
+            suffix: suffix.into(),
+            original,
+        };
+        sidecar.validate()?;
+        Ok(sidecar)
+    }
+
+    pub(crate) fn suffix(&self) -> &str {
+        &self.suffix
+    }
+
+    pub(crate) fn original(&self) -> Option<&str> {
+        self.original.as_deref()
+    }
+
+    fn validate(&self) -> Result<(), RestoreJournalError> {
+        if !matches!(self.suffix.as_str(), "wal" | "shm" | "journal") {
+            return Err(RestoreJournalError::Invalid(
+                "unsupported SQLite sidecar suffix".to_owned(),
+            ));
+        }
+        if let Some(original) = &self.original {
+            validate_relative_path("sidecar original", original)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct RestoreJournalEntry {
     target: String,
     staged: String,
     original: Option<String>,
+    #[serde(default)]
+    sidecars: Vec<RestoreSidecar>,
     applied: bool,
 }
 
@@ -75,6 +118,7 @@ impl RestoreJournalEntry {
             target: target.into(),
             staged: staged.into(),
             original,
+            sidecars: Vec::new(),
             applied: false,
         };
         entry.validate()?;
@@ -97,11 +141,33 @@ impl RestoreJournalEntry {
         self.applied
     }
 
+    pub(crate) fn sidecars(&self) -> &[RestoreSidecar] {
+        &self.sidecars
+    }
+
+    pub(crate) fn with_sidecars(
+        mut self,
+        sidecars: Vec<RestoreSidecar>,
+    ) -> Result<Self, RestoreJournalError> {
+        self.sidecars = sidecars;
+        self.validate()?;
+        Ok(self)
+    }
+
     fn validate(&self) -> Result<(), RestoreJournalError> {
         validate_relative_path("target", &self.target)?;
         validate_relative_path("staged", &self.staged)?;
         if let Some(original) = &self.original {
             validate_relative_path("original", original)?;
+        }
+        let mut suffixes = std::collections::BTreeSet::new();
+        for sidecar in &self.sidecars {
+            sidecar.validate()?;
+            if !suffixes.insert(sidecar.suffix.clone()) {
+                return Err(RestoreJournalError::Invalid(
+                    "journal contains duplicate sidecar suffixes".to_owned(),
+                ));
+            }
         }
         Ok(())
     }
@@ -314,7 +380,10 @@ fn validate_relative_path(name: &str, value: &str) -> Result<(), RestoreJournalE
 
 #[cfg(test)]
 mod tests {
-    use super::{RestoreJournal, RestoreJournalEntry, RestoreJournalError, RestoreJournalState};
+    use super::{
+        RestoreJournal, RestoreJournalEntry, RestoreJournalError, RestoreJournalState,
+        RestoreSidecar,
+    };
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -341,10 +410,16 @@ mod tests {
     #[test]
     fn journal_round_trips_and_records_durable_progress() {
         let path = path();
+        let sqlite_entry = entry("data/sessions.sqlite3")
+            .with_sidecars(vec![
+                RestoreSidecar::new("wal", Some("original/data/sessions.sqlite3-wal".to_owned()))
+                    .unwrap(),
+            ])
+            .unwrap();
         let mut journal = RestoreJournal::create(
             &path,
             "restore-20260924-abc",
-            vec![entry("data/sessions.sqlite3"), entry("config/config.json")],
+            vec![sqlite_entry, entry("config/config.json")],
         )
         .unwrap();
         assert_eq!(journal.state(), RestoreJournalState::Prepared);
@@ -358,6 +433,7 @@ mod tests {
         let loaded = RestoreJournal::load(&path).unwrap();
         assert_eq!(loaded.state(), RestoreJournalState::Applying);
         assert!(loaded.entries()[0].applied());
+        assert_eq!(loaded.entries()[0].sidecars()[0].suffix(), "wal");
         assert!(!loaded.entries()[1].applied());
         assert!(!loaded.is_terminal());
 

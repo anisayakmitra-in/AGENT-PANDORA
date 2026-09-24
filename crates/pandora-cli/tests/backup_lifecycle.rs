@@ -95,6 +95,8 @@ fn encrypted_backup_restores_state_and_rejects_wrong_key() {
     parse_success(fixture.command(&["setup", "--json"], "correct horse battery staple"));
     let marker = fixture.data.join("state.marker");
     fs::write(&marker, b"before").unwrap();
+    let stale_sidecar = fixture.data.join("state.marker-wal");
+    fs::write(&stale_sidecar, b"stale-sidecar").unwrap();
     let archive = fixture.root.join("pandora-recovery.json");
 
     let created = parse_success(fixture.command(
@@ -138,7 +140,8 @@ fn encrypted_backup_restores_state_and_rejects_wrong_key() {
     ));
     assert_eq!(restored["command"], "backup restore");
     assert_eq!(restored["authenticated"], true);
-    assert_eq!(fs::read(marker).unwrap(), b"before");
+    assert_eq!(fs::read(&marker).unwrap(), b"before");
+    assert!(!stale_sidecar.exists());
     let recovery_root = PathBuf::from(restored["pre_restore_backup"].as_str().unwrap());
     let journal: Value =
         serde_json::from_slice(&fs::read(recovery_root.join("journal.json")).unwrap()).unwrap();
