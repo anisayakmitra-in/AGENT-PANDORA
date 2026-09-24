@@ -23,7 +23,7 @@ pandora package validate --manifest pandora.package.json --artifact domain-harne
 ```
 
 The manifest uses strict package SemVer, exact Gene versions, and exact
-compatibility with Pandora `2.0.0-beta.7`. Change the runtime requirement when
+compatibility with Pandora `2.0.0-beta.8`. Change the runtime requirement when
 targeting another Pandora build. Unknown fields—including a `capabilities`
 field—are rejected. Duplicate Gene IDs, noncanonical or duplicate route hints,
 an incorrect artifact hash, and invalid identity or SemVer values fail closed.

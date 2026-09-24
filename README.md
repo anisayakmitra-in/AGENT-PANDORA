@@ -21,7 +21,7 @@ observation surface.
 
 ## Status
 
-The active prerelease is `2.0.0-beta.7`. The repository now builds two local
+The next prerelease identity is `2.0.0-beta.8`. The repository now builds two local
 product surfaces: the Rust CLI and a Tauri desktop app. Desktop release builds
 bundle the same-commit CLI as a native sidecar and connect only to Pandora's
 authenticated loopback service. The webview cannot issue permits or execute
@@ -119,14 +119,14 @@ environment. For scripted setup, use `pandora setup` instead.
 To pin the current release explicitly:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/AGENT-PANDORA/main/scripts/install.sh | PANDORA_VERSION=v2.0.0-beta.7 sh
+curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/AGENT-PANDORA/main/scripts/install.sh | PANDORA_VERSION=v2.0.0-beta.8 sh
 ```
 
 After installation, update to a specific published tag with the same checksum
 verification:
 
 ```text
-pandora update --release v2.0.0-beta.7
+pandora update --release v2.0.0-beta.8
 pandora fleet dashboard --json
 ```
 

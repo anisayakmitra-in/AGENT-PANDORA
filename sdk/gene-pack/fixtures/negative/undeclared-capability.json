@@ -6,7 +6,7 @@
   "content_hash": "sha256:a4244ce45b9f768ba92daf352bca6c4eb40fa1fd763a03665934cd5e498e980e",
   "dependencies": [],
   "compatibility": {
-    "runtime": "pandora=2.0.0-beta.7"
+    "runtime": "pandora=2.0.0-beta.8"
   },
   "license": "Apache-2.0",
   "trust": {

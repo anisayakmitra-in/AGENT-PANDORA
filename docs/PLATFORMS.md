@@ -44,7 +44,7 @@ are never published. This is bounded installer-mechanics evidence; only a drill
 between two real signed releases can close the release-migration gate.
 
 WiX receives the numeric MSI form of the same release identity. For example,
-Pandora `2.0.0-beta.7` is packaged as MSI version `2.0.0.7` because MSI does not
+Pandora `2.0.0-beta.8` is packaged as MSI version `2.0.0.8` because MSI does not
 accept named prerelease identifiers. The release identity gate derives and
 verifies this mapping.
 
@@ -97,8 +97,8 @@ identity.
 
 ## Product boundary
 
-The `2.0.0-beta.7` tag publishes the CLI release line. Desktop packaging was
-added after that tag and is verified on the main branch. A desktop package
-becomes a supported release only when its tagged workflow publishes the
-artifact and records the platform, signing, install, update, and rollback
-evidence required by the release policy.
+The `2.0.0-beta.8` identity is the next CLI release line. Desktop packaging
+was added after the consumed `2.0.0-beta.7` tag and is verified on the main
+branch. A desktop package becomes a supported release only when its tagged
+workflow publishes the artifact and records the platform, signing, install,
+update, and rollback evidence required by the release policy.

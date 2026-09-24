@@ -64,8 +64,8 @@ class AccessibilityEvidenceTests(unittest.TestCase):
                     "clean_machine": True,
                 },
                 "release_identity": {
-                    "desktop_version": "2.0.0-beta.7",
-                    "cli_version": "2.0.0-beta.7",
+                    "desktop_version": "2.0.0-beta.8",
+                    "cli_version": "2.0.0-beta.8",
                 },
                 "checks": {name: "pass" for name in CHECKS},
                 "evidence": [
@@ -92,7 +92,7 @@ class AccessibilityEvidenceTests(unittest.TestCase):
 
             self.assertTrue(index["complete"])
             self.assertEqual(index["commit_sha"], COMMIT)
-            self.assertEqual(index["release_identity"], "2.0.0-beta.7")
+            self.assertEqual(index["release_identity"], "2.0.0-beta.8")
             self.assertEqual(
                 {record["platform"] for record in index["platforms"]}, set(PLATFORMS)
             )

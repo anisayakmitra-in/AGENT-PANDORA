@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Changes after the next beta identity will be recorded here.
+
+## v2.0.0-beta.8
+
 - Added an honest stable rollback closure record. RC and stable tags now validate
   the four native accessibility manifests against their exact commit. Stable
   publication waits for every published CLI and desktop lifecycle job, then

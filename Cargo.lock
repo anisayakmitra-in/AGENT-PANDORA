@@ -1214,7 +1214,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-cli"
-version = "2.0.0-beta.7"
+version = "2.0.0-beta.8"
 dependencies = [
  "atomic-write-file",
  "base64",
@@ -1239,7 +1239,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-harnesses"
-version = "2.0.0-beta.7"
+version = "2.0.0-beta.8"
 dependencies = [
  "pandora-types",
  "serde",
@@ -1249,7 +1249,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-provider"
-version = "2.0.0-beta.7"
+version = "2.0.0-beta.8"
 dependencies = [
  "pandora-types",
  "reqwest",
@@ -1259,7 +1259,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-runtime"
-version = "2.0.0-beta.7"
+version = "2.0.0-beta.8"
 dependencies = [
  "argon2",
  "atomic-write-file",
@@ -1285,7 +1285,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-service"
-version = "2.0.0-beta.7"
+version = "2.0.0-beta.8"
 dependencies = [
  "axum",
  "pandora-runtime",
@@ -1298,7 +1298,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-types"
-version = "2.0.0-beta.7"
+version = "2.0.0-beta.8"
 dependencies = [
  "semver",
  "serde",

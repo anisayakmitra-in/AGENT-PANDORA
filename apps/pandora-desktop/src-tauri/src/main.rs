@@ -2067,8 +2067,8 @@ mod configuration_tests {
         assert!(validate_package_id("../coding-gene").is_err());
         assert!(validate_package_id("owner//coding-gene").is_err());
         assert_eq!(
-            optional_package_version("2.0.0-beta.7").unwrap(),
-            Some("2.0.0-beta.7".to_owned())
+            optional_package_version("2.0.0-beta.8").unwrap(),
+            Some("2.0.0-beta.8".to_owned())
         );
         assert!(optional_package_version("2.0.0 beta").is_err());
         assert!(validate_registry_url("https://registry.example.test").is_ok());

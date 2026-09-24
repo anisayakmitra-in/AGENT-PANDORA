@@ -25,7 +25,7 @@ irm https://raw.githubusercontent.com/anisayakmitra-in/AGENT-PANDORA/main/script
 ```
 
 Pin a published tag with `PANDORA_VERSION`, for example
-`v2.0.0-beta.7`. Do not use a tag until its release page contains the binary
+`v2.0.0-beta.8`. Do not use a tag until its release page contains the binary
 for your platform and its checksum manifest.
 
 ## CLI source build
@@ -79,7 +79,7 @@ permission boundary.
 
 ## Support status
 
-The `2.0.0-beta.7` installers support the native CLI on Windows, macOS, and
+The `2.0.0-beta.8` installers support the native CLI on Windows, macOS, and
 Linux. The main branch also builds desktop packages for those platforms.
 Desktop support remains prerelease until a tagged release publishes the
 packages and retains the required signing and clean-machine evidence.

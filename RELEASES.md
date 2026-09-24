@@ -11,10 +11,10 @@ archived previews from an earlier naming scheme. They remain available for
 history and reproducibility, but they are not the active release line or
 recommended install targets.
 
-The canonical prerelease tags for this line are `v2.0.0-alpha.1` through
-`v2.0.0-alpha.6`, followed by `v2.0.0-beta.1`, `v2.0.0-beta.2`,
+The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
+through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1`, `v2.0.0-beta.2`,
 `v2.0.0-beta.3`, `v2.0.0-beta.4`, `v2.0.0-beta.5`, `v2.0.0-beta.6`, and
-`v2.0.0-beta.7`.
+`v2.0.0-beta.7`. The next planned identity is `v2.0.0-beta.8`.
 
 ## Source-bound release scope
 
@@ -40,6 +40,15 @@ The checked-in policy currently selects `cli-only` for the next prerelease line.
 A change to `full` is an explicit source change and must include the desktop
 signing and evidence prerequisites documented in
 [production readiness](docs/PRODUCTION.md).
+
+## v2.0.0-beta.8
+
+This is the next coherent prerelease identity. It updates the coupled Rust,
+npm, desktop, installer, documentation, and SDK runtime surfaces to
+`2.0.0-beta.8` while retaining the source-bound `cli-only` release scope. The
+identity is prepared for review and is not a public release until its exact tag
+workflow completes; RC and stable remain fail-closed pending isolated desktop
+signing.
 
 ## v2.0.0-beta.7
 

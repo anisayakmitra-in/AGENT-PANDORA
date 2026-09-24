@@ -21,7 +21,7 @@ cannot issue permits, change policy roots, or activate themselves.
 
 ## What is shipped
 
-The current `2.0.0-beta.7` line is a CLI-first prerelease with:
+The current `2.0.0-beta.8` line is a CLI-first prerelease with:
 
 - a Rust runtime and Ratatui client;
 - multi-provider configuration and bounded tool workflows;

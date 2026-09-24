@@ -35,7 +35,7 @@ class ReleaseScopeTests(unittest.TestCase):
         return root
 
     def test_current_source_scope_allows_a_cli_only_beta(self) -> None:
-        resolved = resolve_release_scope("v2.0.0-beta.7", ROOT)
+        resolved = resolve_release_scope("v2.0.0-beta.8", ROOT)
 
         self.assertEqual(resolved["scope"], "cli-only")
         self.assertEqual(resolved["channel"], "beta")

@@ -2207,7 +2207,7 @@ describe("Pandora desktop run state", () => {
       manifest_digest: `sha256:${"b".repeat(64)}`,
       artifact_digest: `sha256:${"c".repeat(64)}`,
       dependencies: [],
-      compatibility: "pandora=2.0.0-beta.7",
+      compatibility: "pandora=2.0.0-beta.8",
       license: "Apache-2.0",
       trust: {
         declared_level: "official",
@@ -2328,7 +2328,7 @@ describe("Pandora desktop run state", () => {
             { id: "coding-domain", version: "0.1.0", optional: false },
             { id: "research-domain", version: "0.1.0", optional: false },
           ],
-          compatibility: "pandora=2.0.0-beta.7",
+          compatibility: "pandora=2.0.0-beta.8",
           license: "Apache-2.0",
           trust: { level: "unverified", has_signature: false, has_public_key: false },
           meta_composition: { allowed_domains: ["coding-domain", "research-domain"], max_handoffs: 4 },
@@ -2369,7 +2369,7 @@ describe("Pandora desktop run state", () => {
           publisher: "pandora-community",
           content_hash: `sha256:${"c".repeat(64)}`,
           dependencies: [],
-          compatibility: "pandora=2.0.0-beta.7",
+          compatibility: "pandora=2.0.0-beta.8",
           license: "Apache-2.0",
           trust: { level: "unverified", has_signature: false, has_public_key: false },
           meta_composition: null,
@@ -2433,7 +2433,7 @@ describe("Pandora desktop run state", () => {
     expect(await screen.findByText("manifest ready")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy JSON" })).toBeEnabled();
     expect(screen.getByLabelText("Package manifest JSON")).toHaveTextContent('"kind": "domain_harness"');
-    expect(screen.getByLabelText("Package manifest JSON")).toHaveTextContent('"runtime": "pandora=2.0.0-beta.7"');
+    expect(screen.getByLabelText("Package manifest JSON")).toHaveTextContent('"runtime": "pandora=2.0.0-beta.8"');
     expect(screen.getByLabelText("Package manifest JSON")).toHaveTextContent('"license": "Apache-2.0"');
     expect(screen.getByLabelText("Package manifest JSON")).toHaveTextContent('"hints": [');
     expect(screen.getByText(/never signs, admits, enables, publishes, stores keys/i)).toBeInTheDocument();
