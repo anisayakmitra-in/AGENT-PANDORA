@@ -6,10 +6,11 @@ use crate::output::{CliError, CommandResult, success};
 use pandora_harnesses::{CODING_HARNESS_ID, canonical_harness_binding_digest};
 use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::{
-    ApprovalStore, ExecutionController, FleetBudget, FleetEngine, FleetError, FleetLeaseFence,
-    FleetNode, GitWorktreeExecutor, SubagentCleanupContext, SubagentCoordinator,
-    SubagentCoordinatorError, SubagentRecord, SubagentRunControl, SubagentScope,
-    SubagentSpawnContext, SubagentStore, SubagentStoreError,
+    AgentCheckpoint, AgentControlStop, AgentRunControl, ApprovalStore, ExecutionController,
+    FleetBudget, FleetEngine, FleetError, FleetLeaseFence, FleetNode, FleetSupervisorState,
+    GitWorktreeExecutor, SubagentCleanupContext, SubagentCoordinator, SubagentCoordinatorError,
+    SubagentRecord, SubagentRunControl, SubagentScope, SubagentSpawnContext, SubagentStore,
+    SubagentStoreError,
 };
 use pandora_types::{
     Capability, EffectOutcome, EffectReceipt, ExecutionId, HarnessId, JobId, JobWorkerId,
@@ -43,11 +44,35 @@ struct ActiveSubagentSupervisor {
     lease_id: String,
     execution_id: String,
     fence: FleetLeaseFence,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl ActiveSubagentSupervisor {
     fn assert_current(&self, now: u64) -> Result<(), FleetError> {
         self.fleet.assert_fence(&self.fence, now)
+    }
+
+    fn stop_requested(&self) -> Result<bool, FleetError> {
+        let supervisor = self
+            .fleet
+            .list_supervisors()?
+            .into_iter()
+            .find(|supervisor| supervisor.node_id() == self.node_id)
+            .ok_or(FleetError::SupervisorNotFound)?;
+        Ok(supervisor.state() != FleetSupervisorState::Running)
+    }
+
+    fn checkpoint(&self) -> Result<(), AgentControlStop> {
+        if self.cancelled.load(Ordering::Acquire) {
+            return Err(AgentControlStop::FenceLost);
+        }
+        match self.stop_requested() {
+            Ok(true) => return Err(AgentControlStop::FenceLost),
+            Ok(false) => {}
+            Err(_) => return Err(AgentControlStop::CancellationStateUnavailable),
+        }
+        self.assert_current(timestamp().as_unix_seconds())
+            .map_err(|_| AgentControlStop::FenceLost)
     }
 }
 
@@ -135,6 +160,7 @@ fn start_subagent_supervisor(config: &RuntimeConfig) -> Result<ActiveSubagentSup
         lease_id,
         execution_id,
         fence,
+        cancelled: Arc::new(AtomicBool::new(false)),
     })
 }
 
@@ -153,6 +179,18 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         unknown => Err(CliError::usage(format!(
             "unknown subagent command '{unknown}'"
         ))),
+    }
+}
+
+struct FenceAwareSubagentControl<'a> {
+    inner: SubagentRunControl<'a>,
+    supervisor: &'a ActiveSubagentSupervisor,
+}
+
+impl AgentRunControl for FenceAwareSubagentControl<'_> {
+    fn checkpoint(&self, checkpoint: AgentCheckpoint<'_>) -> Result<(), AgentControlStop> {
+        self.inner.checkpoint(checkpoint)?;
+        self.supervisor.checkpoint()
     }
 }
 
@@ -187,6 +225,7 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
     let heartbeat_lease = supervisor.lease_id.clone();
     let heartbeat_execution = supervisor.execution_id.clone();
     let heartbeat_fence = supervisor.fence.clone();
+    let heartbeat_cancelled = Arc::clone(&supervisor.cancelled);
     let heartbeat_thread = thread::spawn(move || {
         while heartbeat.load(Ordering::Acquire) {
             thread::sleep(Duration::from_secs(SUBAGENT_WORKER_HEARTBEAT_SECONDS));
@@ -214,6 +253,7 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
                 })
                 .is_err()
             {
+                heartbeat_cancelled.store(true, Ordering::Release);
                 heartbeat_failed_for_thread.store(true, Ordering::Release);
                 break;
             }
@@ -223,6 +263,13 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
         for _ in 0..max_agents {
             threads.spawn(|| {
                 barrier.wait();
+                if supervisor.checkpoint().is_err() {
+                    *failures
+                        .lock()
+                        .expect("worker failure mutex should not poison") =
+                        Some(fleet_error(FleetError::FenceMismatch));
+                    return;
+                }
                 if let Err(error) = supervisor.fleet.heartbeat_supervisor_for_process(
                     &supervisor.node_id,
                     worker_process_id,
@@ -263,6 +310,10 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
                         &scope,
                         claimed.request().budgets(),
                     );
+                    let control = FenceAwareSubagentControl {
+                        inner: control,
+                        supervisor: &supervisor,
+                    };
                     let outcome = match super::subagent_run::execute_trusted_subagent(
                         super::subagent_run::TrustedSubagentRun {
                             config: &config,
@@ -759,6 +810,11 @@ fn terminal_status(error: &CliError) -> SubagentStatus {
     {
         return SubagentStatus::Cancelled;
     }
+    if error.code == "agent_controlled_stop"
+        && error.details.get("reason").and_then(Value::as_str) == Some("fence_lost")
+    {
+        return SubagentStatus::Interrupted;
+    }
     SubagentStatus::Failed
 }
 
@@ -773,18 +829,28 @@ fn terminal_result(
             "status": terminal_status_text(status),
         }),
         Err(error) => {
-            let mut result = serde_json::Map::new();
-            result.insert("code".to_owned(), Value::String(error.code.to_owned()));
-            result.insert(
-                "status".to_owned(),
-                Value::String(terminal_status_text(status).to_owned()),
-            );
             if error.code == "agent_controlled_stop"
-                && error.details.get("reason").and_then(Value::as_str) == Some("cancelled")
+                && error.details.get("reason").and_then(Value::as_str) == Some("fence_lost")
             {
-                result.insert("reason".to_owned(), Value::String("cancelled".to_owned()));
+                json!({
+                    "code": "worker_interrupted",
+                    "outcome_known": false,
+                    "reason": "fence_lost",
+                })
+            } else {
+                let mut result = serde_json::Map::new();
+                result.insert("code".to_owned(), Value::String(error.code.to_owned()));
+                result.insert(
+                    "status".to_owned(),
+                    Value::String(terminal_status_text(status).to_owned()),
+                );
+                if error.code == "agent_controlled_stop"
+                    && error.details.get("reason").and_then(Value::as_str) == Some("cancelled")
+                {
+                    result.insert("reason".to_owned(), Value::String("cancelled".to_owned()));
+                }
+                Value::Object(result)
             }
-            Value::Object(result)
         }
     };
     match serde_json::to_vec(&result) {
@@ -1051,14 +1117,39 @@ mod tests {
             lease_id: lease_id.to_owned(),
             execution_id: "subagent-process:test".to_owned(),
             fence,
+            cancelled: Arc::new(AtomicBool::new(false)),
         };
         supervisor.assert_current(10).unwrap();
         assert!(matches!(
             supervisor.assert_current(3_610),
             Err(FleetError::FenceExpired)
         ));
+        assert!(matches!(
+            supervisor.checkpoint(),
+            Err(AgentControlStop::FenceLost)
+        ));
         drop(supervisor);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn fence_loss_is_recorded_as_an_unknown_interrupted_outcome() {
+        let error = CliError {
+            code: "agent_controlled_stop",
+            message: "worker fence was lost".to_owned(),
+            details: json!({"reason": "fence_lost"}),
+            exit_code: 50,
+        };
+        let status = terminal_status(&error);
+        let (status, result) = terminal_result(status, Err(error), 8_192);
+        assert_eq!(status, SubagentStatus::Interrupted);
+        assert_eq!(result["code"], "worker_interrupted");
+        assert_eq!(result["outcome_known"], false);
+        assert_eq!(result["reason"], "fence_lost");
+        assert_eq!(
+            stable_result(Some(&result)),
+            Some(json!({"code": "worker_interrupted", "outcome_known": false}))
+        );
     }
 
     #[test]

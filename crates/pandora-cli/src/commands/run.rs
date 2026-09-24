@@ -1126,6 +1126,7 @@ fn controlled_stop_reason(reason: AgentControlStop) -> &'static str {
     match reason {
         AgentControlStop::Cancelled => "cancelled",
         AgentControlStop::CancellationStateUnavailable => "cancellation_state_unavailable",
+        AgentControlStop::FenceLost => "fence_lost",
         AgentControlStop::TokenBudgetExceeded => "token_budget_exceeded",
         AgentControlStop::DurationBudgetExceeded => "duration_budget_exceeded",
     }

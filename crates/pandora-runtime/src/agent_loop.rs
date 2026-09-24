@@ -42,6 +42,7 @@ const CONTEXT_USER_ATTACHMENT_BOUNDARY_ID: &str = "agent.user-attachment-boundar
 pub enum AgentControlStop {
     Cancelled,
     CancellationStateUnavailable,
+    FenceLost,
     TokenBudgetExceeded,
     DurationBudgetExceeded,
 }
@@ -53,6 +54,7 @@ impl fmt::Display for AgentControlStop {
             Self::CancellationStateUnavailable => {
                 formatter.write_str("agent cancellation state is unavailable")
             }
+            Self::FenceLost => formatter.write_str("agent execution fence was lost"),
             Self::TokenBudgetExceeded => formatter.write_str("agent token budget exceeded"),
             Self::DurationBudgetExceeded => formatter.write_str("agent duration budget exceeded"),
         }
