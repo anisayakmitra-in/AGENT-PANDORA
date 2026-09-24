@@ -199,12 +199,27 @@ required human reviewers and restrict it to `main`. Enable self-review
 prevention when a second eligible release reviewer exists. A single-reviewer
 repository must leave that option disabled or every promotion deadlocks; the
 evolution contract still independently forbids a scorecard evaluator from
-approving its own promotion. The request supplies the
-exact commit, artifact digest, rollout evidence digest, one-shot approval ID,
-channel, and channel-valid SemVer tag. After validation and environment
-approval, the workflow creates that one annotated tag and retains an
-`approved-tag.json` evidence artifact. Existing tag annotations are checked so
-the same approval ID cannot authorize another tag or channel.
+approving its own promotion. The request supplies the exact commit, a
+repository-relative tracked SDK `.artifact` or `.wasm` path with its sibling
+manifest and SHA-256 digest, the rollout evidence digest, a unique
+`promotion_id` record key, channel, and channel-valid SemVer tag. Validation
+writes a canonical evidence manifest binding the
+package-validation report, deterministic evaluation report, pipeline boundary
+record, commit, and channel. The validation job recomputes the submitted
+artifact and evidence digests before environment review; after review, the
+promotion job downloads the exact run evidence and verifies both digests again
+before creating a tag. `promotion_id` is a uniqueness key, not a
+substitute for GitHub's protected-environment reviewer decision. After
+environment approval, the workflow creates that one annotated tag and retains
+an `approved-tag.json` evidence artifact. Existing tag annotations are checked
+so the same record ID cannot authorize another tag or channel.
+
+For promotion, first run the workflow without promotion intent and record the
+manifest `digest` from the uploaded `evidence-manifest.json`. Then dispatch
+promotion for the same `main` commit, supplying the repository-relative tracked
+artifact path, its `sha256:<hex>` digest, the evidence-manifest digest, a unique
+promotion ID, and the channel-valid tag. The workflow regenerates the stable
+evidence bundle and fails before reviewer approval if either digest differs.
 
 This promotion job grants only tag-creation authority. It does not publish a
 release, admit a package, or activate an artifact. The tag-driven release

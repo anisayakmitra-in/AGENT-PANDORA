@@ -98,6 +98,47 @@ Older notes.
         self.assertIn('test "${#npm_packages[@]}" -eq 1', publish)
         self.assertNotIn("npm pack", publish)
 
+    def test_agent_pipeline_binds_promotion_to_tracked_artifact_and_evidence_bytes(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "agent-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
+
+        validate_start = workflow.index("  validate:")
+        promotion_start = workflow.index("  promotion-gate:")
+        validate = workflow[validate_start:promotion_start]
+        promotion = workflow[promotion_start:]
+
+        manifest = validate.index("- name: Create canonical pipeline evidence manifest")
+        input_verify = validate.index("- name: Verify submitted digests before requesting promotion approval")
+        upload = validate.index("- name: Upload pipeline evidence")
+        self.assertLess(manifest, input_verify)
+        self.assertLess(input_verify, upload)
+        self.assertIn("artifact_path:", workflow[:promotion_start])
+        self.assertIn("promotion_id:", workflow[:promotion_start])
+        self.assertNotIn("approval_id:", workflow[:promotion_start])
+        for trigger_path in (
+            '"scripts/agent_pipeline_evidence.py"',
+            '"scripts/test_agent_pipeline_evidence.py"',
+        ):
+            self.assertIn(trigger_path, workflow[:validate_start])
+        self.assertIn("scripts/agent_pipeline_evidence.py create", validate)
+        self.assertIn('--repository-root "$GITHUB_WORKSPACE"', validate)
+        self.assertIn("scripts/agent_pipeline_evidence.py verify", validate)
+        self.assertIn("canary_stops_before_activation_tested", validate)
+
+        download = promotion.index("- name: Download exact pipeline evidence")
+        identity = promotion.index("python scripts/release_identity.py \"$RELEASE_TAG\"")
+        verify = promotion.index("- name: Reverify exact artifact and evidence digests after reviewer approval")
+        tag = promotion.index("- name: Create the one approved tag")
+        self.assertLess(download, verify)
+        self.assertLess(identity, tag)
+        self.assertLess(verify, tag)
+        self.assertIn('python scripts/release_identity.py "$RELEASE_TAG"', promotion)
+        self.assertIn('"promotion_id": os.environ["PROMOTION_ID"]', promotion)
+        self.assertIn("artifact_path", promotion[verify:tag])
+        self.assertIn("evidence-manifest.json", promotion[verify:])
+        self.assertIn('"artifact_path": os.environ["ARTIFACT_PATH"]', promotion)
+
     def test_release_workflow_smokes_native_cli_before_uploading_assets(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
             encoding="utf-8"

@@ -6,7 +6,10 @@ on:
       - ".github/workflows/agent-pipeline.yml"
       - "crates/**"
       - "sdk/**"
+      - "scripts/agent_pipeline_evidence.py"
+      - "scripts/release_identity.py"
       - "scripts/fixtures/agent-pipeline-golden.json"
+      - "scripts/test_agent_pipeline_evidence.py"
   workflow_dispatch:
     inputs:
       channel:
@@ -31,16 +34,20 @@ on:
         description: Exact 40-character commit bound by the rollout approval
         required: false
         type: string
+      artifact_path:
+        description: Repository-relative tracked artifact path whose SHA-256 is approved
+        required: false
+        type: string
       artifact_digest:
-        description: Exact sha256 artifact digest bound by the rollout approval
+        description: Exact sha256 digest of artifact_path at the checked-out commit
         required: false
         type: string
       evidence_digest:
         description: Exact sha256 rollout evidence digest bound by the approval
         required: false
         type: string
-      approval_id:
-        description: Unique sha256 human approval identity
+      promotion_id:
+        description: Unique sha256 promotion record ID; environment review is the human approval
         required: false
         type: string
 
@@ -57,7 +64,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PIPELINE_CHANNEL: ${{ inputs.channel || 'beta' }}
-      PROMOTION_INTENT: ${{ inputs.promotion_intent || false }}
+      PROMOTION_ARTIFACT_PATH: ${{ inputs.artifact_path || '' }}
+      PROMOTION_ARTIFACT_DIGEST: ${{ inputs.artifact_digest || '' }}
+      PROMOTION_EVIDENCE_DIGEST: ${{ inputs.evidence_digest || '' }}
 
     steps:
       - name: Check out exact source
@@ -81,6 +90,9 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.11"
+
+      - name: Test promotion evidence binding
+        run: python -m unittest scripts.test_agent_pipeline_evidence -v
 
       - name: Build the governed CLI boundary
         run: cargo build --locked -p pandora-cli
@@ -122,7 +134,30 @@ jobs:
       - name: Record the non-activating pipeline boundary
         shell: bash
         run: |
-          python -c 'import json, os, pathlib; pathlib.Path(os.environ["RUNNER_TEMP"], "agent-pipeline-evidence", "pipeline.json").write_text(json.dumps({"schema_version": 1, "commit": os.environ["GITHUB_SHA"], "channel": os.environ["PIPELINE_CHANNEL"], "promotion_intent": os.environ["PROMOTION_INTENT"] == "true", "package_admission_performed": False, "signed_distribution_boundary_tested": True, "artifact_activation_performed": False, "release_tag_created": False, "authority": "evidence_only"}, sort_keys=True) + "\n", encoding="utf-8")'
+          python -c 'import json, os, pathlib; pathlib.Path(os.environ["RUNNER_TEMP"], "agent-pipeline-evidence", "pipeline.json").write_text(json.dumps({"schema_version": 1, "commit": os.environ["GITHUB_SHA"], "channel": os.environ["PIPELINE_CHANNEL"], "package_admission_performed": False, "signed_distribution_boundary_tested": True, "canary_stops_before_activation_tested": True, "artifact_activation_performed": False, "release_tag_created": False, "authority": "evidence_only"}, sort_keys=True) + "\n", encoding="utf-8")'
+
+      - name: Create canonical pipeline evidence manifest
+        shell: bash
+        run: >-
+          python scripts/agent_pipeline_evidence.py create
+          --repository-root "$GITHUB_WORKSPACE"
+          --directory "$RUNNER_TEMP/agent-pipeline-evidence"
+          --commit "$GITHUB_SHA"
+          --channel "$PIPELINE_CHANNEL"
+
+      - name: Verify submitted digests before requesting promotion approval
+        if: inputs.promotion_intent
+        shell: bash
+        run: >-
+          python scripts/agent_pipeline_evidence.py verify
+          --repository-root "$GITHUB_WORKSPACE"
+          --directory "$RUNNER_TEMP/agent-pipeline-evidence"
+          --manifest "$RUNNER_TEMP/agent-pipeline-evidence/evidence-manifest.json"
+          --commit "$GITHUB_SHA"
+          --channel "$PIPELINE_CHANNEL"
+          --evidence-digest "$PROMOTION_EVIDENCE_DIGEST"
+          --artifact-path "$PROMOTION_ARTIFACT_PATH"
+          --artifact-digest "$PROMOTION_ARTIFACT_DIGEST"
 
       - name: Upload pipeline evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -148,9 +183,10 @@ jobs:
       PIPELINE_CHANNEL: ${{ inputs.channel }}
       RELEASE_TAG: ${{ inputs.release_tag }}
       APPROVED_COMMIT: ${{ inputs.exact_commit }}
+      ARTIFACT_PATH: ${{ inputs.artifact_path }}
       ARTIFACT_DIGEST: ${{ inputs.artifact_digest }}
       EVIDENCE_DIGEST: ${{ inputs.evidence_digest }}
-      APPROVAL_ID: ${{ inputs.approval_id }}
+      PROMOTION_ID: ${{ inputs.promotion_id }}
     steps:
       - name: Check out the exact approved source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -159,6 +195,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
+      - name: Download exact pipeline evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agent-pipeline-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/agent-pipeline-evidence
+
       - name: Require the main branch
         shell: bash
         run: |
@@ -166,9 +208,10 @@ jobs:
           test "$GITHUB_REF" = "refs/heads/main"
           test "$APPROVED_COMMIT" = "$GITHUB_SHA"
           [[ "$APPROVED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ -n "$ARTIFACT_PATH" ]]
           [[ "$ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "$EVIDENCE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
-          [[ "$APPROVAL_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$PROMOTION_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ -n "$RELEASE_TAG" ]]
           [[ "$GITHUB_ACTOR" != *"[bot]" ]]
           test "$GITHUB_ACTOR" != "github-actions"
@@ -178,20 +221,34 @@ jobs:
             beta) [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+$ ]] && [[ "$RELEASE_TAG" != *"-rc."* ]] ;;
             *) exit 1 ;;
           esac
+          python scripts/release_identity.py "$RELEASE_TAG"
           if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
             echo "The approved tag already exists; approval identities are one-shot." >&2
             exit 1
           fi
-          if git for-each-ref refs/tags --format='%(contents)' | grep -Fq "\"approval_id\": \"$APPROVAL_ID\""; then
-            echo "The rollout approval ID is already bound to another immutable tag." >&2
+          if git for-each-ref refs/tags --format='%(contents)' | grep -Fq "\"promotion_id\": \"$PROMOTION_ID\""; then
+            echo "The promotion record ID is already bound to another immutable tag." >&2
             exit 1
           fi
+
+      - name: Reverify exact artifact and evidence digests after reviewer approval
+        shell: bash
+        run: >-
+          python scripts/agent_pipeline_evidence.py verify
+          --repository-root "$GITHUB_WORKSPACE"
+          --directory "$RUNNER_TEMP/agent-pipeline-evidence"
+          --manifest "$RUNNER_TEMP/agent-pipeline-evidence/evidence-manifest.json"
+          --commit "$APPROVED_COMMIT"
+          --channel "$PIPELINE_CHANNEL"
+          --evidence-digest "$EVIDENCE_DIGEST"
+          --artifact-path "$ARTIFACT_PATH"
+          --artifact-digest "$ARTIFACT_DIGEST"
 
       - name: Record exact approved tag evidence
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/promotion-evidence"
-          python -c 'import json, os, pathlib; pathlib.Path(os.environ["RUNNER_TEMP"], "promotion-evidence", "approved-tag.json").write_text(json.dumps({"schema_version": 1, "approval_id": os.environ["APPROVAL_ID"], "requested_by": os.environ["GITHUB_ACTOR"], "approval_environment": "promotion-" + os.environ["PIPELINE_CHANNEL"], "commit": os.environ["APPROVED_COMMIT"], "artifact_digest": os.environ["ARTIFACT_DIGEST"], "channel": os.environ["PIPELINE_CHANNEL"], "evidence_digest": os.environ["EVIDENCE_DIGEST"], "release_tag": os.environ["RELEASE_TAG"], "artifact_activation_performed": False, "authority": "tag_creation_only"}, sort_keys=True) + "\n", encoding="utf-8")'
+          python -c 'import json, os, pathlib; pathlib.Path(os.environ["RUNNER_TEMP"], "promotion-evidence", "approved-tag.json").write_text(json.dumps({"schema_version": 1, "promotion_id": os.environ["PROMOTION_ID"], "requested_by": os.environ["GITHUB_ACTOR"], "approval_environment": "promotion-" + os.environ["PIPELINE_CHANNEL"], "commit": os.environ["APPROVED_COMMIT"], "artifact_path": os.environ["ARTIFACT_PATH"], "artifact_digest": os.environ["ARTIFACT_DIGEST"], "channel": os.environ["PIPELINE_CHANNEL"], "evidence_digest": os.environ["EVIDENCE_DIGEST"], "release_tag": os.environ["RELEASE_TAG"], "artifact_activation_performed": False, "authority": "tag_creation_only"}, sort_keys=True) + "\n", encoding="utf-8")'
 
       - name: Create the one approved tag
         shell: bash
