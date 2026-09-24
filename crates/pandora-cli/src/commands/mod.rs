@@ -33,6 +33,7 @@ mod orchestration;
 mod package;
 mod provider;
 mod registry;
+mod restore_journal;
 mod rollout;
 mod run;
 mod secret;

@@ -139,6 +139,15 @@ fn encrypted_backup_restores_state_and_rejects_wrong_key() {
     assert_eq!(restored["command"], "backup restore");
     assert_eq!(restored["authenticated"], true);
     assert_eq!(fs::read(marker).unwrap(), b"before");
+    let recovery_root = PathBuf::from(restored["pre_restore_backup"].as_str().unwrap());
+    let journal: Value =
+        serde_json::from_slice(&fs::read(recovery_root.join("journal.json")).unwrap()).unwrap();
+    assert_eq!(journal["state"], "completed");
+    assert!(
+        journal["entries"]
+            .as_array()
+            .is_some_and(|entries| !entries.is_empty())
+    );
 }
 
 #[test]
@@ -189,6 +198,60 @@ fn backup_captures_wal_only_sqlite_state_in_a_consistent_snapshot() {
             .entries()
             .iter()
             .any(|entry| entry.path().ends_with("-wal") || entry.path().ends_with("-shm"))
+    );
+}
+
+#[test]
+fn restore_refuses_to_start_while_a_previous_journal_is_incomplete() {
+    let fixture = Fixture::new();
+    parse_success(fixture.command(&["setup", "--json"], "correct horse battery staple"));
+    let archive = fixture.root.join("pending-backup.json");
+    parse_success(fixture.command(
+        &[
+            "backup",
+            "create",
+            "--output",
+            archive.to_str().unwrap(),
+            "--json",
+        ],
+        "correct horse battery staple",
+    ));
+    let recovery = fixture.data.join("recovery").join("pre-pending");
+    fs::create_dir_all(&recovery).unwrap();
+    fs::write(
+        recovery.join("journal.json"),
+        serde_json::to_vec(&json!({
+            "format_version": 1,
+            "transaction_id": "restore-pending",
+            "state": "applying",
+            "entries": [{
+                "target": "data/sessions.sqlite3",
+                "staged": "staged/data/sessions.sqlite3",
+                "original": null,
+                "applied": false
+            }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let error = parse_error(fixture.command(
+        &[
+            "backup",
+            "restore",
+            "--input",
+            archive.to_str().unwrap(),
+            "--yes",
+            "--json",
+        ],
+        "correct horse battery staple",
+    ));
+    assert_eq!(error["code"], "configuration_error");
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("incomplete restore journal")
     );
 }
 

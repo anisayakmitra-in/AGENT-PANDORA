@@ -1,3 +1,6 @@
+use super::restore_journal::{
+    RestoreJournal, RestoreJournalEntry, RestoreJournalError, RestoreJournalState,
+};
 use super::{load_config, parse_options, timestamp};
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{
@@ -11,7 +14,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use zeroize::Zeroizing;
 
 const MAX_ARCHIVE_FILE_BYTES: u64 = 192 * 1024 * 1024;
@@ -292,14 +295,20 @@ fn restore(args: &[String]) -> Result<CommandResult, CliError> {
     }
     let input = required_input(&parsed)?;
     let config = load_config(&parsed)?;
+    ensure_no_incomplete_restore(config.data_dir())?;
     let passphrase = backup_passphrase(&parsed)?;
     let encoded = read_archive(&input)?;
     let bundle = RecoveryArchive::open(&encoded, &passphrase).map_err(recovery_error)?;
     validate_sqlite_entries(bundle.entries())?;
+    let recovery_nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| CliError::internal("system clock is before the Unix epoch", json!({})))?
+        .as_nanos();
+    let transaction_id = format!("restore-{recovery_nonce}-{}", std::process::id());
     let recovery_root = config
         .data_dir()
         .join("recovery")
-        .join(format!("pre-restore-{}", timestamp().as_unix_seconds()));
+        .join(format!("pre-{transaction_id}"));
     reject_unsafe_descendant(
         config.data_dir(),
         &recovery_root.join(".pandora-restore-probe"),
@@ -314,31 +323,70 @@ fn restore(args: &[String]) -> Result<CommandResult, CliError> {
         }
         targets.push((entry, target));
     }
+
+    for (entry, _) in &targets {
+        let staged_relative = format!("staged/{}", entry.path());
+        let staged = recovery_root.join(&staged_relative);
+        write_private_atomic(&staged, entry.bytes())?;
+    }
+
     let mut originals = BTreeMap::new();
-    for (_, target) in &targets {
-        if target.is_file() {
-            let backup = recovery_root.join(backup_relative_path(
-                target,
-                config.config_path(),
-                config.data_dir(),
-            )?);
+    let mut journal_entries = Vec::with_capacity(targets.len());
+    for (entry, target) in &targets {
+        let original_relative =
+            backup_relative_path(target, config.config_path(), config.data_dir())?;
+        let original_relative = portable_relative_path(&original_relative);
+        let original = if target.is_file() {
+            let backup = recovery_root.join(&original_relative);
             if let Some(parent) = backup.parent() {
                 fs::create_dir_all(parent).map_err(io_error)?;
             }
             fs::copy(target, &backup).map_err(io_error)?;
             originals.insert(target.clone(), Some(backup));
+            Some(original_relative)
         } else {
             originals.insert(target.clone(), None);
-        }
+            None
+        };
+        journal_entries.push(
+            RestoreJournalEntry::new(entry.path(), format!("staged/{}", entry.path()), original)
+                .map_err(journal_error)?,
+        );
     }
+    let journal_path = recovery_root.join("journal.json");
+    let mut journal = RestoreJournal::create(&journal_path, &transaction_id, journal_entries)
+        .map_err(journal_error)?;
+    journal
+        .set_state(&journal_path, RestoreJournalState::Applying)
+        .map_err(journal_error)?;
+
     let mut written = Vec::new();
     for (entry, target) in &targets {
         if let Err(error) = write_private_atomic(target, entry.bytes()) {
-            rollback_restore(&written, &originals);
-            return Err(error);
+            return Err(rollback_failed_restore(
+                &mut journal,
+                &journal_path,
+                &written,
+                &originals,
+                &recovery_root,
+                error,
+            ));
         }
         written.push(target.clone());
+        if let Err(error) = journal.mark_applied(&journal_path, entry.path()) {
+            return Err(rollback_failed_restore(
+                &mut journal,
+                &journal_path,
+                &written,
+                &originals,
+                &recovery_root,
+                journal_error(error),
+            ));
+        }
     }
+    journal
+        .set_state(&journal_path, RestoreJournalState::Completed)
+        .map_err(journal_error)?;
     Ok(success(
         "backup restore",
         json!({
@@ -346,6 +394,7 @@ fn restore(args: &[String]) -> Result<CommandResult, CliError> {
             "restored_entries": written.len(),
             "pre_restore_backup": recovery_root,
             "authenticated": true,
+            "restore_journal": journal_path,
         }),
         format!(
             "Restored {} Pandora state entries; previous state is at {}",
@@ -353,6 +402,92 @@ fn restore(args: &[String]) -> Result<CommandResult, CliError> {
             recovery_root.display()
         ),
     ))
+}
+
+fn ensure_no_incomplete_restore(data_dir: &Path) -> Result<(), CliError> {
+    let recovery_root = data_dir.join("recovery");
+    if !recovery_root.exists() {
+        return Ok(());
+    }
+    let mut directories = fs::read_dir(&recovery_root)
+        .map_err(io_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(io_error)?;
+    directories.sort_by_key(|entry| entry.file_name());
+    for directory in directories {
+        let path = directory.path();
+        let metadata = fs::symlink_metadata(&path).map_err(io_error)?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            continue;
+        }
+        let journal_path = path.join("journal.json");
+        if !journal_path.is_file() {
+            continue;
+        }
+        let journal = RestoreJournal::load(&journal_path).map_err(journal_error)?;
+        if !journal.is_terminal() {
+            return Err(CliError::configuration(
+                "an incomplete restore journal requires operator recovery",
+                json!({
+                    "recovery_root": path,
+                    "transaction_id": journal.transaction_id(),
+                    "state": journal.state().as_str(),
+                    "entries": journal.entries().len(),
+                    "applied_entries": journal.entries().iter().filter(|entry| entry.applied()).count(),
+                    "first_target": journal.entries().first().map(|entry| entry.target()),
+                    "first_staged": journal.entries().first().map(|entry| entry.staged()),
+                    "first_original": journal.entries().first().and_then(RestoreJournalEntry::original),
+                }),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn portable_relative_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn journal_error(error: RestoreJournalError) -> CliError {
+    CliError::configuration(error.to_string(), json!({}))
+}
+
+fn rollback_failed_restore(
+    journal: &mut RestoreJournal,
+    journal_path: &Path,
+    written: &[PathBuf],
+    originals: &BTreeMap<PathBuf, Option<PathBuf>>,
+    recovery_root: &Path,
+    error: CliError,
+) -> CliError {
+    let error_message = error.message.clone();
+    let state_write_error = journal
+        .set_state(journal_path, RestoreJournalState::RollingBack)
+        .err()
+        .map(journal_error);
+    let rollback = rollback_restore(written, originals);
+    let (state, rollback_error) = match (state_write_error, rollback) {
+        (None, Ok(())) => (RestoreJournalState::RolledBack, None),
+        (state_error, rollback_result) => (
+            RestoreJournalState::RollbackFailed,
+            Some(
+                state_error
+                    .map(|error| error.message)
+                    .or_else(|| rollback_result.err().map(|error| error.message))
+                    .unwrap_or_else(|| "restore rollback failed".to_owned()),
+            ),
+        ),
+    };
+    let journal_write = journal.set_state(journal_path, state);
+    CliError::configuration(
+        format!("backup restore failed: {error_message}"),
+        json!({
+            "recovery_root": recovery_root,
+            "rollback_succeeded": rollback_error.is_none(),
+            "rollback_error": rollback_error,
+            "journal_updated": journal_write.is_ok(),
+        }),
+    )
 }
 
 fn is_sqlite_sidecar(path: &Path) -> bool {
@@ -612,18 +747,24 @@ fn unsafe_target(path: &Path) -> Result<(), CliError> {
     ))
 }
 
-fn rollback_restore(written: &[PathBuf], originals: &BTreeMap<PathBuf, Option<PathBuf>>) {
+fn rollback_restore(
+    written: &[PathBuf],
+    originals: &BTreeMap<PathBuf, Option<PathBuf>>,
+) -> Result<(), CliError> {
     for target in written.iter().rev() {
         match originals.get(target) {
             Some(Some(backup)) => {
-                let _ = fs::copy(backup, target);
+                fs::copy(backup, target).map_err(io_error)?;
             }
             Some(None) => {
-                let _ = fs::remove_file(target);
+                if target.exists() {
+                    fs::remove_file(target).map_err(io_error)?;
+                }
             }
             None => {}
         }
     }
+    Ok(())
 }
 
 fn write_private_atomic(path: &Path, bytes: &[u8]) -> Result<(), CliError> {
