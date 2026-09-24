@@ -14,18 +14,21 @@ from scripts.release_evidence import (
 
 
 class ReleaseEvidenceTests(unittest.TestCase):
-    def _write_dist(self, root: Path) -> tuple[Path, dict[str, bytes]]:
+    def _write_dist(
+        self, root: Path, *, include_desktop: bool = True
+    ) -> tuple[Path, dict[str, bytes]]:
         dist = root / "dist"
         dist.mkdir()
         artifacts = {
             "pandora-x86_64-unknown-linux-gnu": b"native cli\n",
-            "desktop-linux-x64-pandora.AppImage": b"desktop bundle\n",
             "install.sh": b"#!/bin/sh\n",
             "install.ps1": b"Write-Output pandora\n",
             "pandora-cli-2.0.0-beta.7.tgz": b"npm package\n",
             "pandora-cargo-metadata.json": b"{}\n",
             "pandora.spdx.json": b"{}\n",
         }
+        if include_desktop:
+            artifacts["desktop-linux-x64-pandora.AppImage"] = b"desktop bundle\n"
         for name, payload in artifacts.items():
             (dist / name).write_bytes(payload)
         checksums = "\n".join(
@@ -63,6 +66,52 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 {item["path"] for item in evidence["artifacts"]},
                 set(artifacts),
             )
+
+    def test_cli_only_beta_allows_native_only_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            dist, artifacts = self._write_dist(
+                Path(temporary), include_desktop=False
+            )
+
+            evidence = build_release_evidence(
+                "v2.0.0-beta.7", dist, scope="cli-only"
+            )
+
+            self.assertEqual(evidence["release_scope"]["name"], "cli-only")
+            self.assertFalse(evidence["release_scope"]["desktop_required"])
+            self.assertEqual(
+                {item["path"] for item in evidence["artifacts"]},
+                set(artifacts),
+            )
+            self.assertFalse(
+                any(item["path"].startswith("desktop-") for item in evidence["artifacts"])
+            )
+
+    def test_full_scope_requires_desktop_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            dist, _ = self._write_dist(
+                Path(temporary), include_desktop=False
+            )
+
+            with self.assertRaisesRegex(ReleaseEvidenceError, "no desktop artifact"):
+                build_release_evidence("v2.0.0-beta.7", dist, scope="full")
+
+    def test_cli_only_scope_rejects_desktop_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            dist, _ = self._write_dist(Path(temporary))
+
+            with self.assertRaisesRegex(ReleaseEvidenceError, "desktop artifacts"):
+                build_release_evidence(
+                    "v2.0.0-beta.7", dist, scope="cli-only"
+                )
+
+    def test_cli_only_scope_rejects_release_candidate_and_stable(self) -> None:
+        for tag in ("v2.0.0-rc.1", "v2.0.0"):
+            with self.subTest(tag=tag):
+                with self.assertRaisesRegex(
+                    ReleaseEvidenceError, "require full scope"
+                ):
+                    build_release_evidence(tag, Path("."), scope="cli-only")
 
     def test_rejects_an_artifact_changed_after_checksum_generation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

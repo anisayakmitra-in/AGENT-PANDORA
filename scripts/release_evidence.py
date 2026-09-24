@@ -24,6 +24,7 @@ _REQUIRED_FILES = (
 )
 _SIGNATURE_FILES = {"checksums.txt.sig", "checksums.txt.pem"}
 _METADATA_FILES = {"checksums.txt", *_SIGNATURE_FILES, "release-evidence.json"}
+_SCOPES = {"full", "cli-only"}
 
 
 class ReleaseEvidenceError(ValueError):
@@ -69,7 +70,7 @@ def _release_files(dist: Path) -> dict[str, Path]:
     return files
 
 
-def _require_files(files: dict[str, Path]) -> None:
+def _require_files(files: dict[str, Path], *, desktop_required: bool) -> None:
     for name in _REQUIRED_FILES:
         path = files.get(name)
         if path is None or path.stat().st_size == 0:
@@ -84,16 +85,29 @@ def _require_files(files: dict[str, Path]) -> None:
     desktop = [name for name in files if name.startswith("desktop-")]
     if not native:
         raise ReleaseEvidenceError("release evidence has no native CLI artifact")
-    if not desktop:
+    if desktop_required and not desktop:
         raise ReleaseEvidenceError("release evidence has no desktop artifact")
+    if not desktop_required and desktop:
+        raise ReleaseEvidenceError(
+            "cli-only release evidence must not contain desktop artifacts"
+        )
 
 
-def build_release_evidence(tag: str, dist: Path) -> dict[str, object]:
+def build_release_evidence(
+    tag: str, dist: Path, *, scope: str = "full"
+) -> dict[str, object]:
     if _RELEASE_TAG.fullmatch(tag) is None:
         raise ReleaseEvidenceError(f"invalid release tag: {tag}")
+    if type(scope) is not str or scope not in _SCOPES:
+        raise ReleaseEvidenceError(f"unsupported release scope: {scope}")
+    if scope == "cli-only" and platform_signing_required(tag):
+        raise ReleaseEvidenceError(
+            "release-candidate and stable releases require full scope"
+        )
+    desktop_required = scope == "full"
 
     files = _release_files(dist)
-    _require_files(files)
+    _require_files(files, desktop_required=desktop_required)
     try:
         checksums = parse_checksums(files["checksums.txt"].read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, ValueError) as error:
@@ -125,6 +139,10 @@ def build_release_evidence(tag: str, dist: Path) -> dict[str, object]:
     return {
         "schema_version": 1,
         "release_tag": tag,
+        "release_scope": {
+            "name": scope,
+            "desktop_required": desktop_required,
+        },
         "checksum_manifest": {
             "path": "checksums.txt",
             "sha256": sha256_file(files["checksums.txt"]),
@@ -143,7 +161,9 @@ def build_release_evidence(tag: str, dist: Path) -> dict[str, object]:
             "windows_authenticode": signing_status,
             "apple_codesign": signing_status,
             "apple_notarization": signing_status,
-            "independent_published_verification_job": "smoke-desktop",
+            "independent_published_verification_job": (
+                "smoke-desktop" if desktop_required else None
+            ),
         },
         "stable_rollback": {
             "state": stable_rollback_state(tag),
@@ -169,11 +189,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Build Pandora release evidence index")
     parser.add_argument("tag")
     parser.add_argument("--dist", type=Path, default=Path("dist"))
+    parser.add_argument("--scope", choices=sorted(_SCOPES), default="full")
     parser.add_argument("--output", type=Path, default=Path("dist/release-evidence.json"))
     arguments = parser.parse_args()
 
     try:
-        evidence = build_release_evidence(arguments.tag, arguments.dist)
+        evidence = build_release_evidence(
+            arguments.tag, arguments.dist, scope=arguments.scope
+        )
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
         arguments.output.write_text(
             json.dumps(evidence, indent=2, sort_keys=True) + "\n",
