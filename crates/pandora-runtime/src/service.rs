@@ -6,7 +6,9 @@ use crate::artifact_catalog::{ArtifactCatalog, ArtifactCatalogError};
 use crate::evaluation_engine::EvaluationEngine;
 use crate::evolution::{EvolutionEngine, EvolutionError, EvolutionRecord};
 use crate::execution_controller::{ExecutionController, RunStatus, RunSummary, RuntimeError};
-use crate::fleet::{FleetBudget, FleetEngine, FleetError, FleetNode, FleetQuiescenceGuard};
+use crate::fleet::{
+    FleetBudget, FleetEngine, FleetError, FleetLeaseFence, FleetNode, FleetQuiescenceGuard,
+};
 use crate::identity::{AccessRole, ServiceIdentity};
 use crate::orchestration_store::{
     OrchestrationRunRecord, OrchestrationStore, OrchestrationStoreError,
@@ -333,11 +335,23 @@ struct RuntimeServiceFleet {
 struct ActiveServiceLease {
     engine: Arc<FleetEngine>,
     lease_id: String,
+    fence: FleetLeaseFence,
+}
+
+impl ActiveServiceLease {
+    fn assert_current(&self, now: Timestamp) -> Result<(), RuntimeServiceError> {
+        self.engine
+            .assert_fence(&self.fence, now.as_unix_seconds())?;
+        Ok(())
+    }
 }
 
 impl Drop for ActiveServiceLease {
     fn drop(&mut self) {
         let _ = self.engine.release_lease(&self.lease_id);
+        let _ = self
+            .engine
+            .release_fence(&self.fence, self.fence.expires_at().saturating_sub(1));
     }
 }
 
@@ -2192,8 +2206,11 @@ impl RuntimeService {
         let session = self.allocate_session(scope, now)?;
         let intent = service_task_intent(request)?;
 
-        let _active_lease = self.acquire_execution_lease(&session, now, 0)?;
+        let active_lease = self.acquire_execution_lease(&session, now, 0)?;
         let summary = self.controller.run_at(intent, session.clone(), now)?;
+        if let Some(lease) = &active_lease {
+            lease.assert_current(now)?;
+        }
         self.sessions.create(&session)?;
         self.persist_execution(&session, &summary, "local", now)?;
 
@@ -2226,7 +2243,7 @@ impl RuntimeService {
         )?;
         let session = snapshot.session().clone();
         let intent = service_task_intent(request.request())?;
-        let _active_lease = self.acquire_execution_lease(&session, now, 0)?;
+        let active_lease = self.acquire_execution_lease(&session, now, 0)?;
         let summary = self.controller.run_with_approval(
             intent,
             session.clone(),
@@ -2234,6 +2251,9 @@ impl RuntimeService {
             request.approval_id(),
             now,
         )?;
+        if let Some(lease) = &active_lease {
+            lease.assert_current(now)?;
+        }
         self.persist_execution(&session, &summary, "local", now)?;
 
         Ok(ServiceResponse::run(service_run_result(
@@ -2283,7 +2303,7 @@ impl RuntimeService {
                 (session, Vec::new())
             }
         };
-        let _active_lease =
+        let active_lease =
             self.acquire_execution_lease(&session, now, u64::from(agent.max_tool_calls))?;
         let provider_id = provider.manifest().id().as_str();
         let l1_evidence = self.sessions.l1_evidence_context(
@@ -2305,10 +2325,14 @@ impl RuntimeService {
             agent_request = agent_request.with_model(model);
         }
 
-        match agent
-            .loop_engine
-            .run_with_request(provider.as_ref(), &self.controller, agent_request)
-        {
+        let run_result =
+            agent
+                .loop_engine
+                .run_with_request(provider.as_ref(), &self.controller, agent_request);
+        if let Some(lease) = &active_lease {
+            lease.assert_current(now)?;
+        }
+        match run_result {
             Ok(summary) => self.finish_agent_run(
                 &session,
                 &summary,
@@ -2363,7 +2387,7 @@ impl RuntimeService {
             scope.workspace_id(),
         )?;
         let session = snapshot.session().clone();
-        let _active_lease =
+        let active_lease =
             self.acquire_execution_lease(&session, now, u64::from(agent.max_tool_calls))?;
         let provider_id = provider.manifest().id().as_str();
         let l1_evidence = self.sessions.l1_evidence_context(
@@ -2393,7 +2417,7 @@ impl RuntimeService {
             approval_context = approval_context.with_model(model);
         }
 
-        match agent
+        let run_result = agent
             .loop_engine
             .run_with_history_and_approval_and_skill_context(
                 provider.as_ref(),
@@ -2402,7 +2426,11 @@ impl RuntimeService {
                 approval_context,
                 agent.skill_context.as_deref(),
                 "resume approved operation",
-            ) {
+            );
+        if let Some(lease) = &active_lease {
+            lease.assert_current(now)?;
+        }
+        match run_result {
             Ok(summary) => self.finish_agent_run(
                 &session,
                 &summary,
@@ -2519,9 +2547,22 @@ impl RuntimeService {
             now,
             60 * 60,
         )?;
+        let fence = match fleet.engine.acquire_fence(
+            format!("service-execution:{}", session.id()),
+            fleet.node_id.clone(),
+            now,
+            60 * 60,
+        ) {
+            Ok(fence) => fence,
+            Err(error) => {
+                let _ = fleet.engine.release_lease(&lease_id);
+                return Err(error.into());
+            }
+        };
         Ok(Some(ActiveServiceLease {
             engine: Arc::clone(&fleet.engine),
             lease_id,
+            fence,
         }))
     }
 
@@ -3012,7 +3053,7 @@ mod tests {
         EvolutionPolicy, EvolutionSource, HoldoutEvaluation, MemoryApproval, MemoryId, MemoryKind,
         MemoryRecord, MemoryScope, MutationProposal, Operation, PackageCompatibility, PackageKind,
         PackageManifest, ParliamentApproval, PolicyContext, ReplacementReceipt, RequestDigest,
-        TrustEvidence, hash_artifact,
+        SessionId, TrustEvidence, hash_artifact,
     };
     use std::sync::Mutex;
 
@@ -3088,6 +3129,43 @@ mod tests {
             TrustEvidence::unsigned(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn service_execution_fence_rejects_expired_completion() {
+        let root = crate::test_support::new_temp_dir("pandora-runtime-service-fence").unwrap();
+        let principal = PrincipalId::new("principal-fence").unwrap();
+        let tenant = TenantId::new("tenant-fence").unwrap();
+        let workspace = WorkspaceId::new("workspace-fence").unwrap();
+        let service = RuntimeService::new(
+            ExecutionController::new(WorkspaceRoot::new(&root).unwrap()),
+            SessionStore::open(root.join("sessions.sqlite3")).unwrap(),
+            ApprovalStore::open(root.join("sessions.sqlite3")).unwrap(),
+            RuntimeServiceScope::new(principal.clone(), tenant.clone(), workspace.clone()),
+        )
+        .with_fleet(
+            FleetEngine::open(root.join("fleet.sqlite3")).unwrap(),
+            "service-fence-test",
+        )
+        .unwrap();
+        let session = Session::new(
+            SessionId::new("session-fence").unwrap(),
+            principal,
+            tenant,
+            workspace,
+            Timestamp::from_unix_seconds(10),
+        );
+        let lease = service
+            .acquire_execution_lease(&session, Timestamp::from_unix_seconds(10), 0)
+            .unwrap()
+            .unwrap();
+        lease
+            .assert_current(Timestamp::from_unix_seconds(10))
+            .unwrap();
+        assert!(matches!(
+            lease.assert_current(Timestamp::from_unix_seconds(3_610)),
+            Err(RuntimeServiceError::Fleet(FleetError::FenceExpired))
+        ));
     }
 
     #[test]
