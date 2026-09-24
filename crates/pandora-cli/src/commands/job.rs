@@ -1,8 +1,8 @@
 use super::{load_config, parse_options, require_config_file, session_scope, timestamp};
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{
-    FleetBudget, FleetEngine, FleetError, FleetLeaseFence, FleetNode, FleetSupervisorState,
-    JobRecord, JobStore, JobStoreError,
+    AgentCheckpoint, AgentControlStop, AgentRunControl, FleetBudget, FleetEngine, FleetError,
+    FleetLeaseFence, FleetNode, FleetSupervisorState, JobRecord, JobStore, JobStoreError,
 };
 use pandora_types::{JobCommand, JobId, JobRequest, JobStatus, JobWorkerId};
 use serde_json::{Map, Value, json};
@@ -24,19 +24,38 @@ struct ActiveJobSupervisor {
     lease_id: String,
     execution_id: String,
     fence: FleetLeaseFence,
+    cancelled: Arc<AtomicBool>,
     shutdown_complete: bool,
     fence_released: bool,
 }
 
 impl ActiveJobSupervisor {
-    fn shutdown_requested(&self) -> Result<bool, FleetError> {
-        let supervisor = self
-            .fleet
+    fn supervisor_state(&self) -> Result<FleetSupervisorState, FleetError> {
+        self.fleet
             .list_supervisors()?
             .into_iter()
             .find(|supervisor| supervisor.node_id() == self.node_id)
-            .ok_or(FleetError::SupervisorNotFound)?;
-        Ok(supervisor.state() != FleetSupervisorState::Running)
+            .map(|supervisor| supervisor.state())
+            .ok_or(FleetError::SupervisorNotFound)
+    }
+
+    fn shutdown_requested(&self) -> Result<bool, FleetError> {
+        Ok(self.supervisor_state()? != FleetSupervisorState::Running)
+    }
+
+    fn checkpoint(&self) -> Result<(), AgentControlStop> {
+        if self.cancelled.load(Ordering::Acquire) {
+            return Err(AgentControlStop::FenceLost);
+        }
+        match self.supervisor_state() {
+            Ok(FleetSupervisorState::Running | FleetSupervisorState::Draining) => {}
+            Ok(FleetSupervisorState::Stopped | FleetSupervisorState::Recovering) => {
+                return Err(AgentControlStop::FenceLost);
+            }
+            Err(_) => return Err(AgentControlStop::CancellationStateUnavailable),
+        }
+        self.assert_current(timestamp().as_unix_seconds())
+            .map_err(|_| AgentControlStop::FenceLost)
     }
 
     fn heartbeat(&self) -> Result<(), FleetError> {
@@ -66,6 +85,7 @@ impl ActiveJobSupervisor {
         let lease_id = self.lease_id.clone();
         let execution_id = self.execution_id.clone();
         let fence = self.fence.clone();
+        let cancelled = Arc::clone(&self.cancelled);
         let handle = thread::spawn(move || {
             while active_for_thread.load(Ordering::Acquire) {
                 for _ in 0..JOB_WORKER_HEARTBEAT_SECONDS {
@@ -81,9 +101,17 @@ impl ActiveJobSupervisor {
                         .map(|supervisor| supervisor.state())
                         .ok_or(FleetError::SupervisorNotFound)
                 });
-                if matches!(state, Ok(state) if state != FleetSupervisorState::Running) {
-                    stop_requested_for_thread.store(true, Ordering::Release);
-                    break;
+                match state {
+                    Ok(FleetSupervisorState::Draining) => {
+                        stop_requested_for_thread.store(true, Ordering::Release);
+                        break;
+                    }
+                    Ok(FleetSupervisorState::Stopped | FleetSupervisorState::Recovering) => {
+                        cancelled.store(true, Ordering::Release);
+                        stop_requested_for_thread.store(true, Ordering::Release);
+                        break;
+                    }
+                    Ok(FleetSupervisorState::Running) | Err(_) => {}
                 }
                 let now = timestamp().as_unix_seconds();
                 let heartbeat_result = fleet
@@ -110,11 +138,12 @@ impl ActiveJobSupervisor {
                                 .find(|supervisor| supervisor.node_id() == node_id)
                         })
                         .is_some_and(|supervisor| {
-                            supervisor.state() != FleetSupervisorState::Running
+                            supervisor.state() == FleetSupervisorState::Draining
                         });
                     if drain_won {
                         stop_requested_for_thread.store(true, Ordering::Release);
                     } else {
+                        cancelled.store(true, Ordering::Release);
                         failed_for_thread.store(true, Ordering::Release);
                     }
                     break;
@@ -279,9 +308,37 @@ fn start_job_supervisor(config: &super::RuntimeConfig) -> Result<ActiveJobSuperv
         lease_id,
         execution_id,
         fence,
+        cancelled: Arc::new(AtomicBool::new(false)),
         shutdown_complete: false,
         fence_released: false,
     })
+}
+
+fn worker_control_error(error: AgentControlStop) -> CliError {
+    let reason = match error {
+        AgentControlStop::FenceLost => "fence_lost",
+        AgentControlStop::CancellationStateUnavailable => "cancellation_state_unavailable",
+        AgentControlStop::Cancelled => "cancelled",
+        AgentControlStop::TokenBudgetExceeded => "token_budget_exceeded",
+        AgentControlStop::DurationBudgetExceeded => "duration_budget_exceeded",
+    };
+    CliError::execution(
+        error.to_string(),
+        json!({"code": "worker_fence_lost", "reason": reason}),
+    )
+}
+
+fn job_status_for_error(error: &CliError) -> JobStatus {
+    if error.code == "approval_required" {
+        JobStatus::ApprovalRequired
+    } else if matches!(
+        error.details.get("reason").and_then(Value::as_str),
+        Some("fence_lost" | "cancellation_state_unavailable")
+    ) {
+        JobStatus::Interrupted
+    } else {
+        JobStatus::Failed
+    }
 }
 
 fn fleet_error(error: FleetError) -> CliError {
@@ -415,6 +472,16 @@ fn mark_interrupted(args: &[String]) -> Result<CommandResult, CliError> {
             job.id()
         ),
     ))
+}
+
+struct JobFenceControl<'a> {
+    supervisor: &'a ActiveJobSupervisor,
+}
+
+impl AgentRunControl for JobFenceControl<'_> {
+    fn checkpoint(&self, _checkpoint: AgentCheckpoint<'_>) -> Result<(), AgentControlStop> {
+        self.supervisor.checkpoint()
+    }
 }
 
 fn work(args: &[String]) -> Result<CommandResult, CliError> {
@@ -718,12 +785,29 @@ fn execute_one_job(
     else {
         return Ok(None);
     };
+    let control = JobFenceControl { supervisor };
     let result = match job.request().command() {
-        JobCommand::Run => super::run::execute(job.request().arguments()),
+        JobCommand::Run => {
+            super::run::execute_with_control(job.request().arguments(), Some(&control))
+        }
     };
-    supervisor
-        .assert_current(timestamp().as_unix_seconds())
-        .map_err(fleet_error)?;
+    if let Err(control_error) = supervisor.checkpoint() {
+        let error = worker_control_error(control_error);
+        let result = error.envelope();
+        store
+            .finish(
+                job.id(),
+                principal,
+                tenant,
+                workspace,
+                worker_id,
+                JobStatus::Interrupted,
+                &result,
+                timestamp(),
+            )
+            .map_err(job_store_error)?;
+        return Err(error);
+    }
     match result {
         Ok(result) => {
             let result = crate::output::envelope(result);
@@ -746,11 +830,7 @@ fn execute_one_job(
             }))
         }
         Err(mut error) => {
-            let status = if error.code == "approval_required" {
-                JobStatus::ApprovalRequired
-            } else {
-                JobStatus::Failed
-            };
+            let status = job_status_for_error(&error);
             let result = error.envelope();
             store
                 .finish(
@@ -944,6 +1024,13 @@ mod tests {
     use std::fs;
 
     #[test]
+    fn fence_loss_is_classified_as_an_interrupted_job() {
+        let error = worker_control_error(AgentControlStop::FenceLost);
+        assert_eq!(job_status_for_error(&error), JobStatus::Interrupted);
+        assert_eq!(error.details["reason"], "fence_lost");
+    }
+
+    #[test]
     fn job_supervisor_fence_rejects_expired_completion() {
         let root = std::env::temp_dir().join(format!("pandora-job-fence-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
@@ -981,6 +1068,7 @@ mod tests {
             lease_id: lease_id.to_owned(),
             execution_id: "job-process:test".to_owned(),
             fence,
+            cancelled: Arc::new(AtomicBool::new(false)),
             shutdown_complete: false,
             fence_released: false,
         };
@@ -988,6 +1076,10 @@ mod tests {
         assert!(matches!(
             supervisor.assert_current(3_610),
             Err(FleetError::FenceExpired)
+        ));
+        assert!(matches!(
+            supervisor.checkpoint(),
+            Err(AgentControlStop::FenceLost)
         ));
         supervisor.shutdown().unwrap();
         let _ = fs::remove_dir_all(root);

@@ -80,6 +80,13 @@ type WasmGeneResolutions = BTreeMap<(String, String), WasmGeneResolution>;
 type PackageWasmGenes = (Vec<Box<dyn Gene>>, WasmGeneResolutions);
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
+    execute_with_control(args, None)
+}
+
+pub(super) fn execute_with_control(
+    args: &[String],
+    control: Option<&dyn pandora_runtime::AgentRunControl>,
+) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
         args,
         &[
@@ -280,7 +287,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                 optimization,
                 max_turns,
                 max_tool_calls,
-                control: None,
+                control,
                 trusted_harness: None,
             },
         );
