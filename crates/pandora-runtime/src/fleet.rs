@@ -305,6 +305,7 @@ impl FleetLease {
     }
 }
 
+#[derive(Clone)]
 pub struct FleetLeaseFence {
     key: String,
     owner_id: String,

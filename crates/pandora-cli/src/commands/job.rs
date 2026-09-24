@@ -1,8 +1,8 @@
 use super::{load_config, parse_options, require_config_file, session_scope, timestamp};
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{
-    FleetBudget, FleetEngine, FleetError, FleetNode, FleetSupervisorState, JobRecord, JobStore,
-    JobStoreError,
+    FleetBudget, FleetEngine, FleetError, FleetLeaseFence, FleetNode, FleetSupervisorState,
+    JobRecord, JobStore, JobStoreError,
 };
 use pandora_types::{JobCommand, JobId, JobRequest, JobStatus, JobWorkerId};
 use serde_json::{Map, Value, json};
@@ -23,7 +23,9 @@ struct ActiveJobSupervisor {
     node_id: String,
     lease_id: String,
     execution_id: String,
+    fence: FleetLeaseFence,
     shutdown_complete: bool,
+    fence_released: bool,
 }
 
 impl ActiveJobSupervisor {
@@ -47,6 +49,8 @@ impl ActiveJobSupervisor {
             now,
             JOB_WORKER_LEASE_DURATION_SECONDS,
         )?;
+        self.fleet
+            .renew_fence(&self.fence, now, JOB_WORKER_LEASE_DURATION_SECONDS)?;
         Ok(())
     }
 
@@ -61,6 +65,7 @@ impl ActiveJobSupervisor {
         let node_id = self.node_id.clone();
         let lease_id = self.lease_id.clone();
         let execution_id = self.execution_id.clone();
+        let fence = self.fence.clone();
         let handle = thread::spawn(move || {
             while active_for_thread.load(Ordering::Acquire) {
                 for _ in 0..JOB_WORKER_HEARTBEAT_SECONDS {
@@ -84,12 +89,16 @@ impl ActiveJobSupervisor {
                 let heartbeat_result = fleet
                     .heartbeat_supervisor_for_process(&node_id, std::process::id(), now)
                     .and_then(|_| {
-                        fleet.renew_lease(
-                            &lease_id,
-                            &execution_id,
-                            now,
-                            JOB_WORKER_LEASE_DURATION_SECONDS,
-                        )
+                        fleet
+                            .renew_lease(
+                                &lease_id,
+                                &execution_id,
+                                now,
+                                JOB_WORKER_LEASE_DURATION_SECONDS,
+                            )
+                            .and_then(|_| {
+                                fleet.renew_fence(&fence, now, JOB_WORKER_LEASE_DURATION_SECONDS)
+                            })
                     });
                 if heartbeat_result.is_err() {
                     let drain_won = fleet
@@ -120,9 +129,25 @@ impl ActiveJobSupervisor {
         }
     }
 
+    fn assert_current(&self, now: u64) -> Result<(), FleetError> {
+        self.fleet.assert_fence(&self.fence, now)
+    }
+
     fn shutdown(&mut self) -> Result<(), FleetError> {
         if self.shutdown_complete {
             return Ok(());
+        }
+        if !self.fence_released {
+            match self
+                .fleet
+                .release_fence(&self.fence, self.fence.expires_at().saturating_sub(1))
+            {
+                Ok(()) => self.fence_released = true,
+                Err(FleetError::FenceExpired | FleetError::FenceMismatch) => {
+                    self.fence_released = true;
+                }
+                Err(error) => return Err(error),
+            }
         }
         let mut last_database_error = None;
         for attempt in 0..JOB_WORKER_SHUTDOWN_RETRIES {
@@ -228,12 +253,28 @@ fn start_job_supervisor(config: &super::RuntimeConfig) -> Result<ActiveJobSuperv
         let _ = fleet.stop_supervisor(&node_id, now);
         return Err(fleet_error(error));
     }
+    let fence = match fleet.acquire_fence(
+        format!("job-worker:{node_id}"),
+        node_id.clone(),
+        now,
+        JOB_WORKER_LEASE_DURATION_SECONDS,
+    ) {
+        Ok(fence) => fence,
+        Err(error) => {
+            let _ = fleet.release_lease(&lease_id);
+            let _ = fleet.drain_supervisor(&node_id, now);
+            let _ = fleet.stop_supervisor(&node_id, now);
+            return Err(fleet_error(error));
+        }
+    };
     Ok(ActiveJobSupervisor {
         fleet,
         node_id,
         lease_id,
         execution_id,
+        fence,
         shutdown_complete: false,
+        fence_released: false,
     })
 }
 
@@ -438,10 +479,23 @@ fn work(args: &[String]) -> Result<CommandResult, CliError> {
         )
     } else if let Some(max_jobs) = max_jobs {
         drain_jobs(
-            &store, &principal, &tenant, &workspace, &worker_id, max_jobs,
+            &store,
+            &principal,
+            &tenant,
+            &workspace,
+            &worker_id,
+            &supervisor,
+            max_jobs,
         )
     } else {
-        match execute_one_job(&store, &principal, &tenant, &workspace, &worker_id)? {
+        match execute_one_job(
+            &store,
+            &principal,
+            &tenant,
+            &workspace,
+            &worker_id,
+            &supervisor,
+        )? {
             Some(completed) => Ok(success(
                 "job work",
                 json!({
@@ -528,6 +582,7 @@ fn watch_jobs(
             context.tenant,
             context.workspace,
             context.worker_id,
+            context.supervisor,
         ) {
             Ok(Some(completed)) => {
                 jobs.push(job_summary(&completed));
@@ -577,6 +632,7 @@ fn daemon_jobs(
             context.tenant,
             context.workspace,
             context.worker_id,
+            context.supervisor,
         ) {
             Ok(Some(completed)) => jobs.push(job_summary(&completed)),
             Ok(None) => thread::sleep(Duration::from_millis(250)),
@@ -605,12 +661,13 @@ fn drain_jobs(
     tenant: &pandora_types::TenantId,
     workspace: &pandora_types::WorkspaceId,
     worker_id: &JobWorkerId,
+    supervisor: &ActiveJobSupervisor,
     max_jobs: usize,
 ) -> Result<CommandResult, CliError> {
     let mut jobs = Vec::with_capacity(max_jobs);
     let mut stop_reason = "limit_reached";
     for _ in 0..max_jobs {
-        match execute_one_job(store, principal, tenant, workspace, worker_id) {
+        match execute_one_job(store, principal, tenant, workspace, worker_id, supervisor) {
             Ok(Some(completed)) => jobs.push(job_summary(&completed)),
             Ok(None) => {
                 stop_reason = "queue_empty";
@@ -647,6 +704,7 @@ fn execute_one_job(
     tenant: &pandora_types::TenantId,
     workspace: &pandora_types::WorkspaceId,
     worker_id: &JobWorkerId,
+    supervisor: &ActiveJobSupervisor,
 ) -> Result<Option<CompletedJob>, CliError> {
     let Some(job) = store
         .claim_next(principal, tenant, workspace, worker_id, timestamp())
@@ -657,6 +715,9 @@ fn execute_one_job(
     let result = match job.request().command() {
         JobCommand::Run => super::run::execute(job.request().arguments()),
     };
+    supervisor
+        .assert_current(timestamp().as_unix_seconds())
+        .map_err(fleet_error)?;
     match result {
         Ok(result) => {
             let result = crate::output::envelope(result);
@@ -875,6 +936,56 @@ mod tests {
     use pandora_runtime::JobStore;
     use pandora_types::{JobCommand, JobRequest, JobWorkerId};
     use std::fs;
+
+    #[test]
+    fn job_supervisor_fence_rejects_expired_completion() {
+        let root = std::env::temp_dir().join(format!("pandora-job-fence-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let fleet = Arc::new(FleetEngine::open(root.join("fleet.sqlite3")).unwrap());
+        let node = FleetNode::new(
+            "job-worker",
+            env!("CARGO_PKG_VERSION"),
+            "local-job-worker",
+            ["job.work".to_owned()],
+            10,
+        )
+        .unwrap();
+        fleet.register_node(&node).unwrap();
+        fleet
+            .start_supervisor_for_process("job-worker", std::process::id(), 10)
+            .unwrap();
+        let lease_id = "job-process-lease-fence";
+        fleet
+            .acquire_lease(
+                lease_id,
+                "job-worker",
+                "job-process:test",
+                FleetBudget::new(0, 0, 3_600, 0),
+                10,
+                3_600,
+            )
+            .unwrap();
+        let fence = fleet
+            .acquire_fence("job-worker:job-worker", "job-worker", 10, 3_600)
+            .unwrap();
+        let mut supervisor = ActiveJobSupervisor {
+            fleet,
+            node_id: "job-worker".to_owned(),
+            lease_id: lease_id.to_owned(),
+            execution_id: "job-process:test".to_owned(),
+            fence,
+            shutdown_complete: false,
+            fence_released: false,
+        };
+        supervisor.assert_current(10).unwrap();
+        assert!(matches!(
+            supervisor.assert_current(3_610),
+            Err(FleetError::FenceExpired)
+        ));
+        supervisor.shutdown().unwrap();
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn submit_requires_a_separator_before_run_arguments() {
