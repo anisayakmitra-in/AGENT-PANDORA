@@ -232,10 +232,11 @@ the retained JSON records the exact request binding and requester.
 
 Alpha and beta tags may publish unsigned native and desktop packages for
 testing, and GitHub marks them as prereleases. The verification, native build,
-and desktop build jobs receive no platform-signing secrets. For release-candidate
-and stable tags, a protected `sign-native` job downloads the immutable unsigned
-CLI artifact, verifies release approval, signs and verifies Windows Authenticode
-or Apple code signing, and uploads a separately named signed artifact.
+and desktop build jobs receive no platform-signing secrets. A future
+release-candidate and stable path would use a protected `sign-native` job to
+download the immutable unsigned CLI artifact, verify release approval, sign and
+verify Windows Authenticode or Apple code signing, and upload a separately named
+signed artifact.
 
 RC and stable currently fail before public release because isolated Tauri desktop
 signing is not configured. Tauri normally consumes Apple signing/notarization
@@ -246,6 +247,12 @@ remote/HSM-backed or otherwise isolated desktop signing design. Desktop feature
 parity remains deferred, but the existing tag workflow still builds and
 publishes desktop assets, so desktop artifact generation remains a publication
 blocker.
+
+The published-package signature and notarization smoke checks are not reachable
+in the current workflow while RC and stable remain blocked: alpha and beta
+publish unsigned artifacts, and the RC/stable path stops at the secretless gate.
+They therefore do not provide current platform-signature or notarization
+evidence.
 
 Publication also waits at the protected `release-publication` environment, which
 accepts only `v*` tags and requires a human reviewer. RC and stable source

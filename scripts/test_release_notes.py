@@ -160,6 +160,9 @@ Older notes.
             encoding="utf-8"
         )
 
+        gate_start = workflow.index("  release-gate:")
+        gate_end = workflow.index("\n  build:", gate_start)
+        gate = workflow[gate_start:gate_end]
         desktop_start = workflow.index("  build-desktop:")
         publish_start = workflow.index("\n  publish:", desktop_start)
         desktop = workflow[desktop_start:publish_start]
@@ -184,13 +187,20 @@ Older notes.
         self.assertIn("Verify desktop system install lifecycle", desktop)
         self.assertIn("PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE: \"1\"", desktop)
 
-        block = publish.index("Block RC and stable until isolated desktop signing is configured")
-        checksums = publish.index("- name: Generate checksums")
-        self.assertLess(block, checksums)
+        self.assertIn("needs: verify", gate)
+        self.assertIn("permissions:\n      contents: read", gate)
+        self.assertIn(
+            "if: contains(github.ref_name, '-rc.') || !contains(github.ref_name, '-')",
+            gate,
+        )
+        block = gate.index("Block RC and stable until isolated desktop signing is configured")
+        self.assertLess(block, gate.index("exit 1"))
         self.assertIn(
             "RC/stable release blocked: isolated desktop platform signing is not configured",
-            publish,
+            gate,
         )
+        self.assertIn("exit 1", gate)
+        self.assertNotIn("Block RC and stable", publish)
         self.assertIn("codesign --verify --deep --strict", workflow)
         self.assertIn("spctl --assess --type execute", workflow)
         self.assertIn("xcrun stapler validate", workflow)
@@ -201,9 +211,26 @@ Older notes.
             encoding="utf-8"
         )
 
+        gate_start = workflow.index("  release-gate:")
+        gate_end = workflow.index("\n  build:", gate_start)
+        gate = workflow[gate_start:gate_end]
         sign_start = workflow.index("  sign-native:")
         stage_start = workflow.index("\n  stage-native:", sign_start)
+        publish_start = workflow.index("\n  publish:", sign_start)
         signing = workflow[sign_start:stage_start]
+        publish = workflow[publish_start:]
+
+        self.assertIn("needs: verify", gate)
+        self.assertIn(
+            "if: contains(github.ref_name, '-rc.') || !contains(github.ref_name, '-')",
+            gate,
+        )
+        self.assertIn(
+            "RC/stable release blocked: isolated desktop platform signing is not configured",
+            gate,
+        )
+        self.assertIn("exit 1", gate)
+        self.assertNotIn("environment:", gate)
         self.assertIn("Enforce release approval", signing)
         self.assertIn("environment: release-publication", signing)
         self.assertIn("PANDORA_RELEASE_CANDIDATE_APPROVED:", signing)
@@ -211,9 +238,12 @@ Older notes.
         self.assertIn('if [[ "$version" == *-rc.* ]]', signing)
         self.assertIn("PANDORA_WINDOWS_CERTIFICATE_BASE64:", signing)
         self.assertIn("PANDORA_APPLE_CERTIFICATE_BASE64:", signing)
+        self.assertIn("APPLE_TEAM_ID:", signing)
         self.assertNotIn("APPLE_ID", signing)
+        self.assertIn("needs: [verify, build, release-gate]", signing)
+        self.assertIn("needs: [release-gate, stage-native, build-desktop]", publish)
+        self.assertNotIn("Block RC and stable", publish)
         self.assertIn("environment: release-publication", workflow)
-        self.assertIn("Block RC and stable until isolated desktop signing is configured", workflow)
         self.assertIn("Validate required native accessibility evidence", workflow)
         self.assertIn("scripts/accessibility_evidence.py", workflow)
 

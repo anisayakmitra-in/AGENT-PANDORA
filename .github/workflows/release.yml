@@ -108,6 +108,20 @@ jobs:
       - name: Validate documentation
         run: python scripts/validate_docs.py
 
+  release-gate:
+    name: Gate protected release jobs
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Block RC and stable until isolated desktop signing is configured
+        if: contains(github.ref_name, '-rc.') || !contains(github.ref_name, '-')
+        shell: bash
+        run: |
+          echo "RC/stable release blocked: isolated desktop platform signing is not configured" >&2
+          exit 1
+
   build:
     name: Build ${{ matrix.target }}
     needs: verify
@@ -192,7 +206,7 @@ jobs:
 
   sign-native:
     name: Sign native CLI ${{ matrix.target }}
-    needs: [verify, build]
+    needs: [verify, build, release-gate]
     if: contains(github.ref_name, '-rc.') || !contains(github.ref_name, '-')
     environment: release-publication
     permissions:
@@ -201,9 +215,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact: pandora-x86_64-unknown-linux-gnu
           - os: macos-15-intel
             target: x86_64-apple-darwin
             artifact: pandora-x86_64-apple-darwin
@@ -242,9 +253,13 @@ jobs:
           PANDORA_APPLE_CERTIFICATE_BASE64: ${{ secrets.PANDORA_APPLE_CERTIFICATE_BASE64 }}
           PANDORA_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.PANDORA_APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          artifact="$RUNNER_TEMP/native-unsigned/${{ matrix.artifact }}"
+          mkdir -p "$RUNNER_TEMP/native-release"
+          staged="$RUNNER_TEMP/native-release/${{ matrix.artifact }}"
+          cp "$RUNNER_TEMP/native-unsigned/${{ matrix.artifact }}" "$staged"
+          chmod 0755 "$staged"
           certificate="$RUNNER_TEMP/pandora-signing.p12"
           keychain="$RUNNER_TEMP/pandora-signing.keychain-db"
           cleanup() {
@@ -258,9 +273,11 @@ jobs:
           security import "$certificate" -k "$keychain" -P "$PANDORA_APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$GITHUB_RUN_ID" "$keychain"
           security list-keychains -d user -s "$keychain"
-          codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$artifact"
-          codesign --verify --strict --verbose=2 "$artifact"
-          test "$("$artifact" --version)" = "pandora ${GITHUB_REF_NAME#v}"
+          codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$staged"
+          identity="$(codesign -dv --verbose=4 "$staged" 2>&1)"
+          printf '%s\n' "$identity" | grep -Fq "Authority=Developer ID Application:"
+          printf '%s\n' "$identity" | grep -Fq "TeamIdentifier=$APPLE_TEAM_ID"
+          codesign --verify --strict --verbose=2 "$staged"
 
       - name: Sign native CLI (Windows)
         if: runner.os == 'Windows'
@@ -269,42 +286,26 @@ jobs:
           PANDORA_WINDOWS_CERTIFICATE_BASE64: ${{ secrets.PANDORA_WINDOWS_CERTIFICATE_BASE64 }}
           PANDORA_WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.PANDORA_WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
-          $artifact = Join-Path $env:RUNNER_TEMP "native-unsigned\${{ matrix.artifact }}"
+          $source = Join-Path $env:RUNNER_TEMP "native-unsigned\${{ matrix.artifact }}"
+          $staged = Join-Path $env:RUNNER_TEMP "native-release\${{ matrix.artifact }}"
           $certificatePath = Join-Path $env:RUNNER_TEMP "pandora-signing.pfx"
           $certificate = $null
           try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $env:RUNNER_TEMP "native-release") | Out-Null
+            Copy-Item -LiteralPath $source -Destination $staged
             [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:PANDORA_WINDOWS_CERTIFICATE_BASE64))
             $securePassword = ConvertTo-SecureString -String $env:PANDORA_WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
             $certificate = Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\My -Password $securePassword -Exportable:$false
-            & signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /sha1 $certificate.Thumbprint $artifact
+            & signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /sha1 $certificate.Thumbprint $staged
             if ($LASTEXITCODE -ne 0) { throw "Windows CLI signing failed" }
-            & signtool verify /pa /all /v $artifact
+            & signtool verify /pa /all /v $staged
             if ($LASTEXITCODE -ne 0) { throw "Windows CLI signature verification failed" }
-            $actual = (& $artifact --version).Trim()
-            if ($LASTEXITCODE -ne 0) { throw "signed Windows CLI smoke test failed" }
-            if ($actual -ne "pandora " + $env:GITHUB_REF_NAME.Substring(1)) { throw "signed Windows CLI version mismatch" }
           } finally {
             if ($null -ne $certificate) {
               Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($certificate.Thumbprint)" -DeleteKey -ErrorAction SilentlyContinue
             }
             Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
           }
-
-      - name: Stage signed native artifact (Unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/native-release"
-          cp "$RUNNER_TEMP/native-unsigned/${{ matrix.artifact }}" "$RUNNER_TEMP/native-release/${{ matrix.artifact }}"
-          chmod 0755 "$RUNNER_TEMP/native-release/${{ matrix.artifact }}"
-
-      - name: Stage signed native artifact (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path (Join-Path $env:RUNNER_TEMP "native-release") | Out-Null
-          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP "native-unsigned\${{ matrix.artifact }}") -Destination (Join-Path $env:RUNNER_TEMP "native-release\${{ matrix.artifact }}")
 
       - name: Upload signed native artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -316,13 +317,13 @@ jobs:
 
   stage-native:
     name: Stage native release artifacts
-    needs: [build, sign-native]
-    if: always() && needs.build.result == 'success' && (needs.sign-native.result == 'success' || needs.sign-native.result == 'skipped')
+    needs: [build, sign-native, release-gate]
+    if: always() && needs.build.result == 'success' && needs.release-gate.result == 'success' && (needs.sign-native.result == 'success' || needs.sign-native.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - name: Download unsigned native artifacts for beta
+      - name: Download unsigned native artifacts for alpha and beta
         if: contains(github.ref_name, '-') && !contains(github.ref_name, '-rc.')
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -338,6 +339,14 @@ jobs:
           path: ${{ runner.temp }}/native-release
           merge-multiple: true
 
+      - name: Download unsigned Linux native artifact for RC and stable
+        if: contains(github.ref_name, '-rc.') || !contains(github.ref_name, '-')
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: native-unsigned-x86_64-unknown-linux-gnu
+          path: ${{ runner.temp }}/native-release
+          merge-multiple: true
+
       - name: Upload staged native release artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -348,7 +357,7 @@ jobs:
 
   build-desktop:
     name: Build desktop ${{ matrix.platform }}
-    needs: [verify, build]
+    needs: [verify, build, release-gate]
     strategy:
       fail-fast: false
       matrix:
@@ -489,8 +498,8 @@ jobs:
 
   publish:
     name: Publish release assets
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [stage-native, build-desktop]
+    if: startsWith(github.ref, 'refs/tags/v') && needs.release-gate.result == 'success'
+    needs: [release-gate, stage-native, build-desktop]
     runs-on: ubuntu-latest
     environment: release-publication
     permissions:
@@ -526,13 +535,6 @@ jobs:
           pattern: desktop-unsigned-*
           path: dist
           merge-multiple: true
-
-      - name: Block RC and stable until isolated desktop signing is configured
-        if: contains(github.ref_name, '-rc.') || !contains(github.ref_name, '-')
-        shell: bash
-        run: |
-          echo "RC/stable release blocked: isolated desktop platform signing is not configured" >&2
-          exit 1
 
       - name: Download verified npm launcher
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4

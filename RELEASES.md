@@ -142,49 +142,53 @@ AgentLoop, session, approval, and governed effect path.
 - Release-candidate and stable publication must pass the protected
   `release-publication` environment. Only `v*` tags may deploy through it, and a
   configured human reviewer must approve the publication job.
-- Native CLI signing runs in a protected job that downloads immutable unsigned
-  build output. Verification, native build, and desktop build jobs do not receive
-  platform-signing secrets.
-- A release candidate must have the same Windows Authenticode and Apple code
-  signing controls as stable. Alpha and beta packages may remain unsigned and
-  must not be described as release candidates.
+- Native CLI signing is isolated in a protected job that downloads immutable
+  unsigned build output. Verification, native build, and desktop build jobs do
+  not receive platform-signing secrets.
+- A future release candidate must have the same Windows Authenticode and Apple
+  code-signing controls as stable. Alpha and beta packages may remain unsigned
+  and must not be described as release candidates.
 - RC and stable publication currently fail closed before public release because
   isolated Tauri desktop signing is not yet configured. Desktop feature parity
   remains deferred, but the existing tag workflow still builds and publishes
   desktop assets, so desktop artifact generation remains a publication blocker.
+- The published-package signature and notarization smoke checks are not reachable
+  in the current workflow while RC and stable remain blocked; alpha and beta
+  publish unsigned artifacts, and the RC/stable path stops at the secretless gate.
 - Stable requires accepted exact-commit native NVDA, VoiceOver, and Orca evidence
   for every advertised desktop platform.
 
 ## Stable release credentials
 
 Alpha and beta tags may publish unsigned native and desktop packages and are
-marked as prereleases. A release-candidate tag enters the protected native
-signing job only when `PANDORA_RELEASE_CANDIDATE_APPROVED` is exactly `1`; a
-plain SemVer stable tag likewise requires `PANDORA_STABLE_RELEASE_APPROVED` to
-be exactly `1`. Native signing consumes only these environment-scoped secrets:
+marked as prereleases. A future release-candidate tag enters the protected
+native signing job only when `PANDORA_RELEASE_CANDIDATE_APPROVED` is exactly
+`1`; a plain SemVer stable tag likewise requires
+`PANDORA_STABLE_RELEASE_APPROVED` to be exactly `1`. Native signing consumes
+only these environment-scoped secrets:
 
 - PANDORA_WINDOWS_CERTIFICATE_BASE64 and
   PANDORA_WINDOWS_CERTIFICATE_PASSWORD;
 - PANDORA_APPLE_CERTIFICATE_BASE64 and
   PANDORA_APPLE_CERTIFICATE_PASSWORD;
-- APPLE_SIGNING_IDENTITY.
+- APPLE_SIGNING_IDENTITY and APPLE_TEAM_ID.
 
-The protected job keeps certificate material in runner-temporary files, signs the
-downloaded native Windows or macOS executable, verifies the signature, and
-uploads a separately named signed artifact. The unsigned build job never imports
-or receives the certificate. Apple notarization account credentials are not
-exposed to the native signer.
+The protected job copies immutable unsigned Windows or macOS output to its
+final native-release path before signing, verifies that exact copied path, and
+uploads the same path without executing the downloaded binary. The unsigned
+build job never imports or receives the certificate. Apple notarization account
+credentials are not exposed to the native signer.
 
 RC and stable remain blocked until a separately reviewed remote/HSM-backed or
 otherwise isolated Tauri desktop signing design is implemented and receives its
 own protected credentials. Certificate values and account credentials must never
 be committed, printed, placed in an artifact, or copied into recovery archives.
 
-The four published-package smoke jobs independently re-download checksum-bound
-artifacts. Windows verifies Authenticode on the CLI and MSI. Both macOS runners
-verify the CLI, notarization ticket, mounted application signature, and
-Gatekeeper assessment. Their signature and lifecycle records are retained as
-workflow artifacts.
+Published-package smoke jobs still re-download checksum-bound artifacts, but
+their Windows Authenticode, Apple signature, notarization, and Gatekeeper checks
+are not reachable in the current workflow while RC and stable remain blocked.
+They therefore provide lifecycle evidence for currently publishable unsigned
+alpha/beta artifacts, not platform-signature or notarization evidence.
 
 ## Stable rollback closure
 
