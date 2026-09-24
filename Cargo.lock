@@ -1290,8 +1290,10 @@ dependencies = [
  "axum",
  "pandora-runtime",
  "pandora-types",
+ "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "tower",
 ]

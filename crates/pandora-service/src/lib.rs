@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+pub mod rpc_ledger;
+
 use axum::{
     Json, Router,
     body::{Body, Bytes, to_bytes},
