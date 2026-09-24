@@ -24,9 +24,9 @@ use pandora_runtime::{
 };
 use pandora_runtime::{
     ArtifactCatalog, DEFAULT_MAX_SAMPLES_PER_TARGET, EfficiencyEngine, EfficiencyStore,
-    ExecutionController, FleetBudget, FleetEngine, FleetError, FleetNode, PackageState,
-    PackageStore, ResearchArtifactStore, RolloutReducer, SkillEngine, SkillError, WasmExecutor,
-    WasmGene,
+    ExecutionController, FleetBudget, FleetEngine, FleetError, FleetLeaseFence, FleetNode,
+    PackageState, PackageStore, ResearchArtifactStore, RolloutReducer, SkillEngine, SkillError,
+    WasmExecutor, WasmGene,
 };
 use pandora_types::{
     AdaptationCandidate, AdaptationRequest, AdaptationTarget, ArtifactId, Capability,
@@ -52,11 +52,21 @@ static NEXT_AGENT_LEASE: AtomicU64 = AtomicU64::new(1);
 struct ActiveAgentLease {
     fleet: FleetEngine,
     lease_id: String,
+    fence: FleetLeaseFence,
+}
+
+impl ActiveAgentLease {
+    fn assert_current(&self, now: u64) -> Result<(), FleetError> {
+        self.fleet.assert_fence(&self.fence, now)
+    }
 }
 
 impl Drop for ActiveAgentLease {
     fn drop(&mut self) {
         let _ = self.fleet.release_lease(&self.lease_id);
+        let _ = self
+            .fleet
+            .release_fence(&self.fence, self.fence.expires_at().saturating_sub(1));
     }
 }
 
@@ -818,7 +828,23 @@ fn acquire_agent_lease(
             AGENT_LEASE_DURATION_SECONDS,
         )
         .map_err(fleet_runtime_error)?;
-    Ok(ActiveAgentLease { fleet, lease_id })
+    let fence = match fleet.acquire_fence(
+        format!("agent-execution:{}", session.id()),
+        AGENT_FLEET_NODE_ID,
+        now,
+        AGENT_LEASE_DURATION_SECONDS,
+    ) {
+        Ok(fence) => fence,
+        Err(error) => {
+            let _ = fleet.release_lease(&lease_id);
+            return Err(fleet_runtime_error(error));
+        }
+    };
+    Ok(ActiveAgentLease {
+        fleet,
+        lease_id,
+        fence,
+    })
 }
 
 fn fleet_runtime_error(error: FleetError) -> CliError {
@@ -856,7 +882,7 @@ pub(super) fn execute_agent_core(
     let loop_engine = AgentLoop::new(options.max_turns, options.max_tool_calls)
         .and_then(|engine| engine.with_context_cache(config.data_dir().join("context-cache.json")))
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
-    let _active_lease = acquire_agent_lease(config, session, options.max_tool_calls)?;
+    let active_lease = acquire_agent_lease(config, session, options.max_tool_calls)?;
     let started = Instant::now();
     let result = match options.approval_id {
         Some(approval_id) => loop_engine.run_with_history_and_approval_and_skill_context(
@@ -882,6 +908,9 @@ pub(super) fn execute_agent_core(
             loop_engine.run_with_request(provider.as_ref(), controller, request)
         }
     };
+    active_lease
+        .assert_current(timestamp().as_unix_seconds())
+        .map_err(fleet_runtime_error)?;
     match result {
         Ok(summary) => {
             let (evaluations, feedback_recorded) = evaluate_and_append_runs(
@@ -2184,6 +2213,52 @@ mod tests {
     use pandora_runtime::config::{ConfigOverrides, RuntimeConfig};
     use pandora_types::{ExecutionId, Timestamp};
     use std::collections::BTreeMap;
+
+    #[test]
+    fn active_agent_lease_rejects_expired_fence_before_completion() {
+        let root =
+            std::env::temp_dir().join(format!("pandora-cli-agent-fence-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let fleet = FleetEngine::open(root.join("fleet.sqlite3")).unwrap();
+        fleet
+            .register_node(
+                &FleetNode::new(
+                    AGENT_FLEET_NODE_ID,
+                    env!("CARGO_PKG_VERSION"),
+                    "cli",
+                    vec!["agent.execute".to_owned()],
+                    10,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let legacy = fleet
+            .acquire_lease(
+                "agent-lease",
+                AGENT_FLEET_NODE_ID,
+                "agent:session",
+                FleetBudget::new(0, 1, 60, 0),
+                10,
+                60,
+            )
+            .unwrap();
+        let fence = fleet
+            .acquire_fence("agent-execution:session", AGENT_FLEET_NODE_ID, 10, 60)
+            .unwrap();
+        let lease = ActiveAgentLease {
+            fleet,
+            lease_id: legacy.id().to_owned(),
+            fence,
+        };
+        lease.assert_current(10).unwrap();
+        assert!(matches!(
+            lease.assert_current(70),
+            Err(FleetError::FenceExpired)
+        ));
+        drop(lease);
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn optimization_selects_a_configured_provider_with_completed_evidence() {
