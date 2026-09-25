@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Added three read-only CLI read surfaces that previously existed only in the
+  service or not at all. `pandora runtime engines list|inspect <id>` exposes the
+  engine inventory through a new `RuntimeService::engine_inventory`, so the CLI
+  and the service `runtime.engines` read model share one list rather than two.
+  The 22 inventory entries are unchanged; a fixture captured before the edit
+  compares them field by field. `pandora session events <id>
+  [--after-sequence <n>] [--limit <1-256>]` pages the existing
+  `SessionStore::event_page` cursor and reports `count`, `has_more`, and
+  `next_sequence`; page bounds are validated before the store is opened, so a bad
+  limit fails as a usage error instead of reading as an empty session. `pandora
+  tool list|inspect [--catalog builtin|active]` can also show the active Harness
+  catalog, reusing the same `register_wasm_genes` path the service uses. The
+  default stays `builtin` and byte-identical. Each surface has a human layout and
+  a `--json` contract, and each was proven to fail closed on invalid input.
 - Corrected two documentation claims that overstated what the shipped path does.
   `pandora update` stages a verified artifact and, without `--target`, leaves the
   installed binary untouched; the README described it as updating. Lifecycle
