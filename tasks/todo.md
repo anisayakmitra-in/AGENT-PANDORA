@@ -1,17 +1,29 @@
 # CLI-first boundary tasks
 
 - [x] W0: Record CLI-first plan, non-goals, and verification gates.
-- [x] W2: Add explicit local `PANDORA_BIN` launcher path, TypeScript-owned launcher helper, generated-output drift checks, and no-install-hook tests.
-- [ ] W1: Verify and document `cargo install --path crates/pandora-cli --locked` and the bundled-SQLite C-toolchain prerequisite.
-- [ ] W3: Deactivate desktop from active product/release/CI gates without deleting adapter source.
-- [ ] W3: Update README, roadmap, platform, production, and release documentation to CLI-first status.
-- [ ] W4: Audit/fix CLI help and completion parity for the existing command surface.
-- [ ] W5: Run CLI, npm, Python, workflow, and documentation verification gates.
-- [ ] Separate follow-up: F1 explicit RPC idempotency-key contract; not part of this behavior-preserving boundary refactor.
+- [x] W1: Verify and document `cargo install --path crates/pandora-cli --locked`
+  and the bundled-SQLite C-toolchain prerequisite.
+- [x] W2: Add explicit local `PANDORA_BIN` launcher path, TypeScript-owned launcher
+  helper, generated-output drift checks, and no-install-hook tests.
+- [x] W3: Deactivate desktop from active product/release/CI gates without
+  deleting adapter source.
+- [x] W3: Update README, roadmap, platform, production, release, and adapter
+  documentation to CLI-first status.
+- [ ] W4: Audit/fix CLI help and completion parity for the existing command
+  surface. (in progress)
+- [ ] W5: Run the full CLI, npm, Python, workflow, and documentation gates.
 
 ## Checkpoints
 
-- [ ] W1/W2: CLI install/build and npm launcher tests pass.
-- [ ] W3: No active CLI release or required CI job depends on desktop packaging.
+- [x] W1/W2: CLI install/build and npm launcher tests pass.
+- [x] W3: No active CLI release or required CI job depends on desktop packaging.
 - [ ] W4: Help/completions match the CLI command registry.
-- [ ] W5: All scoped gates pass; no desktop build, signing, tag, or publication occurs.
+- [ ] W5: All scoped gates pass; no desktop build, signing, tag, or publication
+  occurs.
+
+## Deferred, tracked separately
+
+- F1: explicit RPC `idempotency_key` contract. The desktop bridge reuses one
+  JSON-RPC `id` as the durable idempotency key, so approval/resume and other
+  mutations can conflict or replay. This changes a public transport contract and
+  is out of scope for the behavior-preserving boundary refactor.
