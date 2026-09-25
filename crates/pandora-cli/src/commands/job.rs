@@ -322,9 +322,17 @@ fn worker_control_error(error: AgentControlStop) -> CliError {
         AgentControlStop::TokenBudgetExceeded => "token_budget_exceeded",
         AgentControlStop::DurationBudgetExceeded => "duration_budget_exceeded",
     };
+    let outcome_known = !matches!(
+        error,
+        AgentControlStop::FenceLost | AgentControlStop::CancellationStateUnavailable
+    );
     CliError::execution(
         error.to_string(),
-        json!({"code": "worker_fence_lost", "reason": reason}),
+        json!({
+            "code": "worker_fence_lost",
+            "reason": reason,
+            "outcome_known": outcome_known,
+        }),
     )
 }
 
@@ -1019,8 +1027,8 @@ fn add_drain_error_details(error: &mut CliError, mut jobs: Vec<Value>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pandora_runtime::JobStore;
-    use pandora_types::{JobCommand, JobRequest, JobWorkerId};
+    use pandora_runtime::{ApprovalStore, JobStore};
+    use pandora_types::{JobCommand, JobRequest, JobWorkerId, PrincipalId};
     use std::fs;
 
     #[test]
@@ -1028,6 +1036,18 @@ mod tests {
         let error = worker_control_error(AgentControlStop::FenceLost);
         assert_eq!(job_status_for_error(&error), JobStatus::Interrupted);
         assert_eq!(error.details["reason"], "fence_lost");
+        assert_eq!(error.details["outcome_known"], false);
+    }
+
+    #[test]
+    fn approval_resume_controlled_stop_is_interrupted() {
+        let error = CliError {
+            code: "agent_controlled_stop",
+            message: "agent execution fence was lost".to_owned(),
+            details: json!({"reason": "fence_lost"}),
+            exit_code: 50,
+        };
+        assert_eq!(job_status_for_error(&error), JobStatus::Interrupted);
     }
 
     #[test]
@@ -1081,6 +1101,154 @@ mod tests {
             supervisor.checkpoint(),
             Err(AgentControlStop::FenceLost)
         ));
+        supervisor.shutdown().unwrap();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn queued_approval_resume_fence_loss_finishes_interrupted() {
+        let root = std::env::temp_dir().join(format!(
+            "pandora-job-approval-fence-{}-{}",
+            std::process::id(),
+            super::super::timestamp().as_unix_seconds()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let data_dir = root.join("data");
+        let workspace = root.join("workspace");
+        let config_path = root.join("config.json");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(workspace.join("README.md"), b"unchanged").unwrap();
+        fs::write(&config_path, b"{}").unwrap();
+        let base = vec![
+            "--config".to_owned(),
+            config_path.to_string_lossy().into_owned(),
+            "--data-dir".to_owned(),
+            data_dir.to_string_lossy().into_owned(),
+            "--workspace".to_owned(),
+            workspace.to_string_lossy().into_owned(),
+        ];
+        let mut approval_args = base.clone();
+        approval_args.push("patch:README.md:approved".to_owned());
+        let first = match super::super::run::execute_with_control(&approval_args, None) {
+            Ok(_) => panic!("direct patch should require approval"),
+            Err(error) => error,
+        };
+        assert_eq!(first.code, "approval_required");
+        let approval_id = first.details["approval_id"]
+            .as_str()
+            .expect("approval ID should be returned")
+            .to_owned();
+        let session_id = first.details["session_id"]
+            .as_str()
+            .expect("session ID should be returned")
+            .to_owned();
+        let approvals = ApprovalStore::open(data_dir.join("sessions.sqlite3")).unwrap();
+        let principal = PrincipalId::new("local-user").unwrap();
+        let approver = PrincipalId::new("approver-1").unwrap();
+        approvals
+            .resolve(
+                &approval_id,
+                &principal,
+                &approver,
+                true,
+                super::super::timestamp(),
+            )
+            .unwrap();
+
+        let fleet = Arc::new(FleetEngine::open(data_dir.join("fleet.sqlite3")).unwrap());
+        fleet
+            .register_node(
+                &FleetNode::new(
+                    "job-worker",
+                    env!("CARGO_PKG_VERSION"),
+                    "local-job-worker",
+                    ["job.work".to_owned()],
+                    10,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        fleet
+            .start_supervisor_for_process("job-worker", std::process::id(), 10)
+            .unwrap();
+        let lease_id = "job-process-lease-approval-test";
+        fleet
+            .acquire_lease(
+                lease_id,
+                "job-worker",
+                "job-process:approval-test",
+                FleetBudget::new(0, 0, 3_600, 0),
+                10,
+                3_600,
+            )
+            .unwrap();
+        let fence = fleet
+            .acquire_fence("job-worker:job-worker", "job-worker", 10, 3_600)
+            .unwrap();
+        let mut supervisor = ActiveJobSupervisor {
+            fleet,
+            node_id: "job-worker".to_owned(),
+            lease_id: lease_id.to_owned(),
+            execution_id: "job-process:approval-test".to_owned(),
+            fence,
+            cancelled: Arc::new(AtomicBool::new(false)),
+            shutdown_complete: false,
+            fence_released: false,
+        };
+        let store = JobStore::open(data_dir.join("jobs.sqlite3")).unwrap();
+        let (principal, tenant, workspace_id) = super::super::session_scope();
+        let worker = JobWorkerId::new("job-worker").unwrap();
+        let job_id = JobId::new("queued-approval").unwrap();
+        let mut job_args = base;
+        job_args.extend([
+            "--approval".to_owned(),
+            approval_id.clone(),
+            "--session".to_owned(),
+            session_id,
+            "patch:README.md:approved".to_owned(),
+        ]);
+        store
+            .submit(
+                &job_id,
+                &principal,
+                &tenant,
+                &workspace_id,
+                &JobRequest::new(JobCommand::Run, job_args).unwrap(),
+                super::super::timestamp(),
+            )
+            .unwrap();
+        supervisor
+            .fleet
+            .invalidate_fence("job-worker:job-worker", "job-worker")
+            .unwrap();
+        let error = match execute_one_job(
+            &store,
+            &principal,
+            &tenant,
+            &workspace_id,
+            &worker,
+            &supervisor,
+        ) {
+            Ok(_) => panic!("fence loss should interrupt the queued approval job"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, "execution_failed");
+        assert_eq!(error.details["reason"], "fence_lost");
+        assert_eq!(error.details["outcome_known"], false);
+        let job = store
+            .inspect(&job_id, &principal, &tenant, &workspace_id)
+            .unwrap();
+        assert_eq!(job.status(), JobStatus::Interrupted);
+        assert_eq!(job.result().unwrap()["details"]["reason"], "fence_lost");
+        assert_eq!(job.result().unwrap()["details"]["outcome_known"], false);
+        assert_eq!(fs::read(workspace.join("README.md")).unwrap(), b"unchanged");
+        assert_eq!(
+            approvals
+                .inspect(&approval_id, &principal)
+                .unwrap()
+                .status_at(super::super::timestamp()),
+            pandora_runtime::ApprovalStatus::Approved
+        );
         supervisor.shutdown().unwrap();
         let _ = fs::remove_dir_all(root);
     }

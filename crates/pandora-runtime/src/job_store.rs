@@ -329,7 +329,10 @@ impl JobStore {
     ) -> Result<JobRecord, JobStoreError> {
         if !matches!(
             status,
-            JobStatus::Completed | JobStatus::ApprovalRequired | JobStatus::Failed
+            JobStatus::Completed
+                | JobStatus::ApprovalRequired
+                | JobStatus::Failed
+                | JobStatus::Interrupted
         ) {
             return Err(JobStoreError::InvalidTransition {
                 status,
@@ -1247,6 +1250,63 @@ mod tests {
                 &worker,
                 JobStatus::Failed,
                 &json!({"code": "late"}),
+                Timestamp::from_unix_seconds(31),
+            ),
+            Err(JobStoreError::InvalidTransition { .. })
+        ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn running_worker_can_finish_a_job_as_interrupted() {
+        let root = crate::test_support::new_temp_dir("pandora-job-interrupted").unwrap();
+        let store = JobStore::open(root.join("jobs.sqlite3")).unwrap();
+        let (principal, tenant, workspace) = scope();
+        let id = JobId::new("job-interrupted").unwrap();
+        let worker = worker("worker-interrupted");
+        store
+            .submit(
+                &id,
+                &principal,
+                &tenant,
+                &workspace,
+                &request("task"),
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap();
+        store
+            .claim_next(
+                &principal,
+                &tenant,
+                &workspace,
+                &worker,
+                Timestamp::from_unix_seconds(20),
+            )
+            .unwrap()
+            .unwrap();
+
+        let interrupted = store
+            .finish(
+                &id,
+                &principal,
+                &tenant,
+                &workspace,
+                &worker,
+                JobStatus::Interrupted,
+                &json!({"reason": "fence_lost", "outcome_known": false}),
+                Timestamp::from_unix_seconds(30),
+            )
+            .unwrap();
+        assert_eq!(interrupted.status(), JobStatus::Interrupted);
+        assert!(matches!(
+            store.finish(
+                &id,
+                &principal,
+                &tenant,
+                &workspace,
+                &worker,
+                JobStatus::Completed,
+                &json!({"status": "late"}),
                 Timestamp::from_unix_seconds(31),
             ),
             Err(JobStoreError::InvalidTransition { .. })

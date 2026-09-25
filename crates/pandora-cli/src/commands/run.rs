@@ -12,15 +12,15 @@ use pandora_harnesses::{
     replaceable_builtin_harness_kind,
 };
 use pandora_provider::{
-    ChatMessage, FallbackPolicy, ModelRequest, TraceMetadata, parse_and_validate,
+    ChatMessage, FallbackPolicy, ModelRequest, TokenUsage, TraceMetadata, parse_and_validate,
 };
 use pandora_runtime::config::RuntimeConfig;
 use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::sessions::SessionStore;
 use pandora_runtime::{
-    AgentApprovalContext, AgentControlStop, AgentLoop, AgentLoopError, AgentRunRequest,
-    ApprovalRequest, ApprovalStore, CodingFeedbackInput, EvaluationEngine, MAX_AGENT_TOOL_CALLS,
-    MAX_AGENT_TURNS, RunStatus, RuntimeError,
+    AgentApprovalContext, AgentCheckpoint, AgentControlStop, AgentLoop, AgentLoopError,
+    AgentRunControl, AgentRunRequest, ApprovalRequest, ApprovalStore, CodingFeedbackInput,
+    EvaluationEngine, MAX_AGENT_TOOL_CALLS, MAX_AGENT_TURNS, RunStatus, RuntimeError,
 };
 use pandora_runtime::{
     ArtifactCatalog, DEFAULT_MAX_SAMPLES_PER_TARGET, EfficiencyEngine, EfficiencyStore,
@@ -78,6 +78,21 @@ struct WasmGeneResolution {
 
 type WasmGeneResolutions = BTreeMap<(String, String), WasmGeneResolution>;
 type PackageWasmGenes = (Vec<Box<dyn Gene>>, WasmGeneResolutions);
+
+fn check_direct_approval_control(control: Option<&dyn AgentRunControl>) -> Result<(), CliError> {
+    let Some(control) = control else {
+        return Ok(());
+    };
+    let usage = TokenUsage::default();
+    control
+        .checkpoint(AgentCheckpoint::before_effect_authorization(0, 1, &usage))
+        .map_err(|reason| CliError {
+            code: "agent_controlled_stop",
+            message: reason.to_string(),
+            details: json!({"reason": controlled_stop_reason(reason)}),
+            exit_code: 50,
+        })
+}
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     execute_with_control(args, None)
@@ -307,15 +322,18 @@ pub(super) fn execute_with_control(
     }
     let started = Instant::now();
     let summary = match parsed.value("approval") {
-        Some(approval_id) => controller
-            .run_with_approval(
-                intent,
-                session.clone(),
-                &approval_store,
-                approval_id,
-                timestamp(),
-            )
-            .map_err(runtime_error)?,
+        Some(approval_id) => {
+            check_direct_approval_control(control)?;
+            controller
+                .run_with_approval(
+                    intent,
+                    session.clone(),
+                    &approval_store,
+                    approval_id,
+                    timestamp(),
+                )
+                .map_err(runtime_error)?
+        }
         None => controller
             .run_at(intent, session.clone(), timestamp())
             .map_err(runtime_error)?,
@@ -892,15 +910,26 @@ pub(super) fn execute_agent_core(
     let active_lease = acquire_agent_lease(config, session, options.max_tool_calls)?;
     let started = Instant::now();
     let result = match options.approval_id {
-        Some(approval_id) => loop_engine.run_with_history_and_approval_and_skill_context(
-            provider.as_ref(),
-            controller,
-            options.history,
-            AgentApprovalContext::new(session.clone(), approval_store, approval_id, timestamp())
-                .with_l1_evidence(Some(&l1_evidence)),
-            skill_context.as_deref(),
-            options.task,
-        ),
+        Some(approval_id) => {
+            let mut approval_context = AgentApprovalContext::new(
+                session.clone(),
+                approval_store,
+                approval_id,
+                timestamp(),
+            )
+            .with_l1_evidence(Some(&l1_evidence));
+            if let Some(control) = options.control {
+                approval_context = approval_context.with_control(control);
+            }
+            loop_engine.run_with_history_and_approval_and_skill_context(
+                provider.as_ref(),
+                controller,
+                options.history,
+                approval_context,
+                skill_context.as_deref(),
+                options.task,
+            )
+        }
         None => {
             let mut request =
                 AgentRunRequest::new(session.clone(), options.history, options.task, timestamp())
@@ -2218,9 +2247,100 @@ fn approval_error(error: pandora_runtime::ApprovalError) -> CliError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pandora_runtime::ApprovalStatus;
     use pandora_runtime::config::{ConfigOverrides, RuntimeConfig};
-    use pandora_types::{ExecutionId, Timestamp};
+    use pandora_types::{ExecutionId, PrincipalId, Timestamp};
     use std::collections::BTreeMap;
+
+    struct DirectFenceLost;
+
+    impl AgentRunControl for DirectFenceLost {
+        fn checkpoint(&self, _checkpoint: AgentCheckpoint<'_>) -> Result<(), AgentControlStop> {
+            Err(AgentControlStop::FenceLost)
+        }
+    }
+
+    #[test]
+    fn direct_approval_resume_obeys_fence_control_before_consumption() {
+        let root = std::env::temp_dir().join(format!(
+            "pandora-cli-direct-approval-control-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let data = root.join("data");
+        let workspace = root.join("workspace");
+        let config = root.join("config.json");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(workspace.join("README.md"), b"unchanged").unwrap();
+        fs::write(&config, b"{}").unwrap();
+        let base = vec![
+            "--config".to_owned(),
+            config.to_string_lossy().into_owned(),
+            "--data-dir".to_owned(),
+            data.to_string_lossy().into_owned(),
+            "--workspace".to_owned(),
+            workspace.to_string_lossy().into_owned(),
+        ];
+        let mut first_args = base.clone();
+        first_args.push("patch:README.md:approved".to_owned());
+        let first = match execute_with_control(&first_args, None) {
+            Ok(_) => panic!("direct patch should require approval"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            first.code, "approval_required",
+            "direct run failed: {} ({})",
+            first.message, first.details
+        );
+        let approval_id = first.details["approval_id"]
+            .as_str()
+            .expect("direct approval should return an approval ID")
+            .to_owned();
+        let session_id = first.details["session_id"]
+            .as_str()
+            .expect("direct approval should return a session ID")
+            .to_owned();
+        let approval_id_for_lookup = approval_id.clone();
+        let approvals = ApprovalStore::open(data.join("sessions.sqlite3")).unwrap();
+        let principal = PrincipalId::new("local-user").unwrap();
+        let approver = PrincipalId::new("approver-1").unwrap();
+        approvals
+            .resolve(
+                &approval_id_for_lookup,
+                &principal,
+                &approver,
+                true,
+                timestamp(),
+            )
+            .unwrap();
+        let control = DirectFenceLost;
+        let mut resumed_args = base;
+        resumed_args.extend([
+            "--approval".to_owned(),
+            approval_id,
+            "--session".to_owned(),
+            session_id,
+            "patch:README.md:approved".to_owned(),
+        ]);
+        let error = match execute_with_control(&resumed_args, Some(&control)) {
+            Ok(_) => panic!("fence loss should stop direct approval resume"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, "agent_controlled_stop");
+        assert_eq!(error.details["reason"], "fence_lost");
+        assert_eq!(fs::read(workspace.join("README.md")).unwrap(), b"unchanged");
+        assert_eq!(
+            approvals
+                .inspect(&approval_id_for_lookup, &principal)
+                .unwrap()
+                .status_at(timestamp()),
+            ApprovalStatus::Approved
+        );
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn active_agent_lease_rejects_expired_fence_before_completion() {

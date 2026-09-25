@@ -92,6 +92,15 @@ impl<'a> AgentCheckpoint<'a> {
         }
     }
 
+    pub fn before_effect_authorization(turns: u32, tool_calls: u32, usage: &'a TokenUsage) -> Self {
+        Self::new(
+            AgentCheckpointKind::BeforeEffectAuthorization,
+            turns,
+            tool_calls,
+            usage,
+        )
+    }
+
     pub const fn kind(&self) -> AgentCheckpointKind {
         self.kind
     }
@@ -457,31 +466,8 @@ impl AgentLoop {
         approval: AgentApprovalContext<'_>,
         task: impl Into<String>,
     ) -> Result<AgentRunSummary, AgentLoopError> {
-        let AgentApprovalContext {
-            session,
-            store,
-            id,
-            now,
-            l1_evidence,
-            trusted_harness,
-            requested_model,
-        } = approval;
-        self.run_with_context(
-            provider,
-            controller,
-            history,
-            AgentRunContext {
-                session,
-                now,
-                approval: Some(AgentApproval { store, id }),
-                l1_evidence,
-                control: None,
-                trusted_harness,
-                requested_model,
-            },
-            None,
-            &[],
-            task,
+        self.run_with_history_and_approval_and_skill_context(
+            provider, controller, history, approval, None, task,
         )
     }
 
@@ -502,6 +488,7 @@ impl AgentLoop {
             l1_evidence,
             trusted_harness,
             requested_model,
+            control,
         } = approval;
         self.run_with_context(
             provider,
@@ -512,7 +499,7 @@ impl AgentLoop {
                 now,
                 approval: Some(AgentApproval { store, id }),
                 l1_evidence,
-                control: None,
+                control,
                 trusted_harness,
                 requested_model,
             },
@@ -1319,6 +1306,7 @@ pub struct AgentApprovalContext<'a> {
     l1_evidence: Option<&'a L1EvidenceContext>,
     trusted_harness: Option<HarnessId>,
     requested_model: Option<ModelId>,
+    control: Option<&'a dyn AgentRunControl>,
 }
 
 impl<'a> AgentApprovalContext<'a> {
@@ -1336,6 +1324,7 @@ impl<'a> AgentApprovalContext<'a> {
             l1_evidence: None,
             trusted_harness: None,
             requested_model: None,
+            control: None,
         }
     }
 
@@ -1351,6 +1340,11 @@ impl<'a> AgentApprovalContext<'a> {
 
     pub fn with_model(mut self, model: ModelId) -> Self {
         self.requested_model = Some(model);
+        self
+    }
+
+    pub fn with_control(mut self, control: &'a dyn AgentRunControl) -> Self {
+        self.control = Some(control);
         self
     }
 }
@@ -1370,20 +1364,22 @@ mod tests {
     use super::*;
     use crate::executors::WorkspaceRoot;
     use crate::sessions::SessionStore;
+    use crate::{ApprovalError, ApprovalRequest, ApprovalStatus};
     use crate::{ExecutionController, ToolEngine, WasmExecutor, WasmGene};
     use pandora_harnesses::HarnessCatalog;
     use pandora_provider::{
-        ChatMessage, FailoverProvider, ModelRequest, ModelResponse, Provider, ProviderError,
-        ProviderManifest, TokenUsage, ToolCall,
+        ChatMessage, FailoverProvider, MessageRole, ModelRequest, ModelResponse, Provider,
+        ProviderError, ProviderManifest, TokenUsage, ToolCall,
     };
     use pandora_types::{
-        Capability, ContextClassification, Gene, MemoryKind, MemoryRecord, MemoryScope, Operation,
-        PackageCompatibility, PackageDependency, PackageKind, PackageManifest, PolicyContext,
-        PrincipalId, Session, SessionId, TenantId, Timestamp, TrustEvidence, WorkspaceId,
-        hash_artifact,
+        Capability, ContextClassification, EventPayload, Gene, MemoryKind, MemoryRecord,
+        MemoryScope, Operation, PackageCompatibility, PackageDependency, PackageKind,
+        PackageManifest, PolicyContext, PrincipalId, RequestDigest, Session, SessionId, TenantId,
+        Timestamp, TrustEvidence, WorkspaceId, hash_artifact,
     };
+    use std::fs;
     use std::path::PathBuf;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     struct SequenceProvider {
         manifest: ProviderManifest,
@@ -1456,6 +1452,21 @@ mod tests {
 
         fn model_ids(&self) -> Vec<String> {
             self.model_ids.lock().unwrap().clone()
+        }
+    }
+
+    struct StopBeforeApproval {
+        observed: Arc<Mutex<Vec<AgentCheckpointKind>>>,
+    }
+
+    impl AgentRunControl for StopBeforeApproval {
+        fn checkpoint(&self, checkpoint: AgentCheckpoint<'_>) -> Result<(), AgentControlStop> {
+            self.observed.lock().unwrap().push(checkpoint.kind());
+            if checkpoint.kind() == AgentCheckpointKind::BeforeEffectAuthorization {
+                Err(AgentControlStop::FenceLost)
+            } else {
+                Ok(())
+            }
         }
     }
 
@@ -1963,6 +1974,200 @@ mod tests {
             ))
         );
         assert!(provider.requests().is_empty());
+    }
+
+    #[test]
+    fn approval_resume_control_stops_before_approval_consumption() {
+        let fixture = Fixture::new();
+        let session = fixture.session();
+        let provider = SequenceProvider::new(vec![ModelResponse::new(
+            "",
+            vec![
+                ToolCall::new(
+                    "call-patch",
+                    "workspace.patch",
+                    serde_json::json!({"path": "README.md", "content": "approved"}),
+                )
+                .unwrap(),
+            ],
+            TokenUsage::default(),
+        )]);
+        let policy = PolicyContext::new(
+            1,
+            [
+                Capability::FilesystemRead,
+                Capability::FilesystemWrite,
+                Capability::ProviderInvoke,
+            ],
+            [Operation::Write],
+        );
+        let controller = ExecutionController::with_policy(fixture.root.clone(), policy);
+        let first = AgentLoop::new(1, 1)
+            .unwrap()
+            .run(
+                &provider,
+                &controller,
+                session.clone(),
+                "Update the README",
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap_err();
+        let AgentLoopError::ApprovalRequired { summary, .. } = first else {
+            panic!("expected an approval boundary");
+        };
+        let run = summary
+            .runs()
+            .last()
+            .expect("approval summary should retain a run");
+        let request_digest = run
+            .events()
+            .iter()
+            .find_map(|event| match event.payload() {
+                EventPayload::Effect { request_digest, .. } => Some(request_digest.clone()),
+                _ => None,
+            })
+            .expect("approval boundary should retain the effect digest");
+        let approvals = ApprovalStore::open(fixture.path.join("approvals.sqlite3")).unwrap();
+        let now = Timestamp::from_unix_seconds(20);
+        approvals
+            .create(
+                ApprovalRequest::new(
+                    "approval-1",
+                    session.id().clone(),
+                    run.execution_id().clone(),
+                    session.principal_id().clone(),
+                    run.selected_gene().clone(),
+                    request_digest,
+                    "resume the approved patch",
+                    1,
+                    Timestamp::from_unix_seconds(100),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let approver = PrincipalId::new("approver-1").unwrap();
+        approvals
+            .resolve("approval-1", session.principal_id(), &approver, true, now)
+            .unwrap();
+        approvals
+            .create(
+                ApprovalRequest::new(
+                    "approval-mismatch",
+                    session.id().clone(),
+                    run.execution_id().clone(),
+                    session.principal_id().clone(),
+                    run.selected_gene().clone(),
+                    RequestDigest::new("pandora-request-v1:sha256:mismatch").unwrap(),
+                    "resume with a mismatched grant",
+                    1,
+                    Timestamp::from_unix_seconds(100),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        approvals
+            .resolve(
+                "approval-mismatch",
+                session.principal_id(),
+                &approver,
+                true,
+                now,
+            )
+            .unwrap();
+        let no_control_error = AgentLoop::new(1, 1)
+            .unwrap()
+            .run_with_history_and_approval(
+                &provider,
+                &controller,
+                summary.messages().to_vec(),
+                AgentApprovalContext::new(session.clone(), &approvals, "approval-mismatch", now),
+                "Continue after approval",
+            )
+            .unwrap_err();
+        assert!(matches!(
+            no_control_error,
+            AgentLoopError::Execution(RuntimeError::Approval(ApprovalError::DigestMismatch))
+        ));
+        assert_eq!(
+            approvals
+                .inspect("approval-mismatch", session.principal_id())
+                .unwrap()
+                .status_at(now),
+            ApprovalStatus::Approved
+        );
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let control = StopBeforeApproval {
+            observed: Arc::clone(&observed),
+        };
+        let error = AgentLoop::new(1, 1)
+            .unwrap()
+            .run_with_history_and_approval_and_skill_context(
+                &provider,
+                &controller,
+                summary.messages().to_vec(),
+                AgentApprovalContext::new(session.clone(), &approvals, "approval-1", now)
+                    .with_control(&control),
+                None,
+                "Continue after approval",
+            )
+            .unwrap_err();
+
+        let AgentLoopError::ControlledStop { reason, summary } = error else {
+            panic!("expected the approval resume to stop cooperatively");
+        };
+        assert_eq!(reason, AgentControlStop::FenceLost);
+        assert_eq!(
+            observed.lock().unwrap().as_slice(),
+            &[AgentCheckpointKind::BeforeEffectAuthorization]
+        );
+        assert_eq!(summary.tool_calls(), 1);
+        assert!(summary.runs().is_empty());
+        assert_eq!(
+            summary.messages().last().unwrap().role(),
+            MessageRole::Assistant
+        );
+        assert_eq!(
+            approvals
+                .inspect("approval-1", session.principal_id())
+                .unwrap()
+                .status_at(now),
+            ApprovalStatus::Approved
+        );
+        assert_eq!(
+            fs::read(fixture.path.join("README.md")).unwrap(),
+            b"fixture\n"
+        );
+        let simple_error = AgentLoop::new(1, 1)
+            .unwrap()
+            .run_with_history_and_approval(
+                &provider,
+                &controller,
+                summary.messages().to_vec(),
+                AgentApprovalContext::new(session.clone(), &approvals, "approval-1", now)
+                    .with_control(&control),
+                "Continue after approval",
+            )
+            .unwrap_err();
+        assert!(matches!(
+            simple_error,
+            AgentLoopError::ControlledStop {
+                reason: AgentControlStop::FenceLost,
+                ..
+            }
+        ));
+        assert_eq!(observed.lock().unwrap().len(), 2);
+        assert_eq!(
+            approvals
+                .inspect("approval-1", session.principal_id())
+                .unwrap()
+                .status_at(now),
+            ApprovalStatus::Approved
+        );
+        assert_eq!(
+            fs::read(fixture.path.join("README.md")).unwrap(),
+            b"fixture\n"
+        );
+        assert_eq!(provider.requests().len(), 1);
     }
 
     #[test]
