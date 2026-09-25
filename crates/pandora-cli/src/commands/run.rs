@@ -89,7 +89,10 @@ fn check_direct_approval_control(control: Option<&dyn AgentRunControl>) -> Resul
         .map_err(|reason| CliError {
             code: "agent_controlled_stop",
             message: reason.to_string(),
-            details: json!({"reason": controlled_stop_reason(reason)}),
+            details: json!({
+                "reason": controlled_stop_reason(reason),
+                "outcome_known": controlled_stop_outcome_known(reason),
+            }),
             exit_code: 50,
         })
 }
@@ -1114,6 +1117,7 @@ pub(super) fn execute_agent_core(
                         "next": "rerun pandora run --agent with --session <session_id> to continue this persisted transcript"
                     },
                     "reason": controlled_stop_reason(reason),
+                    "outcome_known": controlled_stop_outcome_known(reason),
                     "turns": summary.turns(),
                     "tool_calls": summary.tool_calls(),
                     "turn_budget": options.max_turns,
@@ -1156,6 +1160,13 @@ pub(super) fn execute_agent_core(
             Err(agent_error(error))
         }
     }
+}
+
+fn controlled_stop_outcome_known(reason: AgentControlStop) -> bool {
+    !matches!(
+        reason,
+        AgentControlStop::FenceLost | AgentControlStop::CancellationStateUnavailable
+    )
 }
 
 fn controlled_stop_reason(reason: AgentControlStop) -> &'static str {
@@ -2247,17 +2258,42 @@ fn approval_error(error: pandora_runtime::ApprovalError) -> CliError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pandora_runtime::ApprovalStatus;
     use pandora_runtime::config::{ConfigOverrides, RuntimeConfig};
+    use pandora_runtime::{AgentCheckpointKind, ApprovalStatus};
     use pandora_types::{ExecutionId, PrincipalId, Timestamp};
     use std::collections::BTreeMap;
 
     struct DirectFenceLost;
 
     impl AgentRunControl for DirectFenceLost {
-        fn checkpoint(&self, _checkpoint: AgentCheckpoint<'_>) -> Result<(), AgentControlStop> {
+        fn checkpoint(&self, checkpoint: AgentCheckpoint<'_>) -> Result<(), AgentControlStop> {
+            assert_eq!(
+                checkpoint.kind(),
+                AgentCheckpointKind::BeforeEffectAuthorization
+            );
             Err(AgentControlStop::FenceLost)
         }
+    }
+
+    struct DirectCancellationUnavailable;
+
+    impl AgentRunControl for DirectCancellationUnavailable {
+        fn checkpoint(&self, checkpoint: AgentCheckpoint<'_>) -> Result<(), AgentControlStop> {
+            assert_eq!(
+                checkpoint.kind(),
+                AgentCheckpointKind::BeforeEffectAuthorization
+            );
+            Err(AgentControlStop::CancellationStateUnavailable)
+        }
+    }
+
+    #[test]
+    fn direct_approval_control_marks_state_unavailable_as_unknown() {
+        let control = DirectCancellationUnavailable;
+        let error = check_direct_approval_control(Some(&control)).unwrap_err();
+        assert_eq!(error.code, "agent_controlled_stop");
+        assert_eq!(error.details["reason"], "cancellation_state_unavailable");
+        assert_eq!(error.details["outcome_known"], false);
     }
 
     #[test]
