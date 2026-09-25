@@ -23,7 +23,7 @@ fn key() -> RpcRequestKey {
         "principal-a|tenant-a|workspace-a",
         "request-1",
         "run.execute",
-        &digest_request("run.execute", &json!({"task": "guide"})),
+        digest_request("run.execute", &json!({"task": "guide"})),
     )
     .unwrap()
 }
@@ -82,7 +82,7 @@ fn request_id_reuse_with_a_different_payload_is_rejected() {
         "principal-a|tenant-a|workspace-a",
         "request-1",
         "run.execute",
-        &digest_request("run.execute", &json!({"task": "different"})),
+        digest_request("run.execute", &json!({"task": "different"})),
     )
     .unwrap();
     assert!(matches!(
@@ -108,7 +108,7 @@ fn request_ids_are_isolated_by_scope() {
         "principal-b|tenant-b|workspace-b",
         "request-1",
         "run.execute",
-        &digest_request("run.execute", &json!({"task": "guide"})),
+        digest_request("run.execute", &json!({"task": "guide"})),
     )
     .unwrap();
     assert!(matches!(
