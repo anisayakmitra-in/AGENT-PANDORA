@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Corrected two documentation claims that overstated what the shipped path does.
+  `pandora update` stages a verified artifact and, without `--target`, leaves the
+  installed binary untouched; the README described it as updating. Lifecycle
+  hooks are library support: the CLI and service construct controllers with an
+  empty hook set, so no hook is evaluated and no command configures one. Both
+  are now stated as such. No behavior changed.
 - Cancelled desktop product work. The `pandora` CLI is the only active product
   surface. `apps/pandora-desktop` stays in the tree as an inactive downstream
   adapter, the `full` release scope is retired, and desktop references in active

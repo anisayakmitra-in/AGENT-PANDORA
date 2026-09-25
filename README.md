@@ -15,9 +15,11 @@ approvals. The `ReferenceMonitor` alone issues scoped, one-shot effect permits.
 
 Every effect request carries an immutable `ExecutionProfile` assembled before Parliament evaluates it. The profile binds the runtime, platform, policy version, workspace identity digest, containment snapshot, executor, and selected components. Its digest is part of the versioned operation-request digest, so a permit or receipt cannot be reused after the execution environment changes. The profile is evidence only; it cannot grant authority.
 
-Lifecycle hooks are ordered declarative veto rules evaluated before effect
-authorization. They may reduce authority, but cannot mutate requests, execute
-code, resolve approvals, or issue permits. Runtime events remain the
+The runtime library also provides ordered declarative veto rules that run
+before effect authorization. They can reduce authority, but they cannot mutate
+requests, execute code, resolve approvals, or issue permits. No hook set is
+configured in the current CLI or service, so no hook is evaluated on the shipped
+path, and there is no command to add one yet. Runtime events remain the
 observation surface.
 
 ## Status
@@ -123,12 +125,21 @@ To pin the current release explicitly:
 curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/AGENT-PANDORA/main/scripts/install.sh | PANDORA_VERSION=v2.0.0-beta.8 sh
 ```
 
-After installation, update to a specific published tag with the same checksum
-verification:
+To fetch and verify a specific published tag:
 
 ```text
 pandora update --release v2.0.0-beta.8
 pandora fleet dashboard --json
+```
+
+`update` stages a verified artifact. By default it writes to
+`data/updates/current/pandora` and leaves the installed binary alone. Pass
+`--target` to replace a specific file. The previous copy is kept beside it as
+`.<name>.previous` and `update --rollback` restores it:
+
+```text
+pandora update --release v2.0.0-beta.8 --target ~/.pandora/bin/pandora
+pandora update --rollback --target ~/.pandora/bin/pandora
 ```
 
 ### Retained desktop adapter
