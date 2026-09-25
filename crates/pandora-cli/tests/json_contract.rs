@@ -423,7 +423,7 @@ fn session_events_page_in_bounded_slices() {
             "--json",
         ])
         .success("session events");
-    assert_eq!(second["after_sequence"], cursor as u64);
+    assert_eq!(second["after_sequence"], cursor);
     let first_ids = event_ids(&first);
     let second_ids = event_ids(&second);
     for id in &first_ids {
