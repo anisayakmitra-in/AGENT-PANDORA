@@ -1,7 +1,8 @@
 use pandora_runtime::SessionStore;
 use pandora_types::{
-    EventContext, EventId, EventPayload, EventType, PrincipalId, RuntimeEvent, Session, SessionId,
-    TenantId, Timestamp, WorkspaceId, hash_artifact,
+    EventContext, EventId, EventPayload, EventType, PackageCompatibility, PackageDependency,
+    PackageKind, PackageManifest, PrincipalId, RuntimeEvent, Session, SessionId, TenantId,
+    Timestamp, TrustEvidence, WorkspaceId, hash_artifact,
 };
 use serde_json::Value;
 use std::fs;
@@ -497,6 +498,168 @@ fn event_ids(page: &Value) -> Vec<String> {
         .iter()
         .map(|event| event["event_id"].as_str().unwrap_or_default().to_owned())
         .collect()
+}
+
+#[test]
+fn tool_catalog_active_adds_packaged_genes_without_moving_the_default() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // The built-in set, captured before anything is packaged. This is the
+    // baseline the default invocation must keep producing.
+    let baseline = fixture.run(&["tool", "list", "--json"]);
+    let baseline_text = baseline.text.clone();
+    let baseline = baseline.success("tool list");
+    let builtin_count = baseline["tools"]
+        .as_array()
+        .expect("tools should be an array")
+        .len();
+    assert!(
+        baseline.get("catalog").is_none(),
+        "the default output must not gain a catalog field: {baseline}"
+    );
+
+    let wasm = wat::parse_str(
+        r#"(module
+            (memory (export "memory") 1)
+            (func (export "pandora_alloc") (param i32) (result i32) i32.const 0)
+            (func (export "pandora_run") (param i32 i32) (result i64)
+                local.get 0
+                i64.extend_i32_u
+                i64.const 32
+                i64.shl
+                local.get 1
+                i64.extend_i32_u
+                i64.or))"#,
+    )
+    .unwrap();
+    let gene = PackageManifest::new(
+        "example/catalog-echo",
+        "1.0.0",
+        PackageKind::Gene,
+        "local-publisher",
+        hash_artifact(&wasm),
+        Vec::new(),
+        PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+        "MIT",
+        TrustEvidence::unsigned(),
+    )
+    .unwrap();
+    let domain_artifact = b"wasm domain\n";
+    let domain = PackageManifest::new(
+        "example/catalog-domain",
+        "1.0.0",
+        PackageKind::DomainHarness,
+        "local-publisher",
+        hash_artifact(domain_artifact),
+        vec![PackageDependency::new("example/catalog-echo", "1.0.0", false).unwrap()],
+        PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+        "MIT",
+        TrustEvidence::unsigned(),
+    )
+    .unwrap();
+    for (name, manifest, artifact) in [
+        ("catalog-echo", &gene, wasm.as_slice()),
+        ("catalog-domain", &domain, domain_artifact.as_slice()),
+    ] {
+        let manifest_path = fixture.root.join(format!("{name}.json"));
+        let artifact_path = fixture.root.join(format!("{name}.artifact"));
+        fs::write(&manifest_path, serde_json::to_vec_pretty(manifest).unwrap()).unwrap();
+        fs::write(&artifact_path, artifact).unwrap();
+        fixture
+            .run(&[
+                "package",
+                "admit",
+                "--manifest",
+                manifest_path.to_str().unwrap(),
+                "--artifact",
+                artifact_path.to_str().unwrap(),
+                "--json",
+            ])
+            .success("package admit");
+    }
+    for id in ["example/catalog-echo", "example/catalog-domain"] {
+        fixture
+            .run(&["package", "enable", id, "1.0.0", "--yes", "--json"])
+            .success("package enable");
+    }
+
+    // Naming the built-in catalog must be indistinguishable from not naming it.
+    let explicit = fixture.run(&["tool", "list", "--catalog", "builtin", "--json"]);
+    let explicit_text = explicit.text.clone();
+    let explicit = explicit.success("tool list");
+    assert_eq!(
+        explicit_text, baseline_text,
+        "--catalog builtin changed the default output"
+    );
+    assert_eq!(explicit["tools"].as_array().unwrap().len(), builtin_count);
+
+    // The active catalog adds the packaged gene and nothing else.
+    let active = fixture
+        .run(&["tool", "list", "--catalog", "active", "--json"])
+        .success("tool list");
+    assert_eq!(active["catalog"], "active");
+    let active_tools = active["tools"]
+        .as_array()
+        .expect("tools should be an array");
+    let builtin_ids = baseline["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["id"].as_str().unwrap().to_owned())
+        .collect::<std::collections::BTreeSet<_>>();
+    let packaged = active_tools
+        .iter()
+        .filter(|tool| !builtin_ids.contains(tool["id"].as_str().unwrap()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        packaged.len(),
+        1,
+        "expected exactly the one packaged gene to be added: {active}"
+    );
+    let packaged_id = packaged[0]["id"].as_str().unwrap().to_owned();
+    assert!(
+        packaged_id.starts_with("package."),
+        "a packaged gene should keep its aliased id: {packaged_id}"
+    );
+
+    // Inspect resolves the gene from the active catalog, and the same id is
+    // honestly absent from the built-in one.
+    let inspected = fixture
+        .run(&[
+            "tool",
+            "inspect",
+            &packaged_id,
+            "--catalog",
+            "active",
+            "--json",
+        ])
+        .success("tool inspect");
+    assert_eq!(inspected["tool"]["id"], packaged_id);
+    assert_eq!(inspected["tool"]["capability"], "wasm.execute");
+    assert_eq!(inspected["catalog"], "active");
+
+    let missing = fixture
+        .run(&["tool", "inspect", &packaged_id, "--json"])
+        .error("usage_error", 2);
+    assert!(
+        missing["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("unknown tool")),
+        "the default catalog should not claim to hold a packaged gene: {missing}"
+    );
+
+    // An unknown selector fails closed instead of quietly reading built-ins,
+    // which would make a typo look like a successful answer.
+    let rejected = fixture
+        .run(&["tool", "list", "--catalog", "not-a-catalog", "--json"])
+        .error("usage_error", 2);
+    assert!(
+        rejected["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("unknown tool catalog")),
+        "an unknown catalog should be named: {rejected}"
+    );
 }
 
 fn path_value(path: &Path) -> Value {

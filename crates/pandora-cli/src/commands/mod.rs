@@ -416,7 +416,7 @@ commands:
   registry list | set --name <name> --registry-url <url> [--token-env <name>] | use <name> | remove <name> --yes
   runtime engines list|inspect <id>
   memory recall --session <id> --provider <name> --tier <l1|l2> [--id <memory-id>] [--limit <1-256>] | audit --session <id> --provider <name> | forget --session <id> --provider <name> <memory-id> [--yes] | compact --session <id> --provider <name> --before <unix-seconds> [--yes] | promote --session <id> --provider <name> <memory-id> [--approval <id>] | synthesize --session <id> --provider <name> --id <memory-id> --summary <text> [--kind <kind>] [--classification <public|internal>] [--yes] | consolidate --source-session <id> --target-session <id> --provider <name> --source-id <memory-id> --target-id <memory-id> [--yes] | provenance --session <id> --provider <name> <memory-id> | schedule create|list|disable|claim|run|runs
-  tool list|inspect <id>
+  tool list|inspect <id> [--catalog <builtin|active>]
   approval list|inspect|resolve
   provider list|set|use|test
   mcp list|inspect|set|remove|catalog <server> --allow|call <server> <tool> --arguments-json <object> --idempotency-key <key> --allow

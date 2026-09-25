@@ -641,7 +641,13 @@ impl ToolEngine {
         Ok(())
     }
 
-    pub(crate) fn register_wasm_genes(
+    /// Register the executable tool surface of a set of Gene manifests.
+    ///
+    /// Public because the service `runtime.tools` read model and the CLI
+    /// `tool list --catalog active` read must resolve to the same set. Keeping
+    /// one implementation is the point: a second, CLI-local copy of the alias
+    /// and version rules would drift from the set the runtime actually calls.
+    pub fn register_wasm_genes(
         &self,
         manifests: impl IntoIterator<Item = GeneManifest>,
     ) -> Result<(), ToolError> {
