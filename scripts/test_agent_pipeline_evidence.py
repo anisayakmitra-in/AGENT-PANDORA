@@ -71,6 +71,8 @@ class AgentPipelineEvidenceTests(unittest.TestCase):
             encoding="utf-8",
         )
         subprocess.run(["git", "init", "-q"], cwd=self.root, check=True)
+        # Keep the fixture byte-stable on Windows; validation intentionally checks raw bytes.
+        subprocess.run(["git", "config", "core.autocrlf", "false"], cwd=self.root, check=True)
         subprocess.run(
             ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-q", "-m", "fixture"],
             cwd=self.root,
