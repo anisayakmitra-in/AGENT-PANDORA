@@ -1,4 +1,8 @@
-use pandora_types::hash_artifact;
+use pandora_runtime::SessionStore;
+use pandora_types::{
+    EventContext, EventId, EventPayload, EventType, PrincipalId, RuntimeEvent, Session, SessionId,
+    TenantId, Timestamp, WorkspaceId, hash_artifact,
+};
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -36,6 +40,33 @@ impl Fixture {
             workspace,
             root,
         }
+    }
+
+    /// Write a real config so commands that require one are reachable.
+    ///
+    /// The default fixture stays unconfigured on purpose: `doctor` is expected
+    /// to fail closed when no config exists, and that assertion should not be
+    /// reachable through a constructor that quietly configures it.
+    fn setup(&self) {
+        let output = Command::new(env!("CARGO_BIN_EXE_pandora"))
+            .args(["setup", "--config"])
+            .arg(&self.config)
+            .args(["--data-dir"])
+            .arg(&self.data)
+            .env("PANDORA_CONFIG", &self.config)
+            .env("PANDORA_DATA_DIR", &self.data)
+            .env("PANDORA_WORKSPACE", &self.workspace)
+            .output()
+            .expect("setup command should start");
+        assert!(
+            output.status.success(),
+            "setup failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            self.config.exists(),
+            "setup should have written the config file"
+        );
     }
 
     fn run(&self, args: &[&str]) -> JsonResponse {
@@ -314,6 +345,158 @@ fn runtime_engines_expose_the_core_inventory_without_a_service() {
             .is_some_and(|message| message.contains("unknown engine")),
         "unknown engine should name the problem: {unknown}"
     );
+}
+
+#[test]
+fn session_events_page_in_bounded_slices() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    let session_id = SessionId::new("paged-session-1").unwrap();
+    let principal = PrincipalId::new("local-user").unwrap();
+    let tenant = TenantId::new("local-tenant").unwrap();
+    let workspace = WorkspaceId::new("local-workspace").unwrap();
+    let sessions = SessionStore::open(fixture.data.join("sessions.sqlite3")).unwrap();
+    sessions
+        .create(&Session::new(
+            session_id.clone(),
+            principal.clone(),
+            tenant.clone(),
+            workspace.clone(),
+            Timestamp::from_unix_seconds(10),
+        ))
+        .expect("session should be created");
+    for index in 1_u64..=5 {
+        sessions
+            .append_event_at(
+                &session_id,
+                &principal,
+                &tenant,
+                &workspace,
+                &RuntimeEvent::new(
+                    EventId::new(format!("event-{index}")).unwrap(),
+                    EventType::SessionStarted,
+                    EventContext::new(tenant.clone(), workspace.clone())
+                        .with_session(session_id.clone()),
+                    EventPayload::Empty,
+                ),
+                Timestamp::from_unix_seconds(10 + index),
+            )
+            .expect("event should be appended");
+    }
+    drop(sessions);
+
+    // First page: bounded, and the cursor points at the next unread event.
+    let first = fixture
+        .run(&[
+            "session",
+            "events",
+            "paged-session-1",
+            "--limit",
+            "2",
+            "--json",
+        ])
+        .success("session events");
+    assert_eq!(first["count"], 2);
+    assert_eq!(
+        first["events"].as_array().map(Vec::len),
+        Some(2),
+        "a page must never exceed --limit"
+    );
+    assert_eq!(first["has_more"], true);
+    let cursor = first["next_sequence"]
+        .as_u64()
+        .expect("a partial page must report a cursor");
+
+    // Second page resumes exactly where the first stopped, with no gap and no
+    // repeat. Together the two pages cover all five events.
+    let second = fixture
+        .run(&[
+            "session",
+            "events",
+            "paged-session-1",
+            "--after-sequence",
+            &cursor.to_string(),
+            "--limit",
+            "2",
+            "--json",
+        ])
+        .success("session events");
+    assert_eq!(second["after_sequence"], cursor as u64);
+    let first_ids = event_ids(&first);
+    let second_ids = event_ids(&second);
+    for id in &first_ids {
+        assert!(
+            !second_ids.contains(id),
+            "event {id} appeared in both pages, so the cursor repeated a record"
+        );
+    }
+    assert_eq!(second["has_more"], true);
+
+    // Final page reports exhaustion, so a client can stop without guessing.
+    let last = fixture
+        .run(&[
+            "session",
+            "events",
+            "paged-session-1",
+            "--after-sequence",
+            &second["next_sequence"].as_u64().unwrap().to_string(),
+            "--json",
+        ])
+        .success("session events");
+    assert_eq!(last["has_more"], false);
+    assert_eq!(last["next_sequence"], Value::Null);
+    let mut seen = first_ids;
+    seen.extend(event_ids(&second));
+    seen.extend(event_ids(&last));
+    assert_eq!(seen.len(), 5, "paging dropped an event: {seen:?}");
+    assert_eq!(
+        seen.iter().collect::<std::collections::BTreeSet<_>>().len(),
+        5,
+        "paging repeated an event: {seen:?}"
+    );
+
+    // Bad bounds fail closed as usage errors before the store is consulted, so
+    // an invalid limit can never be mistaken for a session with no events.
+    for bad in ["0", "257", "not-a-number"] {
+        let rejected = fixture
+            .run(&[
+                "session",
+                "events",
+                "paged-session-1",
+                "--limit",
+                bad,
+                "--json",
+            ])
+            .error("usage_error", 2);
+        assert!(
+            rejected["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("limit")),
+            "limit {bad} should be named in the error: {rejected}"
+        );
+    }
+
+    // An unknown session fails closed rather than returning an empty page that
+    // would read as "this session has no events".
+    let missing = fixture
+        .run(&["session", "events", "no-such-session", "--json"])
+        .error("internal_error", 60);
+    assert!(
+        missing["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("not found")),
+        "a missing session should say so: {missing}"
+    );
+}
+
+fn event_ids(page: &Value) -> Vec<String> {
+    page["events"]
+        .as_array()
+        .expect("events should be an array")
+        .iter()
+        .map(|event| event["event_id"].as_str().unwrap_or_default().to_owned())
+        .collect()
 }
 
 fn path_value(path: &Path) -> Value {

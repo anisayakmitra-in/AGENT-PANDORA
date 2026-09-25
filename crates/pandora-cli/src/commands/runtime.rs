@@ -11,11 +11,13 @@ use serde_json::json;
 /// authority. It is the CLI counterpart of the service's `runtime.engines`
 /// read model, and both read the same core list.
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
-    let group = args
-        .first()
-        .ok_or_else(|| CliError::usage("runtime requires 'engines'"))?;
-    match group.as_str() {
-        "engines" => engines(&args[1..]),
+    let selected = args.iter().position(|arg| !arg.starts_with('-'));
+    let (group, rest) = match selected {
+        Some(index) => (args[index].as_str(), &args[index + 1..]),
+        None => ("engines", args),
+    };
+    match group {
+        "engines" => engines(rest),
         unknown => Err(CliError::usage(format!(
             "unknown runtime command '{unknown}'"
         ))),
@@ -23,12 +25,17 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
 }
 
 fn engines(args: &[String]) -> Result<CommandResult, CliError> {
-    let subcommand = args
-        .first()
-        .ok_or_else(|| CliError::usage("runtime engines requires 'list' or 'inspect'"))?;
-    match subcommand.as_str() {
-        "list" => list(&args[1..]),
-        "inspect" => inspect(&args[1..]),
+    // The first non-flag argument selects the subcommand, so `runtime engines
+    // --json` lists rather than complaining about a missing verb. Reading the
+    // whole inventory is the only sensible default for a read-only listing.
+    let selected = args.iter().position(|arg| !arg.starts_with('-'));
+    let (subcommand, rest) = match selected {
+        Some(index) => (args[index].as_str(), &args[index + 1..]),
+        None => ("list", args),
+    };
+    match subcommand {
+        "list" => list(rest),
+        "inspect" => inspect(rest),
         unknown => Err(CliError::usage(format!(
             "unknown runtime engines command '{unknown}'"
         ))),

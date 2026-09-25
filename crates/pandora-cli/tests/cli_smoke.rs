@@ -10667,22 +10667,22 @@ fn completions_include_session_inspect_for_each_shell() {
         (
             "powershell",
             "if ($elements.Count -gt 1 -and $elements[1] -eq 'session')",
-            "'list','resume','inspect'",
+            "'list','resume','inspect','events'",
         ),
         (
             "bash",
             "if [[ \"$previous\" == \"session\" ]]",
-            "compgen -W 'list resume inspect'",
+            "compgen -W 'list resume inspect events'",
         ),
         (
             "zsh",
             "if [[ ${words[2]} == session ]]",
-            "'2:session command:(list resume inspect)'",
+            "'2:session command:(list resume inspect events)'",
         ),
         (
             "fish",
             "__fish_seen_subcommand_from session",
-            "list resume inspect",
+            "list resume inspect events",
         ),
     ];
     for (shell, parent_condition, subcommands) in expectations {
@@ -10700,8 +10700,10 @@ fn completions_include_session_inspect_for_each_shell() {
         assert!(script.contains(parent_condition));
         assert!(script.contains(subcommands));
         if shell == "zsh" {
+            // The root command list must appear once. A second copy is what
+            // leaves an earlier list behind when a command is added.
             assert!(!script.contains(
-                "_arguments \\\n+    '1:command:(setup run harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor)' \\\n+    '2:session command:(list resume inspect)'"
+                "_arguments \\\n+    '1:command:(setup run harness session skill approval provider tool orchestration strategies completions migrate update uninstall doctor)' \\\n+    '2:session command:(list resume inspect events)'"
             ));
         }
     }

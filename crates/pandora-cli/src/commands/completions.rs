@@ -47,7 +47,7 @@ fn powershell() -> &'static str {
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'rollout') {
         'inspect'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'session') {
-        'list','resume','inspect'
+        'list','resume','inspect','events'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'job') {
         'submit','work','list','inspect','cancel','mark-interrupted'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'subagent') {
@@ -138,7 +138,7 @@ fn bash() -> &'static str {
     elif [[ "$previous" == "rollout" ]]; then
         COMPREPLY=( $(compgen -W 'inspect' -- "$current") )
     elif [[ "$previous" == "session" ]]; then
-        COMPREPLY=( $(compgen -W 'list resume inspect' -- "$current") )
+        COMPREPLY=( $(compgen -W 'list resume inspect events' -- "$current") )
     elif [[ "$previous" == "job" ]]; then
         COMPREPLY=( $(compgen -W 'submit work list inspect cancel mark-interrupted' -- "$current") )
     elif [[ "$previous" == "subagent" ]]; then
@@ -229,7 +229,7 @@ elif [[ ${words[2]} == secret ]]; then
 elif [[ ${words[2]} == rollout ]]; then
     _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:rollout command:(inspect)'
 elif [[ ${words[2]} == session ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:session command:(list resume inspect)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:session command:(list resume inspect events)'
 elif [[ ${words[2]} == job ]]; then
     _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:job command:(submit work list inspect cancel mark-interrupted)'
 elif [[ ${words[2]} == subagent ]]; then
@@ -303,7 +303,7 @@ complete -c pandora -f -n '__fish_seen_subcommand_from backup; and not __fish_se
 complete -c pandora -f -n '__fish_seen_subcommand_from backup; and __fish_seen_subcommand_from lifecycle' -a 'preview record list inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from harness' -a 'list inspect run'
 complete -c pandora -f -n '__fish_seen_subcommand_from slash' -a 'list resolve'
-complete -c pandora -f -n '__fish_seen_subcommand_from session' -a 'list resume inspect'
+complete -c pandora -f -n '__fish_seen_subcommand_from session' -a 'list resume inspect events'
 complete -c pandora -f -n '__fish_seen_subcommand_from service' -a 'start'
 complete -c pandora -f -n '__fish_seen_subcommand_from auth' -a 'enroll list revoke'
 complete -c pandora -f -n '__fish_seen_subcommand_from secret' -a 'set list status remove'

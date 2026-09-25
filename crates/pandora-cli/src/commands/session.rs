@@ -6,17 +6,107 @@ use pandora_types::{EventType, ObservabilitySample, SessionId};
 use serde_json::json;
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
-    let subcommand = args
-        .first()
-        .ok_or_else(|| CliError::usage("session requires 'list', 'resume', or 'inspect'"))?;
+    let subcommand = args.first().ok_or_else(|| {
+        CliError::usage("session requires 'list', 'resume', 'inspect', or 'events'")
+    })?;
     match subcommand.as_str() {
         "list" => list(&args[1..]),
         "resume" => resume(&args[1..]),
         "inspect" => inspect(&args[1..]),
+        "events" => events(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown session command '{unknown}'"
         ))),
     }
+}
+
+/// Bounded page of session events.
+///
+/// The store already pages with a sequence cursor; this exposes it. Paging
+/// rather than loading the whole log matters because `session resume` and
+/// `session inspect` deserialize every event, so a long session costs
+/// unbounded memory on a read that is only asking for the next slice.
+fn events(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "after-sequence", "limit"],
+    )?;
+    // Validate the page bounds before touching the store. A bad `--limit` is a
+    // usage error, and reporting it as an empty page would look like a session
+    // with no events.
+    let limit = parse_event_limit(parsed.value("limit"))?;
+    let after_sequence = parsed
+        .value("after-sequence")
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .map_err(|_| CliError::usage("after-sequence must be a non-negative integer"))
+        })
+        .transpose()?;
+    if parsed.positionals.len() != 1 {
+        return Err(CliError::usage(
+            "session events requires exactly one session ID",
+        ));
+    }
+    let session_id = SessionId::new(parsed.positionals[0].clone())
+        .map_err(|_| CliError::usage("session ID is invalid"))?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+    let (principal, tenant, workspace) = session_scope();
+    let page = store
+        .event_page(
+            &session_id,
+            &principal,
+            &tenant,
+            &workspace,
+            after_sequence,
+            limit,
+        )
+        .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
+    let events = serde_json::to_value(page.events())
+        .map_err(|_| CliError::internal("could not serialize session events", json!({})))?;
+    let count = page.events().len();
+    let next_sequence = page.next_sequence();
+    Ok(success(
+        "session events",
+        json!({
+            "session_id": session_id,
+            "after_sequence": after_sequence,
+            "limit": limit,
+            "count": count,
+            "has_more": next_sequence.is_some(),
+            "next_sequence": next_sequence,
+            "events": events,
+        }),
+        match next_sequence {
+            Some(next) => format!(
+                "{count} event(s) for {}; continue with --after-sequence {next}",
+                session_id
+            ),
+            None => format!("{count} event(s) for {}; end of log", session_id),
+        },
+    ))
+}
+
+const DEFAULT_EVENT_LIMIT: u16 = 50;
+const MAX_EVENT_LIMIT: u16 = 256;
+
+fn parse_event_limit(value: Option<&str>) -> Result<u16, CliError> {
+    let limit = value
+        .map(|value| {
+            value
+                .parse::<u16>()
+                .map_err(|_| CliError::usage("session events limit must be an integer"))
+        })
+        .transpose()?
+        .unwrap_or(DEFAULT_EVENT_LIMIT);
+    if limit == 0 || limit > MAX_EVENT_LIMIT {
+        return Err(CliError::usage(format!(
+            "session events limit must be between 1 and {MAX_EVENT_LIMIT}"
+        )));
+    }
+    Ok(limit)
 }
 
 fn list(args: &[String]) -> Result<CommandResult, CliError> {

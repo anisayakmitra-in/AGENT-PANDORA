@@ -407,7 +407,7 @@ commands:
   tui [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>] [--theme <auto|dark|light|mono>]
   harness list|inspect|run [--harness-version <version>]
   slash list|resolve <command>
-  session list|resume|inspect <id>
+  session list|resume|inspect <id> | events <id> [--after-sequence <n>] [--limit <1-256>]
   job submit|work|list|inspect|cancel|mark-interrupted (work accepts --max-jobs <1-64>, bounded --watch --idle-timeout <1-3600>, or --daemon)
   subagent spawn --session <id> --execution <id> [--commit <sha>] [--provider <name>] [--harness <id> --harness-version <version>] [--max-turns <n>] [--max-tools <n>] [--max-tokens <n>] [--max-duration <seconds>] [--max-depth <n>] [--max-result-bytes <n>] <task>
   subagent list|inspect|cancel|mark-interrupted|cleanup <id> | work [--max-agents <1-8>]
