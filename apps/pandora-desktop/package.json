@@ -27,16 +27,17 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.11.0",
+    "@playwright/test": "^1.55.0",
     "@tauri-apps/cli": "^2.8.4",
+    "@testing-library/dom": "^10.4.2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.3",
     "@types/react": "^19.1.1",
     "@types/react-dom": "^19.1.1",
     "@vitejs/plugin-react": "^5.0.2",
-    "@playwright/test": "^1.55.0",
     "jsdom": "^26.1.0",
     "typescript": "^5.8.3",
     "vite": "^7.1.2",
-    "vitest": "^3.2.7"
+    "vitest": "^4.1.11"
   }
 }
