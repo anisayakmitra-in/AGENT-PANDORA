@@ -192,7 +192,10 @@ AgentLoop, session, approval, and governed effect path.
   in the current workflow while RC and stable remain blocked. `cli-only` alpha
   and beta releases intentionally skip desktop smoke, while a future `full`
   alpha or beta release can exercise only unsigned desktop lifecycle; neither
-  path currently provides platform-signature or notarization evidence.
+  path currently provides platform-signature or notarization evidence. The
+  provider-neutral request and response requirements are documented in
+  [the external signing boundary](docs/EXTERNAL_DESKTOP_SIGNING.md); no
+  provider adapter or signing evidence is configured.
 - Stable requires accepted exact-commit native NVDA, VoiceOver, and Orca evidence
   for every advertised desktop platform.
 

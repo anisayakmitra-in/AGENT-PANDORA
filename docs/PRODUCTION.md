@@ -278,7 +278,9 @@ alpha and beta releases, desktop smoke is intentionally skipped; for a future
 `full` alpha or beta release it can exercise unsigned desktop lifecycle without
 providing platform-signature evidence. The RC/stable path stops at the
 secretless gate, so neither path currently provides platform-signature or
-notarization evidence.
+notarization evidence. The provider-neutral request boundary is documented in
+[external desktop signing](EXTERNAL_DESKTOP_SIGNING.md); no provider adapter or
+signing evidence is configured.
 
 Publication also waits at the protected `release-publication` environment, which
 accepts only `v*` tags and requires a human reviewer. RC and stable source

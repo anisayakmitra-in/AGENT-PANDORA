@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-- Changes after the next beta identity will be recorded here.
+- Added a provider-neutral, hash-bound contract for requesting isolated desktop
+  signing without placing credentials beside tag-controlled build hooks. The
+  contract does not enable RC/stable publication or claim provider authenticity;
+  an independently administered signer, trust root, and clean verification
+  runner remain required.
 
 ## v2.0.0-beta.8
 
