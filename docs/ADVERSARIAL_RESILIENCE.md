@@ -60,8 +60,8 @@ pandora package transparency inspect --sequence 1
 
 The commands report `append-only-sqlite`, `sha256-event-chain`, and
 `runtime_authority: false`. They do not admit, enable, activate, or execute a
-package. The TUI provides guidance through `/trust-transparency`; the desktop
-Package Manager displays the same read-only evidence.
+package. The TUI provides guidance through `/trust-transparency`, and the CLI
+reports the same read-only evidence.
 
 ## Production parser fuzzing
 

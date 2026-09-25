@@ -1,6 +1,8 @@
 # Pandora interface design brief
 
-Status: implementation-ready brief for the Open Design workflow
+Status: retained, inactive. Desktop product work is cancelled. This brief is
+kept as a design record for the in-tree adapter; the shipped interface is the
+`pandora` CLI.
 
 ## Product intent
 

@@ -1,5 +1,8 @@
 # Desktop theme contract
 
+Status: retained, inactive. Desktop product work is cancelled, so these themes
+are reference material for the in-tree adapter and nothing more.
+
 Pandora desktop themes are local presentation data. They cannot execute code,
 read prompts, memories, secrets, receipts, or workspace files, invoke tools,
 change routing, resolve approvals, or grant permits.

@@ -162,8 +162,8 @@ all times the store enforces:
 enforced_consumed + active_reservations <= aggregate_ceiling
 ```
 
-`orchestration inspect`, `orchestration list`, `fleet dashboard`, the TUI
-`/fleet-health` view, and desktop Background Runs expose ceiling, active
+`orchestration inspect`, `orchestration list`, `fleet dashboard`, and the TUI
+`/fleet-health` view expose ceiling, active
 reservations, measured use, enforceable remaining capacity, unknown-cost count,
 and the invariant result without including prompts, outputs, credentials, or
 hidden reasoning.
@@ -191,20 +191,19 @@ worker can reserve the failed role again only when enough aggregate capacity
 remains. Queued runs may be cancelled with `pandora orchestration cancel
 <run-id>`.
 
-## Desktop inspection and control
+## Orchestration inspection and control
 
 The authenticated local service exposes scoped `orchestration.list`,
 `orchestration.inspect`, `orchestration.cancel`, and `orchestration.resume` RPC
-methods. The desktop Background Runs surface uses those methods; it never reads
-the orchestration database directly and cannot claim a run, steal a worker
-lease, complete a role, issue a permit, or fabricate a receipt.
+methods. The CLI calls them directly, and so did the retained desktop adapter's
+Background Runs surface, which never read the orchestration database and could
+not claim a run, steal a worker lease, complete a role, issue a permit, or
+fabricate a receipt.
 
 Cancellation is available only for queued work. Resume is available only for an
 interrupted snapshot that the orchestration store considers safe to requeue.
 Both mutations require the exact run ID as confirmation, and service role policy
-limits them to operators and administrators. Native desktop device trust is
-established automatically, so this internal service boundary does not create an
-account or sign-in flow.
+limits them to operators and administrators.
 
 ## Phase 7 recovery evidence
 

@@ -121,7 +121,7 @@ operations gate. Long-duration runs remain an operator/release evidence gate
 and are not part of default CI.
 
 `pandora fleet dashboard --json` is the operations read model shared by the
-CLI, `/fleet-health` TUI command, and desktop Background Runs view. It reports
+CLI and the `/fleet-health` TUI command. It reports
 Fleet health, queue depth, lease age and expiry, stale supervisor counts,
 failure identities, active Fleet lease ceilings, and the durable orchestration
 budget ledger. The orchestration section separates aggregate ceiling, active

@@ -71,7 +71,11 @@ those checks.
 
 ## Reviewed dependency backports
 
-Tauri 2.11.5 and Wry 0.55.1 currently bind the supported Linux desktop to the
+These apply to the retained desktop adapter, which is inactive and outside the
+release gate. They stay documented because the vendored source, the Cargo
+override, and the validation digest are still in the tree.
+
+Tauri 2.11.5 and Wry 0.55.1 bind the adapter's Linux build to the
 final GTK3 `gtk 0.18` dependency line. That line cannot resolve the published
 `glib 0.20` fix for RUSTSEC-2024-0429 while Tauri's GTK4 migration remains
 unreleased.

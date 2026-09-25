@@ -23,7 +23,7 @@ Pandora records improvement evidence without allowing the improvement system to 
 - `ArtifactCatalog` persists active base-to-candidate bindings, resolves bounded replacement chains, rejects cycles and duplicate bases, and requires dependent replacements to roll back first.
 - `ReplacementEngine` requires a passed canary and an idle execution boundary registered with that engine before activation. Activation and rollback produce typed receipts, and failed catalog changes compensate by rolling evolution state back closed.
 - Admitted custom WebAssembly Genes resolve the active catalog chain once while Pandora assembles the selected Domain Harness. The resulting execution profile keeps the base Gene ID and version while binding the exact resolved artifact hash. A catalog change can affect a later profile, but cannot replace the module inside an in-flight profile.
-- The CLI, local service, and desktop expose the proposal's exact memory-evidence IDs alongside its evidence digest. Legacy proposals deserialize with an empty list. The service and desktop expose active catalog bindings read-only; they do not expose approval or staging controls, and desktop activation or rollback remains an explicit exact-confirmation operation.
+- The CLI and local service expose the proposal's exact memory-evidence IDs alongside its evidence digest. Legacy proposals deserialize with an empty list. The service exposes active catalog bindings read-only and does not expose approval or staging controls, and activation or rollback stays an explicit exact-confirmation operation.
 
 ## Authority
 

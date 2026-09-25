@@ -1,6 +1,10 @@
 # Desktop accessibility and clean-machine evidence
 
-Pandora keeps three different claims separate:
+Status: retained, inactive. Desktop product work is cancelled, so none of the
+checks described here run, and none of them gate a release. The rest of this
+document records how the adapter was verified while it was active.
+
+Pandora kept three different claims separate:
 
 1. rendered webview accessibility and scaling checks;
 2. packaged-app install, start, identity, update, rollback, and uninstall checks on fresh CI runners;

@@ -48,7 +48,7 @@ repository no longer claims a desktop product that is being cancelled.
 
 ### W0 — Boundary inventory and plan gate
 
-- Owned files: `tasks/plan.md`, `tasks/todo.md`.
+- Owned files: `tasks/plan.md` and the sibling task list in the same directory.
 - Dependencies: none.
 - Done: plan, non-goals, and verification commands recorded; no product code
   changed.

@@ -1,5 +1,10 @@
 # External desktop-signing boundary
 
+Status: non-enabling and now moot. Desktop product work is cancelled, so no
+desktop is built, signed, or published from this repository. The contract below
+is kept for audit history, and the open questions it raised still apply if
+anyone reactivates the adapter.
+
 Pandora does not treat a GitHub environment attached to the tag-controlled
 release workflow as a sufficient desktop-signing boundary. A tag can change the
 workflow, build hooks, package scripts, and helper code that run beside a

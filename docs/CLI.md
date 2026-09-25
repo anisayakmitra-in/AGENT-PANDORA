@@ -87,7 +87,8 @@ token pricing; Pandora never stores API key values in configuration or output. P
 uses integer micro-units per million input and output tokens. Both rates must be
 provided together. A profile can name one fallback profile.
 
-The desktop Command composer exposes the same explicit one-run routing. Its
+The retained desktop adapter's Command composer exposed the same explicit
+one-run routing. Its
 provider selector lists only configured profiles whose credential is available
 when the local service starts; the service default is the active profile when
 that profile is available, otherwise the first available configured profile.
@@ -187,7 +188,7 @@ reuse of the same evidence ID with different content fails closed. `list` and
 `external_action_performed_by_runtime: false`, and
 `secure_erasure_guaranteed: false`: the operator must perform and independently
 verify the provider action before hashing its external audit record. The TUI
-exposes this boundary through `/storage-lifecycle`, and the desktop can review
+exposes this boundary through `/storage-lifecycle`, and the CLI lists
 the resulting receipts. The append-only ledger is bounded to 4,096 receipts.
 Provider fields are identifiers and audit references only; never place a
 credential, private key, recovery passphrase, or key material in the manifest.
@@ -422,7 +423,7 @@ approvals and permits; invalid values fail closed before terminal raw mode is
 entered.
 The status line reports one of five typed public activity states: `idle`,
 `working`, `waiting`, `success`, or `failure`. `/activity` repeats that state in
-the transcript. This is a terminal equivalent of the optional desktop
+the transcript. This is a terminal equivalent of the retired desktop
 companion and never includes prompts, tool output, hidden reasoning, or runtime
 arguments.
 `/packages` lists at most 50 local package identities with their kind and
@@ -628,7 +629,7 @@ pandora evolution generate --session session-1 --kind prompt --target-id planner
 The result identifies the exact base/candidate hashes, evidence digest, and the
 canonical `memory_evidence_ids` list for every memory record included in the
 research evidence. That list is stored on the proposal and appears in list,
-inspect, service, and desktop views; the evidence digest covers the same IDs. It
+inspect, and service views; the evidence digest covers the same IDs. It
 must still pass holdouts and regression checks, Parliament approval, staging,
 and canary before activation. Prompt, Skill, and workflow activation remains a
 non-executable catalog binding; a WASM Gene candidate also requires normal
@@ -873,8 +874,7 @@ identities, and the sum of active lease ceilings. Those ceilings are limits,
 not measured spend. The response deliberately excludes job arguments, prompts,
 results, provider output, credentials, and hidden reasoning. Its records cannot
 approve an effect, issue a permit, activate a package, or mutate Fleet state.
-The TUI exposes the same bounded summary through `/fleet-health`, and the
-desktop shows it above Background Runs.
+The TUI exposes the same bounded summary through `/fleet-health`.
 
 Enabled Skills contribute bounded guidance to the rebuilt system instruction.
 Only Skills explicitly in the `enabled` state are included. Their text is
@@ -1120,8 +1120,8 @@ set of exact Domain identities and `--max-handoffs` is bounded to 1-64. The
 runtime resolves exact built-in Domain dependencies, requires custom Domains to
 be enabled before the Meta profile, and refuses duplicate, self-cyclic,
 missing, disabled, wrong-kind, or incompatible members before execution. The
-TUI `/meta-starter` command is non-mutating guidance; the desktop inspector
-shows exact composition, dependencies, trust, active generation, and rollback
+TUI `/meta-starter` command is non-mutating guidance, and the
+CLI shows exact composition, dependencies, trust, active generation, and rollback
 evidence without granting authority.
 
 The tracked `sdk/gene-pack` examples exercise the same package commands with
@@ -1130,7 +1130,7 @@ effect, `bounded_read` declares only `filesystem.read`, and `effect_request`
 declares `filesystem.write` with required approval. `package inspect` reports
 `gene_contract`, `provenance`, and exact `owning_domains` alongside activation
 generation and rollback state. The TUI `/gene-pack` command is guidance only,
-and the desktop renders the same evidence without calling an executor. Contract
+and the CLI renders the same evidence without calling an executor. Contract
 validation rejects undeclared or authority-changing capabilities before
 admission. Matching effect proposals still require policy, exact approval when
 required, a ReferenceMonitor permit, and an executor receipt.
@@ -1229,8 +1229,8 @@ subject identity, the prior digest, and their own SHA-256 digest, but no package
 artifact, private key, credential, prompt, or model output. SQLite triggers
 reject updates and deletes. The ledger is append-only inspection evidence and
 reports `runtime_authority: false`; it cannot admit, enable, or execute a
-package. The TUI `/trust-transparency` command is guidance only, and the desktop
-Package Manager renders the same read-only ledger.
+package. The TUI `/trust-transparency` command is guidance only, and the CLI
+renders the same read-only ledger.
 
 `memory recall` exposes only the selected, redacted L1 or L2 records from the exact
 tenant, workspace, session, and provider scope. L0 remains process-local and is not
@@ -1261,7 +1261,7 @@ exists. `keep-target` is a non-mutating success, while `reject` is fail-closed;
 neither can overwrite an active record or reuse a tombstoned identity. Sensitive
 records are denied, source provenance is hash-bound, and the operation cannot
 promote to L2, approve memory, or grant execution authority. The TUI exposes
-these rules through `/memory-transfer`, and the desktop shows the same boundary.
+these rules through `/memory-transfer`, and the CLI shows the same boundary.
 
 `memory schedule` stores bounded, scoped synthesis schedules and durable run
 history. A worker claim has a lease, and `schedule run` re-reads the exact source

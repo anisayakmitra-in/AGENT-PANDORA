@@ -50,7 +50,7 @@ Keep each pull request tied to one issue or one small defect. In the description
 - name the authority boundary touched or say that none changed;
 - list the exact commands you ran;
 - call out incomplete platform checks or release evidence;
-- include screenshots for visible desktop changes;
+- include screenshots for visible UI changes to the retained adapter;
 - update docs when a public command, JSON field, package contract, or lifecycle
   changes.
 
@@ -71,7 +71,9 @@ python scripts/validate_repo.py
 python scripts/validate_docs.py
 ```
 
-For desktop changes:
+Desktop product work is cancelled and `apps/pandora-desktop` is retained
+inactive, so its checks are not part of the merge gate. If you are
+deliberately working in the adapter, run them separately:
 
 ```sh
 cd apps/pandora-desktop

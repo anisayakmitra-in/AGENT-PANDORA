@@ -23,7 +23,8 @@
 
 ## Deferred, tracked separately
 
-- F1: explicit RPC `idempotency_key` contract. The desktop bridge reuses one
-  JSON-RPC `id` as the durable idempotency key, so approval/resume and other
-  mutations can conflict or replay. This changes a public transport contract and
-  is out of scope for the behavior-preserving boundary refactor.
+- F1: explicit RPC `idempotency_key` contract. Desktop product work is
+  cancelled, so this is no longer a live desktop defect, but the same constant
+  JSON-RPC `id` pattern would break any other client that reused one id for
+  approval/resume and other mutations. It changes a public transport contract
+  and is out of scope for the behavior-preserving boundary refactor.

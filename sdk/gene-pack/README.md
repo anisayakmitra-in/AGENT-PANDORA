@@ -35,6 +35,6 @@ pandora package disable --data-dir <data-dir> example/static-guide 1.0.0 --dry-r
 pandora package disable --data-dir <data-dir> example/static-guide 1.0.0 --yes
 ```
 
-Enable all three exact Genes before enabling `example/gene-pack-domain@1.0.0`. To evaluate rollback, admit a second exact version of one Gene with its hash-bound artifact, enable version 1 and then version 2, preview `package rollback`, and confirm with `--yes`. The CLI and desktop inspectors report activation generation, active and previous versions, provenance, declared capabilities, and owning Domain records.
+Enable all three exact Genes before enabling `example/gene-pack-domain@1.0.0`. To evaluate rollback, admit a second exact version of one Gene with its hash-bound artifact, enable version 1 and then version 2, preview `package rollback`, and confirm with `--yes`. The CLI inspector reports activation generation, active and previous versions, provenance, declared capabilities, and owning Domain records.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the authority boundary and [fixtures/inspector.json](fixtures/inspector.json) for deterministic inspector evidence.

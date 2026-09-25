@@ -83,9 +83,10 @@ Pandora's approval, permit, receipt, and event authority.
 already-revoked logical records. Its default mode reports how many exact-scope
 records are eligible; `--yes` applies the same session, provider, and timestamp
 boundary. The runtime retains revocation tombstones and append-only audit
-evidence, so a compacted identity cannot be reinserted. The desktop requires the
-typed confirmation `COMPACT <unix-seconds>` before it invokes that apply path,
-and the TUI exposes the same workflow as non-mutating guidance.
+evidence, so a compacted identity cannot be reinserted. The retained desktop
+adapter required the typed confirmation `COMPACT <unix-seconds>` before it
+invoked that apply path, and the TUI exposes the same workflow as non-mutating
+guidance.
 
 Logical compaction is not secure erasure. SQLite pages and WAL files may retain
 recoverable bytes, and encrypted backups or storage snapshots remain separate
@@ -99,7 +100,8 @@ S3, Azure Blob, or Google Cloud Storage identifiers for backup expiry, snapshot
 removal, and encryption-key destruction. Preview is non-mutating. `record
 --yes` stores a digest-bound operator attestation in an append-only SQLite
 ledger; exact retries are idempotent and conflicting evidence IDs fail closed.
-The TUI documents the workflow and the desktop lists the receipts. Every view
+The TUI documents the workflow, and the retained desktop adapter listed the
+receipts. Every view
 states that the runtime did not perform the provider action and does not
 guarantee secure erasure.
 

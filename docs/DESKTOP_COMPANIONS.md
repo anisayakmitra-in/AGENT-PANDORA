@@ -1,5 +1,8 @@
 # Desktop companion contract
 
+Status: retained, inactive. Desktop product work is cancelled, so these
+companions are reference material for the in-tree adapter and nothing more.
+
 Pandora companions are optional local presentation. They do not receive or
 read prompts, memories, secrets, receipts, workspace files, tool output,
 private reasoning, network data, or provider messages. They cannot invoke a

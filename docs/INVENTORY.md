@@ -1,9 +1,10 @@
 # Runtime inventory
 
 Pandora's local service reports a read-only component inventory through
-`runtime.engines`. The desktop **Runtime Inventory** surface groups those
-records by category and exposes each component's inputs, outputs, invariants,
-evidence classes, source modules, relationships, and documentation paths.
+`runtime.engines`. The CLI consumes those records; the retained desktop
+adapter's **Runtime Inventory** surface used to group them by category and
+show each component's inputs, outputs, invariants, evidence classes, source
+modules, relationships, and documentation paths.
 
 Inventory records describe compiled contracts. They are not health checks,
 activation receipts, effect permits, or proof that a replaceable package is
@@ -51,7 +52,7 @@ activate an evolution candidate, or bypass ReferenceMonitor.
 
 ## Adjacent inventories
 
-The desktop inventory links to the other runtime-reported surfaces rather than
+The desktop inventory linked to the other runtime-reported surfaces rather than
 flattening their contracts into component records:
 
 - Harness Lab: Harnesses, Genes, packages, plugins, authority, and receipts;

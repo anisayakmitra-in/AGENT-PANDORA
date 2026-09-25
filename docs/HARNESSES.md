@@ -133,8 +133,8 @@ Undeclared capabilities, duplicate identities, traversal IDs, unsafe symlink
 inputs, incompatible runtimes, imports, and invalid ABIs fail before code loading
 or durable activation.
 
-The native desktop Package Manager includes a Manifest Workbench for Domain,
-Meta, and Gene envelopes. It produces a copyable, deterministic JSON preview
+The retained desktop adapter's Package Manager included a Manifest Workbench for
+Domain, Meta, and Gene envelopes. It produced a copyable, deterministic JSON preview
 with the package kind, exact version, content hash, dependencies, runtime
 compatibility, route hints or Meta composition, and `unverified` trust
 evidence. The workbench is intentionally preview-only: it does not sign,
@@ -199,7 +199,7 @@ mutations require `--yes` and refuse to break an enabled dependent. These
 bindings do not grant effect authority and cannot alter Parliament, Shadow
 Council, ReferenceMonitor, permits, or the constitutional service.
 
-The desktop package inspector exposes the replacement lineage beside the
+The retained desktop package inspector exposed the replacement lineage beside the
 selected record: whether it targets a built-in Harness, its lifecycle
 generation, active version, and one-step rollback target. This is read-only
 evidence; changing the binding still requires the existing dry-run, exact
@@ -552,7 +552,7 @@ or grant runtime authority.
 
 ## Local service activation snapshot
 
-The local desktop service builds its runtime catalog from the package store's
+The local service builds its runtime catalog from the package store's
 active exact-version bindings at startup. Enabled custom Domain Harnesses load
 before enabled Meta Harnesses, and their installed WebAssembly Gene
 dependencies are resolved through the active artifact catalog. A Gene shared by
@@ -561,10 +561,10 @@ same exact identity to the same artifact. Conflicting resolutions fail service
 startup rather than selecting one implicitly.
 
 The service exposes loaded custom Harnesses through `runtime.capabilities`, so
-the desktop Harness Lab, Command selector, and saved workflows use the same
-catalog that can execute. Enabling, disabling, updating, or rolling back a
+the CLI and TUI use the same catalog that can execute. Enabling, disabling,
+updating, or rolling back a
 package changes the persisted binding but does not mutate a running controller;
-the desktop therefore requires a local-service restart before the new snapshot
+the service therefore needs a restart before the new snapshot
 is active.
 
 An enabled custom Domain may include a `domain_routing.hints` list with 1-32

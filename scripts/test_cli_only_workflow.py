@@ -6,6 +6,33 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 
+# Markdown that may mention the desktop without restating the cancellation.
+# Each entry earns its place: a changelog records what happened, vendored and
+# third-party trees are not ours to annotate, and .unlazy/ holds agent working
+# state rather than shipped documentation.
+MARKDOWN_EXEMPT_PREFIXES = (
+    ".unlazy/",
+    "third_party/",
+    "apps/pandora-desktop/public/vendor/",
+)
+MARKDOWN_EXEMPT_FILES = ("CHANGELOG.md",)
+MARKDOWN_SKIP_DIRS = {"node_modules", "target", "dist", "build", "test-results"}
+
+DESKTOP_MENTION = re.compile(r"\bdesktop\b|\btauri\b", re.IGNORECASE)
+CANCELLATION_MARKER = re.compile(
+    r"\bcancel(?:led|led)?\b|\bretained\b|\binactive\b|\bhistorical\b|\bretired\b",
+    re.IGNORECASE,
+)
+
+
+def tracked_markdown() -> list[Path]:
+    found: list[Path] = []
+    for path in ROOT.rglob("*.md"):
+        if any(part in MARKDOWN_SKIP_DIRS for part in path.parts):
+            continue
+        found.append(path.relative_to(ROOT).as_posix())
+    return sorted(found)
+
 
 def workflow_text() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
@@ -114,6 +141,25 @@ class CliOnlyWorkflowTests(unittest.TestCase):
             self.assertIn("full", document)
         self.assertIn("does not claim desktop parity", releases)
         self.assertIn("must not contain desktop artifacts", production)
+
+    def test_every_markdown_mentioning_the_desktop_states_that_it_is_cancelled(self) -> None:
+        unmarked: list[str] = []
+        for relative in tracked_markdown():
+            if relative in MARKDOWN_EXEMPT_FILES:
+                continue
+            if relative.startswith(MARKDOWN_EXEMPT_PREFIXES):
+                continue
+            text = (ROOT / relative).read_text(encoding="utf-8")
+            if not DESKTOP_MENTION.search(text):
+                continue
+            if not CANCELLATION_MARKER.search(text):
+                unmarked.append(relative)
+        self.assertEqual(
+            unmarked,
+            [],
+            "markdown mentions the desktop without stating it is cancelled: "
+            + ", ".join(unmarked),
+        )
 
 
 if __name__ == "__main__":
