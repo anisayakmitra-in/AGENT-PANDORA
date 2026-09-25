@@ -29,12 +29,12 @@ The current `2.0.0-beta.8` line is a CLI-first prerelease with:
 - local governed MCP stdio support;
 - Harness, Gene, Skill, memory, graph, evaluation, and evolution contracts;
 - a typed TypeScript launcher/client boundary;
-- a Tauri desktop control surface that is buildable from source.
+- an inactive Tauri adapter kept for downstream reuse and audit history.
 
 Pandora does not treat a type as proof that a product feature is complete.
-Release notes and tests define the supported scope. Desktop packages, remote
-execution, and marketplace distribution remain gated until their release checks
-and security boundaries are complete.
+Release notes and tests define the supported scope. Desktop work is cancelled:
+nothing in the retained adapter is built, published, or gated on. Remote
+execution and marketplace distribution also sit outside the shipped boundary.
 
 ## Who it is for
 

@@ -1,8 +1,9 @@
 # Pandora
 
-Pandora is a local-first agent platform with two interfaces: a Tauri desktop
-app and the `pandora` CLI. Both use the same Rust runtime, authenticated
-loopback service, and governed effect path:
+Pandora is a local-first agent platform whose primary interface is the Rust
+`pandora` CLI. A Tauri adapter stays in the tree, inactive, for downstream
+reuse. The CLI, runtime, and authenticated loopback service share one governed
+effect path:
 
 ```text
 ExecutionController → Parliament → ReferenceMonitor → executor → receipt
@@ -21,11 +22,12 @@ observation surface.
 
 ## Status
 
-The next prerelease identity is `2.0.0-beta.8`. The repository now builds two local
-product surfaces: the Rust CLI and a Tauri desktop app. Desktop release builds
-bundle the same-commit CLI as a native sidecar and connect only to Pandora's
-authenticated loopback service. The webview cannot issue permits or execute
-tools by itself.
+The next prerelease identity is `2.0.0-beta.8`. The repository ships one local
+product surface, the Rust CLI. `apps/pandora-desktop` is retained as an
+inactive downstream adapter: no desktop build, package, signature, or
+publication enters the CLI release or CI gates. Any retained client reaches the
+runtime through the authenticated loopback service, where permits stay with the
+ReferenceMonitor and effects stay with the executor.
 
 Existing legacy preview tags remain immutable for compatibility. Release tags
 use plain SemVer; prereleases use `alpha`, `beta`, and `rc` suffixes. Older
@@ -38,9 +40,8 @@ recovery archives, local crash records, and stable-release signing gates. See
 [production readiness](docs/PRODUCTION.md).
 Pandora now binds local context caching and provider-native stable-prefix
 caching to the same classification and provenance boundaries as execution. See
-[prompt caching](docs/PROMPT_CACHING.md). Background and parallel agents,
-evaluation primitives, scoped memory synthesis, and the desktop foundation are
-also present. For the audited shipped/open split, see
+[prompt caching](docs/PROMPT_CACHING.md). Background and parallel agents and
+evaluation primitives are also present. For the audited shipped/open split, see
 [the roadmap](docs/ROADMAP.md).
 
 Registered evaluation suites can run on durable worker-owned schedules.
@@ -56,7 +57,7 @@ six production parser targets run in bounded fuzz CI. See
 
 Research evolution proposals retain the exact stable IDs of every memory record
 that shaped their bounded evidence. The canonical ID list is digest-bound,
-durable, and visible in CLI and desktop lineage inspection without granting any
+durable, and visible in CLI lineage inspection without granting any
 additional authority. See [governed evolution](docs/EVOLUTION.md).
 
 Scoped memory retention is also operator-controlled. `memory compact` previews
@@ -130,23 +131,13 @@ pandora update --release v2.0.0-beta.8
 pandora fleet dashboard --json
 ```
 
-### Desktop app
+### Retained desktop adapter
 
-Pandora Desktop is local and has no account or login screen. Its package
-contains the same-commit `pandora` CLI sidecar, so launching the app does not
-depend on an inherited shell or `PATH`.
-
-Build a local package from source:
-
-```sh
-cd apps/pandora-desktop
-npm ci
-npm run tauri:build
-```
-
-On macOS, `./script/build_and_run.sh --verify` builds the app bundle and runs
-the project checks. See [Pandora Desktop](apps/pandora-desktop/README.md) for
-platform behavior and direct-distribution limits.
+Desktop product work is cancelled. `apps/pandora-desktop` stays in the tree for
+downstream reuse and audit history, and nothing in it runs in this repository's
+release or CI path. Use the CLI for shipped functionality. The
+[adapter notes](apps/pandora-desktop/README.md) remain for anyone who
+deliberately reactivates it.
 
 ## Build
 
@@ -214,8 +205,8 @@ terminal storage, the durable store still records cancellation; a late provider
 response cannot overwrite it with success. Cleanup remains local, requires
 explicit confirmation, and preserves dirty or commit-mismatched worktrees.
 
-For the native desktop development build or another local client, start the
-authenticated loopback runtime service:
+For a local client, or the retained adapter, start the authenticated loopback
+runtime service:
 
 ```text
 pandora service start --port 0
@@ -225,15 +216,12 @@ It prints one JSON readiness record with the bound endpoint and protected token
 file path, then remains in the foreground until Ctrl-C. It never prints the
 token or accepts non-loopback connections. See [CLI reference](docs/CLI.md).
 
-The `2.0.0-beta.7` installers remain CLI-only because that tag predates the
-desktop packaging work. The current main branch builds the desktop on Ubuntu,
-Windows, and macOS 26 CI. A stable desktop support claim still requires signed
-and notarized packages, clean-machine install and update drills, and retained
-release evidence. Remote execution, mobile, and a public package marketplace
-remain outside the shipped boundary.
+The current main branch ships the CLI only, with no desktop build, package, or
+support claim. Remote execution, mobile, and a public package marketplace also
+sit outside the shipped boundary.
 
-The CLI and desktop use the same governed local stdio MCP preview and admitted
-WebAssembly package Genes. See [MCP.md](docs/MCP.md),
+The CLI uses the governed local stdio MCP preview and admitted WebAssembly
+package Genes. See [MCP.md](docs/MCP.md),
 [WebAssembly package Genes](docs/WASM.md), and
 [Installation](docs/INSTALL.md).
 

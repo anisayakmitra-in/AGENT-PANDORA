@@ -107,6 +107,11 @@ jobs:
           if-no-files-found: error
 
   desktop:
+    # Retired from the active CLI-first product path. The adapter source stays
+    # in-tree for downstream reuse, but desktop packaging is not a CI gate.
+    # Reactivating it requires an explicit repository variable plus its own
+    # signing and evidence work.
+    if: ${{ vars.PANDORA_DESKTOP_CI == 'enabled' }}
     name: Desktop (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
     strategy:

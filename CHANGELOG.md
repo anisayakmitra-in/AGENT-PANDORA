@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Cancelled desktop product work. The `pandora` CLI is the only active product
+  surface. `apps/pandora-desktop` stays in the tree as an inactive downstream
+  adapter, the `full` release scope is retired, and desktop references in active
+  documentation are now marked historical. Core, service, and CLI behavior are
+  unchanged.
+- Added an explicit `PANDORA_BIN` local-native override to the npm launcher so
+  an already-built Rust binary can be used on targets outside the release
+  download matrix. Moved the launcher file helper into TypeScript source with a
+  generated-output drift gate, and proved `cargo install --path crates/pandora-cli
+  --locked` in CI. The npm package still has no install hooks and the
+  checksum-verified release path is unchanged.
 - Added a provider-neutral, hash-bound contract for requesting isolated desktop
   signing without placing credentials beside tag-controlled build hooks. The
   contract does not enable RC/stable publication or claim provider authenticity;

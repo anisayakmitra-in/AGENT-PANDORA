@@ -12,13 +12,17 @@ WSL uses the Linux CLI environment. It is not a separate packaged target.
 Source development requires Rust `1.97.1`. Release installation does not
 require Rust.
 
-## Desktop app
+## Retained desktop adapter
 
-The current main branch builds Pandora Desktop with Tauri 2 on Windows x64,
-Linux x64, macOS Intel, and macOS Apple Silicon. Each package contains a
-same-commit `pandora` CLI sidecar. The native launcher rejects a sidecar that
-is missing, a symlink, or not a regular executable; release builds do not fall
-back to `PATH`.
+Desktop product work is cancelled. `apps/pandora-desktop` stays in the tree for
+downstream reuse and audit history, and it has no build, signing, or CI path
+here. The paragraphs below record how the adapter used to work; they are not a
+support claim.
+
+The adapter used Tauri 2 on Windows x64, Linux x64, macOS Intel, and macOS
+Apple Silicon, with a same-commit `pandora` CLI sidecar. Its native launcher
+rejected a sidecar that was missing, a symlink, or not a regular executable, and
+release builds did not fall back to `PATH`.
 
 macOS 26 uses AppKit's supported Liquid Glass Clear material. Older macOS
 versions fall back to semantic vibrancy. Linux keeps an opaque application
@@ -101,8 +105,7 @@ identity.
 
 ## Product boundary
 
-The `2.0.0-beta.8` identity is the next CLI release line. Desktop packaging
-was added after the consumed `2.0.0-beta.7` tag and is verified on the main
-branch. A desktop package becomes a supported release only when its tagged
-workflow publishes the artifact and records the platform, signing, install,
-update, and rollback evidence required by the release policy.
+The `2.0.0-beta.8` identity is the next CLI release line, and the CLI is the
+only active product surface. Desktop packaging, signing, and publication are
+cancelled, so the retained adapter source takes part in no release gate this
+repository runs.

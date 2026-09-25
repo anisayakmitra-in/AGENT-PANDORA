@@ -1,5 +1,9 @@
 # Release policy
 
+Pandora ships as a CLI. Desktop product work is cancelled, so the retained
+Tauri adapter has no build, signing, publication, or support path, and this
+document treats every desktop reference as historical context.
+
 Pandora uses plain SemVer tags and release titles. Stable and prerelease
 versions use the same tag format; prereleases use neutral suffixes such as
 `v2.0.0-alpha.1`, `v2.0.0-beta.1`, and `v2.0.0-rc.1`.
@@ -21,25 +25,24 @@ through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1`, `v2.0.0-beta.2`,
 Every new tag is evaluated against the exact tracked `release-scope.json` at its
 source commit. This is a release contract, not a mutable workflow input:
 
-- `cli-only` is permitted only for alpha and beta tags. It publishes the native
-  CLI, launcher, installers, checksums, signature, SBOM, provenance, notes, and
-  CLI lifecycle evidence. It does not claim desktop parity, and its release
-  evidence must not contain desktop artifacts.
-- `full` is permitted for alpha, beta, release-candidate, and stable tags. It
-  requires desktop build, publication, smoke, and (for stable) rollback evidence
-  in addition to the CLI evidence.
+- `CLI-only` is the only active scope, covering alpha and beta tags. It
+  publishes the native CLI, launcher, installers, checksums, signature, SBOM,
+  provenance, notes, and CLI lifecycle evidence. Its release evidence must not
+  contain desktop artifacts, and it does not claim desktop parity.
+- `full` is retired. It would require desktop build, publication, smoke, and
+  (for stable) rollback evidence, and desktop work is cancelled. Re-enabling it
+  means editing `release-scope.json` in source, which is not a supported path.
 
 The workflow skips desktop build, desktop artifact download and attestation,
-desktop smoke, and desktop rollback closure only when the validated scope is
+desktop smoke, and desktop rollback closure when the validated scope is
 `cli-only`. A skipped desktop job is never treated as successful full-scope
-evidence. Release-candidate and stable cannot use `cli-only`; the current
-secretless desktop-signing gate also keeps both channels fail-closed until an
-isolated Tauri signing design is approved and implemented.
+evidence. Release-candidate and stable cannot use `cli-only`, so with `full`
+retired both channels stay fail-closed and cannot be published from this
+repository. The external desktop-signing boundary in
+[external desktop signing](docs/EXTERNAL_DESKTOP_SIGNING.md) is non-enabling
+and has no provider adapter, trust root, or credentials.
 
-The checked-in policy currently selects `cli-only` for the next prerelease line.
-A change to `full` is an explicit source change and must include the desktop
-signing and evidence prerequisites documented in
-[production readiness](docs/PRODUCTION.md).
+The checked-in policy selects `cli-only` for the next prerelease line.
 
 ## v2.0.0-beta.8
 

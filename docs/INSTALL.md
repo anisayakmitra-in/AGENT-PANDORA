@@ -49,24 +49,11 @@ pandora --version
 A source build is locally compiled code, not an OS-trust attestation. Gatekeeper,
 SmartScreen, antivirus, and enterprise policy may still apply.
 
-## Desktop source build
+## Desktop adapter
 
-Pandora Desktop has no account or login. It starts the same local Pandora
-service used by the CLI and keeps service credentials in the native Tauri
-layer.
-
-Install Node.js and the native Tauri prerequisites for your platform, then run:
-
-```sh
-cd apps/pandora-desktop
-npm ci
-npm run tauri:build
-```
-
-The build stages a same-commit CLI sidecar before packaging. On macOS, use
-`./script/build_and_run.sh --verify` for the project build, checks, and app
-bundle launch. See [Platform support](PLATFORMS.md) for macOS direct
-distribution and current signing limits.
+Desktop product work is cancelled. `apps/pandora-desktop` stays in the tree for
+downstream reuse and audit history, and this repository offers no desktop
+install path. Use the CLI source build above or a published CLI installer.
 
 ## First CLI run
 

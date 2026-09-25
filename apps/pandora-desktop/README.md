@@ -1,9 +1,14 @@
 # Pandora Desktop
 
-Pandora Desktop is the local graphical control surface for the same runtime
-used by the `pandora` CLI. Its Tauri shell hosts the React interface;
-Pandora's Rust runtime, Parliament, and ReferenceMonitor retain execution
-authority.
+Status: retained, inactive. Desktop product work is cancelled. This adapter
+stays in the tree for downstream reuse and audit history, takes part in no
+build, signing, or publication path, and carries no support claim. Shipped
+functionality lives in the [`pandora`](../../docs/CLI.md) CLI. Everything below
+is historical adapter documentation.
+
+The adapter was the local graphical control surface for the same runtime used
+by the `pandora` CLI. Its Tauri shell hosts the React interface; Pandora's Rust
+runtime, Parliament, and ReferenceMonitor retain execution authority.
 
 ## Run locally
 

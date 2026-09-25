@@ -111,6 +111,16 @@ Older notes.
             self.assertNotIn(hook, scripts)
         self.assertEqual(package["bin"]["pandora"], "bin/pandora.js")
 
+    def test_desktop_ci_job_is_retained_but_not_an_active_gate(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        start = workflow.index("  desktop:")
+        desktop = workflow[start:]
+        self.assertIn("vars.PANDORA_DESKTOP_CI == 'enabled'", desktop)
+        self.assertIn("apps/pandora-desktop", desktop)
+        self.assertNotIn("needs: desktop", workflow)
+
     def test_agent_pipeline_binds_promotion_to_tracked_artifact_and_evidence_bytes(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "agent-pipeline.yml").read_text(
             encoding="utf-8"

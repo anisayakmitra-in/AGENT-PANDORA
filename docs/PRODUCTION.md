@@ -6,9 +6,12 @@ self-improvement can propose, evaluate, admit, activate, and roll back
 candidates only through the existing evidence gates.
 
 Production readiness is Phase 6. Prompt caching, background agents, parallel
-orchestration, evaluation primitives, memory synthesis, and the desktop
-foundation now exist. Their remaining operating and release work is tracked in
+orchestration, evaluation primitives, and memory synthesis now exist. Their
+remaining operating and release work is tracked in
 [the audited roadmap](ROADMAP.md).
+
+Desktop product work is cancelled. The retained Tauri adapter stays in the tree
+and stays out of every build, signing, and publication gate.
 
 ## Identity and tenant isolation
 
@@ -198,17 +201,16 @@ job and exposes only the validated `scope`, `channel`, and
 `desktop_required` values to later jobs. It never infers a broader scope from a
 release tag.
 
-- `cli-only` is valid for alpha and beta tags only. It requires native CLI
-  artifacts and the full evidence set, but it does not build, download,
-  attest, smoke-test, or publish desktop artifacts. CLI-only evidence must not contain desktop artifacts and does not claim desktop parity.
-- `full` is valid for every supported channel. It requires desktop build and
-  evidence paths, including desktop smoke and stable rollback closure where the
-  channel calls for them.
+- `CLI-only` is the only active scope, valid for alpha and beta tags. It
+  requires native CLI artifacts and the full evidence set. CLI-only evidence
+  must not contain desktop artifacts and does not claim desktop parity.
+- `full` is retired because desktop work is cancelled. Re-enabling it is an
+  explicit source change and is not a supported path.
 
 The checked-in policy currently selects `cli-only` for the next prerelease line.
-Changing the file is an explicit source change, not a workflow override. The
-`full` path remains fail-closed for release-candidate and stable until the
-isolated desktop-signing gate is complete.
+Changing the file is an explicit source change, not a workflow override. Because
+`full` is retired, release-candidate and stable stay fail-closed and cannot be
+published from this repository.
 
 The `Agent artifact pipeline` workflow validates every tracked SDK package,
 runs a deterministic evaluation gate, proves the scheduled canary stops before
