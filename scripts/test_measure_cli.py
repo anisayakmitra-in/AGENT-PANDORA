@@ -81,6 +81,8 @@ class MeasureCliTests(unittest.TestCase):
         self.assertLess(measure_step, upload_step)
         self.assertIn("--binary target/release/pandora ", workflow)
         self.assertIn("--binary target/release/pandora.exe ", workflow)
+        self.assertIn("cargo install --path crates/pandora-cli --locked", workflow)
+        self.assertIn("pandora-cargo-install", workflow)
         self.assertIn("--iterations 5 --timeout-seconds 10", workflow)
         self.assertIn(
             "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",

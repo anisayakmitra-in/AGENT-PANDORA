@@ -87,7 +87,11 @@ Each tagged GitHub release includes a `pandora-agent-<version>.tgz` Node/Bun
 launcher. It downloads the matching native binary, verifies its checksum,
 caches it, and forwards command-line arguments to the `pandora` executable.
 It is a downloader and argument forwarder, not a second runtime or authority
-boundary.
+boundary. For a local Rust build, set `PANDORA_BIN` to the explicit native
+binary; the launcher then skips the release download matrix and does not
+checksum or replace that file. The release downloader currently supports
+Windows x64, Linux x64, macOS Intel, and macOS Apple Silicon; Cargo remains
+the source-build path for other targets.
 
 The launcher is not published to the public npm registry, so
 `npm install -g pandora-agent` and equivalent Bun registry installation are

@@ -1,3 +1,4 @@
+import json
 import unittest
 from pathlib import Path
 
@@ -89,6 +90,7 @@ Older notes.
         self.assertIn("npm pack --ignore-scripts", verify)
         self.assertIn("name: npm-launcher-${{ github.sha }}", verify)
         self.assertIn("npm ci --ignore-scripts && npm run build", verify)
+        self.assertIn("git diff --exit-code -- npm/pandora-cli/lib", verify)
 
         download = publish.index("- name: Download verified npm launcher")
         copy = publish.index('npm_packages=("$RUNNER_TEMP"/pandora-npm/pandora-agent-*.tgz)')
@@ -97,6 +99,17 @@ Older notes.
         self.assertLess(copy, checksums)
         self.assertIn('test "${#npm_packages[@]}" -eq 1', publish)
         self.assertNotIn("npm pack", publish)
+
+    def test_npm_launcher_does_not_execute_install_hooks(self) -> None:
+        package = json.loads(
+            (ROOT / "npm" / "pandora-cli" / "package.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        scripts = package.get("scripts", {})
+        for hook in ("postinstall", "install", "prepare", "prepack", "prepublishOnly"):
+            self.assertNotIn(hook, scripts)
+        self.assertEqual(package["bin"]["pandora"], "bin/pandora.js")
 
     def test_agent_pipeline_binds_promotion_to_tracked_artifact_and_evidence_bytes(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "agent-pipeline.yml").read_text(

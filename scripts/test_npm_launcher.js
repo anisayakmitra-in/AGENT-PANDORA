@@ -10,6 +10,7 @@ const {
   MAX_RELEASE_DOWNLOAD_BYTES,
   fetchBytes,
   readResponseBytes,
+  resolveLocalBinary,
 } = require("../npm/pandora-cli/bin/pandora.js");
 
 function streamedResponse(chunks, contentLength = null) {
@@ -80,6 +81,11 @@ async function main() {
   try {
     const destination = path.join(directory, "pandora");
     fs.writeFileSync(destination, "stale");
+
+    const localBinary = path.join(directory, "local-pandora");
+    fs.writeFileSync(localBinary, "local build");
+    assert.equal(resolveLocalBinary(localBinary), path.resolve(localBinary));
+    assert.throws(() => resolveLocalBinary(path.join(directory, "missing")), /does not exist/);
 
     replaceFile(destination, Buffer.from("fresh"), 0o755);
 

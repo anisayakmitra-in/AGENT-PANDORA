@@ -53,6 +53,9 @@ jobs:
         working-directory: npm/pandora-cli
         run: npm ci --ignore-scripts && npm run build
 
+      - name: Check TypeScript launcher output is current
+        run: git diff --exit-code -- npm/pandora-cli/lib
+
       - name: Test npm launcher
         run: node scripts/test_npm_launcher.js
 
@@ -70,6 +73,23 @@ jobs:
 
       - name: Build release CLI
         run: cargo build --release -p pandora-cli --locked
+
+      - name: Verify cargo-installable CLI (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pandora-cargo-install"
+          cargo install --path crates/pandora-cli --locked --root "$root" --force
+          "$root/bin/pandora" --version
+
+      - name: Verify cargo-installable CLI (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "pandora-cargo-install"
+          cargo install --path crates/pandora-cli --locked --root $root --force
+          & (Join-Path $root "bin\pandora.exe") --version
 
       - name: Measure CLI baseline
         if: runner.os != 'Windows'

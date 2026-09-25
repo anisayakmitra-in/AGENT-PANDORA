@@ -124,7 +124,27 @@ function verify(payload, expected) {
   return crypto.createHash("sha256").update(payload).digest("hex") === expected;
 }
 
+function resolveLocalBinary(value = process.env.PANDORA_BIN) {
+  if (value === undefined || value === "") return null;
+  if (typeof value !== "string" || value.trim() === "" || /[\u0000\r\n]/.test(value)) {
+    fail("PANDORA_BIN must be a non-empty path without control characters");
+  }
+  const resolved = path.resolve(value);
+  let metadata;
+  try {
+    metadata = fs.statSync(resolved);
+  } catch (error) {
+    if (error && error.code === "ENOENT") fail("PANDORA_BIN does not exist");
+    fail("PANDORA_BIN cannot be inspected");
+  }
+  if (!metadata.isFile()) fail("PANDORA_BIN is not a regular file");
+  return fs.realpathSync(resolved);
+}
+
 async function verifiedBinary() {
+  const localBinary = resolveLocalBinary();
+  if (localBinary) return localBinary;
+
   const version = releaseVersion();
   const artifact = artifactName();
   const cache = cacheDirectory(version, artifact);
@@ -180,4 +200,5 @@ module.exports = {
   MAX_RELEASE_DOWNLOAD_BYTES,
   fetchBytes,
   readResponseBytes,
+  resolveLocalBinary,
 };

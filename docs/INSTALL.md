@@ -30,12 +30,24 @@ for your platform and its checksum manifest.
 
 ## CLI source build
 
-Install Rust `1.97.1`, clone the repository, and run:
+Install Rust `1.97.1`, a platform C toolchain (MSVC Build Tools on Windows or
+the equivalent compiler used by your Rust target), clone the repository, and
+run:
 
 ```sh
 cargo build --release -p pandora-cli --locked
 cargo run --release -p pandora-cli -- --version
 ```
+
+To install the CLI from the checkout without npm or Tauri:
+
+```sh
+cargo install --path crates/pandora-cli --locked
+pandora --version
+```
+
+A source build is locally compiled code, not an OS-trust attestation. Gatekeeper,
+SmartScreen, antivirus, and enterprise policy may still apply.
 
 ## Desktop source build
 
@@ -76,6 +88,24 @@ The repository contains a TypeScript launcher package that resolves a verified
 native CLI binary. Use it only after the package has been published for the
 tagged release. It does not replace the Rust runtime or create a second
 permission boundary.
+
+For a local Rust build, point the launcher at the binary explicitly instead of
+using the release download matrix:
+
+```sh
+PANDORA_BIN="$PWD/target/release/pandora" pandora --json doctor
+```
+
+PowerShell:
+
+```powershell
+$env:PANDORA_BIN = "$PWD\target\release\pandora.exe"
+pandora --json doctor
+```
+
+`PANDORA_BIN` is an explicit local trust choice. The launcher does not download,
+checksum, or replace that binary; use the verified release path when the binary
+is not locally built and trusted.
 
 ## Support status
 

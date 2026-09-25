@@ -85,6 +85,9 @@ jobs:
         working-directory: npm/pandora-cli
         run: npm ci --ignore-scripts && npm run build
 
+      - name: Check TypeScript launcher output is current
+        run: git diff --exit-code -- npm/pandora-cli/lib
+
       - name: Test npm launcher
         run: node scripts/test_npm_launcher.js
 
