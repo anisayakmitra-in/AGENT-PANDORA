@@ -728,8 +728,14 @@ impl RuntimeService {
         Ok(ServiceResponse::capabilities(harnesses))
     }
 
-    fn engines(&self) -> Result<ServiceResponse, RuntimeServiceError> {
-        Ok(ServiceResponse::engines(vec![
+    /// Read-only inventory of the runtime's engines.
+    ///
+    /// This is the single source of truth for the engine list. It takes no
+    /// `self` and opens no store, so a caller such as the CLI can read the
+    /// inventory without constructing a service. [`Self::engines`] is only the
+    /// service-shaped response wrapper around it.
+    pub fn engine_inventory() -> Vec<ServiceEngineSummary> {
+        vec![
             ServiceEngineSummary::new(
                 "execution-controller",
                 "ExecutionController",
@@ -1615,7 +1621,11 @@ impl RuntimeService {
                 ],
                 &["docs/EVOLUTION.md", "docs/EVALUATION.md"],
             ),
-        ]))
+        ]
+    }
+
+    fn engines(&self) -> Result<ServiceResponse, RuntimeServiceError> {
+        Ok(ServiceResponse::engines(Self::engine_inventory()))
     }
 
     fn tools(&self) -> Result<ServiceResponse, RuntimeServiceError> {
@@ -3798,6 +3808,60 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn engine_inventory_is_readable_without_constructing_a_service() {
+        let engines = RuntimeService::engine_inventory();
+
+        assert_eq!(engines.len(), 22);
+
+        let mut ids = Vec::new();
+        for engine in &engines {
+            assert!(
+                !ids.contains(&engine.id().to_owned()),
+                "duplicate engine id: {}",
+                engine.id()
+            );
+            ids.push(engine.id().to_owned());
+            assert!(!engine.name().is_empty(), "engine has no name");
+            assert!(!engine.authority().is_empty(), "engine has no authority");
+        }
+
+        // The authority chain stays reachable from the inventory: the controller
+        // owns the pipeline, and the monitor is the only permit issuer.
+        let controller = engines
+            .iter()
+            .find(|engine| engine.id() == "execution-controller")
+            .expect("execution controller should be discoverable");
+        assert_eq!(controller.authority(), "Runtime authority");
+        assert_eq!(controller.category(), "Core authority");
+        for component in ["Parliament", "Shadow Council", "ReferenceMonitor"] {
+            assert!(
+                controller
+                    .related_components()
+                    .iter()
+                    .any(|entry| entry == component),
+                "execution controller should reference {component}"
+            );
+        }
+
+        let monitor = engines
+            .iter()
+            .find(|engine| engine.id() == "reference-monitor")
+            .expect("reference monitor should be discoverable");
+        assert_eq!(monitor.authority(), "Sole permit issuer");
+
+        // Parliament and the Shadow Council are constitutional components, not
+        // standalone engines. A top-level entry would imply they can be selected
+        // or invoked on their own, which they cannot.
+        for engine in &engines {
+            assert!(
+                !["parliament", "shadow-council"].contains(&engine.id()),
+                "{} must stay a component of execution-controller",
+                engine.id()
+            );
+        }
     }
 
     #[test]

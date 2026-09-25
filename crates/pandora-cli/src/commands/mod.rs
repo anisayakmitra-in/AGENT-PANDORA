@@ -36,6 +36,7 @@ mod registry;
 mod restore_journal;
 mod rollout;
 mod run;
+mod runtime;
 mod secret;
 mod service;
 mod session;
@@ -78,6 +79,7 @@ pub(crate) const ROOT_COMMANDS: &[&str] = &[
     "skill",
     "package",
     "registry",
+    "runtime",
     "memory",
     "approval",
     "provider",
@@ -166,6 +168,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "subagent" => subagent::execute(&args[1..]),
         "provider" => provider::execute(&args[1..]),
         "registry" => registry::execute(&args[1..]),
+        "runtime" => runtime::execute(&args[1..]),
         "strategies" => strategies(&args[1..]),
         "tool" => tool::execute(&args[1..]),
         "tui" if json_requested => Err(CliError::usage("tui does not support --json")),
@@ -390,7 +393,7 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|tui|harness|slash|session|job|subagent|skill|package|registry|memory|approval|provider|mcp|tool|orchestration|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor> [options]
+    r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|tui|harness|slash|session|job|subagent|skill|package|registry|runtime|memory|approval|provider|mcp|tool|orchestration|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor> [options]
 
 commands:
   help (or --help)
@@ -411,6 +414,7 @@ commands:
   skill list|inspect|install|enable|disable|suspend|remove|restore <id-or-path>
   package scaffold domain-harness --output <new-directory> [--id <id>] [--version <semver>] [--publisher <name>] [--gene <id>@<semver>] [--route-hint <hint>] | scaffold meta-harness --output <new-directory> [--id <id>] [--version <semver>] [--publisher <name>] [--domains <id>@<semver>,...] [--max-handoffs <1-64>] | admit --manifest <path> --artifact <path> | admit-cached <id> <version> [--dry-run|--yes] | validate --manifest <path> --artifact <path> | sign --manifest <path> --artifact <path> --secret-name <vault-name> --output <path> [--yes] | keygen --publisher <name> --key-id <id> --secret-name <vault-name> | discover <id> [version] [--registry <url>|--registry-profile <name>] | download|install <id> [version] [--registry <url>|--registry-profile <name>] [--token-env <name>] | download-github|install-github --repository <url> --commit <sha> --manifest <repo-path> --artifact <repo-path> [--token-env <name>] | cache list|inspect|verify|events | list | inspect <id> <version> | enable|disable <id> <version> [--dry-run|--yes] | rollback <id> [--dry-run|--yes] | lock [--output <path>] | verify-lock [--lock <path>] | trust-root add|list|revoke | transparency list [--event-kind <kind>] [--outcome <allowed|denied>] [--limit <1-256>] | transparency inspect --sequence <id> | remove <id> <version> [--dry-run|--yes]
   registry list | set --name <name> --registry-url <url> [--token-env <name>] | use <name> | remove <name> --yes
+  runtime engines list|inspect <id>
   memory recall --session <id> --provider <name> --tier <l1|l2> [--id <memory-id>] [--limit <1-256>] | audit --session <id> --provider <name> | forget --session <id> --provider <name> <memory-id> [--yes] | compact --session <id> --provider <name> --before <unix-seconds> [--yes] | promote --session <id> --provider <name> <memory-id> [--approval <id>] | synthesize --session <id> --provider <name> --id <memory-id> --summary <text> [--kind <kind>] [--classification <public|internal>] [--yes] | consolidate --source-session <id> --target-session <id> --provider <name> --source-id <memory-id> --target-id <memory-id> [--yes] | provenance --session <id> --provider <name> <memory-id> | schedule create|list|disable|claim|run|runs
   tool list|inspect <id>
   approval list|inspect|resolve

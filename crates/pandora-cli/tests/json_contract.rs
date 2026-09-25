@@ -226,6 +226,96 @@ fn release_critical_error_envelopes_match_process_exit_codes() {
     assert_eq!(update["details"]["path"], path_value(&artifact));
 }
 
+#[test]
+fn runtime_engines_expose_the_core_inventory_without_a_service() {
+    let fixture = Fixture::new();
+
+    // No configuration, no provider, no store: the inventory is compiled-in.
+    let listed = fixture.run(&["runtime", "engines", "list", "--json"]);
+    let listed = listed.success("runtime engines list");
+    let engines = listed["engines"]
+        .as_array()
+        .expect("engines should be an array");
+    assert_eq!(engines.len(), 22);
+    assert_eq!(listed["count"], 22);
+    assert_eq!(
+        listed["categories"]["Core authority"], 2,
+        "execution controller and reference monitor are the constitutional pair"
+    );
+
+    let by_id = |id: &str| -> Value {
+        engines
+            .iter()
+            .find(|engine| engine["id"] == id)
+            .unwrap_or_else(|| panic!("engine {id} should be listed"))
+            .clone()
+    };
+
+    let controller = by_id("execution-controller");
+    assert_eq!(controller["authority"], "Runtime authority");
+    assert_eq!(controller["category"], "Core authority");
+    let related = controller["related_components"]
+        .as_array()
+        .expect("related components should be an array");
+    for component in ["Parliament", "Shadow Council", "ReferenceMonitor"] {
+        assert!(
+            related.iter().any(|entry| entry == component),
+            "execution controller should reference {component}"
+        );
+    }
+
+    // The monitor is the only permit issuer in the inventory.
+    assert_eq!(
+        by_id("reference-monitor")["authority"],
+        "Sole permit issuer"
+    );
+
+    // Parliament and the Shadow Council stay components. A top-level entry
+    // would imply they can be selected on their own.
+    for engine in engines {
+        let id = engine["id"].as_str().expect("engine id should be a string");
+        assert!(
+            !["parliament", "shadow-council"].contains(&id),
+            "{id} must stay a component of execution-controller"
+        );
+    }
+
+    let inspected = fixture
+        .run(&[
+            "runtime",
+            "engines",
+            "inspect",
+            "execution-controller",
+            "--json",
+        ])
+        .success("runtime engines inspect");
+    assert_eq!(inspected["engine"]["id"], "execution-controller");
+    assert_eq!(inspected["engine"]["name"], "ExecutionController");
+    assert!(
+        inspected["engine"]["invariants"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty()),
+        "inspect should expose the deep contract, not just the identity"
+    );
+
+    // Fail closed rather than reporting an empty result for a bad id.
+    let unknown = fixture
+        .run(&[
+            "runtime",
+            "engines",
+            "inspect",
+            "definitely-not-a-real-engine",
+            "--json",
+        ])
+        .error("usage_error", 2);
+    assert!(
+        unknown["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("unknown engine")),
+        "unknown engine should name the problem: {unknown}"
+    );
+}
+
 fn path_value(path: &Path) -> Value {
     Value::String(path.to_string_lossy().into_owned())
 }

@@ -66,6 +66,10 @@ fn powershell() -> &'static str {
         'scaffold','admit','admit-cached','validate','sign','keygen','discover','download','download-github','install','install-github','cache','list','inspect','enable','disable','rollback','lock','verify-lock','trust-root','transparency','remove'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'registry') {
         'list','set','use','remove'
+    } elseif ($elements.Count -gt 2 -and $elements[1] -eq 'runtime' -and $elements[2] -eq 'engines') {
+        'list','inspect'
+    } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'runtime') {
+        'engines'
     } elseif ($elements.Count -gt 2 -and $elements[1] -eq 'memory' -and $elements[2] -eq 'schedule') {
         'create','list','disable','claim','run','runs'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'memory') {
@@ -107,7 +111,7 @@ fn powershell() -> &'static str {
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'feedback') {
         'coding'
     } else {
-        'help','setup','backup','service','auth','secret','rollout','run','chat','tui','harness','slash','session','job','subagent','skill','package','registry','memory','approval','provider','mcp','tool','orchestration','strategies','evaluation','evolution','feedback','efficiency','fleet','graph','completions','migrate','update','uninstall','doctor'
+        'help','setup','backup','service','auth','secret','rollout','run','chat','tui','harness','slash','session','job','subagent','skill','package','registry','runtime','memory','approval','provider','mcp','tool','orchestration','strategies','evaluation','evolution','feedback','efficiency','fleet','graph','completions','migrate','update','uninstall','doctor'
     }
     $commands |
         Where-Object { $_ -like "$wordToComplete*" } |
@@ -153,6 +157,10 @@ fn bash() -> &'static str {
         COMPREPLY=( $(compgen -W 'scaffold admit admit-cached validate sign keygen discover download download-github install install-github cache list inspect enable disable rollback lock verify-lock trust-root transparency remove' -- "$current") )
     elif [[ "$previous" == "registry" ]]; then
         COMPREPLY=( $(compgen -W 'list set use remove' -- "$current") )
+    elif [[ "${COMP_WORDS[2]}" == "engines" ]]; then
+        COMPREPLY=( $(compgen -W 'list inspect' -- "$current") )
+    elif [[ "$previous" == "runtime" ]]; then
+        COMPREPLY=( $(compgen -W 'engines' -- "$current") )
     elif [[ "${COMP_WORDS[1]}" == "memory" && "$previous" == "schedule" ]]; then
         COMPREPLY=( $(compgen -W 'create list disable claim run runs' -- "$current") )
     elif [[ "$previous" == "memory" ]]; then
@@ -198,7 +206,7 @@ fn bash() -> &'static str {
     elif [[ "$previous" == "feedback" ]]; then
         COMPREPLY=( $(compgen -W 'coding' -- "$current") )
     else
-        COMPREPLY=( $(compgen -W 'help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor' -- "$current") )
+        COMPREPLY=( $(compgen -W 'help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor' -- "$current") )
     fi
 }
 complete -F _pandora_complete pandora"#
@@ -211,49 +219,53 @@ if [[ ${words[2]} == evaluation && ${words[3]} == regression ]]; then
 elif [[ ${words[2]} == backup && ${words[3]} == lifecycle ]]; then
     _arguments '3:backup lifecycle command:(preview record list inspect)'
 elif [[ ${words[2]} == backup ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:backup command:(create inspect restore lifecycle)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:backup command:(create inspect restore lifecycle)'
 elif [[ ${words[2]} == service ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:service command:(start)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:service command:(start)'
 elif [[ ${words[2]} == auth ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:auth command:(enroll list revoke)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:auth command:(enroll list revoke)'
 elif [[ ${words[2]} == secret ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:secret command:(set list status remove)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:secret command:(set list status remove)'
 elif [[ ${words[2]} == rollout ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:rollout command:(inspect)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:rollout command:(inspect)'
 elif [[ ${words[2]} == session ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:session command:(list resume inspect)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:session command:(list resume inspect)'
 elif [[ ${words[2]} == job ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:job command:(submit work list inspect cancel mark-interrupted)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:job command:(submit work list inspect cancel mark-interrupted)'
 elif [[ ${words[2]} == subagent ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:subagent command:(spawn work list inspect cancel mark-interrupted cleanup)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:subagent command:(spawn work list inspect cancel mark-interrupted cleanup)'
 elif [[ ${words[2]} == harness ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:harness command:(list inspect run)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:harness command:(list inspect run)'
 elif [[ ${words[2]} == slash ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:slash command:(list resolve)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:slash command:(list resolve)'
 elif [[ ${words[2]} == skill ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:skill command:(list inspect install enable disable suspend remove restore)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:skill command:(list inspect install enable disable suspend remove restore)'
 elif [[ ${words[2]} == package && ${words[3]} == cache ]]; then
     _arguments '3:package cache command:(list inspect verify events)'
 elif [[ ${words[2]} == package && ${words[3]} == transparency ]]; then
     _arguments '3:package transparency command:(list inspect)'
 elif [[ ${words[2]} == package ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:package command:(scaffold admit admit-cached validate sign keygen discover download download-github install install-github cache list inspect enable disable rollback lock verify-lock trust-root transparency remove)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:package command:(scaffold admit admit-cached validate sign keygen discover download download-github install install-github cache list inspect enable disable rollback lock verify-lock trust-root transparency remove)'
 elif [[ ${words[2]} == registry ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:registry command:(list set use remove)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:registry command:(list set use remove)'
+elif [[ ${words[2]} == runtime && ${words[3]} == engines ]]; then
+    _arguments '3:runtime engines command:(list inspect)'
+elif [[ ${words[2]} == runtime ]]; then
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:runtime command:(engines)'
 elif [[ ${words[2]} == memory && ${words[3]} == schedule ]]; then
     _arguments '3:memory schedule command:(create list disable claim run runs)'
 elif [[ ${words[2]} == memory ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:memory command:(recall audit forget compact promote synthesize consolidate provenance schedule)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:memory command:(recall audit forget compact promote synthesize consolidate provenance schedule)'
 elif [[ ${words[2]} == approval ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:approval command:(list inspect resolve)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:approval command:(list inspect resolve)'
 elif [[ ${words[2]} == provider ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:provider command:(list set use test)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:provider command:(list set use test)'
 elif [[ ${words[2]} == mcp ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:mcp command:(list inspect set remove catalog call)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:mcp command:(list inspect set remove catalog call)'
 elif [[ ${words[2]} == tool ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:tool command:(list inspect)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:tool command:(list inspect)'
 elif [[ ${words[2]} == orchestration ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:orchestration command:(roles submit claim complete list inspect cancel mark-interrupted reconcile-failed resume)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:orchestration command:(roles submit claim complete list inspect cancel mark-interrupted reconcile-failed resume)'
 elif [[ ${words[2]} == strategies && ${words[3]} == population && ${words[4]} == list ]]; then
     _arguments '--state=[population state path]:path:_files'
 elif [[ ${words[2]} == strategies && ${words[3]} == population && ${words[4]} == inspect ]]; then
@@ -261,32 +273,32 @@ elif [[ ${words[2]} == strategies && ${words[3]} == population && ${words[4]} ==
 elif [[ ${words[2]} == strategies && ${words[3]} == population ]]; then
     _arguments '3:population command:(list inspect)'
 elif [[ ${words[2]} == strategies ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:strategies command:(list population)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:strategies command:(list population)'
 elif [[ ${words[2]} == efficiency ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:efficiency command:(rank)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:efficiency command:(rank)'
 elif [[ ${words[2]} == evaluation && ${words[3]} == schedule ]]; then
     _arguments '3:evaluation schedule command:(create list disable claim run runs)'
 elif [[ ${words[2]} == evaluation ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:evaluation command:(golden inspect scorecard suite regression schedule)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:evaluation command:(golden inspect scorecard suite regression schedule)'
 elif [[ ${words[2]} == evolution && ${words[3]} == rollout ]]; then
     _arguments '3:evolution rollout command:(configure score approve promote pause resume reject retry rollback)'
 elif [[ ${words[2]} == evolution ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:evolution command:(generate list inspect submit evaluate approve stage canary rollout activate rollback)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:evolution command:(generate list inspect submit evaluate approve stage canary rollout activate rollback)'
 elif [[ ${words[2]} == graph ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:graph command:(code knowledge review architecture)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:graph command:(code knowledge review architecture)'
 elif [[ ${words[2]} == fleet && ${words[3]} == supervisor ]]; then
     _arguments '3:supervisor command:(list start drain stop recover heartbeat reconcile reap restart)'
 elif [[ ${words[2]} == fleet ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:fleet command:(dashboard list register dispatch lease renew release expire supervisor quarantine revoke kill)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:fleet command:(dashboard list register dispatch lease renew release expire supervisor quarantine revoke kill)'
 elif [[ ${words[2]} == feedback ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:feedback command:(coding)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:feedback command:(coding)'
 else
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)'
 fi"#
 }
 
 fn fish() -> &'static str {
-    r#"complete -c pandora -f -n '__fish_use_subcommand' -a 'help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor'
+    r#"complete -c pandora -f -n '__fish_use_subcommand' -a 'help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor'
 complete -c pandora -f -n '__fish_seen_subcommand_from backup; and not __fish_seen_subcommand_from lifecycle' -a 'create inspect restore lifecycle'
 complete -c pandora -f -n '__fish_seen_subcommand_from backup; and __fish_seen_subcommand_from lifecycle' -a 'preview record list inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from harness' -a 'list inspect run'
@@ -303,6 +315,8 @@ complete -c pandora -f -n '__fish_seen_subcommand_from package; and not __fish_s
 complete -c pandora -f -n '__fish_seen_subcommand_from package; and __fish_seen_subcommand_from cache' -a 'list inspect verify events'
 complete -c pandora -f -n '__fish_seen_subcommand_from package; and __fish_seen_subcommand_from transparency' -a 'list inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from registry' -a 'list set use remove'
+complete -c pandora -f -n '__fish_seen_subcommand_from runtime; and __fish_seen_subcommand_from engines' -a 'list inspect'
+complete -c pandora -f -n '__fish_seen_subcommand_from runtime; and not __fish_seen_subcommand_from engines' -a 'engines'
 complete -c pandora -f -n '__fish_seen_subcommand_from memory; and not __fish_seen_subcommand_from schedule' -a 'recall audit forget compact promote synthesize consolidate provenance schedule'
 complete -c pandora -f -n '__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from schedule' -a 'create list disable claim run runs'
 complete -c pandora -f -n '__fish_seen_subcommand_from approval' -a 'list inspect resolve'
