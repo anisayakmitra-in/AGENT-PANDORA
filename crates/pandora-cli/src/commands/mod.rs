@@ -54,6 +54,68 @@ pub(crate) const LOCAL_PRINCIPAL: &str = "local-user";
 pub(crate) const LOCAL_TENANT: &str = "local-tenant";
 pub(crate) const LOCAL_WORKSPACE: &str = "local-workspace";
 
+/// Every command name accepted by the top-level dispatch in [`execute`].
+///
+/// The usage text and the four completion scripts are both checked against this
+/// list, so a dispatch arm that is not listed here fails the parity tests.
+#[cfg(test)]
+pub(crate) const ROOT_COMMANDS: &[&str] = &[
+    "help",
+    "setup",
+    "backup",
+    "service",
+    "auth",
+    "secret",
+    "rollout",
+    "run",
+    "chat",
+    "tui",
+    "harness",
+    "slash",
+    "session",
+    "job",
+    "subagent",
+    "skill",
+    "package",
+    "registry",
+    "memory",
+    "approval",
+    "provider",
+    "mcp",
+    "tool",
+    "orchestration",
+    "strategies",
+    "evaluation",
+    "evolution",
+    "feedback",
+    "efficiency",
+    "fleet",
+    "graph",
+    "completions",
+    "migrate",
+    "update",
+    "uninstall",
+    "doctor",
+];
+
+/// [`ROOT_COMMANDS`] joined by single spaces, the way the POSIX, zsh, and fish
+/// completion scripts spell their root command list.
+#[cfg(test)]
+pub(crate) fn root_command_words() -> String {
+    ROOT_COMMANDS.join(" ")
+}
+
+/// [`ROOT_COMMANDS`] single-quoted and comma-separated, the way the PowerShell
+/// completion script spells its root command list.
+#[cfg(test)]
+pub(crate) fn powershell_root_command_words() -> String {
+    ROOT_COMMANDS
+        .iter()
+        .map(|command| format!("'{command}'"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 pub(crate) struct ParsedArgs {
     pub values: BTreeMap<String, String>,
     pub positionals: Vec<String>,
@@ -358,7 +420,7 @@ commands:
   strategies list | population list --state <path> | population inspect --state <path> --id <id>
   evaluation golden --input <path> [--fail-on-failure]
   evaluation suite register --id <id> --input <path> [--candidate <id>] | list | inspect --id <id> | run --id <id> [--harness <id>] [--fail-on-failure]
-  evaluation regression propose --id <id> --input <path> --case <case-id> | list | inspect --id <id> | review --id <id> --decision <accept|reject>
+  evaluation regression propose --id <id> --input <path> --case <case-id> | generate --id <candidate-id> --input <path> --suite <suite-id> | list | inspect --id <id> | review --id <id> --decision <accept|reject>
   evaluation inspect --session <id> [--execution <id>]
   evaluation scorecard --session <id> [--fail-on-non-passed]
   evaluation schedule create --id <id> --name <name> --suite <id> [--proposal <proposal-id>] --interval-seconds <seconds> | list | disable --id <id> | claim --worker <id> [--limit <1-16>] | run --id <id> --worker <id> [--input <path>] [--harness <id>] [--fail-on-failure] | runs [--id <id>] [--limit <1-256>]
@@ -495,7 +557,150 @@ fn population_strategy_error(error: PopulationStrategyError) -> CliError {
 
 #[cfg(test)]
 mod tests {
-    use super::{execute, needs_interactive_setup, starts_interactive_tui};
+    use super::{ROOT_COMMANDS, execute, needs_interactive_setup, starts_interactive_tui, usage};
+
+    /// Root commands whose bare invocation only reports a usage error, so the
+    /// tests below can prove they are dispatched without touching disk, stdin,
+    /// or a terminal. `chat`, `tui`, `run`, `setup`, `doctor`, and `help` are
+    /// excluded because they render output, start a session or REPL, or run a
+    /// health probe instead.
+    const SUBCOMMAND_GATED: &[&str] = &[
+        "approval",
+        "auth",
+        "backup",
+        "completions",
+        "efficiency",
+        "evaluation",
+        "evolution",
+        "feedback",
+        "fleet",
+        "graph",
+        "harness",
+        "job",
+        "mcp",
+        "memory",
+        "migrate",
+        "orchestration",
+        "package",
+        "provider",
+        "registry",
+        "rollout",
+        "service",
+        "session",
+        "skill",
+        "slash",
+        "strategies",
+        "subagent",
+        "tool",
+        "uninstall",
+        "update",
+    ];
+
+    fn dispatch_error(command: &str) -> String {
+        match execute(vec![command.to_owned()]) {
+            Ok(_) => panic!("{command} should reject a bare invocation"),
+            Err(error) => error.message,
+        }
+    }
+
+    #[test]
+    fn unknown_command_names_are_rejected() {
+        let message = dispatch_error("definitely-not-a-pandora-command");
+
+        assert!(
+            message.starts_with("unknown command 'definitely-not-a-pandora-command'."),
+            "unexpected message: {message}"
+        );
+        assert!(message.contains("usage: pandora"));
+    }
+
+    #[test]
+    fn every_documented_root_command_is_dispatched() {
+        for command in SUBCOMMAND_GATED {
+            let message = dispatch_error(command);
+            assert!(
+                !message.starts_with("unknown command"),
+                "{command} is documented but not dispatched: {message}"
+            );
+            assert!(
+                message.contains(command),
+                "{command} is dispatched but does not name itself: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_documented_root_command_is_probeable() {
+        // Guards the probe list above: each probed command must also be part of
+        // the documented surface, so a rename cannot silently weaken the test.
+        for command in SUBCOMMAND_GATED {
+            assert!(
+                ROOT_COMMANDS.contains(command),
+                "{command} is probed but missing from ROOT_COMMANDS"
+            );
+        }
+    }
+
+    /// The command names in the `usage: pandora <...> [options]` synopsis line.
+    fn usage_synopsis() -> Vec<&'static str> {
+        let synopsis = usage()
+            .lines()
+            .next()
+            .expect("usage should start with a synopsis");
+        let listed = synopsis
+            .split_once('<')
+            .and_then(|(_, rest)| rest.split_once('>'))
+            .map_or("", |(listed, _)| listed);
+        listed.split('|').collect()
+    }
+
+    /// The `commands:` help entries, de-indented and stripped of their usage tail.
+    fn usage_command_entries() -> Vec<&'static str> {
+        usage()
+            .lines()
+            .filter_map(|line| line.strip_prefix("  "))
+            .filter(|line| !line.starts_with(' ') && !line.is_empty())
+            .map(|line| line.split([' ', '|']).next().unwrap_or(line))
+            .collect()
+    }
+
+    #[test]
+    fn usage_synopsis_matches_the_dispatch_table() {
+        let mut synopsis = usage_synopsis();
+        let mut dispatched = ROOT_COMMANDS.to_vec();
+
+        synopsis.sort_unstable();
+        dispatched.sort_unstable();
+        assert_eq!(synopsis, dispatched);
+    }
+
+    #[test]
+    fn usage_documents_every_root_command_on_its_own_line() {
+        let entries = usage_command_entries();
+        for command in ROOT_COMMANDS {
+            assert!(
+                entries.contains(command),
+                "usage is missing a commands entry for '{command}'"
+            );
+        }
+    }
+
+    #[test]
+    fn usage_documents_the_help_alias() {
+        assert!(usage().contains("help (or --help)"));
+    }
+
+    #[test]
+    fn usage_documents_regression_candidate_generation() {
+        let usage = usage();
+
+        assert!(
+            usage.contains(
+                "evaluation regression propose --id <id> --input <path> --case <case-id>"
+            )
+        );
+        assert!(usage.contains("generate --id <candidate-id> --input <path> --suite <suite-id>"));
+    }
 
     #[test]
     fn empty_argv_opens_tui_only_for_interactive_human_sessions() {
