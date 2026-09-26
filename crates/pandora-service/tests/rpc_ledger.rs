@@ -28,6 +28,64 @@ fn key() -> RpcRequestKey {
     .unwrap()
 }
 
+/// F1/G3: the scope binding is what keeps a client-chosen idempotency key from
+/// crossing a trust boundary.
+///
+/// Since the key is now supplied by the client rather than derived from the
+/// correlation `id`, two principals could pick the same string. Isolation now
+/// rests entirely on the scope component of the primary key, so this is proven
+/// directly: the same request id under a different scope executes as a new
+/// operation rather than replaying, and the two rows coexist.
+#[test]
+fn the_same_idempotency_key_in_a_different_scope_is_a_separate_operation() {
+    let path = ledger_path();
+    let ledger = DurableRpcLedger::open(&path).unwrap();
+    let digest = digest_request("run.execute", &json!({"task": "guide"}));
+    let first = RpcRequestKey::new(
+        "principal-a|tenant-a|workspace-a",
+        "shared-client-key",
+        "run.execute",
+        digest.clone(),
+    )
+    .unwrap();
+    let second = RpcRequestKey::new(
+        "principal-b|tenant-b|workspace-b",
+        "shared-client-key",
+        "run.execute",
+        digest,
+    )
+    .unwrap();
+
+    assert!(matches!(
+        ledger.begin(&first, 10).unwrap(),
+        RpcBegin::Execute
+    ));
+    ledger
+        .complete(&first, r#"{"jsonrpc":"2.0","id":1,"result":{"a":1}}"#, 10)
+        .unwrap();
+    assert!(
+        matches!(ledger.begin(&second, 11).unwrap(), RpcBegin::Execute),
+        "a client-chosen key must not replay across a scope boundary"
+    );
+    ledger
+        .complete(&second, r#"{"jsonrpc":"2.0","id":1,"result":{"b":2}}"#, 11)
+        .unwrap();
+
+    // Both rows persist independently, so neither scope can evict or shadow
+    // the other's record.
+    assert!(matches!(
+        ledger.begin(&first, 12).unwrap(),
+        RpcBegin::Replay { .. }
+    ));
+    assert!(matches!(
+        ledger.begin(&second, 12).unwrap(),
+        RpcBegin::Replay { .. }
+    ));
+
+    drop(ledger);
+    fs::remove_file(path).unwrap();
+}
+
 #[test]
 fn completed_request_replays_the_exact_response_after_reopen() {
     let path = ledger_path();

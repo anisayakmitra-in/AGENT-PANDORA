@@ -32,13 +32,17 @@
 - [x] W5: All scoped gates pass; no desktop build, signing, tag, or publication
   occurs.
 
-## Deferred, tracked separately
+## Delivered, tracked separately
 
-- F1: explicit RPC `idempotency_key` contract. **Not started.** Desktop product
-  work is cancelled, so this is no longer a live desktop defect, but the same
-  constant JSON-RPC `id` pattern would break any other client that reused one id
-  for approval/resume and other mutations. It changes a public transport
-  contract and is out of scope for the behavior-preserving boundary refactor.
-  Note that `DurableRpcLedger` and `mcp call --idempotency-key` already exist;
-  what is missing is the explicit key on the F1 approval/resume contract
-  itself, which is a transport change and needs its own reviewed slice.
+- [x] F1: explicit RPC `idempotency_key` contract. Mutating service methods now
+  require a client-supplied `idempotency_key` and derive the ledger key from
+  `(scope, idempotency_key, method, digest(method, params))`. The correlation
+  `id` is no longer part of the identity, because a gateway, proxy, or a
+  reconnecting client may renumber it and silently defeat replay protection on
+  `approval.resolve`, the `*.resume` methods, and the evolution mutations. Scope
+  binding is unchanged, so a client-chosen key cannot cross a trust boundary.
+  This breaks clients that do not send the key. Desktop product work is
+  cancelled, so the only affected caller is the retained desktop TypeScript
+  client, which would need the key before it could drive the service again; the
+  CLI does not use this transport. See `docs/CLI.md` for the contract, the
+  bounds, and the breaking-change note.

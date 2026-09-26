@@ -315,13 +315,39 @@ never printed. Read it from `token_path` and send it as `Authorization: Bearer
 the foreground until Ctrl-C; it does not listen on LAN addresses, daemonize,
 or expose provider, MCP, package, or remote-execution methods.
 
-Mutating JSON-RPC methods require a non-null, stable request ID. The service
-persists reservations and completed responses in
-`<data-dir>/rpc-idempotency.sqlite3`; an exact retry replays the stored response,
-a changed body conflicts, and an interrupted pending request is not
-automatically re-executed after restart. Clients should reuse the same request
-ID and body for a retry and treat `idempotency_in_progress`,
-`idempotency_conflict`, and `idempotency_unavailable` as fail-closed errors.
+Mutating methods require an explicit `idempotency_key` string alongside the
+JSON-RPC envelope. The correlation `id` is **not** accepted as a substitute: it
+exists to pair a response with a request, and a gateway, proxy, or client whose
+counter restarts on reconnect may renumber it. Keying replay protection on `id`
+meant a retry could miss the ledger and execute the mutation a second time, with
+nothing reporting it.
+
+The key is bound to the caller's scope, so two principals may choose the same
+string without colliding. The service persists reservations and completed
+responses in `<data-dir>/rpc-idempotency.sqlite3` under
+`(scope, idempotency_key)`. An exact retry — same key, method, and params —
+replays the stored response. The same key with different method or params is
+rejected as `idempotency_conflict` rather than executed, so a client bug cannot
+be laundered into a fresh governed execution. An interrupted pending request is
+not automatically re-executed after restart. Treat `idempotency_key_required`,
+`idempotency_key_invalid`, `idempotency_in_progress`, `idempotency_conflict`,
+and `idempotency_unavailable` as fail-closed errors.
+
+The key must be 1 to 256 bytes and contain no control characters. Bounds match
+the ledger's own key validation.
+
+```json
+{"jsonrpc":"2.0","id":1,"idempotency_key":"run-2026-09-26-0001",
+ "method":"run.execute","params":{"task":"guide"}}
+```
+
+**This breaks clients that do not send the key.** A mutating request without
+`idempotency_key` now fails closed with `idempotency_key_required` instead of
+executing, by design: an optional key with a silent fallback to `id` would
+preserve exactly the coupling this removes. The CLI does not use this transport
+and is unaffected. Desktop product work is cancelled, so the only affected
+caller is the retained desktop TypeScript client, which would need the key
+added before it could drive the service again.
 
 Read-only work can complete without approval. Writes and process effects stop at
 the approval boundary and expose an inspectable, redacted request subject.

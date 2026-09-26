@@ -2,7 +2,7 @@
 
 pub mod rpc_ledger;
 
-use crate::rpc_ledger::{DurableRpcLedger, RpcBegin, RpcRequestKey, digest_bytes};
+use crate::rpc_ledger::{DurableRpcLedger, RpcBegin, RpcRequestKey, digest_bytes, digest_request};
 use axum::{
     Json, Router,
     body::{Body, Bytes, to_bytes},
@@ -315,7 +315,7 @@ async fn handle_rpc(
     let parsed = service_request(&request);
     let response = match parsed {
         Ok(Some(service_request)) if is_mutating_method(&request.method) => {
-            handle_mutating_rpc(&state, &scope, &id, &body, &request.method, service_request)
+            handle_mutating_rpc(&state, &scope, &id, &request, service_request)
         }
         Ok(Some(service_request)) => dispatch_service_request(&state, &scope, id, &service_request),
         Ok(None) => JsonRpcResponse::method_not_found(id),
@@ -341,15 +341,25 @@ fn handle_mutating_rpc(
     state: &TransportState,
     runtime_scope: &RuntimeServiceScope,
     id: &Value,
-    body: &[u8],
-    method: &str,
+    rpc: &JsonRpcRequest,
     request: ServiceRequest,
 ) -> JsonRpcResponse {
     let Some(ledger) = state.rpc_ledger.as_ref() else {
         return JsonRpcResponse::idempotency_error(id.clone(), "idempotency_unavailable");
     };
-    let Some(request_id) = canonical_request_id(id) else {
+    // The correlation `id` is deliberately not the dedup identity. JSON-RPC
+    // defines `id` for correlation only, and a gateway, a proxy, or a client
+    // whose counter restarts on reconnect may renumber it. Keying replay
+    // protection on it meant a retry could miss the ledger and execute a
+    // mutating method twice, with nothing reporting the second execution. The
+    // client states the operation identity instead, and an absent key fails
+    // closed rather than falling back, because a fallback would preserve exactly
+    // the coupling this removes.
+    let Some(idempotency_key) = rpc.idempotency_key.as_ref() else {
         return JsonRpcResponse::idempotency_error(id.clone(), "idempotency_key_required");
+    };
+    let Some(idempotency_key) = idempotency_key.as_str() else {
+        return JsonRpcResponse::idempotency_error(id.clone(), "idempotency_key_invalid");
     };
     let scope_material = serde_json::to_vec(&(
         runtime_scope.principal_id().as_str(),
@@ -359,7 +369,11 @@ fn handle_mutating_rpc(
     ))
     .expect("scope serialization cannot fail");
     let scope_key = digest_bytes(&scope_material);
-    let key = match RpcRequestKey::new(scope_key, request_id, method, digest_bytes(body)) {
+    // Digest the method and params only. The previous whole-body digest also
+    // covered `id`, which coupled identity to framing a second time, and it
+    // would additionally absorb the idempotency key into its own digest.
+    let content_digest = digest_request(&rpc.method, &rpc.params);
+    let key = match RpcRequestKey::new(scope_key, idempotency_key, &rpc.method, content_digest) {
         Ok(key) => key,
         Err(_) => return JsonRpcResponse::idempotency_error(id.clone(), "idempotency_key_invalid"),
     };
@@ -391,14 +405,6 @@ fn handle_mutating_rpc(
             JsonRpcResponse::idempotency_error(id.clone(), "idempotency_conflict")
         }
         Err(_) => JsonRpcResponse::idempotency_error(id.clone(), "idempotency_unavailable"),
-    }
-}
-
-fn canonical_request_id(id: &Value) -> Option<String> {
-    match id {
-        Value::String(value) if !value.is_empty() => serde_json::to_string(value).ok(),
-        Value::Number(_) => serde_json::to_string(id).ok(),
-        _ => None,
     }
 }
 
@@ -584,6 +590,10 @@ struct JsonRpcRequest {
     method: String,
     #[serde(default)]
     params: Value,
+    /// Client-stated identity of the logical operation, required for mutating
+    /// methods. Deliberately separate from `id`, which is correlation framing.
+    #[serde(default)]
+    idempotency_key: Option<Value>,
 }
 
 impl JsonRpcRequest {
@@ -862,6 +872,7 @@ mod tests {
             json!({
                 "jsonrpc": "2.0",
                 "id": 2,
+                "idempotency_key": "k875",
                 "method": "run.execute",
                 "params": {"task": "guide"}
             }),
@@ -901,6 +912,7 @@ mod tests {
             json!({
                 "jsonrpc": "2.0",
                 "id": 30,
+                "idempotency_key": "k914",
                 "method": "run.execute",
                 "params": {"task": "guide"}
             }),
@@ -939,6 +951,7 @@ mod tests {
             json!({
                 "jsonrpc": "2.0",
                 "id": 4,
+                "idempotency_key": "k952",
                 "method": "run.execute",
                 "params": {"task": "guide"}
             }),
@@ -980,6 +993,7 @@ mod tests {
             json!({
                 "jsonrpc": "2.0",
                 "id": 5,
+                "idempotency_key": "k993",
                 "method": "run.execute",
                 "params": {"task": "tampered"}
             }),
@@ -997,6 +1011,7 @@ mod tests {
             json!({
                 "jsonrpc": "2.0",
                 "id": 1,
+                "idempotency_key": "k1010",
                 "method": "run.execute",
                 "params": {"task": "guide"}
             }),
@@ -1019,6 +1034,7 @@ mod tests {
             json!({
                 "jsonrpc": "2.0",
                 "id": 1,
+                "idempotency_key": "k1032",
                 "method": "agent.execute",
                 "params": {"task": "Inspect this repository"}
             }),
@@ -1078,6 +1094,7 @@ mod tests {
             json!({
                 "jsonrpc": "2.0",
                 "id": 1,
+                "idempotency_key": "k1091",
                 "method": "evolution.activate",
                 "params": {"proposal_id": "proposal-a", "confirmation": "proposal-b"}
             }),
@@ -1093,6 +1110,7 @@ mod tests {
             json!({
                 "jsonrpc": "2.0",
                 "id": 2,
+                "idempotency_key": "k1106",
                 "method": "evolution.activate",
                 "params": {"proposal_id": "proposal-a", "confirmation": "proposal-a"}
             }),
@@ -1111,6 +1129,7 @@ mod tests {
             json!({
                 "jsonrpc": "2.0",
                 "id": 3,
+                "idempotency_key": "k1124",
                 "method": "evolution.rollback",
                 "params": {
                     "proposal_id": "proposal-a",
@@ -1132,6 +1151,7 @@ mod tests {
             json!({
                 "jsonrpc": "2.0",
                 "id": 4,
+                "idempotency_key": "k1145",
                 "method": "evolution.rollout.transition",
                 "params": {
                     "proposal_id": "proposal-a",
@@ -1160,6 +1180,7 @@ mod tests {
             json!({
                 "jsonrpc": "2.0",
                 "id": 1,
+                "idempotency_key": "k1173",
                 "method": "run.execute",
                 "params": {"task": "patch:README.md:approved"}
             }),
@@ -1193,6 +1214,7 @@ mod tests {
             json!({
                 "jsonrpc": "2.0",
                 "id": 3,
+                "idempotency_key": "k1206",
                 "method": "approval.resolve",
                 "params": {"approval_id": approval_id, "allow": true}
             }),
@@ -1208,6 +1230,7 @@ mod tests {
             json!({
                 "jsonrpc": "2.0",
                 "id": 4,
+                "idempotency_key": "k1221",
                 "method": "run.resume",
                 "params": {
                     "approval_id": approval_id,
@@ -1234,6 +1257,7 @@ mod tests {
             json!({
                 "jsonrpc": "2.0",
                 "id": 1,
+                "idempotency_key": "k1247",
                 "method": "run.execute",
                 "params": {"task": "guide"}
             }),
@@ -1269,6 +1293,7 @@ mod tests {
         let request = json!({
             "jsonrpc": "2.0",
             "id": 700,
+            "idempotency_key": "k1282",
             "method": "run.execute",
             "params": {"task": "guide"}
         });
@@ -1284,12 +1309,132 @@ mod tests {
         assert_eq!(first_json, second_json);
     }
 
+    /// F1: dedup identity must not be coupled to the JSON-RPC correlation `id`.
+    ///
+    /// `handle_mutating_rpc` derives the ledger key from
+    /// `(scope, canonical_request_id(id), method, sha256(whole body))`, and the
+    /// whole-body digest already contains `id`. So a retry that arrives under a
+    /// different correlation id misses the ledger and executes the mutation
+    /// again, silently. A gateway, proxy, or reconnecting client that renumbers
+    /// `id` defeats dedup with nothing reporting it.
+    ///
+    /// RED before the fix: this test fails because the second call executes
+    /// rather than replaying.
+    #[tokio::test]
+    async fn explicit_idempotency_key_replays_across_a_changed_correlation_id() {
+        let fixture = Fixture::new();
+        let frame = |id: u64| {
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "idempotency_key": "operation-a",
+                "method": "run.execute",
+                "params": {"task": "guide"}
+            })
+        };
+        let call = async |id: u64| {
+            let response = post(&fixture, Some(&fixture.token), frame(id)).await;
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            serde_json::from_slice::<Value>(&body).unwrap()
+        };
+
+        let first = call(1).await;
+        let retried = call(2).await;
+        assert_eq!(
+            first["result"]["run"]["execution_id"], retried["result"]["run"]["execution_id"],
+            "the same idempotency key must replay across a changed correlation id"
+        );
+    }
+
+    /// A mutating method with no explicit key must fail closed.
+    ///
+    /// The correlation `id` is not an acceptable substitute: it is transport
+    /// framing, and the client does not control it end to end. RED before the fix,
+    /// because today the request executes.
+    #[tokio::test]
+    async fn mutating_rpc_without_an_idempotency_key_is_rejected_closed() {
+        let fixture = Fixture::new();
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "run.execute",
+            "params": {"task": "guide"}
+        });
+        let response = post(&fixture, Some(&fixture.token), request).await;
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert!(
+            json.get("result").is_none(),
+            "a mutating request with no idempotency key must not execute: {json}"
+        );
+        assert_eq!(json["error"]["data"]["code"], "idempotency_key_required");
+    }
+
+    /// Malformed keys are rejected closed rather than coerced.
+    ///
+    /// Bounds come from `RpcRequestKey::validate`: 1 to 256 bytes, no control
+    /// characters. RED before the fix, because today these execute.
+    #[tokio::test]
+    async fn malformed_idempotency_keys_are_rejected_closed() {
+        let fixture = Fixture::new();
+        let too_long = "k".repeat(257);
+        for (label, key) in [
+            ("empty", String::new()),
+            ("too long", too_long),
+            ("control character", "op\u{0007}eration".to_owned()),
+        ] {
+            let request = json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "idempotency_key": key,
+                "method": "run.execute",
+                "params": {"task": "guide"}
+            });
+            let response = post(&fixture, Some(&fixture.token), request).await;
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let json: Value = serde_json::from_slice(&body).unwrap();
+            assert!(
+                json.get("result").is_none(),
+                "a {label} idempotency key must not execute: {json}"
+            );
+        }
+    }
+
+    /// One key is one logical operation, and distinct keys are distinct
+    /// operations. This holds before and after the fix and must not regress.
+    #[tokio::test]
+    async fn idempotency_key_separates_operations_and_repeats_replay() {
+        let fixture = Fixture::new();
+        let call = async |key: &str| {
+            let request = json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "idempotency_key": key,
+                "method": "run.execute",
+                "params": {"task": "guide"}
+            });
+            let response = post(&fixture, Some(&fixture.token), request).await;
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            serde_json::from_slice::<Value>(&body).unwrap()
+        };
+
+        let first = call("operation-a").await;
+        assert_eq!(first, call("operation-a").await, "a repeated key replays");
+
+        let second = call("operation-b").await;
+        assert_ne!(
+            first["result"]["run"]["execution_id"], second["result"]["run"]["execution_id"],
+            "a distinct key must produce a distinct execution"
+        );
+    }
+
     #[tokio::test]
     async fn mutating_rpc_replays_deterministic_runtime_errors() {
         let fixture = Fixture::new();
         let request = json!({
             "jsonrpc": "2.0",
             "id": 703,
+            "idempotency_key": "k1422",
             "method": "run.execute",
             "params": {"task": "not-a-supported-action"}
         });
@@ -1303,8 +1448,15 @@ mod tests {
         assert_eq!(first_json, second_json);
     }
 
+    /// Reusing one idempotency key for different content is a conflict, not a
+    /// second operation and not a replay.
+    ///
+    /// The correlation `id` no longer carries any identity, so this is now a
+    /// property of the explicit key: same key, different method/params, same
+    /// scope. The ledger reports `Conflict` rather than executing, which keeps a
+    /// client bug from being laundered into a fresh governed execution.
     #[tokio::test]
-    async fn mutating_rpc_rejects_id_reuse_with_changed_payload() {
+    async fn mutating_rpc_rejects_idempotency_key_reuse_with_changed_payload() {
         let fixture = Fixture::new();
         let first = post(
             &fixture,
@@ -1312,6 +1464,7 @@ mod tests {
             json!({
                 "jsonrpc": "2.0",
                 "id": 701,
+                "idempotency_key": "reused-operation",
                 "method": "run.execute",
                 "params": {"task": "guide"}
             }),
@@ -1324,7 +1477,8 @@ mod tests {
             Some(&fixture.token),
             json!({
                 "jsonrpc": "2.0",
-                "id": 701,
+                "id": 999,
+                "idempotency_key": "reused-operation",
                 "method": "run.execute",
                 "params": {"task": "second"}
             }),
@@ -1360,6 +1514,7 @@ mod tests {
             json!({
                 "jsonrpc": "2.0",
                 "id": 702,
+                "idempotency_key": "k1492",
                 "method": "run.execute",
                 "params": {"task": "no-ledger"}
             }),
