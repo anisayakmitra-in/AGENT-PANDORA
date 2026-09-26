@@ -29,7 +29,16 @@ impl Fixture {
             .expect("system clock should be available")
             .as_nanos();
         let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!(
+        // Canonicalize before building paths under it. On macOS the temporary
+        // directory is reached through /var, a symlink to /private/var, and the
+        // CLI refuses any manifest or artifact path with a symlink component.
+        // Matching cli_smoke's fixture keeps both suites on the same footing
+        // instead of one of them tripping a path-safety guard the other never
+        // reaches.
+        let temp_root = std::env::temp_dir()
+            .canonicalize()
+            .expect("temporary directory should have a canonical path");
+        let root = temp_root.join(format!(
             "pandora-json-contract-{}-{timestamp}-{sequence}",
             std::process::id()
         ));
