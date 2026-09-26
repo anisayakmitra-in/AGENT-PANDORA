@@ -11,8 +11,10 @@ cache action, is precisely the regression this is meant to catch.
 
 from __future__ import annotations
 
+import os
 import re
 import unittest
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,7 +44,7 @@ JOBS_REQUIRING_TIMEOUT = {
 
 # The reviewed rust-cache pin. Changing it is a supply-chain decision, so the
 # exact commit is asserted rather than any v2 tag.
-RUST_CACHE_PIN = "Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7"
+RUST_CACHE_PIN = "Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6"
 WORKFLOWS_REQUIRING_CACHE = ("ci.yml", "security.yml", "fuzz.yml")
 
 # A matrix exists to surface platform differences, so one platform failing must
@@ -119,6 +121,47 @@ class WorkflowHardening(unittest.TestCase):
                         RUST_CACHE_PIN,
                         f"{name}: rust-cache must stay pinned to the reviewed commit",
                     )
+
+    def test_pins_are_commit_objects_not_tag_objects(self) -> None:
+        """A 40-hex value can still be unusable.
+
+        The first rust-cache pin came from `git ls-remote refs/tags/...` after the
+        output was truncated to its last few lines, which kept the annotated tag
+        object and dropped the peeled `^{}` commit. Both are 40 hex characters,
+        so the shape assertions above accepted it and all three workflows failed
+        to start.
+
+        Distinguishing them needs the upstream ref, so this test is opt-in and
+        only runs when a token is available. Without it the failure mode is a red
+        run rather than a silent wrong answer, which is the acceptable direction.
+        """
+        if os.environ.get("GITHUB_TOKEN") is None and os.environ.get("GH_TOKEN") is None:
+            self.skipTest("no token: verifying a ref resolves to a commit needs the API")
+        for pin in sorted(self._all_pins()):
+            with self.subTest(pin=pin):
+                owner_repo, ref = pin.rsplit("@", 1)
+                request = urllib.request.Request(
+                    f"https://api.github.com/repos/{owner_repo}/commits/{ref}",
+                    headers={"Authorization": f"Bearer {self._token()}"},
+                )
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    self.assertEqual(response.status, 200, f"{pin} does not resolve to a commit")
+
+    @staticmethod
+    def _token() -> str:
+        return os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or ""
+
+    @staticmethod
+    def _all_pins() -> set[str]:
+        pins: set[str] = set()
+        for path in WORKFLOWS.glob("*.yml"):
+            pins.update(
+                re.findall(
+                    r"uses:\s*([\w.-]+/[\w.-]+@[0-9a-f]{40})",
+                    path.read_text(encoding="utf-8"),
+                )
+            )
+        return pins
 
     def test_verify_matrix_reports_every_platform(self) -> None:
         body = job_block(workflow("ci.yml"), VERIFY_MATRIX[1])
