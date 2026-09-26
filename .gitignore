@@ -15,3 +15,13 @@ apps/pandora-desktop/dist/
 apps/pandora-desktop/.npm-cache/
 npm/pandora-cli/node_modules/
 .npm-cache/
+
+# Agent gate ledgers and hook state are machine-local. The unlazy skill writes
+# `.claude/settings.local.json` containing absolute paths to this machine's node
+# and to the vendored skill, and its Stop-hook state is per session. Committing
+# either would publish local layout and machine-specific paths. The skill's own
+# SECURITY.md asks consumers to keep all three untracked, so enforce it here
+# rather than relying on a local exclude file that is not shared.
+/.unlazy/
+/.unlazy-hook-state.json
+/.claude/settings.local.json
