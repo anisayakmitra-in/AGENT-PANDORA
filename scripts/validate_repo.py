@@ -127,6 +127,18 @@ def validate_release_changelog(changelog: str, tags: list[str]) -> list[str]:
 
 
 def validate_patched_glib(root: Path) -> list[str]:
+    """Verify the reviewed glib override, but only if the desktop tree is present.
+
+    This is a security check on the vendored patch, so it is kept as long as the
+    source it covers exists. It is made conditional because desktop product work
+    is cancelled: a CLI-only checkout must not fail repository validation over
+    retained files that are never built or shipped. The check is skipped, not
+    weakened, and it runs in full the moment the tree is there.
+    """
+    desktop_root = root / "apps" / "pandora-desktop"
+    if not (desktop_root / "src-tauri" / "Cargo.toml").is_file():
+        return []
+
     findings: list[str] = []
     manifest = root / "apps" / "pandora-desktop" / "src-tauri" / "Cargo.toml"
     lockfile = root / "apps" / "pandora-desktop" / "src-tauri" / "Cargo.lock"

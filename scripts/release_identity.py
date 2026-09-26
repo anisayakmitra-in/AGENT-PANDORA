@@ -36,10 +36,86 @@ def windows_msi_version(version: str) -> str:
     return f"{major}.{minor}.{patch}.{build}"
 
 
+def validate_desktop_identity(root: Path, version: str) -> None:
+    """Cross-check the cancelled desktop tree's version sources.
+
+    Desktop product work is cancelled and its adapter source is retained only for
+    downstream reuse, so these checks are opt-in. They used to run on every CLI
+    release, which meant a version bump in the workspace was blocked until
+    desktop files nobody builds or ships were also bumped.
+
+    The rules are unchanged, so `--include-desktop` still enforces exactly what
+    it enforced before, should the desktop ever be revived.
+    """
+    with (root / "apps" / "pandora-desktop" / "package.json").open(
+        encoding="utf-8"
+    ) as package_file:
+        desktop_npm_version = json.load(package_file)["version"]
+    with (root / "apps" / "pandora-desktop" / "package-lock.json").open(
+        encoding="utf-8"
+    ) as package_lock_file:
+        desktop_lock = json.load(package_lock_file)
+    with (root / "apps" / "pandora-desktop" / "src-tauri" / "Cargo.toml").open(
+        "rb"
+    ) as desktop_cargo_file:
+        desktop_cargo_version = tomllib.load(desktop_cargo_file)["package"]["version"]
+    with (root / "apps" / "pandora-desktop" / "src-tauri" / "tauri.conf.json").open(
+        encoding="utf-8"
+    ) as tauri_config_file:
+        tauri_config = json.load(tauri_config_file)
+        tauri_version_source = tauri_config["version"]
+        windows_wix = tauri_config["bundle"]["windows"]["wix"]
+        windows_msi_bundle_version = windows_wix["version"]
+        windows_upgrade_code = windows_wix["upgradeCode"]
+    if desktop_npm_version != version:
+        raise ValueError(
+            f"desktop npm package version {desktop_npm_version!r} "
+            f"does not match workspace {version!r}"
+        )
+    desktop_lock_version = desktop_lock.get("version")
+    desktop_lock_package_version = desktop_lock.get("packages", {}).get("", {}).get(
+        "version"
+    )
+    if desktop_lock_version != version or desktop_lock_package_version != version:
+        raise ValueError(
+            f"desktop package lock versions do not match workspace {version!r}"
+        )
+    if desktop_cargo_version != version:
+        raise ValueError(
+            f"desktop Cargo package version {desktop_cargo_version!r} "
+            f"does not match workspace {version!r}"
+        )
+    if tauri_version_source != "../package.json":
+        raise ValueError(
+            "Tauri version must resolve from '../package.json' so desktop "
+            "bundle metadata cannot drift"
+        )
+    expected_windows_msi_version = windows_msi_version(version)
+    if windows_msi_bundle_version != expected_windows_msi_version:
+        raise ValueError(
+            f"desktop Windows MSI version {windows_msi_bundle_version!r} "
+            f"does not match derived release version {expected_windows_msi_version!r}"
+        )
+    if windows_upgrade_code != DESKTOP_WINDOWS_UPGRADE_CODE:
+        raise ValueError(
+            "desktop Windows MSI upgrade code changed; existing installs "
+            "would no longer share one update identity"
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate Pandora release identity")
     parser.add_argument("tag", nargs="?")
     parser.add_argument("--root", type=Path, default=Path.cwd())
+    parser.add_argument(
+        "--include-desktop",
+        action="store_true",
+        help=(
+            "also require the cancelled desktop tree's version sources to match. "
+            "Off by default: desktop product work is cancelled, so a CLI release "
+            "must not be blocked by drift in source that is never built or shipped."
+        ),
+    )
     arguments = parser.parse_args()
 
     try:
@@ -50,74 +126,14 @@ def main() -> int:
             encoding="utf-8"
         ) as package_file:
             npm_version = json.load(package_file)["version"]
-        with (root / "apps" / "pandora-desktop" / "package.json").open(
-            encoding="utf-8"
-        ) as package_file:
-            desktop_npm_version = json.load(package_file)["version"]
-        with (root / "apps" / "pandora-desktop" / "package-lock.json").open(
-            encoding="utf-8"
-        ) as package_lock_file:
-            desktop_lock = json.load(package_lock_file)
-        with (root / "apps" / "pandora-desktop" / "src-tauri" / "Cargo.toml").open(
-            "rb"
-        ) as desktop_cargo_file:
-            desktop_cargo_version = tomllib.load(desktop_cargo_file)["package"][
-                "version"
-            ]
-        with (
-            root
-            / "apps"
-            / "pandora-desktop"
-            / "src-tauri"
-            / "tauri.conf.json"
-        ).open(encoding="utf-8") as tauri_config_file:
-            tauri_config = json.load(tauri_config_file)
-            tauri_version_source = tauri_config["version"]
-            windows_wix = tauri_config["bundle"]["windows"]["wix"]
-            windows_msi_bundle_version = windows_wix["version"]
-            windows_upgrade_code = windows_wix["upgradeCode"]
         if not isinstance(version, str) or not version:
             raise ValueError("workspace package version is invalid")
         if npm_version != version:
             raise ValueError(
                 f"npm package version {npm_version!r} does not match workspace {version!r}"
             )
-        if desktop_npm_version != version:
-            raise ValueError(
-                "desktop npm package version "
-                f"{desktop_npm_version!r} does not match workspace {version!r}"
-            )
-        desktop_lock_version = desktop_lock.get("version")
-        desktop_lock_package_version = desktop_lock.get("packages", {}).get(
-            "", {}
-        ).get("version")
-        if desktop_lock_version != version or desktop_lock_package_version != version:
-            raise ValueError(
-                "desktop package lock versions do not match workspace "
-                f"{version!r}"
-            )
-        if desktop_cargo_version != version:
-            raise ValueError(
-                "desktop Cargo package version "
-                f"{desktop_cargo_version!r} does not match workspace {version!r}"
-            )
-        if tauri_version_source != "../package.json":
-            raise ValueError(
-                "Tauri version must resolve from '../package.json' so desktop "
-                "bundle metadata cannot drift"
-            )
-        expected_windows_msi_version = windows_msi_version(version)
-        if windows_msi_bundle_version != expected_windows_msi_version:
-            raise ValueError(
-                "desktop Windows MSI version "
-                f"{windows_msi_bundle_version!r} does not match derived "
-                f"release version {expected_windows_msi_version!r}"
-            )
-        if windows_upgrade_code != DESKTOP_WINDOWS_UPGRADE_CODE:
-            raise ValueError(
-                "desktop Windows MSI upgrade code changed; existing installs "
-                "would no longer share one update identity"
-            )
+        if arguments.include_desktop:
+            validate_desktop_identity(root, version)
         expected_tag = f"v{version}"
         shell_installer = (root / "scripts" / "install.sh").read_text(encoding="utf-8")
         shell_defaults = re.findall(
