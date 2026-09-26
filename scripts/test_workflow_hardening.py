@@ -174,6 +174,41 @@ class WorkflowHardening(unittest.TestCase):
                 with urllib.request.urlopen(request, timeout=30) as response:
                     self.assertEqual(response.status, 200, f"{pin} does not resolve to a commit")
 
+    def test_the_merge_gate_is_a_single_stable_non_matrix_job(self) -> None:
+        """The required check must not embed a runner label or a matrix value.
+
+        Required status checks are matched by name. Pinning the `verify` matrix
+        jobs directly would pin three names containing `ubuntu-latest`,
+        `macos-26`, and `windows-latest`, so a routine runner bump would block
+        merges for a reason unrelated to correctness. The gate job exists to keep
+        exactly one stable, matrix-free name in the required set, and it must
+        depend on the whole matrix so a platform failure still fails the gate.
+        """
+        body = job_block(workflow("ci.yml"), "gate")
+        self.assertIn(
+            "name: CI gate",
+            body,
+            "the merge gate must keep the exact name 'CI gate', because that is "
+            "what branch protection requires",
+        )
+        self.assertNotRegex(
+            body,
+            r"(?m)^\s+matrix:",
+            "the merge gate must not declare a matrix, or its required check name "
+            "would change per platform",
+        )
+        self.assertRegex(
+            body,
+            r"(?m)^    needs:\s*\[verify\]\s*$",
+            "the merge gate must need the verify matrix, or a platform failure "
+            "would not block the merge",
+        )
+        self.assertRegex(
+            body,
+            r"(?m)^\s+timeout-minutes:\s*\d+\s*$",
+            "the merge gate declares no timeout, so a hung runner would stall merges",
+        )
+
     def test_every_action_is_covered_by_the_selected_actions_policy(self) -> None:
         """A disallowed action fails the run at dispatch, not inside a job.
 

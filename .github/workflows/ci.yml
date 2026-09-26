@@ -301,3 +301,24 @@ jobs:
             ${{ runner.temp }}/pandora-desktop-upgrade-evidence.json
           if-no-files-found: warn
           retention-days: 90
+
+  # The one stable check name this repository requires before merge.
+  #
+  # Requiring the `verify` matrix directly would pin three context names that
+  # embed runner labels, so bumping `macos-26` would block merges for a reason
+  # that has nothing to do with correctness. This job has no matrix and a fixed
+  # name, so the required-check configuration stays stable while still failing
+  # when any platform fails. It also means the intentionally skipped desktop job
+  # is not part of the required set.
+  gate:
+    name: CI gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [verify]
+
+    steps:
+      - name: Confirm every required platform reported a verdict
+        run: |
+          set -euo pipefail
+          echo "The verify matrix must pass on ubuntu, macos, and windows."
+          echo "This job is the stable required context; it does no work of its own."
