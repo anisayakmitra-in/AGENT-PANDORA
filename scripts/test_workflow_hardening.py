@@ -222,6 +222,23 @@ class WorkflowHardening(unittest.TestCase):
             r"(?m)^\s+timeout-minutes:\s*\d+\s*$",
             "the merge gate declares no timeout, so a hung runner would stall merges",
         )
+        # This is the part that makes the required check mean anything. With
+        # `needs` alone, a matrix failure leaves the gate *skipped*, and GitHub
+        # does not block a merge on a skipped required check. That regression was
+        # observed on a real run: windows failed, and `CI gate` reported skipped
+        # rather than failed. The gate must always run and fail explicitly.
+        self.assertRegex(
+            body,
+            r"(?m)^\s+if:\s*always\(\)\s*$",
+            "the merge gate must run even when the matrix fails, or it is skipped "
+            "and a skipped required check does not block the merge",
+        )
+        self.assertRegex(
+            body,
+            r"needs\.verify\.result",
+            "the merge gate must inspect needs.verify.result and fail on anything "
+            "other than success",
+        )
 
     def test_main_requires_the_stable_merge_gate(self) -> None:
         """Branch protection is server state, so nothing in the tree guards it.

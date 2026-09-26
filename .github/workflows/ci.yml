@@ -126,20 +126,34 @@ jobs:
           path: ${{ runner.temp }}/pandora-cli-baseline.json
           if-no-files-found: error
 
+  # The one stable check name this repository requires before merge.
+  #
+  # Requiring the `verify` matrix directly would pin three context names that
   # embed runner labels, so bumping `macos-26` would block merges for a reason
   # that has nothing to do with correctness. This job has no matrix and a fixed
   # name, so the required-check configuration stays stable while still failing
   # when any platform fails. The cancelled desktop job is not in this workflow at
   # all, so it cannot become a required context.
+  #
+  # `if: always()` is load-bearing. Without it a matrix failure leaves this job
+  # *skipped*, and a skipped required check does not block a merge, which would
+  # defeat the entire point. This job must always run and must turn a
+  # non-success matrix result into a failure.
   gate:
     name: CI gate
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [verify]
+    if: always()
 
     steps:
-      - name: Confirm every required platform reported a verdict
+      - name: Fail unless the verify matrix succeeded
         run: |
           set -euo pipefail
-          echo "The verify matrix must pass on ubuntu, macos, and windows."
-          echo "This job is the stable required context; it does no work of its own."
+          result='${{ needs.verify.result }}'
+          echo "verify matrix result: ${result}"
+          if [ "${result}" != "success" ]; then
+            echo "::error::the verify matrix reported ${result}, not success"
+            exit 1
+          fi
+          echo "Every required platform passed."

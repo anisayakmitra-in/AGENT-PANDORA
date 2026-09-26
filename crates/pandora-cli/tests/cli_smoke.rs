@@ -3489,9 +3489,18 @@ fn long_lived_job_daemon_handles_staggered_enqueue_without_duplicate_completion(
     let tenant = TenantId::new("local-tenant").unwrap();
     let workspace = WorkspaceId::new("local-workspace").unwrap();
     // Windows process startup and SQLite handoff are substantially slower than
-    // the in-process worker path; keep the soak bounded but allow the full
-    // staggered batch to drain on a hosted runner.
-    let completion_deadline = Instant::now() + Duration::from_secs(30);
+    // the in-process worker path. This test spawns sixteen separate CLI
+    // processes and then waits for a daemon to run all sixteen to completion, so
+    // on a loaded Windows host runner a flat 30s budget was observed to expire
+    // without any job having gone wrong. The bound is scaled per platform rather
+    // than raised everywhere, so the fast platforms keep catching a real hang
+    // quickly.
+    let completion_budget = if cfg!(target_os = "windows") {
+        Duration::from_secs(180)
+    } else {
+        Duration::from_secs(60)
+    };
+    let completion_deadline = Instant::now() + completion_budget;
     loop {
         let jobs = store.list(&principal, &tenant, &workspace).unwrap();
         if jobs.len() == job_ids.len()
@@ -3499,9 +3508,17 @@ fn long_lived_job_daemon_handles_staggered_enqueue_without_duplicate_completion(
         {
             break;
         }
+        // Report what was actually outstanding when the budget expired. Without
+        // this the failure only says "did not complete", which cannot be told
+        // apart from a slow runner. The message is only built on failure.
         assert!(
             Instant::now() < completion_deadline,
-            "staggered daemon did not complete the full queue"
+            "staggered daemon did not complete the full queue within {completion_budget:?}; \
+             outstanding: {}",
+            jobs.iter()
+                .map(|job| format!("{}={}", job.id(), job.status().as_str()))
+                .collect::<Vec<_>>()
+                .join(" ")
         );
         thread::sleep(Duration::from_millis(50));
     }
