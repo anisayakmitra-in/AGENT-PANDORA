@@ -692,7 +692,9 @@ fn operations_reads_telemetry_and_empty_crash_evidence_read_only() {
     assert_eq!(crashes["count"], 0);
     assert_eq!(crashes["truncated"], false);
     assert_eq!(crashes["reports"].as_array().map(Vec::len), Some(0));
+}
 
+#[test]
 fn graph_show_round_trips_a_persisted_snapshot_and_reports_absence() {
     let fixture = Fixture::new();
     let input = fixture.root.join("graph-input.json");
@@ -747,7 +749,53 @@ fn graph_show_round_trips_a_persisted_snapshot_and_reports_absence() {
     assert_eq!(shown["edges"].as_array().map(Vec::len), Some(0));
     assert_eq!(shown["scope"]["tenant"], "local-tenant");
     assert_eq!(shown["scope"]["workspace"], "local-workspace");
+}
 
+#[test]
+fn graph_remove_deletes_only_the_selected_stored_snapshot() {
+    let fixture = Fixture::new();
+    let input = fixture.root.join("graph-remove-input.json");
+    let store = fixture.root.join("graph-remove.sqlite3");
+    fs::write(
+        &input,
+        br#"{"inputs":[{"path":"src/lib.rs","content":"pub fn answer() {}","provenance":"session:graph-remove"}]}"#,
+    )
+    .expect("graph input should be written");
+    fixture
+        .run(&[
+            "graph",
+            "code",
+            "--input",
+            input.to_str().unwrap(),
+            "--store",
+            store.to_str().unwrap(),
+            "--json",
+        ])
+        .success("graph build");
+
+    let removed = fixture
+        .run(&[
+            "graph",
+            "code",
+            "remove",
+            "--store",
+            store.to_str().unwrap(),
+            "--json",
+        ])
+        .success("graph remove");
+    assert_eq!(removed["removed"], true);
+
+    let shown = fixture
+        .run(&[
+            "graph",
+            "code",
+            "show",
+            "--store",
+            store.to_str().unwrap(),
+            "--json",
+        ])
+        .success("graph show");
+    assert_eq!(shown["present"], false);
 }
 
 fn path_value(path: &Path) -> Value {

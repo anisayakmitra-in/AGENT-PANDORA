@@ -36,8 +36,42 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     // original build shape, so `graph code --input <path>` is untouched.
     match rest.first().map(String::as_str) {
         Some("show") => show(kind, &rest[1..]),
+        Some("remove") => remove(kind, &rest[1..]),
         _ => build(kind, rest),
     }
+}
+
+fn remove(kind: GraphKind, args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["store", "tenant", "workspace"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "graph remove does not accept positional arguments",
+        ));
+    }
+    let store_path = parsed
+        .value("store")
+        .ok_or_else(|| CliError::usage("graph remove requires '--store <path>'"))?;
+    let scope = GraphScope::new(
+        parsed.value("tenant").unwrap_or(LOCAL_TENANT),
+        parsed.value("workspace").unwrap_or(LOCAL_WORKSPACE),
+    )
+    .map_err(|error| CliError::usage(format!("invalid graph scope: {error}")))?;
+    let store = GraphStore::open(store_path).map_err(graph_store_error)?;
+    let removed = store.remove(kind, &scope).map_err(graph_store_error)?;
+    Ok(success(
+        "graph remove",
+        json!({
+            "kind": kind.as_str(),
+            "removed": removed,
+            "tenant": scope.tenant(),
+            "workspace": scope.workspace(),
+        }),
+        if removed {
+            format!("Removed stored {} graph", kind.as_str())
+        } else {
+            format!("No stored {} graph to remove", kind.as_str())
+        },
+    ))
 }
 
 /// Report the stored snapshot for a scope.
