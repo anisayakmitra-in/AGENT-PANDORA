@@ -31,7 +31,79 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             CliError::usage("graph requires 'code', 'knowledge', 'review', or 'architecture'")
         })
         .and_then(|value| parse_kind(value))?;
-    build(kind, &args[1..])
+    let rest = &args[1..];
+    // `show` is a read of an already-stored snapshot. Everything else keeps the
+    // original build shape, so `graph code --input <path>` is untouched.
+    match rest.first().map(String::as_str) {
+        Some("show") => show(kind, &rest[1..]),
+        _ => build(kind, rest),
+    }
+}
+
+/// Report the stored snapshot for a scope.
+///
+/// This is the read counterpart to `graph build --store`. It calls
+/// `GraphStore::load`, so it returns the same digest the write recorded rather
+/// than re-deriving a graph, and it never calls `replace` or `remove`.
+///
+/// An absent snapshot is a real state, not an error: the scope simply holds no
+/// graph yet. That is reported as `present: false` with a zero exit, because
+/// "you have not built this yet" is an answer, while a failure would make
+/// scripting a graph's presence awkward for no gain.
+fn show(kind: GraphKind, args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["store", "tenant", "workspace"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "graph show does not accept positional arguments",
+        ));
+    }
+    let store_path = parsed
+        .value("store")
+        .ok_or_else(|| CliError::usage("graph show requires '--store <path>'"))?;
+    let scope = GraphScope::new(
+        parsed.value("tenant").unwrap_or(LOCAL_TENANT),
+        parsed.value("workspace").unwrap_or(LOCAL_WORKSPACE),
+    )
+    .map_err(|error| CliError::usage(format!("invalid graph scope: {error}")))?;
+    let store = GraphStore::open(store_path).map_err(graph_store_error)?;
+    let Some(snapshot) = store.load(kind, &scope).map_err(graph_store_error)? else {
+        return Ok(success(
+            "graph show",
+            json!({
+                "kind": kind.as_str(),
+                "present": false,
+                "tenant": scope.tenant(),
+                "workspace": scope.workspace(),
+            }),
+            format!(
+                "no stored {} graph for tenant {} workspace {}",
+                kind.as_str(),
+                scope.tenant(),
+                scope.workspace()
+            ),
+        ));
+    };
+    let mut data = serde_json::to_value(&snapshot).map_err(|error| {
+        CliError::internal(
+            "could not serialize graph snapshot",
+            json!({"error": error.to_string()}),
+        )
+    })?;
+    data.as_object_mut()
+        .expect("graph snapshots serialize as JSON objects")
+        .insert("present".to_owned(), json!(true));
+    Ok(success(
+        "graph show",
+        data,
+        format!(
+            "{} graph: {} source(s), {} node(s), {} edge(s), digest {}",
+            kind.as_str(),
+            snapshot.source_count(),
+            snapshot.nodes().len(),
+            snapshot.edges().len(),
+            snapshot.digest()
+        ),
+    ))
 }
 
 fn build(kind: GraphKind, args: &[String]) -> Result<CommandResult, CliError> {
