@@ -692,6 +692,62 @@ fn operations_reads_telemetry_and_empty_crash_evidence_read_only() {
     assert_eq!(crashes["count"], 0);
     assert_eq!(crashes["truncated"], false);
     assert_eq!(crashes["reports"].as_array().map(Vec::len), Some(0));
+
+fn graph_show_round_trips_a_persisted_snapshot_and_reports_absence() {
+    let fixture = Fixture::new();
+    let input = fixture.root.join("graph-input.json");
+    let store = fixture.root.join("graphs.sqlite3");
+    fs::write(
+        &input,
+        br#"{"inputs":[{"path":"src/main.rs","content":"fn main() {}","provenance":"session:graph"}]}"#,
+    )
+    .expect("graph input should be written");
+
+    let absent = fixture
+        .run(&[
+            "graph",
+            "code",
+            "show",
+            "--store",
+            store.to_str().unwrap(),
+            "--json",
+        ])
+        .success("graph show");
+    assert_eq!(absent["kind"], "code");
+    assert_eq!(absent["present"], false);
+
+    let built = fixture
+        .run(&[
+            "graph",
+            "code",
+            "--input",
+            input.to_str().unwrap(),
+            "--store",
+            store.to_str().unwrap(),
+            "--json",
+        ])
+        .success("graph build");
+    let built_digest = built["digest"].as_str().expect("build digest");
+
+    let shown = fixture
+        .run(&[
+            "graph",
+            "code",
+            "show",
+            "--store",
+            store.to_str().unwrap(),
+            "--json",
+        ])
+        .success("graph show");
+    assert_eq!(shown["kind"], "code");
+    assert_eq!(shown["present"], true);
+    assert_eq!(shown["digest"], built_digest);
+    assert_eq!(shown["source_count"], 1);
+    assert_eq!(shown["nodes"].as_array().map(Vec::len), Some(1));
+    assert_eq!(shown["edges"].as_array().map(Vec::len), Some(0));
+    assert_eq!(shown["scope"]["tenant"], "local-tenant");
+    assert_eq!(shown["scope"]["workspace"], "local-workspace");
+
 }
 
 fn path_value(path: &Path) -> Value {

@@ -439,7 +439,7 @@ commands:
   rollout inspect --session <id> [--execution <id>]
   efficiency rank [--task-class <name>] [--objective <cost|latency|tokens|certainty>]
   fleet dashboard [--now <unix-seconds>] [--stale-after <1-86400>] | list|register|dispatch|lease|renew|release|expire|supervisor [list|start|drain|stop|recover|heartbeat|reconcile|reap|restart]|quarantine|revoke|kill
-  graph code|knowledge|review|architecture --input <path> [--store <path>] [--tenant <id>] [--workspace <id>]
+  graph code|knowledge|review|architecture --input <path> [--store <path>] [--tenant <id>] [--workspace <id>] | graph code|knowledge|review|architecture show --store <path> [--tenant <id>] [--workspace <id>]
   completions <powershell|bash|zsh|fish>
   migrate config
   update [--release <tag> [--channel <stable|beta|release-candidate>] | --artifact <path> --sha256 <digest> | --rollback]
