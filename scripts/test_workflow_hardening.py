@@ -30,6 +30,18 @@ API = "https://api.github.com"
 # Actions published by GitHub itself, covered by `github_owned_allowed`.
 GITHUB_OWNED_OWNERS = frozenset({"actions", "github"})
 
+# The required status checks on main, mirroring branch protection. `CI gate`
+# stands in for the whole `verify` matrix, so no required name embeds a runner
+# label. The desktop job is deliberately absent: it is gated behind
+# PANDORA_DESKTOP_CI and is skipped, so requiring it would gate merges on a
+# variable nobody sets.
+REQUIRED_CHECK_CONTEXTS = (
+    "CI gate",
+    "Dependency and repository audit",
+    "Bounded parser fuzzing",
+    "Analyze Rust",
+)
+
 # Every job that can actually run, as (job key, declared name). A hung job
 # otherwise runs to the 360-minute platform default. The name is asserted too,
 # so renaming a job cannot quietly move it out of this table.
@@ -207,6 +219,59 @@ class WorkflowHardening(unittest.TestCase):
             body,
             r"(?m)^\s+timeout-minutes:\s*\d+\s*$",
             "the merge gate declares no timeout, so a hung runner would stall merges",
+        )
+
+    def test_main_requires_the_stable_merge_gate(self) -> None:
+        """Branch protection is server state, so nothing in the tree guards it.
+
+        The required-check set is the only thing that makes this pipeline
+        binding. If it is ever cleared, every gate added here becomes advisory
+        again and the repository looks healthy while red runs merge. So the
+        configuration is asserted rather than assumed.
+
+        The set is the four stable job names. The `verify` matrix is represented
+        by `CI gate`, and the intentionally skipped desktop job is excluded on
+        purpose: requiring a job that is gated off would make merges depend on a
+        variable nobody sets.
+        """
+        token = self._token()
+        if not token:
+            self.skipTest("no token: reading branch protection needs the API")
+        request = urllib.request.Request(
+            f"{API}/repos/{OWNER}/{REPO}/branches/main/protection",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                protection = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            self.skipTest(f"cannot read branch protection: HTTP {error.code}")
+
+        checks = protection.get("required_status_checks")
+        self.assertIsNotNone(
+            checks,
+            "main has no required status checks, so a red pipeline does not "
+            "block a merge. Add the contexts in REQUIRED_CHECK_CONTEXTS.",
+        )
+        self.assertEqual(
+            sorted(checks.get("contexts") or []),
+            sorted(REQUIRED_CHECK_CONTEXTS),
+            "the required check set drifted. It must stay the stable, non-matrix "
+            "job names; pinning a matrix job would block merges when a runner "
+            "label changes.",
+        )
+        self.assertTrue(
+            checks.get("strict"),
+            "required checks must be strict, or a stale success from an older "
+            "push can satisfy them",
+        )
+        self.assertFalse(
+            protection.get("allow_force_pushes", {}).get("enabled"),
+            "force pushes must stay disabled on main",
+        )
+        self.assertTrue(
+            protection.get("required_linear_history", {}).get("enabled"),
+            "linear history must stay required on main",
         )
 
     def test_every_action_is_covered_by_the_selected_actions_policy(self) -> None:

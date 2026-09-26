@@ -106,3 +106,28 @@ Maintainers may ask for a smaller change when a pull request crosses several
 authority or product boundaries. Review checks behavior, invariants, tests,
 documentation, and release impact. Passing CI alone does not waive an
 architecture or security concern.
+
+### Required checks on `main`
+
+`main` requires four status checks, and the set is asserted by
+`scripts/test_workflow_hardening.py` rather than left to memory:
+
+- `CI gate`
+- `Dependency and repository audit`
+- `Bounded parser fuzzing`
+- `Analyze Rust`
+
+Checks are required strictly, so a stale success from an older push cannot
+satisfy them. Force pushes are disabled and linear history is required.
+
+`CI gate` is a single job with no matrix that depends on the `verify` matrix. It
+exists so the required set contains no runner label: requiring
+`Verify (macos-26)` directly would block merges whenever a runner label is
+bumped, for a reason unrelated to correctness. The desktop job is deliberately
+absent from the required set because it is gated behind `PANDORA_DESKTOP_CI` and
+is skipped.
+
+Branch protection is server state, so it is invisible in the tree. If a check
+set is ever cleared, the pipeline silently becomes advisory. That test is
+token-gated and skips without one; run it locally with `GITHUB_TOKEN` set to
+confirm the live configuration.
