@@ -31,8 +31,11 @@ jobs:
           toolchain: 1.97.1
           components: rustfmt, clippy
 
-      - name: Restore Rust build cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # The Rust build cache is temporarily disabled. With this step present,
+      # every run of this workflow fails at startup before dispatching a single
+      # job, which leaves the pipeline with no verdict at all. Cold cargo passes
+      # are slower but they are a reported result; a startup failure is not.
+      # pandora-ci-cache-waived: rust-cache step causes workflow-level startup failure
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7

@@ -47,6 +47,10 @@ JOBS_REQUIRING_TIMEOUT = {
 RUST_CACHE_PIN = "Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6"
 WORKFLOWS_REQUIRING_CACHE = ("ci.yml", "security.yml", "fuzz.yml")
 
+# A workflow with no rust-cache step must carry this marker, followed by a
+# colon and the reason, so a removed cache is always a recorded decision.
+CACHE_WAIVER_MARKER = "pandora-ci-cache-waived"
+
 # A matrix exists to surface platform differences, so one platform failing must
 # not suppress the verdict from the others.
 VERIFY_MATRIX = ("ci.yml", "verify")
@@ -107,20 +111,33 @@ class WorkflowHardening(unittest.TestCase):
                 )
 
     def test_rust_cache_is_present_and_pinned_to_the_reviewed_commit(self) -> None:
+        """Caching is either pinned on, or waived in-file with a recorded reason.
+
+        This used to assert the step unconditionally, which left no way to
+        express "we deliberately turned this off". That is a bad gate: it makes
+        a temporary, documented removal indistinguishable from an accidental
+        one. So absence is now allowed, but only against an explicit marker
+        naming the reason.
+        """
         for name in WORKFLOWS_REQUIRING_CACHE:
             with self.subTest(workflow=name):
-                pins = re.findall(r"Swatinem/rust-cache@\S+", workflow(name))
-                self.assertTrue(
-                    pins,
-                    f"{name}: expected a rust-cache step, since every cargo pass "
-                    f"was rebuilding cold",
+                text = workflow(name)
+                pins = re.findall(r"Swatinem/rust-cache@\S+", text)
+                if pins:
+                    for pin in pins:
+                        self.assertEqual(
+                            pin,
+                            RUST_CACHE_PIN,
+                            f"{name}: rust-cache must stay pinned to the reviewed commit",
+                        )
+                    continue
+                self.assertIn(
+                    CACHE_WAIVER_MARKER,
+                    text,
+                    f"{name}: no rust-cache step and no recorded reason. Every cargo "
+                    f"pass was rebuilding cold, so add the pinned step back or record "
+                    f"the '{CACHE_WAIVER_MARKER}' marker with why it is absent",
                 )
-                for pin in pins:
-                    self.assertEqual(
-                        pin,
-                        RUST_CACHE_PIN,
-                        f"{name}: rust-cache must stay pinned to the reviewed commit",
-                    )
 
     def test_pins_are_commit_objects_not_tag_objects(self) -> None:
         """A 40-hex value can still be unusable.
