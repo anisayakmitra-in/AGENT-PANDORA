@@ -1334,12 +1334,31 @@ impl FleetEngine {
         }
     }
 
+    /// Acquire a fence, judging liveness on the trusted clock.
+    ///
+    /// Delegates to [`Self::acquire_fence_at`]. The public signature keeps
+    /// caller-provided `now` semantics for everything the fence itself records,
+    /// but the operation blocker cannot use that value: it is untrusted input to
+    /// a liveness decision. Keeping the explicit-time form separate is what lets
+    /// the blocker be exercised with a chosen time instead of only through the
+    /// private test clock.
     pub fn acquire_fence(
         &self,
         key: impl Into<String>,
         owner_id: impl Into<String>,
         now: u64,
         duration_seconds: u64,
+    ) -> Result<FleetLeaseFence, FleetError> {
+        self.acquire_fence_at(key, owner_id, now, duration_seconds, self.trusted_now()?)
+    }
+
+    fn acquire_fence_at(
+        &self,
+        key: impl Into<String>,
+        owner_id: impl Into<String>,
+        now: u64,
+        duration_seconds: u64,
+        blocker_now: u64,
     ) -> Result<FleetLeaseFence, FleetError> {
         if duration_seconds == 0 {
             return Err(FleetError::InvalidFenceDuration);
@@ -1355,11 +1374,9 @@ impl FleetEngine {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         ensure_work_permitted(&transaction, now)?;
         // Replacement is a fence mutation like any other, so a live operation
-        // blocks it. Sampling the trusted clock here rather than reusing `now`
-        // is deliberate: the caller's idea of the time is untrusted input to a
-        // liveness decision, and an operation holder is exactly the party that
-        // would want to understate it.
-        self.block_fence_mutation(&transaction, &key, self.trusted_now()?)?;
+        // blocks it. The trusted clock is passed in by the caller, not reused
+        // from `now`, for the reason given on `acquire_fence`.
+        self.block_fence_mutation(&transaction, &key, blocker_now)?;
         let existing = transaction
             .query_row(
                 "SELECT generation, state, expires_at
@@ -1432,26 +1449,31 @@ impl FleetEngine {
     /// method intentionally does not accept a claim token; callers use it only
     /// after the fleet supervisor lifecycle has established takeover authority.
     pub fn invalidate_fence(&self, key: &str, owner_id: &str) -> Result<bool, FleetError> {
+        self.invalidate_fence_at(key, owner_id, self.trusted_now()?)
+    }
+
+    fn invalidate_fence_at(
+        &self,
+        key: &str,
+        owner_id: &str,
+        blocker_now: u64,
+    ) -> Result<bool, FleetError> {
         let key = validate_text("fence key", key.to_owned(), 256)?;
         let owner_id = validate_text("fence owner", owner_id.to_owned(), 256)?;
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        self.block_fence_mutation(&transaction, &key, self.trusted_now()?)?;
-        let record = transaction
-            .query_row(
-                "SELECT owner_id, state FROM fleet_fences WHERE fence_key = ?1",
-                params![key],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-            )
-            .optional()?;
-        let Some((current_owner, state)) = record else {
+        self.block_fence_mutation(&transaction, &key, blocker_now)?;
+        // Through the shared reader, so a fence row that cannot be decoded is
+        // `CorruptRecord` here too. A second, laxer reader here would let a
+        // corrupted fence be invalidated on one path and refused on another.
+        let Some(row) = read_fence_row(&transaction, &key)? else {
             transaction.commit()?;
             return Ok(false);
         };
-        if current_owner != owner_id {
+        if row.owner_id != owner_id {
             return Err(FleetError::FenceMismatch);
         }
-        if decode_fence_state(&state)? == FleetFenceState::Active {
+        if decode_fence_state(&row.state)? == FleetFenceState::Active {
             transaction.execute(
                 "UPDATE fleet_fences SET state = 'released'
                  WHERE fence_key = ?1 AND owner_id = ?2 AND state = 'active'",
@@ -1468,6 +1490,16 @@ impl FleetEngine {
         now: u64,
         duration_seconds: u64,
     ) -> Result<FleetLeaseFence, FleetError> {
+        self.renew_fence_at(fence, now, duration_seconds, self.trusted_now()?)
+    }
+
+    fn renew_fence_at(
+        &self,
+        fence: &FleetLeaseFence,
+        now: u64,
+        duration_seconds: u64,
+        blocker_now: u64,
+    ) -> Result<FleetLeaseFence, FleetError> {
         if duration_seconds == 0 {
             return Err(FleetError::InvalidFenceDuration);
         }
@@ -1476,7 +1508,23 @@ impl FleetEngine {
             .ok_or(FleetError::InvalidFenceDuration)?;
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        self.block_fence_mutation(&transaction, &fence.key, self.trusted_now()?)?;
+        // `renew_fence` is the one fence mutation a live operation still permits,
+        // and only in one direction. The operation matrix says: an extension
+        // strictly beyond the operation's own expiry, and nothing else. So a
+        // renewal that would leave the operation outliving the fence is refused
+        // with the same `FenceOperationActive` a shorter one gets, rather than
+        // being allowed to weaken the holder it is meant to protect. An
+        // expired-but-unreaped row still fails closed via
+        // `operation_for_fence`, and a malformed one still yields
+        // `CorruptRecord`, so this carve-out cannot be used to route around
+        // either.
+        match self.operation_for_fence(&transaction, &fence.key, blocker_now)? {
+            Some(operation) if expires_at <= operation.expires_at => {
+                return Err(FleetError::FenceOperationActive);
+            }
+            Some(_) => {}
+            None => {}
+        }
         validate_fence(&transaction, fence, now)?;
         transaction.execute(
             "UPDATE fleet_fences SET expires_at = ?1
@@ -1496,6 +1544,10 @@ impl FleetEngine {
     }
 
     pub fn assert_fence(&self, fence: &FleetLeaseFence, now: u64) -> Result<(), FleetError> {
+        self.assert_fence_at(fence, now)
+    }
+
+    fn assert_fence_at(&self, fence: &FleetLeaseFence, now: u64) -> Result<(), FleetError> {
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         validate_fence(&transaction, fence, now)?;
@@ -1504,9 +1556,18 @@ impl FleetEngine {
     }
 
     pub fn release_fence(&self, fence: &FleetLeaseFence, now: u64) -> Result<(), FleetError> {
+        self.release_fence_at(fence, now, self.trusted_now()?)
+    }
+
+    fn release_fence_at(
+        &self,
+        fence: &FleetLeaseFence,
+        now: u64,
+        blocker_now: u64,
+    ) -> Result<(), FleetError> {
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        self.block_fence_mutation(&transaction, &fence.key, self.trusted_now()?)?;
+        self.block_fence_mutation(&transaction, &fence.key, blocker_now)?;
         validate_fence(&transaction, fence, now)?;
         transaction.execute(
             "UPDATE fleet_fences SET state = 'released'
@@ -1528,9 +1589,12 @@ impl FleetEngine {
     /// is expired, which is the only fail-closed reading: expiring the others and
     /// reporting an error would leave the caller unable to tell what happened.
     pub fn expire_fences(&self, now: u64) -> Result<usize, FleetError> {
+        self.expire_fences_at(now, self.trusted_now()?)
+    }
+
+    fn expire_fences_at(&self, now: u64, blocker_now: u64) -> Result<usize, FleetError> {
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let blocker_now = self.trusted_now()?;
         let mut candidates = {
             let mut statement = transaction.prepare(
                 "SELECT fence_key FROM fleet_fences
@@ -1798,24 +1862,7 @@ impl FleetEngine {
         transaction: &rusqlite::Transaction<'_>,
         fence_key: &str,
     ) -> Result<Option<FenceRow>, FleetError> {
-        let record = transaction
-            .query_row(
-                "SELECT owner_id, generation, token_hash, issued_at, expires_at, state
-                 FROM fleet_fences WHERE fence_key = ?1",
-                params![fence_key],
-                |row| {
-                    Ok(FenceRow {
-                        owner_id: row.get(0)?,
-                        generation: decode_u64(row.get(1)?)?,
-                        token_hash: row.get(2)?,
-                        issued_at: decode_u64(row.get(3)?)?,
-                        expires_at: decode_u64(row.get(4)?)?,
-                        state: row.get(5)?,
-                    })
-                },
-            )
-            .optional()?;
-        Ok(record)
+        read_fence_row(transaction, fence_key)
     }
 
     /// Reject a duration that is zero, oversized, or overflows.
@@ -2536,26 +2583,18 @@ fn validate_fence(
     fence: &FleetLeaseFence,
     now: u64,
 ) -> Result<(), FleetError> {
-    let record = connection
-        .query_row(
-            "SELECT owner_id, generation, token_hash, issued_at, expires_at, state
-             FROM fleet_fences WHERE fence_key = ?1",
-            params![fence.key],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    decode_u64(row.get(1)?)?,
-                    row.get::<_, String>(2)?,
-                    decode_u64(row.get(3)?)?,
-                    decode_u64(row.get(4)?)?,
-                    row.get::<_, String>(5)?,
-                ))
-            },
-        )
-        .optional()?;
-    let Some((owner_id, generation, token_hash, issued_at, expires_at, state)) = record else {
+    let record = read_fence_row(connection, &fence.key)?;
+    let Some(row) = record else {
         return Err(FleetError::FenceNotFound);
     };
+    let FenceRow {
+        owner_id,
+        generation,
+        token_hash,
+        issued_at,
+        expires_at,
+        state,
+    } = row;
     let state = decode_fence_state(&state)?;
     if state != FleetFenceState::Active {
         return Err(FleetError::FenceMismatch);
@@ -2584,6 +2623,56 @@ fn sha256_bytes(bytes: &[u8]) -> [u8; 32] {
     let mut out = [0u8; 32];
     out.copy_from_slice(&Sha256::digest(bytes));
     out
+}
+
+/// Read and decode one fence row.
+///
+/// As with `read_operation_rows`, the malformed-row mapping is stated once: a
+/// row that cannot be decoded is `CorruptRecord` rather than a generic
+/// `Database` error, because it is not a transient connection problem and
+/// retrying it will not help. The caller's fence key is the lookup, so a row
+/// that exists but cannot be understood must never read as "no fence".
+fn read_fence_row(
+    connection: &Connection,
+    fence_key: &str,
+) -> Result<Option<FenceRow>, FleetError> {
+    let record = connection
+        .query_row(
+            "SELECT owner_id, generation, token_hash, issued_at, expires_at, state
+             FROM fleet_fences WHERE fence_key = ?1",
+            params![fence_key],
+            |row| {
+                Ok(FenceRow {
+                    owner_id: row.get(0)?,
+                    generation: decode_u64(row.get(1)?)?,
+                    token_hash: row.get(2)?,
+                    issued_at: decode_u64(row.get(3)?)?,
+                    expires_at: decode_u64(row.get(4)?)?,
+                    state: row.get(5)?,
+                })
+            },
+        )
+        .optional()?;
+    record.map(decode_fence_row).transpose()
+}
+
+/// Reject a fence row whose stored values do not form a coherent fence.
+fn decode_fence_row(row: FenceRow) -> Result<FenceRow, FleetError> {
+    let state = decode_fence_state(&row.state)?;
+    let corrupt = || FleetError::CorruptRecord;
+    if row.owner_id.is_empty()
+        || row.owner_id.len() > 256
+        || row.generation == 0
+        || row.token_hash.is_empty()
+        || row.issued_at > row.expires_at
+        || matches!(state, FleetFenceState::Expired) && row.expires_at == 0
+    {
+        return Err(corrupt());
+    }
+    Ok(FenceRow {
+        state: row.state,
+        ..row
+    })
 }
 
 /// Strictly decode one operation row.
@@ -3948,6 +4037,498 @@ mod tests {
             )
             .unwrap();
         assert_eq!(columns, 1, "the conflicting table must be left untouched");
+    }
+
+    /// Insert `count` valid operation rows for keys this test does not use, so
+    /// the total-row cap can be reached without hand-crafting a real holder.
+    fn fill_operation_rows(fleet: &FleetEngine, count: usize) {
+        let mut connection = fleet.lock().unwrap();
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        {
+            let mut statement = transaction
+                .prepare(
+                    "INSERT INTO fleet_fence_operations
+                        (operation_hash, fence_key, fence_owner_id, fence_generation,
+                         fence_token_hash, fence_issued_at, acquired_at, last_renewed_at,
+                         expires_at)
+                     VALUES (?1, ?2, 'worker-a', 1, ?3, 10, 10, 10, 20)",
+                )
+                .unwrap();
+            for index in 0..count {
+                // Distinct keys, distinct identities, all individually valid.
+                let mut hash = [0u8; 32];
+                hash[..8].copy_from_slice(&(index as u64).to_le_bytes());
+                statement
+                    .execute(params![
+                        hash.to_vec(),
+                        format!("filler-{index}"),
+                        "0".repeat(64)
+                    ])
+                    .unwrap();
+            }
+        }
+        transaction.commit().unwrap();
+    }
+
+    #[test]
+    fn the_total_row_cap_refuses_new_operations_and_counts_every_row() {
+        let fleet = engine("pandora-fence-operation-cap");
+        fleet.set_trusted_now_for_test(10);
+        let fence = fleet.acquire_fence("job-1", "worker-a", 10, 100).unwrap();
+
+        // One row below the cap still admits a new operation.
+        fill_operation_rows(&fleet, MAX_FENCE_OPERATION_ROWS - 1);
+        fleet.acquire_fence_operation(&fence, 5).unwrap();
+        assert_eq!(operation_row_count(&fleet), MAX_FENCE_OPERATION_ROWS);
+
+        // At the cap, a fence with no operation of its own is refused. The cap is
+        // on the whole table, so unrelated live rows still exhaust it, and the
+        // refusal is not mistaken for a missing row.
+        let other = fleet.acquire_fence("job-2", "worker-b", 10, 100).unwrap();
+        assert!(matches!(
+            fleet.acquire_fence_operation(&other, 5),
+            Err(FleetError::FenceOperationLimitExceeded)
+        ));
+        // Release frees capacity again, so the cap is a ceiling and not a latch.
+        fill_operation_rows(&fleet, 0);
+        {
+            let connection = fleet.lock().unwrap();
+            connection
+                .execute("DELETE FROM fleet_fence_operations", [])
+                .unwrap();
+        }
+        fleet.acquire_fence_operation(&other, 5).unwrap();
+    }
+
+    #[test]
+    fn renew_fence_is_permitted_only_beyond_the_operation_expiry() {
+        let fleet = engine("pandora-fence-renew-beyond-operation");
+        fleet.set_trusted_now_for_test(10);
+        let fence = fleet.acquire_fence("job-1", "worker-a", 10, 100).unwrap();
+        fleet.set_trusted_now_for_test(11);
+        // The operation is capped at the fence's expiry, so renewing the fence is
+        // the only way the holder can ever extend past it.
+        let mut guard = fleet.acquire_fence_operation(&fence, 10_000).unwrap();
+        assert_eq!(guard.expires_at(), fence.expires_at());
+
+        // A renewal that would leave the operation outliving the fence is
+        // refused. The operation is capped at the fence's expiry of 110, so
+        // anything at or below that is the dangerous direction: it would shorten
+        // the authority the holder believes it has.
+        fleet.set_trusted_now_for_test(12);
+        assert!(matches!(
+            fleet.renew_fence(&fence, 12, 5),
+            Err(FleetError::FenceOperationActive)
+        ));
+        assert!(matches!(
+            fleet.renew_fence(&fence, 12, 50),
+            Err(FleetError::FenceOperationActive)
+        ));
+        assert_eq!(guard.expires_at(), fence.expires_at());
+
+        // Extending strictly beyond the operation's expiry is allowed, which is
+        // what makes the carve-out useful rather than a blanket refusal.
+        let renewed = fleet.renew_fence(&fence, 12, 200).unwrap();
+        assert_eq!(renewed.expires_at(), 212);
+        // And once the fence outlasts the operation, the holder can extend its
+        // own operation within the new lifetime.
+        fleet.renew_fence_operation(&mut guard, 150).unwrap();
+        assert_eq!(guard.expires_at(), 162);
+        assert!(guard.expires_at() <= renewed.expires_at());
+    }
+
+    #[test]
+    fn renew_fence_still_fails_closed_on_a_stale_operation() {
+        let fleet = engine("pandora-fence-renew-stale-operation");
+        fleet.set_trusted_now_for_test(10);
+        let fence = fleet.acquire_fence("job-1", "worker-a", 10, 100).unwrap();
+        fleet.set_trusted_now_for_test(11);
+        fleet.acquire_fence_operation(&fence, 5).unwrap();
+        fleet.set_trusted_now_for_test(16);
+
+        // An expired-but-unreaped row is not "no operation", so the one carve-out
+        // in `renew_fence` cannot be used to renew past it.
+        assert!(matches!(
+            fleet.renew_fence(&fence, 16, 50),
+            Err(FleetError::FenceOperationRecoveryRequired)
+        ));
+    }
+
+    #[test]
+    fn release_is_scoped_by_the_row_binding_not_merely_by_the_fence_key() {
+        // `FenceOperationGuard` is move-only and not `Clone`, so safe code cannot
+        // present a released guard a second time. That is a type-level property
+        // and stable Rust cannot assert the absence of a `Clone` impl at runtime:
+        // a blanket `impl<T>` and an `impl<T: Clone>` for the same type overlap
+        // and are rejected, and method-resolution tricks need nightly. So the
+        // executable half of "an old guard cannot affect a successor" is asserted
+        // here instead, and it is the half that could actually break: release is
+        // scoped by the row's full binding, not by the fence key it happens to
+        // carry.
+        let fleet = engine("pandora-fence-guard-binding");
+        fleet.set_trusted_now_for_test(10);
+        let fence = fleet.acquire_fence("job-1", "worker-a", 10, 100).unwrap();
+        let other = fleet.acquire_fence("job-2", "worker-b", 10, 100).unwrap();
+        fleet.set_trusted_now_for_test(11);
+        let first = fleet.acquire_fence_operation(&fence, 5).unwrap();
+        fleet.release_fence_operation(first).unwrap();
+
+        fleet.set_trusted_now_for_test(12);
+        let second = fleet.acquire_fence_operation(&other, 5).unwrap();
+        // Repoint the stored row at the first fence's key, as a corrupted or
+        // hostile store might. A key-only check would now let this guard delete
+        // a row that is not its own.
+        {
+            let connection = fleet.lock().unwrap();
+            connection
+                .execute("UPDATE fleet_fence_operations SET fence_key = 'job-1'", [])
+                .unwrap();
+        }
+        assert!(
+            matches!(
+                fleet.release_fence_operation(second),
+                Err(FleetError::CorruptRecord)
+            ),
+            "release must verify the row's whole binding, not just the fence key"
+        );
+        assert_eq!(
+            operation_row_count(&fleet),
+            1,
+            "a refused release must not delete the row either"
+        );
+    }
+
+    #[test]
+    fn synthetic_and_oversized_times_are_refused_rather_than_silently_zero() {
+        let fleet = engine("pandora-fence-operation-synthetic-time");
+        fleet.set_trusted_now_for_test(10);
+        let fence = fleet.acquire_fence("job-1", "worker-a", 10, 100).unwrap();
+        fleet.set_trusted_now_for_test(11);
+        fleet.acquire_fence_operation(&fence, 5).unwrap();
+
+        // `u64::MAX` cannot be stored in the SQLite integer column, so
+        // `expire_fences` refuses it. What matters is that it refuses loudly: a
+        // silent `Ok(0)` here would read as "nothing was expired", which is a
+        // different and wrong claim.
+        assert!(
+            fleet.expire_fences(u64::MAX).is_err(),
+            "an unstorable time must be an error, not an empty success"
+        );
+        // A large but storable time is honoured, and the live operation still
+        // blocks the batch.
+        assert!(matches!(
+            fleet.expire_fences(1_000_000),
+            Err(FleetError::FenceOperationActive)
+        ));
+        // Expiry arithmetic overflow is refused by the fence methods too.
+        assert!(matches!(
+            fleet.renew_fence(&fence, 11, u64::MAX),
+            Err(FleetError::InvalidFenceDuration)
+        ));
+        assert!(matches!(
+            fleet.acquire_fence("job-2", "worker-b", 11, u64::MAX),
+            Err(FleetError::InvalidFenceDuration)
+        ));
+    }
+
+    #[test]
+    fn a_malformed_fence_row_is_corruption_rather_than_a_missing_fence() {
+        let fleet = engine("pandora-fence-row-malformed");
+        fleet.set_trusted_now_for_test(10);
+        let fence = fleet.acquire_fence("job-1", "worker-a", 10, 100).unwrap();
+        {
+            // generation = 0, which the table's own CHECK rejects, so this is
+            // fault injection: it models a store that stopped enforcing its
+            // constraints, which is the case a decoder exists to catch.
+            let connection = fleet.lock().unwrap();
+            connection
+                .execute_batch("PRAGMA ignore_check_constraints = ON")
+                .unwrap();
+            connection
+                .execute(
+                    "UPDATE fleet_fences SET generation = 0 WHERE fence_key = 'job-1'",
+                    [],
+                )
+                .unwrap();
+            connection
+                .execute_batch("PRAGMA ignore_check_constraints = OFF")
+                .unwrap();
+        }
+        // Every read path that touches that fence must say corrupt, not absent.
+        // `FenceNotFound` would invite a re-acquisition that silently overwrites
+        // a fence whose state nobody could read.
+        assert!(matches!(
+            fleet.assert_fence(&fence, 10),
+            Err(FleetError::CorruptRecord)
+        ));
+        assert!(matches!(
+            fleet.release_fence(&fence, 10),
+            Err(FleetError::CorruptRecord)
+        ));
+        assert!(matches!(
+            fleet.renew_fence(&fence, 10, 50),
+            Err(FleetError::CorruptRecord)
+        ));
+        assert!(matches!(
+            fleet.invalidate_fence("job-1", "worker-a"),
+            Err(FleetError::CorruptRecord)
+        ));
+    }
+
+    #[test]
+    fn a_malformed_operation_row_blocks_every_fence_mutation() {
+        let fleet = engine("pandora-fence-operation-row-families");
+        fleet.set_trusted_now_for_test(10);
+        let fence = fleet.acquire_fence("job-1", "worker-a", 10, 100).unwrap();
+        {
+            let connection = fleet.lock().unwrap();
+            connection
+                .execute_batch("PRAGMA ignore_check_constraints = ON")
+                .unwrap();
+            // hash one byte short of 32, and a NULL identity
+            connection
+                .execute(
+                    "INSERT INTO fleet_fence_operations
+                        (operation_hash, fence_key, fence_owner_id, fence_generation,
+                         fence_token_hash, fence_issued_at, acquired_at,
+                         last_renewed_at, expires_at)
+                     VALUES (?1, 'job-1', 'worker-a', 1, ?2, 10, 10, 10, 20)",
+                    params![vec![7u8; 31], "0".repeat(64)],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO fleet_fence_operations
+                        (operation_hash, fence_key, fence_owner_id, fence_generation,
+                         fence_token_hash, fence_issued_at, acquired_at,
+                         last_renewed_at, expires_at)
+                     VALUES (?1, 'job-1', 'worker-a', 1, ?2, 10, 10, 10, 20)",
+                    params![Vec::new(), "0".repeat(64)],
+                )
+                .unwrap();
+            connection
+                .execute_batch("PRAGMA ignore_check_constraints = OFF")
+                .unwrap();
+        }
+        // Two rows for one key is independently corrupt, and a short hash is
+        // corrupt on its own. Either must stop every mutation for that key.
+        assert!(matches!(
+            fleet.invalidate_fence("job-1", "worker-a"),
+            Err(FleetError::CorruptRecord)
+        ));
+        assert!(matches!(
+            fleet.release_fence(&fence, 10),
+            Err(FleetError::CorruptRecord)
+        ));
+        assert!(matches!(
+            fleet.renew_fence(&fence, 10, 50),
+            Err(FleetError::CorruptRecord)
+        ));
+        assert!(matches!(
+            fleet.expire_fences(1_000),
+            Err(FleetError::CorruptRecord)
+        ));
+        assert!(matches!(
+            fleet.acquire_fence_operation(&fence, 5),
+            Err(FleetError::CorruptRecord)
+        ));
+    }
+
+    /// Build a valid v5 database, then reduce it to a bare version-0 file with
+    /// no user schema, which is what a fresh install starts from.
+    fn seed_bare_version_zero(path: &std::path::Path) {
+        {
+            FleetEngine::open(path).unwrap();
+        }
+        let connection = Connection::open(path).unwrap();
+        // Dropping a table drops its indexes with it, so the index names must not
+        // be dropped separately.
+        connection
+            .execute_batch(
+                "DROP TABLE fleet_fence_operations;
+                 DROP TABLE fleet_nodes;
+                 DROP TABLE fleet_leases;
+                 DROP TABLE fleet_fences;
+                 DROP TABLE fleet_supervisors;
+                 DROP TABLE fleet_quiescence;",
+            )
+            .unwrap();
+        connection.pragma_update(None, "user_version", 0).unwrap();
+    }
+
+    #[test]
+    fn a_bare_version_zero_file_creates_the_whole_schema() {
+        let root = crate::test_support::new_temp_dir("pandora-fleet-version-zero").unwrap();
+        let path = root.join("fleet.sqlite3");
+        seed_bare_version_zero(&path);
+
+        let fleet = FleetEngine::open(&path).unwrap();
+        assert_eq!(fleet.schema_version_for_test(), 5);
+        fleet.set_trusted_now_for_test(10);
+        // Both halves of the schema are usable, not just the legacy tables.
+        let fence = fleet.acquire_fence("job-1", "worker-a", 10, 100).unwrap();
+        fleet.acquire_fence_operation(&fence, 5).unwrap();
+        assert_eq!(operation_row_count(&fleet), 1);
+    }
+
+    #[test]
+    fn a_populated_version_zero_file_is_refused_rather_than_adopted() {
+        let root = crate::test_support::new_temp_dir("pandora-fleet-version-zero-used").unwrap();
+        let path = root.join("fleet.sqlite3");
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute_batch("CREATE TABLE something_else (id TEXT);")
+                .unwrap();
+        }
+        // Version 0 with content means this is not a fresh fleet database, it is
+        // someone else's file. Creating the schema beside unknown tables would
+        // quietly reinterpret a database this build knows nothing about.
+        assert!(matches!(
+            FleetEngine::open(&path),
+            Err(FleetError::CorruptRecord)
+        ));
+        // Refusal is inert: the foreign table is still there and still untouched.
+        let connection = Connection::open(&path).unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 0);
+        let survivor: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'something_else'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(survivor, 1);
+    }
+
+    #[test]
+    fn a_malformed_version_four_database_is_refused_without_repair() {
+        let root = crate::test_support::new_temp_dir("pandora-fleet-v4-malformed").unwrap();
+        let path = root.join("fleet.sqlite3");
+        {
+            FleetEngine::open(&path).unwrap();
+        }
+        {
+            let connection = Connection::open(&path).unwrap();
+            // A genuine version 4 has no operation table at all, so remove it as
+            // well as dropping a legacy table. Leaving it behind would make this
+            // a v5 database with a missing supervisor table, which is a different
+            // scenario and one the v5 branch already covers.
+            connection
+                .execute_batch(
+                    "DROP TABLE fleet_fence_operations;
+                     DROP TABLE fleet_supervisors;",
+                )
+                .unwrap();
+            connection.pragma_update(None, "user_version", 4).unwrap();
+        }
+        assert!(matches!(
+            FleetEngine::open(&path),
+            Err(FleetError::CorruptRecord)
+        ));
+        let connection = Connection::open(&path).unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            version, 4,
+            "a refused migration must not advance the version"
+        );
+        let operation_tables: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'fleet_fence_operations'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            operation_tables, 0,
+            "a refused migration must not create the table it failed on"
+        );
+    }
+
+    #[test]
+    fn a_version_five_database_missing_its_operation_table_is_refused() {
+        let root = crate::test_support::new_temp_dir("pandora-fleet-v5-no-operations").unwrap();
+        let path = root.join("fleet.sqlite3");
+        {
+            FleetEngine::open(&path).unwrap();
+        }
+        {
+            // The version still claims 5, so the v5 branch validates the schema
+            // instead of migrating. A missing table must be caught, not assumed.
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute_batch("DROP TABLE fleet_fence_operations;")
+                .unwrap();
+        }
+        assert!(FleetEngine::open(&path).is_err());
+    }
+
+    #[test]
+    fn intermediate_versions_are_refused_rather_than_migrated_guessed() {
+        for version in 1..=3u32 {
+            let root =
+                crate::test_support::new_temp_dir(&format!("pandora-fleet-v{version}-unsupported"))
+                    .unwrap();
+            let path = root.join("fleet.sqlite3");
+            {
+                FleetEngine::open(&path).unwrap();
+            }
+            {
+                let connection = Connection::open(&path).unwrap();
+                connection
+                    .pragma_update(None, "user_version", version as i64)
+                    .unwrap();
+            }
+            assert!(
+                matches!(
+                    FleetEngine::open(&path),
+                    Err(FleetError::UnsupportedSchemaVersion)
+                ),
+                "version {version} must be refused, not guessed at"
+            );
+        }
+    }
+
+    #[test]
+    fn a_future_version_is_refused_before_the_database_is_touched() {
+        let root = crate::test_support::new_temp_dir("pandora-fleet-future-untouched").unwrap();
+        let path = root.join("fleet.sqlite3");
+        {
+            FleetEngine::open(&path).unwrap();
+        }
+        {
+            // Leave the file in rollback-journal mode so a WAL switch would be
+            // visible as a change of this value.
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .pragma_update(None, "journal_mode", "DELETE")
+                .unwrap();
+            connection.pragma_update(None, "user_version", 6).unwrap();
+        }
+
+        assert!(matches!(
+            FleetEngine::open(&path),
+            Err(FleetError::UnsupportedSchemaVersion)
+        ));
+
+        let connection = Connection::open(&path).unwrap();
+        let journal: String = connection
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            journal.to_ascii_lowercase(),
+            "delete",
+            "the version is read before any pragma that would rewrite the file, \
+             so a refused open leaves no trace at all"
+        );
     }
 
     #[test]
