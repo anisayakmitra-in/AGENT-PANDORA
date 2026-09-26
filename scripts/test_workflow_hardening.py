@@ -11,14 +11,24 @@ cache action, is precisely the regression this is meant to catch.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import unittest
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
+
+# The live policy that decides which actions a workflow may reference.
+OWNER = "anisayakmitra-in"
+REPO = "AGENT-PANDORA"
+API = "https://api.github.com"
+
+# Actions published by GitHub itself, covered by `github_owned_allowed`.
+GITHUB_OWNED_OWNERS = frozenset({"actions", "github"})
 
 # Every job that can actually run, as (job key, declared name). A hung job
 # otherwise runs to the 360-minute platform default. The name is asserted too,
@@ -122,7 +132,7 @@ class WorkflowHardening(unittest.TestCase):
         for name in WORKFLOWS_REQUIRING_CACHE:
             with self.subTest(workflow=name):
                 text = workflow(name)
-                pins = re.findall(r"Swatinem/rust-cache@\S+", text)
+                pins = re.findall(r"uses:\s*(Swatinem/rust-cache@\S+)", text)
                 if pins:
                     for pin in pins:
                         self.assertEqual(
@@ -164,6 +174,61 @@ class WorkflowHardening(unittest.TestCase):
                 with urllib.request.urlopen(request, timeout=30) as response:
                     self.assertEqual(response.status, 200, f"{pin} does not resolve to a commit")
 
+    def test_every_action_is_covered_by_the_selected_actions_policy(self) -> None:
+        """A disallowed action fails the run at dispatch, not inside a job.
+
+        The repository runs `allowed_actions: selected`. Referencing an action
+        outside that list makes GitHub refuse the whole run: the conclusion is
+        `startup_failure`, no job is ever created, the check suite has zero
+        check runs, and the REST API reports no reason at all. That is a silent,
+        total loss of the pipeline verdict, and it is exactly what the rust-cache
+        step did from `dfe6f22` until this was found.
+
+        So the invariant is: every `uses:` reference must be covered by the live
+        policy. That needs the API, so this test is opt-in on a token.
+        """
+        token = self._token()
+        if not token:
+            self.skipTest("no token: reading the selected-actions policy needs the API")
+        request = urllib.request.Request(
+            f"{API}/repos/{OWNER}/{REPO}/actions/permissions/selected-actions",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                policy = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            # The default CI token is a `contents: read` token and is refused
+            # here. Skipping is the honest outcome: the workflow is not broken,
+            # this test simply could not ask the question.
+            self.skipTest(f"cannot read the selected-actions policy: HTTP {error.code}")
+
+        allowed = set(policy.get("patterns_allowed") or [])
+        github_owned = bool(policy.get("github_owned_allowed"))
+        verified = bool(policy.get("verified_allowed"))
+
+        for pin in sorted(self._all_action_refs()):
+            owner_repo, _ref = pin.rsplit("@", 1)
+            owner = owner_repo.split("/", 1)[0]
+            with self.subTest(action=pin):
+                if owner in GITHUB_OWNED_OWNERS:
+                    self.assertTrue(
+                        github_owned,
+                        f"{pin} is a GitHub-owned action but github_owned_allowed "
+                        f"is false, so no workflow using it can dispatch",
+                    )
+                    continue
+                if verified:
+                    continue
+                self.assertIn(
+                    f"{owner_repo}@*",
+                    allowed,
+                    f"{pin} is not covered by the selected-actions policy. Adding a "
+                    f"step that uses it makes every run of that workflow report "
+                    f"startup_failure with no jobs and no log. Add '{owner_repo}@*' "
+                    f"to the repository's allowed actions, or drop the step.",
+                )
+
     @staticmethod
     def _token() -> str:
         return os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or ""
@@ -179,6 +244,24 @@ class WorkflowHardening(unittest.TestCase):
                 )
             )
         return pins
+
+    @staticmethod
+    def _all_action_refs() -> set[str]:
+        """Every `uses:` action reference, pinned or not.
+
+        The policy matches on `owner/repo`, so an unpinned or locally defined
+        action still has to be covered. `uses: ./...` is a local reusable
+        workflow and is excluded because the regex requires an owner segment.
+        """
+        refs: set[str] = set()
+        for path in WORKFLOWS.glob("*.yml"):
+            refs.update(
+                re.findall(
+                    r"uses:\s*([\w.-]+/[\w.-]+@[^\s#]+)",
+                    path.read_text(encoding="utf-8"),
+                )
+            )
+        return refs
 
     def test_verify_matrix_reports_every_platform(self) -> None:
         body = job_block(workflow("ci.yml"), VERIFY_MATRIX[1])

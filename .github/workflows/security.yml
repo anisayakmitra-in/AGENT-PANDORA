@@ -23,9 +23,11 @@ jobs:
         with:
           toolchain: 1.97.1
 
-      # The Rust build cache is temporarily disabled; see the matching note in
-      # ci.yml. This workflow fails at startup with the step present.
-      # pandora-ci-cache-waived: rust-cache step causes workflow-level startup failure
+      # See the matching note in ci.yml: this step is allow-listed again, after
+      # the repository's selected-actions policy was found to be the cause of a
+      # startup failure here.
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7

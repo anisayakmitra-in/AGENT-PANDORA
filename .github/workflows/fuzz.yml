@@ -30,9 +30,11 @@ jobs:
         with:
           toolchain: nightly-2026-08-30
 
-      # The Rust build cache is temporarily disabled; see the matching note in
-      # ci.yml. This workflow fails at startup with the step present.
-      # pandora-ci-cache-waived: rust-cache step causes workflow-level startup failure
+      # See the matching note in ci.yml: this step is allow-listed again, after
+      # the repository's selected-actions policy was found to be the cause of a
+      # startup failure here.
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --version 0.13.2 --locked
