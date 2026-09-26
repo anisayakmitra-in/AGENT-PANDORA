@@ -2,7 +2,7 @@ use super::{load_config, parse_options, require_config_file};
 use crate::output::{CliError, CommandResult, success};
 use serde_json::{Value, json};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 const MAX_RECORD_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_CRASH_REPORTS: usize = 20;
