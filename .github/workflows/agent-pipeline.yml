@@ -62,6 +62,7 @@ jobs:
   validate:
     name: Admission, evaluation, and canary evidence
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       PIPELINE_CHANNEL: ${{ inputs.channel || 'beta' }}
       PROMOTION_ARTIFACT_PATH: ${{ inputs.artifact_path || '' }}
@@ -172,6 +173,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.promotion_intent
     needs: validate
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     concurrency:
       group: approved-tag-ledger
       cancel-in-progress: false

@@ -12,8 +12,12 @@ jobs:
   verify:
     name: Verify (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # A matrix exists to catch platform differences, so one platform failing must
+    # not hide the verdict from the others. With fail-fast on, a macOS failure
+    # cancelled Windows and left it unreported.
+    timeout-minutes: 60
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-26, windows-latest]
 
@@ -26,6 +30,9 @@ jobs:
         with:
           toolchain: 1.97.1
           components: rustfmt, clippy
+
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
@@ -64,6 +71,9 @@ jobs:
 
       - name: Run Python tests
         run: python -m unittest discover -s scripts -p "test_*.py" -v
+
+      - name: Check workflow hardening
+        run: python -m unittest scripts.test_workflow_hardening -v
 
       - name: Validate repository
         run: python scripts/validate_repo.py
@@ -114,6 +124,7 @@ jobs:
     if: ${{ vars.PANDORA_DESKTOP_CI == 'enabled' }}
     name: Desktop (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:

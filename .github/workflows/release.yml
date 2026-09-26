@@ -16,6 +16,7 @@ jobs:
   verify:
     name: Verify release source
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     outputs:
       scope: ${{ steps.release-scope.outputs.scope }}
       channel: ${{ steps.release-scope.outputs.channel }}
@@ -123,6 +124,7 @@ jobs:
     name: Gate protected release jobs
     needs: verify
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -157,6 +159,7 @@ jobs:
             binary: pandora.exe
             artifact: pandora-x86_64-pc-windows-msvc.exe
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     permissions:
       contents: read
     steps:
@@ -236,6 +239,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             artifact: pandora-x86_64-pc-windows-msvc.exe
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - name: Enforce release approval
         shell: bash
@@ -331,6 +335,7 @@ jobs:
     needs: [build, sign-native, release-gate]
     if: always() && needs.build.result == 'success' && needs.release-gate.result == 'success' && (needs.sign-native.result == 'success' || needs.sign-native.result == 'skipped')
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -395,6 +400,7 @@ jobs:
             artifact: windows-x64
             native: pandora-x86_64-pc-windows-msvc.exe
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     env:
       PANDORA_SIDECAR_TARGET: ${{ matrix.target }}
       PANDORA_SIDECAR_SOURCE: ${{ github.workspace }}/.pandora-native/${{ matrix.native }}
@@ -522,6 +528,7 @@ jobs:
         (needs.build-desktop.result == 'skipped' && needs.verify.outputs.scope == 'cli-only' && needs.verify.outputs.desktop_required == 'false')
       )
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     environment: release-publication
     permissions:
       contents: write
@@ -663,6 +670,7 @@ jobs:
             binary: pandora.exe
             artifact: pandora-x86_64-pc-windows-msvc.exe
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     permissions:
       contents: read
     env:
@@ -863,6 +871,7 @@ jobs:
             native: pandora-x86_64-pc-windows-msvc.exe
             bundle: desktop-windows-x64-*.msi
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     permissions:
       contents: read
     env:
@@ -1045,6 +1054,7 @@ jobs:
             native: pandora-x86_64-pc-windows-msvc.exe
             bundle: desktop-windows-x64-*.msi
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     permissions:
       contents: read
     env:
@@ -1229,6 +1239,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') && needs.verify.outputs.desktop_required == 'true'
     needs: [verify, smoke-install, smoke-desktop, stable-desktop-rollback]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
