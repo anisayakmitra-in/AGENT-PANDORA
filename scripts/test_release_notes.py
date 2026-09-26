@@ -111,15 +111,40 @@ Older notes.
             self.assertNotIn(hook, scripts)
         self.assertEqual(package["bin"]["pandora"], "bin/pandora.js")
 
-    def test_desktop_ci_job_is_retained_but_not_an_active_gate(self) -> None:
+    def test_desktop_is_cancelled_and_absent_from_the_cli_pipeline(self) -> None:
+        """Permanent cancellation, asserted rather than left to a variable.
+
+        The desktop job used to sit in CI behind `vars.PANDORA_DESKTOP_CI`, which
+        nothing ever set. That read as though reactivation were a variable flip,
+        which is not true: reviving desktop packaging needs its own build, signing,
+        and evidence work. With the cancellation made permanent the job is
+        removed, so the CLI pipeline cannot grow a desktop context by accident and
+        no one can set a variable to re-enable it.
+        """
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
             encoding="utf-8"
         )
-        start = workflow.index("  desktop:")
-        desktop = workflow[start:]
-        self.assertIn("vars.PANDORA_DESKTOP_CI == 'enabled'", desktop)
-        self.assertIn("apps/pandora-desktop", desktop)
+        self.assertNotIn(
+            "  desktop:",
+            workflow,
+            "the cancelled desktop job must not remain in the CLI workflow",
+        )
+        self.assertNotIn(
+            "PANDORA_DESKTOP_CI",
+            workflow,
+            "the desktop reactivation variable must not remain in the CLI workflow",
+        )
+        self.assertNotIn(
+            "apps/pandora-desktop",
+            workflow,
+            "the CLI workflow must not reference the cancelled desktop tree",
+        )
         self.assertNotIn("needs: desktop", workflow)
+        # The source itself is retained for downstream reuse, so the tree stays.
+        self.assertTrue(
+            (ROOT / "apps" / "pandora-desktop").is_dir(),
+            "the cancelled desktop source is retained, not deleted",
+        )
 
     def test_agent_pipeline_binds_promotion_to_tracked_artifact_and_evidence_bytes(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "agent-pipeline.yml").read_text(
@@ -376,49 +401,3 @@ Older notes.
         self.assertIn("PANDORA_DESKTOP_CURRENT_SIDECAR:", workflow)
         self.assertIn("npm run verify:bundle-upgrade-lifecycle", workflow)
         self.assertIn("stable-rollback-${{ github.ref_name }}", workflow)
-
-    def test_ci_runs_ephemeral_system_installer_lifecycle(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertIn("Verify desktop system install lifecycle", workflow)
-        self.assertIn('CI: "true"', workflow)
-        self.assertIn('PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE: "1"', workflow)
-        self.assertIn("npm run verify:bundle-lifecycle", workflow)
-
-    def test_ci_retains_exact_commit_unsigned_native_test_packages(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
-            encoding="utf-8"
-        )
-
-        stage = workflow.index("- name: Preserve exact native accessibility test package")
-        rollback = workflow.index("- name: Verify desktop install, update, rollback, and uninstall")
-        upload = workflow.index("- name: Retain exact native accessibility test package")
-
-        self.assertLess(stage, rollback)
-        self.assertLess(rollback, upload)
-        self.assertIn("stage-native-test-package.mjs", workflow)
-        self.assertIn("github.ref == 'refs/heads/main'", workflow)
-        self.assertIn("native-test-package-${{ matrix.platform }}-${{ github.sha }}", workflow)
-        self.assertIn("retention-days: 30", workflow[upload:])
-
-    def test_ci_runs_synthetic_desktop_upgrade_rollback_drill(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
-            encoding="utf-8"
-        )
-
-        create = workflow.index("- name: Create synthetic desktop upgrade identities")
-        predecessor = workflow.index("- name: Build synthetic predecessor desktop bundle")
-        current = workflow.index("- name: Build synthetic current desktop bundle")
-        verify = workflow.index(
-            "- name: Verify desktop install, update, rollback, and uninstall"
-        )
-        self.assertLess(create, predecessor)
-        self.assertLess(predecessor, current)
-        self.assertLess(current, verify)
-        self.assertIn("create-upgrade-drill-configs.mjs", workflow)
-        self.assertIn("predecessor.json", workflow)
-        self.assertIn("current.json", workflow)
-        self.assertIn("PANDORA_DESKTOP_UPGRADE_MANIFEST:", workflow)
-        self.assertIn("npm run verify:bundle-upgrade-lifecycle", workflow)

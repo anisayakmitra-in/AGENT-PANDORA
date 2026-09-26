@@ -48,7 +48,9 @@ REQUIRED_CHECK_CONTEXTS = (
 JOBS_REQUIRING_TIMEOUT = {
     "ci.yml": (
         ("verify", "Verify (${{ matrix.os }})"),
-        ("desktop", "Desktop (${{ matrix.platform }})"),
+        # The cancelled desktop job is deliberately absent from ci.yml. The
+        # matrix-free `gate` job aggregates the verify matrix for branch
+        # protection and declares its own timeout, asserted separately below.
     ),
     "security.yml": (("audit", "Dependency and repository audit"),),
     "codeql.yml": (("analyze", "Analyze Rust"),),
