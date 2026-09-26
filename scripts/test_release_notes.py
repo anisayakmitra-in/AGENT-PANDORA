@@ -212,17 +212,11 @@ Older notes.
 
         self.assertIn("needs: verify", gate)
         self.assertIn("permissions:\n      contents: read", gate)
+        self.assertIn('test "${{ needs.verify.outputs.scope }}" = "cli-only"', gate)
         self.assertIn(
-            "if: contains(github.ref_name, '-rc.') || !contains(github.ref_name, '-')",
-            gate,
+            'test "${{ needs.verify.outputs.desktop_required }}" = "false"', gate
         )
-        block = gate.index("Block RC and stable until isolated desktop signing is configured")
-        self.assertLess(block, gate.index("exit 1"))
-        self.assertIn(
-            "RC/stable release blocked: isolated desktop platform signing is not configured",
-            gate,
-        )
-        self.assertIn("exit 1", gate)
+        self.assertNotIn("Block RC and stable", gate)
         self.assertNotIn("Block RC and stable", publish)
         self.assertIn("codesign --verify --deep --strict", workflow)
         self.assertIn("spctl --assess --type execute", workflow)
@@ -244,15 +238,10 @@ Older notes.
         publish = workflow[publish_start:]
 
         self.assertIn("needs: verify", gate)
+        self.assertIn('test "${{ needs.verify.outputs.scope }}" = "cli-only"', gate)
         self.assertIn(
-            "if: contains(github.ref_name, '-rc.') || !contains(github.ref_name, '-')",
-            gate,
+            'test "${{ needs.verify.outputs.desktop_required }}" = "false"', gate
         )
-        self.assertIn(
-            "RC/stable release blocked: isolated desktop platform signing is not configured",
-            gate,
-        )
-        self.assertIn("exit 1", gate)
         self.assertNotIn("environment:", gate)
         self.assertIn("Enforce release approval", signing)
         self.assertIn("environment: release-publication", signing)

@@ -68,10 +68,6 @@ def resolve_release_scope(tag: str, root: Path) -> dict[str, object]:
     document = _read_policy(root.resolve(strict=True))
     scope = document["scope"]
     desktop_required = document["desktop_required"]
-    if scope == "cli-only" and channel in {"release-candidate", "stable"}:
-        raise ReleaseScopeError(
-            f"{channel} release requires full scope, not cli-only"
-        )
     return {
         "release_tag": tag,
         "channel": channel,

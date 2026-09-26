@@ -128,12 +128,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Block RC and stable until isolated desktop signing is configured
-        if: contains(github.ref_name, '-rc.') || !contains(github.ref_name, '-')
+      - name: Require the CLI-only release boundary
         shell: bash
         run: |
-          echo "RC/stable release blocked: isolated desktop platform signing is not configured" >&2
-          exit 1
+          set -euo pipefail
+          test "${{ needs.verify.outputs.scope }}" = "cli-only"
+          test "${{ needs.verify.outputs.desktop_required }}" = "false"
 
   build:
     name: Build ${{ matrix.target }}

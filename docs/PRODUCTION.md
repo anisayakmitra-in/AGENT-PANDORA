@@ -253,34 +253,24 @@ the retained JSON records the exact request binding and requester.
 
 ## Release boundary
 
-Alpha and beta tags use the source-bound scope selected by `release-scope.json`.
-A `cli-only` alpha or beta publishes the verified native CLI, launcher,
+All release channels use the source-bound `cli-only` scope selected by
+`release-scope.json`. A `cli-only` alpha, beta, release-candidate, or stable
+tag publishes the verified native CLI, launcher,
 installers, and evidence set without desktop artifacts. A `full` alpha or beta
 may publish unsigned native and desktop packages for testing, and GitHub marks
 both as prereleases. The verification, native build, and desktop build jobs
-receive no platform-signing secrets. A future release-candidate and stable path
-would use a protected `sign-native` job to download the immutable unsigned CLI
-artifact, verify release approval, sign and verify Windows Authenticode or Apple
-code signing, and upload a separately named signed artifact.
+receive no platform-signing secrets. A protected `sign-native` job handles
+native CLI release approval and signing; it never signs a desktop package.
+Desktop signing is not part of any supported release channel.
 
-RC and stable currently fail before public release because isolated Tauri desktop
-signing is not configured. Tauri normally consumes Apple signing/notarization
-credentials during its build/bundle phase; exposing those credentials to the
-current desktop build job would recreate the supply-chain boundary this workflow
-is intended to remove. A future RC/stable path requires a separately reviewed
-remote/HSM-backed or otherwise isolated desktop signing design. Desktop feature
-parity remains deferred. With the current `cli-only` source policy, the workflow
-does not build or publish desktop assets; changing to `full` keeps desktop
-artifact generation a publication blocker until that isolated signing path is
-available.
+RC and stable no longer wait for desktop signing. The release gate requires
+`scope=cli-only` and `desktop_required=false`; desktop feature parity remains
+deferred, and no desktop artifact is built or published on any channel.
 
-The published-package signature and notarization smoke checks are not reachable
-in the current workflow while RC and stable remain blocked. For `cli-only`
-alpha and beta releases, desktop smoke is intentionally skipped; for a future
-`full` alpha or beta release it can exercise unsigned desktop lifecycle without
-providing platform-signature evidence. The RC/stable path stops at the
-secretless gate, so neither path currently provides platform-signature or
-notarization evidence. The provider-neutral request boundary is documented in
+The published-package signature and notarization smoke checks are not part of
+the CLI-only workflow. Desktop smoke is intentionally skipped on every channel;
+the release provides CLI artifact, checksum, and native signing evidence only.
+The provider-neutral request boundary is documented in
 [external desktop signing](EXTERNAL_DESKTOP_SIGNING.md); no provider adapter or
 signing evidence is configured.
 

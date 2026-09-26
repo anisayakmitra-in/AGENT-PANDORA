@@ -49,8 +49,7 @@ vendor evidence, and only then may the publication gate proceed.
 ## Release state
 
 The checked-in `release-scope.json` remains `cli-only`; no desktop artifact is
-published by the current beta line. The existing secretless release gate must
-remain blocking for RC and stable until the external provider, trust root,
-adapter, and real platform evidence have been independently reviewed. No
-provider credentials, signing operation, tag, or publication is part of this
-contract-only change.
+published on any channel. The release gate now formalizes CLI-only RC and
+stable publication and keeps desktop build, signing, and publication skipped.
+This document remains a non-enabling design record: no provider credentials,
+desktop signing operation, tag, or publication is part of this contract.

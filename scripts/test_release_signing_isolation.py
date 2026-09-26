@@ -62,15 +62,10 @@ class ReleaseSigningIsolationTests(unittest.TestCase):
 
         self.assertIn("needs: verify", gate)
         self.assertIn("permissions:\n      contents: read", gate)
+        self.assertIn('test "${{ needs.verify.outputs.scope }}" = "cli-only"', gate)
         self.assertIn(
-            "if: contains(github.ref_name, '-rc.') || !contains(github.ref_name, '-')",
-            gate,
+            'test "${{ needs.verify.outputs.desktop_required }}" = "false"', gate
         )
-        self.assertIn(
-            "RC/stable release blocked: isolated desktop platform signing is not configured",
-            gate,
-        )
-        self.assertIn("exit 1", gate)
         self.assertNotIn("exit 0", gate)
         self.assertNotIn("environment:", gate)
         self.assertIn("release-gate", signing)
@@ -193,8 +188,8 @@ class ReleaseSigningIsolationTests(unittest.TestCase):
         self.assertNotIn("Import Apple signing identity", desktop)
         self.assertNotIn("Sign desktop bundles (Windows)", desktop)
         self.assertIn("pattern: desktop-unsigned-*", publish)
-        self.assertIn("fail before public release", production)
-        self.assertIn("not reachable in the current workflow", releases)
+        self.assertIn("no desktop artifact is built or published on any channel", production)
+        self.assertIn("same `cli-only` boundary as", releases)
         self.assertNotIn(
             "The four published-package smoke jobs independently re-download checksum-bound",
             releases,

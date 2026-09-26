@@ -55,12 +55,13 @@ class ReleaseScopeTests(unittest.TestCase):
                 self.assertEqual(resolved["channel"], channel)
                 self.assertTrue(resolved["desktop_required"])
 
-    def test_cli_only_scope_rejects_release_candidate_and_stable(self) -> None:
+    def test_cli_only_scope_allows_every_supported_channel_without_desktop(self) -> None:
         root = self.make_root("cli-only", False)
-        for tag in ("v2.0.0-rc.1", "v2.0.0"):
+        for tag in ("v2.0.0-alpha.1", "v2.0.0-beta.1", "v2.0.0-rc.1", "v2.0.0"):
             with self.subTest(tag=tag):
-                with self.assertRaisesRegex(ReleaseScopeError, "requires full scope"):
-                    resolve_release_scope(tag, root)
+                resolved = resolve_release_scope(tag, root)
+                self.assertEqual(resolved["scope"], "cli-only")
+                self.assertFalse(resolved["desktop_required"])
 
     def test_rejects_scope_and_desktop_requirement_disagreement(self) -> None:
         for scope, desktop_required in (("full", False), ("cli-only", True)):

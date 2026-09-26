@@ -29,20 +29,21 @@ source commit. This is a release contract, not a mutable workflow input:
   publishes the native CLI, launcher, installers, checksums, signature, SBOM,
   provenance, notes, and CLI lifecycle evidence. Its release evidence must not
   contain desktop artifacts, and it does not claim desktop parity.
-- `full` is retired. It would require desktop build, publication, smoke, and
-  (for stable) rollback evidence, and desktop work is cancelled. Re-enabling it
-  means editing `release-scope.json` in source, which is not a supported path.
+ - `full` is retired. It would require desktop build, publication, smoke, and
+   (for stable) rollback evidence, and desktop work is cancelled. The active
+   release gate rejects any scope other than `cli-only`, so desktop signing is
+   not a release prerequisite or a supported path.
 
 The workflow skips desktop build, desktop artifact download and attestation,
 desktop smoke, and desktop rollback closure when the validated scope is
 `cli-only`. A skipped desktop job is never treated as successful full-scope
-evidence. Release-candidate and stable cannot use `cli-only`, so with `full`
-retired both channels stay fail-closed and cannot be published from this
-repository. The external desktop-signing boundary in
+ evidence. Release-candidate and stable use the same `cli-only` boundary as
+ alpha and beta. They publish only verified CLI artifacts; desktop build, smoke,
+ and rollback remain skipped. The external desktop-signing boundary in
 [external desktop signing](docs/EXTERNAL_DESKTOP_SIGNING.md) is non-enabling
 and has no provider adapter, trust root, or credentials.
 
-The checked-in policy selects `cli-only` for the next prerelease line.
+The checked-in policy selects `cli-only` for every release channel.
 
 ## v2.0.0-beta.8
 
@@ -50,8 +51,7 @@ This is the next coherent prerelease identity. It updates the coupled Rust,
 npm, desktop, installer, documentation, and SDK runtime surfaces to
 `2.0.0-beta.8` while retaining the source-bound `cli-only` release scope. The
 identity is prepared for review and is not a public release until its exact tag
-workflow completes; RC and stable remain fail-closed pending isolated desktop
-signing.
+workflow completes. The same CLI-only workflow is used for beta, RC, and stable.
 
 ## v2.0.0-beta.7
 
