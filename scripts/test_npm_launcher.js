@@ -84,7 +84,11 @@ async function main() {
 
     const localBinary = path.join(directory, "local-pandora");
     fs.writeFileSync(localBinary, "local build");
-    assert.equal(resolveLocalBinary(localBinary), path.resolve(localBinary));
+    // resolveLocalBinary returns fs.realpathSync, not path.resolve. Those agree
+    // on Linux and Windows, but macOS puts the temp dir behind a symlink
+    // (/var -> /private/var), so only the realpath is the platform-independent
+    // expectation. Asserting against path.resolve failed there and nowhere else.
+    assert.equal(resolveLocalBinary(localBinary), fs.realpathSync(localBinary));
     assert.throws(() => resolveLocalBinary(path.join(directory, "missing")), /does not exist/);
 
     replaceFile(destination, Buffer.from("fresh"), 0o755);
