@@ -671,6 +671,29 @@ fn tool_catalog_active_adds_packaged_genes_without_moving_the_default() {
     );
 }
 
+#[test]
+fn operations_reads_telemetry_and_empty_crash_evidence_read_only() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    let telemetry = fixture
+        .run(&["operations", "telemetry", "--json"])
+        .success("operations telemetry");
+    assert!(telemetry["count"].as_u64().is_some());
+    assert!(
+        telemetry["records"]
+            .as_array()
+            .is_some_and(|records| !records.is_empty())
+    );
+
+    let crashes = fixture
+        .run(&["operations", "crashes", "--json"])
+        .success("operations crashes");
+    assert_eq!(crashes["count"], 0);
+    assert_eq!(crashes["truncated"], false);
+    assert_eq!(crashes["reports"].as_array().map(Vec::len), Some(0));
+}
+
 fn path_value(path: &Path) -> Value {
     Value::String(path.to_string_lossy().into_owned())
 }

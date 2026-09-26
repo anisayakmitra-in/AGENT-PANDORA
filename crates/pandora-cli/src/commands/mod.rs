@@ -29,6 +29,7 @@ mod job;
 mod mcp;
 mod memory;
 mod migration;
+mod operations;
 mod orchestration;
 mod package;
 mod provider;
@@ -86,6 +87,7 @@ pub(crate) const ROOT_COMMANDS: &[&str] = &[
     "mcp",
     "tool",
     "orchestration",
+    "operations",
     "strategies",
     "evaluation",
     "evolution",
@@ -176,6 +178,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "uninstall" => uninstall::execute(&args[1..]),
         "update" => update::execute(&args[1..]),
         "orchestration" => orchestration::execute(&args[1..]),
+        "operations" => operations::execute(&args[1..]),
         "doctor" => doctor::execute(&args[1..]),
         "evaluation" => evaluation::execute(&args[1..]),
         "evolution" => evolution::execute(&args[1..]),
@@ -393,7 +396,7 @@ fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|tui|harness|slash|session|job|subagent|skill|package|registry|runtime|memory|approval|provider|mcp|tool|orchestration|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor> [options]
+    r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|tui|harness|slash|session|job|subagent|skill|package|registry|runtime|memory|approval|provider|mcp|tool|orchestration|operations|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor> [options]
 
 commands:
   help (or --help)
@@ -421,6 +424,7 @@ commands:
   provider list|set|use|test
   mcp list|inspect|set|remove|catalog <server> --allow|call <server> <tool> --arguments-json <object> --idempotency-key <key> --allow
   orchestration roles|submit|claim|complete|list|inspect|cancel|mark-interrupted|reconcile-failed|resume
+  operations telemetry|crashes
   strategies list | population list --state <path> | population inspect --state <path> --id <id>
   evaluation golden --input <path> [--fail-on-failure]
   evaluation suite register --id <id> --input <path> [--candidate <id>] | list | inspect --id <id> | run --id <id> [--harness <id>] [--fail-on-failure]
