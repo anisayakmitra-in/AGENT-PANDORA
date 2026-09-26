@@ -34,8 +34,10 @@ fn powershell() -> &'static str {
     $elements = @($commandAst.CommandElements | ForEach-Object { $_.Extent.Text })
     $commands = if ($elements.Count -gt 2 -and $elements[1] -eq 'backup' -and $elements[2] -eq 'lifecycle') {
         'preview','record','list','inspect'
+    } elseif ($elements.Count -gt 2 -and $elements[1] -eq 'backup' -and $elements[2] -eq 'recovery') {
+        'list','inspect'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'backup') {
-        'create','inspect','restore','lifecycle'
+        'create','inspect','restore','lifecycle','recovery'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'service') {
         'start'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'auth') {
@@ -127,8 +129,10 @@ fn bash() -> &'static str {
     local previous="${COMP_WORDS[COMP_CWORD-1]}"
     if [[ "${COMP_WORDS[1]}" == "backup" && "$previous" == "lifecycle" ]]; then
         COMPREPLY=( $(compgen -W 'preview record list inspect' -- "$current") )
+    elif [[ "${COMP_WORDS[1]}" == "backup" && "$previous" == "recovery" ]]; then
+        COMPREPLY=( $(compgen -W 'list inspect' -- "$current") )
     elif [[ "$previous" == "backup" ]]; then
-        COMPREPLY=( $(compgen -W 'create inspect restore lifecycle' -- "$current") )
+        COMPREPLY=( $(compgen -W 'create inspect restore lifecycle recovery' -- "$current") )
     elif [[ "$previous" == "service" ]]; then
         COMPREPLY=( $(compgen -W 'start' -- "$current") )
     elif [[ "$previous" == "auth" ]]; then
@@ -222,8 +226,10 @@ if [[ ${words[2]} == evaluation && ${words[3]} == regression ]]; then
     _arguments '3:evaluation regression command:(propose generate list inspect review)'
 elif [[ ${words[2]} == backup && ${words[3]} == lifecycle ]]; then
     _arguments '3:backup lifecycle command:(preview record list inspect)'
+elif [[ ${words[2]} == backup && ${words[3]} == recovery ]]; then
+    _arguments '3:backup recovery command:(list inspect)'
 elif [[ ${words[2]} == backup ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration operations strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:backup command:(create inspect restore lifecycle)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration operations strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:backup command:(create inspect restore lifecycle recovery)'
 elif [[ ${words[2]} == service ]]; then
     _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration operations strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:service command:(start)'
 elif [[ ${words[2]} == auth ]]; then
@@ -305,8 +311,9 @@ fi"#
 
 fn fish() -> &'static str {
     r#"complete -c pandora -f -n '__fish_use_subcommand' -a 'help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration operations strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor'
-complete -c pandora -f -n '__fish_seen_subcommand_from backup; and not __fish_seen_subcommand_from lifecycle' -a 'create inspect restore lifecycle'
+complete -c pandora -f -n '__fish_seen_subcommand_from backup; and not __fish_seen_subcommand_from lifecycle; and not __fish_seen_subcommand_from recovery' -a 'create inspect restore lifecycle recovery'
 complete -c pandora -f -n '__fish_seen_subcommand_from backup; and __fish_seen_subcommand_from lifecycle' -a 'preview record list inspect'
+complete -c pandora -f -n '__fish_seen_subcommand_from backup; and __fish_seen_subcommand_from recovery' -a 'list inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from harness' -a 'list inspect run'
 complete -c pandora -f -n '__fish_seen_subcommand_from slash' -a 'list resolve'
 complete -c pandora -f -n '__fish_seen_subcommand_from session' -a 'list resume inspect events'

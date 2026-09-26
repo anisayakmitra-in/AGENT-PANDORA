@@ -798,6 +798,100 @@ fn graph_remove_deletes_only_the_selected_stored_snapshot() {
     assert_eq!(shown["present"], false);
 }
 
+#[test]
+fn backup_recovery_reports_nothing_when_no_restore_has_been_interrupted() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    let listed = fixture
+        .run(&["backup", "recovery", "list", "--json"])
+        .success("backup recovery list");
+    assert_eq!(listed["count"], 0);
+    assert_eq!(listed["blocking"], 0);
+    assert_eq!(listed["journals"].as_array().map(Vec::len), Some(0));
+
+    // An unknown transaction is a usage error, not an empty success. Reporting
+    // "no journal" for a typo would let an operator believe a recovery root is
+    // clean when they named the wrong one.
+    let missing = fixture
+        .run(&[
+            "backup",
+            "recovery",
+            "inspect",
+            "--transaction",
+            "restore-does-not-exist",
+            "--json",
+        ])
+        .error("usage_error", 2);
+    assert!(
+        missing["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("no restore journal")),
+        "an unknown transaction should be named: {missing}"
+    );
+}
+
+#[test]
+fn backup_recovery_surfaces_an_interrupted_restore_as_blocking() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // Hand-write a non-terminal journal. A restore that dies between staging
+    // and completion is exactly the state this surface exists to expose, and
+    // manufacturing it directly is the only way to reach the branch.
+    let recovery_root = fixture
+        .data
+        .join("recovery")
+        .join("pre-restore-interrupted");
+    fs::create_dir_all(&recovery_root).expect("recovery root should be created");
+    fs::write(
+        recovery_root.join("journal.json"),
+        br#"{"format_version":1,"transaction_id":"restore-interrupted","state":"applying","entries":[{"target":"data/sessions.sqlite3","staged":"staged/data/sessions.sqlite3","original":"original/data/sessions.sqlite3","sidecars":[{"suffix":"wal","original":"original/data/sessions.sqlite3-wal"}],"applied":true},{"target":"data/memory.sqlite3","staged":"staged/data/memory.sqlite3","original":null,"sidecars":[],"applied":false}]}"#,
+    )
+    .expect("journal should be written");
+    let journal_path = recovery_root.join("journal.json");
+    let before = fs::read(&journal_path).expect("journal should be readable");
+
+    let listed = fixture
+        .run(&["backup", "recovery", "list", "--json"])
+        .success("backup recovery list");
+    assert_eq!(listed["count"], 1);
+    assert_eq!(listed["blocking"], 1);
+    assert_eq!(
+        listed["journals"][0]["transaction_id"],
+        "restore-interrupted"
+    );
+    assert_eq!(listed["journals"][0]["state"], "applying");
+    assert_eq!(listed["journals"][0]["blocks_restore"], true);
+    assert_eq!(listed["journals"][0]["entries"], 2);
+    assert_eq!(listed["journals"][0]["applied_entries"], 1);
+
+    let inspected = fixture
+        .run(&[
+            "backup",
+            "recovery",
+            "inspect",
+            "--transaction",
+            "restore-interrupted",
+            "--json",
+        ])
+        .success("backup recovery inspect");
+    assert_eq!(inspected["terminal"], false);
+    assert_eq!(inspected["blocks_restore"], true);
+    assert_eq!(inspected["applied_entries"], 1);
+    assert_eq!(inspected["pending_entries"], 1);
+    assert_eq!(inspected["detail"][0]["target"], "data/sessions.sqlite3");
+    assert_eq!(inspected["detail"][0]["applied"], true);
+    assert_eq!(inspected["detail"][0]["sidecars"][0]["suffix"], "wal");
+    assert_eq!(inspected["detail"][1]["applied"], false);
+    assert_eq!(inspected["detail"][1]["original"], Value::Null);
+
+    // Reading is read-only: the journal on disk must be byte-identical to what
+    // was written before any of these commands ran.
+    let after = fs::read(&journal_path).expect("journal should still be present");
+    assert_eq!(before, after, "inspection must not rewrite the journal");
+}
+
 fn path_value(path: &Path) -> Value {
     Value::String(path.to_string_lossy().into_owned())
 }

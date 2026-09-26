@@ -1,7 +1,7 @@
 use super::restore_journal::{
     RestoreJournal, RestoreJournalEntry, RestoreJournalError, RestoreJournalState, RestoreSidecar,
 };
-use super::{load_config, parse_options, timestamp};
+use super::{load_config, parse_options, require_config_file, timestamp};
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{
     MAX_STORAGE_LIFECYCLE_LIST, RecoveryArchive, RecoveryArchiveError, RecoveryEntry,
@@ -23,17 +23,153 @@ const DEFAULT_PASSPHRASE_ENV: &str = "PANDORA_BACKUP_KEY";
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
-        CliError::usage("backup requires 'create', 'inspect', 'restore', or 'lifecycle'")
+        CliError::usage(
+            "backup requires 'create', 'inspect', 'restore', 'lifecycle', or 'recovery'",
+        )
     })?;
     match subcommand.as_str() {
         "create" => create(&args[1..]),
         "inspect" => inspect(&args[1..]),
         "restore" => restore(&args[1..]),
         "lifecycle" => lifecycle(&args[1..]),
+        "recovery" => recovery(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown backup command '{unknown}'"
         ))),
     }
+}
+
+/// Read-only view of restore journals left behind by an interrupted restore.
+///
+/// `backup restore` refuses to start while a journal is non-terminal and says
+/// that operator recovery is required. Until this existed, that instruction had
+/// no command behind it. These two subcommands are the read side of that
+/// instruction: they report what the journal claims and what is actually on
+/// disk. They never write, so a mistaken inspection cannot change a recovery.
+fn recovery(args: &[String]) -> Result<CommandResult, CliError> {
+    let subcommand = args
+        .first()
+        .ok_or_else(|| CliError::usage("backup recovery requires 'list' or 'inspect'"))?;
+    match subcommand.as_str() {
+        "list" => recovery_list(&args[1..]),
+        "inspect" => recovery_inspect(&args[1..]),
+        unknown => Err(CliError::usage(format!(
+            "unknown backup recovery command '{unknown}'"
+        ))),
+    }
+}
+
+fn recovery_list(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "backup recovery list accepts only named options",
+        ));
+    }
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let journals = discover_restore_journals(config.data_dir())?;
+    let summaries = journals
+        .iter()
+        .map(|(root, journal)| {
+            json!({
+                "recovery_root": root,
+                "transaction_id": journal.transaction_id(),
+                "state": journal.state().as_str(),
+                "terminal": journal.is_terminal(),
+                "blocks_restore": !journal.is_terminal(),
+                "entries": journal.entries().len(),
+                "applied_entries": journal
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.applied())
+                    .count(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let blocking = summaries
+        .iter()
+        .filter(|summary| summary["blocks_restore"] == json!(true))
+        .count();
+    let count = summaries.len();
+    Ok(success(
+        "backup recovery list",
+        json!({
+            "recovery_root": config.data_dir().join("recovery"),
+            "count": count,
+            "blocking": blocking,
+            "journals": summaries,
+        }),
+        format!("Read {count} restore journal(s); {blocking} block a new restore"),
+    ))
+}
+
+fn recovery_inspect(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "transaction"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "backup recovery inspect accepts only named options",
+        ));
+    }
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let transaction = parsed
+        .value("transaction")
+        .ok_or_else(|| CliError::usage("backup recovery inspect requires '--transaction <id>'"))?;
+    let journals = discover_restore_journals(config.data_dir())?;
+    let (root, journal) = journals
+        .into_iter()
+        .find(|(_, journal)| journal.transaction_id() == transaction)
+        .ok_or_else(|| {
+            CliError::usage(format!(
+                "no restore journal with transaction id '{transaction}'"
+            ))
+        })?;
+    let entries = journal
+        .entries()
+        .iter()
+        .map(|entry| {
+            json!({
+                "target": entry.target(),
+                "staged": entry.staged(),
+                "original": entry.original(),
+                "applied": entry.applied(),
+                "sidecars": entry
+                    .sidecars()
+                    .iter()
+                    .map(|sidecar| json!({
+                        "suffix": sidecar.suffix(),
+                        "original": sidecar.original(),
+                    }))
+                    .collect::<Vec<_>>(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let applied = journal
+        .entries()
+        .iter()
+        .filter(|entry| entry.applied())
+        .count();
+    let total = journal.entries().len();
+    Ok(success(
+        "backup recovery inspect",
+        json!({
+            "recovery_root": root,
+            "transaction_id": journal.transaction_id(),
+            "state": journal.state().as_str(),
+            "terminal": journal.is_terminal(),
+            "blocks_restore": !journal.is_terminal(),
+            "entries": total,
+            "applied_entries": applied,
+            "pending_entries": total - applied,
+            "detail": entries,
+        }),
+        format!(
+            "Read restore journal '{}' in state {} ({applied}/{total} entries applied)",
+            journal.transaction_id(),
+            journal.state().as_str()
+        ),
+    ))
 }
 
 fn lifecycle(args: &[String]) -> Result<CommandResult, CliError> {
@@ -498,16 +634,24 @@ fn remove_restore_sidecars(target: &Path) -> Result<(), CliError> {
     Ok(())
 }
 
-fn ensure_no_incomplete_restore(data_dir: &Path) -> Result<(), CliError> {
+/// Every restore journal under `<data_dir>/recovery`, in a stable order.
+///
+/// Symlinked and non-directory entries are skipped rather than followed, and a
+/// root with no `journal.json` is not a restore. This is the single discovery
+/// path: `ensure_no_incomplete_restore` and `recovery list`/`inspect` both go
+/// through it, so the operator-visible state can never disagree with the state
+/// that blocks a restore.
+fn discover_restore_journals(data_dir: &Path) -> Result<Vec<(PathBuf, RestoreJournal)>, CliError> {
     let recovery_root = data_dir.join("recovery");
     if !recovery_root.exists() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let mut directories = fs::read_dir(&recovery_root)
         .map_err(io_error)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(io_error)?;
     directories.sort_by_key(|entry| entry.file_name());
+    let mut found = Vec::new();
     for directory in directories {
         let path = directory.path();
         let metadata = fs::symlink_metadata(&path).map_err(io_error)?;
@@ -518,7 +662,16 @@ fn ensure_no_incomplete_restore(data_dir: &Path) -> Result<(), CliError> {
         if !journal_path.is_file() {
             continue;
         }
-        let journal = RestoreJournal::load(&journal_path).map_err(journal_error)?;
+        found.push((
+            path,
+            RestoreJournal::load(&journal_path).map_err(journal_error)?,
+        ));
+    }
+    Ok(found)
+}
+
+fn ensure_no_incomplete_restore(data_dir: &Path) -> Result<(), CliError> {
+    for (path, journal) in discover_restore_journals(data_dir)? {
         if !journal.is_terminal() {
             return Err(CliError::configuration(
                 "an incomplete restore journal requires operator recovery",
