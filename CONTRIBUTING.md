@@ -123,9 +123,8 @@ satisfy them. Force pushes are disabled and linear history is required.
 `CI gate` is a single job with no matrix that depends on the `verify` matrix. It
 exists so the required set contains no runner label: requiring
 `Verify (macos-26)` directly would block merges whenever a runner label is
-bumped, for a reason unrelated to correctness. The desktop job is deliberately
-absent from the required set because it is gated behind `PANDORA_DESKTOP_CI` and
-is skipped.
+bumped, for a reason unrelated to correctness. The desktop job is not in the
+workflow at all, so it cannot become a required context.
 
 Branch protection is server state, so it is invisible in the tree. If a check
 set is ever cleared, the pipeline silently becomes advisory. That test is
