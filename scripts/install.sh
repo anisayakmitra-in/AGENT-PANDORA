@@ -54,8 +54,13 @@ fi
 [ "$(printf '%s' "$actual" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')" ] \
   || fail "release checksum verification failed"
 
-if [ "${PANDORA_REQUIRE_SIGNATURE:-0}" = "1" ]; then
-  command -v cosign >/dev/null 2>&1 || fail "cosign is required when PANDORA_REQUIRE_SIGNATURE=1"
+# Release integrity is verified by default. The checksum manifest is signed with a
+# keyless Cosign signature at publication, so an install that skips this step only
+# proves the artifact matches a manifest it never authenticated. Skipping requires
+# an explicit PANDORA_REQUIRE_SIGNATURE=0, which is a deliberate acceptance of that
+# risk rather than the default state.
+if [ "${PANDORA_REQUIRE_SIGNATURE:-1}" != "0" ]; then
+  command -v cosign >/dev/null 2>&1 || fail "cosign is required to verify this release; install it from https://github.com/sigstore/cosign/releases, or set PANDORA_REQUIRE_SIGNATURE=0 to accept an unverified manifest"
   identity="${PANDORA_COSIGN_IDENTITY:-}"
   [ -n "$identity" ] || fail "PANDORA_COSIGN_IDENTITY is required for signature verification"
   download "$base/$version/checksums.txt.sig" "$temporary/checksums.txt.sig"

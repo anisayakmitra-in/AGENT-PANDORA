@@ -163,6 +163,59 @@ class InstallerContractTests(unittest.TestCase):
             or "couldn't create signal pipe" in result.stderr
         )
 
+    def test_installers_default_to_verifying_the_release_signature(self) -> None:
+        """The checksum manifest is signed; verifying it must be the default.
+
+        The audit finding behind this is that both installers only verified the
+        manifest signature when `PANDORA_REQUIRE_SIGNATURE=1` was set
+        explicitly, so the shipped default proved an artifact matched a manifest
+        nobody had authenticated. The release workflow already publishes
+        `checksums.txt.sig` and `checksums.txt.pem`, so the verification code was
+        present and correct; only the default was wrong.
+        """
+        shell = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
+        powershell = (ROOT / "scripts" / "install.ps1").read_text(encoding="utf-8")
+
+        # The default must be "verify", expressed as "skip only on an explicit 0".
+        self.assertIn('PANDORA_REQUIRE_SIGNATURE:-1', shell)
+        self.assertIn('!= "0"', shell)
+        self.assertNotIn('PANDORA_REQUIRE_SIGNATURE:-0', shell)
+        self.assertIn('PANDORA_REQUIRE_SIGNATURE -ne "0"', powershell)
+        self.assertNotIn('PANDORA_REQUIRE_SIGNATURE -eq "1"', powershell)
+
+        # Both must still reach the real verification, not just flip a flag.
+        for script, marker in ((shell, "cosign verify-blob"), (powershell, "cosign verify-blob")):
+            self.assertIn(marker, script)
+            self.assertIn("checksums.txt.sig", script)
+            self.assertIn("certificate-identity", script)
+
+        # A missing identity must fail rather than silently skip.
+        self.assertIn("PANDORA_COSIGN_IDENTITY is required", shell)
+        self.assertIn("PANDORA_COSIGN_IDENTITY is required", powershell)
+
+    def test_the_release_smoke_install_verifies_the_signature_it_publishes(self) -> None:
+        """The pipeline must not install its own artifact on an unverified manifest.
+
+        This was the gap that made the shipped evidence weaker than it looked: the
+        smoke-install job downloaded the published installer and relied on the old
+        insecure default, so a manifest-signing regression would not have failed
+        the release.
+        """
+        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+        start = workflow.index("  smoke-install:")
+        job = workflow[start:]
+        # Bound the job slice at the next top-level job key so a match elsewhere in
+        # the workflow cannot satisfy this assertion.
+        next_key = re.search(r"\n  [a-z][a-z0-9-]*:\n", job)
+        job = job[: next_key.start()] if next_key else job
+
+        self.assertIn('PANDORA_REQUIRE_SIGNATURE: "1"', job)
+        self.assertIn("PANDORA_COSIGN_IDENTITY:", job)
+        self.assertIn("sigstore/cosign-installer@", job)
+        self.assertNotIn('PANDORA_REQUIRE_SIGNATURE: "0"', job)
+
     def test_readme_pin_example_passes_version_to_the_installer_shell(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         cargo = (ROOT / "Cargo.toml").read_text(encoding="utf-8")

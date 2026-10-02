@@ -83,9 +83,23 @@ certification.
 
 Release assets include `checksums.txt`, a signed checksum manifest, an SPDX
 SBOM, and GitHub build provenance. The shell and PowerShell CLI installers
-verify the artifact checksum before replacing the local binary. Signature
-verification can be required with `PANDORA_REQUIRE_SIGNATURE=1` and a
-configured Cosign identity.
+verify the checksum manifest signature and then the artifact checksum before
+replacing the local binary.
+
+Signature verification is on by default and requires
+[Pandora's release workflow identity](https://github.com/anisayakmitra-in/AGENT-PANDORA)
+to be passed in `PANDORA_COSIGN_IDENTITY`, plus `cosign` on `PATH`:
+
+```sh
+PANDORA_COSIGN_IDENTITY='https://github.com/anisayakmitra-in/AGENT-PANDORA/.github/workflows/release.yml@refs/tags/<version>' \
+  sh install.sh
+```
+
+Verifying the artifact against the manifest is not sufficient on its own — it
+only proves the artifact matches a manifest. Without the manifest signature, a
+party able to serve both files controls the result. Setting
+`PANDORA_REQUIRE_SIGNATURE=0` skips signature verification and is a deliberate
+acceptance of that risk; the install still checksums the artifact.
 
 Each tagged GitHub release includes a `pandora-agent-<version>.tgz` Node/Bun
 launcher. It downloads the matching native binary, verifies its checksum,

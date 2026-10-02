@@ -675,11 +675,19 @@ jobs:
       contents: read
     env:
       PANDORA_VERSION: ${{ github.ref_name }}
+      # The installers verify the checksum manifest signature by default. This job
+      # deliberately does not opt out: a release pipeline that installs its own
+      # artifact without verifying the signature proves only that the artifact
+      # matches a manifest nobody authenticated.
+      PANDORA_REQUIRE_SIGNATURE: "1"
+      PANDORA_COSIGN_IDENTITY: https://github.com/anisayakmitra-in/AGENT-PANDORA/.github/workflows/release.yml@refs/tags/${{ github.ref_name }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7

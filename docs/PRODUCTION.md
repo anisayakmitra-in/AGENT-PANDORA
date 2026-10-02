@@ -187,11 +187,17 @@ Stable channels accept plain SemVer releases, release-candidate accepts
 use the same release workflow and evidence contract; the validated source scope
 controls which artifact classes are admissible. The downloaded binary must
 match the release checksum manifest before
-staging. Local artifacts can additionally require a detached Ed25519
-signature. Release assets include a keyless Cosign signature for the checksum
+staging. The checksum manifest is itself authenticated with a keyless Cosign
+signature, and both installers verify that signature by default before trusting
+any checksum inside it. Release assets include that keyless Cosign signature for
+the checksum
 manifest, an SPDX SBOM, and GitHub build provenance.
 The publish job also generates release-evidence.json, tying every
 checksum-verified artifact to its signature, SBOM, and provenance subjects.
+The smoke-install job installs the published binary on each supported runner
+with signature verification enforced, so a manifest-signing regression fails
+the release instead of shipping. Local artifacts can additionally require a
+detached Ed25519 signature.
 
 ## Source-bound release scope
 
