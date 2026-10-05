@@ -99,4 +99,7 @@ is not locally built and trusted.
 The `2.0.0-beta.8` installers support the native CLI on Windows, macOS, and
 Linux. The main branch also builds desktop packages for those platforms.
 Desktop support remains prerelease until a tagged release publishes the
-packages and retains the required signing and clean-machine evidence.
+packages and retains the required clean-machine evidence. No package is
+OS-signed on any channel; see
+[platform support](PLATFORMS.md) for the integrity guarantees that replace
+code signing and for the supported install channels.

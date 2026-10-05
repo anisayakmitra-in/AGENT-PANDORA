@@ -38,8 +38,17 @@ codename tags are historical references only. See
 [platform support](docs/PLATFORMS.md) for the shipped scope and release gates.
 The source tree also contains the production-readiness controls for the next
 release: scoped identities, cryptographic device trust, encrypted secrets,
-recovery archives, local crash records, and stable-release signing gates. See
+recovery archives, local crash records, and checksum-, signature-, and
+attestation-backed release gates. See
 [production readiness](docs/PRODUCTION.md).
+
+Release binaries are **not OS-signed**: no Authenticode, no Developer ID, no
+notarization. Integrity comes from `checksums.txt`, its keyless cosign
+signature, and GitHub build attestations. A binary you download in a browser
+may still trigger a SmartScreen or Gatekeeper warning; install through a
+supported channel instead. See
+[platform support](docs/PLATFORMS.md) for the channel list and the exact steps
+to publish to Homebrew, Scoop, and winget.
 Pandora now binds local context caching and provider-native stable-prefix
 caching to the same classification and provenance boundaries as execution. See
 [prompt caching](docs/PROMPT_CACHING.md). Background and parallel agents and

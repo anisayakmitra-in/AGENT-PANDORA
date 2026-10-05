@@ -11,14 +11,17 @@ documented release gates. It is not a release claim.
 The execution and authority core is ahead of the product loops around it.
 Parliament, Shadow Council, ReferenceMonitor, exact Harness and Gene bindings,
 one-shot permits, receipts, package admission, and governed replacement already
-exist. The largest unfinished CLI release gates are signed publication evidence
-and published stable rollback evidence.
+exist. The largest unfinished CLI release gates are published-channel evidence
+(Homebrew, Scoop, and winget, which need external repositories this project does
+not own) and published stable rollback evidence. Platform code signing is not on
+the roadmap for any channel: release binaries are not OS-signed, and integrity is
+carried by checksums, a keyless cosign signature, and build attestations.
 
 ## Status by phase
 
 | Phase | Estimate | Shipped in the source tree | Work still open |
 | --- | ---: | --- | --- |
-| 6. Production readiness | 92-95% | scoped identity, automatic local device trust, encrypted secrets, local telemetry and crash records, encrypted backup and restore, retained fresh-runner install/update/rollback/backup/restore/uninstall evidence, synthetic two-version native installer upgrade and rollback drills, update channels, protected release publication, RC/stable vendor-signing gates, independent published signature checks, checksum signature verification, release and stable-rollback evidence indexes, CodeQL, dependency audits | accepted real native accessibility records, actual Windows/Apple signing credentials, published RC/stable lifecycle evidence, stable-to-stable rollback proof |
+| 6. Production readiness | 95-97% | scoped identity, automatic local device trust, encrypted secrets, local telemetry and crash records, encrypted backup and restore, retained fresh-runner install/update/rollback/backup/restore/uninstall evidence, synthetic two-version native installer upgrade and rollback drills, update channels, protected release publication with human approval, checksum signature verification enforced at every published-verification call site, keyless cosign signature over the checksum manifest, GitHub build attestations verified on published binaries, cosign- and checksum-rendered Homebrew, Scoop, and winget manifests, cargo-binstall metadata, asserted macOS ad-hoc signature with no Developer ID claim, an explicit `platform_signing: not_applicable` posture in release evidence, release and stable-rollback evidence indexes, CodeQL, dependency audits | accepted real native accessibility records, published RC/stable lifecycle evidence, stable-to-stable rollback proof, publication to a Homebrew tap, a Scoop bucket, and winget-pkgs, which each need an external repository this project does not own |
 | 7. Runtime scale and orchestration | 100% | persistent prompt-context cache, headless jobs, bounded parallel subagents, exact-commit worktrees, durable orchestration claims and receipts, interruption and evidence-bound reconciliation rules, multi-repository plans, transactionally enforced aggregate token/tool/time/cost budgets, atomic role reservations and receipt-linked usage settlement, conservative unknown-cost enforcement, fleet leases, execution-bound lease renewal, durable supervisor state with PID-bound worker heartbeats, process-wide execution leases for headless jobs and subagents, lease gating, stale-supervisor reconciliation without replay, bounded stale reaping, atomic PID-bound restart handoff, atomic cross-process quiescence guards, bounded independently launched job watch windows, long-lived local daemon workers with explicit drain/stop protocol, cross-process crash reconciliation/restart evidence, bounded staggered-producer soak coverage, cancellation/provider-return restart evidence, combined cross-process worker-operations recovery acceptance, and successful retained ten-minute and two-hour four-platform campaigns plus checkpointed eight-hour and twenty-four-hour profiles | none in the defined release gate; longer soak campaigns remain continuous assurance work |
 | 8. Agent experience and disclosure | cancelled | Tauri desktop adapter kept in-tree and inactive; no desktop build, packaging, signature, or release gate. CLI-owned capabilities from this phase stay tracked in the CLI rows: runtime inventory, Harness Lab, package and Skill lifecycle, provider and MCP configuration, registry and pinned-GitHub discovery, offline verification, explicit admission, revocation quarantine, and CLI/TUI trust inspection | none; desktop reactivation is out of scope |
 | 9. Evaluation-driven loops | 94-96% | trajectory, outcome, policy, regression, adversarial, golden, and holdout evaluation; coding feedback; research-only mutation and population strategies; durable evolution state; canary activation and rollback; versioned evidence-derived zero-failure canary policy; read-only durable per-session evaluation scorecards with a fail-on-non-passed CI gate; durable schedules with a bounded local registry of validated suite definitions; typed prompt/Skill/workflow/WebAssembly Gene target metadata; durable failure-derived regression candidates; explicit review-gated suite admission; governed scheduled execution of evidence-backed and task-backed suites; proposal-bound one-shot canary scheduling; exact-bound canary, limited, expanded, and complete rollout stages with cost, duration, failure, quality, latency, and stability limits; human approval; pause/resume/reject/retry/rollback evidence; CLI/TUI/desktop controls; deterministic artifact-class scorecards for typed evaluation reports; accepted-candidate regression fixture generation with exact source revalidation; and protected tag creation on the existing activation and publication paths | none in the defined source-tree scope; future artifact classes and longer assurance campaigns remain continuous work |
@@ -40,8 +43,8 @@ provenance-bound until the supported upstream stack advances.
 Next work:
 
 - collect the exact-commit native NVDA, VoiceOver, and Orca records;
-- provide real Windows signing and Apple signing/notarization credentials and
-  exercise them first on a release candidate;
+- publish the rendered Homebrew, Scoop, and winget manifests, which each need an
+  external repository this project does not own;
 - test recovery after interruption during update, restore, and catalog
   activation;
 - review the generated release evidence index before publishing, then close the
@@ -154,8 +157,9 @@ Next work:
 - collect and admit the four exact-commit native NVDA, VoiceOver, and Orca
   graphical-session records; automated 100%, 150%, and 200% evidence and
   clean-runner lifecycle JSON are retained already;
-- exercise Windows signing plus Apple signing and notarization with stable
-  release credentials.
+- exercise a real stable release end to end: human approval, cosign-signed
+  checksum manifest, build attestations, and the published rollback drill. No
+  platform signing credential is involved.
 
 ## Phase 9: connect evidence into repeatable loops
 
@@ -272,8 +276,8 @@ Next work:
 
 - configure required reviewers on all three protected promotion environments
   and execute retained beta, release-candidate, and stable promotion drills;
-- run the shared promotion and publication evidence chain with real platform
-  signing credentials.
+- run the shared promotion and publication evidence chain on a real stable tag,
+  with the cosign-signed manifest and build attestations verified end to end.
 
 The aggregate execution-budget gate is source-complete. Every submitted role
 has a durable reservation, dispatch and settlement are atomic, token/tool/time

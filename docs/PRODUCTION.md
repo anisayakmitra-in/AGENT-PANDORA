@@ -264,10 +264,10 @@ All release channels use the source-bound `cli-only` scope selected by
 tag publishes the verified native CLI, launcher,
 installers, and evidence set without desktop artifacts. A `full` alpha or beta
 may publish unsigned native and desktop packages for testing, and GitHub marks
-both as prereleases. The verification, native build, and desktop build jobs
-receive no platform-signing secrets. A protected `sign-native` job handles
-native CLI release approval and signing; it never signs a desktop package.
-Desktop signing is not part of any supported release channel.
+both as prereleases. No job in the release workflow receives a platform-signing
+secret, because no channel OS-signs these binaries. A protected
+`approve-release` job handles native CLI release approval for RC and stable;
+it signs nothing. Desktop signing is not part of any supported release channel.
 
 RC and stable no longer wait for desktop signing. The release gate requires
 `scope=cli-only` and `desktop_required=false`; desktop feature parity remains
@@ -319,3 +319,51 @@ RUSTSEC-2024-0429 as an exact local source override with bound crates.io
 provenance and a validated source digest. Dependency audit therefore evaluates
 the patched source rather than accepting an advisory waiver. Remove the local
 override as soon as Tauri's supported Linux stack moves to `glib` 0.20 or newer.
+
+## Optional future: SignPath Foundation for Windows signing
+
+Pandora does not OS-sign its releases today, and nothing about the current
+channels requires it: `scripts/install.ps1`, the npm launcher, Scoop, winget,
+and `cargo binstall` all install by checksum against the cosign-signed manifest,
+and a browser download that triggers SmartScreen is avoidable by using a
+supported channel.
+
+This section is a note, not a plan. Nothing below is implemented, and no
+credential for it exists in this repository. If the project ever needs an
+Authenticode signature, the relevant question is which free tier applies.
+
+**SignPath Foundation** offers free Windows code signing to qualifying open
+source projects. The usual eligibility conditions are an OSI-approved licence, a
+public source repository, and no closed-source dependencies. Before assuming
+eligibility, check the current terms directly at
+<https://about.signpath.io/>, because the programme's rules and free-tier
+limits change.
+
+If the project did apply and were approved, the shape of the change would be:
+
+1. Add the signing step to the release workflow in a job that holds the
+   certificate only, gated on the existing `release-publication` environment.
+   That keeps the credential out of the build jobs, which is the property the
+   removed `sign-native` job was built to preserve.
+2. Sign the staged `pandora-x86_64-pc-windows-msvc.exe` and verify it with
+   `signtool verify /pa /all /v` before upload.
+3. Record the outcome in `release_evidence.py`, which currently emits
+   `platform_signing: not_applicable`. That field, and the `SCHEMA_VERSION`
+   constant, would need to change together.
+4. Add back the Authenticode assertions in `test_release_notes.py`, which
+   currently assert that no signing invocation exists anywhere in the workflow.
+   Those assertions would have to be narrowed rather than deleted, so that a
+   later partial reintroduction fails.
+5. State the new posture in `README.md`, `docs/PLATFORMS.md`, and
+   `docs/ROADMAP.md` in the same commit, so the documentation never lags the
+   workflow.
+
+Two cautions. First, `test_release_notes.py` deliberately treats any
+`signtool sign` or `codesign --sign` as a regression, so step 4 is required for
+the change to be reviewable rather than a silent relaxation. Second, a signing
+identity reintroduced into the build matrix would reintroduce the credential
+exposure that H-12 was raised about; keep signing in the protected job.
+
+Apple Developer ID signing is not covered by any free programme and would need
+paying for. Given that macOS binaries already carry an ad-hoc signature that
+lets Gatekeeper run them, that is the least likely of the two to be worth it.
