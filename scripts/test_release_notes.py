@@ -1,4 +1,5 @@
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -251,6 +252,104 @@ Older notes.
         self.assertIn("cosign verify-blob", workflow)
         self.assertIn("checksums.txt.sig", workflow)
         self.assertIn("checksums.txt.pem", workflow)
+
+    def test_every_verifying_job_can_actually_reach_cosign(self) -> None:
+        """A verification that cannot run is not a verification.
+
+        Each job that calls verify_release_downloads.py with
+        --require-signature shells out to cosign. If cosign is not installed in
+        that job the check fails closed on every release, and if a future edit
+        makes it skip instead, it verifies nothing. So each verifying job must
+        install cosign.
+        """
+        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+
+        # Map every job to whether it requires a signature and whether it can run
+        # the verification. Iterating the raw text keeps this honest when jobs
+        # are added or renamed.
+        jobs: dict[str, list[str]] = {}
+        current: list[str] | None = None
+        for line in workflow.splitlines():
+            job_match = re.match(r"^  ([a-z][a-z0-9-]*):\s*$", line)
+            if job_match:
+                current = jobs.setdefault(job_match.group(1), [])
+                continue
+            if current is not None:
+                current.append(line)
+
+        verifying = [
+            name
+            for name, body in jobs.items()
+            if any("--require-signature" in line for line in body)
+        ]
+        self.assertTrue(verifying, "no job requires a manifest signature")
+
+        for name in verifying:
+            body = "\n".join(jobs[name])
+            with self.subTest(job=name):
+                self.assertIn(
+                    "sigstore/cosign-installer@",
+                    body,
+                    f"{name} requires a manifest signature but never installs cosign, "
+                    "so it can only ever fail or skip",
+                )
+                self.assertIn("verify_release_downloads.py", body)
+
+        # The publish job is the one that signs, so it installs cosign too even
+        # though it does not pass --require-signature to the script.
+        self.assertIn("sigstore/cosign-installer@", "\n".join(jobs["publish"]))
+
+    def test_published_verification_enforces_the_manifest_signature(self) -> None:
+        """The release must prove it signed what it published.
+
+        Without OS signing, the cosign signature over checksums.txt and the
+        build attestation are the entire integrity story. If a smoke job verifies
+        only checksums, a signing regression passes the release while every
+        downstream install fails closed. These assertions pin both.
+        """
+        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+
+        # Every verify_release_downloads.py call site must demand the signature.
+        call_sites = workflow.count("verify_release_downloads.py")
+        required_sites = workflow.count("--require-signature")
+        identities = workflow.count("--certificate-identity")
+        self.assertGreaterEqual(call_sites, 4)
+        # smoke-install exercises the installer path rather than this script, so
+        # the script call sites are the desktop smoke and rollback ones.
+        self.assertGreaterEqual(required_sites, 4)
+        self.assertGreaterEqual(identities, 4)
+
+        # Verification pins an exact identity. A regexp would let any tag, or
+        # any other workflow in the repo, satisfy the check.
+        publish = workflow[workflow.index("\n  publish:") : workflow.index(
+            "\n  smoke-install:"
+        )]
+        self.assertNotIn("--certificate-identity-regexp", publish)
+        self.assertIn("cosign verify-blob", publish)
+        self.assertIn(
+            "https://github.com/anisayakmitra-in/AGENT-PANDORA/.github/workflows"
+            "/release.yml@refs/tags/${{ github.ref_name }}",
+            workflow,
+        )
+
+        # The attestation is actually verified, not merely produced.
+        self.assertIn("gh attestation verify", workflow)
+        self.assertIn("--repo anisayakmitra-in/AGENT-PANDORA", workflow)
+
+        # Smoke jobs need cosign available, or the verification would always fail.
+        smoke_install = workflow[
+            workflow.index("  smoke-install:") : workflow.index(
+                "\n  smoke-desktop:"
+            )
+        ]
+        smoke_desktop = workflow[workflow.index("  smoke-desktop:") :]
+        for job in (smoke_install, smoke_desktop):
+            with self.subTest(job=job.strip().splitlines()[0]):
+                self.assertIn("sigstore/cosign-installer@", job)
 
     def test_release_candidate_and_stable_still_require_human_approval(self) -> None:
         """Removing signing must not remove the human gate.

@@ -442,6 +442,11 @@ jobs:
       contents: write
       id-token: write
       attestations: write
+    env:
+      # The identity the release workflow presents when it signs checksums.txt.
+      # Published smoke jobs re-verify the manifest against exactly this value.
+      PANDORA_COSIGN_IDENTITY: https://github.com/anisayakmitra-in/AGENT-PANDORA/.github/workflows/release.yml@refs/tags/${{ github.ref_name }}
+      PANDORA_COSIGN_OIDC_ISSUER: https://token.actions.githubusercontent.com
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -531,8 +536,8 @@ jobs:
           cosign verify-blob \
             --certificate dist/checksums.txt.pem \
             --signature dist/checksums.txt.sig \
-            --certificate-identity-regexp "^https://github.com/anisayakmitra-in/AGENT-PANDORA/.github/workflows/release.yml@refs/tags/${GITHUB_REF_NAME}$" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-identity "$PANDORA_COSIGN_IDENTITY" \
+            --certificate-oidc-issuer "$PANDORA_COSIGN_OIDC_ISSUER" \
             dist/checksums.txt
 
       - name: Attest native artifacts
@@ -622,6 +627,18 @@ jobs:
           curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
             --output "$checksums" \
             "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/${GITHUB_REF_NAME}/checksums.txt"
+
+          # Verify the build attestation for the published binary, independently
+          # of the checksum path. This is free provenance from GitHub and does not
+          # require a signing certificate.
+          published="$RUNNER_TEMP/published-${{ matrix.artifact }}"
+          curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
+            --output "$published" \
+            "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/${GITHUB_REF_NAME}/${{ matrix.artifact }}"
+          GH_TOKEN="${{ github.token }}" \
+            gh attestation verify "$published" \
+            --repo anisayakmitra-in/AGENT-PANDORA \
+            --format 'json' > "$RUNNER_TEMP/attestation-${{ matrix.artifact }}.json"
 
           assert_version() {
             path="$1"
@@ -794,11 +811,18 @@ jobs:
       CI: "true"
       GH_TOKEN: ${{ github.token }}
       PANDORA_SIDECAR_TARGET: ${{ matrix.target }}
+      # Published smoke verifies the manifest signature against the identity the
+      # release workflow signed with, so a signing regression fails the release.
+      PANDORA_COSIGN_IDENTITY: https://github.com/anisayakmitra-in/AGENT-PANDORA/.github/workflows/release.yml@refs/tags/${{ github.ref_name }}
+      PANDORA_COSIGN_OIDC_ISSUER: https://token.actions.githubusercontent.com
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
@@ -869,6 +893,9 @@ jobs:
           test "${#bundles[@]}" -eq 1
           python "$GITHUB_WORKSPACE/scripts/verify_release_downloads.py" \
             --manifest "$release/checksums.txt" \
+            --certificate-identity "$PANDORA_COSIGN_IDENTITY" \
+            --certificate-oidc-issuer "$PANDORA_COSIGN_OIDC_ISSUER" \
+            --require-signature \
             "$native" "${bundles[0]}"
           chmod 0755 "$native"
           # No OS code-signing gate. Integrity is established by checksums.txt and
@@ -891,6 +918,9 @@ jobs:
           if ($bundles.Count -ne 1) { throw "expected exactly one published Windows MSI" }
           python "$env:GITHUB_WORKSPACE/scripts/verify_release_downloads.py" `
             --manifest (Join-Path $release "checksums.txt") `
+            --certificate-identity $env:PANDORA_COSIGN_IDENTITY `
+            --certificate-oidc-issuer $env:PANDORA_COSIGN_OIDC_ISSUER `
+            --require-signature `
             $native ($bundles[0].FullName)
           if ($LASTEXITCODE -ne 0) { throw "published desktop checksum verification failed" }
           # No Authenticode gate. The binaries are not OS-signed; integrity comes
@@ -953,11 +983,17 @@ jobs:
       CI: "true"
       GH_TOKEN: ${{ github.token }}
       PANDORA_SIDECAR_TARGET: ${{ matrix.target }}
+      # The rollback drill re-verifies both the predecessor and current manifests,
+      # so each needs the identity that signed that specific tag.
+      PANDORA_COSIGN_IDENTITY: https://github.com/anisayakmitra-in/AGENT-PANDORA/.github/workflows/release.yml@refs/tags/${{ github.ref_name }}
     steps:
       - name: Check out exact stable source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
@@ -1015,6 +1051,8 @@ jobs:
                 --dir "$destination" \
                 --clobber \
                 --pattern checksums.txt \
+                --pattern checksums.txt.sig \
+                --pattern checksums.txt.pem \
                 --pattern '${{ matrix.native }}' \
                 --pattern '${{ matrix.bundle }}'; then
                 break
@@ -1029,9 +1067,13 @@ jobs:
           test "${#current_bundles[@]}" -eq 1
           python scripts/verify_release_downloads.py \
             --manifest "$predecessor_root/checksums.txt" \
+            --certificate-identity "https://github.com/anisayakmitra-in/AGENT-PANDORA/.github/workflows/release.yml@refs/tags/${predecessor}" \
+            --require-signature \
             "$predecessor_root/${{ matrix.native }}" "${predecessor_bundles[0]}"
           python scripts/verify_release_downloads.py \
             --manifest "$current_root/checksums.txt" \
+            --certificate-identity "$PANDORA_COSIGN_IDENTITY" \
+            --require-signature \
             "$current_root/${{ matrix.native }}" "${current_bundles[0]}"
           chmod 0755 "$predecessor_root/${{ matrix.native }}" "$current_root/${{ matrix.native }}"
           # No codesign/stapler gate: the rollback artifacts are not OS-signed.
@@ -1083,9 +1125,9 @@ jobs:
           }
           $predecessorNative = Join-Path $predecessorRoot '${{ matrix.native }}'
           $currentNative = Join-Path $currentRoot '${{ matrix.native }}'
-          python scripts/verify_release_downloads.py --manifest (Join-Path $predecessorRoot "checksums.txt") $predecessorNative $predecessorBundles[0].FullName
+          python scripts/verify_release_downloads.py --manifest (Join-Path $predecessorRoot "checksums.txt") --certificate-identity "https://github.com/anisayakmitra-in/AGENT-PANDORA/.github/workflows/release.yml@refs/tags/$predecessor" --require-signature $predecessorNative $predecessorBundles[0].FullName
           if ($LASTEXITCODE -ne 0) { throw "predecessor checksum verification failed" }
-          python scripts/verify_release_downloads.py --manifest (Join-Path $currentRoot "checksums.txt") $currentNative $currentBundles[0].FullName
+          python scripts/verify_release_downloads.py --manifest (Join-Path $currentRoot "checksums.txt") --certificate-identity $env:PANDORA_COSIGN_IDENTITY --require-signature $currentNative $currentBundles[0].FullName
           if ($LASTEXITCODE -ne 0) { throw "current checksum verification failed" }
           # No Authenticode gate: the rollback artifacts are not OS-signed. Both
           # versions were already checksum-verified above.
