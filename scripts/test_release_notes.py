@@ -203,7 +203,61 @@ Older notes.
             '$expected = "pandora " + $env:GITHUB_REF_NAME.Substring(1)', workflow
         )
 
-    def test_release_workflow_builds_desktop_secretless_and_blocks_unsafe_rc_stable(self) -> None:
+    def test_release_workflow_does_not_os_sign_any_release_artifact(self) -> None:
+        """No release channel may require an OS signature.
+
+        Pandora is a terminal CLI, so Authenticode, Developer ID signing and
+        notarization were removed from the release process. These assertions are
+        the regression guard: they fail if a codesign/signtool/stapler/spctl gate
+        or a vendor-signing receipt requirement is reintroduced anywhere in the
+        workflow. Integrity comes from checksums.txt, its cosign signature, and
+        build attestations instead, and those are asserted elsewhere.
+        """
+        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+
+        for marker in (
+            "signtool sign",
+            "signtool verify /pa",
+            "codesign --force",
+            "codesign --verify",
+            "codesign -dv",
+            "xcrun stapler validate",
+            "spctl --assess",
+            "Import-PfxCertificate",
+            "Get-AuthenticodeSignature",
+            "APPLE_SIGNING_IDENTITY",
+            "PANDORA_APPLE_CERTIFICATE_BASE64",
+            "PANDORA_WINDOWS_CERTIFICATE_BASE64",
+            "APPLE_TEAM_ID",
+            "Authority=Developer ID Application:",
+            "signing_required",
+            "signingRequired",
+            "platform_signing_required",
+            "signing-receipt",
+        ):
+            with self.subTest(marker=marker):
+                self.assertNotIn(marker, workflow)
+
+        # The sign-native job must be gone, replaced by approval only.
+        self.assertNotIn("  sign-native:", workflow)
+        self.assertNotIn("native-signed-", workflow)
+        self.assertIn("  approve-release:", workflow)
+
+        # Provenance that replaces signing must remain present.
+        self.assertIn("actions/attest-build-provenance@", workflow)
+        self.assertIn("cosign sign-blob", workflow)
+        self.assertIn("cosign verify-blob", workflow)
+        self.assertIn("checksums.txt.sig", workflow)
+        self.assertIn("checksums.txt.pem", workflow)
+
+    def test_release_candidate_and_stable_still_require_human_approval(self) -> None:
+        """Removing signing must not remove the human gate.
+
+        The signing job also carried the RC/stable approval check and the
+        `release-publication` environment. Both survive in `approve-release`.
+        """
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
             encoding="utf-8"
         )
@@ -211,55 +265,10 @@ Older notes.
         gate_start = workflow.index("  release-gate:")
         gate_end = workflow.index("\n  build:", gate_start)
         gate = workflow[gate_start:gate_end]
-        desktop_start = workflow.index("  build-desktop:")
-        publish_start = workflow.index("\n  publish:", desktop_start)
-        desktop = workflow[desktop_start:publish_start]
-        publish = workflow[publish_start:]
-
-        build = desktop.index("- name: Build desktop bundle")
-        lifecycle = desktop.index("- name: Verify desktop bundle lifecycle")
-        stage = desktop.index("- name: Stage desktop artifacts (Unix)")
-        self.assertLess(build, lifecycle)
-        self.assertLess(lifecycle, stage)
-        self.assertNotIn("Import Apple signing identity", desktop)
-        self.assertNotIn("Sign desktop bundles (Windows)", desktop)
-        self.assertNotIn("${{ secrets.", desktop)
-        self.assertIn("name: desktop-unsigned-${{ matrix.artifact }}", desktop)
-        self.assertIn("npm run verify:bundle-lifecycle", desktop)
-        self.assertIn("patchelf xvfb", desktop)
-        self.assertIn("target/release/bundle", desktop)
-        self.assertNotIn("apps/pandora-desktop/src-tauri/target/release/bundle", desktop)
-        self.assertIn("name: native-unsigned-${{ matrix.target }}", desktop)
-        self.assertIn("PANDORA_SIDECAR_SOURCE:", desktop)
-        self.assertIn("PANDORA_DESKTOP_SOURCE_SIDECAR:", desktop)
-        self.assertIn("Verify desktop system install lifecycle", desktop)
-        self.assertIn("PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE: \"1\"", desktop)
-
-        self.assertIn("needs: verify", gate)
-        self.assertIn("permissions:\n      contents: read", gate)
-        self.assertIn('test "${{ needs.verify.outputs.scope }}" = "cli-only"', gate)
-        self.assertIn(
-            'test "${{ needs.verify.outputs.desktop_required }}" = "false"', gate
-        )
-        self.assertNotIn("Block RC and stable", gate)
-        self.assertNotIn("Block RC and stable", publish)
-        self.assertIn("codesign --verify --deep --strict", workflow)
-        self.assertIn("spctl --assess --type execute", workflow)
-        self.assertIn("xcrun stapler validate", workflow)
-        self.assertIn("signtool verify /pa /all /v", workflow)
-
-    def test_release_candidate_and_stable_fail_closed_on_signing_and_publication(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
-            encoding="utf-8"
-        )
-
-        gate_start = workflow.index("  release-gate:")
-        gate_end = workflow.index("\n  build:", gate_start)
-        gate = workflow[gate_start:gate_end]
-        sign_start = workflow.index("  sign-native:")
-        stage_start = workflow.index("\n  stage-native:", sign_start)
-        publish_start = workflow.index("\n  publish:", sign_start)
-        signing = workflow[sign_start:stage_start]
+        approve_start = workflow.index("  approve-release:")
+        stage_start = workflow.index("\n  stage-native:", approve_start)
+        publish_start = workflow.index("\n  publish:", approve_start)
+        approve = workflow[approve_start:stage_start]
         publish = workflow[publish_start:]
 
         self.assertIn("needs: verify", gate)
@@ -268,21 +277,24 @@ Older notes.
             'test "${{ needs.verify.outputs.desktop_required }}" = "false"', gate
         )
         self.assertNotIn("environment:", gate)
-        self.assertIn("Enforce release approval", signing)
-        self.assertIn("environment: release-publication", signing)
-        self.assertIn("PANDORA_RELEASE_CANDIDATE_APPROVED:", signing)
-        self.assertIn("PANDORA_STABLE_RELEASE_APPROVED:", signing)
-        self.assertIn('if [[ "$version" == *-rc.* ]]', signing)
-        self.assertIn("PANDORA_WINDOWS_CERTIFICATE_BASE64:", signing)
-        self.assertIn("PANDORA_APPLE_CERTIFICATE_BASE64:", signing)
-        self.assertIn("APPLE_TEAM_ID:", signing)
-        self.assertNotIn("APPLE_ID", signing)
-        self.assertIn("needs: [verify, build, release-gate]", signing)
-        self.assertIn("needs: [verify, release-gate, stage-native, build-desktop]", publish)
+        self.assertIn("Enforce release approval", approve)
+        self.assertIn("environment: release-publication", approve)
+        self.assertIn("PANDORA_RELEASE_CANDIDATE_APPROVED:", approve)
+        self.assertIn("PANDORA_STABLE_RELEASE_APPROVED:", approve)
+        self.assertIn('if [[ "$version" == *-rc.* ]]', approve)
+        self.assertIn("needs: [verify, build, release-gate]", approve)
+        self.assertIn(
+            "needs: [verify, release-gate, stage-native, build-desktop]", publish
+        )
         self.assertNotIn("Block RC and stable", publish)
         self.assertIn("environment: release-publication", workflow)
         self.assertIn("Validate required native accessibility evidence", workflow)
         self.assertIn("scripts/accessibility_evidence.py", workflow)
+
+        # Every channel stages the same unsigned-by-OS artifacts now.
+        stage = workflow[stage_start:publish_start]
+        self.assertIn("pattern: native-unsigned-*", stage)
+        self.assertNotIn("pattern: native-signed-*", stage)
 
     def test_release_workflow_smokes_published_installers_on_fresh_runners(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
@@ -378,11 +390,13 @@ Older notes.
         self.assertIn("PANDORA_DESKTOP_BUNDLE_ROOT", workflow)
         self.assertIn("PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE", workflow)
         self.assertIn("npm run verify:bundle-lifecycle", workflow)
-        self.assertIn("Get-AuthenticodeSignature", workflow)
-        self.assertIn('codesign --verify --strict --verbose=2 "$native"', workflow)
-        self.assertIn("xcrun stapler validate", workflow)
-        self.assertIn("spctl --assess --type execute", workflow)
+        # Published desktop artifacts are checksum-verified but never OS-signed,
+        # so the smoke job records that posture instead of asserting a signature.
         self.assertIn("platform-signature-verification.json", workflow)
+        self.assertNotIn("Get-AuthenticodeSignature", workflow)
+        self.assertNotIn('codesign --verify --strict --verbose=2 "$native"', workflow)
+        self.assertNotIn("xcrun stapler validate", workflow)
+        self.assertNotIn("spctl --assess --type execute", workflow)
 
     def test_stable_release_records_honest_post_publication_rollback_state(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(

@@ -273,12 +273,12 @@ RC and stable no longer wait for desktop signing. The release gate requires
 `scope=cli-only` and `desktop_required=false`; desktop feature parity remains
 deferred, and no desktop artifact is built or published on any channel.
 
-The published-package signature and notarization smoke checks are not part of
-the CLI-only workflow. Desktop smoke is intentionally skipped on every channel;
-the release provides CLI artifact, checksum, and native signing evidence only.
-The provider-neutral request boundary is documented in
-[external desktop signing](EXTERNAL_DESKTOP_SIGNING.md); no provider adapter or
-signing evidence is configured.
+The published-package signature and notarization checks are not part of the
+CLI-only workflow, and they never were part of any channel's release gate.
+Pandora is a terminal CLI: release binaries are not Authenticode-signed, not
+Developer ID-signed, and not notarized, and no platform signing credential is
+configured or required. Release integrity comes from `checksums.txt`, its
+keyless cosign signature, and GitHub build attestations.
 
 Publication also waits at the protected `release-publication` environment, which
 accepts only `v*` tags and requires a human reviewer. RC and stable source

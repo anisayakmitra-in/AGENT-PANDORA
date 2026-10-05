@@ -6,9 +6,9 @@ import unittest
 from pathlib import Path
 
 from scripts.release_evidence import (
+    SCHEMA_VERSION,
     ReleaseEvidenceError,
     build_release_evidence,
-    platform_signing_required,
     stable_rollback_state,
 )
 
@@ -50,15 +50,16 @@ class ReleaseEvidenceTests(unittest.TestCase):
 
             evidence = build_release_evidence("v2.0.0-beta.7", dist)
 
-            self.assertEqual(evidence["schema_version"], 1)
+            self.assertEqual(evidence["schema_version"], SCHEMA_VERSION)
             self.assertEqual(evidence["release_tag"], "v2.0.0-beta.7")
             self.assertEqual(evidence["checksum_manifest"]["entries"], len(artifacts))
             self.assertTrue(evidence["signature"]["verified_in_workflow"])
             self.assertTrue(evidence["provenance"]["verified_in_workflow"])
-            self.assertFalse(evidence["platform_signing"]["required"])
-            self.assertEqual(
-                evidence["platform_signing"]["windows_authenticode"], "not_required"
-            )
+            self.assertNotIn("windows_authenticode", evidence["platform_signing"])
+            self.assertNotIn("apple_codesign", evidence["platform_signing"])
+            self.assertNotIn("apple_notarization", evidence["platform_signing"])
+            self.assertNotIn("receipts", evidence["platform_signing"])
+            self.assertEqual(evidence["platform_signing"]["status"], "not_applicable")
             self.assertEqual(
                 evidence["stable_rollback"]["state"], "not_applicable_prerelease"
             )
@@ -105,14 +106,6 @@ class ReleaseEvidenceTests(unittest.TestCase):
                     "v2.0.0-beta.7", dist, scope="cli-only"
                 )
 
-    def test_cli_only_scope_rejects_release_candidate_and_stable(self) -> None:
-        for tag in ("v2.0.0-rc.1", "v2.0.0"):
-            with self.subTest(tag=tag):
-                with self.assertRaisesRegex(
-                    ReleaseEvidenceError, "require full scope"
-                ):
-                    build_release_evidence(tag, Path("."), scope="cli-only")
-
     def test_rejects_an_artifact_changed_after_checksum_generation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             dist, _ = self._write_dist(Path(temporary))
@@ -136,15 +129,23 @@ class ReleaseEvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(ReleaseEvidenceError, "invalid release tag"):
                 build_release_evidence("latest", dist)
 
-    def test_release_candidate_and_stable_require_vendor_platform_signing(self) -> None:
-        self.assertFalse(platform_signing_required("v2.0.0-beta.7"))
-        self.assertTrue(platform_signing_required("v2.0.0-rc.1"))
-        self.assertTrue(platform_signing_required("v2.0.0"))
+    def test_platform_signing_is_never_required_for_any_channel(self) -> None:
+        """No release channel requires an OS signature any more.
 
-        with tempfile.TemporaryDirectory() as temporary:
-            dist, _ = self._write_dist(Path(temporary))
-            with self.assertRaisesRegex(ReleaseEvidenceError, "requires a commit"):
-                build_release_evidence("v2.0.0-rc.1", dist)
+        This replaced the old vendor-signing requirement, which demanded a
+        Developer ID or Authenticode receipt for RC and stable releases. The
+        guarantee those receipts backed is now carried by checksums.txt, its
+        cosign signature, and build attestations, so evidence for every channel
+        must build without a commit and without receipts.
+        """
+        for tag in ("v2.0.0-alpha.1", "v2.0.0-beta.7", "v2.0.0-rc.1", "v2.0.0"):
+            with self.subTest(tag=tag):
+                with tempfile.TemporaryDirectory() as temporary:
+                    dist, _ = self._write_dist(Path(temporary))
+                    evidence = build_release_evidence(tag, dist)
+                    self.assertEqual(
+                        evidence["platform_signing"]["status"], "not_applicable"
+                    )
 
     def test_stable_release_index_never_claims_first_release_rollback_closure(self) -> None:
         self.assertEqual(

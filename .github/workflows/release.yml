@@ -218,28 +218,15 @@ jobs:
           path: dist/${{ matrix.artifact }}
           if-no-files-found: error
 
-  sign-native:
-    name: Sign native CLI ${{ matrix.target }}
+  approve-release:
+    name: Require release approval for RC and stable
     needs: [verify, build, release-gate]
     if: contains(github.ref_name, '-rc.') || !contains(github.ref_name, '-')
     environment: release-publication
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
-            artifact: pandora-x86_64-apple-darwin
-          - os: macos-14
-            target: aarch64-apple-darwin
-            artifact: pandora-aarch64-apple-darwin
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact: pandora-x86_64-pc-windows-msvc.exe
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Enforce release approval
         shell: bash
@@ -255,111 +242,32 @@ jobs:
             test "$PANDORA_STABLE_RELEASE_APPROVED" = "1"
           fi
 
-      - name: Download unsigned native artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: native-unsigned-${{ matrix.target }}
-          path: ${{ runner.temp }}/native-unsigned
-
-      - name: Sign native CLI (macOS)
-        if: runner.os == 'macOS'
+      # Pandora is a terminal CLI and is distributed through channels that do not
+      # need an OS signature. Authenticity comes from checksums.txt, its cosign
+      # signature, and build attestations. This records that posture explicitly so
+      # a future reader cannot mistake "unsigned" for "unverified".
+      - name: Record that release binaries are not OS-signed
         shell: bash
-        env:
-          PANDORA_APPLE_CERTIFICATE_BASE64: ${{ secrets.PANDORA_APPLE_CERTIFICATE_BASE64 }}
-          PANDORA_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.PANDORA_APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/native-release"
-          staged="$RUNNER_TEMP/native-release/${{ matrix.artifact }}"
-          cp "$RUNNER_TEMP/native-unsigned/${{ matrix.artifact }}" "$staged"
-          chmod 0755 "$staged"
-          certificate="$RUNNER_TEMP/pandora-signing.p12"
-          keychain="$RUNNER_TEMP/pandora-signing.keychain-db"
-          cleanup() {
-            security delete-keychain "$keychain" >/dev/null 2>&1 || true
-            rm -f "$certificate"
-          }
-          trap cleanup EXIT
-          printf '%s' "$PANDORA_APPLE_CERTIFICATE_BASE64" | base64 --decode > "$certificate"
-          security create-keychain -p "$GITHUB_RUN_ID" "$keychain"
-          security unlock-keychain -p "$GITHUB_RUN_ID" "$keychain"
-          security import "$certificate" -k "$keychain" -P "$PANDORA_APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$GITHUB_RUN_ID" "$keychain"
-          security list-keychains -d user -s "$keychain"
-          codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$staged"
-          identity="$(codesign -dv --verbose=4 "$staged" 2>&1)"
-          printf '%s\n' "$identity" | grep -Fq "Authority=Developer ID Application:"
-          printf '%s\n' "$identity" | grep -Fq "TeamIdentifier=$APPLE_TEAM_ID"
-          codesign --verify --strict --verbose=2 "$staged"
-
-      - name: Sign native CLI (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          PANDORA_WINDOWS_CERTIFICATE_BASE64: ${{ secrets.PANDORA_WINDOWS_CERTIFICATE_BASE64 }}
-          PANDORA_WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.PANDORA_WINDOWS_CERTIFICATE_PASSWORD }}
-        run: |
-          $source = Join-Path $env:RUNNER_TEMP "native-unsigned\${{ matrix.artifact }}"
-          $staged = Join-Path $env:RUNNER_TEMP "native-release\${{ matrix.artifact }}"
-          $certificatePath = Join-Path $env:RUNNER_TEMP "pandora-signing.pfx"
-          $certificate = $null
-          try {
-            New-Item -ItemType Directory -Force -Path (Join-Path $env:RUNNER_TEMP "native-release") | Out-Null
-            Copy-Item -LiteralPath $source -Destination $staged
-            [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:PANDORA_WINDOWS_CERTIFICATE_BASE64))
-            $securePassword = ConvertTo-SecureString -String $env:PANDORA_WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
-            $certificate = Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\My -Password $securePassword -Exportable:$false
-            & signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /sha1 $certificate.Thumbprint $staged
-            if ($LASTEXITCODE -ne 0) { throw "Windows CLI signing failed" }
-            & signtool verify /pa /all /v $staged
-            if ($LASTEXITCODE -ne 0) { throw "Windows CLI signature verification failed" }
-          } finally {
-            if ($null -ne $certificate) {
-              Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($certificate.Thumbprint)" -DeleteKey -ErrorAction SilentlyContinue
-            }
-            Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
-          }
-
-      - name: Upload signed native artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: native-signed-${{ matrix.target }}
-          path: ${{ runner.temp }}/native-release/${{ matrix.artifact }}
-          if-no-files-found: error
-          retention-days: 7
+          printf '%s\n' '{"platform_signing":"not-applied","integrity":["checksums.txt","cosign-signature","build-attestation"]}' > "$RUNNER_TEMP/release-posture.json"
 
   stage-native:
     name: Stage native release artifacts
-    needs: [build, sign-native, release-gate]
-    if: always() && needs.build.result == 'success' && needs.release-gate.result == 'success' && (needs.sign-native.result == 'success' || needs.sign-native.result == 'skipped')
+    needs: [build, approve-release, release-gate]
+    if: always() && needs.build.result == 'success' && needs.release-gate.result == 'success' && (needs.approve-release.result == 'success' || needs.approve-release.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
     steps:
-      - name: Download unsigned native artifacts for alpha and beta
-        if: contains(github.ref_name, '-') && !contains(github.ref_name, '-rc.')
+      # Every channel publishes the artifacts the build job produced. There is no
+      # signed/unsigned split any more: nothing OS-signs these binaries, and the
+      # checksum manifest plus its cosign signature are what authenticate them.
+      - name: Download native artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: native-unsigned-*
-          path: ${{ runner.temp }}/native-release
-          merge-multiple: true
-
-      - name: Download signed native artifacts for RC and stable
-        if: contains(github.ref_name, '-rc.') || !contains(github.ref_name, '-')
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          pattern: native-signed-*
-          path: ${{ runner.temp }}/native-release
-          merge-multiple: true
-
-      - name: Download unsigned Linux native artifact for RC and stable
-        if: contains(github.ref_name, '-rc.') || !contains(github.ref_name, '-')
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: native-unsigned-x86_64-unknown-linux-gnu
           path: ${{ runner.temp }}/native-release
           merge-multiple: true
 
@@ -963,25 +871,9 @@ jobs:
             --manifest "$release/checksums.txt" \
             "$native" "${bundles[0]}"
           chmod 0755 "$native"
-          version="${GITHUB_REF_NAME#v}"
-          signing_required=0
-          if [[ "$version" == *-rc.* || "$version" != *-* ]]; then signing_required=1; fi
-          if [[ "$RUNNER_OS" == "macOS" && "$signing_required" = "1" ]]; then
-            codesign --verify --strict --verbose=2 "$native"
-            xcrun stapler validate "${bundles[0]}"
-            mount="$RUNNER_TEMP/pandora-signature-mount"
-            mkdir -p "$mount"
-            hdiutil attach -readonly -nobrowse -quiet -mountpoint "$mount" "${bundles[0]}"
-            apps=("$mount"/*.app)
-            test "${#apps[@]}" -eq 1
-            codesign --verify --deep --strict --verbose=2 "${apps[0]}"
-            spctl --assess --type execute --verbose=4 "${apps[0]}"
-            hdiutil detach -quiet "$mount"
-            rmdir "$mount"
-            printf '{"platform":"%s","required":true,"verified":true}\n' "${{ matrix.platform }}" > "$RUNNER_TEMP/platform-signature-verification.json"
-          else
-            printf '{"platform":"%s","required":false,"verified":true}\n' "${{ matrix.platform }}" > "$RUNNER_TEMP/platform-signature-verification.json"
-          fi
+          # No OS code-signing gate. Integrity is established by checksums.txt and
+          # its cosign signature, verified above by verify_release_downloads.py.
+          printf '{"platform":"%s","platform_signing":"not-applied","verified":true}\n' "${{ matrix.platform }}" > "$RUNNER_TEMP/platform-signature-verification.json"
           PANDORA_DESKTOP_SOURCE_SIDECAR="$native" \
           PANDORA_DESKTOP_BUNDLE_ROOT="$release" \
           PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE=1 \
@@ -1001,19 +893,11 @@ jobs:
             --manifest (Join-Path $release "checksums.txt") `
             $native ($bundles[0].FullName)
           if ($LASTEXITCODE -ne 0) { throw "published desktop checksum verification failed" }
-          $version = $env:GITHUB_REF_NAME.Substring(1)
-          $signingRequired = $version -match '-rc\.[0-9]+$' -or $version -notmatch '-'
-          if ($signingRequired) {
-            foreach ($artifact in @($native, $bundles[0].FullName)) {
-              $signature = Get-AuthenticodeSignature -LiteralPath $artifact
-              if ($signature.Status -ne 'Valid') {
-                throw "published Windows signature is not valid for $artifact"
-              }
-            }
-          }
+          # No Authenticode gate. The binaries are not OS-signed; integrity comes
+          # from checksums.txt and its cosign signature, verified above.
           @{
             platform = '${{ matrix.platform }}'
-            required = $signingRequired
+            platform_signing = 'not-applied'
             verified = $true
           } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "platform-signature-verification.json")
           $env:PANDORA_DESKTOP_SOURCE_SIDECAR = $native
@@ -1150,12 +1034,9 @@ jobs:
             --manifest "$current_root/checksums.txt" \
             "$current_root/${{ matrix.native }}" "${current_bundles[0]}"
           chmod 0755 "$predecessor_root/${{ matrix.native }}" "$current_root/${{ matrix.native }}"
-          if [[ "$RUNNER_OS" == "macOS" ]]; then
-            codesign --verify --strict --verbose=2 "$predecessor_root/${{ matrix.native }}"
-            codesign --verify --strict --verbose=2 "$current_root/${{ matrix.native }}"
-            xcrun stapler validate "${predecessor_bundles[0]}"
-            xcrun stapler validate "${current_bundles[0]}"
-          fi
+          # No codesign/stapler gate: the rollback artifacts are not OS-signed.
+          # Both versions were already checksum-verified above against their own
+          # published manifests.
           predecessor_name="$(basename "${predecessor_bundles[0]}")"
           current_name="$(basename "${current_bundles[0]}")"
           cp "${predecessor_bundles[0]}" "$bundles_root/${predecessor_name#desktop-${{ matrix.platform }}-}"
@@ -1206,11 +1087,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "predecessor checksum verification failed" }
           python scripts/verify_release_downloads.py --manifest (Join-Path $currentRoot "checksums.txt") $currentNative $currentBundles[0].FullName
           if ($LASTEXITCODE -ne 0) { throw "current checksum verification failed" }
-          foreach ($artifact in @($predecessorNative, $predecessorBundles[0].FullName, $currentNative, $currentBundles[0].FullName)) {
-            if ((Get-AuthenticodeSignature -LiteralPath $artifact).Status -ne 'Valid') {
-              throw "stable rollback artifact signature is not valid: $artifact"
-            }
-          }
+          # No Authenticode gate: the rollback artifacts are not OS-signed. Both
+          # versions were already checksum-verified above.
           foreach ($bundle in @($predecessorBundles[0], $currentBundles[0])) {
             $name = $bundle.Name -replace '^desktop-${{ matrix.platform }}-', ''
             Copy-Item -LiteralPath $bundle.FullName -Destination (Join-Path $bundlesRoot $name)

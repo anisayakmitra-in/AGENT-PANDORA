@@ -5,24 +5,11 @@ import hashlib
 import json
 import re
 from pathlib import Path
-from typing import Sequence
 
 try:
     from .installer_contract import expected_checksum, parse_checksums
-    from .platform_signing_receipt import (
-        SigningReceiptError,
-        receipt_digest,
-        read_platform_signing_receipt,
-        validate_platform_signing_receipt,
-    )
 except ImportError:
     from installer_contract import expected_checksum, parse_checksums
-    from platform_signing_receipt import (
-        SigningReceiptError,
-        receipt_digest,
-        read_platform_signing_receipt,
-        validate_platform_signing_receipt,
-    )
 
 
 _RELEASE_TAG = re.compile(
@@ -39,16 +26,16 @@ _SIGNATURE_FILES = {"checksums.txt.sig", "checksums.txt.pem"}
 _METADATA_FILES = {"checksums.txt", *_SIGNATURE_FILES, "release-evidence.json"}
 _SCOPES = {"full", "cli-only"}
 _GIT_COMMIT = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
-_VENDOR_PLATFORMS = ("windows", "macos")
+
+# Schema 2 drops the platform_signing block: Pandora is a terminal CLI whose
+# release binaries are not OS-signed. Schema 1 evidence remains readable, so
+# evidence produced before this change still validates.
+SCHEMA_VERSION = 2
+_SUPPORTED_EVIDENCE_SCHEMA_VERSIONS = (1, 2)
 
 
 class ReleaseEvidenceError(ValueError):
     pass
-
-
-def platform_signing_required(tag: str) -> bool:
-    version = tag[1:]
-    return "-rc." in version or "-" not in version
 
 
 def stable_rollback_state(tag: str) -> str:
@@ -108,109 +95,12 @@ def _require_files(files: dict[str, Path], *, desktop_required: bool) -> None:
         )
 
 
-def _platform_for_artifact(name: str) -> str | None:
-    if name in {"pandora-cargo-metadata.json", "pandora.spdx.json"}:
-        return None
-    if name.startswith("desktop-windows-"):
-        return "windows"
-    if name.startswith("desktop-macos-"):
-        return "macos"
-    if name.startswith("pandora-") and "windows" in name:
-        return "windows"
-    if name.startswith("pandora-") and ("apple" in name or "macos" in name):
-        return "macos"
-    return None
-
-
-def _validate_commit(commit: str | None, *, required: bool) -> str | None:
+def _validate_commit(commit: str | None) -> str | None:
     if commit is None:
-        if required:
-            raise ReleaseEvidenceError("platform signing evidence requires a commit")
         return None
     if _GIT_COMMIT.fullmatch(commit) is None:
         raise ReleaseEvidenceError("release evidence commit is invalid")
     return commit
-
-
-def _load_and_validate_signing_receipts(
-    tag: str,
-    dist: Path,
-    files: dict[str, Path],
-    *,
-    commit: str | None,
-    receipt_paths: Sequence[Path],
-    signing_required: bool,
-) -> list[dict[str, object]]:
-    if signing_required and not receipt_paths:
-        raise ReleaseEvidenceError("platform signing receipts are required")
-    if receipt_paths and commit is None:
-        raise ReleaseEvidenceError("platform signing receipts require a commit")
-
-    required_names = {
-        name for name in files if (platform := _platform_for_artifact(name)) is not None
-    }
-    by_artifact: dict[str, dict[str, object]] = {}
-    for receipt_path in receipt_paths:
-        try:
-            receipt, receipt_file_sha256 = read_platform_signing_receipt(receipt_path)
-        except SigningReceiptError as error:
-            raise ReleaseEvidenceError(str(error)) from error
-        if not isinstance(receipt, dict):
-            raise ReleaseEvidenceError(f"signing receipt is not an object: {receipt_path}")
-        artifact = receipt.get("artifact")
-        if not isinstance(artifact, dict) or type(artifact.get("path")) is not str:
-            raise ReleaseEvidenceError(f"signing receipt has no artifact path: {receipt_path}")
-        artifact_name = artifact["path"]
-        platform = _platform_for_artifact(artifact_name)
-        if platform is None:
-            raise ReleaseEvidenceError(
-                f"signing receipt references a non-vendor artifact: {artifact_name}"
-            )
-        if receipt.get("platform") != platform:
-            raise ReleaseEvidenceError(
-                f"signing receipt platform does not match artifact: {artifact_name}"
-            )
-        if artifact_name in by_artifact:
-            raise ReleaseEvidenceError(f"duplicate signing receipt for artifact: {artifact_name}")
-        if artifact_name not in files:
-            raise ReleaseEvidenceError(
-                f"signing receipt references an artifact outside the release: {artifact_name}"
-            )
-        try:
-            validated = validate_platform_signing_receipt(
-                receipt,
-                dist / artifact_name,
-                expected_tag=tag,
-                expected_commit=commit,
-                require_verified=True,
-            )
-        except SigningReceiptError as error:
-            raise ReleaseEvidenceError(str(error)) from error
-        by_artifact[artifact_name] = {
-            "path": receipt_path.name,
-            "artifact": artifact_name,
-            "platform": platform,
-            "file_sha256": receipt_file_sha256,
-            "receipt_sha256": receipt_digest(validated),
-        }
-
-    if signing_required:
-        missing = sorted(required_names - set(by_artifact))
-        if missing:
-            raise ReleaseEvidenceError(
-                "platform signing receipts are incomplete: " + ", ".join(missing)
-            )
-        missing_platforms = [
-            platform
-            for platform in _VENDOR_PLATFORMS
-            if not any(entry["platform"] == platform for entry in by_artifact.values())
-        ]
-        if missing_platforms:
-            raise ReleaseEvidenceError(
-                "platform signing receipts have no evidence for: "
-                + ", ".join(missing_platforms)
-            )
-    return [by_artifact[name] for name in sorted(by_artifact)]
 
 
 def build_release_evidence(
@@ -219,30 +109,16 @@ def build_release_evidence(
     *,
     scope: str = "full",
     commit: str | None = None,
-    signing_receipts: Sequence[Path] = (),
 ) -> dict[str, object]:
     if _RELEASE_TAG.fullmatch(tag) is None:
         raise ReleaseEvidenceError(f"invalid release tag: {tag}")
     if type(scope) is not str or scope not in _SCOPES:
         raise ReleaseEvidenceError(f"unsupported release scope: {scope}")
-    signing_required = platform_signing_required(tag)
-    if scope == "cli-only" and signing_required:
-        raise ReleaseEvidenceError(
-            "release-candidate and stable releases require full scope"
-        )
-    normalized_commit = _validate_commit(commit, required=signing_required)
+    normalized_commit = _validate_commit(commit)
     desktop_required = scope == "full"
 
     files = _release_files(dist)
     _require_files(files, desktop_required=desktop_required)
-    signing_receipt_entries = _load_and_validate_signing_receipts(
-        tag,
-        dist,
-        files,
-        commit=normalized_commit,
-        receipt_paths=signing_receipts,
-        signing_required=signing_required,
-    )
     try:
         checksums = parse_checksums(files["checksums.txt"].read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, ValueError) as error:
@@ -269,9 +145,8 @@ def build_release_evidence(
             }
         )
 
-    signing_status = "verified_by_receipt" if signing_required else "not_required"
     return {
-        "schema_version": 1,
+        "schema_version": SCHEMA_VERSION,
         "release_tag": tag,
         "source_commit": normalized_commit,
         "release_scope": {
@@ -292,14 +167,13 @@ def build_release_evidence(
             "oidc_issuer": "https://token.actions.githubusercontent.com",
         },
         "platform_signing": {
-            "required": signing_required,
-            "windows_authenticode": signing_status,
-            "apple_codesign": signing_status,
-            "apple_notarization": signing_status,
-            "independent_published_verification_job": (
-                "smoke-desktop" if desktop_required else None
+            "status": "not_applicable",
+            "reason": (
+                "Pandora is a terminal CLI distributed through channels that do not "
+                "require an OS signature. Release binaries are not Authenticode- or "
+                "codesign-signed. Integrity is established by checksums.txt, its "
+                "cosign signature, and build attestations."
             ),
-            "receipts": signing_receipt_entries,
         },
         "stable_rollback": {
             "state": stable_rollback_state(tag),
@@ -327,13 +201,6 @@ def main() -> int:
     parser.add_argument("--dist", type=Path, default=Path("dist"))
     parser.add_argument("--scope", choices=sorted(_SCOPES), default="full")
     parser.add_argument("--commit")
-    parser.add_argument(
-        "--signing-receipt",
-        action="append",
-        type=Path,
-        default=[],
-        help="hash-bound platform receipt JSON; repeat for each vendor artifact",
-    )
     parser.add_argument("--output", type=Path, default=Path("dist/release-evidence.json"))
     arguments = parser.parse_args()
 
@@ -343,14 +210,13 @@ def main() -> int:
             arguments.dist,
             scope=arguments.scope,
             commit=arguments.commit,
-            signing_receipts=arguments.signing_receipt,
         )
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
         arguments.output.write_text(
             json.dumps(evidence, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-    except (OSError, ReleaseEvidenceError, SigningReceiptError) as error:
+    except (OSError, ReleaseEvidenceError) as error:
         print(f"error: {error}")
         return 1
 

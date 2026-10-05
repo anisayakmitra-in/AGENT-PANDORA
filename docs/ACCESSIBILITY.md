@@ -78,9 +78,12 @@ One reviewed record is required for every advertised platform:
 
 Each session must use a packaged app on a clean graphical machine. Record the
 exact commit, installer filename and SHA-256, desktop and CLI version, OS build,
-assistive-technology version, tester, and UTC test time. Also record whether the
-artifact was signed and, for macOS, notarized. Signing is mandatory at the
-release-candidate gate, not inferred from accessibility evidence.
+assistive-technology version, tester, and UTC test time.
+
+Release binaries are not OS-signed: Pandora is a terminal CLI and no
+Authenticode or Developer ID signing gate applies to any release channel.
+Record the artifact's SHA-256 and, where applicable, the cosign signature and
+build attestation that establish its integrity instead.
 
 ### Exact-commit native test packages
 
@@ -98,10 +101,10 @@ CI run for the exact commit under review. Verify every recorded digest before
 copying the package to the clean graphical test machine.
 
 These packages exist only to make the native NVDA, VoiceOver, and Orca sessions
-reproducible. They are not releases, are not signed release evidence, must not
-be published, and do not satisfy any native accessibility check by themselves.
-Release-candidate and stable publication continue to require the independent
-vendor-signing gates in `RELEASES.md`.
+reproducible. They are not releases, are not release evidence, must not be
+published, and do not satisfy any native accessibility check by themselves.
+Release-candidate and stable publication is gated by human release approval
+plus the checksum manifest, its cosign signature, and build attestations.
 
 ## Native test protocol
 

@@ -142,8 +142,10 @@ write files, admit records, enable bindings, publish packages, or handle
 private keys. Users may pass the copied manifest through the existing local
 `package admit` command, where the normal runtime validation and artifact hash
 checks remain authoritative. The separate package keygen and package sign
-commands now provide local signing through an encrypted-vault key boundary;
-they never accept, return, or write private key material.
+commands perform local Ed25519 content signing through an encrypted-vault key
+boundary; they never accept, return, or write private key material. This is
+Pandora's own package signature and is unrelated to OS code signing, which
+Pandora does not perform.
 
 `package admit` uses one local manifest as both the declared and embedded record.
 Local hexadecimal trust evidence remains supported. Remote `package download`

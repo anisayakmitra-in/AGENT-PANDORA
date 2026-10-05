@@ -39,9 +39,8 @@ desktop smoke, and desktop rollback closure when the validated scope is
 `cli-only`. A skipped desktop job is never treated as successful full-scope
  evidence. Release-candidate and stable use the same `cli-only` boundary as
  alpha and beta. They publish only verified CLI artifacts; desktop build, smoke,
- and rollback remain skipped. The external desktop-signing boundary in
-[external desktop signing](docs/EXTERNAL_DESKTOP_SIGNING.md) is non-enabling
-and has no provider adapter, trust root, or credentials.
+ and rollback remain skipped. No release channel requires a platform signature:
+  binaries are not Authenticode- or codesign-signed and are not notarized.
 
 The checked-in policy selects `cli-only` for every release channel.
 
@@ -191,14 +190,13 @@ AgentLoop, session, approval, and governed effect path.
   remains deferred. A `cli-only` source does not build or publish desktop assets;
   a `full` source keeps desktop artifact generation a publication blocker until
   the isolated signing path is available.
-- The published-package signature and notarization smoke checks are not reachable
-  in the current workflow while RC and stable remain blocked. `cli-only` alpha
-  and beta releases intentionally skip desktop smoke, while a future `full`
-  alpha or beta release can exercise only unsigned desktop lifecycle; neither
-  path currently provides platform-signature or notarization evidence. The
-  provider-neutral request and response requirements are documented in
-  [the external signing boundary](docs/EXTERNAL_DESKTOP_SIGNING.md); no
-  provider adapter or signing evidence is configured.
+- No release channel requires a platform signature. Windows Authenticode, Apple
+  Developer ID signing, and notarization were removed from the release process
+  on 2026-10-05: Pandora is a terminal CLI distributed through channels that do
+  not need an OS signature. Release binaries are therefore **not** OS-signed.
+  Integrity is established instead by `checksums.txt`, its keyless cosign
+  signature, and GitHub build attestations, all of which are verified in the
+  release workflow and by the installers.
 - Stable requires accepted exact-commit native NVDA, VoiceOver, and Orca evidence
   for every advertised desktop platform.
 
