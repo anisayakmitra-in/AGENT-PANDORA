@@ -84,8 +84,6 @@ def build_stable_rollback_evidence(
         "workflow_run_id": int(workflow_run_id),
         "published_lifecycle_jobs": [
             "smoke-install",
-            "smoke-desktop",
-            "stable-desktop-rollback",
         ],
         "install_update_backup_restore_rollback_uninstall": True,
     }

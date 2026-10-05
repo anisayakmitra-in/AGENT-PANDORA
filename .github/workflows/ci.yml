@@ -132,8 +132,7 @@ jobs:
   # embed runner labels, so bumping `macos-26` would block merges for a reason
   # that has nothing to do with correctness. This job has no matrix and a fixed
   # name, so the required-check configuration stays stable while still failing
-  # when any platform fails. The cancelled desktop job is not in this workflow at
-  # all, so it cannot become a required context.
+  # when any platform fails.
   #
   # `if: always()` is load-bearing. Without it a matrix failure leaves this job
   # *skipped*, and a skipped required check does not block a merge, which would
