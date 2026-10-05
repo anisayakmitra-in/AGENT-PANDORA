@@ -30,3 +30,17 @@ zeroize.workspace = true
 
 [dev-dependencies]
 wat = "1"
+
+# cargo-binstall metadata. binstall prefers a prebuilt binary over compiling from
+# source, so it is pointed at the raw GitHub release assets rather than a .crate
+# tarball. These asset names must match what release.yml publishes; a test fails
+# if they drift. The binaries are not OS-signed. Integrity comes from
+# checksums.txt and its cosign signature, published alongside the assets.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/{ version }/pandora-{ target }"
+bin-url = "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/{ version }/pandora-{ target }"
+pkg-fmt = "bin"
+bin-fmt = "bin"
+# The Windows asset is published with a .exe suffix.
+[package.metadata.binstall.target.x86_64-pc-windows-msvc]
+bin-fmt = "bin:exe"

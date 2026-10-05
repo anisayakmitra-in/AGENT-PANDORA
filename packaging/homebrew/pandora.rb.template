@@ -1,0 +1,45 @@
+# Template for a Homebrew cask. Rendered by scripts/render_channel_manifests.py
+# from the release checksums.txt. Placeholders are double-brace UPPER_SNAKE names
+# and are substituted; every other character is copied verbatim. An unknown
+# placeholder is an error, not a passthrough.
+#
+# Pandora binaries are not OS-signed. Homebrew does not require a signature for
+# a CLI cask, and integrity comes from the SHA-256 below, which is taken from the
+# release checksum manifest that carries a cosign signature.
+cask "pandora" do
+  version "{{ VERSION }}"
+  sha256 "{{ SHA256 }}"
+
+  arch arm: "aarch64-apple-darwin", intel: "x86_64-apple-darwin"
+
+  url "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/{{ TAG }}/pandora-{{ ARCH }}-apple-darwin",
+      verified: "github.com/anisayakmitra-in/AGENT-PANDORA/"
+
+  name "pandora"
+  desc "Terminal-first agent runtime"
+  homepage "https://github.com/anisayakmitra-in/AGENT-PANDORA"
+
+  livecheck do
+    url :url
+    strategy :github_latest
+  end
+
+  depends_on macos: ">= :big_sur"
+
+  # The Rust toolchain applies an ad-hoc signature to macOS binaries, which is
+  # enough for Gatekeeper to run them. There is no Developer ID signature and no
+  # notarization: this cask is a terminal CLI, not a bundled application.
+  postflight do
+    system_command "/usr/bin/codesign",
+                   args:       ["--verify", "--verbose=2", "#{staged_path}/pandora"],
+                   must_succeed: true
+  end
+
+  zap trash: [
+    "~/.config/pandora",
+    "~/.local/share/pandora",
+    "~/Library/Application Support/pandora",
+    "~/Library/Preferences/pandora",
+    "~/Library/Caches/pandora",
+  ]
+end

@@ -204,6 +204,33 @@ jobs:
           cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/${{ matrix.artifact }}"
           chmod 0755 "dist/${{ matrix.artifact }}"
 
+      # Rust's linker applies an ad-hoc signature to macOS binaries. That is not a
+      # Developer ID signature and there is no notarization: the project is a
+      # terminal CLI. But an ad-hoc signature is what lets Gatekeeper run the
+      # binary at all, so its absence is a real packaging defect. Fail if the
+      # signature is missing or if a Developer ID authority is claimed, which
+      # would misrepresent the release posture.
+      - name: Assert macOS ad-hoc signature
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          staged="dist/${{ matrix.artifact }}"
+          codesign --verify --strict --verbose=2 "$staged"
+          identity="$(codesign -dv --verbose=4 "$staged" 2>&1)"
+          printf '%s\n' "$identity"
+          if printf '%s\n' "$identity" | grep -Fq "Authority=Developer ID Application:"; then
+            echo "::error::published macOS binary claims a Developer ID signature; this project does not use one" >&2
+            exit 1
+          fi
+          # An ad-hoc signature reports no Authority line at all.
+          if printf '%s\n' "$identity" | grep -Fq "CodeDirectory"; then
+            :
+          else
+            echo "::error::published macOS binary has no code signature" >&2
+            exit 1
+          fi
+
       - name: Stage Windows artifact
         if: runner.os == 'Windows'
         shell: pwsh
@@ -510,6 +537,25 @@ jobs:
       - name: Generate checksums
         shell: bash
         run: (cd dist && sha256sum * > checksums.txt)
+
+      # Homebrew, Scoop, and winget manifests. Rendered from the checksum
+      # manifest above so the digest in each channel is the published one.
+      # These are attached as release assets only; publishing to a tap, a
+      # bucket, or winget-pkgs needs external repositories this project does
+      # not own. See docs/PLATFORMS.md.
+      - name: Render channel manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          rendered="$RUNNER_TEMP/channel-manifests"
+          mkdir -p "$rendered"
+          python scripts/render_channel_manifests.py "$GITHUB_REF_NAME" \
+            --manifest dist/checksums.txt \
+            --output-dir "$rendered"
+          # Copied into dist/ so the release upload picks them up. They are
+          # derived metadata and are deliberately not listed in checksums.txt,
+          # which is generated above and covers the artifacts themselves.
+          cp "$rendered"/* dist/
 
       - name: Generate release notes
         shell: bash

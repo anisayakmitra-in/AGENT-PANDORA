@@ -1,0 +1,29 @@
+{
+  "//": "Template for a winget manifest. Rendered by scripts/render_channel_manifests.py from the release checksums.txt. The Windows binary is not Authenticode-signed. winget does not verify Authenticode; it verifies InstallerSha256, which is the SHA-256 from the cosign-signed release checksum manifest.",
+  "PackageIdentifier": "AnisayakmitraIn.AGENT-PANDORA",
+  "PackageVersion": "{{ VERSION }}",
+  "DefaultLocale": "en-US",
+  "Publisher": "anisayakmitra-in",
+  "PublisherUrl": "https://github.com/anisayakmitra-in",
+  "Author": "anisayakmitra-in",
+  "PackageUrl": "https://github.com/anisayakmitra-in/AGENT-PANDORA",
+  "PackageLicense": "MIT",
+  "ProjectUrl": "https://github.com/anisayakmitra-in/AGENT-PANDORA",
+  "ReleaseNotesUrl": "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/tag/v{{ VERSION }}",
+  "Installers": [
+    {
+      "InstallerType": "zip",
+      "Architecture": "x64",
+      "InstallerUrl": "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/{{ TAG }}/pandora-x86_64-pc-windows-msvc.exe",
+      "InstallerSha256": "{{ SHA256 }}",
+      "NestedInstallerType": "portable",
+      "NestedInstallerFiles": [
+        "pandora.exe"
+      ],
+      "Commands": [
+        "pandora"
+      ]
+    }
+  ],
+  "ManifestType": "installer"
+}

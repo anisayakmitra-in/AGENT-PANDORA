@@ -219,20 +219,17 @@ Older notes.
         )
 
         for marker in (
+            # Signing. None of these may appear anywhere in the workflow.
             "signtool sign",
-            "signtool verify /pa",
             "codesign --force",
-            "codesign --verify",
-            "codesign -dv",
-            "xcrun stapler validate",
-            "spctl --assess",
+            "codesign --sign",
             "Import-PfxCertificate",
             "Get-AuthenticodeSignature",
             "APPLE_SIGNING_IDENTITY",
             "PANDORA_APPLE_CERTIFICATE_BASE64",
             "PANDORA_WINDOWS_CERTIFICATE_BASE64",
             "APPLE_TEAM_ID",
-            "Authority=Developer ID Application:",
+            "security import",
             "signing_required",
             "signingRequired",
             "platform_signing_required",
@@ -240,6 +237,48 @@ Older notes.
         ):
             with self.subTest(marker=marker):
                 self.assertNotIn(marker, workflow)
+
+        # Verification is allowed, but only to assert the ad-hoc posture. A
+        # Developer ID authority must be treated as a failure, not a pass.
+        self.assertIn("Assert macOS ad-hoc signature", workflow)
+        ad_hoc = workflow[
+            workflow.index("      - name: Assert macOS ad-hoc signature") :
+            workflow.index("      - name: Stage Windows artifact")
+        ]
+        self.assertIn("codesign --verify --strict", ad_hoc)
+        self.assertIn("codesign -dv --verbose=4", ad_hoc)
+        # The check must fail if a Developer ID authority is present, and must
+        # fail if there is no signature at all.
+        self.assertIn("Authority=Developer ID Application:", ad_hoc)
+        self.assertIn("has no code signature", ad_hoc)
+        # Both failure branches must actually exit non-zero, not just print.
+        self.assertEqual(
+            ad_hoc.count("exit 1"),
+            2,
+            "both the Developer ID claim and the missing signature must exit 1",
+        )
+        self.assertIn("::error::", ad_hoc)
+        # It runs only on macOS, so no other platform is affected.
+        self.assertIn("if: runner.os == 'macOS'", ad_hoc)
+
+        # Channel manifests are rendered from the published checksums.txt, so a
+        # channel digest can never drift from the release's own digest.
+        self.assertIn("scripts/render_channel_manifests.py", workflow)
+        render = workflow[
+            workflow.index("      - name: Render channel manifests") :
+            workflow.index("      - name: Generate release notes")
+        ]
+        self.assertIn("--manifest dist/checksums.txt", render)
+        self.assertIn('"$GITHUB_REF_NAME"', render)
+
+        # No notarization or Gatekeeper assessment anywhere. Comments are excluded:
+        # they legitimately say these gates were removed.
+        code = "\n".join(
+            line for line in workflow.splitlines() if not line.lstrip().startswith("#")
+        )
+        for marker in ("stapler", "spctl --assess", "notarytool"):
+            with self.subTest(marker=marker):
+                self.assertNotIn(marker, code)
 
         # The sign-native job must be gone, replaced by approval only.
         self.assertNotIn("  sign-native:", workflow)

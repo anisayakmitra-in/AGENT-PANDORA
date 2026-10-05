@@ -1,0 +1,23 @@
+{
+  "//": "Template for a Scoop manifest. Rendered by scripts/render_channel_manifests.py from the release checksums.txt. The Windows binary is not Authenticode-signed: integrity is the SHA-256 below, taken from the cosign-signed release checksum manifest.",
+  "version": "{{ VERSION }}",
+  "description": "Terminal-first agent runtime",
+  "homepage": "https://github.com/anisayakmitra-in/AGENT-PANDORA",
+  "license": "MIT",
+  "depends": "git",
+  "architecture": "x64",
+  "url": "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/{{ TAG }}/pandora-x86_64-pc-windows-msvc.exe",
+  "hash": "{{ SHA256 }}",
+  "bin": [
+    "pandora.exe"
+  ],
+  "checkver": "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/latest/download/checksums.txt",
+  "autoupdate": {
+    "url": "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/{{ TAG }}/pandora-x86_64-pc-windows-msvc.exe",
+    "hash": "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/{{ TAG }}/checksums.txt"
+  },
+  "notes": [
+    "Pandora binaries are not Authenticode-signed.",
+    "Integrity is the SHA-256 above, taken from the cosign-signed release checksum manifest."
+  ]
+}
