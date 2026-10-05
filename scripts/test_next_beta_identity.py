@@ -16,23 +16,12 @@ CONSUMED_TAG = "v2.0.0-beta.7"
 class NextBetaIdentityTests(unittest.TestCase):
     def test_runtime_and_package_surfaces_use_the_next_beta(self) -> None:
         cargo = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
-        npm = json.loads((ROOT / "npm" / "pandora-cli" / "package.json").read_text(encoding="utf-8"))
-        desktop_npm = json.loads(
-            (ROOT / "apps" / "pandora-desktop" / "package.json").read_text(encoding="utf-8")
-        )
-        desktop_lock = json.loads(
-            (ROOT / "apps" / "pandora-desktop" / "package-lock.json").read_text(encoding="utf-8")
-        )
-        desktop_cargo = (ROOT / "apps" / "pandora-desktop" / "src-tauri" / "Cargo.toml").read_text(
-            encoding="utf-8"
+        npm = json.loads(
+            (ROOT / "npm" / "pandora-cli" / "package.json").read_text(encoding="utf-8")
         )
 
         self.assertIn(f'version = "{NEXT_VERSION}"', cargo)
         self.assertEqual(npm["version"], NEXT_VERSION)
-        self.assertEqual(desktop_npm["version"], NEXT_VERSION)
-        self.assertEqual(desktop_lock["version"], NEXT_VERSION)
-        self.assertEqual(desktop_lock["packages"][""]["version"], NEXT_VERSION)
-        self.assertIn(f'version = "{NEXT_VERSION}"', desktop_cargo)
 
     def test_installers_and_sdk_manifests_use_the_next_beta(self) -> None:
         shell = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")

@@ -11,8 +11,11 @@ from typing import Any
 _RELEASE_TAG = re.compile(
     r"^v[0-9]+\.[0-9]+\.[0-9]+(?:-(alpha|beta|rc)\.[0-9]+)?$"
 )
-_ALLOWED_KEYS = {"schema_version", "scope", "desktop_required"}
-_SCOPES = {"full", "cli-only"}
+# There is no "full" scope any more. The desktop was deleted, so a scope that
+# could require it has nothing to select. The key stays so the release gate can
+# keep asserting a single, named boundary rather than assuming one.
+_ALLOWED_KEYS = {"schema_version", "scope"}
+_SCOPES = {"cli-only"}
 _MAX_POLICY_BYTES = 4096
 
 
@@ -48,31 +51,25 @@ def _read_policy(root: Path) -> dict[str, Any]:
         raise ReleaseScopeError("release-scope.json is invalid JSON") from error
     if not isinstance(document, dict) or set(document) != _ALLOWED_KEYS:
         raise ReleaseScopeError("release-scope.json has an unsupported shape")
-    if type(document["schema_version"]) is not int or document["schema_version"] != 1:
-        raise ReleaseScopeError("release-scope.json schema_version must be 1")
+    if type(document["schema_version"]) is not int or document["schema_version"] != 2:
+        raise ReleaseScopeError("release-scope.json schema_version must be 2")
     scope = document["scope"]
     if type(scope) is not str:
         raise ReleaseScopeError("release-scope.json scope must be a string")
     if scope not in _SCOPES:
-        raise ReleaseScopeError("release-scope.json scope is unsupported")
-    desktop_required = document["desktop_required"]
-    if type(desktop_required) is not bool:
-        raise ReleaseScopeError("release-scope.json desktop_required must be boolean")
-    if desktop_required != (scope == "full"):
-        raise ReleaseScopeError("release scope and desktop_required disagree")
+        raise ReleaseScopeError(
+            f"release-scope.json scope is unsupported: {scope!r}"
+        )
     return document
 
 
 def resolve_release_scope(tag: str, root: Path) -> dict[str, object]:
     channel = channel_for_tag(tag)
     document = _read_policy(root.resolve(strict=True))
-    scope = document["scope"]
-    desktop_required = document["desktop_required"]
     return {
         "release_tag": tag,
         "channel": channel,
-        "scope": scope,
-        "desktop_required": desktop_required,
+        "scope": document["scope"],
     }
 
 
@@ -82,8 +79,7 @@ def _write_github_output(path: Path, resolved: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         f"scope={resolved['scope']}\n"
-        f"channel={resolved['channel']}\n"
-        f"desktop_required={str(resolved['desktop_required']).lower()}\n",
+        f"channel={resolved['channel']}\n",
         encoding="utf-8",
     )
 

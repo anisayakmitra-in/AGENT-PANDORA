@@ -6,32 +6,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 
-# Markdown that may mention the desktop without restating the cancellation.
-# Each entry earns its place: a changelog records what happened, vendored and
-# third-party trees are not ours to annotate, and .unlazy/ holds agent working
-# state rather than shipped documentation.
-MARKDOWN_EXEMPT_PREFIXES = (
-    ".unlazy/",
-    "third_party/",
-    "apps/pandora-desktop/public/vendor/",
+# The desktop was deleted, not cancelled-in-place. These are the only places a
+# desktop reference may survive: the changelog records the removal, and the
+# audit ledger is a dated record of what was found before it happened.
+ALLOWED_REFERENCE_PREFIXES = (".unlazy/pandora-audit/",)
+ALLOWED_REFERENCE_FILES = ("CHANGELOG.md",)
+
+# These files mention the tokens only to assert their absence. Each one is a
+# guard against the product coming back, not a description of it.
+GUARD_FILES = (
+    # Asserts the tree is absent and no pipeline job exists.
+    "scripts/test_cli_only_workflow.py",
+    # Asserts the evidence index carries no desktop artifact or requirement.
+    "scripts/test_release_evidence.py",
+    # Asserts the scope policy has no desktop_required key.
+    "scripts/test_release_scope.py",
 )
-MARKDOWN_EXEMPT_FILES = ("CHANGELOG.md",)
-MARKDOWN_SKIP_DIRS = {"node_modules", "target", "dist", "build", "test-results"}
-
-DESKTOP_MENTION = re.compile(r"\bdesktop\b|\btauri\b", re.IGNORECASE)
-CANCELLATION_MARKER = re.compile(
-    r"\bcancel(?:led|led)?\b|\bretained\b|\binactive\b|\bhistorical\b|\bretired\b",
-    re.IGNORECASE,
-)
-
-
-def tracked_markdown() -> list[Path]:
-    found: list[Path] = []
-    for path in ROOT.rglob("*.md"):
-        if any(part in MARKDOWN_SKIP_DIRS for part in path.parts):
-            continue
-        found.append(path.relative_to(ROOT).as_posix())
-    return sorted(found)
 
 
 def workflow_text() -> str:
@@ -47,119 +37,83 @@ def job(workflow: str, name: str) -> str:
     return workflow[start.start() : end]
 
 
-class CliOnlyWorkflowTests(unittest.TestCase):
-    def test_verify_resolves_and_exposes_source_bound_scope(self) -> None:
-        verify = job(workflow_text(), "verify")
+def tracked_markdown() -> list[str]:
+    found: list[str] = []
+    for path in ROOT.rglob("*.md"):
+        if any(part in MARKDOWN_SKIP_DIRS for part in path.parts):
+            continue
+        found.append(path.relative_to(ROOT).as_posix())
+    return sorted(found)
 
-        self.assertIn("outputs:", verify)
+
+def is_allowed(relative: str) -> bool:
+    return (
+        relative in ALLOWED_REFERENCE_FILES
+        or relative in GUARD_FILES
+        or relative.startswith(ALLOWED_REFERENCE_PREFIXES)
+    )
+
+
+class CliOnlyWorkflowTests(unittest.TestCase):
+    """The release workflow is CLI-only, with no desktop path left to enable."""
+
+    def test_verify_exposes_only_the_cli_scope(self) -> None:
+        workflow = workflow_text()
+        verify = job(workflow, "verify")
+
         self.assertIn("scope: ${{ steps.release-scope.outputs.scope }}", verify)
         self.assertIn("channel: ${{ steps.release-scope.outputs.channel }}", verify)
-        self.assertIn(
-            "desktop_required: ${{ steps.release-scope.outputs.desktop_required }}",
-            verify,
-        )
-        self.assertIn("id: release-scope", verify)
-        self.assertIn(
-            'python scripts/release_scope.py "$GITHUB_REF_NAME" --github-output "$GITHUB_OUTPUT"',
-            verify,
-        )
+        # The second scope is gone, so nothing can ask for it.
+        self.assertNotIn("desktop_required", verify)
 
-    def test_cli_only_scope_skips_desktop_build_but_publishes_native_assets(self) -> None:
+    def test_release_gate_asserts_a_single_cli_only_boundary(self) -> None:
         workflow = workflow_text()
-        desktop = job(workflow, "build-desktop")
+        gate = job(workflow, "release-gate")
+
+        self.assertIn('test "${{ needs.verify.outputs.scope }}" = "cli-only"', gate)
+        self.assertNotIn("desktop_required", gate)
+
+    def test_publish_has_no_desktop_dependency_or_step(self) -> None:
+        workflow = workflow_text()
         publish = job(workflow, "publish")
 
-        self.assertIn(
-            "if: needs.verify.outputs.desktop_required == 'true'", desktop
-        )
-        self.assertIn("needs: [verify, release-gate, stage-native, build-desktop]", publish)
-        self.assertIn("!cancelled()", publish)
-        self.assertNotIn("always()", publish)
-        self.assertIn("needs.verify.result == 'success'", publish)
-        self.assertIn("needs.release-gate.result == 'success'", publish)
-        self.assertIn("needs.stage-native.result == 'success'", publish)
-        self.assertIn("needs.build-desktop.result == 'success'", publish)
-        self.assertIn(
-            "needs.build-desktop.result == 'skipped'",
-            publish,
-        )
-        self.assertIn(
-            "needs.verify.outputs.scope == 'cli-only'",
-            publish,
-        )
-        self.assertIn(
-            "needs.verify.outputs.desktop_required == 'false'",
-            publish,
-        )
-        self.assertIn(
-            "if: needs.verify.outputs.desktop_required == 'true'",
-            publish[publish.index("- name: Download unsigned desktop artifacts") :],
-        )
-        self.assertIn(
-            'release_evidence.py "$GITHUB_REF_NAME" --dist dist --scope "${{ needs.verify.outputs.scope }}"',
-            publish,
-        )
+        self.assertIn("needs: [verify, release-gate, stage-native]", publish)
+        self.assertNotIn("build-desktop", publish)
+        self.assertNotIn("desktop-unsigned", publish)
+        self.assertNotIn("dist/desktop-", publish)
+        self.assertNotIn("desktop_required", publish)
 
-    def test_full_scope_requires_desktop_attestation(self) -> None:
-        publish = job(workflow_text(), "publish")
-        desktop_download = publish.index("- name: Download unsigned desktop artifacts")
-        native_attest = publish.index("- name: Attest native artifacts")
-        desktop_attest = publish.index("- name: Attest desktop artifacts")
-        evidence = publish.index("- name: Generate release evidence index")
+    def test_no_desktop_job_exists_in_any_workflow(self) -> None:
+        """A job that could still build a deleted desktop would only skip."""
+        for path in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+            text = path.read_text(encoding="utf-8")
+            found = re.findall(
+                r"^  (build-desktop|smoke-desktop|stable-desktop-rollback):",
+                text,
+                re.MULTILINE,
+            )
+            with self.subTest(workflow=path.name):
+                self.assertEqual(found, [])
 
-        self.assertLess(desktop_download, native_attest)
-        self.assertLess(native_attest, desktop_attest)
-        self.assertLess(desktop_attest, evidence)
-        desktop_step = publish[desktop_attest:evidence]
-        self.assertIn(
-            "if: needs.verify.outputs.desktop_required == 'true'", desktop_step
-        )
-
-    def test_desktop_smoke_and_rollback_jobs_only_run_for_full_scope(self) -> None:
+    def test_stable_rollback_evidence_depends_only_on_surviving_jobs(self) -> None:
         workflow = workflow_text()
-        smoke = job(workflow, "smoke-desktop")
-        rollback = job(workflow, "stable-desktop-rollback")
         evidence = job(workflow, "stable-rollback-evidence")
 
-        for block in (smoke, rollback, evidence):
-            self.assertRegex(block, r"(?m)^    needs:.*\bverify\b")
-            self.assertIn("needs.verify.outputs.desktop_required == 'true'", block)
-        self.assertIn("needs: [publish, verify]", smoke)
-        self.assertIn("needs: [publish, verify]", rollback)
-        self.assertIn(
-            "needs: [verify, smoke-install, smoke-desktop, stable-desktop-rollback]",
-            evidence,
+        self.assertIn("needs: [verify, smoke-install]", evidence)
+        self.assertNotIn("smoke-desktop", evidence)
+        self.assertNotIn("stable-desktop-rollback", evidence)
+        self.assertNotIn("desktop_required", evidence)
+
+    def test_the_desktop_tree_is_absent(self) -> None:
+        self.assertFalse((ROOT / "apps" / "pandora-desktop").exists())
+        self.assertFalse((ROOT / "scripts" / "accessibility_evidence.py").exists())
+        self.assertFalse(
+            (ROOT / ".github" / "workflows" / "native-accessibility-evidence.yml").exists()
         )
 
-    def test_documentation_describes_source_bound_scope_without_desktop_overclaim(self) -> None:
-        production = (ROOT / "docs" / "PRODUCTION.md").read_text(encoding="utf-8")
-        releases = (ROOT / "RELEASES.md").read_text(encoding="utf-8")
-
-        for document in (production, releases):
-            self.assertIn("release-scope.json", document)
-            self.assertIn("CLI-only", document)
-            self.assertIn("full", document)
-        self.assertIn("does not claim desktop parity", releases)
-        self.assertIn("must not contain desktop artifacts", production)
-
-    def test_every_markdown_mentioning_the_desktop_states_that_it_is_cancelled(self) -> None:
-        unmarked: list[str] = []
-        for relative in tracked_markdown():
-            if relative in MARKDOWN_EXEMPT_FILES:
-                continue
-            if relative.startswith(MARKDOWN_EXEMPT_PREFIXES):
-                continue
-            text = (ROOT / relative).read_text(encoding="utf-8")
-            if not DESKTOP_MENTION.search(text):
-                continue
-            if not CANCELLATION_MARKER.search(text):
-                unmarked.append(relative)
-        self.assertEqual(
-            unmarked,
-            [],
-            "markdown mentions the desktop without stating it is cancelled: "
-            + ", ".join(unmarked),
-        )
+    # The tree-wide scan and the vendored-patch check are added in the commit
+    # that deletes the remaining documentation and the glib patch. Until then
+    # they would fail on files this commit has not yet removed.
 
 
 if __name__ == "__main__":

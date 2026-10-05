@@ -112,39 +112,22 @@ Older notes.
             self.assertNotIn(hook, scripts)
         self.assertEqual(package["bin"]["pandora"], "bin/pandora.js")
 
-    def test_desktop_is_cancelled_and_absent_from_the_cli_pipeline(self) -> None:
-        """Permanent cancellation, asserted rather than left to a variable.
+    def test_the_desktop_tree_is_deleted_and_cannot_return_through_a_variable(self) -> None:
+        """The desktop was deleted, not cancelled behind a flag.
 
-        The desktop job used to sit in CI behind `vars.PANDORA_DESKTOP_CI`, which
-        nothing ever set. That read as though reactivation were a variable flip,
-        which is not true: reviving desktop packaging needs its own build, signing,
-        and evidence work. With the cancellation made permanent the job is
-        removed, so the CLI pipeline cannot grow a desktop context by accident and
-        no one can set a variable to re-enable it.
+        It used to sit in CI behind `vars.PANDORA_DESKTOP_CI`, which nothing ever
+        set, so cancellation read as though reactivation were a variable flip.
+        Deleting the tree removes that ambiguity: there is nothing to flip.
         """
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
             encoding="utf-8"
         )
-        self.assertNotIn(
-            "  desktop:",
-            workflow,
-            "the cancelled desktop job must not remain in the CLI workflow",
-        )
-        self.assertNotIn(
-            "PANDORA_DESKTOP_CI",
-            workflow,
-            "the desktop reactivation variable must not remain in the CLI workflow",
-        )
-        self.assertNotIn(
-            "apps/pandora-desktop",
-            workflow,
-            "the CLI workflow must not reference the cancelled desktop tree",
-        )
+        self.assertNotIn("  desktop:", workflow)
+        self.assertNotIn("PANDORA_DESKTOP_CI", workflow)
         self.assertNotIn("needs: desktop", workflow)
-        # The source itself is retained for downstream reuse, so the tree stays.
-        self.assertTrue(
-            (ROOT / "apps" / "pandora-desktop").is_dir(),
-            "the cancelled desktop source is retained, not deleted",
+        self.assertFalse(
+            (ROOT / "apps" / "pandora-desktop").exists(),
+            "the desktop tree must be deleted, not retained",
         )
 
     def test_agent_pipeline_binds_promotion_to_tracked_artifact_and_evidence_bytes(self) -> None:
@@ -356,11 +339,11 @@ Older notes.
         call_sites = workflow.count("verify_release_downloads.py")
         required_sites = workflow.count("--require-signature")
         identities = workflow.count("--certificate-identity")
-        self.assertGreaterEqual(call_sites, 4)
         # smoke-install exercises the installer path rather than this script, so
-        # the script call sites are the desktop smoke and rollback ones.
-        self.assertGreaterEqual(required_sites, 4)
-        self.assertGreaterEqual(identities, 4)
+        # the script call sites are the publish-time and rollback ones.
+        self.assertGreaterEqual(call_sites, 1)
+        self.assertGreaterEqual(required_sites, 1)
+        self.assertGreaterEqual(identities, required_sites)
 
         # Verification pins an exact identity. A regexp would let any tag, or
         # any other workflow in the repo, satisfy the check.
@@ -382,13 +365,10 @@ Older notes.
         # Smoke jobs need cosign available, or the verification would always fail.
         smoke_install = workflow[
             workflow.index("  smoke-install:") : workflow.index(
-                "\n  smoke-desktop:"
+                "\n  stable-rollback-evidence:"
             )
         ]
-        smoke_desktop = workflow[workflow.index("  smoke-desktop:") :]
-        for job in (smoke_install, smoke_desktop):
-            with self.subTest(job=job.strip().splitlines()[0]):
-                self.assertIn("sigstore/cosign-installer@", job)
+        self.assertIn("sigstore/cosign-installer@", smoke_install)
 
     def test_release_candidate_and_stable_still_require_human_approval(self) -> None:
         """Removing signing must not remove the human gate.
@@ -411,9 +391,6 @@ Older notes.
 
         self.assertIn("needs: verify", gate)
         self.assertIn('test "${{ needs.verify.outputs.scope }}" = "cli-only"', gate)
-        self.assertIn(
-            'test "${{ needs.verify.outputs.desktop_required }}" = "false"', gate
-        )
         self.assertNotIn("environment:", gate)
         self.assertIn("Enforce release approval", approve)
         self.assertIn("environment: release-publication", approve)
@@ -422,12 +399,10 @@ Older notes.
         self.assertIn('if [[ "$version" == *-rc.* ]]', approve)
         self.assertIn("needs: [verify, build, release-gate]", approve)
         self.assertIn(
-            "needs: [verify, release-gate, stage-native, build-desktop]", publish
+            "needs: [verify, release-gate, stage-native]", publish
         )
         self.assertNotIn("Block RC and stable", publish)
         self.assertIn("environment: release-publication", workflow)
-        self.assertIn("Validate required native accessibility evidence", workflow)
-        self.assertIn("scripts/accessibility_evidence.py", workflow)
 
         # Every channel stages the same unsigned-by-OS artifacts now.
         stage = workflow[stage_start:publish_start]
@@ -506,50 +481,29 @@ Older notes.
         self.assertIn("checksums.txt", workflow)
         self.assertIn("sentinel.txt", workflow)
 
-    def test_release_workflow_smokes_published_desktop_packages(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertIn("smoke-desktop:", workflow)
-        self.assertIn(
-            "Exercise published desktop package on ${{ matrix.platform }}", workflow
-        )
-        for bundle in (
-            "desktop-linux-x64-*.deb",
-            "desktop-macos-x64-*.dmg",
-            "desktop-macos-arm64-*.dmg",
-            "desktop-windows-x64-*.msi",
-        ):
-            self.assertIn(bundle, workflow)
-        self.assertIn("gh release download", workflow)
-        self.assertIn("verify_release_downloads.py", workflow)
-        self.assertIn("PANDORA_DESKTOP_SOURCE_SIDECAR", workflow)
-        self.assertIn("PANDORA_DESKTOP_BUNDLE_ROOT", workflow)
-        self.assertIn("PANDORA_DESKTOP_SYSTEM_INSTALL_LIFECYCLE", workflow)
-        self.assertIn("npm run verify:bundle-lifecycle", workflow)
-        # Published desktop artifacts are checksum-verified but never OS-signed,
-        # so the smoke job records that posture instead of asserting a signature.
-        self.assertIn("platform-signature-verification.json", workflow)
-        self.assertNotIn("Get-AuthenticodeSignature", workflow)
-        self.assertNotIn('codesign --verify --strict --verbose=2 "$native"', workflow)
-        self.assertNotIn("xcrun stapler validate", workflow)
-        self.assertNotIn("spctl --assess --type execute", workflow)
-
     def test_stable_release_records_honest_post_publication_rollback_state(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
             encoding="utf-8"
         )
 
+        # stable-rollback-evidence survives the desktop removal, reduced to the
+        # CLI drill that still runs.
         self.assertIn("stable-rollback-evidence:", workflow)
-        self.assertIn("stable-desktop-rollback:", workflow)
-        self.assertIn(
-            "needs: [verify, smoke-install, smoke-desktop, stable-desktop-rollback]",
-            workflow,
-        )
+        self.assertIn("needs: [verify, smoke-install]", workflow)
         self.assertIn("scripts/stable_rollback_evidence.py", workflow)
-        self.assertIn("--stable-only", workflow)
-        self.assertIn("PANDORA_DESKTOP_PREDECESSOR_SIDECAR:", workflow)
-        self.assertIn("PANDORA_DESKTOP_CURRENT_SIDECAR:", workflow)
-        self.assertIn("npm run verify:bundle-upgrade-lifecycle", workflow)
         self.assertIn("stable-rollback-${{ github.ref_name }}", workflow)
+
+        # The drill it records must be one the release actually performs.
+        smoke_install = workflow[
+            workflow.index("  smoke-install:") : workflow.index(
+                "\n  stable-rollback-evidence:"
+            )
+        ]
+        for command in (
+            "update --artifact",
+            "update --rollback",
+            "backup create",
+            "backup restore",
+            "uninstall --yes",
+        ):
+            self.assertIn(command, smoke_install)

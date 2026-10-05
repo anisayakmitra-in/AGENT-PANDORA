@@ -32,9 +32,7 @@ GITHUB_OWNED_OWNERS = frozenset({"actions", "github"})
 
 # The required status checks on main, mirroring branch protection. `CI gate`
 # stands in for the whole `verify` matrix, so no required name embeds a runner
-# label. The desktop job is deliberately absent: it is gated behind
-# PANDORA_DESKTOP_CI and is skipped, so requiring it would gate merges on a
-# variable nobody sets.
+# label.
 REQUIRED_CHECK_CONTEXTS = (
     "CI gate",
     "Dependency and repository audit",
@@ -48,8 +46,7 @@ REQUIRED_CHECK_CONTEXTS = (
 JOBS_REQUIRING_TIMEOUT = {
     "ci.yml": (
         ("verify", "Verify (${{ matrix.os }})"),
-        # The cancelled desktop job is deliberately absent from ci.yml. The
-        # matrix-free `gate` job aggregates the verify matrix for branch
+        # The matrix-free `gate` job aggregates the verify matrix for branch
         # protection and declares its own timeout, asserted separately below.
     ),
     "security.yml": (("audit", "Dependency and repository audit"),),
@@ -118,13 +115,10 @@ class WorkflowHardening(unittest.TestCase):
     def test_release_jobs_that_can_run_declare_a_timeout(self) -> None:
         text = workflow("release.yml")
         keys = re.findall(r"^  ([A-Za-z0-9_-]+):\s*$", text, re.MULTILINE)[1:]
-        unreachable = {
-            "build-desktop",
-            "smoke-desktop",
-            "stable-desktop-rollback",
-            "stable-rollback-evidence",
-        }
-        reachable = [key for key in keys if key not in unreachable]
+        # stable-rollback-evidence runs only for stable tags, so its coverage is
+        # asserted separately rather than by every-push reachability.
+        stable_only = {"stable-rollback-evidence"}
+        reachable = [key for key in keys if key not in stable_only]
         self.assertGreaterEqual(len(reachable), 7, "expected the release spine to be present")
         for key in reachable:
             with self.subTest(job=key):
@@ -249,9 +243,8 @@ class WorkflowHardening(unittest.TestCase):
         configuration is asserted rather than assumed.
 
         The set is the four stable job names. The `verify` matrix is represented
-        by `CI gate`, and the intentionally skipped desktop job is excluded on
-        purpose: requiring a job that is gated off would make merges depend on a
-        variable nobody sets.
+        by `CI gate`, so requiring the matrix directly would pin three context
+        names that embed runner labels.
         """
         token = self._token()
         if not token:

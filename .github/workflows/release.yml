@@ -49,26 +49,6 @@ jobs:
         id: release-scope
         run: python scripts/release_scope.py "$GITHUB_REF_NAME" --github-output "$GITHUB_OUTPUT"
 
-      - name: Validate required native accessibility evidence
-        if: contains(github.ref_name, '-rc.') || !contains(github.ref_name, '-')
-        run: >-
-          python scripts/accessibility_evidence.py
-          --root "$GITHUB_WORKSPACE"
-          --directory evidence/native-accessibility
-          --commit "$GITHUB_SHA"
-          --output "$RUNNER_TEMP/native-accessibility-index.json"
-
-      - name: Retain release-bound native accessibility evidence
-        if: contains(github.ref_name, '-rc.') || !contains(github.ref_name, '-')
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: release-native-accessibility-${{ github.ref_name }}
-          path: |
-            evidence/native-accessibility
-            ${{ runner.temp }}/native-accessibility-index.json
-          if-no-files-found: error
-          retention-days: 90
-
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -523,6 +503,16 @@ jobs:
             --repo anisayakmitra-in/AGENT-PANDORA \
             --format 'json' > "$RUNNER_TEMP/attestation-${{ matrix.artifact }}.json"
 
+          # Authenticate the manifest and the published binary explicitly, in
+          # addition to the installer. The installer enforces this itself, so a
+          # signing regression fails twice rather than once.
+          python "$GITHUB_WORKSPACE/scripts/verify_release_downloads.py" \
+            --manifest "$checksums" \
+            --certificate-identity "$PANDORA_COSIGN_IDENTITY" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --require-signature \
+            "$published"
+
           assert_version() {
             path="$1"
             tag="$2"
@@ -601,6 +591,21 @@ jobs:
           Invoke-WebRequest `
             -Uri "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/$env:GITHUB_REF_NAME/checksums.txt" `
             -OutFile $checksums
+          $published = Join-Path $env:RUNNER_TEMP "published-${{ matrix.artifact }}"
+          Invoke-WebRequest `
+            -Uri "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/$env:GITHUB_REF_NAME/${{ matrix.artifact }}" `
+            -OutFile $published
+          gh attestation verify $published `
+            --repo anisayakmitra-in/AGENT-PANDORA `
+            --format 'json' | Out-File -LiteralPath (Join-Path $env:RUNNER_TEMP "attestation-${{ matrix.artifact }}.json")
+          # Authenticate the manifest and the published binary explicitly, in
+          # addition to the installer.
+          python scripts/verify_release_downloads.py `
+            --manifest $checksums `
+            --certificate-identity $env:PANDORA_COSIGN_IDENTITY `
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com `
+            --require-signature `
+            $published
 
           function Assert-Version([string]$Path, [string]$Tag) {
             $expected = "pandora " + $Tag.Substring(1)

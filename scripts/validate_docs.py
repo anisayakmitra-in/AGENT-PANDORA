@@ -44,13 +44,7 @@ def tracked_markdown(root: Path) -> list[Path]:
         capture_output=True,
     )
     paths = [Path(path) for path in result.stdout.decode("utf-8").split("\0") if path]
-    return [path for path in paths if is_project_documentation(path)]
-
-
-def is_project_documentation(relative: Path) -> bool:
-    if relative.parts and relative.parts[0] == "third_party":
-        return relative.name == "PANDORA-PATCH.md"
-    return True
+    return list(paths)
 
 
 def main() -> int:

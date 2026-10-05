@@ -15,7 +15,7 @@ from scripts.release_evidence import (
 
 class ReleaseEvidenceTests(unittest.TestCase):
     def _write_dist(
-        self, root: Path, *, include_desktop: bool = True
+        self, root: Path, *, include_bundle: bool = True
     ) -> tuple[Path, dict[str, bytes]]:
         dist = root / "dist"
         dist.mkdir()
@@ -27,8 +27,8 @@ class ReleaseEvidenceTests(unittest.TestCase):
             "pandora-cargo-metadata.json": b"{}\n",
             "pandora.spdx.json": b"{}\n",
         }
-        if include_desktop:
-            artifacts["desktop-linux-x64-pandora.AppImage"] = b"desktop bundle\n"
+        if include_bundle:
+            artifacts["pandora-aarch64-apple-darwin"] = b"second native cli\n"
         for name, payload in artifacts.items():
             (dist / name).write_bytes(payload)
         checksums = "\n".join(
@@ -68,48 +68,40 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 set(artifacts),
             )
 
-    def test_cli_only_beta_allows_native_only_evidence(self) -> None:
+    def test_a_single_native_artifact_is_sufficient_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             dist, artifacts = self._write_dist(
-                Path(temporary), include_desktop=False
+                Path(temporary), include_bundle=False
             )
 
-            evidence = build_release_evidence(
-                "v2.0.0-beta.7", dist, scope="cli-only"
-            )
+            evidence = build_release_evidence("v2.0.0-beta.7", dist)
 
             self.assertEqual(evidence["release_scope"]["name"], "cli-only")
-            self.assertFalse(evidence["release_scope"]["desktop_required"])
+            self.assertNotIn("desktop_required", evidence["release_scope"])
             self.assertEqual(
                 {item["path"] for item in evidence["artifacts"]},
                 set(artifacts),
             )
-            self.assertFalse(
-                any(item["path"].startswith("desktop-") for item in evidence["artifacts"])
-            )
 
-    def test_full_scope_requires_desktop_evidence(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            dist, _ = self._write_dist(
-                Path(temporary), include_desktop=False
-            )
-
-            with self.assertRaisesRegex(ReleaseEvidenceError, "no desktop artifact"):
-                build_release_evidence("v2.0.0-beta.7", dist, scope="full")
-
-    def test_cli_only_scope_rejects_desktop_artifacts(self) -> None:
+    def test_evidence_carries_only_cli_artifacts(self) -> None:
+        """A deleted product must not reappear in a release's evidence index."""
         with tempfile.TemporaryDirectory() as temporary:
             dist, _ = self._write_dist(Path(temporary))
 
-            with self.assertRaisesRegex(ReleaseEvidenceError, "desktop artifacts"):
-                build_release_evidence(
-                    "v2.0.0-beta.7", dist, scope="cli-only"
+            evidence = build_release_evidence("v2.0.0-beta.7", dist)
+
+            self.assertFalse(
+                any(
+                    str(item["path"]).startswith("desktop-")
+                    for item in evidence["artifacts"]
                 )
+            )
+            self.assertNotIn("desktop_required", evidence["release_scope"])
 
     def test_rejects_an_artifact_changed_after_checksum_generation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             dist, _ = self._write_dist(Path(temporary))
-            (dist / "desktop-linux-x64-pandora.AppImage").write_bytes(b"tampered\n")
+            (dist / "pandora-aarch64-apple-darwin").write_bytes(b"tampered\n")
 
             with self.assertRaisesRegex(ReleaseEvidenceError, "checksum mismatch"):
                 build_release_evidence("v2.0.0-beta.7", dist)
