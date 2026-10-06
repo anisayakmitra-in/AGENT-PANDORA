@@ -535,7 +535,6 @@ mod tests {
     /// then fail for a reason that has nothing to do with the allowlist.
     const SHELL_SYNTHESIZED: [&str; 3] = ["COMSPEC", "PATHEXT", "PROMPT"];
 
-
     /// A parent environment that is defined everywhere, including on a stock
     /// Windows host where HOME is not set. Lets the forwarding rule be tested
     /// in full rather than only for the variables the machine happens to have.
@@ -548,10 +547,7 @@ mod tests {
     /// so the sentinel passed there and failed on Linux.
     fn synthetic_parent() -> BTreeMap<String, String> {
         let mut parent = BTreeMap::new();
-        parent.insert(
-            "PATH".to_owned(),
-            std::env::var("PATH").unwrap_or_default(),
-        );
+        parent.insert("PATH".to_owned(), std::env::var("PATH").unwrap_or_default());
         parent.insert("HOME".to_owned(), "/synthetic/home".to_owned());
         parent.insert("USERPROFILE".to_owned(), "/synthetic/profile".to_owned());
         parent.insert("SystemRoot".to_owned(), "/synthetic/windows".to_owned());
