@@ -522,7 +522,9 @@ fn receipt_for(permit: &ConsumedPermit, now: Timestamp, outcome: EffectOutcome) 
 
 #[cfg(test)]
 mod tests {
-    use super::{configure_git_environment, configure_git_environment_from, ALLOWED_CHILD_VARIABLES};
+    use super::{
+        ALLOWED_CHILD_VARIABLES, configure_git_environment, configure_git_environment_from,
+    };
     use std::collections::BTreeMap;
     use std::process::Command;
 
