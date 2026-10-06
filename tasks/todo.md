@@ -5,7 +5,7 @@
   and the bundled-SQLite C-toolchain prerequisite.
 - [x] W2: Add explicit local `PANDORA_BIN` launcher path, TypeScript-owned launcher
   helper, generated-output drift checks, and no-install-hook tests.
-- [x] W3: Deactivate desktop from active product/release/CI gates without
+- [x] W3: Deactivate the desktop from active product/release/CI gates without
   deleting adapter source.
 - [x] W3: Update README, roadmap, platform, production, release, and adapter
   documentation to CLI-first status.
@@ -20,14 +20,14 @@
   and `npm run build`, the generated-`lib` drift check, the npm launcher and
   TypeScript client tests, the Python script suite, `validate_repo.py`, and
   `validate_docs.py` all pass. CI, Security, Parser fuzz smoke, and CodeQL are
-  green on the same commit, and the desktop job stays skipped because
-  `PANDORA_DESKTOP_CI` is unset. No tag, release, signing, or publication
+  green on the same commit, and the desktop job stayed skipped because
+  `PANDORA_DESKTOP_CI` was unset. No tag, release, signing, or publication
   occurred.
 
 ## Checkpoints
 
 - [x] W1/W2: CLI install/build and npm launcher tests pass.
-- [x] W3: No active CLI release or required CI job depends on desktop packaging.
+- [x] W3: No active CLI release or required CI job depended on desktop packaging.
 - [x] W4: Help/completions match the CLI command registry.
 - [x] W5: All scoped gates pass; no desktop build, signing, tag, or publication
   occurs.
@@ -41,8 +41,7 @@
   reconnecting client may renumber it and silently defeat replay protection on
   `approval.resolve`, the `*.resume` methods, and the evolution mutations. Scope
   binding is unchanged, so a client-chosen key cannot cross a trust boundary.
-  This breaks clients that do not send the key. Desktop product work is
-  cancelled, so the only affected caller is the retained desktop TypeScript
-  client, which would need the key before it could drive the service again; the
-  CLI does not use this transport. See `docs/CLI.md` for the contract, the
-  bounds, and the breaking-change note.
+  This breaks clients that do not send the key. The only affected caller was the
+  desktop TypeScript client, which was deleted on 2026-10-05; the CLI does not
+  use this transport. See `docs/CLI.md` for the contract, the bounds, and the
+  breaking-change note.

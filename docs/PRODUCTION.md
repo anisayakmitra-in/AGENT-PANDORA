@@ -10,8 +10,8 @@ orchestration, evaluation primitives, and memory synthesis now exist. Their
 remaining operating and release work is tracked in
 [the audited roadmap](ROADMAP.md).
 
-Desktop product work is cancelled. The retained Tauri adapter stays in the tree
-and stays out of every build, signing, and publication gate.
+The desktop product was deleted on 2026-10-05 and left no build, signing, or
+publication gate behind. The CLI is the only shipped surface.
 
 ## Identity and tenant isolation
 
@@ -25,7 +25,7 @@ written to separate private files.
     pandora auth list
     pandora auth revoke <identity-id> --yes
 
-Every desktop RPC carries an Ed25519 device proof over the bearer credential
+Every loopback RPC carries an Ed25519 device proof over the bearer credential
 digest, timestamp, nonce, HTTP method, and RPC path. The service rejects stale
 proofs, wrong-device proofs, revoked identities, and replayed nonces. Runtime
 reads and mutations use the authenticated identity's tenant and workspace
@@ -59,7 +59,7 @@ XChaCha20-Poly1305 with scope-bound authenticated data.
 
 Use the platform's credential manager or service manager to inject
 PANDORA_MASTER_KEY. Do not place it in the repository, command history,
-configuration, desktop UI, telemetry, or a backup beside its archive.
+configuration, any client surface, telemetry, or a backup beside its archive.
 
 ## Recovery
 
@@ -203,20 +203,19 @@ detached Ed25519 signature.
 
 The tracked `release-scope.json` file is the release policy bound to the exact
 tagged source commit. The workflow validates it before any build or publication
-job and exposes only the validated `scope`, `channel`, and
-`desktop_required` values to later jobs. It never infers a broader scope from a
-release tag.
+job and exposes only the validated `scope` and `channel` values to later jobs.
+It never infers a scope from a release tag.
 
-- `CLI-only` is the only active scope, valid for alpha and beta tags. It
-  requires native CLI artifacts and the full evidence set. CLI-only evidence
-  must not contain desktop artifacts and does not claim desktop parity.
-- `full` is retired because desktop work is cancelled. Re-enabling it is an
-  explicit source change and is not a supported path.
+`cli-only` is the only scope. It requires native CLI artifacts and the full
+evidence set. There is no second scope: the desktop product was deleted on
+2026-10-05, so a scope that could select it had nothing to select. The release
+gate asserts `cli-only` explicitly rather than assuming it, and the policy
+rejects any other value.
 
-The checked-in policy currently selects `cli-only` for the next prerelease line.
-Changing the file is an explicit source change, not a workflow override. Because
-`full` is retired, release-candidate and stable stay fail-closed and cannot be
-published from this repository.
+The checked-in policy selects `cli-only` for every release channel. Changing the
+file is an explicit source change, not a workflow override. Release-candidate
+and stable are no longer blocked by a retired scope; they are gated by explicit
+human approval through the protected `release-publication` environment.
 
 The `Agent artifact pipeline` workflow validates every tracked SDK package,
 runs a deterministic evaluation gate, proves the scheduled canary stops before
@@ -260,18 +259,14 @@ the retained JSON records the exact request binding and requester.
 ## Release boundary
 
 All release channels use the source-bound `cli-only` scope selected by
-`release-scope.json`. A `cli-only` alpha, beta, release-candidate, or stable
-tag publishes the verified native CLI, launcher,
-installers, and evidence set without desktop artifacts. A `full` alpha or beta
-may publish unsigned native and desktop packages for testing, and GitHub marks
-both as prereleases. No job in the release workflow receives a platform-signing
-secret, because no channel OS-signs these binaries. A protected
-`approve-release` job handles native CLI release approval for RC and stable;
-it signs nothing. Desktop signing is not part of any supported release channel.
+`release-scope.json`. An alpha, beta, release-candidate, or stable tag publishes
+the verified native CLI, launcher, installers, and evidence set. No job in the
+release workflow receives a platform-signing secret, because no channel
+OS-signs these binaries. A protected `approve-release` job handles release
+approval for RC and stable; it signs nothing.
 
-RC and stable no longer wait for desktop signing. The release gate requires
-`scope=cli-only` and `desktop_required=false`; desktop feature parity remains
-deferred, and no desktop artifact is built or published on any channel.
+The release gate requires `scope=cli-only`. RC and stable are gated by explicit
+human approval, not by any deferred product work.
 
 The published-package signature and notarization checks are not part of the
 CLI-only workflow, and they never were part of any channel's release gate.
@@ -281,44 +276,29 @@ configured or required. Release integrity comes from `checksums.txt`, its
 keyless cosign signature, and GitHub build attestations.
 
 Publication also waits at the protected `release-publication` environment, which
-accepts only `v*` tags and requires a human reviewer. RC and stable source
-verification validates the four strict native accessibility manifests against the
-tag's exact commit before compilation.
+accepts only `v*` tags and requires a human reviewer.
 
 A production release also requires:
 
-- locked formatting, compilation, Clippy, Rust, Python, TypeScript, desktop,
+- locked formatting, compilation, Clippy, Rust, Python, TypeScript,
   integration, and adversarial tests;
 - CodeQL and dependency-audit success;
 - clean-machine install, update, rollback, setup, doctor, and uninstall smoke
   tests on every advertised platform;
-- accepted exact-commit NVDA, VoiceOver, and Orca evidence for every advertised
-  desktop platform;
 - checksums, signature certificate, SBOM, provenance, release notes, recovery
   instructions, and security reporting instructions;
 - verification that no signing key, provider secret, master key, device key, or
   recovery passphrase entered source control or build logs.
 
-Native RC/stable secrets and the currently blocked desktop-signing requirement
-are documented in [the release policy](../RELEASES.md). Values belong only in
-GitHub environment-scoped encrypted secrets and the corresponding platform
-account; no future desktop signing secret may be added to an ordinary build
-job.
+The release approval requirements are documented in [the release policy](../RELEASES.md).
+No release credential is required to publish: there is no certificate, signing
+identity, or notarization account, so no such secret can be leaked by a build job.
 
-After stable publication, a separate job runs only after every published CLI
-and desktop lifecycle matrix succeeds. It records the exact compatible stable
-predecessor. The first `v2.0.0` release remains explicitly
-`pending_first_patch`; only a legitimate `v2.0.1` rollback drill can close the
-stable-to-stable evidence gate.
-
-### Linux desktop dependency patch
-
-Tauri's current Linux webview stack still resolves the archived GTK3 bindings
-and `glib` 0.18.5. The repository carries the reviewed upstream fix for RustSec
-RUSTSEC-2024-0429 as an exact local source override with bound crates.io
-provenance and a validated source digest. Dependency audit therefore evaluates
-the patched source rather than accepting an advisory waiver. Remove the local
-override as soon as Tauri's supported Linux stack moves to `glib` 0.20 or newer.
+After stable publication, a separate job runs only after the published CLI
+lifecycle drill succeeds. It records the exact compatible stable predecessor.
+The first `v2.0.0` release remains explicitly `pending_first_patch`; only a
+legitimate `v2.0.1` rollback drill can close the stable-to-stable evidence
+gate.
 
 ## Optional future: SignPath Foundation for Windows signing
 

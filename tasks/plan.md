@@ -1,5 +1,13 @@
 # Implementation Plan: CLI-First Product Boundary
 
+> **Superseded on 2026-10-05.** This plan was executed non-destructively: it
+> removed the desktop from the active product and release path but deliberately
+> kept its source. The source has since been deleted outright, along with its
+> build jobs, release jobs, vendored patches, and documentation. Several
+> statements below therefore describe work that no longer matches the tree.
+> They are retained as a record of what was decided and why, not as current
+> guidance.
+
 ## Overview
 
 Make the Rust CLI the primary and independently buildable product surface. Keep
@@ -15,14 +23,14 @@ repository no longer claims a desktop product that is being cancelled.
 - CLI workspace/build/install path as the canonical product path.
 - Separation of the npm launcher from the Rust CLI build graph.
 - Removal of desktop from active release/product claims and required CI gates.
-- Preservation of the desktop source as a non-active downstream adapter.
+- Preservation of the desktop source as a non-active downstream adapter. (Superseded: the source was deleted on 2026-10-05.)
 - Documentation, help text, completions, and release-scope wording.
 - Behavior-preserving tests for CLI build, JSON output, and core authority paths.
 
 ### Out of scope
 
-- Deleting `apps/pandora-desktop` or its historical code.
-- Desktop packaging, signing, notarization, publication, or Tauri builds.
+- Deleting the desktop source tree or its historical code. (Performed on 2026-10-05, after this plan closed.)
+- Desktop packaging, signing, notarization, publication, or GUI-webview builds.
 - Changing runtime governance semantics, permissions, effects, approvals, or
   provider behavior.
 - Introducing a new runtime, service API, or idempotency protocol as part of
@@ -35,8 +43,8 @@ repository no longer claims a desktop product that is being cancelled.
 1. The Rust workspace (`crates/pandora-*`) is the product core. The CLI binary
    is the primary interface and may depend only on workspace crates plus
    standard/toolchain prerequisites.
-2. The Tauri app remains source-compatible but is not an active product surface,
-   release asset, or required CI gate while cancellation is in effect.
+2. The desktop app remained source-compatible but was not an active product surface,
+   release asset, or required CI gate while cancellation was in effect.
 3. The npm package is only a typed launcher. It never builds, signs, or executes
    the native CLI during install; `PANDORA_BIN` is an explicit local override.
 4. Documentation must distinguish shipped CLI capability from retained
@@ -60,7 +68,7 @@ repository no longer claims a desktop product that is being cancelled.
 - Dependencies: W0.
 - Preserve: all CLI behavior and dependency versions.
 - Done: `cargo build/test -p pandora-cli` and `cargo install --path` proof are
-  documented and checked without Node/Tauri.
+  documented and checked without Node.
 
 ### W2 — npm launcher boundary
 
@@ -79,7 +87,7 @@ repository no longer claims a desktop product that is being cancelled.
   `docs/PLATFORMS.md`, `README.md`, `RELEASES.md`, and any desktop-specific
   release documentation.
 - Dependencies: W0, W1, W2.
-- Preserve: `apps/pandora-desktop` source and historical tags.
+- Preserve: the desktop source and historical tags. (Superseded.)
 - Done: active docs and required gates describe CLI-only delivery; desktop jobs
   no longer block or publish a CLI release; no desktop build is run by the CLI
   verification path.

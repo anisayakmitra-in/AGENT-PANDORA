@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Removed the desktop product on 2026-10-05. The Tauri adapter tree, its four
+  release jobs, the `security.yml` dependency audit for its lockfile, the
+  accessibility evidence script and workflow, the vendored `glib 0.18.5` backport
+  and its repository validation, the desktop documentation, and the
+  `desktop_required` release-scope field are all gone. The release scope has one
+  value, `cli-only`, and the release gate asserts it explicitly. The CLI is the
+  only shipped surface; there is no flag or variable that restores a desktop.
+
 - Added three read-only CLI read surfaces that previously existed only in the
   service or not at all. `pandora runtime engines list|inspect <id>` exposes the
   engine inventory through a new `RuntimeService::engine_inventory`, so the CLI

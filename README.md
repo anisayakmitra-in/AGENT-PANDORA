@@ -1,9 +1,8 @@
 # Pandora
 
 Pandora is a local-first agent platform whose primary interface is the Rust
-`pandora` CLI. A Tauri adapter stays in the tree, inactive, for downstream
-reuse. The CLI, runtime, and authenticated loopback service share one governed
-effect path:
+`pandora` CLI. The CLI, runtime, and authenticated loopback service share one
+governed effect path:
 
 ```text
 ExecutionController → Parliament → ReferenceMonitor → executor → receipt
@@ -25,9 +24,9 @@ observation surface.
 ## Status
 
 The next prerelease identity is `2.0.0-beta.8`. The repository ships one local
-product surface, the Rust CLI. `apps/pandora-desktop` is retained as an
-inactive downstream adapter: no desktop build, package, signature, or
-publication enters the CLI release or CI gates. Any retained client reaches the
+product surface, the Rust CLI. The desktop product was deleted on 2026-10-05:
+no desktop source, build, package, signature, or publication remains, and there
+is no variable that can bring it back. Any client reaches the
 runtime through the authenticated loopback service, where permits stay with the
 ReferenceMonitor and effects stay with the executor.
 
@@ -151,13 +150,12 @@ pandora update --release v2.0.0-beta.8 --target ~/.pandora/bin/pandora
 pandora update --rollback --target ~/.pandora/bin/pandora
 ```
 
-### Retained desktop adapter
+### Desktop product removed
 
-Desktop product work is cancelled. `apps/pandora-desktop` stays in the tree for
-downstream reuse and audit history, and nothing in it runs in this repository's
-release or CI path. Use the CLI for shipped functionality. The
-[adapter notes](apps/pandora-desktop/README.md) remain for anyone who
-deliberately reactivates it.
+The desktop was deleted on 2026-10-05: source, vendored patches, build jobs,
+release jobs, accessibility evidence, and documentation. There is no adapter to
+retain and no flag that re-enables it. Use the CLI for shipped functionality.
+The changelog records what was removed.
 
 ## Build
 

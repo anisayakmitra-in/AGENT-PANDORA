@@ -1,8 +1,8 @@
 # Release policy
 
-Pandora ships as a CLI. Desktop product work is cancelled, so the retained
-Tauri adapter has no build, signing, publication, or support path, and this
-document treats every desktop reference as historical context.
+Pandora ships as a CLI. The desktop product was deleted on 2026-10-05, so it has
+no build, signing, publication, or support path, and this document treats every
+desktop reference as historical context.
 
 Pandora uses plain SemVer tags and release titles. Stable and prerelease
 versions use the same tag format; prereleases use neutral suffixes such as
@@ -25,24 +25,17 @@ through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1`, `v2.0.0-beta.2`,
 Every new tag is evaluated against the exact tracked `release-scope.json` at its
 source commit. This is a release contract, not a mutable workflow input:
 
-- `CLI-only` is the only active scope, covering alpha and beta tags. It
-  publishes the native CLI, launcher, installers, checksums, signature, SBOM,
-  provenance, notes, and CLI lifecycle evidence. Its release evidence must not
-  contain desktop artifacts, and it does not claim desktop parity.
- - `full` is retired. It would require desktop build, publication, smoke, and
-   (for stable) rollback evidence, and desktop work is cancelled. The active
-   release gate rejects any scope other than `cli-only`, so desktop signing is
-   not a release prerequisite or a supported path.
+`cli-only` is the only scope. It publishes the native CLI, launcher, installers,
+checksums, signature, SBOM, provenance, notes, and CLI lifecycle evidence.
 
-The workflow skips desktop build, desktop artifact download and attestation,
-desktop smoke, and desktop rollback closure when the validated scope is
-`cli-only`. A skipped desktop job is never treated as successful full-scope
- evidence. Release-candidate and stable use the same `cli-only` boundary as
- alpha and beta. They publish only verified CLI artifacts; desktop build, smoke,
- and rollback remain skipped. No release channel requires a platform signature:
-  binaries are not Authenticode- or codesign-signed and are not notarized.
+There is no second scope. The desktop product was deleted on 2026-10-05, so a
+scope that could select it had nothing to select. The release gate asserts
+`cli-only` explicitly rather than assuming it, and the policy rejects any
+other value.
 
-The checked-in policy selects `cli-only` for every release channel.
+Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
+No release channel requires a platform signature: binaries are not
+Authenticode- or codesign-signed and are not notarized.
 
 ## v2.0.0-beta.8
 
@@ -56,8 +49,8 @@ workflow completes. The same CLI-only workflow is used for beta, RC, and stable.
 
 This beta groups bounded self-healing feedback, composition provenance,
 verified memory synthesis, persisted graph snapshots, holdout evaluation, and
-evidence-only evolution proposal intake. It is a CLI-first prerelease with a
-tested Tauri desktop source, not a stable distribution claim.
+evidence-only evolution proposal intake. It is a CLI-only prerelease, not a
+stable distribution claim.
 The release workflow publishes release-evidence.json, linking checksums,
 signatures, SBOM, provenance subjects, and platform artifacts.
 
@@ -178,18 +171,9 @@ AgentLoop, session, approval, and governed effect path.
 - Release-candidate and stable publication must pass the protected
   `release-publication` environment. Only `v*` tags may deploy through it, and a
   configured human reviewer must approve the publication job.
-- Native CLI signing is isolated in a protected job that downloads immutable
-  unsigned build output. Verification, native build, and desktop build jobs do
-  not receive platform-signing secrets.
-- A future release candidate must have the same Windows Authenticode and Apple
-  code-signing controls as stable. `full` alpha and beta packages may remain
-  unsigned and must not be described as release candidates; `cli-only` packages
-  contain native artifacts only.
-- RC and stable publication currently fail closed before public release because
-  isolated Tauri desktop signing is not yet configured. Desktop feature parity
-  remains deferred. A `cli-only` source does not build or publish desktop assets;
-  a `full` source keeps desktop artifact generation a publication blocker until
-  the isolated signing path is available.
+- A prerelease must not be described as a release candidate or as stable. Alpha
+  and beta tags are prereleases; only `v*` tags enter the protected publication
+  environment.
 - No release channel requires a platform signature. Windows Authenticode, Apple
   Developer ID signing, and notarization were removed from the release process
   on 2026-10-05: Pandora is a terminal CLI distributed through channels that do
@@ -197,42 +181,25 @@ AgentLoop, session, approval, and governed effect path.
   Integrity is established instead by `checksums.txt`, its keyless cosign
   signature, and GitHub build attestations, all of which are verified in the
   release workflow and by the installers.
-- Stable requires accepted exact-commit native NVDA, VoiceOver, and Orca evidence
-  for every advertised desktop platform.
 
-## Stable release credentials
+## Stable release approval
 
-Alpha and beta tags use their source-bound scope and are marked as prereleases.
-A `cli-only` release publishes native artifacts only; a `full` release may
-publish unsigned native and desktop packages. A future release-candidate tag
-enters the protected native signing job only when
+Alpha and beta tags are marked as prereleases and never enter the protected
+publication environment. A release-candidate tag enters it only when
 `PANDORA_RELEASE_CANDIDATE_APPROVED` is exactly `1`; a plain SemVer stable tag
-likewise requires `PANDORA_STABLE_RELEASE_APPROVED` to be exactly `1`. Native
-signing consumes only these environment-scoped secrets:
+likewise requires `PANDORA_STABLE_RELEASE_APPROVED` to be exactly `1`.
 
-- PANDORA_WINDOWS_CERTIFICATE_BASE64 and
-  PANDORA_WINDOWS_CERTIFICATE_PASSWORD;
-- PANDORA_APPLE_CERTIFICATE_BASE64 and
-  PANDORA_APPLE_CERTIFICATE_PASSWORD;
-- APPLE_SIGNING_IDENTITY and APPLE_TEAM_ID.
+No release credential is required to publish. There is no certificate, no
+signing identity, and no notarization account. The `release-publication`
+environment is an approval gate and nothing else, so there is no secret that
+could be leaked, logged, or committed by a signing job.
 
-The protected job copies immutable unsigned Windows or macOS output to its
-final native-release path before signing, verifies that exact copied path, and
-uploads the same path without executing the downloaded binary. The unsigned
-build job never imports or receives the certificate. Apple notarization account
-credentials are not exposed to the native signer.
-
-RC and stable remain blocked until a separately reviewed remote/HSM-backed or
-otherwise isolated Tauri desktop signing design is implemented and receives its
-own protected credentials. Certificate values and account credentials must never
-be committed, printed, placed in an artifact, or copied into recovery archives.
-
-Published-package smoke jobs still re-download checksum-bound artifacts. The
-CLI lifecycle runs for both scopes, while desktop smoke runs only for `full`
-scope. Windows Authenticode, Apple signature, notarization, and Gatekeeper
-checks are not reachable in the current workflow while RC and stable remain
-blocked. Current evidence therefore covers native lifecycle, and any permitted
-unsigned desktop lifecycle, but not platform-signature or notarization evidence.
+The published-package smoke job re-downloads checksum-bound artifacts,
+authenticates the manifest and the binary with cosign, verifies the GitHub
+build attestation, and exercises the CLI install, update, rollback, backup,
+restore, and uninstall lifecycle. Current evidence therefore covers native
+lifecycle and manifest integrity. It does not cover platform-signature or
+notarization evidence, because no release artifact claims one.
 
 ## Stable rollback closure
 

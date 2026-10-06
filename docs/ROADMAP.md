@@ -1,9 +1,7 @@
 # Pandora roadmap
 
-Pandora is a CLI-first project, and desktop product work is cancelled.
-`apps/pandora-desktop` stays in the tree as an inactive downstream adapter. Each
-desktop reference below is historical or audit context unless a line names the
-CLI as the owner.
+Pandora is a CLI project. The desktop product was deleted on 2026-10-05 and
+left no tree, build, packaging, or release path behind.
 
 Completion is estimated from the CLI source tree, tests, workflows, and
 documented release gates. It is not a release claim.
@@ -23,9 +21,9 @@ carried by checksums, a keyless cosign signature, and build attestations.
 | --- | ---: | --- | --- |
 | 6. Production readiness | 95-97% | scoped identity, automatic local device trust, encrypted secrets, local telemetry and crash records, encrypted backup and restore, retained fresh-runner install/update/rollback/backup/restore/uninstall evidence, synthetic two-version native installer upgrade and rollback drills, update channels, protected release publication with human approval, checksum signature verification enforced at every published-verification call site, keyless cosign signature over the checksum manifest, GitHub build attestations verified on published binaries, cosign- and checksum-rendered Homebrew, Scoop, and winget manifests, cargo-binstall metadata, asserted macOS ad-hoc signature with no Developer ID claim, an explicit `platform_signing: not_applicable` posture in release evidence, release and stable-rollback evidence indexes, CodeQL, dependency audits | accepted real native accessibility records, published RC/stable lifecycle evidence, stable-to-stable rollback proof, publication to a Homebrew tap, a Scoop bucket, and winget-pkgs, which each need an external repository this project does not own |
 | 7. Runtime scale and orchestration | 100% | persistent prompt-context cache, headless jobs, bounded parallel subagents, exact-commit worktrees, durable orchestration claims and receipts, interruption and evidence-bound reconciliation rules, multi-repository plans, transactionally enforced aggregate token/tool/time/cost budgets, atomic role reservations and receipt-linked usage settlement, conservative unknown-cost enforcement, fleet leases, execution-bound lease renewal, durable supervisor state with PID-bound worker heartbeats, process-wide execution leases for headless jobs and subagents, lease gating, stale-supervisor reconciliation without replay, bounded stale reaping, atomic PID-bound restart handoff, atomic cross-process quiescence guards, bounded independently launched job watch windows, long-lived local daemon workers with explicit drain/stop protocol, cross-process crash reconciliation/restart evidence, bounded staggered-producer soak coverage, cancellation/provider-return restart evidence, combined cross-process worker-operations recovery acceptance, and successful retained ten-minute and two-hour four-platform campaigns plus checkpointed eight-hour and twenty-four-hour profiles | none in the defined release gate; longer soak campaigns remain continuous assurance work |
-| 8. Agent experience and disclosure | cancelled | Tauri desktop adapter kept in-tree and inactive; no desktop build, packaging, signature, or release gate. CLI-owned capabilities from this phase stay tracked in the CLI rows: runtime inventory, Harness Lab, package and Skill lifecycle, provider and MCP configuration, registry and pinned-GitHub discovery, offline verification, explicit admission, revocation quarantine, and CLI/TUI trust inspection | none; desktop reactivation is out of scope |
-| 9. Evaluation-driven loops | 94-96% | trajectory, outcome, policy, regression, adversarial, golden, and holdout evaluation; coding feedback; research-only mutation and population strategies; durable evolution state; canary activation and rollback; versioned evidence-derived zero-failure canary policy; read-only durable per-session evaluation scorecards with a fail-on-non-passed CI gate; durable schedules with a bounded local registry of validated suite definitions; typed prompt/Skill/workflow/WebAssembly Gene target metadata; durable failure-derived regression candidates; explicit review-gated suite admission; governed scheduled execution of evidence-backed and task-backed suites; proposal-bound one-shot canary scheduling; exact-bound canary, limited, expanded, and complete rollout stages with cost, duration, failure, quality, latency, and stability limits; human approval; pause/resume/reject/retry/rollback evidence; CLI/TUI/desktop controls; deterministic artifact-class scorecards for typed evaluation reports; accepted-candidate regression fixture generation with exact source revalidation; and protected tag creation on the existing activation and publication paths | none in the defined source-tree scope; future artifact classes and longer assurance campaigns remain continuous work |
-| 10. Memory consolidation | 100% | scoped L0, L1, and L2 records; durable recall; approval-gated promotion; revocation and audit; deterministic evidence-bound synthesis with stale-snapshot checks; bounded provenance graphs; versioned same-tenant/provider cross-session and explicit cross-project L1 consolidation with reject/keep-target conflict rules; durable leased synthesis schedules and run history; exact digest-bound memory IDs on evolution candidates; desktop source, promotion, provenance, audit, revocation, schedule, transfer-policy disclosure, and typed retention-compaction controls; logical compaction that retains tombstones and audit evidence with explicit secure-erasure guidance; versioned local/AWS/Azure/GCP backup-expiry, snapshot-removal, and key-destruction manifests; non-mutating preview; append-only idempotent operator-attested receipts; CLI/TUI workflow and desktop evidence view | none in the defined Phase 10 source-tree scope; provider control-plane actions and independent verification remain external by design |
+| 8. Modular product surface | 100% | bounded Domain Harness route hints with longest-match auto route and fail-closed ties, package replacement of built-in Domain IDs only by exact verified signature, runtime inventory, Harness Lab local Skill lifecycle, package and Skill lifecycle, provider and MCP configuration, read-only registry and pinned-GitHub discovery into an inert cache, offline verification with no network, explicit admission, revocation quarantine, and CLI/TUI trust inspection | none in the defined source-tree scope; registry growth and longer assurance campaigns remain continuous work |
+| 9. Evaluation-driven loops | 94-96% | trajectory, outcome, policy, regression, adversarial, golden, and holdout evaluation; coding feedback; research-only mutation and population strategies; durable evolution state; canary activation and rollback; versioned evidence-derived zero-failure canary policy; read-only durable per-session evaluation scorecards with a fail-on-non-passed CI gate; durable schedules with a bounded local registry of validated suite definitions; typed prompt/Skill/workflow/WebAssembly Gene target metadata; durable failure-derived regression candidates; explicit review-gated suite admission; governed scheduled execution of evidence-backed and task-backed suites; proposal-bound one-shot canary scheduling; exact-bound canary, limited, expanded, and complete rollout stages with cost, duration, failure, quality, latency, and stability limits; human approval; pause/resume/reject/retry/rollback evidence; CLI and TUI controls; deterministic artifact-class scorecards for typed evaluation reports; accepted-candidate regression fixture generation with exact source revalidation; and protected tag creation on the existing activation and publication paths | none in the defined source-tree scope; future artifact classes and longer assurance campaigns remain continuous work |
+| 10. Memory consolidation | 100% | scoped L0, L1, and L2 records; durable recall; approval-gated promotion; revocation and audit; deterministic evidence-bound synthesis with stale-snapshot checks; bounded provenance graphs; versioned same-tenant/provider cross-session and explicit cross-project L1 consolidation with reject/keep-target conflict rules; durable leased synthesis schedules and run history; exact digest-bound memory IDs on evolution candidates; source, promotion, provenance, audit, revocation, schedule, transfer-policy disclosure, and typed retention-compaction controls; logical compaction that retains tombstones and audit evidence with explicit secure-erasure guidance; versioned local/AWS/Azure/GCP backup-expiry, snapshot-removal, and key-destruction manifests; non-mutating preview; append-only idempotent operator-attested receipts; CLI and TUI workflow and evidence views | none in the defined Phase 10 source-tree scope; provider control-plane actions and independent verification remain external by design |
 | 11. Adversarial resilience | 100% | path confinement, symlink checks, secret redaction, replay protection, exact signatures and hashes, fail-closed package and permit checks, adversarial evaluation primitives, typed context-origin metadata, one shared revalidating quarantine boundary across all adapter origins, replayable hostile and benign corpus coverage, hostile multi-hop handoff persistence tests, append-only hash-chained publisher and admission transparency evidence, and six bounded production-parser fuzz targets with CI smoke runs | none in the defined Phase 11 source-tree scope; corpus growth and longer fuzz campaigns remain continuous assurance work |
 | 12. Agent operations | 92-95% | three-platform CI, release and security workflows, bounded agent workers, orchestration receipts, supervisor controls, local fleet records, transactionally enforced multi-repository budgets with measured receipt usage and explicit unknown-cost accounting, one privacy-safe CLI/TUI Fleet dashboard, a staged SDK package/evaluation/canary pipeline, protected beta/release-candidate/stable promotion, and protected tag-driven release publication | signed RC and stable publication with real platform credentials and human approval |
 
@@ -110,26 +108,17 @@ core-source, Parliament, Shadow Council, ReferenceMonitor, and the permit path
 remain immutable. Disable or roll back the package to restore the compiled
 entry on the next runtime snapshot.
 
-The desktop package manager now includes a manifest workbench. It previews the
-closed package vocabulary, exact JSON shape, bounded Domain route hints, Meta
-composition, dependency declarations, and unverified trust posture. Copying
-the JSON is the only mutation it performs; it does not sign, admit, enable,
-publish, store private keys, or grant authority. The existing admission and
-lifecycle boundaries remain the only path to durable package state.
+A manifest inspector previews the closed package vocabulary, exact JSON shape,
+bounded Domain route hints, Meta composition, dependency declarations, and
+unverified trust posture. Copying the JSON is the only mutation it performs; it
+does not sign, admit, enable, publish, store private keys, or grant authority.
+The existing admission and lifecycle boundaries remain the only path to durable
+package state. It also previews exact route-hint overlaps across the local
+catalog before a Domain is enabled. This is advisory evidence only; runtime
+routing still uses active admitted bindings, explicit user selection wins, and
+ambiguous ties fail closed.
 
-It also previews exact route-hint overlaps across the local catalog before a
-Domain is enabled. This is advisory evidence only; runtime routing still uses
-active admitted bindings, explicit user selection wins, and ambiguous ties
-fail closed.
-
-The Command Center now has a persistent Witness Dock for Flow, Evidence, Work,
-and Browser. Operators can place it on the right or bottom, choose a bounded
-size, or hide it. Searchable grouped Settings expose the same workspace choices
-and route operators to providers, MCP, Harnesses, packages, tools, runtime
-contracts, Council, audit, evolution, and memory without creating a second
-authority path.
-
-The native Harness Lab exposes SkillEngine's local lifecycle: install from an
+The Harness Lab exposes SkillEngine's local lifecycle: install from an
 absolute directory, inspect, enable, disable, suspend, remove with an exact
 confirmation, and restore into the disabled state. Connections can select an
 existing Provider profile. Both paths require a local-service restart before a
@@ -140,7 +129,7 @@ Signed remote distribution now covers Gene, Domain Harness, Meta Harness, Skill,
 and Provider kinds. Discovery is read-only; registry or full-commit GitHub download
 verifies one exact Official manifest and artifact into an inert durable cache.
 Publisher/key identity, manifest and artifact digests, source revision, trust
-state, and admission binding are visible in CLI, TUI, and desktop. Offline
+state, and admission binding are visible in CLI and TUI. Offline
 verification uses no network. Exact replay is idempotent, while substitution,
 downgrade, traversal, missing dependencies, untrusted publishers, and revoked
 keys fail closed. Confirmed admission still leaves packages and Skills disabled
@@ -152,7 +141,7 @@ Next work:
 
 - retain signed-release and real-user update, rollback, and uninstall evidence
   on every advertised platform; tagged releases now re-download checksum-bound
-  desktop packages on fresh runners and prove bounded package extraction,
+  the published CLI artifact on fresh runners and prove bounded extraction,
   launch, and sandbox cleanup;
 - collect and admit the four exact-commit native NVDA, VoiceOver, and Orca
   graphical-session records; automated 100%, 150%, and 200% evidence and
@@ -202,7 +191,7 @@ reject or keep-target conflict rule; it remains denied across tenants or
 providers and cannot overwrite or reuse a tombstoned identity.
 
 Durable synthesis schedules now re-check source evidence before commit and keep
-bounded worker-owned run history. The desktop exposes records, source graphs,
+bounded worker-owned run history. The CLI exposes records, source graphs,
 audit, revocation, and schedules. Its retention panel previews an exact timestamp
 and requires typed confirmation before compacting only already-revoked logical
 records; tombstones and audit evidence remain, and storage-level erasure is
@@ -210,7 +199,7 @@ explicitly outside that operation.
 
 Research evolution evidence now carries the exact canonical IDs of all included
 memory records. Those IDs are covered by the evidence digest, persisted on the
-candidate proposal, and visible in CLI, service, and desktop lineage inspection.
+candidate proposal, and visible in CLI, service, and lineage inspection.
 
 Storage lifecycle policy version 1 closes the remaining evidence gap. It uses a
 closed provider/action field matrix for local filesystem, AWS S3, Azure Blob,
@@ -218,7 +207,7 @@ and Google Cloud Storage backup expiry, snapshot removal, and encryption-key
 destruction. Preview does not open the ledger. Explicit record writes an
 append-only, digest-bound operator attestation; exact retry is idempotent and a
 conflicting evidence ID fails closed. CLI list/inspect, TUI guidance, and the
-desktop evidence panel all retain the same boundary: the runtime did not
+evidence views all retain the same boundary: the runtime did not
 perform the provider action and does not guarantee secure erasure.
 
 Phase status: complete for the defined source-tree scope. Provider control-plane
@@ -255,7 +244,7 @@ multi-hop persisted handoff regression.
 Trust-root additions and revocations and every package admission decision now
 append safe evidence to a bounded SQLite ledger. A SHA-256 predecessor chain
 and database triggers make mutation or deletion detectable and fail closed.
-CLI, TUI guidance, and the desktop expose the same read-only evidence without
+CLI and TUI guidance expose the same read-only evidence without
 granting package or execution authority.
 
 Six `cargo-fuzz` targets drive the production path, package-manifest, MCP RPC,
@@ -283,7 +272,7 @@ The aggregate execution-budget gate is source-complete. Every submitted role
 has a durable reservation, dispatch and settlement are atomic, token/tool/time
 usage is receipt-backed, provider cost remains explicitly unknown when absent,
 and unknown cost consumes the full reservation for enforcement. The same
-privacy-safe read model is visible through CLI, TUI, and desktop surfaces.
+privacy-safe read model is visible through CLI and TUI surfaces.
 
 ## Issue-sized contribution areas
 
@@ -292,7 +281,7 @@ tests that prove both the success and failure paths. The current backlog is
 best split into:
 
 - route-conflict preview and package-authoring validation;
-- desktop accessibility and native packaging checks;
+- native CLI lifecycle and accessibility-of-terminal checks;
 - worker crash, daemon restart/reaping, lease expiry, and cancellation race tests;
 - multi-repository partial-failure fixtures and reconciliation evidence;
 - evaluation fixtures and scorecard views;

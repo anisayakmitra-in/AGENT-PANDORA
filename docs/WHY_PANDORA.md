@@ -28,12 +28,11 @@ The current `2.0.0-beta.8` line is a CLI-first prerelease with:
 - durable sessions, jobs, local subagents, and runtime service access;
 - local governed MCP stdio support;
 - Harness, Gene, Skill, memory, graph, evaluation, and evolution contracts;
-- a typed TypeScript launcher/client boundary;
-- an inactive Tauri adapter kept for downstream reuse and audit history.
+- a typed TypeScript launcher/client boundary.
 
 Pandora does not treat a type as proof that a product feature is complete.
-Release notes and tests define the supported scope. Desktop work is cancelled:
-nothing in the retained adapter is built, published, or gated on. Remote
+Release notes and tests define the supported scope. The desktop product was
+deleted on 2026-10-05 and nothing of it remains in the tree. Remote
 execution and marketplace distribution also sit outside the shipped boundary.
 
 ## Who it is for

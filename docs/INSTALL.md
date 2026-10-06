@@ -1,6 +1,6 @@
 # Install Pandora
 
-This guide covers the published CLI installer and the desktop source build.
+This guide covers the published CLI installer and a CLI source build.
 The current release line is a prerelease, so check the
 [release page](https://github.com/anisayakmitra-in/AGENT-PANDORA/releases)
 before installing an artifact.
@@ -39,7 +39,7 @@ cargo build --release -p pandora-cli --locked
 cargo run --release -p pandora-cli -- --version
 ```
 
-To install the CLI from the checkout without npm or Tauri:
+To install the CLI from the checkout without npm:
 
 ```sh
 cargo install --path crates/pandora-cli --locked
@@ -49,11 +49,11 @@ pandora --version
 A source build is locally compiled code, not an OS-trust attestation. Gatekeeper,
 SmartScreen, antivirus, and enterprise policy may still apply.
 
-## Desktop adapter
+## Desktop
 
-Desktop product work is cancelled. `apps/pandora-desktop` stays in the tree for
-downstream reuse and audit history, and this repository offers no desktop
-install path. Use the CLI source build above or a published CLI installer.
+The desktop product was deleted on 2026-10-05. There is no desktop install path,
+no desktop tree, and no flag that restores one. Use the CLI source build above or
+a published CLI installer.
 
 ## First CLI run
 
@@ -97,9 +97,8 @@ is not locally built and trusted.
 ## Support status
 
 The `2.0.0-beta.8` installers support the native CLI on Windows, macOS, and
-Linux. The main branch also builds desktop packages for those platforms.
-Desktop support remains prerelease until a tagged release publishes the
-packages and retains the required clean-machine evidence. No package is
+Linux. The CLI is the only shipped surface; the desktop product was deleted on
+2026-10-05. No package is
 OS-signed on any channel; see
 [platform support](PLATFORMS.md) for the integrity guarantees that replace
 code signing and for the supported install channels.

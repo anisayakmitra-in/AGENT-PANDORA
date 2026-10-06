@@ -21,7 +21,6 @@ body:
       options:
         - CLI
         - Runtime service
-        - Tauri desktop source build
         - TypeScript launcher
         - Documentation
     validations:

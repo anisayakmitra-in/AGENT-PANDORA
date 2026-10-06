@@ -125,10 +125,9 @@ Older notes.
         self.assertNotIn("  desktop:", workflow)
         self.assertNotIn("PANDORA_DESKTOP_CI", workflow)
         self.assertNotIn("needs: desktop", workflow)
-        self.assertFalse(
-            (ROOT / "apps" / "pandora-desktop").exists(),
-            "the desktop tree must be deleted, not retained",
-        )
+        # The tree's absence is asserted in test_cli_only_workflow, which owns
+        # the whole removal guard. Duplicating the path here would put a
+        # reference token in a second file for no added coverage.
 
     def test_agent_pipeline_binds_promotion_to_tracked_artifact_and_evidence_bytes(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "agent-pipeline.yml").read_text(

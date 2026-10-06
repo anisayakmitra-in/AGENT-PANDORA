@@ -71,16 +71,8 @@ python scripts/validate_repo.py
 python scripts/validate_docs.py
 ```
 
-Desktop product work is cancelled and `apps/pandora-desktop` is retained
-inactive, so its checks are not part of the merge gate. If you are
-deliberately working in the adapter, run them separately:
-
-```sh
-cd apps/pandora-desktop
-npm ci --ignore-scripts
-npm test
-npm run build
-```
+The desktop product was deleted on 2026-10-05. There is no desktop tree and
+no desktop build, test, packaging, or release path; see the changelog.
 
 Native packaging is platform-specific. Say which operating systems you tested.
 Do not claim a Windows, macOS, or Linux release check from a frontend-only
@@ -123,8 +115,7 @@ satisfy them. Force pushes are disabled and linear history is required.
 `CI gate` is a single job with no matrix that depends on the `verify` matrix. It
 exists so the required set contains no runner label: requiring
 `Verify (macos-26)` directly would block merges whenever a runner label is
-bumped, for a reason unrelated to correctness. The desktop job is not in the
-workflow at all, so it cannot become a required context.
+bumped, for a reason unrelated to correctness.
 
 Branch protection is server state, so it is invisible in the tree. If a check
 set is ever cleared, the pipeline silently becomes advisory. That test is

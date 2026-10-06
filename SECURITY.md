@@ -71,23 +71,13 @@ those checks.
 
 ## Reviewed dependency backports
 
-These apply to the retained desktop adapter, which is inactive and outside the
-release gate. They stay documented because the vendored source, the Cargo
-override, and the validation digest are still in the tree.
+None are currently in the tree. The only backport this project carried was a
+one-line mutable out-argument fix applied to a vendored `glib 0.18.5` source,
+which existed solely for the deleted desktop adapter's Linux build. That tree,
+its Cargo source override, the vendored source, and the repository validation
+that bound the reviewed digest were all removed on 2026-10-05.
 
-Tauri 2.11.5 and Wry 0.55.1 bind the adapter's Linux build to the
-final GTK3 `gtk 0.18` dependency line. That line cannot resolve the published
-`glib 0.20` fix for RUSTSEC-2024-0429 while Tauri's GTK4 migration remains
-unreleased.
-
-The repository therefore vendors the exact crates.io `glib 0.18.5` source and
-applies the upstream one-line mutable out-argument fix from gtk-rs/gtk-rs-core
-pull request 1343. The desktop manifest uses a Cargo source override; it does
-not edit the lockfile version to hide the dependency. Repository validation
-binds the reviewed source digest, crates.io revision, Cargo override, and fixed
-code shape. The source provenance and retirement condition are recorded in
-`third_party/glib-0.18.5-patched/PANDORA-PATCH.md`.
-
-This override must be removed as soon as the supported Tauri/Wry release moves
-Linux to `glib 0.20` or newer. The version-based RustSec exception is limited to
-RUSTSEC-2024-0429; new advisories remain release-blocking.
+The workspace `Cargo.lock` has no `glib` entry, and no workspace crate pulls in
+a GUI toolkit or a webview stack. `cargo audit --deny warnings` in
+`security.yml` therefore audits the real dependency graph, with no advisory
+exception and no source override.
