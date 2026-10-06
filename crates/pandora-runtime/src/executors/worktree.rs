@@ -535,24 +535,26 @@ mod tests {
     /// then fail for a reason that has nothing to do with the allowlist.
     const SHELL_SYNTHESIZED: [&str; 3] = ["COMSPEC", "PATHEXT", "PROMPT"];
 
-    /// A parent environment that is defined everywhere, including on a stock
-    /// Windows host where HOME is not set. Lets the forwarding rule be tested
-    /// in full rather than only for the variables the machine happens to have.
-    const SYNTHETIC_VALUES: [(&str, &str); 4] = [
-        ("PATH", "/synthetic/bin"),
-        ("HOME", "/synthetic/home"),
-        ("USERPROFILE", "/synthetic/profile"),
-        ("SystemRoot", "/synthetic/windows"),
-    ];
 
     /// A parent environment that is defined everywhere, including on a stock
     /// Windows host where HOME is not set. Lets the forwarding rule be tested
     /// in full rather than only for the variables the machine happens to have.
+    ///
+    /// PATH keeps the caller's real value rather than a sentinel. The probe
+    /// program is found through PATH on Unix, so a synthetic PATH would make
+    /// the probe itself unrunnable, and the test would fail for a reason
+    /// unrelated to the rule under test. Windows hid this because
+    /// CreateProcess resolves cmd.exe from SystemRoot without consulting PATH,
+    /// so the sentinel passed there and failed on Linux.
     fn synthetic_parent() -> BTreeMap<String, String> {
-        let mut parent: BTreeMap<String, String> = SYNTHETIC_VALUES
-            .iter()
-            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
-            .collect();
+        let mut parent = BTreeMap::new();
+        parent.insert(
+            "PATH".to_owned(),
+            std::env::var("PATH").unwrap_or_default(),
+        );
+        parent.insert("HOME".to_owned(), "/synthetic/home".to_owned());
+        parent.insert("USERPROFILE".to_owned(), "/synthetic/profile".to_owned());
+        parent.insert("SystemRoot".to_owned(), "/synthetic/windows".to_owned());
         parent.insert("PANDORA_UNRELATED".to_owned(), "inherited".to_owned());
         parent
     }
