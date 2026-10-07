@@ -15,8 +15,8 @@
 #![deny(unsafe_code)]
 
 use pandora_sandbox::{
-    encode_report, Availability, ConfinementOutcome, HelperReport, PlatformFamily, SandboxProfile,
-    UnavailableReason,
+    Availability, ConfinementOutcome, HelperReport, PlatformFamily, SandboxProfile,
+    UnavailableReason, encode_report,
 };
 use std::io::Write as _;
 
@@ -73,10 +73,7 @@ fn main() {
 /// without attempting anything. The self-test is written out anyway so STEP 2
 /// has to satisfy it rather than skip past it, and so the shape of the proof is
 /// reviewable before it can be claimed.
-fn apply_and_prove(
-    availability: &Availability,
-    profile: &SandboxProfile,
-) -> ConfinementOutcome {
+fn apply_and_prove(availability: &Availability, profile: &SandboxProfile) -> ConfinementOutcome {
     if !availability.covers(profile) {
         return ConfinementOutcome::Unavailable {
             reason: availability.reason(),
@@ -162,9 +159,7 @@ fn write_report(handle: &str, bytes: &[u8]) -> std::io::Result<()> {
 fn exec(program: &str, arguments: &[String]) -> ! {
     #[cfg(windows)]
     {
-        let status = std::process::Command::new(program)
-            .args(arguments)
-            .status();
+        let status = std::process::Command::new(program).args(arguments).status();
         match status {
             Ok(status) => std::process::exit(status.code().unwrap_or(REFUSED_EXIT)),
             Err(error) => {
