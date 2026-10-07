@@ -27,17 +27,62 @@ started would be a race the target could win.
 The helper:
 
 1. applies confinement,
-2. proves it by attempting denied operations **from inside the confined
-   process**,
-3. writes exactly one verification report to the parent over a pipe,
+2. runs the self-tests **from inside the confined process** and records what it
+   observed,
+3. writes exactly one report to the parent over a pipe, carrying those
+   observations,
 4. explicitly closes the write end,
 5. `exec`s the target, which inherits the confinement.
 
-The parent never infers confinement from the existence of a capability. A
-report that says a mechanism was applied is not evidence; only an observed
-denial is. A control can only enter an outcome through
-`VerifiedControl::verified`, which requires naming the proof performed, so there
-is no path from "the API call succeeded" to "the control holds".
+The parent never infers confinement from the existence of a capability, and it
+never takes the helper's word for which controls hold. The helper reports what it
+observed; the parent rebuilds the control set itself. A control can only enter an
+outcome through `VerifiedControl::verified`, which the parent calls from
+`derive_outcome` and only where an observation supports it, so there is no path
+from "the helper said so" to "the control holds".
+
+### The wire carries observations, not conclusions
+
+The report format has no field in which a control can arrive. `VerifiedControl`
+and `ConfinementOutcome` are `Serialize`-only; the deserializable types are
+`ReportedOutcome` (`SelfTested` / `Unavailable` / `Refused`), `Proofs`,
+`Mechanisms`, and the two report structs wrapping them. A frame carrying a
+`verified` list is refused outright rather than downgraded, because there is
+nowhere to put one.
+
+This is version **2** of the report wire format. Version 1 let the helper state
+which controls held, and a helper that stated them could state confinement it had
+never applied: the parent cloned the deserialized outcome and checked only that
+the claimed set covered the profile. Version 1 frames are refused, not
+reinterpreted.
+
+The parent's derivation rules, in full:
+
+- `Unavailable` and `Refused` pass through unchanged, and license nothing.
+- `SelfTested` requires the workspace-write observation to have been `Allowed`. A
+  policy that denied everything satisfies the other three probes, so this is what
+  makes them mean something. A denial here is `SelfTestDisproved`; an
+  inconclusive probe is `VerificationMissing`.
+- Each requested control is verified only if its observation shows the denial
+  **and** the mechanism is one this parent recognises. Everything else lands in
+  `unverified`, which never satisfies a profile.
+- A network control additionally requires the helper to have named both
+  `AF_INET` and `AF_INET6` as denied. Denying one is not network denial.
+
+**Mechanism names come from a closed set compiled into the parent.** A backend
+that names something unrecognised is treated as having named nothing, which
+leaves its controls unproven. This is not the security boundary — the observation
+is — it is what stops attacker-chosen text from landing in a receipt that later
+reads as though the parent had blessed it.
+
+**What the parent still has to trust, stated plainly.** The parent trusts the
+helper's *observations*; it does not trust the helper's *conclusions*, and it
+cannot re-run the probes itself. A helper that lies about what it observed would
+still be believed. That is irreducible in this design rather than a defect to be
+fixed later: the helper is this repository's own binary, the code it confines has
+not started yet, and the `exec`'d target never holds the write end of the report
+channel. Confinement cannot defend against a helper that has already been
+subverted, because by then it is not the thing under attack.
 
 ### One frame, then EOF
 
@@ -188,6 +233,12 @@ exposure means not inheriting `HOME` for git, which is a separate change to
 **Proofs are single-shot.** Each self-test runs once, at startup, in the
 confined process. A mechanism that is later relaxed inside the target is not
 detected. Continuous confinement monitoring is out of scope.
+
+**The parent's trust boundary is the helper's honesty about its own probes.** The
+parent rebuilds every control from the observations the helper reports and trusts
+no conclusion it sends, but it cannot independently observe the denials. A
+subverted helper could report denials that never happened. See "The wire carries
+observations, not conclusions" above for why that is the honest limit here.
 
 ## Confinement is not authority
 

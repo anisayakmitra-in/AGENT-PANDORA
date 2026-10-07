@@ -14,9 +14,10 @@
 // `#[allow]` with a SAFETY note rather than arriving unnoticed.
 #![deny(unsafe_code)]
 
+use pandora_sandbox::report::{Mechanisms, Proofs};
 use pandora_sandbox::{
-    Availability, ConfinementOutcome, HelperReport, PlatformFamily, SandboxProfile,
-    UnavailableReason, encode_report,
+    Availability, HelperReport, PlatformFamily, ReportedOutcome, SandboxProfile, UnavailableReason,
+    encode_report,
 };
 use std::io::Write as _;
 
@@ -48,17 +49,21 @@ fn main() {
     };
 
     let availability = Availability::probe(PlatformFamily::current());
-    let outcome = apply_and_prove(&availability, &profile);
-    report(&report_handle, &outcome);
+    let (reported, proofs, mechanisms) = apply_and_prove(&availability, &profile);
+    report(&report_handle, &reported, &proofs, &mechanisms);
 
-    match outcome {
-        // Only an Applied outcome may exec. Everything else stops here, which is
-        // the whole point of the helper: it never falls back to unconfined.
-        ConfinementOutcome::Applied { .. } => {}
+    match reported {
+        // Only a helper that got as far as running its self-tests may exec. Every
+        // other answer stops here, which is the whole point of the helper: it
+        // never falls back to unconfined. Note that the helper cannot decide this
+        // for itself — the parent derives the controls from the observations
+        // below — so this branch is only the helper declining to run something it
+        // could not confine, not a claim that it did confine it.
+        ReportedOutcome::SelfTested => {}
         _ => {
             eprintln!(
                 "pandora-sandbox-helper: refusing to exec {program} unconfined ({})",
-                outcome.kind()
+                reported.kind()
             );
             std::process::exit(REFUSED_EXIT);
         }
@@ -67,26 +72,38 @@ fn main() {
     exec(&program, &program_arguments);
 }
 
-/// Applies the requested confinement, then proves it.
+/// Applies the requested confinement, then runs the self-tests.
 ///
-/// STEP 1 has no backend to apply, so this always resolves to `Unavailable`
-/// without attempting anything. The self-test is written out anyway so STEP 2
-/// has to satisfy it rather than skip past it, and so the shape of the proof is
-/// reviewable before it can be claimed.
-fn apply_and_prove(availability: &Availability, profile: &SandboxProfile) -> ConfinementOutcome {
+/// Returns what was *observed*, never a claim about which controls hold: the
+/// parent derives those from these observations and the profile. STEP 1 has no
+/// backend to apply, so this always reports `Unavailable` without attempting
+/// anything. The observation plumbing is written out anyway so STEP 3 has to
+/// satisfy it rather than skip past it.
+fn apply_and_prove(
+    availability: &Availability,
+    profile: &SandboxProfile,
+) -> (ReportedOutcome, Proofs, Mechanisms) {
     if !availability.covers(profile) {
-        return ConfinementOutcome::Unavailable {
-            reason: availability.reason(),
-        };
+        return (
+            ReportedOutcome::Unavailable {
+                reason: availability.reason(),
+            },
+            Proofs::none(),
+            Mechanisms::none(),
+        );
     }
-    // STEP 2 replaces this block with: apply the backend, then run
-    // self_test_denied_write() and self_test_denied_socket(), and build the
-    // verified set from those results alone. A control with no corresponding
-    // denied-operation result must not appear in the set.
-    let _ = (UnavailableReason::BackendRefused,);
-    ConfinementOutcome::Unavailable {
-        reason: UnavailableReason::BackendRefused,
-    }
+    // STEP 3 replaces this block with: apply the backend, then run the four
+    // self-tests inside the confined process and report what each one saw. A
+    // control with no corresponding denied-operation observation must never be
+    // implied here, because the parent will not infer it either.
+    let _ = UnavailableReason::BackendRefused;
+    (
+        ReportedOutcome::Unavailable {
+            reason: UnavailableReason::BackendRefused,
+        },
+        Proofs::none(),
+        Mechanisms::none(),
+    )
 }
 
 fn load_profile() -> Result<SandboxProfile, String> {
@@ -100,8 +117,13 @@ fn load_profile() -> Result<SandboxProfile, String> {
 /// The descriptor is cross-platform by construction: the parent gives the
 /// helper an inheritable handle, and the helper wraps it with the platform's
 /// own conversion rather than assuming a Unix fd number.
-fn report(handle: &str, outcome: &ConfinementOutcome) {
-    let encoded = match encode_report(&HelperReport::new(outcome.clone(), None)) {
+fn report(handle: &str, reported: &ReportedOutcome, proofs: &Proofs, mechanisms: &Mechanisms) {
+    let encoded = match encode_report(&HelperReport::new(
+        reported.clone(),
+        None,
+        *proofs,
+        mechanisms.clone(),
+    )) {
         Ok(encoded) => encoded,
         Err(error) => {
             eprintln!("pandora-sandbox-helper: {error}");

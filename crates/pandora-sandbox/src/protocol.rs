@@ -1,9 +1,13 @@
 //! The report channel between the helper and the parent.
 //!
-//! The helper applies confinement, proves it, writes a [`ConfinementOutcome`]
-//! to the report descriptor, and only then executes the target. The parent
-//! reads that report and refuses to proceed unless it arrived, parsed, and
-//! satisfies the profile.
+//! The helper applies confinement, runs the self-tests inside the confined
+//! process, writes what it *observed* to the report descriptor, and only then
+//! executes the target. The parent reads that report, rebuilds the control set
+//! from those observations itself, and refuses to proceed unless the controls it
+//! derived satisfy the profile.
+//!
+//! Note what the helper does not send: a statement about which controls hold. It
+//! sends observations, and the parent does the reasoning.
 //!
 //! The framing is a fixed-width hex length followed by that many bytes of JSON.
 //! Fixed width rather than a newline delimiter so a helper that dies mid-write
@@ -12,6 +16,7 @@
 
 use crate::error::SandboxProtocolError;
 use crate::outcome::CONFINEMENT_OUTCOME_VERSION;
+use crate::report::{Mechanisms, Proofs};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fmt::Write as _;
@@ -24,38 +29,78 @@ pub const REPORT_LENGTH_HEX: usize = 8;
 pub const MAX_REPORT_BYTES: usize = 64 * 1024;
 
 /// What the helper writes back before it executes anything.
+///
+/// Carries observations, never controls. `proofs` and `mechanisms` default to
+/// "nothing observed and nothing named", which derives zero controls, so a
+/// helper that omits them gains nothing by omission.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HelperReport {
     version: u16,
-    outcome: crate::outcome::ConfinementOutcome,
+    reported: crate::outcome::ReportedOutcome,
     /// Identity the helper actually ran as, when it created one. Empty when it
     /// did not, which is every platform in STEP 1.
     restricted_identity: Option<String>,
+    #[serde(default)]
+    proofs: Proofs,
+    #[serde(default)]
+    mechanisms: Mechanisms,
 }
 
 impl HelperReport {
     pub fn new(
-        outcome: crate::outcome::ConfinementOutcome,
+        reported: crate::outcome::ReportedOutcome,
         restricted_identity: Option<String>,
+        proofs: Proofs,
+        mechanisms: Mechanisms,
     ) -> Self {
         Self {
             version: CONFINEMENT_OUTCOME_VERSION,
-            outcome,
+            reported,
             restricted_identity,
+            proofs,
+            mechanisms,
         }
+    }
+
+    /// The report a helper sends when no backend could be applied.
+    pub fn unavailable(reason: crate::outcome::UnavailableReason) -> Self {
+        Self::new(
+            crate::outcome::ReportedOutcome::Unavailable { reason },
+            None,
+            Proofs::none(),
+            Mechanisms::none(),
+        )
+    }
+
+    /// The report a helper sends when it refuses.
+    pub fn refused(reason: crate::outcome::RefusalReason) -> Self {
+        Self::new(
+            crate::outcome::ReportedOutcome::Refused { reason },
+            None,
+            Proofs::none(),
+            Mechanisms::none(),
+        )
     }
 
     pub const fn version(&self) -> u16 {
         self.version
     }
 
-    pub const fn outcome(&self) -> &crate::outcome::ConfinementOutcome {
-        &self.outcome
+    pub const fn reported(&self) -> &crate::outcome::ReportedOutcome {
+        &self.reported
     }
 
     pub fn restricted_identity(&self) -> Option<&str> {
         self.restricted_identity.as_deref()
+    }
+
+    pub const fn proofs(&self) -> &Proofs {
+        &self.proofs
+    }
+
+    pub const fn mechanisms(&self) -> &Mechanisms {
+        &self.mechanisms
     }
 }
 

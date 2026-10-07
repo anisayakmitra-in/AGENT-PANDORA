@@ -37,9 +37,14 @@
 //! which closes it before creating the target process.
 
 use crate::error::SandboxProtocolError;
-use crate::outcome::{CONFINEMENT_OUTCOME_VERSION, ConfinementOutcome, RefusalReason};
+use crate::outcome::{
+    CONFINEMENT_OUTCOME_VERSION, ConfinementOutcome, ProofKind, RefusalReason, ReportedOutcome,
+    VerifiedControl,
+};
+use crate::profile::RequestedControl;
 use crate::protocol::{MAX_REPORT_BYTES, REPORT_LENGTH_HEX};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::io::Read;
 
 /// What a self-test observed, from inside the confined process.
@@ -152,17 +157,17 @@ impl Mechanisms {
 
 /// The full helper report.
 ///
-/// Note what is *not* here: there is no `verified` list. The outcome carries
-/// controls, and controls are only constructed by
-/// [`crate::outcome::VerifiedControl::verified`] inside a backend that has run
-/// the matching probe. Deserializing this struct can therefore never conjure a
-/// control; the parent re-validates the outcome through
-/// [`crate::accept_report`].
+/// Note what is *not* here: there is no `verified` list, anywhere, at any depth.
+/// The report carries a [`ReportedOutcome`] (which has no controls in it), the
+/// [`Proofs`] the helper observed, and the [`Mechanisms`] it named. Deserializing
+/// this struct therefore cannot conjure a control — there is no field to conjure
+/// one into. The controls are built in the parent, by [`derive_outcome`], from
+/// observations the parent has read itself.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VerificationReport {
     version: u16,
-    outcome: ConfinementOutcome,
+    reported: ReportedOutcome,
     restricted_identity: Option<String>,
     #[serde(default)]
     proofs: Proofs,
@@ -171,32 +176,49 @@ pub struct VerificationReport {
 }
 
 impl VerificationReport {
-    pub fn new(outcome: ConfinementOutcome, restricted_identity: Option<String>) -> Self {
+    pub fn new(
+        reported: ReportedOutcome,
+        restricted_identity: Option<String>,
+        proofs: Proofs,
+        mechanisms: Mechanisms,
+    ) -> Self {
         Self {
             version: CONFINEMENT_OUTCOME_VERSION,
-            outcome,
+            reported,
             restricted_identity,
-            proofs: Proofs::none(),
-            mechanisms: Mechanisms::none(),
+            proofs,
+            mechanisms,
         }
     }
 
-    pub fn with_proofs(mut self, proofs: Proofs) -> Self {
-        self.proofs = proofs;
-        self
+    /// The report a helper sends when no backend could be applied. Used by
+    /// tests and by the helper's own unavailability path.
+    pub fn unavailable(reason: crate::outcome::UnavailableReason) -> Self {
+        Self::new(
+            ReportedOutcome::Unavailable { reason },
+            None,
+            Proofs::none(),
+            Mechanisms::none(),
+        )
     }
 
-    pub fn with_mechanisms(mut self, mechanisms: Mechanisms) -> Self {
-        self.mechanisms = mechanisms;
-        self
+    /// The report a helper sends when it refuses. No observations, because a
+    /// refusal is a decision rather than a measurement.
+    pub fn refused(reason: RefusalReason) -> Self {
+        Self::new(
+            ReportedOutcome::Refused { reason },
+            None,
+            Proofs::none(),
+            Mechanisms::none(),
+        )
     }
 
     pub const fn version(&self) -> u16 {
         self.version
     }
 
-    pub const fn outcome(&self) -> &ConfinementOutcome {
-        &self.outcome
+    pub const fn reported(&self) -> &ReportedOutcome {
+        &self.reported
     }
 
     pub fn restricted_identity(&self) -> Option<&str> {
@@ -209,6 +231,164 @@ impl VerificationReport {
 
     pub const fn mechanisms(&self) -> &Mechanisms {
         &self.mechanisms
+    }
+}
+
+/// The mechanism names this parent recognises.
+///
+/// A closed set, deliberately. The mechanism string on the wire is a claim
+/// about *how*, and a claim about how is not what grants a control — the
+/// observations are. But accepting an arbitrary string would let a helper put
+/// attacker-chosen text into a receipt that later reads as if the parent had
+/// blessed it. Matching against a list the parent compiled in means a receipt
+/// can only ever name a mechanism this code knows about, and a backend that
+/// names something unrecognised is treated as having named no mechanism at all,
+/// which leaves its controls unproven.
+const RECOGNISED_FILESYSTEM_MECHANISMS: &[(&str, &str)] = &[
+    ("landlock", "landlock"),
+    ("seatbelt_sandbox_exec", "seatbelt_sandbox_exec"),
+];
+
+const RECOGNISED_NETWORK_MECHANISMS: &[(&str, &str)] = &[
+    ("seccomp_bpf", "seccomp_bpf"),
+    ("seatbelt_deny_network", "seatbelt_deny_network"),
+];
+
+/// The canonical mechanism name for a reported one, or `None` if this parent
+/// does not recognise it.
+fn recognised(reported: &str, table: &[(&str, &'static str)]) -> Option<&'static str> {
+    table
+        .iter()
+        .find(|(candidate, _)| *candidate == reported)
+        .map(|(_, canonical)| *canonical)
+}
+
+/// Whether the helper named exactly the address families a `DenyAll` profile
+/// needs denied.
+///
+/// `AF_UNIX` staying reachable is a recorded residual risk, not something this
+/// function claims otherwise: `NetworkDenied` means "the internet is
+/// unreachable", and a helper that denied only one of the two internet families
+/// has not earned that.
+fn denies_both_internet_families(mechanisms: &Mechanisms) -> bool {
+    let families: BTreeSet<&str> = mechanisms
+        .denied_socket_families
+        .iter()
+        .map(String::as_str)
+        .collect();
+    families.contains("AF_INET") && families.contains("AF_INET6")
+}
+
+/// The mechanism to record for `control`, or `None` when the observations do
+/// not support it.
+///
+/// Two independent gates, both of which must pass:
+///
+/// 1. The observation the control depends on must actually show the denial, and
+///    the mechanism name must be one this parent recognises.
+/// 2. For the network control, the helper must have named both internet address
+///    families as denied.
+fn mechanism_for(
+    control: RequestedControl,
+    proofs: &Proofs,
+    mechanisms: &Mechanisms,
+) -> Option<&'static str> {
+    match control {
+        RequestedControl::FilesystemWriteRestricted
+        | RequestedControl::FilesystemReadRestricted => {
+            // Both filesystem controls rest on the pair of denials the profile's
+            // workspace-write rule is meant to produce; neither is claimed if the
+            // outside write was allowed through.
+            if !proofs.outside_write.proves_denial() || !proofs.canary_read.proves_denial() {
+                return None;
+            }
+            recognised(
+                mechanisms.filesystem.as_str(),
+                RECOGNISED_FILESYSTEM_MECHANISMS,
+            )
+        }
+        RequestedControl::NetworkDenied => {
+            if !proofs.inet_socket.proves_denial() || !denies_both_internet_families(mechanisms) {
+                return None;
+            }
+            recognised(mechanisms.network.as_str(), RECOGNISED_NETWORK_MECHANISMS)
+        }
+    }
+}
+
+/// Turns what the helper reported into the parent's [`ConfinementOutcome`].
+///
+/// This is the only place a [`VerifiedControl`] is built, and it builds one only
+/// where an observation the parent read supports it. The helper's role ends at
+/// reporting; the judgement is made here.
+///
+/// The rule, in full:
+///
+/// * `Unavailable` and `Refused` pass through unchanged. Neither licenses
+///   anything: [`ConfinementOutcome::verified`] is empty for both.
+/// * `SelfTested` requires the workspace-write observation to have *succeeded*.
+///   A policy that denied everything would satisfy the other three probes, so
+///   without this a deny-everything sandbox would look like a working one.
+///   A denial there is a refusal to have applied what was asked; an inconclusive
+///   probe is a refusal for want of evidence.
+/// * Each requested control is verified only if its observation shows the denial
+///   and the mechanism is recognised. Everything else lands in `unverified`.
+pub fn derive_outcome(
+    reported: &ReportedOutcome,
+    proofs: &Proofs,
+    mechanisms: &Mechanisms,
+    profile: &crate::SandboxProfile,
+) -> ConfinementOutcome {
+    match reported {
+        ReportedOutcome::Unavailable { reason } => {
+            ConfinementOutcome::Unavailable { reason: *reason }
+        }
+        ReportedOutcome::Refused { reason } => ConfinementOutcome::Refused { reason: *reason },
+        ReportedOutcome::SelfTested => {
+            // The workspace write must have worked. A policy that denied
+            // everything would satisfy the other three probes, so without this
+            // gate they would prove nothing at all. Denying it is a different
+            // failure from never running it, and the two deserve different
+            // answers: the first means the backend did not do what it claimed,
+            // the second means there is no evidence either way.
+            match proofs.inside_write {
+                Observation::Denied => {
+                    return ConfinementOutcome::Refused {
+                        reason: RefusalReason::SelfTestDisproved,
+                    };
+                }
+                Observation::Allowed => {}
+                Observation::Inconclusive => {
+                    return ConfinementOutcome::Refused {
+                        reason: RefusalReason::VerificationMissing,
+                    };
+                }
+            }
+            let mut verified = BTreeSet::new();
+            let mut unverified = BTreeSet::new();
+            for control in profile.requested_controls() {
+                match mechanism_for(control, proofs, mechanisms) {
+                    // `ProofKind` is fixed at `DeniedOperation` because the only
+                    // thing the parent can attest to is that a denied operation
+                    // was observed. A backend that proved confinement some other
+                    // way has still not proven it *to the parent*.
+                    Some(mechanism) => {
+                        verified.insert(VerifiedControl::verified(
+                            control,
+                            mechanism,
+                            ProofKind::DeniedOperation,
+                        ));
+                    }
+                    None => {
+                        unverified.insert(control);
+                    }
+                }
+            }
+            ConfinementOutcome::Applied {
+                verified,
+                unverified,
+            }
+        }
     }
 }
 
@@ -276,19 +456,39 @@ pub fn read_one_frame<R: Read>(mut reader: R) -> Result<VerificationReport, Refu
     Ok(report)
 }
 
-/// Accepts a verification report, re-validating every field.
+/// The fail-closed rule, in one place.
 ///
-/// This is the same decision [`crate::accept_report`] makes, expressed over
-/// [`VerificationReport`]. The STEP 1 entry point keeps its own signature so the
-/// already-merged contract tests are unaffected; both funnel into one rule:
+/// An outcome that does not satisfy every requested control becomes a refusal
+/// rather than a downgrade: the parent does not read `Unavailable` as permission
+/// to proceed, and it does not read a partial `Applied` as permission to proceed
+/// with less. The one exception is an explicit operator decision recorded in the
+/// profile, and even then the *derived* outcome is returned unchanged so the
+/// receipt and the containment evidence can both show that confinement was
+/// skipped on purpose.
 ///
-/// * no report is Refused;
-/// * an outcome that does not satisfy every requested control is Refused, unless
-///   the profile carries an explicit `allow_unsandboxed` decision.
+/// A refusal that is already a refusal keeps its own reason. Collapsing
+/// `SelfTestDisproved` into the generic `VerificationMissing` would throw away
+/// the only useful thing in it, which is *why* the helper stopped.
+pub fn gate(derived: ConfinementOutcome, profile: &crate::SandboxProfile) -> ConfinementOutcome {
+    if matches!(derived, ConfinementOutcome::Refused { .. }) {
+        return derived;
+    }
+    if !derived.satisfies(&profile.requested_controls()) && !profile.allow_unsandboxed() {
+        return ConfinementOutcome::Refused {
+            reason: RefusalReason::VerificationMissing,
+        };
+    }
+    derived
+}
+
+/// Accepts a verification report, re-deriving every control from its
+/// observations.
 ///
-/// Deserializing a [`VerificationReport`] cannot manufacture a control, because
-/// the report type has no `verified` field. The controls live in the outcome,
-/// and only a backend that has run a matching probe builds them.
+/// The reported outcome is *not* trusted as a conclusion. [`derive_outcome`]
+/// rebuilds the control set from the [`Proofs`] and [`Mechanisms`] the parent
+/// read, and [`gate`] applies the one accept rule. Both are shared with
+/// [`crate::accept_report`], so there is one decision rather than one per call
+/// site.
 pub fn accept_verified(
     report: Option<&VerificationReport>,
     profile: &crate::SandboxProfile,
@@ -298,13 +498,13 @@ pub fn accept_verified(
             reason: RefusalReason::VerificationMissing,
         };
     };
-    let outcome = report.outcome();
-    if !outcome.satisfies(&profile.requested_controls()) && !profile.allow_unsandboxed() {
-        return ConfinementOutcome::Refused {
-            reason: RefusalReason::VerificationMissing,
-        };
-    }
-    outcome.clone()
+    let derived = derive_outcome(
+        report.reported(),
+        report.proofs(),
+        report.mechanisms(),
+        profile,
+    );
+    gate(derived, profile)
 }
 
 #[cfg(test)]
@@ -313,11 +513,10 @@ mod tests {
 
     fn applied_report() -> VerificationReport {
         VerificationReport::new(
-            ConfinementOutcome::Applied {
-                verified: Default::default(),
-                unverified: Default::default(),
-            },
+            ReportedOutcome::SelfTested,
             None,
+            Proofs::none(),
+            Mechanisms::none(),
         )
     }
 
@@ -329,7 +528,7 @@ mod tests {
     fn a_single_frame_round_trips() {
         let report = applied_report();
         let decoded = read_one_frame(frame_for(&report).as_slice()).expect("the frame decodes");
-        assert_eq!(decoded.outcome(), report.outcome());
+        assert_eq!(decoded.reported(), report.reported());
     }
 
     #[test]
@@ -400,7 +599,7 @@ mod tests {
 
     #[test]
     fn a_future_version_is_refused() {
-        let json = r#"{"version":99,"outcome":{"kind":"refused","reason":"verification_missing"},"restricted_identity":null,"proofs":{},"mechanisms":{"filesystem":"","network":"","denied_socket_families":[],"rlimits":[]}}"#;
+        let json = r#"{"version":99,"reported":{"kind":"refused","reason":"verification_missing"},"restricted_identity":null,"proofs":{"outside_write":"denied","canary_read":"denied","inet_socket":"denied","inside_write":"allowed"},"mechanisms":{"filesystem":"landlock","network":"seccomp_bpf","denied_socket_families":[],"rlimits":[]}}"#;
         let mut bytes = format!("{:08x}", json.len()).into_bytes();
         bytes.extend_from_slice(json.as_bytes());
         assert_eq!(
@@ -439,5 +638,153 @@ mod tests {
             inside_write: Observation::Allowed,
         };
         assert!(proofs.all_four_as_designed());
+    }
+
+    fn profile() -> crate::SandboxProfile {
+        crate::SandboxProfile::new(vec![std::path::PathBuf::from("/workspace")])
+            .expect("the test profile is valid")
+    }
+
+    /// The observations a working Linux backend produces. Deliberately named
+    /// after nothing: these are inputs, not claims.
+    fn all_denied() -> Proofs {
+        Proofs {
+            outside_write: Observation::Denied,
+            canary_read: Observation::Denied,
+            inet_socket: Observation::Denied,
+            inside_write: Observation::Allowed,
+        }
+    }
+
+    fn linux_mechanisms() -> Mechanisms {
+        Mechanisms {
+            filesystem: "landlock".to_owned(),
+            network: "seccomp_bpf".to_owned(),
+            denied_socket_families: vec!["AF_INET".to_owned(), "AF_INET6".to_owned()],
+            rlimits: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_helper_that_observed_everything_yields_every_requested_control() {
+        let outcome = derive_outcome(
+            &ReportedOutcome::SelfTested,
+            &all_denied(),
+            &linux_mechanisms(),
+            &profile(),
+        );
+
+        assert!(outcome.satisfies(&profile().requested_controls()));
+        assert_eq!(outcome.verified().len(), 3);
+    }
+
+    #[test]
+    fn an_unrecognised_mechanism_leaves_its_control_unverified() {
+        let mechanisms = Mechanisms {
+            filesystem: "a-mechanism-this-parent-has-never-heard-of".to_owned(),
+            ..linux_mechanisms()
+        };
+
+        let outcome = derive_outcome(
+            &ReportedOutcome::SelfTested,
+            &all_denied(),
+            &mechanisms,
+            &profile(),
+        );
+
+        assert!(!outcome.satisfies(&profile().requested_controls()));
+        assert!(
+            outcome
+                .verified()
+                .iter()
+                .all(|control| control.control() != RequestedControl::FilesystemWriteRestricted),
+            "an unrecognised mechanism must not put a filesystem control in the receipt"
+        );
+    }
+
+    #[test]
+    fn a_probe_that_saw_no_denial_verifies_nothing() {
+        let proofs = Proofs::none();
+
+        let outcome = derive_outcome(
+            &ReportedOutcome::SelfTested,
+            &proofs,
+            &linux_mechanisms(),
+            &profile(),
+        );
+
+        assert!(outcome.verified().is_empty());
+        assert!(!outcome.satisfies(&profile().requested_controls()));
+    }
+
+    #[test]
+    fn a_deny_everything_helper_is_refused_rather_than_believed() {
+        let deny_all = Proofs {
+            inside_write: Observation::Denied,
+            ..all_denied()
+        };
+
+        let outcome = derive_outcome(
+            &ReportedOutcome::SelfTested,
+            &deny_all,
+            &linux_mechanisms(),
+            &profile(),
+        );
+
+        assert_eq!(
+            outcome,
+            ConfinementOutcome::Refused {
+                reason: RefusalReason::SelfTestDisproved
+            },
+            "a policy that denies the workspace too proves the other three denials mean nothing"
+        );
+    }
+
+    #[test]
+    fn denying_one_internet_family_is_not_network_denied() {
+        let mechanisms = Mechanisms {
+            denied_socket_families: vec!["AF_INET".to_owned()],
+            ..linux_mechanisms()
+        };
+
+        let outcome = derive_outcome(
+            &ReportedOutcome::SelfTested,
+            &all_denied(),
+            &mechanisms,
+            &profile(),
+        );
+
+        assert!(
+            outcome
+                .verified()
+                .iter()
+                .all(|control| control.control() != RequestedControl::NetworkDenied),
+            "denying AF_INET alone must not be recorded as network denied"
+        );
+    }
+
+    #[test]
+    fn unavailable_and_refused_pass_through_without_a_control() {
+        let unavailable = derive_outcome(
+            &ReportedOutcome::Unavailable {
+                reason: crate::outcome::UnavailableReason::NoBackendOnPlatform,
+            },
+            &all_denied(),
+            &linux_mechanisms(),
+            &profile(),
+        );
+        assert!(unavailable.verified().is_empty());
+        assert_eq!(unavailable.kind(), "unavailable");
+
+        let refused = derive_outcome(
+            &ReportedOutcome::Refused {
+                reason: RefusalReason::UnconfinedNotPermitted,
+            },
+            &all_denied(),
+            &linux_mechanisms(),
+            &profile(),
+        );
+        assert!(refused.verified().is_empty());
+        assert_eq!(refused.kind(), "refused");
     }
 }

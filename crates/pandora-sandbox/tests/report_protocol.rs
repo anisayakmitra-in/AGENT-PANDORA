@@ -43,8 +43,10 @@
 #![forbid(unsafe_code)]
 #![cfg(unix)]
 
-use pandora_sandbox::report::{Observation, Proofs, VerificationReport, encode};
-use pandora_sandbox::{ConfinementOutcome, MAX_REPORT_BYTES, RefusalReason, read_one_frame};
+use pandora_sandbox::report::{Mechanisms, Observation, Proofs, VerificationReport, encode};
+use pandora_sandbox::{
+    ConfinementOutcome, MAX_REPORT_BYTES, RefusalReason, ReportedOutcome, read_one_frame,
+};
 use std::io::Write as _;
 
 /// Feeds `bytes` to the reader through a real OS stream.
@@ -63,20 +65,25 @@ fn read_over_pipe(bytes: &[u8]) -> Result<VerificationReport, RefusalReason> {
     handle.join().expect("the reader thread does not panic")
 }
 
+/// A report as a working Linux helper would send it: observations present, no
+/// claim about which controls hold.
 fn a_report() -> VerificationReport {
     VerificationReport::new(
-        ConfinementOutcome::Applied {
-            verified: Default::default(),
-            unverified: Default::default(),
-        },
+        ReportedOutcome::SelfTested,
         Some("probe-identity".to_owned()),
+        Proofs {
+            outside_write: Observation::Denied,
+            canary_read: Observation::Denied,
+            inet_socket: Observation::Denied,
+            inside_write: Observation::Allowed,
+        },
+        Mechanisms {
+            filesystem: "landlock".to_owned(),
+            network: "seccomp_bpf".to_owned(),
+            denied_socket_families: vec!["AF_INET".to_owned(), "AF_INET6".to_owned()],
+            rlimits: vec!["RLIMIT_NOFILE".to_owned()],
+        },
     )
-    .with_proofs(Proofs {
-        outside_write: Observation::Denied,
-        canary_read: Observation::Denied,
-        inet_socket: Observation::Denied,
-        inside_write: Observation::Allowed,
-    })
 }
 
 /// A single well-formed frame is accepted. This is the negative control for
@@ -160,7 +167,7 @@ fn a_non_numeric_length_is_refused() {
 
 #[test]
 fn a_future_version_is_refused() {
-    let json = r#"{"version":9999,"outcome":{"kind":"refused","reason":"verification_missing"},"restricted_identity":null,"proofs":{"outside_write":"denied","canary_read":"denied","inet_socket":"denied","inside_write":"allowed"},"mechanisms":{"filesystem":"x","network":"y","denied_socket_families":[],"rlimits":[]}}"#;
+    let json = r#"{"version":9999,"reported":{"kind":"refused","reason":"verification_missing"},"restricted_identity":null,"proofs":{"outside_write":"denied","canary_read":"denied","inet_socket":"denied","inside_write":"allowed"},"mechanisms":{"filesystem":"landlock","network":"seccomp_bpf","denied_socket_families":[],"rlimits":[]}}"#;
     let mut bytes = format!("{:08x}", json.len()).into_bytes();
     bytes.extend_from_slice(json.as_bytes());
     assert_eq!(
@@ -173,7 +180,7 @@ fn a_future_version_is_refused() {
 fn an_unknown_field_is_refused_rather_than_ignored() {
     // deny_unknown_fields means a report carrying an unexpected claim is
     // refused outright instead of being accepted with that claim dropped.
-    let json = r#"{"version":1,"outcome":{"kind":"refused","reason":"verification_missing"},"restricted_identity":null,"proofs":{},"mechanisms":{"filesystem":"","network":"","denied_socket_families":[],"rlimits":[]},"smuggled":"control"}"#;
+    let json = r#"{"version":2,"reported":{"kind":"refused","reason":"verification_missing"},"restricted_identity":null,"proofs":{"outside_write":"denied","canary_read":"denied","inet_socket":"denied","inside_write":"allowed"},"mechanisms":{"filesystem":"landlock","network":"seccomp_bpf","denied_socket_families":[],"rlimits":[]},"smuggled":"control"}"#;
     let mut bytes = format!("{:08x}", json.len()).into_bytes();
     bytes.extend_from_slice(json.as_bytes());
     assert_eq!(
@@ -182,11 +189,43 @@ fn an_unknown_field_is_refused_rather_than_ignored() {
     );
 }
 
-/// An `Applied` outcome that verified nothing must not satisfy a profile that
+/// A self-tested report whose probes saw nothing must not satisfy a profile that
 /// asked for controls. This is the `accept_verified` contract, checked over the
 /// pipe rather than in isolation.
 #[test]
-fn an_applied_outcome_with_no_controls_does_not_satisfy_a_profile() {
+fn a_report_that_observed_nothing_does_not_satisfy_a_profile() {
+    let profile =
+        pandora_sandbox::SandboxProfile::new(vec![std::path::PathBuf::from("/workspace")])
+            .expect("a valid profile");
+    let blind = VerificationReport::new(
+        ReportedOutcome::SelfTested,
+        None,
+        Proofs::none(),
+        Mechanisms::none(),
+    );
+    let decoded =
+        read_over_pipe(&encode(&blind).expect("the report encodes")).expect("the frame decodes");
+    let accepted = pandora_sandbox::report::accept_verified(Some(&decoded), &profile);
+    assert!(
+        !accepted.is_applied(),
+        "a report that observed nothing must not pass as Applied for a profile that asked for controls"
+    );
+    assert!(
+        accepted.verified().is_empty(),
+        "and it must not license any control"
+    );
+    assert_eq!(
+        accepted,
+        ConfinementOutcome::Refused {
+            reason: RefusalReason::VerificationMissing
+        }
+    );
+}
+
+/// The negative control for the refusal above: the same pipe, the same reader,
+/// with observations that *do* support the profile.
+#[test]
+fn a_report_whose_observations_support_the_profile_is_accepted() {
     let profile =
         pandora_sandbox::SandboxProfile::new(vec![std::path::PathBuf::from("/workspace")])
             .expect("a valid profile");
@@ -194,7 +233,7 @@ fn an_applied_outcome_with_no_controls_does_not_satisfy_a_profile() {
         .expect("the frame decodes");
     let accepted = pandora_sandbox::report::accept_verified(Some(&decoded), &profile);
     assert!(
-        !accepted.is_applied(),
-        "an outcome that verified nothing must not pass as Applied for a profile that asked for controls"
+        accepted.satisfies(&profile.requested_controls()),
+        "the parent must still accept an honest helper, or every refusal above is vacuous"
     );
 }
