@@ -47,6 +47,7 @@ pub mod error;
 pub mod outcome;
 pub mod profile;
 pub mod protocol;
+pub mod report;
 
 pub use detect::{Availability, PlatformFamily};
 pub use error::{SandboxProfileError, SandboxProtocolError};
@@ -61,6 +62,7 @@ pub use profile::{
 pub use protocol::{
     HelperReport, MAX_REPORT_BYTES, REPORT_LENGTH_HEX, decode_report, encode_report,
 };
+pub use report::{Mechanisms, Observation, Proofs, VerificationReport, encode, read_one_frame};
 
 /// The decision the parent makes about whether to run the target at all.
 ///

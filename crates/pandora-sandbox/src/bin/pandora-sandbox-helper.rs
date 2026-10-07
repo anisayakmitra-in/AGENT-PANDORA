@@ -14,9 +14,9 @@
 // `#[allow]` with a SAFETY note rather than arriving unnoticed.
 #![deny(unsafe_code)]
 
+use pandora_sandbox::report::{VerificationReport, encode};
 use pandora_sandbox::{
-    Availability, ConfinementOutcome, HelperReport, PlatformFamily, SandboxProfile,
-    UnavailableReason, encode_report,
+    Availability, ConfinementOutcome, PlatformFamily, SandboxProfile, UnavailableReason,
 };
 use std::io::Write as _;
 
@@ -49,7 +49,14 @@ fn main() {
 
     let availability = Availability::probe(PlatformFamily::current());
     let outcome = apply_and_prove(&availability, &profile);
-    report(&report_handle, &outcome);
+
+    // One frame, then the write end is closed explicitly. The parent requires
+    // EOF with zero further bytes, and only an explicit close produces that
+    // deterministically.
+    let report = VerificationReport::new(outcome.clone(), None);
+    if let Ok(bytes) = encode(&report) {
+        let _ = write_and_close(&report_handle, &bytes);
+    }
 
     match outcome {
         // Only an Applied outcome may exec. Everything else stops here, which is
@@ -95,44 +102,7 @@ fn load_profile() -> Result<SandboxProfile, String> {
     serde_json::from_str(&raw).map_err(|error| format!("the sandbox profile is invalid: {error}"))
 }
 
-/// Writes the single framed report to the descriptor the parent supplied.
-///
-/// The descriptor is cross-platform by construction: the parent gives the
-/// helper an inheritable handle, and the helper wraps it with the platform's
-/// own conversion rather than assuming a Unix fd number.
-fn report(handle: &str, outcome: &ConfinementOutcome) {
-    let encoded = match encode_report(&HelperReport::new(outcome.clone(), None)) {
-        Ok(encoded) => encoded,
-        Err(error) => {
-            eprintln!("pandora-sandbox-helper: {error}");
-            std::process::exit(REFUSED_EXIT);
-        }
-    };
-    if write_report(handle, &encoded).is_err() {
-        eprintln!("pandora-sandbox-helper: the report channel was unusable");
-        std::process::exit(REFUSED_EXIT);
-    }
-}
-
 #[cfg(windows)]
-#[allow(unsafe_code)]
-fn write_report(handle: &str, bytes: &[u8]) -> std::io::Result<()> {
-    use std::os::windows::io::{FromRawHandle as _, IntoRawHandle as _};
-
-    let raw = handle
-        .parse::<usize>()
-        .map_err(|_| std::io::Error::other("the report handle is not a number"))?;
-    // SAFETY: the parent creates the pipe, marks the write end inheritable,
-    // passes it as this handle, and keeps it open until it has read the report.
-    // This is the only place the handle is wrapped, it is written exactly once,
-    // and ownership is released back to the raw handle immediately after so the
-    // File destructor cannot close a descriptor the parent still owns.
-    let mut file = unsafe { std::fs::File::from_raw_handle(raw as _) };
-    let written = file.write_all(bytes).and_then(|()| file.flush());
-    let _ = file.into_raw_handle();
-    written
-}
-
 #[cfg(not(windows))]
 #[allow(unsafe_code)]
 fn write_report(handle: &str, bytes: &[u8]) -> std::io::Result<()> {
@@ -176,4 +146,46 @@ fn exec(program: &str, arguments: &[String]) -> ! {
         eprintln!("pandora-sandbox-helper: could not exec {program}: {error}");
         std::process::exit(REFUSED_EXIT);
     }
+}
+
+/// Writes the single frame, then closes the write end explicitly.
+///
+/// The close is the point, not an accident of scope: the parent requires EOF
+/// with zero further bytes, and on Linux and macOS the descriptor is also
+/// close-on-exec so the `exec`'d target can never append a second claim.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn write_and_close(handle: &str, bytes: &[u8]) -> std::io::Result<()> {
+    use std::os::windows::io::FromRawHandle as _;
+
+    let raw = handle
+        .parse::<usize>()
+        .map_err(|_| std::io::Error::other("the report handle is not a number"))?;
+    // SAFETY: the parent creates the pipe and passes this handle as the sole
+    // write end. It is wrapped exactly once, written exactly once, and dropped
+    // immediately. Because Windows has no `exec`, closing is what produces EOF,
+    // which is why Windows confinement cannot make the same guarantee and stays
+    // Unavailable.
+    let mut file = unsafe { std::fs::File::from_raw_handle(raw as _) };
+    let written = file.write_all(bytes).and_then(|()| file.flush());
+    drop(file);
+    written
+}
+
+#[cfg(not(windows))]
+#[allow(unsafe_code)]
+fn write_and_close(handle: &str, bytes: &[u8]) -> std::io::Result<()> {
+    use std::os::fd::FromRawFd as _;
+
+    let raw = handle
+        .parse::<i32>()
+        .map_err(|_| std::io::Error::other("the report descriptor is not a number"))?;
+    // SAFETY: the parent holds the read end and keeps this write end open until
+    // it has read one frame. It is wrapped once and written once. Dropping the
+    // File closes the descriptor, and that close is deliberate: it is what makes
+    // the parent's read return EOF with zero further bytes.
+    let mut file = unsafe { std::fs::File::from_raw_fd(raw) };
+    let written = file.write_all(bytes).and_then(|()| file.flush());
+    drop(file);
+    written
 }
