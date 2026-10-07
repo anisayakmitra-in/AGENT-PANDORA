@@ -1,3 +1,11 @@
+//! The `pandora` binary.
+//!
+//! `#![forbid(unsafe_code)]` keeps this crate inside the workspace rule that
+//! `pandora-sandbox` is the only place unsafe code is permitted. The crate has
+//! no `lib.rs`, so the attribute has to live here to have any effect.
+
+#![forbid(unsafe_code)]
+
 mod commands;
 mod output;
 

@@ -1,0 +1,19 @@
+[package]
+name = "pandora-sandbox"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+# The helper is a second target of this crate rather than its own crate so that
+# the workspace's single point of permitted `unsafe` stays one directory. Both
+# targets are here: the library decides and describes, the helper applies.
+[[bin]]
+name = "pandora-sandbox-helper"
+path = "src/bin/pandora-sandbox-helper.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

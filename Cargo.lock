@@ -1284,6 +1284,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pandora-sandbox"
+version = "2.0.0-beta.8"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "pandora-service"
 version = "2.0.0-beta.8"
 dependencies = [

@@ -5,6 +5,7 @@ members = [
     "crates/pandora-harnesses",
     "crates/pandora-provider",
     "crates/pandora-service",
+    "crates/pandora-sandbox",
     "crates/pandora-cli",
 ]
 exclude = ["fuzz"]
