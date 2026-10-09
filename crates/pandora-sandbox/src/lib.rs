@@ -11,9 +11,11 @@
 //! 2. The library half decides and describes; it never applies confinement and
 //!    never claims a control. Only the helper half does that.
 //! 3. A control can only enter an outcome through
-//!    [`outcome::VerifiedControl::verified`], which requires naming the proof
-//!    that was performed. There is no path from "the backend exists" to
-//!    "the control holds".
+//!    [`outcome::VerifiedControl::verified`], which the *parent* calls from
+//!    [`report::derive_outcome`] and only where an observation the parent read
+//!    itself supports it. The wire format has no field in which a control could
+//!    arrive, so there is no path from "the backend says so" to "the control
+//!    holds".
 //!
 //! # What confinement is not
 //!
@@ -47,12 +49,13 @@ pub mod error;
 pub mod outcome;
 pub mod profile;
 pub mod protocol;
+pub mod report;
 
 pub use detect::{Availability, PlatformFamily};
 pub use error::{SandboxProfileError, SandboxProtocolError};
 pub use outcome::{
-    CONFINEMENT_OUTCOME_VERSION, ConfinementOutcome, ProofKind, RefusalReason, UnavailableReason,
-    VerifiedControl,
+    CONFINEMENT_OUTCOME_VERSION, ConfinementOutcome, ProofKind, RefusalReason, ReportedOutcome,
+    UnavailableReason, VerifiedControl,
 };
 pub use profile::{
     FilesystemConfinement, NetworkConfinement, RequestedControl, SANDBOX_PROFILE_VERSION,
@@ -61,12 +64,18 @@ pub use profile::{
 pub use protocol::{
     HelperReport, MAX_REPORT_BYTES, REPORT_LENGTH_HEX, decode_report, encode_report,
 };
+pub use report::{
+    Mechanisms, Observation, Proofs, VerificationReport, accept_verified, derive_outcome, encode,
+    gate, read_one_frame,
+};
 
 /// The decision the parent makes about whether to run the target at all.
 ///
-/// This is the single place the fail-closed rule is expressed, so there is one
-/// answer to "what happens when verification is missing" rather than one per
-/// call site.
+/// The helper's report is never taken as a verdict. The controls are rebuilt
+/// from the observations it carries by [`derive_outcome`], and the one fail-closed
+/// rule is [`gate`]. This function exists so the STEP 1 entry point keeps its
+/// signature; the decision it makes is exactly the one [`accept_verified`]
+/// makes, so there is one rule rather than one per call site.
 pub fn accept_report(
     report: Option<&HelperReport>,
     profile: &SandboxProfile,
@@ -76,13 +85,11 @@ pub fn accept_report(
             reason: RefusalReason::VerificationMissing,
         };
     };
-    let outcome = report.outcome();
-    if !outcome.satisfies(&profile.requested_controls()) && !profile.allow_unsandboxed() {
-        // An unsatisfied outcome is a refusal, not a downgrade. The parent does
-        // not treat `Unavailable` as permission to proceed.
-        return ConfinementOutcome::Refused {
-            reason: RefusalReason::VerificationMissing,
-        };
-    }
-    outcome.clone()
+    let derived = derive_outcome(
+        report.reported(),
+        report.proofs(),
+        report.mechanisms(),
+        profile,
+    );
+    gate(derived, profile)
 }

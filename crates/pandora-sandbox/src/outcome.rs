@@ -5,18 +5,25 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fmt;
 
-/// Version of the outcome wire format shared with the helper.
-pub const CONFINEMENT_OUTCOME_VERSION: u16 = 1;
+/// Version of the report wire format shared with the helper.
+///
+/// Bumped to 2 when the wire stopped carrying a *conclusion* and started
+/// carrying *observations*. Version 1 let the helper state which controls
+/// held; version 2 lets it state only what its probes observed, and the parent
+/// derives the controls from that. The old shape is refused rather than
+/// reinterpreted, so a version-1 helper cannot be mistaken for a version-2 one.
+pub const CONFINEMENT_OUTCOME_VERSION: u16 = 2;
 
 /// The only three answers a backend may give.
 ///
-/// There is deliberately no `Applied` variant that is reachable without a
-/// [`VerifiedControl`], and no way to construct a verified control other than
-/// [`VerifiedControl::verified`], which takes the probe result that justified
-/// it. That is what stops a backend from reporting a capability it merely
-/// believes it has.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+/// This type is the **parent's** answer, derived by
+/// [`crate::derive_outcome`] from what the helper observed. It deliberately
+/// does not implement [`serde::Deserialize`]: there is no `Applied` variant
+/// that is reachable without a [`VerifiedControl`], no way to construct a
+/// verified control other than [`VerifiedControl::verified`], and — because
+/// nothing off the wire can build one — no path from bytes on a pipe to "this
+/// control holds".
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub enum ConfinementOutcome {
     /// Every requested control was proven. `verified` is non-empty and a
     /// superset of what the profile asked for.
@@ -76,13 +83,51 @@ impl ConfinementOutcome {
     }
 }
 
+/// What the helper puts on the wire.
+///
+/// This is deliberately *not* a [`ConfinementOutcome`]. It carries no controls
+/// and no verdict about any control, because a helper that is allowed to state
+/// which confinement holds is a helper that can state confinement it never
+/// applied. The helper reports what its probes observed in
+/// [`crate::Proofs`] and [`crate::Mechanisms`]; the parent derives the
+/// controls, in the parent, from those observations and the profile.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ReportedOutcome {
+    /// The helper applied what it could and ran the self-tests inside the
+    /// confined process. It does not say which controls hold; the observations
+    /// do, and only the parent turns them into controls.
+    SelfTested,
+    /// No backend could be applied on this host. A statement about the platform,
+    /// not about this exchange.
+    Unavailable { reason: UnavailableReason },
+    /// The helper refused to proceed. A decision, not an absence.
+    Refused { reason: RefusalReason },
+}
+
+impl ReportedOutcome {
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::SelfTested => "self_tested",
+            Self::Unavailable { .. } => "unavailable",
+            Self::Refused { .. } => "refused",
+        }
+    }
+}
+
 /// A control a backend proved by behaviour, plus what it proved it with.
 ///
 /// The proof is retained rather than discarded so a receipt can state *how* a
 /// control was established, and so a reviewer can tell a verified control from
 /// an asserted one.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+///
+/// This type is **not** [`serde::Deserialize`]'d, and must never become so. It
+/// is the load-bearing half of the crate's evidence claim: a `VerifiedControl`
+/// can only be built by [`VerifiedControl::verified`], in the parent, from a
+/// [`crate::Proofs`] observation the parent has read itself. Dropping the
+/// `Deserialize` derive is what makes that a type-checked fact instead of a
+/// convention, so `tests/fabrication.rs` asserts the absence at compile time.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct VerifiedControl {
     control: RequestedControl,
     mechanism: String,
@@ -93,9 +138,11 @@ impl VerifiedControl {
     /// The only constructor. Callers must name the mechanism and the proof they
     /// actually performed.
     ///
-    /// The mechanism is taken as `&'static str` so a caller cannot pass a
-    /// runtime-computed name, then stored as `String` because this type is
-    /// deserialized from the helper's report.
+    /// `mechanism` is `&'static str` so the name can only ever come from a
+    /// closed set the parent recognises, never from a string that arrived over
+    /// the wire. The only caller is [`crate::derive_outcome`], which supplies a
+    /// mechanism it matched against that closed set *and* whose control the
+    /// observations the parent read actually support.
     pub fn verified(control: RequestedControl, mechanism: &'static str, proof: ProofKind) -> Self {
         Self {
             control,

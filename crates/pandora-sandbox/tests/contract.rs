@@ -5,10 +5,11 @@
 //! that matters most here is a test that passes because it never exercised the
 //! rule.
 
+use pandora_sandbox::report::{Mechanisms, Observation, Proofs};
 use pandora_sandbox::{
     Availability, ConfinementOutcome, FilesystemConfinement, HelperReport, NetworkConfinement,
-    PlatformFamily, ProofKind, RefusalReason, RequestedControl, SandboxProfile, UnavailableReason,
-    VerifiedControl, accept_report, decode_report, encode_report,
+    PlatformFamily, ProofKind, RefusalReason, ReportedOutcome, RequestedControl, SandboxProfile,
+    UnavailableReason, VerifiedControl, accept_report, decode_report, encode_report,
 };
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -28,6 +29,25 @@ fn applied(controls: &[RequestedControl]) -> ConfinementOutcome {
             .map(|control| VerifiedControl::verified(*control, "test", ProofKind::DeniedOperation))
             .collect(),
         unverified: BTreeSet::new(),
+    }
+}
+
+/// The observations a working Linux backend produces.
+fn all_denied() -> Proofs {
+    Proofs {
+        outside_write: Observation::Denied,
+        canary_read: Observation::Denied,
+        inet_socket: Observation::Denied,
+        inside_write: Observation::Allowed,
+    }
+}
+
+fn linux_mechanisms() -> Mechanisms {
+    Mechanisms {
+        filesystem: "landlock".to_owned(),
+        network: "seccomp_bpf".to_owned(),
+        denied_socket_families: vec!["AF_INET".to_owned(), "AF_INET6".to_owned()],
+        rlimits: Vec::new(),
     }
 }
 
@@ -240,12 +260,7 @@ fn a_missing_report_is_refused() {
 
 #[test]
 fn an_unverified_report_is_refused_rather_than_downgraded() {
-    let report = HelperReport::new(
-        ConfinementOutcome::Unavailable {
-            reason: UnavailableReason::BackendRefused,
-        },
-        None,
-    );
+    let report = HelperReport::unavailable(UnavailableReason::BackendRefused);
 
     let outcome = accept_report(Some(&report), &profile());
 
@@ -271,12 +286,7 @@ fn an_unsandboxed_profile_still_refuses_but_may_be_honoured_later() {
         true,
     )
     .expect("the profile is valid");
-    let report = HelperReport::new(
-        ConfinementOutcome::Unavailable {
-            reason: UnavailableReason::BackendRefused,
-        },
-        None,
-    );
+    let report = HelperReport::unavailable(UnavailableReason::BackendRefused);
 
     assert!(
         accept_report(Some(&report), &strict).eq(&ConfinementOutcome::Refused {
@@ -287,15 +297,17 @@ fn an_unsandboxed_profile_still_refuses_but_may_be_honoured_later() {
         accept_report(Some(&report), &relaxed).eq(&ConfinementOutcome::Unavailable {
             reason: UnavailableReason::BackendRefused
         }),
-        "with the flag set the original outcome must be returned so it can be recorded"
+        "with the flag set the derived outcome must be returned so it can be recorded"
     );
 }
 
 #[test]
 fn a_report_round_trips_through_the_pipe_format() {
     let report = HelperReport::new(
-        applied(&[RequestedControl::NetworkDenied]),
+        ReportedOutcome::SelfTested,
         Some("restricted-sandbox".to_owned()),
+        all_denied(),
+        linux_mechanisms(),
     );
 
     let frame = encode_report(&report).expect("the report encodes");
@@ -303,17 +315,13 @@ fn a_report_round_trips_through_the_pipe_format() {
 
     assert_eq!(decoded, report);
     assert_eq!(decoded.restricted_identity(), Some("restricted-sandbox"));
+    assert_eq!(decoded.proofs(), &all_denied());
 }
 
 #[test]
 fn a_truncated_report_is_rejected_rather_than_read_as_empty() {
-    let frame = encode_report(&HelperReport::new(
-        ConfinementOutcome::Refused {
-            reason: RefusalReason::VerificationMissing,
-        },
-        None,
-    ))
-    .expect("the report encodes");
+    let frame = encode_report(&HelperReport::refused(RefusalReason::VerificationMissing))
+        .expect("the report encodes");
 
     let truncated = &frame[..frame.len() - 3];
 
@@ -361,7 +369,7 @@ fn an_empty_report_is_rejected() {
 
 #[test]
 fn a_report_from_a_future_version_is_rejected() {
-    let json = r#"{"version":99,"outcome":{"kind":"refused","reason":"verification_missing"},"restricted_identity":null}"#;
+    let json = r#"{"version":99,"reported":{"kind":"refused","reason":"verification_missing"},"restricted_identity":null,"proofs":{"outside_write":"denied","canary_read":"denied","inet_socket":"denied","inside_write":"allowed"},"mechanisms":{"filesystem":"landlock","network":"seccomp_bpf","denied_socket_families":["AF_INET","AF_INET6"],"rlimits":[]}}"#;
     let mut frame = format!("{:08x}", json.len()).into_bytes();
     frame.extend_from_slice(json.as_bytes());
 
@@ -385,4 +393,62 @@ fn the_helper_refuses_when_asked_for_a_control_it_cannot_prove() {
     assert_eq!(outcome.kind(), "unavailable");
     assert!(outcome.verified().is_empty());
     assert!(!outcome.satisfies(&profile().requested_controls()));
+}
+
+#[test]
+fn a_helper_that_observed_every_requested_control_is_accepted() {
+    let report = HelperReport::new(
+        ReportedOutcome::SelfTested,
+        None,
+        all_denied(),
+        linux_mechanisms(),
+    );
+
+    let outcome = accept_report(Some(&report), &profile());
+
+    assert!(
+        outcome.satisfies(&profile().requested_controls()),
+        "the parent must accept a helper whose own observations support every control"
+    );
+    assert_eq!(outcome.verified().len(), 3);
+}
+
+#[test]
+fn a_helper_that_observed_nothing_verifies_nothing() {
+    let report = HelperReport::new(
+        ReportedOutcome::SelfTested,
+        None,
+        Proofs::none(),
+        Mechanisms::none(),
+    );
+
+    let outcome = accept_report(Some(&report), &profile());
+
+    assert_eq!(
+        outcome,
+        ConfinementOutcome::Refused {
+            reason: RefusalReason::VerificationMissing
+        }
+    );
+    assert!(outcome.verified().is_empty());
+}
+
+#[test]
+fn leaving_the_observations_out_of_the_frame_gains_nothing() {
+    // The omission must be cheaper than the observation, or a helper could
+    // report "self tested" and leave the parent to guess.
+    let json = format!(
+        r#"{{"version":{},"reported":{{"kind":"self_tested"}},"restricted_identity":null}}"#,
+        pandora_sandbox::CONFINEMENT_OUTCOME_VERSION
+    );
+    let mut frame = format!("{:08x}", json.len()).into_bytes();
+    frame.extend_from_slice(json.as_bytes());
+
+    let report = decode_report(&frame).expect("a report that omits them still parses");
+    let outcome = accept_report(Some(&report), &profile());
+
+    assert!(
+        !outcome.satisfies(&profile().requested_controls()),
+        "omitting the observations must derive zero controls, not all of them"
+    );
 }
