@@ -87,6 +87,15 @@ impl SandboxProfile {
         self.allow_unsandboxed
     }
 
+    /// The roots the filesystem request may write to. Empty for `Host`, which
+    /// writes anywhere by request rather than by accident.
+    pub fn writable_roots(&self) -> &[PathBuf] {
+        match &self.filesystem {
+            FilesystemConfinement::WorkspaceOnly(roots) => roots,
+            FilesystemConfinement::Host => &[],
+        }
+    }
+
     /// The controls this profile asks for. A backend reports only the subset it
     /// verified, so this is an upper bound on what may ever be claimed.
     pub fn requested_controls(&self) -> BTreeSet<RequestedControl> {

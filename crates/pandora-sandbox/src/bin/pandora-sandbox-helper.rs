@@ -4,22 +4,32 @@
 //! applied to *this* process before `exec` replaces the image. Confining after
 //! the target starts would be a race the target could win.
 //!
-//! STEP 1 implements no backend. The helper therefore performs its self-tests,
-//! finds that confinement is not in force, and reports `Unavailable` rather than
-//! executing. That is the fail-closed behaviour the contract requires, and it
-//! is what makes the plumbing testable before STEP 2 supplies real backends.
-
-// `deny` rather than `forbid`: the two `write_report` bodies below must be able
-// to opt in, and `deny` still forces any *new* unsafe to carry an explicit
-// `#[allow]` with a SAFETY note rather than arriving unnoticed.
+//! The order is not negotiable. Confine, then self-test **in the real confined
+//! process**, then write exactly one report frame, then close the write end, then
+//! `exec`. Reporting before confining would let a target that never ran read a
+//! report claiming it did.
+//!
+//! On Linux the backend is Landlock plus seccomp-bpf plus rlimits, and it is
+//! reached through [`pandora_sandbox::confine`] — this binary holds no
+//! confinement code of its own. Everywhere else there is no backend, so the
+//! helper reports `Unavailable` and exits non-zero without executing anything.
+//!
+//! # The one `unsafe`
+//!
+//! Wrapping the parent's report descriptor is the only unsafe in the workspace,
+//! and it lives in [`write_report`] and nowhere else. `deny` rather than
+//! `forbid` at the crate root, so that any *new* unsafe has to carry an explicit
+//! `#[allow]` with a SAFETY note rather than arriving unnoticed.
 #![deny(unsafe_code)]
 
 use pandora_sandbox::report::{Mechanisms, Proofs};
 use pandora_sandbox::{
-    Availability, HelperReport, PlatformFamily, ReportedOutcome, SandboxProfile, UnavailableReason,
-    encode_report,
+    Availability, ConfinementRequest, HelperReport, PlatformFamily, ReportedOutcome,
+    SandboxProfile, confine, encode_report,
 };
+#[cfg(unix)]
 use std::io::Write as _;
+use std::path::PathBuf;
 
 /// Exit code used when the helper refuses. Distinct from a target's own exit
 /// codes so a caller can tell "the sandbox stopped this" from "the program
@@ -49,7 +59,38 @@ fn main() {
     };
 
     let availability = Availability::probe(PlatformFamily::current());
-    let (reported, proofs, mechanisms) = apply_and_prove(&availability, &profile);
+    // A pre-spawn check only. The host may have Landlock and still fail to
+    // enforce a ruleset, and only `confine` finds that out.
+    if !availability.covers(&profile) && !profile.allow_unsandboxed() {
+        let reported = ReportedOutcome::Unavailable {
+            reason: availability.reason(),
+        };
+        report(
+            &report_handle,
+            &reported,
+            &Proofs::none(),
+            &Mechanisms::none(),
+        );
+        std::process::exit(REFUSED_EXIT);
+    }
+
+    // Created before confinement, because afterwards this process must not be
+    // able to write there — which is the whole point of the write probe.
+    let probe_dir = match create_probe_dir() {
+        Ok(probe_dir) => probe_dir,
+        Err(message) => {
+            eprintln!("pandora-sandbox-helper: {message}");
+            std::process::exit(REFUSED_EXIT);
+        }
+    };
+
+    let attempt = confine(ConfinementRequest {
+        profile,
+        probe_dir,
+        program_dir: program_directory(&program),
+    });
+    let (reported, proofs, mechanisms) = (attempt.reported, attempt.proofs, attempt.mechanisms);
+
     report(&report_handle, &reported, &proofs, &mechanisms);
 
     match reported {
@@ -72,38 +113,24 @@ fn main() {
     exec(&program, &program_arguments);
 }
 
-/// Applies the requested confinement, then runs the self-tests.
+/// Creates the directory the outside-write and canary-read probes target.
 ///
-/// Returns what was *observed*, never a claim about which controls hold: the
-/// parent derives those from these observations and the profile. STEP 1 has no
-/// backend to apply, so this always reports `Unavailable` without attempting
-/// anything. The observation plumbing is written out anyway so STEP 3 has to
-/// satisfy it rather than skip past it.
-fn apply_and_prove(
-    availability: &Availability,
-    profile: &SandboxProfile,
-) -> (ReportedOutcome, Proofs, Mechanisms) {
-    if !availability.covers(profile) {
-        return (
-            ReportedOutcome::Unavailable {
-                reason: availability.reason(),
-            },
-            Proofs::none(),
-            Mechanisms::none(),
-        );
-    }
-    // STEP 3 replaces this block with: apply the backend, then run the four
-    // self-tests inside the confined process and report what each one saw. A
-    // control with no corresponding denied-operation observation must never be
-    // implied here, because the parent will not infer it either.
-    let _ = UnavailableReason::BackendRefused;
-    (
-        ReportedOutcome::Unavailable {
-            reason: UnavailableReason::BackendRefused,
-        },
-        Proofs::none(),
-        Mechanisms::none(),
-    )
+/// It must be outside every writable root, and it must be populated before
+/// confinement is applied. Afterwards nobody may write here, and the canary may
+/// not be read back, which is what makes both probes tests of confinement
+/// rather than of the directory's existence.
+fn create_probe_dir() -> Result<PathBuf, String> {
+    let dir = std::env::temp_dir().join(format!("pandora-sandbox-probe-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| format!("could not create the probe directory: {error}"))?;
+    std::fs::write(dir.join("canary"), b"pandora-sandbox-canary")
+        .map_err(|error| format!("could not write the probe canary: {error}"))?;
+    Ok(dir)
+}
+
+/// The directory holding the target program, which Landlock needs a rule for.
+fn program_directory(program: &str) -> Option<PathBuf> {
+    std::path::Path::new(program).parent().map(PathBuf::from)
 }
 
 fn load_profile() -> Result<SandboxProfile, String> {
@@ -113,10 +140,6 @@ fn load_profile() -> Result<SandboxProfile, String> {
 }
 
 /// Writes the single framed report to the descriptor the parent supplied.
-///
-/// The descriptor is cross-platform by construction: the parent gives the
-/// helper an inheritable handle, and the helper wraps it with the platform's
-/// own conversion rather than assuming a Unix fd number.
 fn report(handle: &str, reported: &ReportedOutcome, proofs: &Proofs, mechanisms: &Mechanisms) {
     let encoded = match encode_report(&HelperReport::new(
         reported.clone(),
@@ -136,40 +159,52 @@ fn report(handle: &str, reported: &ReportedOutcome, proofs: &Proofs, mechanisms:
     }
 }
 
-#[cfg(windows)]
+/// Writes exactly one report frame to the descriptor the parent supplied, then
+/// closes the write end.
+///
+/// This is the **only** `unsafe` in the workspace, and the only place a raw
+/// descriptor is turned into an owned value. It is one function rather than two
+/// because writing and closing have to be inseparable: a frame that is written
+/// and not closed never produces the EOF the parent is waiting for, and a
+/// descriptor that is closed and not written looks identical to a helper that
+/// died. One function, one ownership transfer, one close.
+#[cfg(unix)]
 #[allow(unsafe_code)]
 fn write_report(handle: &str, bytes: &[u8]) -> std::io::Result<()> {
-    use std::os::windows::io::{FromRawHandle as _, IntoRawHandle as _};
-
-    let raw = handle
-        .parse::<usize>()
-        .map_err(|_| std::io::Error::other("the report handle is not a number"))?;
-    // SAFETY: the parent creates the pipe, marks the write end inheritable,
-    // passes it as this handle, and keeps it open until it has read the report.
-    // This is the only place the handle is wrapped, it is written exactly once,
-    // and ownership is released back to the raw handle immediately after so the
-    // File destructor cannot close a descriptor the parent still owns.
-    let mut file = unsafe { std::fs::File::from_raw_handle(raw as _) };
-    let written = file.write_all(bytes).and_then(|()| file.flush());
-    let _ = file.into_raw_handle();
-    written
-}
-
-#[cfg(not(windows))]
-#[allow(unsafe_code)]
-fn write_report(handle: &str, bytes: &[u8]) -> std::io::Result<()> {
-    use std::os::fd::{FromRawFd as _, IntoRawFd as _};
+    use std::os::fd::FromRawFd as _;
 
     let raw = handle
         .parse::<i32>()
         .map_err(|_| std::io::Error::other("the report descriptor is not a number"))?;
-    // SAFETY: as above. The parent holds the read end and keeps the write end
-    // open until it has read the report, and the raw descriptor is handed back
-    // rather than closed here.
+    // SAFETY: the parent creates the pipe, marks the write end inheritable, and
+    // passes it to this process as `raw`, keeping its own descriptor for the same
+    // open file description. Closing ours cannot close theirs, so the parent still
+    // controls when the channel is really shut.
+    //
+    // The frame is written exactly once, from the single call site in [`report`],
+    // and the `File` is dropped at the end of this function, which is the
+    // deliberate close. Nothing else here takes ownership of a raw descriptor.
     let mut file = unsafe { std::fs::File::from_raw_fd(raw) };
     let written = file.write_all(bytes).and_then(|()| file.flush());
-    let _ = file.into_raw_fd();
+    // Closing explicitly rather than relying on `exec`: EOF at the parent is what
+    // confirms nothing else was written, so it has to happen deterministically and
+    // before the target starts.
+    drop(file);
     written
+}
+
+/// Windows has no `exec`, so there is no ordering property to preserve, and no
+/// backend that could honestly fill a frame.
+///
+/// Writing nothing is therefore the right answer for a platform with no backend:
+/// the parent sees an absent frame, which is a refusal, rather than a frame
+/// claiming confinement it never applied.
+#[cfg(not(unix))]
+fn write_report(handle: &str, bytes: &[u8]) -> std::io::Result<()> {
+    let _ = (handle, bytes);
+    Err(std::io::Error::other(
+        "no backend writes a report frame on this platform",
+    ))
 }
 
 /// Replaces this process with the target, keeping the confinement applied here.
