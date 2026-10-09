@@ -1,14 +1,13 @@
 //! Platform detection and honest backend availability.
 //!
-//! STEP 1 implements no confinement backend. Every platform therefore probes as
-//! `Unavailable`, including Windows, which the approved plan requires be
-//! reported `Unavailable` for filesystem and network until a denied-operation
-//! test proves otherwise.
+//! Availability is decided *before* anything is spawned. A parent that cannot
+//! learn whether confinement is available must refuse to run, rather than spawn
+//! and hope.
 //!
-//! The reason this module exists rather than being folded into the helper is
-//! that availability has to be decided *before* anything is spawned. A parent
-//! that cannot learn whether confinement is available must refuse to run,
-//! rather than spawn and hope.
+//! Detection is a pre-spawn check, not the answer. A host can have a usable
+//! kernel ABI and still fail to enforce a ruleset; only [`crate::confine`]
+//! discovers that, and its observations — not this module — are what the parent
+//! derives controls from.
 
 use crate::outcome::{ProofKind, UnavailableReason, VerifiedControl};
 use crate::profile::{RequestedControl, SandboxProfile};
@@ -77,19 +76,22 @@ pub struct Availability {
 impl Availability {
     /// Availability for the given platform family.
     ///
-    /// STEP 1 ships no backend, so the provable set is empty on every platform.
+    /// This is a pre-spawn check, not the answer. On Linux it reports what the
+    /// backend can attempt; the authoritative statement comes from
+    /// [`crate::confine`] and the observations its probes return, because a
+    /// host can have Landlock and still fail to enforce a ruleset.
+    ///
     /// Windows is explicitly empty rather than "unknown": the approved plan
     /// requires filesystem and network be reported Unavailable there unless a
     /// denied-operation test proves them, and no such test exists yet.
-    pub const fn probe(family: PlatformFamily) -> Self {
+    pub fn probe(family: PlatformFamily) -> Self {
         Self {
             family,
-            provable: BTreeSet::new(),
+            provable: provable_for(family),
             reason: match family {
                 PlatformFamily::Unsupported => UnavailableReason::NoBackendOnPlatform,
-                // Every known family reports the same reason in STEP 1: the
-                // backend exists on this platform but has not been implemented
-                // here. STEP 2 replaces this with a real probe.
+                // Every other family without a backend reports this: a backend
+                // exists for the platform but has not been written here.
                 _ => UnavailableReason::BackendRefused,
             },
         }
@@ -103,12 +105,15 @@ impl Availability {
         self.reason
     }
 
-    /// Controls this host could actually prove today. Empty in STEP 1.
+    /// Controls this host could actually prove today, before any of it runs.
     pub fn provable(&self) -> &BTreeSet<RequestedControl> {
         &self.provable
     }
 
-    /// Whether every control this profile asks for could be proven.
+    /// Whether every control this profile asks for could be attempted here.
+    ///
+    /// This is the pre-spawn gate, and only that: a host that passes it can still
+    /// fail to confine, which [`crate::confine`] discovers and reports.
     pub fn covers(&self, profile: &SandboxProfile) -> bool {
         profile
             .requested_controls()
@@ -124,5 +129,38 @@ impl Availability {
         self.provable
             .contains(&control)
             .then(|| VerifiedControl::verified(control, self.family.as_str(), proof))
+    }
+}
+
+/// What this build's backend could attempt on this host, before any of it runs.
+///
+/// Empty everywhere except Linux, and there only when the kernel actually has a
+/// usable Landlock ABI. A host whose kernel does not is reported as covering
+/// nothing, so the parent refuses rather than spawning a child it cannot confine.
+fn provable_for(family: PlatformFamily) -> BTreeSet<RequestedControl> {
+    let linux_can_attempt = {
+        #[cfg(target_os = "linux")]
+        {
+            matches!(family, PlatformFamily::Landlock | PlatformFamily::Seccomp)
+                && crate::linux::detected_abi()
+                    .is_some_and(|abi| crate::linux::abi_version(abi) >= crate::linux::REQUIRED_ABI)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = family;
+            false
+        }
+    };
+
+    if linux_can_attempt {
+        [
+            RequestedControl::FilesystemWriteRestricted,
+            RequestedControl::FilesystemReadRestricted,
+            RequestedControl::NetworkDenied,
+        ]
+        .into_iter()
+        .collect()
+    } else {
+        BTreeSet::new()
     }
 }

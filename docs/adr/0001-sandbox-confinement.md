@@ -173,6 +173,45 @@ If the kernel lacks Landlock or seccomp, the outcome is `Unavailable` with the
 reason. There is no silent fallback to a weaker mode: a weaker mode reported as
 the stronger one is the failure this crate exists to prevent.
 
+### The Linux backend
+
+Implemented in `src/linux.rs`, behind `#[cfg(target_os = "linux")]`, and reached
+by the helper only through `pandora_sandbox::confine`. The library half still
+holds no confinement code: applying a mechanism is a side effect on the caller,
+and the only caller that may accept that is the code about to become the target.
+
+**Order.** `PR_SET_NO_NEW_PRIVS` first, then Landlock, then seccomp, with rlimits
+alongside. `no_new_privs` is set *and read back*, because a kernel that accepted
+the call without applying it would leave every later mechanism weaker than
+reported, and Landlock's own protection assumes the flag is on. The ruleset is
+built with `CompatLevel::HardRequirement`, `restrict_self` must return
+`RulesetStatus::FullyEnforced`, and the running ABI must meet `REQUIRED_ABI` — a
+kernel below it is `UnsupportedRequest`, never a partially confined run.
+
+**Filesystem.** Every access right is *handled*, which is what makes the default
+a denial: nothing outside a granted path is reachable. `AccessFs::from_all` on
+the workspace roots; `AccessFs::from_read` — which includes `Execute` — on the
+system directories and on the target program's directory. Paths are
+canonicalised before a rule is attached, because a rule on a symlink inode
+grants nothing: `/bin` is a symlink to `usr/bin` on every mainstream
+distribution. An `exec` after confinement is a path lookup like any other, so
+without the program-directory rule the `exec` that carries confinement to the
+target would itself be denied.
+
+**What the probes mean.** `outside_write`, `canary_read` and `inet_socket` count
+as denials only when the error is `EACCES` or `EPERM`. Anything else — a missing
+path, a name too long, a directory that is absent — records `Inconclusive`,
+because a probe that did not run must never look like a confinement. The fourth
+probe, `inside_write`, is the control on the other three: a policy that denied
+everything satisfies those, so a workspace write that still succeeds is what
+makes them mean something.
+
+**`RLIMIT_NPROC` is not applied.** On Linux the process-count limit is a
+per-*user* limit, not a per-process one, and lowering it from inside a sandboxed
+child counts against the user rather than the child. There is no safe
+per-process process-count limit to apply, so the honest answer is to apply
+nothing and claim nothing.
+
 ### macOS: deny-default Seatbelt
 
 Generate a deny-default Seatbelt profile from the `SandboxProfile`. Allow only
@@ -207,6 +246,20 @@ No backend. The probe returns `Unavailable`. See the requirement above.
 leaves local sockets working, so a confined process can still talk to local
 services over a Unix socket. The report says so. Denying `AF_UNIX` too is a
 follow-up, and it will break legitimate local IPC.
+
+**Linux, credential files under `$HOME` stay readable.** The backend grants
+`AccessFs::from_read` on the system directories, and nothing yet narrows that
+per profile, so a host's credential files stay readable by a confined process.
+Narrowing it needs the read paths plumbed through `SandboxProfile` and the
+executors, which is later work. Recorded here rather than described as confined.
+
+**Linux, the ABI floor is a simulated old kernel in tests.** There is no way to
+make a modern kernel forget how to do Landlock, so the "kernel below the
+required ABI" branch is exercised by forcing the floor through
+`PANDORA_SANDBOX_TEST_ABI_FLOOR`. That tests the refusal path, not a real old
+kernel. The real old-kernel behaviour is covered only by
+`detected_abi()` returning `None` and by `HardRequirement` refusing to build a
+ruleset it cannot enforce.
 
 **Linux, `/proc` and `/sys` reads.** Landlock grants read-only access to what a
 process needs to start. If `/proc` is reachable, some kernel interfaces leak
