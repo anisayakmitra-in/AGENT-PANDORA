@@ -121,10 +121,18 @@ impl Availability {
             .all(|control| self.provable.contains(control))
     }
 
-    /// A `VerifiedControl` for the given control, or the reason it cannot exist.
+    /// A `VerifiedControl` for the given control, or `None` if this host could not
+    /// attempt it at all.
     ///
-    /// Returning `None` is the important half: there is no path from "no probe"
-    /// to "verified", so a control cannot be claimed without a proof.
+    /// **The `ProofKind` is a claim the caller makes, not evidence this function
+    /// gathered.** It asserts a proof the caller says it performed; it performs
+    /// none. That is deliberately useless as authority: the controls the parent
+    /// actually accepts come from [`crate::derive_outcome`], rebuilding them from
+    /// observations, and nothing on that path goes through here.
+    ///
+    /// What this function does enforce is the bound — it can only ever return a
+    /// control the host reported as provable, so it cannot manufacture one out of
+    /// nothing.
     pub fn verify(&self, control: RequestedControl, proof: ProofKind) -> Option<VerifiedControl> {
         self.provable
             .contains(&control)

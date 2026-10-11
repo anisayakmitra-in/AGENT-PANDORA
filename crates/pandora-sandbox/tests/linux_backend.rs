@@ -371,8 +371,81 @@ fn a_forced_unsupported_abi_is_refused_rather_than_verified() {
 }
 
 // ---------------------------------------------------------------------------
-// The probes, against processes that are not confined
+// The report channel and the target's stdout
 // ---------------------------------------------------------------------------
+
+/// A target that writes to stdout after `exec` must not corrupt the report.
+///
+/// This is the whole reason the helper closes its report descriptor before
+/// `exec`. The parent passes `1` with `Stdio::piped()`, so the helper's stdout
+/// **is** the report pipe; the helper writes its frame, then closes fd 1, and only
+/// then execs. `CommandExt::exec` performs the `Command`'s setup and then defaults
+/// to *inheriting* stdio, so the target inherits fd 1 in the state the helper left
+/// it — closed.
+///
+/// The target therefore has no stdout at all, `echo`'s write fails with `EBADF`,
+/// nothing lands in the pipe, and the parent reads exactly one frame followed by
+/// EOF. The report is intact.
+///
+/// **What this test also exposes, deliberately.** A dead stdout is not a detail,
+/// it is the design being wrong. The agreed design is a *dedicated* report pipe
+/// with `CLOEXEC`, so the report fd is not one of the three standard descriptors
+/// and the target keeps a working stdout, stderr and stdin. Getting there needs a
+/// second `unsafe` — `libc::pipe2`, or `pre_exec` with `dup2` — and the
+/// one-`unsafe` budget this PR set for itself forbids it.
+///
+/// So this proves the narrow claim asked of it, that a printing target cannot
+/// corrupt or be mistaken for the report, and simultaneously documents why that is
+/// not good enough. The design needs a second permitted `unsafe` before the
+/// executors can be wired to it.
+#[test]
+fn a_target_that_prints_after_exec_cannot_corrupt_the_report() {
+    let (_workspace, profile) = fixtures(false);
+
+    let mut command = Command::new(HELPER);
+    command
+        .arg("1")
+        .arg("/bin/sh")
+        .arg("-c")
+        .arg("echo this-is-target-output")
+        .env("PANDORA_SANDBOX_PROFILE_JSON", &profile)
+        .env_clear()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = command.spawn().expect("the helper starts");
+    let mut pipe = child.stdout.take().expect("stdout is piped");
+    let mut bytes = Vec::new();
+    pipe.read_to_end(&mut bytes).expect("the pipe reads to EOF");
+    drop(pipe);
+
+    let mut stderr = String::new();
+    if let Some(mut sink) = child.stderr.take() {
+        let _ = sink.read_to_string(&mut stderr);
+    }
+    let status = child.wait().expect("the helper exits");
+
+    let declared = expected_length(&bytes);
+    assert_eq!(
+        bytes.len(),
+        declared,
+        "the pipe must hold exactly the one frame and nothing else, but the \
+         target's output may have followed it; stderr: {stderr}, exit {status:?}"
+    );
+    let report = decode_one_frame(&bytes)
+        .expect("the frame decodes")
+        .expect("a frame was written");
+
+    assert_eq!(
+        report.proofs().outside_write,
+        Observation::Denied,
+        "confinement must have been applied before the exec"
+    );
+    assert!(
+        !String::from_utf8_lossy(&bytes).contains("this-is-target-output"),
+        "the target's output must not be in the report pipe at all"
+    );
+}
 
 /// The negative control at the probe level: on a process that was never
 /// confined, every probe must report `Allowed`.
