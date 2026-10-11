@@ -9,7 +9,7 @@
 //! discovers that, and its observations — not this module — are what the parent
 //! derives controls from.
 
-use crate::outcome::{ProofKind, UnavailableReason, VerifiedControl};
+use crate::outcome::UnavailableReason;
 use crate::profile::{RequestedControl, SandboxProfile};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -119,24 +119,6 @@ impl Availability {
             .requested_controls()
             .iter()
             .all(|control| self.provable.contains(control))
-    }
-
-    /// A `VerifiedControl` for the given control, or `None` if this host could not
-    /// attempt it at all.
-    ///
-    /// **The `ProofKind` is a claim the caller makes, not evidence this function
-    /// gathered.** It asserts a proof the caller says it performed; it performs
-    /// none. That is deliberately useless as authority: the controls the parent
-    /// actually accepts come from [`crate::derive_outcome`], rebuilding them from
-    /// observations, and nothing on that path goes through here.
-    ///
-    /// What this function does enforce is the bound — it can only ever return a
-    /// control the host reported as provable, so it cannot manufacture one out of
-    /// nothing.
-    pub fn verify(&self, control: RequestedControl, proof: ProofKind) -> Option<VerifiedControl> {
-        self.provable
-            .contains(&control)
-            .then(|| VerifiedControl::verified(control, self.family.as_str(), proof))
     }
 }
 

@@ -159,38 +159,44 @@ fn report(handle: &str, reported: &ReportedOutcome, proofs: &Proofs, mechanisms:
     }
 }
 
-/// Writes exactly one report frame to the descriptor the parent supplied, then
-/// closes the write end.
+/// Writes exactly one report frame to the descriptor the parent supplied, arms
+/// close-on-exec on it, and then closes it.
 ///
 /// This is the **only** `unsafe` in the workspace, and the only place a raw
 /// descriptor is turned into an owned value. It is one function rather than two
-/// because writing and closing have to be inseparable: a frame that is written
-/// and not closed never produces the EOF the parent is waiting for, and a
-/// descriptor that is closed and not written looks identical to a helper that
-/// died. One function, one ownership transfer, one close.
+/// because the three steps have to be inseparable: a frame that is written and
+/// not closed never produces the EOF the parent is waiting for, and a descriptor
+/// that is closed and not written looks identical to a helper that died.
+///
+/// The close-on-exec in the middle is not decoration. The parent clears the flag
+/// on this descriptor so it is inherited; leaving it cleared would mean an `exec`
+/// carried the write end into the target, and the target could append to the
+/// report after the frame. Re-arming it means the target holds nothing, whatever
+/// happens to the close.
 #[cfg(unix)]
 #[allow(unsafe_code)]
 fn write_report(handle: &str, bytes: &[u8]) -> std::io::Result<()> {
+    use pandora_sandbox::arm_close_on_exec;
     use std::os::fd::FromRawFd as _;
 
     let raw = handle
         .parse::<i32>()
         .map_err(|_| std::io::Error::other("the report descriptor is not a number"))?;
-    // SAFETY: the parent creates the pipe, marks the write end inheritable, and
-    // passes it to this process as `raw`, keeping its own descriptor for the same
-    // open file description. Closing ours cannot close theirs, so the parent still
-    // controls when the channel is really shut.
+    // SAFETY: the parent creates the pipe, clears close-on-exec on the write end
+    // so this process inherits it, and passes it as `raw`. It holds its own
+    // descriptor for the same open file description, so closing ours cannot close
+    // theirs, and it keeps the read end open until it has read the report.
     //
     // The frame is written exactly once, from the single call site in [`report`],
-    // and the `File` is dropped at the end of this function, which is the
-    // deliberate close. Nothing else here takes ownership of a raw descriptor.
+    // and this is the only ownership transfer of a raw descriptor anywhere in the
+    // workspace.
     let mut file = unsafe { std::fs::File::from_raw_fd(raw) };
     let written = file.write_all(bytes).and_then(|()| file.flush());
-    // Closing explicitly rather than relying on `exec`: EOF at the parent is what
-    // confirms nothing else was written, so it has to happen deterministically and
-    // before the target starts.
+    let armed = arm_close_on_exec(&file);
+    // Closing is what produces the EOF the parent waits for. It happens here,
+    // deterministically, before `exec` — never at the target's mercy.
     drop(file);
-    written
+    written.and(armed)
 }
 
 /// Windows has no `exec`, so there is no ordering property to preserve, and no

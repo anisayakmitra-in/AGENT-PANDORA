@@ -89,6 +89,25 @@ pub struct ConfinementRequest {
     pub program_dir: Option<std::path::PathBuf>,
 }
 
+/// Marks a descriptor close-on-exec, so that an `exec` after this point does not
+/// carry it into the target.
+///
+/// The two halves of the report channel are a matched pair. The parent clears
+/// this flag on the write end so the helper inherits exactly that descriptor; the
+/// helper sets it again before closing, so the `exec`'d target cannot hold the
+/// write end even if the close were skipped. Neither half needs `unsafe`, because
+/// `fcntl(F_SETFD, FD_CLOEXEC)` operates on a borrowed descriptor — the only raw
+/// value in the whole channel is the one the helper wraps to *write* the frame.
+///
+/// Unix only, and reached through `pandora_sandbox::` so that the helper never
+/// needs `rustix` itself.
+#[cfg(unix)]
+pub fn arm_close_on_exec<Fd: std::os::fd::AsFd>(fd: Fd) -> std::io::Result<()> {
+    // `fcntl` reports through rustix's own `Errno` rather than `io::Error`; the
+    // conversion is what keeps this function's signature plain for the caller.
+    rustix::io::fcntl_setfd(fd, rustix::io::FdFlags::CLOEXEC).map_err(std::io::Error::from)
+}
+
 /// What applying the platform backend produced.
 ///
 /// A backend reports *observations*, never controls. [`derive_outcome`] turns

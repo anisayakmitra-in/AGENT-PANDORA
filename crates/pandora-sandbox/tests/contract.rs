@@ -194,52 +194,23 @@ fn windows_reports_filesystem_and_network_unavailable() {
 /// A backend with no kernel support must not claim a control it cannot back.
 ///
 /// Windows, macOS and the unsupported catch-all have no backend in this build, so
-/// every control is out of reach and `verify` has nothing to return.
+/// every control is out of reach and nothing about them may be reported as
+/// available.
 #[test]
-fn an_unproven_control_cannot_become_a_verified_one() {
+fn a_platform_with_no_backend_can_attempt_nothing() {
     for family in [
         PlatformFamily::Windows,
         PlatformFamily::Seatbelt,
         PlatformFamily::Unsupported,
     ] {
         let availability = Availability::probe(family);
-        for control in [
-            RequestedControl::FilesystemWriteRestricted,
-            RequestedControl::FilesystemReadRestricted,
-            RequestedControl::NetworkDenied,
-        ] {
-            assert!(
-                availability
-                    .verify(control, ProofKind::DeniedOperation)
-                    .is_none(),
-                "{control} became verified on {family:?} without a probe backing it"
-            );
-        }
-    }
-}
-
-/// `Availability::verify` can only ever return a control the backend reported as
-/// provable, whatever `ProofKind` the caller passes.
-///
-/// Linux is included because its `provable` set is real: a host with a usable
-/// Landlock ABI popsulates it, and this asserts the *bound* rather than an
-/// emptiness that only held while no backend existed. The bound is what matters
-/// — `verify` cannot manufacture a control out of nothing, only narrow to what
-/// the host could actually do.
-#[test]
-fn availability_verify_never_returns_a_control_the_host_cannot_attempt() {
-    let availability = Availability::probe(PlatformFamily::Landlock);
-
-    for control in [
-        RequestedControl::FilesystemWriteRestricted,
-        RequestedControl::FilesystemReadRestricted,
-        RequestedControl::NetworkDenied,
-    ] {
-        let verified = availability.verify(control, ProofKind::DeniedOperation);
-        assert_eq!(
-            verified.is_some(),
-            availability.provable().contains(&control),
-            "{control} was returned by verify without being provable on this host"
+        assert!(
+            availability.provable().is_empty(),
+            "{family:?} claimed provable controls without a backend"
+        );
+        assert!(
+            !availability.covers(&profile()),
+            "{family:?} claimed to cover the default profile"
         );
     }
 }
