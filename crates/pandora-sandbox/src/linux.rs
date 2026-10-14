@@ -106,21 +106,17 @@ pub fn apply(request: &ConfinementRequest) -> Result<Mechanisms, UnavailableReas
         return Err(UnavailableReason::UnsupportedRequest);
     }
 
-    apply_no_new_privs().map_err(|error| {
+    apply_no_new_privs().inspect_err(|error| {
         eprintln!("DEBUG_APPLY step=no_new_privs reason={error}");
-        error
     })?;
-    apply_landlock(request).map_err(|error| {
+    apply_landlock(request).inspect_err(|error| {
         eprintln!("DEBUG_APPLY step=landlock reason={error}");
-        error
     })?;
-    let rlimits = apply_rlimits().map_err(|error| {
+    let rlimits = apply_rlimits().inspect_err(|error| {
         eprintln!("DEBUG_APPLY step=rlimits reason={error}");
-        error
     })?;
-    apply_seccomp().map_err(|error| {
+    apply_seccomp().inspect_err(|error| {
         eprintln!("DEBUG_APPLY step=seccomp reason={error}");
-        error
     })?;
 
     Ok(Mechanisms {
