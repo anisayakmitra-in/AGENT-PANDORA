@@ -280,7 +280,8 @@ fn a_confined_helper_verifies_every_requested_control() {
         proofs.outside_write,
         Observation::Denied,
         "a write outside every allowed path must be denied; stderr={}; proofs={:?}",
-        report.stderr, proofs
+        report.stderr,
+        proofs
     );
     assert_eq!(
         proofs.canary_read,
@@ -538,7 +539,8 @@ fn a_target_that_prints_to_stdout_keeps_its_own_stdout() {
         frame.proofs().outside_write,
         Observation::Denied,
         "confinement must have been applied before the exec; stderr={}; frame_reported_kind={}",
-        report.stderr, frame.reported().kind()
+        report.stderr,
+        frame.reported().kind()
     );
     let _ = workspace;
 }
@@ -574,7 +576,8 @@ fn a_target_cannot_write_to_the_report_descriptor_it_inherited() {
         frame.proofs().outside_write,
         Observation::Denied,
         "confinement must have been applied before the exec; stderr={}; frame_reported_kind={}",
-        report.stderr, frame.reported().kind()
+        report.stderr,
+        frame.reported().kind()
     );
     let _ = workspace;
 }

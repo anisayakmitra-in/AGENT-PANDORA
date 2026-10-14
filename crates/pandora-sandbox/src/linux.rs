@@ -415,7 +415,10 @@ fn observe_write(target: &Path) -> Observation {
         Err(error) => {
             eprintln!(
                 "DEBUG observe_write target={:?} kind={:?} raw_os_error={:?} displayed={}",
-                target, error.kind(), error.raw_os_error(), error
+                target,
+                error.kind(),
+                error.raw_os_error(),
+                error
             );
             Observation::Inconclusive
         }
@@ -429,7 +432,10 @@ fn observe_read(target: &Path) -> Observation {
         Err(error) => {
             eprintln!(
                 "DEBUG observe_read target={:?} kind={:?} raw_os_error={:?} displayed={}",
-                target, error.kind(), error.raw_os_error(), error
+                target,
+                error.kind(),
+                error.raw_os_error(),
+                error
             );
             Observation::Inconclusive
         }
