@@ -59,13 +59,17 @@ fn main() {
     };
 
     let availability = Availability::probe(PlatformFamily::current());
+    #[cfg(target_os = "linux")]
+    let detected_abi = format!("{:?}", pandora_sandbox::linux::detected_abi());
+    #[cfg(not(target_os = "linux"))]
+    let detected_abi = "n/a".to_owned();
     eprintln!(
-        "DEBUG_AVAIL family={:?} covers={} provable={:?} requested={:?} detected_abi={:?}",
+        "DEBUG_AVAIL family={:?} covers={} provable={:?} requested={:?} detected_abi={}",
         availability.family(),
         availability.covers(&profile),
         availability.provable(),
         profile.requested_controls(),
-        pandora_sandbox::linux::detected_abi(),
+        detected_abi,
     );
     // A pre-spawn check only. The host may have Landlock and still fail to
     // enforce a ruleset, and only `confine` finds that out.

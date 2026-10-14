@@ -107,19 +107,19 @@ pub fn apply(request: &ConfinementRequest) -> Result<Mechanisms, UnavailableReas
     }
 
     apply_no_new_privs().map_err(|error| {
-        eprintln!("DEBUG_APPLY step=no_new_privs reason={error:?}");
+        eprintln!("DEBUG_APPLY step=no_new_privs reason={error}");
         error
     })?;
     apply_landlock(request).map_err(|error| {
-        eprintln!("DEBUG_APPLY step=landlock reason={error:?}");
+        eprintln!("DEBUG_APPLY step=landlock reason={error}");
         error
     })?;
     let rlimits = apply_rlimits().map_err(|error| {
-        eprintln!("DEBUG_APPLY step=rlimits reason={error:?}");
+        eprintln!("DEBUG_APPLY step=rlimits reason={error}");
         error
     })?;
     apply_seccomp().map_err(|error| {
-        eprintln!("DEBUG_APPLY step=seccomp reason={error:?}");
+        eprintln!("DEBUG_APPLY step=seccomp reason={error}");
         error
     })?;
 
