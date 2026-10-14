@@ -109,10 +109,14 @@ fn main() {
         // below — so this branch is only the helper declining to run something it
         // could not confine, not a claim that it did confine it.
         ReportedOutcome::SelfTested => {}
-        _ => {
+        other => {
+            let reason = match &other {
+                ReportedOutcome::Unavailable { reason } => format!("{reason:?}"),
+                other => other.kind().to_owned(),
+            };
             eprintln!(
-                "pandora-sandbox-helper: refusing to exec {program} unconfined ({})",
-                reported.kind()
+                "pandora-sandbox-helper: refusing to exec {program} unconfined ({}) reason={reason}",
+                other.kind()
             );
             std::process::exit(REFUSED_EXIT);
         }
