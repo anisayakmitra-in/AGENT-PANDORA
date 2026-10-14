@@ -412,7 +412,13 @@ fn observe_write(target: &Path) -> Observation {
     match std::fs::File::create(target) {
         Ok(_) => Observation::Allowed,
         Err(error) if is_denial(&error) => Observation::Denied,
-        Err(_) => Observation::Inconclusive,
+        Err(error) => {
+            eprintln!(
+                "DEBUG observe_write target={:?} kind={:?} raw_os_error={:?} displayed={}",
+                target, error.kind(), error.raw_os_error(), error
+            );
+            Observation::Inconclusive
+        }
     }
 }
 
@@ -420,7 +426,13 @@ fn observe_read(target: &Path) -> Observation {
     match std::fs::read(target) {
         Ok(_) => Observation::Allowed,
         Err(error) if is_denial(&error) => Observation::Denied,
-        Err(_) => Observation::Inconclusive,
+        Err(error) => {
+            eprintln!(
+                "DEBUG observe_read target={:?} kind={:?} raw_os_error={:?} displayed={}",
+                target, error.kind(), error.raw_os_error(), error
+            );
+            Observation::Inconclusive
+        }
     }
 }
 
