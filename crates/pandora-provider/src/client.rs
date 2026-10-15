@@ -736,11 +736,15 @@ impl HttpProvider {
             ProviderProtocol::OpenAiCompatible => "chat/completions",
             ProviderProtocol::AnthropicMessages => "messages",
             ProviderProtocol::GeminiGenerateContent => {
-                return format!(
-                    "{}/models/{}:generateContent",
-                    self.manifest.base_url().trim_end_matches('/'),
-                    model.as_str()
-                );
+                let model_name = model
+                    .as_str()
+                    .strip_prefix("models/")
+                    .unwrap_or(model.as_str());
+                let base = self.manifest.base_url().trim_end_matches('/');
+                if base.ends_with(":generateContent") {
+                    return base.to_owned();
+                }
+                return format!("{base}/models/{model_name}:generateContent");
             }
         };
         format!("{}/{path}", self.manifest.base_url().trim_end_matches('/'))
@@ -775,13 +779,20 @@ impl Provider for HttpProvider {
                 .header("anthropic-version", "2023-06-01")
                 .json(&AnthropicRequest::from_request(&request)?)
                 .send(),
-            ProviderProtocol::GeminiGenerateContent => self
-                .client
-                .post(self.endpoint(request.model_id()))
-                .timeout(request.timeout())
-                .header("x-goog-api-key", self.api_key.expose())
-                .json(&GeminiRequest::from_request(&request)?)
-                .send(),
+            ProviderProtocol::GeminiGenerateContent => {
+                let mut req = self
+                    .client
+                    .post(self.endpoint(request.model_id()))
+                    .timeout(request.timeout());
+                let key = self.api_key.expose();
+                if key.starts_with("ya29.") || key.starts_with("Bearer ") {
+                    let token = key.strip_prefix("Bearer ").unwrap_or(key);
+                    req = req.header("Authorization", format!("Bearer {token}"));
+                } else {
+                    req = req.header("x-goog-api-key", key);
+                }
+                req.json(&GeminiRequest::from_request(&request)?).send()
+            }
         }
         .map_err(|_| ProviderError::Transport)?;
         let status = response.status().as_u16();
@@ -1410,6 +1421,7 @@ struct GeminiGenerationConfig {
 
 #[derive(Deserialize)]
 struct GeminiResponse {
+    #[serde(default)]
     candidates: Vec<GeminiCandidate>,
     #[serde(rename = "usageMetadata")]
     usage: Option<GeminiUsage>,
@@ -1422,6 +1434,7 @@ struct GeminiCandidate {
 
 #[derive(Deserialize)]
 struct GeminiResponseContent {
+    #[serde(default)]
     parts: Vec<GeminiResponsePart>,
 }
 
@@ -1430,18 +1443,22 @@ struct GeminiResponseContent {
 enum GeminiResponsePart {
     Text {
         text: String,
+        #[serde(default)]
+        thought: bool,
     },
     FunctionCall {
         #[serde(rename = "functionCall")]
         function_call: GeminiFunctionCall,
     },
+    #[allow(dead_code)]
+    Other(serde_json::Value),
 }
 
 #[derive(Deserialize)]
 struct GeminiUsage {
-    #[serde(rename = "promptTokenCount")]
+    #[serde(rename = "promptTokenCount", default)]
     prompt_tokens: u32,
-    #[serde(rename = "candidatesTokenCount")]
+    #[serde(rename = "candidatesTokenCount", default)]
     completion_tokens: u32,
     #[serde(rename = "cachedContentTokenCount", default)]
     cached_prompt_tokens: u32,
@@ -1460,10 +1477,20 @@ fn parse_gemini_response(bytes: &[u8]) -> Result<ModelResponse, ProviderError> {
         .and_then(|candidate| candidate.content)
         .ok_or(ProviderError::InvalidResponse)?;
     let mut text = String::new();
+    let mut thoughts = String::new();
     let mut tool_calls = Vec::new();
     for (index, part) in content.parts.into_iter().enumerate() {
         match part {
-            GeminiResponsePart::Text { text: block } => {
+            GeminiResponsePart::Text {
+                text: block,
+                thought,
+            } => {
+                if thought {
+                    if thoughts.len().saturating_add(block.len()) <= MAX_RESPONSE_TEXT_BYTES {
+                        thoughts.push_str(&block);
+                    }
+                    continue;
+                }
                 if text.len().saturating_add(block.len()) > MAX_RESPONSE_TEXT_BYTES {
                     return Err(ProviderError::ResponseTooLarge);
                 }
@@ -1482,7 +1509,11 @@ fn parse_gemini_response(bytes: &[u8]) -> Result<ModelResponse, ProviderError> {
                     })?;
                 tool_calls.push(call);
             }
+            GeminiResponsePart::Other(_) => {}
         }
+    }
+    if text.is_empty() && tool_calls.is_empty() && !thoughts.is_empty() {
+        text = thoughts;
     }
     let usage = response
         .usage
@@ -2214,5 +2245,132 @@ mod tests {
         server.join().unwrap();
         assert_eq!(response.text(), "ready");
         assert_eq!(response.usage().total_tokens(), 3);
+    }
+
+    #[test]
+    fn gemini_endpoint_strips_models_prefix_and_handles_direct_url() {
+        let manifest = ProviderManifest::new_with_protocol(
+            "gemini",
+            "Gemini",
+            ProviderProtocol::GeminiGenerateContent,
+            "https://generativelanguage.googleapis.com/v1beta",
+            "models/gemini-3.8-flash",
+            "PANDORA_GEMINI_API_KEY",
+        )
+        .unwrap();
+        let provider = HttpProvider::new(manifest, "test-key").unwrap();
+        let endpoint = provider.endpoint(&ModelId::new("models/gemini-3.8-flash").unwrap());
+        assert_eq!(
+            endpoint,
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
+        );
+
+        let direct_manifest = ProviderManifest::new_with_protocol(
+            "gemini-direct",
+            "Gemini Direct",
+            ProviderProtocol::GeminiGenerateContent,
+            "https://custom-gateway.local/v1/models/my-model:generateContent",
+            "my-model",
+            "PANDORA_GEMINI_API_KEY",
+        )
+        .unwrap();
+        let direct_provider = HttpProvider::new(direct_manifest, "test-key").unwrap();
+        assert_eq!(
+            direct_provider.endpoint(&ModelId::new("my-model").unwrap()),
+            "https://custom-gateway.local/v1/models/my-model:generateContent"
+        );
+    }
+
+    #[test]
+    fn gemini_request_uses_authorization_bearer_for_access_tokens() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            loop {
+                let mut chunk = [0_u8; 1_024];
+                let bytes_read = stream.read(&mut chunk).unwrap();
+                if bytes_read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&chunk[..bytes_read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let headers = String::from_utf8_lossy(&request).to_ascii_lowercase();
+            assert!(headers.contains("authorization: bearer ya29.mock-google-token"));
+            assert!(!headers.contains("x-goog-api-key:"));
+            let response = br#"{
+                "candidates":[{"content":{"parts":[{"text":"authorized"}]}}],
+                "usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":2}
+            }"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                response.len()
+            )
+            .unwrap();
+            stream.write_all(response).unwrap();
+        });
+        let manifest = ProviderManifest::new_with_protocol(
+            "gemini-adc",
+            "Gemini ADC",
+            ProviderProtocol::GeminiGenerateContent,
+            format!("http://{address}/v1beta"),
+            "gemini-3.8-flash",
+            "PANDORA_GOOGLE_ACCESS_TOKEN",
+        )
+        .unwrap();
+        let request = ModelRequest::new(
+            manifest.id().clone(),
+            manifest.default_model().clone(),
+            vec![ChatMessage::user("ping").unwrap()],
+        )
+        .unwrap();
+        let provider = HttpProvider::new(manifest, "ya29.mock-google-token").unwrap();
+        let response = provider.complete(request).unwrap();
+        server.join().unwrap();
+        assert_eq!(response.text(), "authorized");
+    }
+
+    #[test]
+    fn gemini_response_filters_thoughts_and_handles_unknown_parts() {
+        let payload = br#"{
+            "candidates":[{
+                "content":{
+                    "parts":[
+                        {"text":"Thinking step by step...","thought":true},
+                        {"text":"Here is the verified answer."},
+                        {"unknownPart":{"type":"inline-annotation","data":[1,2,3]}}
+                    ]
+                }
+            }],
+            "usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":8}
+        }"#;
+        let response = parse_gemini_response(payload).unwrap();
+        assert_eq!(response.text(), "Here is the verified answer.");
+        assert_eq!(response.usage().prompt_tokens(), 10);
+        assert_eq!(response.usage().completion_tokens(), 8);
+    }
+
+    #[test]
+    fn gemini_response_falls_back_to_thoughts_when_text_empty() {
+        let payload = br#"{
+            "candidates":[{
+                "content":{
+                    "parts":[
+                        {"text":"Only internal reasoning was emitted before cutoff.","thought":true}
+                    ]
+                }
+            }],
+            "usageMetadata":{"promptTokenCount":12,"candidatesTokenCount":6}
+        }"#;
+        let response = parse_gemini_response(payload).unwrap();
+        assert_eq!(
+            response.text(),
+            "Only internal reasoning was emitted before cutoff."
+        );
     }
 }
