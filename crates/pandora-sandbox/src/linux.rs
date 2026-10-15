@@ -300,17 +300,6 @@ fn resolved_path(path: impl AsRef<Path>) -> Option<PathBuf> {
 fn apply_rlimits() -> Result<Vec<String>, UnavailableReason> {
     let mut applied = Vec::new();
 
-    let before_core = process::getrlimit(Resource::Core);
-    eprintln!(
-        "DEBUG_RLIMIT core_before soft={:?} hard={:?}",
-        before_core.current, before_core.maximum
-    );
-    let before_nofile = process::getrlimit(Resource::Nofile);
-    eprintln!(
-        "DEBUG_RLIMIT nofile_before soft={:?} hard={:?}",
-        before_nofile.current, before_nofile.maximum
-    );
-
     // No core dumps: a crash must not leave a memory image on disk for another
     // process to read credentials out of.
     process::setrlimit(
@@ -320,13 +309,6 @@ fn apply_rlimits() -> Result<Vec<String>, UnavailableReason> {
             maximum: Some(0),
         },
     )
-    .inspect_err(|error| {
-        eprintln!(
-            "DEBUG_RLIMIT core_set failed errno={:?} display={}",
-            error.raw_os_error(),
-            error
-        )
-    })
     .map_err(|_| UnavailableReason::BackendRefused)?;
     applied.push("RLIMIT_CORE".to_owned());
 
