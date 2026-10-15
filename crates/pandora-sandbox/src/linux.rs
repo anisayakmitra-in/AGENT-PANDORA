@@ -106,18 +106,10 @@ pub fn apply(request: &ConfinementRequest) -> Result<Mechanisms, UnavailableReas
         return Err(UnavailableReason::UnsupportedRequest);
     }
 
-    apply_no_new_privs().inspect_err(|error| {
-        eprintln!("DEBUG_APPLY step=no_new_privs reason={error}");
-    })?;
-    apply_landlock(request).inspect_err(|error| {
-        eprintln!("DEBUG_APPLY step=landlock reason={error}");
-    })?;
-    let rlimits = apply_rlimits().inspect_err(|error| {
-        eprintln!("DEBUG_APPLY step=rlimits reason={error}");
-    })?;
-    apply_seccomp().inspect_err(|error| {
-        eprintln!("DEBUG_APPLY step=seccomp reason={error}");
-    })?;
+    apply_no_new_privs()?;
+    apply_landlock(request)?;
+    let rlimits = apply_rlimits()?;
+    apply_seccomp()?;
 
     Ok(Mechanisms {
         filesystem: "landlock".to_owned(),
@@ -308,6 +300,17 @@ fn resolved_path(path: impl AsRef<Path>) -> Option<PathBuf> {
 fn apply_rlimits() -> Result<Vec<String>, UnavailableReason> {
     let mut applied = Vec::new();
 
+    let before_core = process::getrlimit(Resource::Core);
+    eprintln!(
+        "DEBUG_RLIMIT core_before soft={:?} hard={:?}",
+        before_core.current, before_core.maximum
+    );
+    let before_nofile = process::getrlimit(Resource::Nofile);
+    eprintln!(
+        "DEBUG_RLIMIT nofile_before soft={:?} hard={:?}",
+        before_nofile.current, before_nofile.maximum
+    );
+
     // No core dumps: a crash must not leave a memory image on disk for another
     // process to read credentials out of.
     process::setrlimit(
@@ -317,6 +320,13 @@ fn apply_rlimits() -> Result<Vec<String>, UnavailableReason> {
             maximum: Some(0),
         },
     )
+    .inspect_err(|error| {
+        eprintln!(
+            "DEBUG_RLIMIT core_set failed errno={:?} display={}",
+            error.raw_os_error(),
+            error
+        )
+    })
     .map_err(|_| UnavailableReason::BackendRefused)?;
     applied.push("RLIMIT_CORE".to_owned());
 
@@ -330,9 +340,10 @@ fn apply_rlimits() -> Result<Vec<String>, UnavailableReason> {
             Resource::Nofile,
             Rlimit {
                 current: Some(MAX_OPEN_FILES),
-                // `None` leaves the hard limit alone, so this cannot fail by
-                // trying to raise something only a privileged process may raise.
-                maximum: None,
+                // `current.maximum` leaves the hard limit alone, so this cannot fail by
+                // trying to raise something only a privileged process may raise (None in
+                // rustix represents RLIM_INFINITY, which requires privileges).
+                maximum: current.maximum,
             },
         )
         .map_err(|_| UnavailableReason::BackendRefused)?;
@@ -420,16 +431,7 @@ fn observe_write(target: &Path) -> Observation {
     match std::fs::File::create(target) {
         Ok(_) => Observation::Allowed,
         Err(error) if is_denial(&error) => Observation::Denied,
-        Err(error) => {
-            eprintln!(
-                "DEBUG observe_write target={:?} kind={:?} raw_os_error={:?} displayed={}",
-                target,
-                error.kind(),
-                error.raw_os_error(),
-                error
-            );
-            Observation::Inconclusive
-        }
+        Err(_) => Observation::Inconclusive,
     }
 }
 
@@ -437,16 +439,7 @@ fn observe_read(target: &Path) -> Observation {
     match std::fs::read(target) {
         Ok(_) => Observation::Allowed,
         Err(error) if is_denial(&error) => Observation::Denied,
-        Err(error) => {
-            eprintln!(
-                "DEBUG observe_read target={:?} kind={:?} raw_os_error={:?} displayed={}",
-                target,
-                error.kind(),
-                error.raw_os_error(),
-                error
-            );
-            Observation::Inconclusive
-        }
+        Err(_) => Observation::Inconclusive,
     }
 }
 
