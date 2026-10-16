@@ -230,10 +230,9 @@ fn validate_identifier(label: &'static str, value: String) -> Result<String, Man
     if value.len() > MAX_IDENTIFIER_BYTES {
         return Err(ManifestError::FieldTooLong(label));
     }
-    if !value
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'/'))
-    {
+    if !value.bytes().all(|byte| {
+        byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'/' | b':' | b'@')
+    }) {
         return Err(ManifestError::InvalidIdentifier(label));
     }
     Ok(value)

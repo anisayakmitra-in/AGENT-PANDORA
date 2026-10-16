@@ -148,7 +148,7 @@ impl ProviderProfile {
         }
         let base_url = validate_provider_url(base_url.into())?;
         let model = model.into();
-        if !is_identifier(&model) {
+        if !is_model_identifier(&model) {
             return Err(ConfigError::InvalidProviderModel);
         }
         let api_key_env = api_key_env.into();
@@ -872,6 +872,14 @@ fn is_identifier(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
+fn is_model_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'/' | b':' | b'@')
+        })
 }
 
 fn is_environment_name(value: &str) -> bool {
