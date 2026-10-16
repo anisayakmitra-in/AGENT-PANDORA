@@ -67,33 +67,35 @@ Open `pandora.package.json` and customize your package metadata:
 
 ```json
 {
-  "schema_version": "pandora-package-manifest-v1",
   "id": "my-org/rust-specialist",
   "version": "1.0.0",
   "kind": "domain_harness",
-  "publisher": {
-    "name": "My Team",
-    "url": "https://github.com/my-org"
+  "publisher": "my-org",
+  "content_hash": "sha256:<calculated-sha256-hash>",
+  "dependencies": [
+    {
+      "id": "workspace.read",
+      "version": "0.1.0",
+      "optional": false
+    }
+  ],
+  "compatibility": {
+    "runtime": "pandora>=2.0.0-alpha.0, <3.0.0"
   },
-  "runtime_requirement": "pandora>=2.0.0-alpha.0, <3.0.0",
   "license": "Apache-2.0",
-  "artifact": {
-    "path": "domain-harness.artifact",
-    "sha256": "<calculated-sha256-hash>"
+  "trust": {
+    "level": "unverified",
+    "signature": null,
+    "public_key": null
   },
   "domain_routing": {
     "hints": [
-      "rust",
       "cargo",
       "clippy",
+      "rust",
       "tokio"
     ]
-  },
-  "owned_genes": [
-    "workspace.read",
-    "workspace.search"
-  ],
-  "dependencies": []
+  }
 }
 ```
 
@@ -101,8 +103,10 @@ Open `pandora.package.json` and customize your package metadata:
 - **`id`**: Namespaced identifier (`<vendor>/<name>`).
 - **`version`**: Strict SemVer (`1.0.0`, not `1.0`).
 - **`kind`**: Must be `domain_harness`.
-- **`domain_routing.hints`**: 1 to 32 canonical keywords. When a user runs a task containing these keywords, **Shadow Council** scores the longest match to auto-route to your Harness.
-- **`owned_genes`**: The list of Gene IDs this Domain Harness provides.
+- **`publisher`**: Organization or author name string.
+- **`content_hash`**: The `sha256:<digest>` checksum of the package artifact.
+- **`domain_routing.hints`**: 1 to 32 canonical keywords, sorted in ascending alphabetical order. When a user runs a task containing these keywords, **Shadow Council** scores the longest match to auto-route to your Harness.
+- **`dependencies`**: The list of Gene or Domain packages this Harness requires.
 
 ### Step 3: Compute Artifact Hash
 
@@ -118,7 +122,7 @@ sha256sum domain-harness.artifact
 (Get-FileHash -Algorithm SHA256 .\domain-harness.artifact).Hash.ToLower()
 ```
 
-Update the `"sha256"` field in `pandora.package.json` with this exact digest.
+Update the `"content_hash"` field in `pandora.package.json` with `sha256:<digest>`.
 
 ---
 
@@ -132,23 +136,29 @@ A Gene package declares its capabilities and target metadata:
 
 ```json
 {
-  "schema_version": "pandora-package-manifest-v1",
   "id": "my-org/cargo-check-gene",
   "version": "1.0.0",
   "kind": "gene",
-  "publisher": {
-    "name": "My Team"
+  "publisher": "my-org",
+  "content_hash": "sha256:<calculated-sha256-hash>",
+  "dependencies": [],
+  "compatibility": {
+    "runtime": "pandora>=2.0.0-alpha.0, <3.0.0"
   },
-  "runtime_requirement": "pandora>=2.0.0-alpha.0, <3.0.0",
   "license": "Apache-2.0",
-  "artifact": {
-    "path": "cargo-check.wasm",
-    "sha256": "<calculated-sha256-hash>"
+  "trust": {
+    "level": "unverified",
+    "signature": null,
+    "public_key": null
   },
-  "capabilities": [
-    "filesystem:read",
-    "process:execute"
-  ]
+  "gene_contract": {
+    "execution": "effect_request",
+    "capabilities": [
+      "filesystem.read",
+      "process.execute"
+    ],
+    "approval_required": true
+  }
 }
 ```
 
@@ -177,38 +187,45 @@ In `pandora.package.json`:
 
 ```json
 {
-  "schema_version": "pandora-package-manifest-v1",
   "id": "my-org/fullstack-meta",
   "version": "1.0.0",
   "kind": "meta_harness",
-  "publisher": {
-    "name": "My Team"
-  },
-  "runtime_requirement": "pandora>=2.0.0-alpha.0, <3.0.0",
-  "license": "Apache-2.0",
-  "artifact": {
-    "path": "meta-harness.artifact",
-    "sha256": "<calculated-sha256-hash>"
-  },
-  "meta_composition": {
-    "max_handoffs": 4,
-    "allowed_domains": [
-      "coding-domain",
-      "research-domain",
-      "my-org/rust-specialist"
-    ]
-  },
+  "publisher": "my-org",
+  "content_hash": "sha256:<calculated-sha256-hash>",
   "dependencies": [
     {
-      "id": "my-org/rust-specialist",
-      "version_requirement": "^1.0.0"
+      "id": "coding-domain",
+      "version": "0.1.0",
+      "optional": false
+    },
+    {
+      "id": "research-domain",
+      "version": "0.1.0",
+      "optional": false
     }
-  ]
+  ],
+  "compatibility": {
+    "runtime": "pandora>=2.0.0-alpha.0, <3.0.0"
+  },
+  "license": "Apache-2.0",
+  "trust": {
+    "level": "unverified",
+    "signature": null,
+    "public_key": null
+  },
+  "meta_composition": {
+    "allowed_domains": [
+      "coding-domain",
+      "research-domain"
+    ],
+    "max_handoffs": 4
+  }
 }
 ```
 
 - **`max_handoffs`**: Prevents runaway loops across subagents (e.g., maximum 4 transitions).
 - **`allowed_domains`**: Strict allowlist of domains this coordinator can delegate to.
+
 
 ---
 
