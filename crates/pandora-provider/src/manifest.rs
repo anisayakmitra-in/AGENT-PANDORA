@@ -87,9 +87,9 @@ impl FromStr for ProviderProtocol {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "open_ai_compatible" => Ok(Self::OpenAiCompatible),
-            "anthropic_messages" => Ok(Self::AnthropicMessages),
-            "gemini_generate_content" => Ok(Self::GeminiGenerateContent),
+            "open_ai_compatible" | "openai" => Ok(Self::OpenAiCompatible),
+            "anthropic_messages" | "anthropic" => Ok(Self::AnthropicMessages),
+            "gemini_generate_content" | "gemini" => Ok(Self::GeminiGenerateContent),
             _ => Err(ManifestError::InvalidProtocol),
         }
     }
@@ -148,6 +148,56 @@ impl ProviderManifest {
         })
     }
 
+    pub fn gemini_studio(
+        id: impl Into<String>,
+        default_model: impl Into<String>,
+        api_key_env: impl Into<String>,
+    ) -> Result<Self, ManifestError> {
+        Self::new_with_protocol(
+            id,
+            "Google AI Studio",
+            ProviderProtocol::GeminiGenerateContent,
+            "https://generativelanguage.googleapis.com/v1beta",
+            default_model,
+            api_key_env,
+        )
+    }
+
+    pub fn vertex_ai_express(
+        id: impl Into<String>,
+        default_model: impl Into<String>,
+        api_key_env: impl Into<String>,
+    ) -> Result<Self, ManifestError> {
+        Self::new_with_protocol(
+            id,
+            "Google Vertex AI Express",
+            ProviderProtocol::GeminiGenerateContent,
+            "https://aiplatform.googleapis.com/v1/publishers/google",
+            default_model,
+            api_key_env,
+        )
+    }
+
+    pub fn vertex_ai(
+        id: impl Into<String>,
+        project: &str,
+        location: &str,
+        default_model: impl Into<String>,
+        api_key_env: impl Into<String>,
+    ) -> Result<Self, ManifestError> {
+        let base_url = format!(
+            "https://{location}-aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google"
+        );
+        Self::new_with_protocol(
+            id,
+            "Google Vertex AI",
+            ProviderProtocol::GeminiGenerateContent,
+            base_url,
+            default_model,
+            api_key_env,
+        )
+    }
+
     pub fn id(&self) -> &ProviderId {
         &self.id
     }
@@ -182,7 +232,7 @@ fn validate_identifier(label: &'static str, value: String) -> Result<String, Man
     }
     if !value
         .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'/'))
     {
         return Err(ManifestError::InvalidIdentifier(label));
     }
@@ -289,6 +339,64 @@ mod tests {
         assert_eq!(
             serde_json::to_value(manifest).unwrap()["protocol"],
             "gemini_generate_content"
+        );
+    }
+
+    #[test]
+    fn manifest_gemini_factory_methods_configure_expected_endpoints() {
+        let studio = ProviderManifest::gemini_studio(
+            "gemini-studio",
+            "gemini-3.8-flash",
+            "PANDORA_GEMINI_API_KEY",
+        )
+        .unwrap();
+        assert_eq!(studio.protocol(), ProviderProtocol::GeminiGenerateContent);
+        assert_eq!(
+            studio.base_url(),
+            "https://generativelanguage.googleapis.com/v1beta"
+        );
+        assert_eq!(studio.default_model().as_str(), "gemini-3.8-flash");
+
+        let express = ProviderManifest::vertex_ai_express(
+            "vertex-express",
+            "gemini-3.8-flash",
+            "PANDORA_VERTEX_API_KEY",
+        )
+        .unwrap();
+        assert_eq!(express.protocol(), ProviderProtocol::GeminiGenerateContent);
+        assert_eq!(
+            express.base_url(),
+            "https://aiplatform.googleapis.com/v1/publishers/google"
+        );
+
+        let vertex = ProviderManifest::vertex_ai(
+            "vertex-standard",
+            "my-gcp-project",
+            "us-central1",
+            "gemini-3.8-flash",
+            "PANDORA_GOOGLE_ACCESS_TOKEN",
+        )
+        .unwrap();
+        assert_eq!(vertex.protocol(), ProviderProtocol::GeminiGenerateContent);
+        assert_eq!(
+            vertex.base_url(),
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/my-gcp-project/locations/us-central1/publishers/google"
+        );
+    }
+
+    #[test]
+    fn provider_protocol_parses_aliases() {
+        assert_eq!(
+            "gemini".parse::<ProviderProtocol>().unwrap(),
+            ProviderProtocol::GeminiGenerateContent
+        );
+        assert_eq!(
+            "openai".parse::<ProviderProtocol>().unwrap(),
+            ProviderProtocol::OpenAiCompatible
+        );
+        assert_eq!(
+            "anthropic".parse::<ProviderProtocol>().unwrap(),
+            ProviderProtocol::AnthropicMessages
         );
     }
 

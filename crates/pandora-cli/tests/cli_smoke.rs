@@ -6023,6 +6023,98 @@ fn provider_test_completes_a_configured_request_without_echoing_credentials() {
 }
 
 #[test]
+fn provider_set_and_test_support_gemini_protocol_and_named_provider_flag() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("gemini fixture should bind");
+    let address = listener
+        .local_addr()
+        .expect("gemini fixture should expose its address");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("gemini should connect");
+        let mut request = Vec::new();
+        let header_end = loop {
+            let mut chunk = [0_u8; 1_024];
+            let bytes_read = stream.read(&mut chunk).expect("gemini request should read");
+            if bytes_read == 0 {
+                panic!("stream closed before headers finished");
+            }
+            request.extend_from_slice(&chunk[..bytes_read]);
+            if let Some(pos) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                break pos + 4;
+            }
+        };
+        let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+        let content_length = headers
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .expect("content-length header should exist");
+        while request.len() < header_end + content_length {
+            let mut chunk = [0_u8; 1_024];
+            let bytes_read = stream
+                .read(&mut chunk)
+                .expect("gemini request body should read");
+            request.extend_from_slice(&chunk[..bytes_read]);
+        }
+        let request_line = headers.lines().next().unwrap();
+        assert!(
+            request_line.contains("post /v1beta/models/gemini-3.8-flash:generatecontent http/1.1")
+        );
+        assert!(headers.contains("x-goog-api-key: test-gemini-key"));
+        let response = br#"{
+            "candidates":[{"content":{"parts":[{"text":"ready"}]}}],
+            "usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":1}
+        }"#;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            response.len()
+        )
+        .expect("gemini response headers should be written");
+        stream
+            .write_all(response)
+            .expect("gemini response body should be written");
+    });
+
+    let fixture = Fixture::new();
+    let provider_url = format!("http://{address}/v1beta");
+    let configured = fixture
+        .command(&[
+            "provider",
+            "set",
+            "--name",
+            "gemini",
+            "--protocol",
+            "gemini",
+            "--provider-url",
+            &provider_url,
+            "--model",
+            "gemini-3.8-flash",
+            "--api-key-env",
+            "PANDORA_GEMINI_KEY",
+            "--json",
+        ])
+        .output()
+        .expect("gemini provider set should start");
+    assert_success(&configured);
+
+    let output = fixture
+        .command(&["provider", "test", "--provider", "gemini", "--json"])
+        .env("PANDORA_GEMINI_KEY", "test-gemini-key")
+        .output()
+        .expect("gemini provider test should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["command"], "provider test");
+    assert_eq!(response["status"], "ready");
+    assert_eq!(response["provider"], "gemini");
+    assert_eq!(response["model"], "gemini-3.8-flash");
+    assert_eq!(response["output"], "ready");
+    assert_eq!(response["usage"]["total_tokens"], 4);
+
+    server.join().expect("gemini fixture should finish");
+}
+
+#[test]
 fn agent_run_executes_a_bounded_read_then_returns_the_final_answer() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("agent fixture should bind");
     let address = listener
