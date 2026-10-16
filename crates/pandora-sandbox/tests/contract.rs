@@ -132,11 +132,13 @@ fn an_excessive_root_list_is_rejected() {
 }
 
 #[test]
-fn no_platform_can_prove_anything_in_this_step() {
+fn a_platform_with_no_backend_can_prove_nothing() {
+    // Seatbelt, Windows and the unsupported catch-all each have no backend in this
+    // build. Linux is excluded here on purpose: it has a real backend, and what it
+    // can prove depends on the kernel it runs on, which is asserted in
+    // `tests/linux_backend.rs` rather than assumed here.
     for family in [
         PlatformFamily::Seatbelt,
-        PlatformFamily::Landlock,
-        PlatformFamily::Seccomp,
         PlatformFamily::Windows,
         PlatformFamily::Unsupported,
     ] {
@@ -148,6 +150,31 @@ fn no_platform_can_prove_anything_in_this_step() {
         assert!(
             !availability.covers(&profile()),
             "{family:?} claimed to cover the default profile"
+        );
+    }
+}
+
+/// A backend may never invent a control the profile did not ask for, and a host
+/// with nothing provable must not claim to cover anything.
+#[test]
+fn a_backend_never_claims_more_than_the_profile_asked_for() {
+    let availability = Availability::probe(PlatformFamily::Landlock);
+
+    assert!(
+        availability
+            .provable()
+            .iter()
+            .all(|control| profile().requested_controls().contains(control)),
+        "a backend must never invent a control the profile did not ask for"
+    );
+    assert!(
+        availability.provable().len() <= profile().requested_controls().len(),
+        "a backend must never claim more than was asked for"
+    );
+    if availability.provable().is_empty() {
+        assert!(
+            !availability.covers(&profile()),
+            "a host with nothing provable must not claim to cover the profile"
         );
     }
 }
@@ -164,20 +191,26 @@ fn windows_reports_filesystem_and_network_unavailable() {
     assert_eq!(availability.reason(), UnavailableReason::BackendRefused);
 }
 
+/// A backend with no kernel support must not claim a control it cannot back.
+///
+/// Windows, macOS and the unsupported catch-all have no backend in this build, so
+/// every control is out of reach and nothing about them may be reported as
+/// available.
 #[test]
-fn an_unproven_control_cannot_become_a_verified_one() {
-    let availability = Availability::probe(PlatformFamily::Landlock);
-
-    for control in [
-        RequestedControl::FilesystemWriteRestricted,
-        RequestedControl::FilesystemReadRestricted,
-        RequestedControl::NetworkDenied,
+fn a_platform_with_no_backend_can_attempt_nothing() {
+    for family in [
+        PlatformFamily::Windows,
+        PlatformFamily::Seatbelt,
+        PlatformFamily::Unsupported,
     ] {
+        let availability = Availability::probe(family);
         assert!(
-            availability
-                .verify(control, ProofKind::DeniedOperation)
-                .is_none(),
-            "{control} became verified without a probe backing it"
+            availability.provable().is_empty(),
+            "{family:?} claimed provable controls without a backend"
+        );
+        assert!(
+            !availability.covers(&profile()),
+            "{family:?} claimed to cover the default profile"
         );
     }
 }
