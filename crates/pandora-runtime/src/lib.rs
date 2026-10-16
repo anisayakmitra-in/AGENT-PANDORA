@@ -175,8 +175,8 @@ pub use observability::{
 };
 pub use operations::{OperationalEvent, OperationalRecorder, OperationalStatus};
 pub use orchestration_engine::{
-    DomainProfileRun, OrchestrationEngine, OrchestrationError, OrchestrationRun,
-    OrchestrationRunSnapshot,
+    DiamondReceipt, DomainProfileRun, EdgeVerificationError, EdgeVerifierPolicy,
+    OrchestrationEngine, OrchestrationError, OrchestrationRun, OrchestrationRunSnapshot,
 };
 pub use orchestration_store::{
     OrchestrationBudgetReservationRecord, OrchestrationBudgetReservationState,

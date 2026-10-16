@@ -1,7 +1,28 @@
 use crate::context::ContextClassification;
 use crate::effect::Timestamp;
 use crate::ids::{IdError, MemoryId, SessionId, TenantId, WorkspaceId};
+use serde::{Deserialize, Serialize};
 use std::fmt;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, Hash, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryIntent {
+    Repo,
+    Procedure,
+    Coding,
+    User,
+}
+
+impl MemoryIntent {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Repo => "repo",
+            Self::Procedure => "procedure",
+            Self::Coding => "coding",
+            Self::User => "user",
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum MemoryTier {
@@ -105,6 +126,18 @@ impl MemoryKind {
             self,
             Self::Lesson | Self::Lineage | Self::PolicyDecision | Self::Replacement
         )
+    }
+
+    pub const fn default_intent(self) -> MemoryIntent {
+        match self {
+            Self::Trace => MemoryIntent::Procedure,
+            Self::ExecutionEvidence | Self::Decision | Self::Failure | Self::Replacement => {
+                MemoryIntent::Coding
+            }
+            Self::Benchmark | Self::Lesson => MemoryIntent::Procedure,
+            Self::Lineage => MemoryIntent::Repo,
+            Self::PolicyDecision => MemoryIntent::User,
+        }
     }
 }
 
@@ -332,6 +365,7 @@ pub struct MemoryRecord {
     id: MemoryId,
     tier: MemoryTier,
     kind: MemoryKind,
+    intent: Option<MemoryIntent>,
     scope: MemoryScope,
     summary: String,
     classification: ContextClassification,
@@ -462,6 +496,7 @@ impl MemoryRecord {
             id: candidate.id,
             tier: MemoryTier::L2,
             kind: candidate.kind,
+            intent: candidate.intent,
             scope: candidate.scope,
             summary: candidate.summary,
             classification: candidate.classification,
@@ -546,6 +581,7 @@ impl MemoryRecord {
             id,
             tier,
             kind,
+            intent: None,
             scope,
             summary,
             classification,
@@ -568,6 +604,19 @@ impl MemoryRecord {
 
     pub const fn kind(&self) -> MemoryKind {
         self.kind
+    }
+
+    pub fn intent(&self) -> MemoryIntent {
+        self.intent.unwrap_or_else(|| self.kind.default_intent())
+    }
+
+    pub const fn explicit_intent(&self) -> Option<MemoryIntent> {
+        self.intent
+    }
+
+    pub fn with_intent(mut self, intent: MemoryIntent) -> Self {
+        self.intent = Some(intent);
+        self
     }
 
     pub fn scope(&self) -> &MemoryScope {
@@ -777,5 +826,48 @@ mod tests {
             ),
             Err(MemoryContractError::SameConsolidationSession)
         );
+    }
+
+    #[test]
+    fn memory_intent_defaults_and_explicit_override_work() {
+        let sc = scope("project-a", "session-a", "provider-a");
+        let record = MemoryRecord::new_l1(
+            "mem-1",
+            MemoryKind::ExecutionEvidence,
+            sc.clone(),
+            "completed patch verification",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(100),
+            "test",
+        )
+        .unwrap();
+
+        // ExecutionEvidence defaults to Coding intent
+        assert_eq!(record.intent(), MemoryIntent::Coding);
+        assert_eq!(record.explicit_intent(), None);
+
+        // Explicit override works
+        let repo_record = record.with_intent(MemoryIntent::Repo);
+        assert_eq!(repo_record.intent(), MemoryIntent::Repo);
+        assert_eq!(repo_record.explicit_intent(), Some(MemoryIntent::Repo));
+
+        // Test Promotion carries intent on L2-eligible kind (Lesson)
+        let lesson = MemoryRecord::new_l1(
+            "lesson-1",
+            MemoryKind::Lesson,
+            sc,
+            "learned to check edge verifier",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(150),
+            "test",
+        )
+        .unwrap()
+        .with_intent(MemoryIntent::Procedure);
+
+        let approval = MemoryApproval::new("app-1", "alice").unwrap();
+        let promoted =
+            MemoryRecord::promote_l2(lesson, approval, Timestamp::from_unix_seconds(200)).unwrap();
+        assert_eq!(promoted.intent(), MemoryIntent::Procedure);
+        assert_eq!(promoted.explicit_intent(), Some(MemoryIntent::Procedure));
     }
 }

@@ -1,7 +1,111 @@
-use pandora_types::{DomainAgentProfile, OrchestrationPlan, PlanId, RoleAssignment, RoleId};
+use pandora_types::{
+    ArtifactRef, DomainAgentProfile, ExecutionTopology, OrchestrationPlan, PlanId, RoleAssignment,
+    RoleId,
+};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Mutex;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum EdgeVerificationError {
+    SizeExceeded {
+        actual: u64,
+        max: u64,
+    },
+    MimeTypeNotAllowed {
+        actual: String,
+        allowed: Vec<String>,
+    },
+    InvalidChecksum {
+        message: String,
+    },
+    PolicyViolation(String),
+}
+
+impl fmt::Display for EdgeVerificationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SizeExceeded { actual, max } => {
+                write!(
+                    formatter,
+                    "artifact size {actual} bytes exceeds limit {max}"
+                )
+            }
+            Self::MimeTypeNotAllowed { actual, allowed } => {
+                write!(
+                    formatter,
+                    "mime type '{actual}' not in allowed list: {allowed:?}"
+                )
+            }
+            Self::InvalidChecksum { message } => {
+                write!(
+                    formatter,
+                    "artifact checksum verification failed: {message}"
+                )
+            }
+            Self::PolicyViolation(msg) => {
+                write!(formatter, "edge verifier rejected artifact: {msg}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for EdgeVerificationError {}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct EdgeVerifierPolicy {
+    pub max_size_bytes: Option<u64>,
+    pub allowed_mime_types: Vec<String>,
+}
+
+impl EdgeVerifierPolicy {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_max_size(mut self, max: u64) -> Self {
+        self.max_size_bytes = Some(max);
+        self
+    }
+
+    pub fn with_allowed_mime(mut self, mime: impl Into<String>) -> Self {
+        self.allowed_mime_types.push(mime.into());
+        self
+    }
+
+    pub fn verify(&self, artifact: &ArtifactRef) -> Result<(), EdgeVerificationError> {
+        if let Some(max) = self.max_size_bytes
+            && artifact.size_bytes > max
+        {
+            return Err(EdgeVerificationError::SizeExceeded {
+                actual: artifact.size_bytes,
+                max,
+            });
+        }
+        if !self.allowed_mime_types.is_empty()
+            && !self
+                .allowed_mime_types
+                .iter()
+                .any(|m| m == &artifact.mime_type)
+        {
+            return Err(EdgeVerificationError::MimeTypeNotAllowed {
+                actual: artifact.mime_type.clone(),
+                allowed: self.allowed_mime_types.clone(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DiamondReceipt {
+    pub topology: ExecutionTopology,
+    pub input_summary: String,
+    pub verified_artifacts: Vec<ArtifactRef>,
+    pub aggregate_digest: String,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OrchestrationError {
@@ -11,10 +115,22 @@ pub enum OrchestrationError {
     RoleNotFound(RoleId),
     RoleNotActive(RoleId),
     RoleAlreadyCompleted(RoleId),
-    HandoffNotDeclared { from: RoleId, to: RoleId },
+    HandoffNotDeclared {
+        from: RoleId,
+        to: RoleId,
+    },
     HandoffSourceIncomplete,
     HandoffLimit,
     InvalidSnapshot,
+    WorkerFailed {
+        worker: String,
+        error: String,
+    },
+    WorkerPanic(String),
+    EdgeVerificationFailed {
+        worker: String,
+        error: EdgeVerificationError,
+    },
 }
 
 impl fmt::Display for OrchestrationError {
@@ -32,6 +148,18 @@ impl fmt::Display for OrchestrationError {
             Self::HandoffSourceIncomplete => formatter.write_str("handoff source is not complete"),
             Self::HandoffLimit => formatter.write_str("plan handoff budget is exhausted"),
             Self::InvalidSnapshot => formatter.write_str("orchestration snapshot is invalid"),
+            Self::WorkerFailed { worker, error } => {
+                write!(formatter, "worker '{worker}' failed: {error}")
+            }
+            Self::WorkerPanic(worker) => {
+                write!(formatter, "worker '{worker}' panicked during execution")
+            }
+            Self::EdgeVerificationFailed { worker, error } => {
+                write!(
+                    formatter,
+                    "edge verification failed for worker '{worker}': {error}"
+                )
+            }
         }
     }
 }
@@ -147,6 +275,71 @@ impl OrchestrationEngine {
         Ok(DomainProfileRun {
             run: OrchestrationRun::new(profile.plan().clone()),
             profile,
+        })
+    }
+
+    pub fn execute_diamond<F>(
+        &self,
+        input_summary: impl Into<String>,
+        workers: Vec<(String, F)>,
+        verifier: &EdgeVerifierPolicy,
+    ) -> Result<DiamondReceipt, OrchestrationError>
+    where
+        F: FnOnce() -> Result<ArtifactRef, String> + Send + 'static,
+    {
+        let input_summary = input_summary.into();
+        let results = std::thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(workers.len());
+            for (name, task) in workers {
+                let handle = scope.spawn(task);
+                handles.push((name, handle));
+            }
+            let mut gathered = Vec::with_capacity(handles.len());
+            for (name, handle) in handles {
+                let res = handle
+                    .join()
+                    .map_err(|_| OrchestrationError::WorkerPanic(name.clone()))?;
+                gathered.push((name, res));
+            }
+            Ok::<_, OrchestrationError>(gathered)
+        })?;
+
+        let mut verified_artifacts = Vec::with_capacity(results.len());
+        for (name, result) in results {
+            let artifact = result.map_err(|err| OrchestrationError::WorkerFailed {
+                worker: name.clone(),
+                error: err,
+            })?;
+            verifier.verify(&artifact).map_err(|err| {
+                OrchestrationError::EdgeVerificationFailed {
+                    worker: name,
+                    error: err,
+                }
+            })?;
+            verified_artifacts.push(artifact);
+        }
+
+        // Deterministic sort by artifact ID
+        verified_artifacts.sort_by(|a, b| a.artifact_id.as_str().cmp(b.artifact_id.as_str()));
+
+        // Compute aggregate join digest
+        let mut hasher = Sha256::new();
+        hasher.update(input_summary.as_bytes());
+        for art in &verified_artifacts {
+            hasher.update(art.artifact_id.as_str().as_bytes());
+            hasher.update(art.sha256);
+        }
+        let digest_bytes = hasher.finalize();
+        let aggregate_digest = digest_bytes
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+
+        Ok(DiamondReceipt {
+            topology: ExecutionTopology::Diamond,
+            input_summary,
+            verified_artifacts,
+            aggregate_digest,
         })
     }
 }
@@ -558,5 +751,87 @@ mod tests {
         let run = engine.start_domain_profile(profile.plan().id()).unwrap();
         assert_eq!(run.profile(), &profile);
         assert_eq!(run.run().plan(), profile.plan());
+    }
+
+    type WorkerTask = Box<dyn FnOnce() -> Result<ArtifactRef, String> + Send + 'static>;
+
+    #[test]
+    fn orchestration_diamond_fanout_with_edge_verifier() {
+        let engine = OrchestrationEngine::new();
+        let verifier = EdgeVerifierPolicy::new()
+            .with_max_size(1024)
+            .with_allowed_mime("application/json");
+
+        let workers: Vec<(String, WorkerTask)> = vec![
+            (
+                "worker_alpha".to_string(),
+                Box::new(|| {
+                    Ok(ArtifactRef::compute(
+                        pandora_types::ArtifactId::new("art-alpha").unwrap(),
+                        "out/alpha.json",
+                        b"{\"module\":\"auth\",\"status\":\"pass\"}",
+                        "application/json",
+                    ))
+                }),
+            ),
+            (
+                "worker_beta".to_string(),
+                Box::new(|| {
+                    Ok(ArtifactRef::compute(
+                        pandora_types::ArtifactId::new("art-beta").unwrap(),
+                        "out/beta.json",
+                        b"{\"module\":\"storage\",\"status\":\"pass\"}",
+                        "application/json",
+                    ))
+                }),
+            ),
+        ];
+
+        let receipt = engine
+            .execute_diamond(
+                "Verify auth and storage subsystems in parallel",
+                workers,
+                &verifier,
+            )
+            .unwrap();
+
+        assert_eq!(receipt.topology, ExecutionTopology::Diamond);
+        assert_eq!(receipt.verified_artifacts.len(), 2);
+        assert_eq!(
+            receipt.verified_artifacts[0].artifact_id.as_str(),
+            "art-alpha"
+        );
+        assert_eq!(
+            receipt.verified_artifacts[1].artifact_id.as_str(),
+            "art-beta"
+        );
+        assert!(!receipt.aggregate_digest.is_empty());
+    }
+
+    #[test]
+    fn orchestration_diamond_rejects_artifact_exceeding_edge_limit() {
+        let engine = OrchestrationEngine::new();
+        let verifier = EdgeVerifierPolicy::new().with_max_size(10);
+
+        let workers: Vec<(String, WorkerTask)> = vec![(
+            "oversized_worker".to_string(),
+            Box::new(|| {
+                Ok(ArtifactRef::compute(
+                    pandora_types::ArtifactId::new("art-big").unwrap(),
+                    "out/big.bin",
+                    b"this content exceeds the 10 byte limit significantly",
+                    "application/octet-stream",
+                ))
+            }),
+        )];
+
+        let result = engine.execute_diamond("Run oversized task", workers, &verifier);
+        assert!(matches!(
+            result,
+            Err(OrchestrationError::EdgeVerificationFailed {
+                worker,
+                error: EdgeVerificationError::SizeExceeded { actual, max }
+            }) if worker == "oversized_worker" && actual > max && max == 10
+        ));
     }
 }

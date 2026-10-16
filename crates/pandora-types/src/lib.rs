@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod adaptation;
+pub mod artifact;
 pub mod capability;
 pub mod containment;
 pub mod context;
@@ -10,6 +11,7 @@ pub mod evaluation;
 pub mod events;
 pub mod evolution;
 pub mod execution_profile;
+pub mod feature_map;
 pub mod gene;
 pub mod governance;
 pub mod harness;
@@ -32,6 +34,7 @@ pub use adaptation::{
     AdaptationCandidate, AdaptationContractError, AdaptationDecision, AdaptationPolicy,
     AdaptationReceipt, AdaptationRequest, AdaptationTarget,
 };
+pub use artifact::ArtifactRef;
 pub use capability::{Capability, Operation};
 pub use containment::{
     CONTAINMENT_EVIDENCE_VERSION, ContainmentBoundary, ContainmentBoundaryKind,
@@ -70,6 +73,7 @@ pub use execution_profile::{
     EXECUTION_PROFILE_VERSION, ExecutionProfile, ExecutionProfileBinding,
     ExecutionProfileBindingKind, ExecutionProfileContractError, ExecutionProfileDigest,
 };
+pub use feature_map::{FeatureEntry, FeatureMap};
 pub use gene::{Gene, GeneError, GeneInput, GeneKind, GeneManifest};
 pub use governance::{ParliamentDecision, PolicyContext};
 pub use harness::{
@@ -85,15 +89,15 @@ pub use jobs::{JobCommand, JobContractError, JobRequest, JobStatus, MAX_JOB_ARGU
 pub use memory::{
     MAX_MEMORY_SYNTHESIS_EVIDENCE, MEMORY_CONSOLIDATION_POLICY_VERSION, MemoryApproval,
     MemoryAuditAction, MemoryAuditEntry, MemoryConflictRule, MemoryConsolidationBoundary,
-    MemoryConsolidationPolicy, MemoryContractError, MemoryKind, MemoryOrigin, MemoryRecord,
-    MemoryScope, MemoryTier,
+    MemoryConsolidationPolicy, MemoryContractError, MemoryIntent, MemoryKind, MemoryOrigin,
+    MemoryRecord, MemoryScope, MemoryTier,
 };
 pub use observability::{
     ObservabilityContractError, ObservabilitySample, ObservabilitySnapshot, SpanView, TraceView,
 };
 pub use orchestration::{
-    DomainAgentProfile, DomainProfileMode, Handoff, IterationOutcome, LoopDecision,
-    LoopTermination, MAX_ORCHESTRATION_HANDOFFS, MAX_ORCHESTRATION_ROLES,
+    DomainAgentProfile, DomainProfileMode, ExecutionTopology, Handoff, IterationOutcome,
+    LoopDecision, LoopTermination, MAX_ORCHESTRATION_HANDOFFS, MAX_ORCHESTRATION_ROLES,
     OrchestrationContractError, OrchestrationPlan, OrchestrationRole, RoleAssignment,
     RunLoopConfig, RunLoopSnapshot, RunLoopState, Usage,
 };

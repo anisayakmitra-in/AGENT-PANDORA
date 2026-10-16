@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "features": [
+    {
+      "name": "Parliament",
+      "entry_point": "crates/pandora-runtime/src/parliament.rs",
+      "description": "Approval authority and human review governance boundary",
+      "invariants": [
+        "Human review required for high-risk operations",
+        "No direct work execution authority",
+        "Tamper-evident approval recording"
+      ],
+      "dependencies": [
+        "ReferenceMonitor",
+        "ApprovalStore"
+      ]
+    },
+    {
+      "name": "ReferenceMonitor",
+      "entry_point": "crates/pandora-runtime/src/reference_monitor.rs",
+      "description": "Kernel and capability permit policy enforcement engine",
+      "invariants": [
+        "Permit TTL enforcement",
+        "Deterministic capability checking",
+        "Fail-closed on expired or invalid permits"
+      ],
+      "dependencies": [
+        "PolicyContext",
+        "PermitStore"
+      ]
+    },
+    {
+      "name": "Sandbox",
+      "entry_point": "crates/pandora-sandbox/src/lib.rs",
+      "description": "OS kernel confinement via Landlock ABI, seccomp-bpf, and Windows Job Objects",
+      "invariants": [
+        "Zero network egress permissions",
+        "Strict filesystem jailed boundaries",
+        "Restricted child process execution"
+      ],
+      "dependencies": [
+        "pandora-types"
+      ]
+    },
+    {
+      "name": "EvolutionEngine",
+      "entry_point": "crates/pandora-runtime/src/evolution.rs",
+      "description": "Self-evolution lifecycle and 4-stage canary rollout governance",
+      "invariants": [
+        "Requires passing holdout scorecard before promotion",
+        "Requires distinct evaluator and human approver",
+        "Produces cryptographic ReplacementReceipt and RollbackReceipt"
+      ],
+      "dependencies": [
+        "Parliament",
+        "EvaluationEngine"
+      ]
+    },
+    {
+      "name": "AgentLoop",
+      "entry_point": "crates/pandora-runtime/src/agent_loop.rs",
+      "description": "Bounded multi-turn autonomous agent execution loop with anti-thrash convergence",
+      "invariants": [
+        "Turn and token budget ceilings",
+        "Convergence guard rejects identical duplicate failing actions",
+        "Tool outputs quarantined as untrusted context"
+      ],
+      "dependencies": [
+        "ExecutionController",
+        "ToolEngine"
+      ]
+    },
+    {
+      "name": "MemoryEngine",
+      "entry_point": "crates/pandora-runtime/src/memory_engine.rs",
+      "description": "Intent-separated L0/L1/L2 memory synthesis and recall engine",
+      "invariants": [
+        "Intent isolation across Repo, Procedure, Coding, and User domains",
+        "Durable persistence in embedded SQLite with WAL",
+        "L2 promotion requires explicit approval"
+      ],
+      "dependencies": [
+        "SessionStore",
+        "pandora-types"
+      ]
+    },
+    {
+      "name": "OrchestrationEngine",
+      "entry_point": "crates/pandora-runtime/src/orchestration_engine.rs",
+      "description": "Multi-agent DAG coordination and diamond graph execution topology",
+      "invariants": [
+        "Acyclic role dependency verification",
+        "Parallel fan-out joins with edge verifiers",
+        "Bounded handoffs across domains"
+      ],
+      "dependencies": [
+        "CoordinationMetaHarness",
+        "pandora-types"
+      ]
+    }
+  ]
+}

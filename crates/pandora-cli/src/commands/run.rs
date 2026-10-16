@@ -1972,6 +1972,7 @@ fn agent_error(error: AgentLoopError) -> CliError {
         | AgentLoopError::Tool(_)
         | AgentLoopError::ToolBudgetExceeded
         | AgentLoopError::TurnBudgetExceeded
+        | AgentLoopError::ConvergenceThrashed
         | AgentLoopError::ControlledStop { .. } => {
             CliError::execution(error.to_string(), json!({}))
         }

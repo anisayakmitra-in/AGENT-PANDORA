@@ -3,8 +3,8 @@ use crate::sessions::{
 };
 use pandora_types::{
     ContextClassification, MAX_MEMORY_SYNTHESIS_EVIDENCE, MemoryApproval, MemoryAuditAction,
-    MemoryAuditEntry, MemoryContractError, MemoryId, MemoryKind, MemoryOrigin, MemoryRecord,
-    MemoryScope, MemoryTier, PrincipalId, Timestamp, hash_artifact,
+    MemoryAuditEntry, MemoryContractError, MemoryId, MemoryIntent, MemoryKind, MemoryOrigin,
+    MemoryRecord, MemoryScope, MemoryTier, PrincipalId, Timestamp, hash_artifact,
 };
 use std::collections::{HashSet, VecDeque};
 use std::path::Path;
@@ -336,6 +336,31 @@ impl MemoryEngine {
                     && !record.is_expired(now)
             })
             .cloned()
+            .collect())
+    }
+
+    pub fn recall_by_intent(
+        &self,
+        scope: &MemoryScope,
+        tier: MemoryTier,
+        intent: MemoryIntent,
+        now: Timestamp,
+    ) -> Vec<MemoryRecord> {
+        self.try_recall_by_intent(scope, tier, intent, now)
+            .unwrap_or_default()
+    }
+
+    pub fn try_recall_by_intent(
+        &self,
+        scope: &MemoryScope,
+        tier: MemoryTier,
+        intent: MemoryIntent,
+        now: Timestamp,
+    ) -> Result<Vec<MemoryRecord>, MemoryError> {
+        let records = self.try_recall(scope, tier, now)?;
+        Ok(records
+            .into_iter()
+            .filter(|record| record.intent() == intent)
             .collect())
     }
 
@@ -1420,5 +1445,76 @@ mod tests {
             synthesized.evidence_ids(),
             &[MemoryId::new("failure-1").unwrap()]
         );
+    }
+
+    #[test]
+    fn memory_engine_recalls_by_intent_and_filters_cross_domain_noise() {
+        let engine = MemoryEngine::new(8);
+        let sc = scope("prov-a");
+
+        // Coding intent: execution evidence
+        engine
+            .distill_l1(
+                sc.clone(),
+                "code-fix-1",
+                MemoryKind::ExecutionEvidence,
+                "fixed syntax error in parser",
+                ContextClassification::Internal,
+                Timestamp::from_unix_seconds(10),
+                "compiler",
+            )
+            .unwrap();
+
+        // Procedure intent: lesson
+        engine
+            .distill_l1(
+                sc.clone(),
+                "proc-lesson-1",
+                MemoryKind::Lesson,
+                "run prepush before git push",
+                ContextClassification::Internal,
+                Timestamp::from_unix_seconds(12),
+                "ci",
+            )
+            .unwrap();
+
+        // User intent / L0 trace
+        engine
+            .remember_l0(
+                sc.clone(),
+                "trace-1",
+                "user approved migration plan",
+                ContextClassification::Internal,
+                Timestamp::from_unix_seconds(14),
+                None,
+                "operator",
+            )
+            .unwrap();
+
+        let coding_memories = engine.recall_by_intent(
+            &sc,
+            MemoryTier::L1,
+            MemoryIntent::Coding,
+            Timestamp::from_unix_seconds(20),
+        );
+        assert_eq!(coding_memories.len(), 1);
+        assert_eq!(coding_memories[0].id().as_str(), "code-fix-1");
+
+        let procedure_memories = engine.recall_by_intent(
+            &sc,
+            MemoryTier::L1,
+            MemoryIntent::Procedure,
+            Timestamp::from_unix_seconds(20),
+        );
+        assert_eq!(procedure_memories.len(), 1);
+        assert_eq!(procedure_memories[0].id().as_str(), "proc-lesson-1");
+
+        let repo_memories = engine.recall_by_intent(
+            &sc,
+            MemoryTier::L1,
+            MemoryIntent::Repo,
+            Timestamp::from_unix_seconds(20),
+        );
+        assert!(repo_memories.is_empty());
     }
 }

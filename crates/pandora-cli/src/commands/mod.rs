@@ -187,6 +187,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "efficiency" => efficiency::execute(&args[1..]),
         "fleet" => fleet::execute(&args[1..]),
         "graph" => graph::execute(&args[1..]),
+        "map" => graph::map_command(&args[1..]),
         "--help" | "help" => {
             if args.len() != 1 {
                 return Err(CliError::usage("help does not accept additional arguments"));

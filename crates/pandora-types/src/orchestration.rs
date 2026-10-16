@@ -32,6 +32,24 @@ impl OrchestrationRole {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionTopology {
+    Chain,
+    Diamond,
+    Router,
+}
+
+impl ExecutionTopology {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Chain => "chain",
+            Self::Diamond => "diamond",
+            Self::Router => "router",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OrchestrationContractError {
     InvalidId(IdError),
