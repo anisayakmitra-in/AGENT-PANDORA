@@ -90,20 +90,15 @@ overwrites an active record or reuses a tombstoned identity.
 The npm package also exports a typed TypeScript client for the stable JSON CLI
 contract. It forwards an argv array to the verified native binary and does not
 create a second runtime or permission path. See [TypeScript client](docs/TYPESCRIPT.md).
-Contributors can start a declarative Domain Harness with the local-only
-[`sdk/domain-harness-starter`](sdk/domain-harness-starter/README.md) reference
-package or `pandora package scaffold domain-harness --output <new-directory>`.
-Composition authors can use the metadata-only
-[`sdk/meta-harness-starter`](sdk/meta-harness-starter/README.md) reference or
-`pandora package scaffold meta-harness --output <new-directory>`.
-Gene authors can evaluate explicit no-effect, bounded-read, and approval-bound
-effect proposals with the validated [`sdk/gene-pack`](sdk/gene-pack/README.md)
-examples. The CLI, TUI, and desktop inspector expose their signed capability
-contracts, provenance, owning Domain, lifecycle generation, and rollback state.
+## Architecture and custom extensions
 
-For project context, contribution rules, and security reporting, see
-[Why Pandora?](docs/WHY_PANDORA.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
-[SECURITY.md](SECURITY.md).
+Pandora is designed to be cleanly extensible through governed packages:
+
+- **Architecture and 21 Runtime Engines**: Detailed overview of the crate structure, the 21 discrete engines in `crates/pandora-runtime`, and the Parliament/ReferenceMonitor authority chain in [Architecture](docs/ARCHITECTURE.md).
+- **Authoring Custom Domain Harnesses, Meta Harnesses & Genes**: Step-by-step developer guide to scaffold, package, admit, and enable custom extensions in [Authoring Custom Harnesses and Genes](docs/CUSTOM_HARNESSES_AND_GENES.md).
+- **Starter Templates**: Copyable starter packages are available at [`sdk/domain-harness-starter`](sdk/domain-harness-starter/README.md), [`sdk/meta-harness-starter`](sdk/meta-harness-starter/README.md), and [`sdk/gene-pack`](sdk/gene-pack/README.md).
+
+For contribution rules, architecture boundaries, and security reporting, see [CONTRIBUTING.md](CONTRIBUTING.md), [Why Pandora?](docs/WHY_PANDORA.md), and [SECURITY.md](SECURITY.md).
 
 ## Install and start
 
