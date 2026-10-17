@@ -940,7 +940,12 @@ fn provenance(args: &[String]) -> Result<CommandResult, CliError> {
     let principal = session_scope().0;
     let engine = open_engine(&config, &principal)?;
     let mut records = HashMap::new();
-    for tier in [MemoryTier::L1, MemoryTier::L2] {
+    for tier in [
+        MemoryTier::L1,
+        MemoryTier::L2,
+        MemoryTier::L3,
+        MemoryTier::L4,
+    ] {
         for record in engine
             .try_recall(&scope, tier, timestamp())
             .map_err(memory_error)?
@@ -1514,7 +1519,12 @@ fn ensure_memory_exists(
     scope: &MemoryScope,
     memory_id: &MemoryId,
 ) -> Result<(), CliError> {
-    for tier in [MemoryTier::L1, MemoryTier::L2] {
+    for tier in [
+        MemoryTier::L1,
+        MemoryTier::L2,
+        MemoryTier::L3,
+        MemoryTier::L4,
+    ] {
         if engine
             .try_recall(scope, tier, timestamp())
             .map_err(memory_error)?

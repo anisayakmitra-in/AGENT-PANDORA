@@ -519,7 +519,11 @@ impl MemoryEngine {
             })
             .cloned()
             .collect();
-        results.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
+        results.sort_by(|a, b| {
+            b.updated_at
+                .cmp(&a.updated_at)
+                .then_with(|| a.sop.id.cmp(&b.sop.id))
+        });
         Ok(results)
     }
 
@@ -544,9 +548,11 @@ impl MemoryEngine {
             .store
             .lock()
             .map_err(|_| MemoryError::StoreUnavailable)?;
-        store
-            .archives
-            .retain(|a| a.archive_id != archive.archive_id);
+        store.archives.retain(|a| {
+            !(a.archive_id == archive.archive_id
+                && a.tenant_id == archive.tenant_id
+                && a.workspace_id == archive.workspace_id)
+        });
         store.archives.push(archive.clone());
         Ok(())
     }
@@ -600,7 +606,11 @@ impl MemoryEngine {
             .filter(|a| &a.tenant_id == tenant_id && &a.workspace_id == workspace_id)
             .cloned()
             .collect();
-        results.sort_by_key(|b| std::cmp::Reverse(b.created_at));
+        results.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| a.archive_id.cmp(&b.archive_id))
+        });
         results.truncate(limit);
         Ok(results)
     }
@@ -1095,6 +1105,20 @@ fn find_tier(store: &MemoryStore, scope: &MemoryScope, id: &MemoryId) -> Option<
         .any(|record| record.scope() == scope && record.id() == id)
     {
         return Some(MemoryTier::L2);
+    }
+    if store
+        .l3
+        .iter()
+        .any(|record| record.scope() == scope && record.id() == id)
+    {
+        return Some(MemoryTier::L3);
+    }
+    if store
+        .l4
+        .iter()
+        .any(|record| record.scope() == scope && record.id() == id)
+    {
+        return Some(MemoryTier::L4);
     }
     None
 }
@@ -1986,5 +2010,71 @@ mod tests {
             proposal.candidate().explicit_intent(),
             Some(MemoryIntent::Procedure)
         );
+    }
+
+    #[test]
+    fn in_memory_l3_l4_recall_revocation_and_sorting() {
+        let engine = MemoryEngine::new(64);
+        let scope = scope("provider-a");
+        let now = Timestamp::from_unix_seconds(10);
+
+        // Remember L3 SOP and L4 Archive
+        let l3 = engine
+            .remember_l3_sop(
+                scope.clone(),
+                "l3-rec-1",
+                "Workflow step",
+                ContextClassification::Internal,
+                now,
+                "prov-l3",
+            )
+            .unwrap();
+        assert_eq!(l3.tier(), MemoryTier::L3);
+
+        let l4 = engine
+            .remember_l4_archive(
+                scope.clone(),
+                "l4-rec-1",
+                "Archive receipt",
+                ContextClassification::Internal,
+                now,
+                "prov-l4",
+            )
+            .unwrap();
+        assert_eq!(l4.tier(), MemoryTier::L4);
+
+        // Verify recall
+        let recalled_l3 = engine.recall(&scope, MemoryTier::L3, now);
+        assert_eq!(recalled_l3.len(), 1);
+        assert_eq!(recalled_l3[0].id().as_str(), "l3-rec-1");
+
+        let recalled_l4 = engine.recall(&scope, MemoryTier::L4, now);
+        assert_eq!(recalled_l4.len(), 1);
+        assert_eq!(recalled_l4[0].id().as_str(), "l4-rec-1");
+
+        // Revoke L3 record via forget
+        engine
+            .forget(&scope, l3.id(), Timestamp::from_unix_seconds(12))
+            .unwrap();
+        let recalled_after_forget =
+            engine.recall(&scope, MemoryTier::L3, Timestamp::from_unix_seconds(15));
+        assert!(recalled_after_forget.is_empty());
+
+        // Revoke L4 record via forget
+        engine
+            .forget(&scope, l4.id(), Timestamp::from_unix_seconds(13))
+            .unwrap();
+        let recalled_after_forget_l4 =
+            engine.recall(&scope, MemoryTier::L4, Timestamp::from_unix_seconds(15));
+        assert!(recalled_after_forget_l4.is_empty());
+
+        // Audit entries verify revocations
+        let audit = engine.audit(&scope);
+        assert!(audit.iter().any(|e| e.memory_id().as_str() == "l3-rec-1"
+            && e.action() == MemoryAuditAction::Revoked
+            && e.tier() == MemoryTier::L3));
+        assert!(audit.iter().any(|e| e.memory_id().as_str() == "l4-rec-1"
+            && e.action() == MemoryAuditAction::Revoked
+            && e.tier() == MemoryTier::L4));
     }
 }

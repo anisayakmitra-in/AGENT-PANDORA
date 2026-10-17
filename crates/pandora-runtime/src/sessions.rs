@@ -1326,7 +1326,7 @@ impl SessionStore {
                  sop_id, tenant_id, workspace_id, name, intent, definition_json,
                  success_count, created_at, updated_at
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?7)
-             ON CONFLICT (sop_id) DO UPDATE SET
+             ON CONFLICT (tenant_id, workspace_id, sop_id) DO UPDATE SET
                  name = excluded.name,
                  intent = excluded.intent,
                  definition_json = excluded.definition_json,
@@ -1344,8 +1344,8 @@ impl SessionStore {
         )?;
 
         let (success_count, created_at, updated_at) = connection.query_row(
-            "SELECT success_count, created_at, updated_at FROM memory_sops WHERE sop_id = ?1",
-            params![sop.id.as_str()],
+            "SELECT success_count, created_at, updated_at FROM memory_sops WHERE tenant_id = ?1 AND workspace_id = ?2 AND sop_id = ?3",
+            params![tenant_id.as_str(), workspace_id.as_str(), sop.id.as_str()],
             |row| {
                 Ok((
                     row.get::<_, u32>(0)?,
@@ -1402,6 +1402,7 @@ impl SessionStore {
 
         let sop: SopDefinition =
             serde_json::from_str(&definition_json).map_err(|_| SessionError::CorruptRecord)?;
+        sop.validate().map_err(|_| SessionError::CorruptRecord)?;
         let created_at = u64::try_from(created_at)
             .map(Timestamp::from_unix_seconds)
             .map_err(|_| SessionError::CorruptRecord)?;
@@ -1463,6 +1464,7 @@ impl SessionStore {
         for (definition_json, success_count, created_at, updated_at) in rows {
             let sop: SopDefinition =
                 serde_json::from_str(&definition_json).map_err(|_| SessionError::CorruptRecord)?;
+            sop.validate().map_err(|_| SessionError::CorruptRecord)?;
             let created_at = u64::try_from(created_at)
                 .map(Timestamp::from_unix_seconds)
                 .map_err(|_| SessionError::CorruptRecord)?;
@@ -1482,13 +1484,22 @@ impl SessionStore {
     }
 
     pub fn store_archive(&self, archive: &SessionArchiveRecord) -> Result<(), SessionError> {
+        archive
+            .validate()
+            .map_err(|_| SessionError::CorruptRecord)?;
         let connection = self.lock()?;
         let time_sec = timestamp_i64(archive.created_at)?;
         connection.execute(
             "INSERT INTO memory_archives (
                  archive_id, tenant_id, workspace_id, session_id,
                  summary, diff_stats, receipt_digest, created_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT (tenant_id, workspace_id, archive_id) DO UPDATE SET
+                 session_id = excluded.session_id,
+                 summary = excluded.summary,
+                 diff_stats = excluded.diff_stats,
+                 receipt_digest = excluded.receipt_digest,
+                 created_at = excluded.created_at",
             params![
                 archive.archive_id.as_str(),
                 archive.tenant_id.as_str(),
@@ -1537,7 +1548,7 @@ impl SessionStore {
             .map(Timestamp::from_unix_seconds)
             .map_err(|_| SessionError::CorruptRecord)?;
 
-        SessionArchiveRecord::new(
+        let record = SessionArchiveRecord::new(
             archive_id,
             tenant_id.clone(),
             workspace_id.clone(),
@@ -1547,8 +1558,9 @@ impl SessionStore {
             receipt_digest,
             created_at,
         )
-        .map(Some)
-        .map_err(|_| SessionError::CorruptRecord)
+        .map_err(|_| SessionError::CorruptRecord)?;
+        record.validate().map_err(|_| SessionError::CorruptRecord)?;
+        Ok(Some(record))
     }
 
     pub fn list_recent_archives(
@@ -1566,8 +1578,9 @@ impl SessionStore {
              LIMIT ?3",
         )?;
 
+        let limit_i64 = i64::try_from(limit).unwrap_or(i64::MAX);
         let rows = statement.query_map(
-            params![tenant_id.as_str(), workspace_id.as_str(), limit as i64],
+            params![tenant_id.as_str(), workspace_id.as_str(), limit_i64],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -1598,6 +1611,7 @@ impl SessionStore {
                 created_at,
             )
             .map_err(|_| SessionError::CorruptRecord)?;
+            record.validate().map_err(|_| SessionError::CorruptRecord)?;
             archives.push(record);
         }
         Ok(archives)
@@ -1887,7 +1901,7 @@ fn migrate(connection: &mut Connection) -> Result<(), SessionError> {
                  ON memory_audit(session_id, provider, sequence);
 
              CREATE TABLE IF NOT EXISTS memory_sops (
-                 sop_id TEXT PRIMARY KEY,
+                 sop_id TEXT NOT NULL,
                  tenant_id TEXT NOT NULL,
                  workspace_id TEXT NOT NULL,
                  name TEXT NOT NULL,
@@ -1895,25 +1909,29 @@ fn migrate(connection: &mut Connection) -> Result<(), SessionError> {
                  definition_json TEXT NOT NULL,
                  success_count INTEGER NOT NULL DEFAULT 1,
                  created_at INTEGER NOT NULL,
-                 updated_at INTEGER NOT NULL
+                 updated_at INTEGER NOT NULL,
+                 PRIMARY KEY (tenant_id, workspace_id, sop_id)
              );
              CREATE INDEX IF NOT EXISTS idx_memory_sops_intent ON memory_sops (tenant_id, workspace_id, intent);
 
              CREATE TABLE IF NOT EXISTS memory_archives (
-                 archive_id TEXT PRIMARY KEY,
+                 archive_id TEXT NOT NULL,
                  tenant_id TEXT NOT NULL,
                  workspace_id TEXT NOT NULL,
                  session_id TEXT NOT NULL,
                  summary TEXT NOT NULL,
                  diff_stats TEXT NOT NULL,
                  receipt_digest TEXT NOT NULL,
-                 created_at INTEGER NOT NULL
+                 created_at INTEGER NOT NULL,
+                 PRIMARY KEY (tenant_id, workspace_id, archive_id)
              );
              CREATE INDEX IF NOT EXISTS idx_memory_archives_created ON memory_archives (tenant_id, workspace_id, created_at);
 
              INSERT INTO schema_migrations (version, applied_at) VALUES (10, strftime('%s', 'now'));",
         )?;
+        version = 10;
     }
+    let _ = version;
     transaction.commit()?;
     Ok(())
 }
@@ -3848,6 +3866,68 @@ mod tests {
             .unwrap();
         assert_eq!(recent_archives.len(), 1);
         assert_eq!(recent_archives[0].archive_id, "arch-1");
+
+        // 6. Verify multi-tenant / multi-workspace isolation for SOPs and archives
+        let tenant_b = TenantId::new("t2").unwrap();
+        let workspace_b = WorkspaceId::new("w2").unwrap();
+        let session_b = SessionId::new("s2").unwrap();
+        let step_b =
+            pandora_types::SopStep::new("step-b1", "compile", "cargo check", vec![]).unwrap();
+        let sop_b = SopDefinition::new(
+            "sop-1",
+            "different procedure for tenant b",
+            MemoryIntent::Coding,
+            vec![step_b],
+            None,
+        )
+        .unwrap();
+        store
+            .store_sop(
+                &tenant_b,
+                &workspace_b,
+                &sop_b,
+                Timestamp::from_unix_seconds(45),
+            )
+            .unwrap();
+
+        let archive_b = SessionArchiveRecord::new(
+            "arch-1",
+            tenant_b.clone(),
+            workspace_b.clone(),
+            session_b,
+            "Summary of tenant b session",
+            "+50 -1 lines",
+            "sha256:digest-b",
+            Timestamp::from_unix_seconds(46),
+        )
+        .unwrap();
+        store.store_archive(&archive_b).unwrap();
+
+        // Tenant A still has original records
+        let loaded_sop_a = store
+            .load_sop(&tenant_id, &workspace_id, "sop-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded_sop_a.sop.name, "release procedure");
+        assert_eq!(loaded_sop_a.tenant_id.as_str(), "t1");
+        let loaded_arch_a = store
+            .load_archive(&tenant_id, &workspace_id, "arch-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded_arch_a.summary, "Summary of session 1");
+
+        // Tenant B has its own records under the same IDs
+        let loaded_sop_b = store
+            .load_sop(&tenant_b, &workspace_b, "sop-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded_sop_b.sop.name, "different procedure for tenant b");
+        assert_eq!(loaded_sop_b.tenant_id.as_str(), "t2");
+        let loaded_arch_b = store
+            .load_archive(&tenant_b, &workspace_b, "arch-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded_arch_b.summary, "Summary of tenant b session");
 
         let _ = std::fs::remove_dir_all(root);
     }

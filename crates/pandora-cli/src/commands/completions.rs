@@ -490,6 +490,19 @@ mod tests {
                 "missing governed rollout completions in {script}"
             );
         }
+        assert!(powershell.contains("-eq 'sop'") && powershell.contains("-eq 'archive'"));
+        assert!(
+            bash.contains("\"$previous\" == \"sop\"")
+                && bash.contains("\"$previous\" == \"archive\"")
+        );
+        assert!(
+            zsh.contains("${words[2]} == memory && ${words[3]} == sop")
+                && zsh.contains("${words[2]} == memory && ${words[3]} == archive")
+        );
+        assert!(
+            fish.contains("__fish_seen_subcommand_from sop")
+                && fish.contains("__fish_seen_subcommand_from archive")
+        );
     }
 
     #[test]

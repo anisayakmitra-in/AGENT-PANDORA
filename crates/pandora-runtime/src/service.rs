@@ -1719,7 +1719,12 @@ impl RuntimeService {
         limit: u16,
     ) -> Result<ServiceResponse, RuntimeServiceError> {
         let mut records = Vec::new();
-        for tier in [MemoryTier::L1, MemoryTier::L2] {
+        for tier in [
+            MemoryTier::L1,
+            MemoryTier::L2,
+            MemoryTier::L3,
+            MemoryTier::L4,
+        ] {
             let remaining = limit.saturating_sub(u16::try_from(records.len()).unwrap_or(u16::MAX));
             if remaining == 0 {
                 break;

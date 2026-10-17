@@ -897,45 +897,106 @@ impl SopDefinition {
         steps: Vec<SopStep>,
         verification_command: Option<String>,
     ) -> Result<Self, MemoryContractError> {
-        let id = validate_text("SOP id", id.into())?;
-        let name = validate_text("SOP name", name.into())?;
-        let verification_command = verification_command
-            .map(|cmd| validate_multiline_text("verification command", cmd))
-            .transpose()?;
+        let sop = Self {
+            id: validate_text("SOP id", id.into())?,
+            name: validate_text("SOP name", name.into())?,
+            trigger_intent,
+            steps,
+            verification_command: verification_command
+                .map(|cmd| validate_multiline_text("verification command", cmd))
+                .transpose()?,
+        };
+        sop.validate()?;
+        Ok(sop)
+    }
 
-        if steps.is_empty() {
+    pub fn validate(&self) -> Result<(), MemoryContractError> {
+        validate_text("SOP id", self.id.clone())?;
+        validate_text("SOP name", self.name.clone())?;
+        if let Some(ref cmd) = self.verification_command {
+            validate_multiline_text("verification command", cmd.clone())?;
+        }
+
+        if self.steps.is_empty() {
             return Err(MemoryContractError::EmptyField("steps"));
         }
 
         let mut step_ids = std::collections::HashSet::new();
-        for step in &steps {
-            if !step_ids.insert(step.id.clone()) {
+        for step in &self.steps {
+            validate_text("step id", step.id.clone())?;
+            validate_text("step name", step.name.clone())?;
+            validate_multiline_text("step command", step.command.clone())?;
+            if !step_ids.insert(step.id.as_str()) {
                 return Err(MemoryContractError::DuplicateStep(step.id.clone()));
             }
         }
 
-        for step in &steps {
+        for step in &self.steps {
+            let mut seen_deps = std::collections::HashSet::new();
             for dep in &step.depends_on {
-                if !step_ids.contains(dep) {
-                    return Err(MemoryContractError::UnknownDependency(dep.clone()));
+                validate_text("step dependency", dep.clone())?;
+                if !seen_deps.insert(dep.as_str()) {
+                    return Err(MemoryContractError::DuplicateStep(dep.clone()));
                 }
                 if dep == &step.id {
                     return Err(MemoryContractError::SelfDependency(step.id.clone()));
                 }
+                if !step_ids.contains(dep.as_str()) {
+                    return Err(MemoryContractError::UnknownDependency(dep.clone()));
+                }
             }
         }
 
-        if has_sop_cycle(&steps) {
+        if self.execution_order().len() != self.steps.len() {
             return Err(MemoryContractError::DependencyCycle);
         }
 
-        Ok(Self {
-            id,
-            name,
-            trigger_intent,
-            steps,
-            verification_command,
-        })
+        Ok(())
+    }
+
+    pub fn execution_order(&self) -> Vec<SopStep> {
+        let mut in_degrees: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
+        let mut dependents: std::collections::HashMap<&str, Vec<&str>> =
+            std::collections::HashMap::new();
+        let step_map: std::collections::HashMap<&str, &SopStep> =
+            self.steps.iter().map(|s| (s.id.as_str(), s)).collect();
+
+        for step in &self.steps {
+            in_degrees.entry(step.id.as_str()).or_insert(0);
+            for dep in &step.depends_on {
+                dependents
+                    .entry(dep.as_str())
+                    .or_default()
+                    .push(step.id.as_str());
+                *in_degrees.entry(step.id.as_str()).or_insert(0) += 1;
+            }
+        }
+
+        let mut queue: std::collections::VecDeque<&str> = self
+            .steps
+            .iter()
+            .filter(|s| in_degrees.get(s.id.as_str()) == Some(&0))
+            .map(|s| s.id.as_str())
+            .collect();
+
+        let mut order = Vec::with_capacity(self.steps.len());
+        while let Some(node) = queue.pop_front() {
+            if let Some(step) = step_map.get(node) {
+                order.push((*step).clone());
+            }
+            if let Some(children) = dependents.get(node) {
+                for &child in children {
+                    if let Some(deg) = in_degrees.get_mut(child) {
+                        *deg -= 1;
+                        if *deg == 0 {
+                            queue.push_back(child);
+                        }
+                    }
+                }
+            }
+        }
+        order
     }
 
     pub fn ready_steps(&self, completed: &[String]) -> Vec<SopStep> {
@@ -953,43 +1014,6 @@ impl SopDefinition {
             .cloned()
             .collect()
     }
-}
-
-fn has_sop_cycle(steps: &[SopStep]) -> bool {
-    let mut in_degrees: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
-    let mut dependents: std::collections::HashMap<&str, Vec<&str>> =
-        std::collections::HashMap::new();
-
-    for step in steps {
-        in_degrees.entry(&step.id).or_insert(0);
-        for dep in &step.depends_on {
-            dependents.entry(dep.as_str()).or_default().push(&step.id);
-            *in_degrees.entry(&step.id).or_insert(0) += 1;
-        }
-    }
-
-    let mut queue: std::collections::VecDeque<&str> = in_degrees
-        .iter()
-        .filter(|(_, deg)| **deg == 0)
-        .map(|(&id, _)| id)
-        .collect();
-
-    let mut visited = 0;
-    while let Some(node) = queue.pop_front() {
-        visited += 1;
-        if let Some(children) = dependents.get(node) {
-            for &child in children {
-                if let Some(deg) = in_degrees.get_mut(child) {
-                    *deg -= 1;
-                    if *deg == 0 {
-                        queue.push_back(child);
-                    }
-                }
-            }
-        }
-    }
-
-    visited != steps.len()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1062,7 +1086,7 @@ impl SessionArchiveRecord {
         let summary = validate_text("summary", summary.into())?;
         let diff_stats = validate_multiline_text("diff stats", diff_stats.into())?;
         let receipt_digest = validate_text("receipt digest", receipt_digest.into())?;
-        Ok(Self {
+        let record = Self {
             archive_id,
             tenant_id,
             workspace_id,
@@ -1071,7 +1095,17 @@ impl SessionArchiveRecord {
             diff_stats,
             receipt_digest,
             created_at,
-        })
+        };
+        record.validate()?;
+        Ok(record)
+    }
+
+    pub fn validate(&self) -> Result<(), MemoryContractError> {
+        validate_text("archive ID", self.archive_id.clone())?;
+        validate_text("summary", self.summary.clone())?;
+        validate_multiline_text("diff stats", self.diff_stats.clone())?;
+        validate_text("receipt digest", self.receipt_digest.clone())?;
+        Ok(())
     }
 }
 
@@ -1366,7 +1400,36 @@ mod tests {
             Err(MemoryContractError::SelfDependency("step-loop".into()))
         );
 
-        // Negative: cycle detection
+        // Verify linear execution order
+        let order = sop.execution_order();
+        assert_eq!(order.len(), 3);
+        assert_eq!(order[0].id, "step-build");
+        assert_eq!(order[1].id, "step-test");
+        assert_eq!(order[2].id, "step-package");
+
+        // Verify deserialized invalid DAG validation
+        let bad_json_cycle = r#"{"id":"sop-bad","name":"Bad","trigger_intent":"procedure","steps":[{"id":"s1","name":"1","command":"c1","depends_on":["s2"]},{"id":"s2","name":"2","command":"c2","depends_on":["s1"]}],"verification_command":null}"#;
+        let deserialized_bad: SopDefinition = serde_json::from_str(bad_json_cycle).unwrap();
+        assert_eq!(
+            deserialized_bad.validate(),
+            Err(MemoryContractError::DependencyCycle)
+        );
+
+        let bad_json_dup = r#"{"id":"sop-bad","name":"Bad","trigger_intent":"procedure","steps":[{"id":"s1","name":"1","command":"c1","depends_on":[]},{"id":"s1","name":"dup","command":"c2","depends_on":[]}],"verification_command":null}"#;
+        let deserialized_dup: SopDefinition = serde_json::from_str(bad_json_dup).unwrap();
+        assert_eq!(
+            deserialized_dup.validate(),
+            Err(MemoryContractError::DuplicateStep("s1".into()))
+        );
+
+        let bad_json_empty = r#"{"id":"sop-bad","name":"Bad","trigger_intent":"procedure","steps":[],"verification_command":null}"#;
+        let deserialized_empty: SopDefinition = serde_json::from_str(bad_json_empty).unwrap();
+        assert_eq!(
+            deserialized_empty.validate(),
+            Err(MemoryContractError::EmptyField("steps"))
+        );
+
+        // Negative: cycle detection via constructor
         let cycle_a = SopStep::new("step-a", "A", "run", vec!["step-b".into()]).unwrap();
         let cycle_b = SopStep::new("step-b", "B", "run", vec!["step-a".into()]).unwrap();
         assert_eq!(

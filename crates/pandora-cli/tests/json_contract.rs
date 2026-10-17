@@ -1399,4 +1399,184 @@ fn memory_layered_l3_l4_sop_and_archive_contract() {
         ])
         .error("execution_failed", 50);
     assert_eq!(archive_missing["details"]["archive_id"], "non-existent");
+
+    // 10. Memory Provenance for L3 and L4 records
+    let prov_l3 = fixture
+        .run(&[
+            "memory",
+            "provenance",
+            "--session",
+            session_id.as_str(),
+            "--provider",
+            "openai-compatible",
+            "l3-sop-rec-1",
+            "--json",
+        ])
+        .success("memory provenance");
+    assert_eq!(prov_l3["command"], "memory provenance");
+    assert_eq!(prov_l3["root_id"], "l3-sop-rec-1");
+
+    let prov_l4 = fixture
+        .run(&[
+            "memory",
+            "provenance",
+            "--session",
+            session_id.as_str(),
+            "--provider",
+            "openai-compatible",
+            "l4-archive-rec-1",
+            "--json",
+        ])
+        .success("memory provenance");
+    assert_eq!(prov_l4["command"], "memory provenance");
+    assert_eq!(prov_l4["root_id"], "l4-archive-rec-1");
+
+    // 11. Memory Forget L3 record
+    let forget_l3_dry = fixture
+        .run(&[
+            "memory",
+            "forget",
+            "--session",
+            session_id.as_str(),
+            "--provider",
+            "openai-compatible",
+            "l3-sop-rec-1",
+            "--json",
+        ])
+        .success("memory forget");
+    assert_eq!(forget_l3_dry["dry_run"], true);
+
+    let forget_l3 = fixture
+        .run(&[
+            "memory",
+            "forget",
+            "--session",
+            session_id.as_str(),
+            "--provider",
+            "openai-compatible",
+            "l3-sop-rec-1",
+            "--yes",
+            "--json",
+        ])
+        .success("memory forget");
+    assert_eq!(forget_l3["dry_run"], false);
+    assert_eq!(forget_l3["revoked"], true);
+
+    let recalled_l3_after = fixture
+        .run(&[
+            "memory",
+            "recall",
+            "--session",
+            session_id.as_str(),
+            "--provider",
+            "openai-compatible",
+            "--tier",
+            "l3",
+            "--json",
+        ])
+        .success("memory recall");
+    assert_eq!(recalled_l3_after["count"], 0);
+
+    // 12. Memory Forget L4 record
+    let forget_l4 = fixture
+        .run(&[
+            "memory",
+            "forget",
+            "--session",
+            session_id.as_str(),
+            "--provider",
+            "openai-compatible",
+            "l4-archive-rec-1",
+            "--yes",
+            "--json",
+        ])
+        .success("memory forget");
+    assert_eq!(forget_l4["revoked"], true);
+
+    let recalled_l4_after = fixture
+        .run(&[
+            "memory",
+            "recall",
+            "--session",
+            session_id.as_str(),
+            "--provider",
+            "openai-compatible",
+            "--tier",
+            "l4",
+            "--json",
+        ])
+        .success("memory recall");
+    assert_eq!(recalled_l4_after["count"], 0);
+
+    // 13. Multi-workspace isolation in CLI
+    let workspace_b = WorkspaceId::new("workspace-beta").unwrap();
+    let session_b = SessionId::new("session-beta").unwrap();
+    let sessions_store = SessionStore::open(fixture.data.join("sessions.sqlite3")).unwrap();
+    sessions_store
+        .create(&Session::new(
+            session_b.clone(),
+            principal.clone(),
+            tenant.clone(),
+            workspace_b.clone(),
+            Timestamp::from_unix_seconds(30),
+        ))
+        .expect("session-beta should be created");
+
+    let step_beta =
+        SopStep::new("step-beta", "build-beta", "cargo build --release", vec![]).unwrap();
+    let sop_beta = SopDefinition::new(
+        "sop-deploy-1",
+        "Beta Deployment Pipeline",
+        MemoryIntent::Coding,
+        vec![step_beta],
+        None,
+    )
+    .unwrap();
+    sessions_store
+        .store_sop(
+            &tenant,
+            &workspace_b,
+            &sop_beta,
+            Timestamp::from_unix_seconds(35),
+        )
+        .unwrap();
+    drop(sessions_store);
+
+    let sop_b_list = fixture
+        .run(&[
+            "memory",
+            "sop",
+            "list",
+            "--workspace",
+            "workspace-beta",
+            "--json",
+        ])
+        .success("memory sop list");
+    assert_eq!(sop_b_list["count"], 1);
+    assert_eq!(sop_b_list["sops"][0]["id"], "sop-deploy-1");
+    assert_eq!(sop_b_list["sops"][0]["name"], "Beta Deployment Pipeline");
+
+    // Primary workspace still has original SOP
+    let sop_orig = fixture
+        .run(&["memory", "sop", "inspect", "--id", "sop-deploy-1", "--json"])
+        .success("memory sop inspect");
+    assert_eq!(sop_orig["sop"]["name"], "Deployment Pipeline");
+
+    // Beta workspace inspect returns beta SOP
+    let sop_beta_inspected = fixture
+        .run(&[
+            "memory",
+            "sop",
+            "inspect",
+            "--workspace",
+            "workspace-beta",
+            "--id",
+            "sop-deploy-1",
+            "--json",
+        ])
+        .success("memory sop inspect");
+    assert_eq!(
+        sop_beta_inspected["sop"]["name"],
+        "Beta Deployment Pipeline"
+    );
 }
