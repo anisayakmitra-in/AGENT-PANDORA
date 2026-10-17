@@ -28,6 +28,7 @@ than being replaced. Noninteractive invocations return the normal usage error.
 
 ```text
 pandora setup --provider-url https://provider.example/v1 --model gpt-5 --api-key-env PANDORA_PROVIDER_API_KEY
+pandora setup --preset ollama
 pandora setup --interactive
 pandora doctor --json
 pandora provider list --json
@@ -1000,12 +1001,12 @@ pandora package lock
 pandora package verify-lock
 pandora package remove <id> <version> --dry-run
 pandora package remove <id> <version> --yes
-pandora memory recall --session <id> --provider <name> --tier <l1|l2> [--id <memory-id>] [--limit <1-256>]
+pandora memory recall --session <id> --provider <name> --tier <l1|l2> [--id <memory-id>] [--limit <1-256>] [--intent <repo|procedure|coding|user>]
 pandora memory audit --session <id> --provider <name>
 pandora memory forget --session <id> --provider <name> <memory-id> [--yes]
 pandora memory compact --session <id> --provider <name> --before <unix-seconds> [--yes]
 pandora memory promote --session <id> --provider <name> <memory-id> [--approval <id>]
-pandora memory synthesize --session <id> --provider <name> --id <memory-id> --summary <text> [--kind <kind>] [--classification <public|internal>] [--yes]
+pandora memory synthesize --session <id> --provider <name> --id <memory-id> --summary <text> [--kind <kind>] [--classification <public|internal>] [--intent <repo|procedure|coding|user>] [--yes]
 pandora memory provenance --session <id> --provider <name> <memory-id>
 pandora memory consolidate --source-session <id> --target-session <id> --provider <name> --source-id <memory-id> --target-id <memory-id> [--source-workspace <id> --target-workspace <id> --conflict reject|keep-target] [--yes]
 pandora memory schedule create --id <id> --name <name> --session <id> --provider <name> --memory-id <memory-id> --summary <text> --interval-seconds <seconds> [--kind <kind>] [--classification <public|internal>]
@@ -1056,6 +1057,7 @@ pandora evolution activate --id <proposal-id>
 pandora evolution rollback --id <proposal-id> --reason <text>
 pandora rollout inspect --session <id> [--execution <id>]
 pandora graph code|knowledge|review|architecture --input <path> [--store <path>] [--tenant <id>] [--workspace <id>]
+pandora graph map [validate|show] [--path <path>]
 pandora completions powershell
 pandora completions bash
 pandora completions zsh
@@ -1259,7 +1261,8 @@ package. The TUI `/trust-transparency` command is guidance only, and the CLI
 renders the same read-only ledger.
 
 `memory recall` exposes only the selected, redacted L1 or L2 records from the exact
-tenant, workspace, session, and provider scope. L0 remains process-local and is not
+tenant, workspace, session, and provider scope, with optional `--intent <repo|procedure|coding|user>`
+partition filtering. L0 remains process-local and is not
 available after the process exits. `memory audit` lists durable additions, promotions,
 and revocations without exposing credentials or hidden reasoning. `memory forget`
 creates a durable revocation tombstone and requires `--yes` to apply it. `memory
@@ -1272,7 +1275,8 @@ an exact Unix timestamp. `--yes` applies that scoped boundary while retaining
 revocation tombstones and audit evidence. It does not claim secure erasure of SQLite
 pages or WAL files, and it does not alter backup or storage-snapshot retention.
 `memory synthesize` takes a fresh, scoped L1 snapshot and previews an evidence-bound
-L1 candidate by default. `--yes` commits it only after the snapshot is checked again;
+L1 candidate by default, optionally partitioned by `--intent <repo|procedure|coding|user>`.
+`--yes` commits it only after the snapshot is checked again;
 it never calls a provider, promotes the candidate, or grants runtime authority.
 `memory provenance` builds a bounded, read-only source graph for one L1 or L2 record.
 It follows only evidence IDs present in the same exact scope, caps traversal at 64

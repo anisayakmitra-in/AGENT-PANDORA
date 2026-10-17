@@ -1,9 +1,9 @@
 use pandora_provider::ChatMessage;
 use pandora_types::{
     ContextClassification, EvaluationKind, EvaluationReceipt, EvaluationResult, EvaluationStatus,
-    ExecutionId, MemoryApproval, MemoryAuditAction, MemoryAuditEntry, MemoryId, MemoryKind,
-    MemoryOrigin, MemoryRecord, MemoryScope, MemoryTier, PrincipalId, Rollout, RuntimeEvent,
-    Session, SessionId, TenantId, Timestamp, WorkspaceId,
+    ExecutionId, MemoryApproval, MemoryAuditAction, MemoryAuditEntry, MemoryId, MemoryIntent,
+    MemoryKind, MemoryOrigin, MemoryRecord, MemoryScope, MemoryTier, PrincipalId, Rollout,
+    RuntimeEvent, Session, SessionId, TenantId, Timestamp, WorkspaceId,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
-const CURRENT_SCHEMA_VERSION: i64 = 8;
+const CURRENT_SCHEMA_VERSION: i64 = 9;
 const MAX_EVENT_BYTES: usize = 1_048_576;
 const MAX_AGENT_MESSAGE_BYTES: usize = 1_048_576;
 const MAX_AGENT_TRANSCRIPT_BYTES: usize = 8 * 1_048_576;
@@ -884,6 +884,38 @@ impl SessionStore {
         load_memory_records(&connection, &scope, tier, limit)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn recall_memory_by_intent(
+        &self,
+        session_id: &SessionId,
+        principal_id: &PrincipalId,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        provider: impl Into<String>,
+        tier: MemoryTier,
+        intent: MemoryIntent,
+        limit: u16,
+    ) -> Result<Vec<MemoryRecord>, SessionError> {
+        if limit == 0 || limit > MAX_MEMORY_RECALL_RECORDS {
+            return Err(SessionError::InvalidMemoryLimit);
+        }
+        if tier == MemoryTier::L0 {
+            return Err(SessionError::InvalidMemory);
+        }
+        let scope = MemoryScope::new(
+            tenant_id.clone(),
+            workspace_id.clone(),
+            session_id.clone(),
+            provider,
+        )
+        .map_err(|_| SessionError::InvalidMemory)?;
+        let connection = self.lock()?;
+        let session =
+            load_session(&connection, session_id)?.ok_or(SessionError::SessionNotFound)?;
+        ensure_scope(&session, principal_id, tenant_id, workspace_id)?;
+        load_memory_records_by_intent(&connection, &scope, tier, intent, limit)
+    }
+
     pub fn revoke_memory(
         &self,
         principal_id: &PrincipalId,
@@ -1131,7 +1163,7 @@ impl SessionStore {
             load_session(&connection, session_id)?.ok_or(SessionError::SessionNotFound)?;
         ensure_scope(&session, principal_id, tenant_id, workspace_id)?;
         let mut statement = connection.prepare(
-            "SELECT memory_id, kind, summary, created_at, provenance, origin, evidence_ids
+            "SELECT memory_id, kind, summary, created_at, provenance, origin, evidence_ids, intent
              FROM memory_records
              WHERE session_id = ?1 AND provider = ?2
                AND tier = 'l1' AND kind IN ('execution_evidence', 'lesson')
@@ -1161,20 +1193,22 @@ impl SessionStore {
                     row.get::<_, String>(4)?,
                     row.get::<_, String>(5)?,
                     row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
                 ))
             },
         )?;
         let mut records = Vec::new();
         for row in rows {
-            let (id, kind, summary, created_at, provenance, origin, evidence_ids) = row?;
+            let (id, kind, summary, created_at, provenance, origin, evidence_ids, intent) = row?;
             let kind = parse_memory_kind(&kind)?;
             let origin = parse_memory_origin(&origin)?;
+            let intent = parse_memory_intent(&intent)?;
             let evidence_ids =
                 serde_json::from_str(&evidence_ids).map_err(|_| SessionError::CorruptRecord)?;
             let created_at = u64::try_from(created_at)
                 .map(Timestamp::from_unix_seconds)
                 .map_err(|_| SessionError::CorruptRecord)?;
-            let record = MemoryRecord::new_l1_with_origin(
+            let mut record = MemoryRecord::new_l1_with_origin(
                 id,
                 kind,
                 scope.clone(),
@@ -1186,6 +1220,7 @@ impl SessionStore {
                 evidence_ids,
             )
             .map_err(|_| SessionError::CorruptRecord)?;
+            record = record.with_intent(intent);
             if kind == MemoryKind::ExecutionEvidence && !is_canonical_l1_execution_evidence(&record)
                 || kind == MemoryKind::Lesson && !is_canonical_l1_evaluation_feedback(&record)
             {
@@ -1460,6 +1495,20 @@ fn migrate(connection: &mut Connection) -> Result<(), SessionError> {
              ALTER TABLE memory_records ADD COLUMN evidence_ids TEXT NOT NULL DEFAULT '[]';
              INSERT INTO schema_migrations (version, applied_at) VALUES (8, strftime('%s', 'now'));",
         )?;
+        version = 8;
+    }
+    if version == 8 {
+        transaction.execute_batch(
+            "ALTER TABLE memory_records ADD COLUMN intent TEXT NOT NULL DEFAULT 'coding';
+             UPDATE memory_records SET intent = CASE
+                 WHEN kind IN ('lesson', 'decision', 'policy_decision') THEN 'procedure'
+                 WHEN kind IN ('lineage', 'replacement') THEN 'repo'
+                 ELSE 'coding'
+             END;
+             CREATE INDEX memory_records_intent_idx
+                 ON memory_records(session_id, provider, tier, intent, created_at);
+             INSERT INTO schema_migrations (version, applied_at) VALUES (9, strftime('%s', 'now'));",
+        )?;
     }
     transaction.commit()?;
     Ok(())
@@ -1477,6 +1526,7 @@ type RawMemoryRecord = (
     Option<String>,
     String,
     String,
+    Option<String>,
 );
 
 fn insert_memory_record(
@@ -1488,8 +1538,8 @@ fn insert_memory_record(
     let result = connection.execute(
         "INSERT INTO memory_records (
              session_id, provider, memory_id, tier, kind, classification,
-             summary, created_at, provenance, approval_id, approver, origin, evidence_ids
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             summary, created_at, provenance, approval_id, approver, origin, evidence_ids, intent
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             record.scope().session_id().as_str(),
             record.scope().provider(),
@@ -1504,6 +1554,7 @@ fn insert_memory_record(
             approver,
             record.origin().as_str(),
             serde_json::to_string(record.evidence_ids()).map_err(SessionError::Serialization)?,
+            record.intent().as_str(),
         ],
     );
     match result {
@@ -1571,7 +1622,7 @@ fn load_memory_record(
     let raw = connection
         .query_row(
             "SELECT tier, kind, classification, summary, provenance, created_at,
-                    memory_id, approval_id, approver, origin, evidence_ids
+                    memory_id, approval_id, approver, origin, evidence_ids, intent
              FROM memory_records
              WHERE session_id = ?1 AND provider = ?2 AND memory_id = ?3 AND tier = ?4",
             params![
@@ -1595,7 +1646,7 @@ fn load_memory_records(
 ) -> Result<Vec<MemoryRecord>, SessionError> {
     let mut statement = connection.prepare(
         "SELECT tier, kind, classification, summary, provenance, created_at,
-                memory_id, approval_id, approver, origin, evidence_ids
+                memory_id, approval_id, approver, origin, evidence_ids, intent
          FROM memory_records
          WHERE session_id = ?1 AND provider = ?2 AND tier = ?3
            AND NOT EXISTS (
@@ -1623,6 +1674,44 @@ fn load_memory_records(
     .collect()
 }
 
+fn load_memory_records_by_intent(
+    connection: &Connection,
+    scope: &MemoryScope,
+    tier: MemoryTier,
+    intent: MemoryIntent,
+    limit: u16,
+) -> Result<Vec<MemoryRecord>, SessionError> {
+    let mut statement = connection.prepare(
+        "SELECT tier, kind, classification, summary, provenance, created_at,
+                memory_id, approval_id, approver, origin, evidence_ids, intent
+         FROM memory_records
+         WHERE session_id = ?1 AND provider = ?2 AND tier = ?3 AND intent = ?4
+           AND NOT EXISTS (
+               SELECT 1 FROM memory_revocations
+               WHERE memory_revocations.session_id = memory_records.session_id
+                 AND memory_revocations.provider = memory_records.provider
+                 AND memory_revocations.memory_id = memory_records.memory_id
+           )
+         ORDER BY created_at DESC, memory_id DESC
+         LIMIT ?5",
+    )?;
+    let rows = statement.query_map(
+        params![
+            scope.session_id().as_str(),
+            scope.provider(),
+            tier.as_str(),
+            intent.as_str(),
+            i64::from(limit),
+        ],
+        decode_memory_row,
+    )?;
+    rows.map(|row| {
+        row.map_err(SessionError::Database)
+            .and_then(|raw| decode_memory_record(scope.clone(), raw))
+    })
+    .collect()
+}
+
 fn load_memory_records_by_id(
     connection: &Connection,
     scope: &MemoryScope,
@@ -1630,7 +1719,7 @@ fn load_memory_records_by_id(
 ) -> Result<Vec<MemoryRecord>, SessionError> {
     let mut statement = connection.prepare(
         "SELECT tier, kind, classification, summary, provenance, created_at,
-                memory_id, approval_id, approver, origin, evidence_ids
+                memory_id, approval_id, approver, origin, evidence_ids, intent
          FROM memory_records
          WHERE session_id = ?1 AND provider = ?2 AND memory_id = ?3
          ORDER BY tier ASC",
@@ -1663,6 +1752,7 @@ fn decode_memory_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawMemoryRecor
         row.get(8)?,
         row.get(9)?,
         row.get(10)?,
+        row.get(11)?,
     ))
 }
 
@@ -1682,6 +1772,7 @@ fn decode_memory_record(
         approver,
         origin,
         evidence_ids,
+        intent,
     ) = raw;
     let tier = parse_memory_tier(&tier)?;
     let kind = parse_memory_kind(&kind)?;
@@ -1692,7 +1783,7 @@ fn decode_memory_record(
     let origin = parse_memory_origin(&origin)?;
     let evidence_ids =
         serde_json::from_str(&evidence_ids).map_err(|_| SessionError::CorruptRecord)?;
-    let candidate = MemoryRecord::new_l1_with_origin(
+    let mut candidate = MemoryRecord::new_l1_with_origin(
         memory_id,
         kind,
         scope,
@@ -1704,6 +1795,10 @@ fn decode_memory_record(
         evidence_ids,
     )
     .map_err(|_| SessionError::CorruptRecord)?;
+    if let Some(intent_str) = intent {
+        let parsed_intent = parse_memory_intent(&intent_str)?;
+        candidate = candidate.with_intent(parsed_intent);
+    }
     match tier {
         MemoryTier::L1 => {
             if approval_id.is_some() || approver.is_some() {
@@ -1792,6 +1887,16 @@ fn parse_memory_kind(value: &str) -> Result<MemoryKind, SessionError> {
         "lineage" => Ok(MemoryKind::Lineage),
         "policy_decision" => Ok(MemoryKind::PolicyDecision),
         "replacement" => Ok(MemoryKind::Replacement),
+        _ => Err(SessionError::CorruptRecord),
+    }
+}
+
+fn parse_memory_intent(value: &str) -> Result<MemoryIntent, SessionError> {
+    match value {
+        "repo" => Ok(MemoryIntent::Repo),
+        "procedure" => Ok(MemoryIntent::Procedure),
+        "coding" => Ok(MemoryIntent::Coding),
+        "user" => Ok(MemoryIntent::User),
         _ => Err(SessionError::CorruptRecord),
     }
 }
@@ -2818,6 +2923,230 @@ mod tests {
             ),
             Err(SessionError::AgentTranscriptTooLarge)
         ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn memory_recall_by_intent_filters_and_persists_intent() {
+        let (root, store, session, scope) = memory_fixture("pandora-memory-intent-test");
+        let coding_record = MemoryRecord::new_l1(
+            "coding-mem-1",
+            MemoryKind::ExecutionEvidence,
+            scope.clone(),
+            "fixed buffer bug",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(10),
+            "trace:1",
+        )
+        .unwrap()
+        .with_intent(MemoryIntent::Coding);
+
+        let procedure_record = MemoryRecord::new_l1(
+            "procedure-mem-1",
+            MemoryKind::Lesson,
+            scope.clone(),
+            "always verify with tests",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(11),
+            "trace:2",
+        )
+        .unwrap()
+        .with_intent(MemoryIntent::Procedure);
+
+        let repo_record = MemoryRecord::new_l1(
+            "repo-mem-1",
+            MemoryKind::Lineage,
+            scope.clone(),
+            "repository architecture invariant",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(12),
+            "trace:3",
+        )
+        .unwrap()
+        .with_intent(MemoryIntent::Repo);
+
+        store
+            .record_memory(session.principal_id(), &coding_record)
+            .unwrap();
+        store
+            .record_memory(session.principal_id(), &procedure_record)
+            .unwrap();
+        store
+            .record_memory(session.principal_id(), &repo_record)
+            .unwrap();
+
+        let coding_memories = store
+            .recall_memory_by_intent(
+                session.id(),
+                session.principal_id(),
+                session.tenant_id(),
+                session.workspace_id(),
+                scope.provider(),
+                MemoryTier::L1,
+                MemoryIntent::Coding,
+                10,
+            )
+            .unwrap();
+        assert_eq!(coding_memories.len(), 1);
+        assert_eq!(coding_memories[0].id().as_str(), "coding-mem-1");
+        assert_eq!(coding_memories[0].intent(), MemoryIntent::Coding);
+
+        let procedure_memories = store
+            .recall_memory_by_intent(
+                session.id(),
+                session.principal_id(),
+                session.tenant_id(),
+                session.workspace_id(),
+                scope.provider(),
+                MemoryTier::L1,
+                MemoryIntent::Procedure,
+                10,
+            )
+            .unwrap();
+        assert_eq!(procedure_memories.len(), 1);
+        assert_eq!(procedure_memories[0].id().as_str(), "procedure-mem-1");
+        assert_eq!(procedure_memories[0].intent(), MemoryIntent::Procedure);
+
+        let repo_memories = store
+            .recall_memory_by_intent(
+                session.id(),
+                session.principal_id(),
+                session.tenant_id(),
+                session.workspace_id(),
+                scope.provider(),
+                MemoryTier::L1,
+                MemoryIntent::Repo,
+                10,
+            )
+            .unwrap();
+        assert_eq!(repo_memories.len(), 1);
+        assert_eq!(repo_memories[0].id().as_str(), "repo-mem-1");
+        assert_eq!(repo_memories[0].intent(), MemoryIntent::Repo);
+
+        let user_memories = store
+            .recall_memory_by_intent(
+                session.id(),
+                session.principal_id(),
+                session.tenant_id(),
+                session.workspace_id(),
+                scope.provider(),
+                MemoryTier::L1,
+                MemoryIntent::User,
+                10,
+            )
+            .unwrap();
+        assert!(user_memories.is_empty());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn schema_eight_migrates_to_nine_with_intent_backfill_and_index() {
+        let root = crate::test_support::new_temp_dir("pandora-schema-9-migration-test").unwrap();
+        let path = root.join("sessions.sqlite3");
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute_batch(
+                    "PRAGMA foreign_keys = ON;
+                     CREATE TABLE schema_migrations (
+                         version INTEGER PRIMARY KEY,
+                         applied_at INTEGER NOT NULL
+                     );
+                     INSERT INTO schema_migrations (version, applied_at) VALUES (8, 1);
+                     CREATE TABLE sessions (
+                         id TEXT PRIMARY KEY NOT NULL,
+                         principal_id TEXT NOT NULL,
+                         tenant_id TEXT NOT NULL,
+                         workspace_id TEXT NOT NULL,
+                         created_at INTEGER NOT NULL CHECK (created_at >= 0)
+                     );
+                     CREATE TABLE memory_records (
+                         session_id TEXT NOT NULL,
+                         provider TEXT NOT NULL,
+                         memory_id TEXT NOT NULL,
+                         tier TEXT NOT NULL CHECK (tier IN ('l1', 'l2')),
+                         kind TEXT NOT NULL,
+                         classification TEXT NOT NULL,
+                         summary TEXT NOT NULL,
+                         created_at INTEGER NOT NULL,
+                         provenance TEXT NOT NULL,
+                         approval_id TEXT,
+                         approver TEXT,
+                         origin TEXT NOT NULL,
+                         evidence_ids TEXT NOT NULL DEFAULT '[]',
+                         PRIMARY KEY (session_id, provider, memory_id, tier)
+                     );
+                      CREATE TABLE memory_revocations (
+                          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                          provider TEXT NOT NULL,
+                          memory_id TEXT NOT NULL,
+                          revoked_at INTEGER NOT NULL CHECK (revoked_at >= 0),
+                          PRIMARY KEY (session_id, provider, memory_id)
+                      );
+                     INSERT INTO sessions VALUES ('s1', 'p1', 't1', 'w1', 1);
+                     INSERT INTO memory_records VALUES
+                         ('s1', 'prov1', 'm1', 'l1', 'lesson', 'internal', 'lesson sum', 10, 'prov', null, null, 'explicit', '[]'),
+                         ('s1', 'prov1', 'm2', 'l1', 'lineage', 'internal', 'lineage sum', 11, 'prov', null, null, 'explicit', '[]'),
+                         ('s1', 'prov1', 'm3', 'l1', 'execution_evidence', 'internal', 'exec sum', 12, 'prov', null, null, 'explicit', '[]');",
+                )
+                .unwrap();
+        }
+
+        let store = SessionStore::open(&path).unwrap();
+        let session_id = SessionId::new("s1").unwrap();
+        let principal_id = PrincipalId::new("p1").unwrap();
+        let tenant_id = TenantId::new("t1").unwrap();
+        let workspace_id = WorkspaceId::new("w1").unwrap();
+
+        let procedure_mem = store
+            .recall_memory_by_intent(
+                &session_id,
+                &principal_id,
+                &tenant_id,
+                &workspace_id,
+                "prov1",
+                MemoryTier::L1,
+                MemoryIntent::Procedure,
+                10,
+            )
+            .unwrap();
+        assert_eq!(procedure_mem.len(), 1);
+        assert_eq!(procedure_mem[0].id().as_str(), "m1");
+        assert_eq!(procedure_mem[0].intent(), MemoryIntent::Procedure);
+
+        let repo_mem = store
+            .recall_memory_by_intent(
+                &session_id,
+                &principal_id,
+                &tenant_id,
+                &workspace_id,
+                "prov1",
+                MemoryTier::L1,
+                MemoryIntent::Repo,
+                10,
+            )
+            .unwrap();
+        assert_eq!(repo_mem.len(), 1);
+        assert_eq!(repo_mem[0].id().as_str(), "m2");
+        assert_eq!(repo_mem[0].intent(), MemoryIntent::Repo);
+
+        let coding_mem = store
+            .recall_memory_by_intent(
+                &session_id,
+                &principal_id,
+                &tenant_id,
+                &workspace_id,
+                "prov1",
+                MemoryTier::L1,
+                MemoryIntent::Coding,
+                10,
+            )
+            .unwrap();
+        assert_eq!(coding_mem.len(), 1);
+        assert_eq!(coding_mem[0].id().as_str(), "m3");
+        assert_eq!(coding_mem[0].intent(), MemoryIntent::Coding);
+
         let _ = std::fs::remove_dir_all(root);
     }
 }

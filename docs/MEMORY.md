@@ -31,7 +31,9 @@ files, backups, or storage snapshots.
 The session schema migrates existing canonical L1 execution evidence into the
 durable memory tables. Migration preserves IDs, provider scope, timestamps,
 summaries, and provenance. Invalid rows, invalid limits, and scope mismatches
-fail closed.
+fail closed. SQLite migration 9 partitions records by intent (`repo`, `procedure`,
+`coding`, `user`), backfills existing entries from their record kind, and indexes
+them via `memory_records_intent_idx` for bounded, domain-isolated recall.
 
 ## Verified synthesis
 
@@ -73,7 +75,8 @@ the exact same tenant, workspace, session, and provider scope. Arbitrary
 non-cacheable descriptive history, never instructions or authority.
 
 The public CLI exposes scoped L1/L2 summaries through `memory recall` and
-`memory audit`. `memory forget` requires explicit confirmation before durable
+`memory audit`. `memory recall` and `memory synthesize` accept `--intent <repo|procedure|coding|user>`
+for partitioned queries and candidate tagging. `memory forget` requires explicit confirmation before durable
 revocation, and `memory promote` requires an exact approval resolved through the
 existing approval store. L0 remains process-local and is not exposed as a
 durable record. These commands do not create a second memory store or bypass

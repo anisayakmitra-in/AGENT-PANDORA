@@ -7,8 +7,9 @@ use pandora_runtime::{
 };
 use pandora_types::{
     ContextClassification, ExecutionId, GeneId, JobWorkerId, MemoryApproval, MemoryConflictRule,
-    MemoryConsolidationBoundary, MemoryConsolidationPolicy, MemoryId, MemoryKind, MemoryRecord,
-    MemoryScope, MemoryTier, RequestDigest, RunLoopId, Timestamp, WorkspaceId, hash_artifact,
+    MemoryConsolidationBoundary, MemoryConsolidationPolicy, MemoryId, MemoryIntent, MemoryKind,
+    MemoryRecord, MemoryScope, MemoryTier, RequestDigest, RunLoopId, Timestamp, WorkspaceId,
+    hash_artifact,
 };
 use serde_json::json;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -792,11 +793,13 @@ fn recall(args: &[String]) -> Result<CommandResult, CliError> {
             "tier",
             "limit",
             "id",
+            "intent",
         ],
     )?;
     let (session_id, scope) = scope(&parsed)?;
     let tier = parse_tier(parsed.value("tier"))?;
     let limit = parse_limit(parsed.value("limit"))?;
+    let intent = parse_intent(parsed.value("intent"))?;
     let requested_id = parsed
         .value("id")
         .map(|value| MemoryId::new(value.to_owned()))
@@ -806,9 +809,15 @@ fn recall(args: &[String]) -> Result<CommandResult, CliError> {
     require_config_file(&config)?;
     let principal = session_scope().0;
     let engine = open_engine(&config, &principal)?;
-    let mut records = engine
-        .try_recall(&scope, tier, timestamp())
-        .map_err(memory_error)?;
+    let mut records = if let Some(intent) = intent {
+        engine
+            .try_recall_by_intent(&scope, tier, intent, timestamp())
+            .map_err(memory_error)?
+    } else {
+        engine
+            .try_recall(&scope, tier, timestamp())
+            .map_err(memory_error)?
+    };
     if let Some(requested_id) = &requested_id {
         records.retain(|record| record.id() == requested_id);
         if records.is_empty() {
@@ -823,6 +832,7 @@ fn recall(args: &[String]) -> Result<CommandResult, CliError> {
         json!({
             "scope": scope_value(&scope),
             "tier": tier.as_str(),
+            "intent": intent.map(|value| value.as_str()),
             "records": values,
             "count": count,
             "limit": limit,
@@ -873,6 +883,7 @@ fn synthesize(args: &[String]) -> Result<CommandResult, CliError> {
             "kind",
             "summary",
             "classification",
+            "intent",
             "yes",
         ],
     )?;
@@ -902,6 +913,7 @@ fn synthesize(args: &[String]) -> Result<CommandResult, CliError> {
             "memory synthesis classification must be 'public' or 'internal'",
         ));
     }
+    let intent = parse_intent(parsed.value("intent"))?;
     let (_, scope) = scope(&parsed)?;
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
@@ -911,7 +923,7 @@ fn synthesize(args: &[String]) -> Result<CommandResult, CliError> {
     let snapshot = engine
         .synthesis_snapshot(&scope, now)
         .map_err(memory_error)?;
-    let proposal = engine
+    let mut proposal = engine
         .propose_synthesis(
             &snapshot,
             memory_id.as_str().to_owned(),
@@ -921,6 +933,9 @@ fn synthesize(args: &[String]) -> Result<CommandResult, CliError> {
             now,
         )
         .map_err(memory_error)?;
+    if let Some(intent) = intent {
+        proposal = proposal.with_candidate_intent(intent);
+    }
     engine
         .verify_synthesis(&proposal, timestamp())
         .map_err(memory_error)?;
@@ -1382,6 +1397,19 @@ fn parse_memory_classification(value: Option<&str>) -> Result<ContextClassificat
     }
 }
 
+fn parse_intent(value: Option<&str>) -> Result<Option<MemoryIntent>, CliError> {
+    match value {
+        Some("repo") => Ok(Some(MemoryIntent::Repo)),
+        Some("procedure") => Ok(Some(MemoryIntent::Procedure)),
+        Some("coding") => Ok(Some(MemoryIntent::Coding)),
+        Some("user") => Ok(Some(MemoryIntent::User)),
+        Some(_) => Err(CliError::usage(
+            "memory intent must be repo, procedure, coding, or user",
+        )),
+        None => Ok(None),
+    }
+}
+
 fn required_option<'a>(
     parsed: &'a super::ParsedArgs,
     name: &str,
@@ -1493,6 +1521,7 @@ fn record_value(record: &MemoryRecord) -> serde_json::Value {
         "id": record.id(),
         "tier": record.tier().as_str(),
         "kind": record.kind().as_str(),
+        "intent": record.intent().as_str(),
         "scope": scope_value(record.scope()),
         "summary": record.summary(),
         "classification": record.classification().as_str(),

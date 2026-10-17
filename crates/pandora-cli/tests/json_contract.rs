@@ -1,8 +1,9 @@
-use pandora_runtime::SessionStore;
+use pandora_runtime::{MemoryEngine, SessionStore};
 use pandora_types::{
-    EventContext, EventId, EventPayload, EventType, PackageCompatibility, PackageDependency,
-    PackageKind, PackageManifest, PrincipalId, RuntimeEvent, Session, SessionId, TenantId,
-    Timestamp, TrustEvidence, WorkspaceId, hash_artifact,
+    ContextClassification, EventContext, EventId, EventPayload, EventType, MemoryIntent,
+    MemoryKind, MemoryScope, PackageCompatibility, PackageDependency, PackageKind, PackageManifest,
+    PrincipalId, RuntimeEvent, Session, SessionId, TenantId, Timestamp, TrustEvidence, WorkspaceId,
+    hash_artifact,
 };
 use serde_json::Value;
 use std::fs;
@@ -894,4 +895,204 @@ fn backup_recovery_surfaces_an_interrupted_restore_as_blocking() {
 
 fn path_value(path: &Path) -> Value {
     Value::String(path.to_string_lossy().into_owned())
+}
+
+#[test]
+fn graph_map_validate_and_show_contract() {
+    let fixture = Fixture::new();
+    let map_path = fixture.root.join("feature_map.json");
+    fs::write(
+        &map_path,
+        br#"{
+  "version": 1,
+  "features": [
+    {
+      "name": "TestFeature",
+      "entry_point": "crates/pandora-runtime/src/lib.rs",
+      "description": "A test feature for contract testing",
+      "invariants": ["Invariant 1"],
+      "dependencies": []
+    }
+  ]
+}"#,
+    )
+    .expect("feature map should be written");
+
+    let validated = fixture
+        .run(&[
+            "graph",
+            "map",
+            "validate",
+            "--path",
+            map_path.to_str().unwrap(),
+            "--json",
+        ])
+        .success("graph map validate");
+    assert_eq!(validated["map_version"], 1);
+    assert_eq!(validated["feature_count"], 1);
+    assert_eq!(validated["features"][0]["name"], "TestFeature");
+    assert_eq!(
+        validated["features"][0]["entry_point"],
+        "crates/pandora-runtime/src/lib.rs"
+    );
+
+    let shown = fixture
+        .run(&[
+            "graph",
+            "map",
+            "show",
+            "--path",
+            map_path.to_str().unwrap(),
+            "--json",
+        ])
+        .success("graph map show");
+    assert_eq!(shown["map_version"], 1);
+    assert_eq!(shown["features"][0]["name"], "TestFeature");
+}
+
+#[test]
+fn memory_recall_and_synthesize_contract_with_intent() {
+    let fixture = Fixture::new();
+    fixture
+        .run(&[
+            "setup",
+            "--provider-url",
+            "https://provider.example/v1",
+            "--model",
+            "contract-model",
+            "--api-key-env",
+            CREDENTIAL_ENV,
+            "--json",
+        ])
+        .success("setup");
+
+    let session_id = SessionId::new("intent-session-1").unwrap();
+    let principal = PrincipalId::new("local-user").unwrap();
+    let tenant = TenantId::new("local-tenant").unwrap();
+    let workspace = WorkspaceId::new("local-workspace").unwrap();
+    let sessions = SessionStore::open(fixture.data.join("sessions.sqlite3")).unwrap();
+    sessions
+        .create(&Session::new(
+            session_id.clone(),
+            principal.clone(),
+            tenant.clone(),
+            workspace.clone(),
+            Timestamp::from_unix_seconds(10),
+        ))
+        .expect("session should be created");
+    drop(sessions);
+
+    let scope =
+        MemoryScope::new(tenant, workspace, session_id.clone(), "openai-compatible").unwrap();
+    let engine = MemoryEngine::open(fixture.data.join("sessions.sqlite3"), 64, principal).unwrap();
+    engine
+        .distill_l1_with_intent(
+            scope.clone(),
+            "coding-memory-1",
+            MemoryKind::Lesson,
+            MemoryIntent::Coding,
+            "bounded coding lesson",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(11),
+            "test-provenance",
+        )
+        .unwrap();
+    engine
+        .distill_l1_with_intent(
+            scope.clone(),
+            "procedure-memory-1",
+            MemoryKind::Lesson,
+            MemoryIntent::Procedure,
+            "bounded procedure lesson",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(12),
+            "test-provenance",
+        )
+        .unwrap();
+    drop(engine);
+
+    // Recall filtered by coding intent
+    let recalled_coding = fixture
+        .run(&[
+            "memory",
+            "recall",
+            "--session",
+            session_id.as_str(),
+            "--provider",
+            "openai-compatible",
+            "--tier",
+            "l1",
+            "--intent",
+            "coding",
+            "--json",
+        ])
+        .success("memory recall");
+    assert_eq!(recalled_coding["intent"], "coding");
+    assert_eq!(recalled_coding["count"], 1);
+    assert_eq!(recalled_coding["records"][0]["id"], "coding-memory-1");
+    assert_eq!(recalled_coding["records"][0]["intent"], "coding");
+
+    // Recall filtered by procedure intent
+    let recalled_proc = fixture
+        .run(&[
+            "memory",
+            "recall",
+            "--session",
+            session_id.as_str(),
+            "--provider",
+            "openai-compatible",
+            "--tier",
+            "l1",
+            "--intent",
+            "procedure",
+            "--json",
+        ])
+        .success("memory recall");
+    assert_eq!(recalled_proc["intent"], "procedure");
+    assert_eq!(recalled_proc["count"], 1);
+    assert_eq!(recalled_proc["records"][0]["id"], "procedure-memory-1");
+    assert_eq!(recalled_proc["records"][0]["intent"], "procedure");
+
+    // Recall all (no intent filter)
+    let recalled_all = fixture
+        .run(&[
+            "memory",
+            "recall",
+            "--session",
+            session_id.as_str(),
+            "--provider",
+            "openai-compatible",
+            "--tier",
+            "l1",
+            "--json",
+        ])
+        .success("memory recall");
+    assert_eq!(recalled_all["count"], 2);
+
+    // Synthesize preview with explicit intent
+    let synth_preview = fixture
+        .run(&[
+            "memory",
+            "synthesize",
+            "--session",
+            session_id.as_str(),
+            "--provider",
+            "openai-compatible",
+            "--id",
+            "synthesized-intent-memory",
+            "--kind",
+            "lesson",
+            "--summary",
+            "Synthesized lesson with intent",
+            "--intent",
+            "coding",
+            "--json",
+        ])
+        .success("memory synthesize");
+    assert_eq!(synth_preview["dry_run"], true);
+    assert_eq!(
+        synth_preview["candidate"]["id"],
+        "synthesized-intent-memory"
+    );
+    assert_eq!(synth_preview["candidate"]["intent"], "coding");
 }

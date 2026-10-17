@@ -106,8 +106,10 @@ fn powershell() -> &'static str {
         'create','list','disable','claim','run','runs'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'evaluation') {
         'golden','inspect','scorecard','suite','regression','schedule'
+    } elseif ($elements.Count -gt 2 -and $elements[1] -eq 'graph' -and $elements[2] -eq 'map') {
+        'validate','show'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'graph') {
-        'code','knowledge','review','architecture','show','remove'
+        'code','knowledge','review','architecture','map','show','remove'
     } elseif ($elements.Count -gt 2 -and $elements[1] -eq "fleet" -and $elements[2] -eq "supervisor") {
         "list","start","drain","stop","recover","heartbeat","reconcile","reap","restart"
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'fleet') {
@@ -205,8 +207,10 @@ fn bash() -> &'static str {
         COMPREPLY=( $(compgen -W 'golden inspect scorecard suite regression schedule' -- "$current") )
     elif [[ "$previous" == "evolution" ]]; then
         COMPREPLY=( $(compgen -W 'generate list inspect submit evaluate approve stage canary rollout activate rollback' -- "$current") )
+    elif [[ "$previous" == "map" && "${COMP_WORDS[1]}" == "graph" ]]; then
+        COMPREPLY=( $(compgen -W 'validate show' -- "$current") )
     elif [[ "$previous" == "graph" ]]; then
-        COMPREPLY=( $(compgen -W 'code knowledge review architecture show remove' -- "$current") )
+        COMPREPLY=( $(compgen -W 'code knowledge review architecture map show remove' -- "$current") )
     elif [[ "$previous" == "supervisor" && "${COMP_WORDS[1]}" == "fleet" ]]; then
         COMPREPLY=( $(compgen -W 'list start drain stop recover heartbeat reconcile reap restart' -- "$current") )
     elif [[ "$previous" == "fleet" ]]; then
@@ -296,8 +300,10 @@ elif [[ ${words[2]} == evolution && ${words[3]} == rollout ]]; then
     _arguments '3:evolution rollout command:(configure score approve promote pause resume reject retry rollback)'
 elif [[ ${words[2]} == evolution ]]; then
     _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration operations strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:evolution command:(generate list inspect submit evaluate approve stage canary rollout activate rollback)'
+elif [[ ${words[2]} == graph && ${words[3]} == map ]]; then
+    _arguments '3:graph map command:(validate show)'
 elif [[ ${words[2]} == graph ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration operations strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:graph command:(code knowledge review architecture show remove)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration operations strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:graph command:(code knowledge review architecture map show remove)'
 elif [[ ${words[2]} == fleet && ${words[3]} == supervisor ]]; then
     _arguments '3:supervisor command:(list start drain stop recover heartbeat reconcile reap restart)'
 elif [[ ${words[2]} == fleet ]]; then
@@ -349,7 +355,8 @@ complete -c pandora -f -n '__fish_seen_subcommand_from evaluation; and __fish_se
 complete -c pandora -f -n '__fish_seen_subcommand_from evaluation; and __fish_seen_subcommand_from schedule' -a 'create list disable claim run runs'
 complete -c pandora -f -n '__fish_seen_subcommand_from evolution; and not __fish_seen_subcommand_from rollout' -a 'generate list inspect submit evaluate approve stage canary rollout activate rollback'
 complete -c pandora -f -n '__fish_seen_subcommand_from evolution; and __fish_seen_subcommand_from rollout' -a 'configure score approve promote pause resume reject retry rollback'
-complete -c pandora -f -n '__fish_seen_subcommand_from graph' -a 'code knowledge review architecture show remove'
+complete -c pandora -f -n '__fish_seen_subcommand_from graph; and __fish_seen_subcommand_from map' -a 'validate show'
+complete -c pandora -f -n '__fish_seen_subcommand_from graph; and not __fish_seen_subcommand_from map' -a 'code knowledge review architecture map show remove'
 complete -c pandora -f -n '__fish_seen_subcommand_from fleet; and __fish_seen_subcommand_from supervisor' -a 'list start drain stop recover heartbeat reconcile reap restart'
 complete -c pandora -f -n '__fish_seen_subcommand_from fleet' -a 'dashboard list register dispatch lease renew release expire supervisor quarantine revoke kill'
 complete -c pandora -f -n '__fish_seen_subcommand_from feedback' -a 'coding'"#
@@ -597,5 +604,31 @@ mod tests {
         );
         assert!(ROOT_COMMANDS.contains(&"auth"));
         assert!(ROOT_COMMANDS.contains(&"secret"));
+    }
+
+    #[test]
+    fn graph_map_completion_covers_subcommands_across_shells() {
+        let powershell = powershell();
+        let bash = bash();
+        let zsh = zsh();
+        let fish = fish();
+
+        assert!(powershell.contains("-eq 'graph' -and $elements[2] -eq 'map'"));
+        assert!(powershell.contains("'validate','show'"));
+        assert!(
+            powershell.contains("'code','knowledge','review','architecture','map','show','remove'")
+        );
+
+        assert!(bash.contains(r#"[[ "$previous" == "map" && "${COMP_WORDS[1]}" == "graph" ]]"#));
+        assert!(bash.contains("compgen -W 'validate show'"));
+        assert!(bash.contains("compgen -W 'code knowledge review architecture map show remove'"));
+
+        assert!(zsh.contains("'3:graph map command:(validate show)'"));
+        assert!(
+            zsh.contains("'2:graph command:(code knowledge review architecture map show remove)'")
+        );
+
+        assert!(fish.contains("__fish_seen_subcommand_from graph; and __fish_seen_subcommand_from map' -a 'validate show'"));
+        assert!(fish.contains("__fish_seen_subcommand_from graph; and not __fish_seen_subcommand_from map' -a 'code knowledge review architecture map show remove'"));
     }
 }

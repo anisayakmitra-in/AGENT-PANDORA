@@ -70,7 +70,7 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora package disable <id> <version> --dry-run --json` | `package disable` | `dry_run`, `changed`, `ready`, `package`, `enabled_dependents` |
 | `pandora package disable <id> <version> --yes --json` | `package disable` | `dry_run`, `changed`, `package`, `binding` |
 | `pandora package rollback <id> [--dry-run|--yes] --json` | `package rollback` | `dry_run`, `changed`, target or active version, `binding`, dependency and dependent preview fields for dry runs |
-| `pandora memory recall ... --json` | `memory recall` | `scope`, `tier`, `records`, `count`, `limit`, `durability` |
+| `pandora memory recall ... --json` | `memory recall` | `scope`, `tier`, `intent`, `records`, `count`, `limit`, `durability` |
 | `pandora memory audit ... --json` | `memory audit` | `scope`, `entries`, `count`, `durability` |
 | `pandora memory forget ... --json` | `memory forget` | `dry_run`, `memory_id`, `scope`, `revoked` or `would_revoke` |
 | `pandora memory compact ... --json` | `memory compact` | `dry_run`, `scope`, `revoked_before_or_at`, `compactable_records` and `would_compact` for previews or `compacted_records` for apply, plus the tombstone, audit, and secure-erasure `boundary` |
@@ -99,6 +99,8 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora evaluation regression ... --json` | `evaluation regression` | propose/inspect/review: `id`, `case_id`, `source_execution_id`, `target`, `task`, `failure_digest`, `status`, `review_required_before_suite`, `durability`; generate: accepted-candidate `generated_suite`, `review_gate`, `runtime_authority_changed`; list: `candidates`, `count`, `durability`
 | `pandora evaluation schedule ... --json` | `evaluation schedule` | schedule list/create: `proposal_id`, `one_shot`, `activation_performed` plus schedule fields; claim/run history: proposal binding and optional `evidence` (`report_digest`, `total_cases`, `passed_cases`, `failed_cases`); schedule run: `run`, `report`, `completed`, `passed`, optional `canary`, `activation_performed`, `durability` |
 | `pandora graph <kind> --input <path> [--store <path>] --json` | `graph build` | `kind`, `scope`, `source_count`, `nodes`, `edges`, `digest`, optional `persisted` |
+| `pandora graph map validate [--path <path>] --json` | `graph map validate` | `path`, `map_version`, `feature_count`, `features` |
+| `pandora graph map show [--path <path>] --json` | `graph map show` | `path`, `map_version`, `features` |
 | `pandora update --artifact ... --json` | `update` | `verified`, `artifact`, `target`, `signature_verified`, `dry_run` |
 | `pandora update --release ... --json` | `update` | `verified`, `release`, `channel`, `artifact`, `signature_verified`, `dry_run`; non-dry-run responses also contain `target` |
 | `pandora update --rollback --json` | `update rollback` | `target`, `dry_run`; a dry run contains `previous`, while a completed rollback contains `restored` |
@@ -119,7 +121,8 @@ report that admission and enablement were not performed. Cached admission always
 reports `enablement_performed: false` and `effect_authority_granted: false`.
 
 Memory records returned by `memory recall` include `origin` (`explicit` or
-`synthesized`) and `evidence_ids`. Synthesized records are L1 candidates only;
+`synthesized`), `evidence_ids`, and partitioned `intent` (`repo`, `procedure`, `coding`, `user`).
+Synthesized records are L1 candidates only;
 their evidence is descriptive provenance and does not authorize tools, policy,
 package activation, or promotion.
 

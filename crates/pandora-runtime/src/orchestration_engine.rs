@@ -76,6 +76,23 @@ impl EdgeVerifierPolicy {
     }
 
     pub fn verify(&self, artifact: &ArtifactRef) -> Result<(), EdgeVerificationError> {
+        if artifact.path.as_os_str().is_empty() {
+            return Err(EdgeVerificationError::PolicyViolation(
+                "artifact path cannot be empty".to_string(),
+            ));
+        }
+        if artifact.path.is_absolute() {
+            return Err(EdgeVerificationError::PolicyViolation(
+                "artifact path must be relative to workspace".to_string(),
+            ));
+        }
+        for component in artifact.path.components() {
+            if matches!(component, std::path::Component::ParentDir) {
+                return Err(EdgeVerificationError::PolicyViolation(
+                    "artifact path traversal ('..') is prohibited".to_string(),
+                ));
+            }
+        }
         if let Some(max) = self.max_size_bytes
             && artifact.size_bytes > max
         {
@@ -131,6 +148,8 @@ pub enum OrchestrationError {
         worker: String,
         error: EdgeVerificationError,
     },
+    EmptyWorkers,
+    DuplicateArtifact(pandora_types::ArtifactId),
 }
 
 impl fmt::Display for OrchestrationError {
@@ -158,6 +177,15 @@ impl fmt::Display for OrchestrationError {
                 write!(
                     formatter,
                     "edge verification failed for worker '{worker}': {error}"
+                )
+            }
+            Self::EmptyWorkers => {
+                formatter.write_str("diamond execution requires at least one worker")
+            }
+            Self::DuplicateArtifact(id) => {
+                write!(
+                    formatter,
+                    "duplicate artifact '{id}' produced across workers"
                 )
             }
         }
@@ -287,6 +315,9 @@ impl OrchestrationEngine {
     where
         F: FnOnce() -> Result<ArtifactRef, String> + Send + 'static,
     {
+        if workers.is_empty() {
+            return Err(OrchestrationError::EmptyWorkers);
+        }
         let input_summary = input_summary.into();
         let results = std::thread::scope(|scope| {
             let mut handles = Vec::with_capacity(workers.len());
@@ -305,11 +336,15 @@ impl OrchestrationEngine {
         })?;
 
         let mut verified_artifacts = Vec::with_capacity(results.len());
+        let mut seen_ids = std::collections::BTreeSet::new();
         for (name, result) in results {
             let artifact = result.map_err(|err| OrchestrationError::WorkerFailed {
                 worker: name.clone(),
                 error: err,
             })?;
+            if !seen_ids.insert(artifact.artifact_id.clone()) {
+                return Err(OrchestrationError::DuplicateArtifact(artifact.artifact_id));
+            }
             verifier.verify(&artifact).map_err(|err| {
                 OrchestrationError::EdgeVerificationFailed {
                     worker: name,
@@ -832,6 +867,95 @@ mod tests {
                 worker,
                 error: EdgeVerificationError::SizeExceeded { actual, max }
             }) if worker == "oversized_worker" && actual > max && max == 10
+        ));
+    }
+
+    #[test]
+    fn orchestration_diamond_rejects_empty_workers() {
+        let engine = OrchestrationEngine::new();
+        let verifier = EdgeVerifierPolicy::new();
+        let workers: Vec<(String, WorkerTask)> = vec![];
+        let result = engine.execute_diamond("Empty task", workers, &verifier);
+        assert_eq!(result, Err(OrchestrationError::EmptyWorkers));
+    }
+
+    #[test]
+    fn orchestration_diamond_rejects_duplicate_artifact_ids() {
+        let engine = OrchestrationEngine::new();
+        let verifier = EdgeVerifierPolicy::new();
+
+        let workers: Vec<(String, WorkerTask)> = vec![
+            (
+                "worker_1".to_string(),
+                Box::new(|| {
+                    Ok(ArtifactRef::compute(
+                        pandora_types::ArtifactId::new("art-duplicate").unwrap(),
+                        "out/dup1.txt",
+                        b"data 1",
+                        "text/plain",
+                    ))
+                }),
+            ),
+            (
+                "worker_2".to_string(),
+                Box::new(|| {
+                    Ok(ArtifactRef::compute(
+                        pandora_types::ArtifactId::new("art-duplicate").unwrap(),
+                        "out/dup2.txt",
+                        b"data 2",
+                        "text/plain",
+                    ))
+                }),
+            ),
+        ];
+
+        let result = engine.execute_diamond("Duplicate task", workers, &verifier);
+        assert!(matches!(
+            result,
+            Err(OrchestrationError::DuplicateArtifact(id)) if id.as_str() == "art-duplicate"
+        ));
+    }
+
+    #[test]
+    fn edge_verifier_policy_rejects_empty_path_absolute_path_and_path_traversal() {
+        let verifier = EdgeVerifierPolicy::new();
+
+        let empty_path_art = ArtifactRef::compute(
+            pandora_types::ArtifactId::new("art-empty").unwrap(),
+            "",
+            b"data",
+            "text/plain",
+        );
+        assert!(matches!(
+            verifier.verify(&empty_path_art),
+            Err(EdgeVerificationError::PolicyViolation(msg)) if msg.contains("cannot be empty")
+        ));
+
+        let abs_path = if cfg!(windows) {
+            "C:\\workspace\\out.txt"
+        } else {
+            "/workspace/out.txt"
+        };
+        let abs_path_art = ArtifactRef::compute(
+            pandora_types::ArtifactId::new("art-abs").unwrap(),
+            abs_path,
+            b"data",
+            "text/plain",
+        );
+        assert!(matches!(
+            verifier.verify(&abs_path_art),
+            Err(EdgeVerificationError::PolicyViolation(msg)) if msg.contains("must be relative")
+        ));
+
+        let traversal_art = ArtifactRef::compute(
+            pandora_types::ArtifactId::new("art-traversal").unwrap(),
+            "out/../../etc/passwd",
+            b"data",
+            "text/plain",
+        );
+        assert!(matches!(
+            verifier.verify(&traversal_art),
+            Err(EdgeVerificationError::PolicyViolation(msg)) if msg.contains("traversal")
         ));
     }
 }

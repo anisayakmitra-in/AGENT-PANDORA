@@ -45,3 +45,11 @@
   desktop TypeScript client, which was deleted on 2026-10-05; the CLI does not
   use this transport. See `docs/CLI.md` for the contract, the bounds, and the
   breaking-change note.
+- [x] F2: Phase 1-4 architectural items and CLI parity. SQLite migration 9
+  intent-partitioned memory (`repo`, `procedure`, `coding`, `user`) with
+  backfill and composite index; anti-thrash convergence loop with success reset;
+  diamond orchestration with role fan-out/join validation and edge verifier
+  safety policies; feature map validation and inspection (`graph map
+  validate|show`) with runtime agent context injection; and CLI setup polish
+  (`--preset`).
+

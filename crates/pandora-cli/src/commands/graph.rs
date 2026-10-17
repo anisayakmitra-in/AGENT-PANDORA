@@ -107,6 +107,7 @@ fn validate_map(args: &[String]) -> Result<CommandResult, CliError> {
         json!({
             "path": path,
             "version": map.version,
+            "map_version": map.version,
             "feature_count": count,
             "features": resolved_features,
         }),
@@ -150,6 +151,7 @@ fn show_map(args: &[String]) -> Result<CommandResult, CliError> {
         json!({
             "path": path,
             "version": map.version,
+            "map_version": map.version,
             "features": map.features,
         }),
         format!("Loaded feature map ({count} feature(s))"),

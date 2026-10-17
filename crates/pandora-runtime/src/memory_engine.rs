@@ -99,6 +99,11 @@ impl MemorySynthesisProposal {
     pub fn evidence_ids(&self) -> &[MemoryId] {
         &self.evidence_ids
     }
+
+    pub fn with_candidate_intent(mut self, intent: MemoryIntent) -> Self {
+        self.candidate = self.candidate.with_intent(intent);
+        self
+    }
 }
 
 pub struct MemoryEngine {
@@ -212,6 +217,54 @@ impl MemoryEngine {
             created_at,
             provenance,
         )?;
+        if let Some(durable) = &self.durable {
+            durable
+                .store
+                .record_memory(&durable.principal_id, &record)
+                .map_err(memory_store_error)?;
+            return Ok(record);
+        }
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        store.l1.push(record.clone());
+        record_added(
+            &mut store,
+            &record,
+            MemoryAuditAction::Added,
+            created_at,
+            None,
+        );
+        Ok(record)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn distill_l1_with_intent(
+        &self,
+        scope: MemoryScope,
+        id: impl Into<String>,
+        kind: MemoryKind,
+        intent: MemoryIntent,
+        summary: impl Into<String>,
+        classification: ContextClassification,
+        created_at: Timestamp,
+        provenance: impl Into<String>,
+    ) -> Result<MemoryRecord, MemoryError> {
+        let _synthesis_guard = self
+            .synthesis_gate
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        let record = MemoryRecord::new_l1(
+            id,
+            kind,
+            scope,
+            summary,
+            classification,
+            created_at,
+            provenance,
+        )?
+        .with_intent(intent);
         if let Some(durable) = &self.durable {
             durable
                 .store
@@ -357,6 +410,27 @@ impl MemoryEngine {
         intent: MemoryIntent,
         now: Timestamp,
     ) -> Result<Vec<MemoryRecord>, MemoryError> {
+        if tier != MemoryTier::L0
+            && let Some(durable) = &self.durable
+        {
+            let records = durable
+                .store
+                .recall_memory_by_intent(
+                    scope.session_id(),
+                    &durable.principal_id,
+                    scope.tenant_id(),
+                    scope.workspace_id(),
+                    scope.provider(),
+                    tier,
+                    intent,
+                    MAX_MEMORY_RECALL_RECORDS,
+                )
+                .map_err(memory_store_error)?;
+            return Ok(records
+                .into_iter()
+                .filter(|record| !record.is_expired(now))
+                .collect());
+        }
         let records = self.try_recall(scope, tier, now)?;
         Ok(records
             .into_iter()
@@ -1516,5 +1590,129 @@ mod tests {
             Timestamp::from_unix_seconds(20),
         );
         assert!(repo_memories.is_empty());
+    }
+
+    #[test]
+    fn durable_memory_engine_distills_and_recalls_by_intent() {
+        let root = crate::test_support::new_temp_dir("pandora-durable-intent-test").unwrap();
+        let path = root.join("sessions.sqlite3");
+        let principal = PrincipalId::new("principal-1").unwrap();
+        let session = pandora_types::Session::new(
+            SessionId::new("session-1").unwrap(),
+            principal.clone(),
+            TenantId::new("tenant-1").unwrap(),
+            WorkspaceId::new("workspace-1").unwrap(),
+            Timestamp::from_unix_seconds(1),
+        );
+        let store = SessionStore::open(&path).unwrap();
+        store.create(&session).unwrap();
+        drop(store);
+
+        let engine = MemoryEngine::open(&path, 32, principal).unwrap();
+        let scope = MemoryScope::new(
+            session.tenant_id().clone(),
+            session.workspace_id().clone(),
+            session.id().clone(),
+            "provider-1",
+        )
+        .unwrap();
+
+        engine
+            .distill_l1_with_intent(
+                scope.clone(),
+                "durable-code-1",
+                MemoryKind::ExecutionEvidence,
+                MemoryIntent::Coding,
+                "fixed cargo check",
+                ContextClassification::Internal,
+                Timestamp::from_unix_seconds(5),
+                "compiler",
+            )
+            .unwrap();
+
+        engine
+            .distill_l1_with_intent(
+                scope.clone(),
+                "durable-proc-1",
+                MemoryKind::Lesson,
+                MemoryIntent::Procedure,
+                "run all quality gates",
+                ContextClassification::Internal,
+                Timestamp::from_unix_seconds(6),
+                "review",
+            )
+            .unwrap();
+
+        let coding_memories = engine
+            .try_recall_by_intent(
+                &scope,
+                MemoryTier::L1,
+                MemoryIntent::Coding,
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap();
+        assert_eq!(coding_memories.len(), 1);
+        assert_eq!(coding_memories[0].id().as_str(), "durable-code-1");
+        assert_eq!(coding_memories[0].intent(), MemoryIntent::Coding);
+
+        let proc_memories = engine
+            .try_recall_by_intent(
+                &scope,
+                MemoryTier::L1,
+                MemoryIntent::Procedure,
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap();
+        assert_eq!(proc_memories.len(), 1);
+        assert_eq!(proc_memories[0].id().as_str(), "durable-proc-1");
+        assert_eq!(proc_memories[0].intent(), MemoryIntent::Procedure);
+
+        let repo_memories = engine
+            .try_recall_by_intent(
+                &scope,
+                MemoryTier::L1,
+                MemoryIntent::Repo,
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap();
+        assert!(repo_memories.is_empty());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn memory_synthesis_proposal_with_candidate_intent_updates_intent() {
+        let engine = MemoryEngine::new(64);
+        let scope = scope("provider-a");
+        let now = Timestamp::from_unix_seconds(1);
+        engine
+            .distill_l1(
+                scope.clone(),
+                "ev-1",
+                MemoryKind::ExecutionEvidence,
+                "evidence 1",
+                ContextClassification::Internal,
+                now,
+                "trace:1",
+            )
+            .unwrap();
+        let snapshot = engine.synthesis_snapshot(&scope, now).unwrap();
+        let proposal = engine
+            .propose_synthesis(
+                &snapshot,
+                "synth-1",
+                MemoryKind::Lesson,
+                "synthesized lesson",
+                ContextClassification::Internal,
+                now,
+            )
+            .unwrap()
+            .with_candidate_intent(MemoryIntent::Procedure);
+
+        assert_eq!(proposal.candidate().intent(), MemoryIntent::Procedure);
+        assert_eq!(
+            proposal.candidate().explicit_intent(),
+            Some(MemoryIntent::Procedure)
+        );
     }
 }

@@ -285,6 +285,7 @@ impl ConvergenceTracker {
 
     pub fn record_success(&mut self, sig: ActionSignature) {
         self.failed_signatures.remove(&sig);
+        self.duplicate_failure_count = 0;
     }
 
     pub fn duplicate_failure_count(&self) -> u32 {
@@ -676,6 +677,7 @@ impl AgentLoop {
             l1_evidence,
             &untrusted_context,
             history_has_untrusted_context,
+            &task,
             now,
         )?;
         let persistent_context = persistent_context_message(&untrusted_context)?;
@@ -1056,6 +1058,7 @@ impl AgentLoop {
         l1_evidence: Option<&L1EvidenceContext>,
         untrusted_context: &[ContextFragment],
         history_has_untrusted_context: bool,
+        task: &str,
         now: Timestamp,
     ) -> Result<ContextAssembly, AgentLoopError> {
         let request = ContextRequest::new(
@@ -1080,6 +1083,15 @@ impl AgentLoop {
             "pandora-runtime",
             CONTEXT_CONSTITUTION_ID,
         )?];
+        let map_path = std::path::Path::new(".pandora/feature_map.json");
+        if map_path.is_file()
+            && let Ok(bytes) = std::fs::read(map_path)
+            && let Ok(map) = serde_json::from_slice::<pandora_types::FeatureMap>(&bytes)
+            && map.validate().is_ok()
+        {
+            let feature_fragments = ContextEngine::fragments_from_feature_map(&map, task);
+            fragments.extend(feature_fragments);
+        }
         if let Some(l1_evidence) = l1_evidence {
             if !l1_evidence.matches(session, provider.manifest().id().as_str()) {
                 return Err(AgentLoopError::InvalidL1Evidence);
@@ -3063,6 +3075,22 @@ mod tests {
         let args2 = serde_json::json!({"path": "existing.txt"});
         let sig2 = ActionSignature::of("workspace.read", &args2);
         assert_eq!(tracker.check_pre_execution(sig2).unwrap(), None);
+    }
+
+    #[test]
+    fn convergence_tracker_record_success_resets_duplicate_failure_count() {
+        let mut tracker = ConvergenceTracker::new();
+        let args = serde_json::json!({"path": "file.txt"});
+        let sig = ActionSignature::of("workspace.read", &args);
+
+        tracker.record_failure(sig);
+        assert!(tracker.check_pre_execution(sig).unwrap().is_some());
+        assert_eq!(tracker.duplicate_failure_count(), 1);
+
+        tracker.record_success(sig);
+        assert_eq!(tracker.duplicate_failure_count(), 0);
+        // Signature is no longer failing
+        assert_eq!(tracker.check_pre_execution(sig).unwrap(), None);
     }
 
     struct Fixture {
