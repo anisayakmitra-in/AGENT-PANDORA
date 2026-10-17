@@ -1029,6 +1029,7 @@ pandora orchestration cancel <run-id>
 pandora orchestration mark-interrupted <run-id> --reason <text> --yes
 pandora orchestration reconcile-failed <run-id> --role <role-id> --usage <usage.json> --evidence-digest <digest> --yes
 pandora orchestration resume <run-id>
+pandora orchestration synthesize --intent <text> [--roles <role1,role2,...>] [--out <path>]
 
 Orchestration commands use the durable, tenant-scoped coordination store
 described in [ORCHESTRATION.md](ORCHESTRATION.md). `claim` returns only ready
@@ -1038,6 +1039,8 @@ receipt-linked measured usage. New plans require an aggregate token, tool,
 elapsed-time, and cost ceiling plus one reservation per role. An interrupted
 active role keeps its reservation until `reconcile-failed` records reviewed
 partial usage and evidence; only then can `resume` make the role retryable.
+`synthesize` dynamically generates a Diamond-topology swarm orchestration plan
+(Planner -> Specialist Roles -> Synthesizer -> Canary Verification Gate) from intent.
 
 pandora strategies list
 pandora evaluation golden --input <path> [--fail-on-failure]
@@ -1059,6 +1062,10 @@ pandora evolution rollout approve --input <path>
 pandora evolution rollout promote|pause|resume|reject|retry|rollback --id <proposal-id> --transition-id <sha256:digest> --actor <principal-id> [--reason <text>]
 pandora evolution activate --id <proposal-id>
 pandora evolution rollback --id <proposal-id> --reason <text>
+pandora evolution island init [--population <n>] [--out <path>]
+pandora evolution island step [--state <path>] [--out <path>] [--generations <n>]
+pandora evolution island migrate [--state <path>] [--out <path>] [--count <n>]
+pandora evolution island run [--state <path>] [--out <path>] [--generations <n>] [--population <n>]
 pandora rollout inspect --session <id> [--execution <id>]
 pandora graph code|knowledge|review|architecture --input <path> [--store <path>] [--tenant <id>] [--workspace <id>]
 pandora graph map [validate|show] [--path <path>]
@@ -1340,8 +1347,41 @@ The command surface supports:
 - `evaluate`: Evaluates a typed `DecisionQuestion` across a `QuestionSchema` (`binary`, `choices`, or `score`). Pluggable backend drivers include `heuristic` (zero-network semantic rules), `ollama` (`/api/generate` single-token evaluation), `custom` / `openai` (`/v1/chat/completions` token logprobs), and `mock` (deterministic unit testing). Output reports the selected candidate, confidence percentage, confidence margin, uncertainty status, and measured latency.
 - `tool-gate`: Pre-screens tool invocations through the System 1 reflex engine, outputting safety choices (`allow`, `require_confirm`, `reject`) along with full softmax candidate distributions.
 - `intent-route`: Maps incoming user prompts to operational intent tiers (`l0_local`, `l1_surgical`, `l2_architect`, `l3_clarify`, `l4_governance`).
+- `harvest`: Active-learning uncertainty harvester. Identifies decisions with low confidence margin (`--min-margin <float>`) and synthesizes `GoldenSuiteDefinition` datasets ready for immediate verification with `pandora evaluation golden`, Direct Preference Optimization (DPO) pairs (`--dpo-export <path>`), and fine-tuning prompt/completion pairs.
 
 Commands are also accessible under the `pandora runtime decision ...` namespace.
+
+## Darwinian Island-Model Evolution
+
+`evolution island` commands manage multi-population genetic evolution across isolated
+niches (`QualityFirst`, `CostMinimal`, `LatencyOptimized`):
+
+```text
+pandora evolution island init --population 4 --out island_state.json
+pandora evolution island step --state island_state.json --generations 2
+pandora evolution island migrate --state island_state.json --count 1
+pandora evolution island run --state island_state.json --generations 5
+```
+
+- `init`: Seeds isolated subpopulation islands with initial Standard Operating Procedure candidates.
+- `step`: Executes tournament selection, SOP step crossover, and mutation operators (prompt mutation, step reordering, verification checkpoint insertion).
+- `migrate`: Transmits top elite candidates across a unidirectional ring topology between niches.
+- `run`: Orchestrates end-to-end multi-generation evolution, tracking candidate fitness divergence and generating non-dominated Pareto frontiers across pass rate, token cost, and latency.
+
+## Dynamic Swarm Topology Synthesis
+
+`orchestration synthesize` compiles architectural task intent into an emergent Diamond DAG plan:
+
+```text
+pandora orchestration synthesize --intent "Security audit, cache tuning, and load validation" --roles "security_auditor,cache_specialist,load_tester" --out diamond_plan.json
+```
+
+The synthesized plan automatically wires:
+1. `Planner` (coordination-meta harness) with root dependencies.
+2. Parallel Specialist Roles (`domain-specialist` harness) depending on Planner.
+3. `Synthesizer` (synthesis-domain harness) aggregating results from all parallel specialists.
+4. `Canary Verification Gate` (verification-meta harness) gating execution prior to commit.
+5. Cross-domain handoff declarations bound to Meta Harness coordination.
 
 Remote admission currently accepts Gene records with no unresolved capability
 requirements and one valid Pandora runtime requirement. Other package kinds fail

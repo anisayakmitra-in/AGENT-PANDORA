@@ -6,12 +6,13 @@ use serde_json::json;
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
-        CliError::usage("decision requires 'evaluate', 'tool-gate', or 'intent-route'")
+        CliError::usage("decision requires 'evaluate', 'tool-gate', 'intent-route', or 'harvest'")
     })?;
     match subcommand.as_str() {
         "evaluate" => evaluate(&args[1..]),
         "tool-gate" => tool_gate(&args[1..]),
         "intent-route" => intent_route(&args[1..]),
+        "harvest" => harvest(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown decision command '{unknown}'"
         ))),
@@ -217,4 +218,146 @@ fn intent_route(args: &[String]) -> Result<CommandResult, CliError> {
     );
 
     Ok(success("decision intent-route", payload, rendered))
+}
+
+fn harvest(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "min-margin",
+            "export-golden",
+            "limit",
+            "suite-id",
+            "input",
+            "dpo-export",
+        ],
+    )?;
+
+    let min_margin = parsed
+        .value("min-margin")
+        .and_then(|s| s.parse::<f64>().ok());
+    let limit = parsed.value("limit").and_then(|s| s.parse::<usize>().ok());
+    let suite_id = parsed
+        .value("suite-id")
+        .unwrap_or("golden-harvested-suite")
+        .to_string();
+    let export_golden = parsed.value("export-golden").map(str::to_string);
+    let dpo_export = parsed.value("dpo-export").map(str::to_string);
+
+    let engine = SinglePassLogitEngine::new();
+
+    let questions: Vec<DecisionQuestion> = if let Some(input_path) = parsed.value("input") {
+        let content = std::fs::read_to_string(input_path)
+            .map_err(|e| CliError::usage(format!("could not read input file: {e}")))?;
+        serde_json::from_str(&content)
+            .map_err(|e| CliError::usage(format!("invalid input questions JSON: {e}")))?
+    } else {
+        default_harvest_questions()
+    };
+
+    let mut verdicts = Vec::with_capacity(questions.len());
+    for q in &questions {
+        let v = engine
+            .evaluate_dynamic(q)
+            .map_err(|e: DecisionError| CliError::execution(e.to_string(), json!({})))?;
+        verdicts.push(v);
+    }
+
+    let harvested =
+        engine.harvest_uncertain_decisions_with_margin(&verdicts, &questions, min_margin, limit);
+
+    let golden_suite = engine.synthesize_golden_suite(&harvested, Some(&suite_id));
+
+    if let Some(ref path_str) = export_golden {
+        let path = std::path::Path::new(path_str);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let json_str = serde_json::to_string_pretty(&golden_suite).map_err(|e| {
+            CliError::execution(format!("failed to serialize golden set: {e}"), json!({}))
+        })?;
+        std::fs::write(path, json_str).map_err(|e| {
+            CliError::execution(format!("failed to write golden set: {e}"), json!({}))
+        })?;
+    }
+
+    if let Some(ref dpo_path_str) = dpo_export {
+        let dpo_pairs = engine.synthesize_dpo_pairs(&harvested);
+        let path = std::path::Path::new(dpo_path_str);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let json_str = serde_json::to_string_pretty(&dpo_pairs).map_err(|e| {
+            CliError::execution(format!("failed to serialize DPO pairs: {e}"), json!({}))
+        })?;
+        std::fs::write(path, json_str).map_err(|e| {
+            CliError::execution(format!("failed to write DPO pairs: {e}"), json!({}))
+        })?;
+    }
+
+    let payload = json!({
+        "command": "decision harvest",
+        "harvested_count": harvested.len(),
+        "min_margin": min_margin.unwrap_or(0.15),
+        "limit": limit.unwrap_or(50),
+        "suite_id": suite_id,
+        "exported_golden": export_golden,
+        "exported_dpo": dpo_export,
+        "cases": golden_suite.cases.iter().map(|c| json!({
+            "id": c.id,
+            "execution_id": c.execution_id,
+            "output": c.output,
+            "expected_output": c.expected_output,
+            "task": c.task,
+        })).collect::<Vec<_>>(),
+    });
+
+    let rendered = format!(
+        "Harvested {} uncertain decisions (min-margin: {:.2})\nSuite ID: {}\nExported Golden Set: {}",
+        harvested.len(),
+        min_margin.unwrap_or(0.15),
+        suite_id,
+        export_golden.as_deref().unwrap_or("none"),
+    );
+
+    Ok(success("decision harvest", payload, rendered))
+}
+
+fn default_harvest_questions() -> Vec<DecisionQuestion> {
+    vec![
+        DecisionQuestion::binary(
+            "q-border-tool-gate",
+            "Should we allow script execution that inspects system logs?",
+            "allow",
+            "reject",
+        ),
+        DecisionQuestion::binary(
+            "q-border-archive-compact",
+            "Compact historical session archives during high resource contention?",
+            "allow",
+            "reject",
+        ),
+        DecisionQuestion::choice(
+            "q-border-routing",
+            "Route refactor task: simple one-line fix vs module redesign",
+            ["l0_local", "l1_surgical", "l2_architect"],
+        ),
+        DecisionQuestion::binary(
+            "q-border-secret-read",
+            "Read local public key file for device authentication signature?",
+            "allow",
+            "reject",
+        ),
+        DecisionQuestion::choice(
+            "q-border-convergence",
+            "Step count reached 8 with minor remaining test failure",
+            ["progress", "stuck", "converged"],
+        ),
+        DecisionQuestion::binary(
+            "q-border-canary-promote",
+            "Promote candidate with 88% pass rate when baseline requirement is 85%",
+            "allow",
+            "reject",
+        ),
+    ]
 }

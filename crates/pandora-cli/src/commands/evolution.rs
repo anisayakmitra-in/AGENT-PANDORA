@@ -11,8 +11,9 @@ use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::{
     ArtifactCatalog, CANARY_POLICY_VERSION, CanaryPolicy, EvaluationEngine, EvolutionEngine,
     EvolutionError, EvolutionRecord, ExecutionController, FleetEngine, FleetQuiescenceGuard,
-    HoldoutCase, HoldoutSetReport, MAX_HOLDOUT_CASES, MemoryEngine, PackageStore,
-    ReplacementEngine, ReplacementError, ResearchArtifactError, ResearchArtifactStore,
+    HoldoutCase, HoldoutSetReport, IslandModelEvolver, MAX_HOLDOUT_CASES, MemoryEngine,
+    PackageStore, ReplacementEngine, ReplacementError, ResearchArtifactError,
+    ResearchArtifactStore, default_evolution_sop,
 };
 use pandora_types::{
     ArtifactId, ArtifactSignature, CanaryResult, Capability, ContextClassification,
@@ -168,7 +169,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         .first()
         .ok_or_else(|| {
             CliError::usage(
-                "evolution requires 'generate', 'list', 'inspect', 'submit', 'evaluate', 'approve', 'stage', 'canary', 'rollout', 'activate', or 'rollback'",
+                "evolution requires 'generate', 'list', 'inspect', 'submit', 'evaluate', 'approve', 'stage', 'canary', 'rollout', 'activate', 'rollback', or 'island'",
             )
         })?;
     match subcommand.as_str() {
@@ -183,8 +184,9 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "rollout" => rollout(&args[1..]),
         "activate" => activate(&args[1..]),
         "rollback" => rollback(&args[1..]),
+        "island" => island(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown evolution command '{unknown}', expected 'generate', 'list', 'inspect', 'submit', 'evaluate', 'approve', 'stage', 'canary', 'rollout', 'activate', or 'rollback'"
+            "unknown evolution command '{unknown}', expected 'generate', 'list', 'inspect', 'submit', 'evaluate', 'approve', 'stage', 'canary', 'rollout', 'activate', 'rollback', or 'island'"
         ))),
     }
 }
@@ -1825,6 +1827,254 @@ fn research_memory_error(error: pandora_runtime::MemoryError) -> CliError {
             json!({"error": format!("{error:?}")}),
         ),
     }
+}
+
+fn island(args: &[String]) -> Result<CommandResult, CliError> {
+    let subcommand = args.first().ok_or_else(|| {
+        CliError::usage("evolution island requires 'init', 'step', 'migrate', or 'run'")
+    })?;
+    match subcommand.as_str() {
+        "init" => island_init(&args[1..]),
+        "step" => island_step(&args[1..]),
+        "migrate" => island_migrate(&args[1..]),
+        "run" => island_run(&args[1..]),
+        unknown => Err(CliError::usage(format!(
+            "unknown evolution island command '{unknown}', expected 'init', 'step', 'migrate', or 'run'"
+        ))),
+    }
+}
+
+fn island_init(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["out", "population"])?;
+    let population = parsed
+        .value("population")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(4);
+    let out_path = parsed.value("out").map(str::to_string);
+
+    let evolver = IslandModelEvolver::new_default(default_evolution_sop(), population);
+
+    if let Some(ref path_str) = out_path {
+        let path = Path::new(path_str);
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let json_str = serde_json::to_string_pretty(&evolver).map_err(|e| {
+            CliError::execution(format!("failed to serialize island state: {e}"), json!({}))
+        })?;
+        fs::write(path, json_str).map_err(|e| {
+            CliError::execution(format!("failed to write island state: {e}"), json!({}))
+        })?;
+    }
+
+    let payload = json!({
+        "command": "evolution island init",
+        "islands_count": evolver.islands.len(),
+        "current_generation": 0,
+        "population_per_island": population,
+        "out_path": out_path,
+        "islands": evolver.islands.iter().map(|isl| json!({
+            "id": isl.id,
+            "niche": isl.niche.as_str(),
+            "population_size": isl.population.len(),
+            "best_fitness": isl.best_candidate().map(|c| c.fitness).unwrap_or(0.0),
+        })).collect::<Vec<_>>(),
+    });
+
+    let rendered = format!(
+        "Initialized Darwinian Island Evolver (3 islands, population {population}/island)\nOutput: {}",
+        out_path.as_deref().unwrap_or("stdout"),
+    );
+
+    Ok(success("evolution island init", payload, rendered))
+}
+
+fn island_step(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["state", "out", "generations"])?;
+    let generations = parsed
+        .value("generations")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(1);
+    let state_path = parsed.value("state").map(str::to_string);
+    let out_path = parsed.value("out").map(str::to_string);
+
+    let mut evolver: IslandModelEvolver = if let Some(ref path_str) = state_path {
+        let content = fs::read_to_string(path_str)
+            .map_err(|e| CliError::usage(format!("could not read state file: {e}")))?;
+        serde_json::from_str(&content)
+            .map_err(|e| CliError::usage(format!("invalid island state JSON: {e}")))?
+    } else {
+        IslandModelEvolver::new_default(default_evolution_sop(), 4)
+    };
+
+    let mut reports = Vec::with_capacity(generations as usize);
+    for _ in 0..generations {
+        reports.push(evolver.step());
+    }
+
+    let target_save = out_path.as_deref().or(state_path.as_deref());
+    if let Some(target) = target_save {
+        let path = Path::new(target);
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let json_str = serde_json::to_string_pretty(&evolver).map_err(|e| {
+            CliError::execution(format!("failed to serialize island state: {e}"), json!({}))
+        })?;
+        fs::write(path, json_str).map_err(|e| {
+            CliError::execution(format!("failed to write island state: {e}"), json!({}))
+        })?;
+    }
+
+    let payload = json!({
+        "command": "evolution island step",
+        "current_generation": evolver.current_generation,
+        "generations_run": generations,
+        "reports": reports,
+        "islands": evolver.islands.iter().map(|isl| json!({
+            "id": isl.id,
+            "niche": isl.niche.as_str(),
+            "population_size": isl.population.len(),
+            "best_candidate": isl.best_candidate().map(|c| json!({
+                "id": c.id,
+                "fitness": c.fitness,
+                "pass_rate": c.pass_rate,
+                "token_cost": c.token_cost,
+                "latency_ms": c.latency_ms,
+            })),
+        })).collect::<Vec<_>>(),
+    });
+
+    let rendered = format!(
+        "Stepped Darwinian Island Evolver by {} generation(s) -> Current Generation {}\nIslands: {}",
+        generations,
+        evolver.current_generation,
+        evolver
+            .islands
+            .iter()
+            .map(|i| format!(
+                "{}: best fitness {:.2}",
+                i.niche.as_str(),
+                i.best_candidate().map(|c| c.fitness).unwrap_or(0.0)
+            ))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    );
+
+    Ok(success("evolution island step", payload, rendered))
+}
+
+fn island_migrate(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["state", "out", "count"])?;
+    let migration_count = parsed.value("count").and_then(|s| s.parse::<usize>().ok());
+    let state_path = parsed.value("state").map(str::to_string);
+    let out_path = parsed.value("out").map(str::to_string);
+
+    let mut evolver: IslandModelEvolver = if let Some(ref path_str) = state_path {
+        let content = fs::read_to_string(path_str)
+            .map_err(|e| CliError::usage(format!("could not read state file: {e}")))?;
+        serde_json::from_str(&content)
+            .map_err(|e| CliError::usage(format!("invalid island state JSON: {e}")))?
+    } else {
+        IslandModelEvolver::new_default(default_evolution_sop(), 4)
+    };
+
+    if let Some(c) = migration_count {
+        evolver.migration_count = c;
+    }
+
+    let report = evolver.migrate();
+
+    let target_save = out_path.as_deref().or(state_path.as_deref());
+    if let Some(target) = target_save {
+        let path = Path::new(target);
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let json_str = serde_json::to_string_pretty(&evolver).map_err(|e| {
+            CliError::execution(format!("failed to serialize island state: {e}"), json!({}))
+        })?;
+        fs::write(path, json_str).map_err(|e| {
+            CliError::execution(format!("failed to write island state: {e}"), json!({}))
+        })?;
+    }
+
+    let payload = json!({
+        "command": "evolution island migrate",
+        "generation": evolver.current_generation,
+        "migrated_count": report.migrated_count,
+        "exchanges": report.exchanges,
+    });
+
+    let rendered = format!(
+        "Elite Migration Complete: {} candidates exchanged across {} islands at generation {}",
+        report.migrated_count,
+        evolver.islands.len(),
+        evolver.current_generation,
+    );
+
+    Ok(success("evolution island migrate", payload, rendered))
+}
+
+fn island_run(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["generations", "state", "out", "population"])?;
+    let generations = parsed
+        .value("generations")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(3);
+    let population = parsed
+        .value("population")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(4);
+    let state_path = parsed.value("state").map(str::to_string);
+    let out_path = parsed.value("out").map(str::to_string);
+
+    let mut evolver: IslandModelEvolver = if let Some(ref path_str) = state_path {
+        let content = fs::read_to_string(path_str)
+            .map_err(|e| CliError::usage(format!("could not read state file: {e}")))?;
+        serde_json::from_str(&content)
+            .map_err(|e| CliError::usage(format!("invalid island state JSON: {e}")))?
+    } else {
+        IslandModelEvolver::new_default(default_evolution_sop(), population)
+    };
+
+    let report = evolver.run(generations);
+
+    let target_save = out_path.as_deref().or(state_path.as_deref());
+    if let Some(target) = target_save {
+        let path = Path::new(target);
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let json_str = serde_json::to_string_pretty(&evolver).map_err(|e| {
+            CliError::execution(format!("failed to serialize island state: {e}"), json!({}))
+        })?;
+        fs::write(path, json_str).map_err(|e| {
+            CliError::execution(format!("failed to write island state: {e}"), json!({}))
+        })?;
+    }
+
+    let payload = json!({
+        "command": "evolution island run",
+        "total_generations": report.total_generations,
+        "pareto_frontier_size": report.pareto_frontier_size,
+        "islands": report.islands,
+        "pareto_candidates": report.pareto_candidates,
+    });
+
+    let rendered = format!(
+        "Island Evolver Execution Complete: {} generations run (Pareto frontier size: {})\nIslands: {}",
+        generations,
+        report.pareto_frontier_size,
+        report
+            .islands
+            .iter()
+            .map(|i| format!("{}: {:.2}", i.niche.as_str(), i.best_fitness))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+
+    Ok(success("evolution island run", payload, rendered))
 }
 
 #[cfg(test)]

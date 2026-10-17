@@ -1,12 +1,14 @@
 use pandora_runtime::{
-    BayesianCanaryGate, ContextVfs, ParetoCandidate, ParetoFrontier, SessionStore,
-    SinglePassLogitEngine,
+    BayesianCanaryGate, ContextVfs, IslandModelEvolver, IslandNiche, ParetoCandidate,
+    ParetoFrontier, SessionStore, SinglePassLogitEngine,
 };
 use pandora_types::{
-    ContextClassification, ContextContractError, ContextUri, ConvergenceChoice, FeatureEntry,
-    FeatureMap, IntentTierChoice, MemoryCapsule, MemoryContractError, MemoryIntent, MemoryKind,
-    MemoryOrigin, MemoryRecord, MemoryScope, PrincipalId, Session, SessionArchiveRecord, SessionId,
-    SopDefinition, SopStep, TenantId, Timestamp, ToolSafetyChoice, VfsNodeKind, WorkspaceId,
+    ContextClassification, ContextContractError, ContextUri, ConvergenceChoice, DecisionQuestion,
+    DpoPair, ExecutionTopology, FeatureEntry, FeatureMap, GoldenSuiteDefinition, IntentTierChoice,
+    MemoryCapsule, MemoryContractError, MemoryIntent, MemoryKind, MemoryOrigin, MemoryRecord,
+    MemoryScope, OrchestrationPlanJson, OrchestrationRole, PrincipalId, Session,
+    SessionArchiveRecord, SessionId, SopDefinition, SopStep, TenantId, Timestamp, ToolSafetyChoice,
+    VfsNodeKind, WorkspaceId,
 };
 use serde_json::{Value, json};
 use std::fs;
@@ -712,4 +714,260 @@ fn contract_decision_cli_and_drivers() {
     ]);
     let val_alias = resp_alias.success("decision evaluate");
     assert!(["allow", "reject"].contains(&val_alias["selected"].as_str().unwrap()));
+}
+
+#[test]
+fn contract_active_learning_uncertainty_harvester_and_golden_export() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    let golden_path = fixture.workspace.join("harvested_golden.json");
+    let dpo_path = fixture.workspace.join("harvested_dpo.json");
+
+    // 1. Run decision harvest with min-margin 0.35, export golden and dpo
+    let resp = fixture.run(&[
+        "decision",
+        "harvest",
+        "--min-margin",
+        "0.35",
+        "--suite-id",
+        "test-harvested-suite",
+        "--export-golden",
+        golden_path.to_str().unwrap(),
+        "--dpo-export",
+        dpo_path.to_str().unwrap(),
+    ]);
+
+    let val = resp.success("decision harvest");
+    assert_eq!(val["suite_id"], "test-harvested-suite");
+    let harvested_count = val["harvested_count"].as_u64().expect("harvested count") as usize;
+    assert!(harvested_count > 0, "should harvest uncertain decisions");
+    assert!(golden_path.exists(), "golden set file should be written");
+    assert!(dpo_path.exists(), "dpo pairs file should be written");
+
+    // 2. Read and verify the golden file matches GoldenSuiteDefinition structure
+    let golden_content = fs::read_to_string(&golden_path).expect("read golden set");
+    let golden_suite: GoldenSuiteDefinition =
+        serde_json::from_str(&golden_content).expect("parse golden suite");
+    assert_eq!(
+        golden_suite.suite_id.as_deref(),
+        Some("test-harvested-suite")
+    );
+    assert_eq!(golden_suite.cases.len(), harvested_count);
+
+    // 3. Pass the exported golden suite directly into `evaluation golden`
+    let eval_resp = fixture.run(&[
+        "evaluation",
+        "golden",
+        "--input",
+        golden_path.to_str().unwrap(),
+    ]);
+    let eval_val = eval_resp.success("evaluation golden");
+    assert_eq!(eval_val["passed"], harvested_count);
+    assert_eq!(eval_val["failed"], 0);
+    assert_eq!(eval_val["total"], harvested_count);
+
+    // 4. Read and verify DPO pairs
+    let dpo_content = fs::read_to_string(&dpo_path).expect("read dpo pairs");
+    let dpo_pairs: Vec<DpoPair> = serde_json::from_str(&dpo_content).expect("parse dpo pairs");
+    assert_eq!(dpo_pairs.len(), harvested_count);
+    for pair in &dpo_pairs {
+        assert!(!pair.prompt.is_empty());
+        assert!(!pair.chosen.is_empty());
+        assert!(!pair.rejected.is_empty());
+        assert_ne!(pair.chosen, pair.rejected);
+    }
+
+    // 5. Direct in-memory engine testing for active learning and fine-tuning synthesis
+    let engine = SinglePassLogitEngine::new();
+    let q = DecisionQuestion::binary("q-test", "should we deploy this canary?", "true", "false");
+    let v = engine.evaluate_dynamic(&q).expect("evaluate dynamic");
+    let harvested = engine.harvest_uncertain_decisions_with_margin(&[v], &[q], Some(0.99), None);
+    assert_eq!(harvested.len(), 1);
+
+    let ft_samples = engine.synthesize_fine_tuning_pairs(&harvested);
+    assert_eq!(ft_samples.len(), 1);
+    assert_eq!(ft_samples[0].id, "ft-q-test");
+    assert!(!ft_samples[0].completion.is_empty());
+}
+
+#[test]
+fn contract_darwinian_island_model_multi_population_evolution() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    let state_file = fixture.workspace.join("island_evolver.json");
+
+    // 1. Initialize island evolver
+    let init_resp = fixture.run(&[
+        "evolution",
+        "island",
+        "init",
+        "--population",
+        "4",
+        "--out",
+        state_file.to_str().unwrap(),
+    ]);
+    let init_val = init_resp.success("evolution island init");
+    assert_eq!(init_val["islands_count"], 3);
+    assert_eq!(init_val["population_per_island"], 4);
+    assert!(state_file.exists());
+
+    // 2. Step generation by 2
+    let step_resp = fixture.run(&[
+        "evolution",
+        "island",
+        "step",
+        "--state",
+        state_file.to_str().unwrap(),
+        "--generations",
+        "2",
+    ]);
+    let step_val = step_resp.success("evolution island step");
+    assert_eq!(step_val["current_generation"], 2);
+    assert_eq!(step_val["generations_run"], 2);
+
+    // 3. Ring elite migration
+    let migrate_resp = fixture.run(&[
+        "evolution",
+        "island",
+        "migrate",
+        "--state",
+        state_file.to_str().unwrap(),
+        "--count",
+        "1",
+    ]);
+    let migrate_val = migrate_resp.success("evolution island migrate");
+    assert_eq!(migrate_val["migrated_count"], 3);
+    let exchanges = migrate_val["exchanges"]
+        .as_array()
+        .expect("exchanges array");
+    assert_eq!(exchanges.len(), 3);
+
+    // 4. Run evolution for 3 more generations
+    let run_resp = fixture.run(&[
+        "evolution",
+        "island",
+        "run",
+        "--state",
+        state_file.to_str().unwrap(),
+        "--generations",
+        "3",
+    ]);
+    let run_val = run_resp.success("evolution island run");
+    assert_eq!(run_val["total_generations"], 5);
+    let frontier_size = run_val["pareto_frontier_size"].as_u64().unwrap();
+    assert!(frontier_size > 0);
+
+    // 5. In-memory IslandModelEvolver verification of multi-niche population
+    let content = fs::read_to_string(&state_file).expect("read island state");
+    let evolver: IslandModelEvolver = serde_json::from_str(&content).expect("parse evolver");
+    assert_eq!(evolver.current_generation, 5);
+    assert_eq!(evolver.islands.len(), 3);
+
+    let quality_island = evolver
+        .islands
+        .iter()
+        .find(|i| i.niche == IslandNiche::QualityFirst)
+        .unwrap();
+    let cost_island = evolver
+        .islands
+        .iter()
+        .find(|i| i.niche == IslandNiche::CostMinimal)
+        .unwrap();
+    let latency_island = evolver
+        .islands
+        .iter()
+        .find(|i| i.niche == IslandNiche::LatencyOptimized)
+        .unwrap();
+
+    assert!(!quality_island.population.is_empty());
+    assert!(!cost_island.population.is_empty());
+    assert!(!latency_island.population.is_empty());
+}
+
+#[test]
+fn contract_dynamic_emergent_swarm_topology_synthesis() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    let plan_out = fixture.workspace.join("synthesized_diamond_plan.json");
+
+    // 1. Synthesize plan with explicit specialist roles
+    let resp = fixture.run(&[
+        "orchestration",
+        "synthesize",
+        "--intent",
+        "Autonomous security audit, cache layer tuning, and load validation",
+        "--roles",
+        "security_auditor,cache_specialist,load_tester",
+        "--out",
+        plan_out.to_str().unwrap(),
+    ]);
+
+    let val = resp.success("orchestration synthesize");
+    assert_eq!(val["topology"], "diamond");
+    assert_eq!(val["roles_count"], 6); // Planner + 3 specialists + Synthesizer + Canary Verifier
+    assert!(val["handoffs_count"].as_u64().unwrap() >= 4);
+    assert!(plan_out.exists());
+
+    // 2. Read and parse plan JSON
+    let plan_content = fs::read_to_string(&plan_out).expect("read synthesized plan");
+    let plan_json: OrchestrationPlanJson =
+        serde_json::from_str(&plan_content).expect("parse plan JSON");
+    assert_eq!(plan_json.topology, ExecutionTopology::Diamond);
+    assert_eq!(plan_json.roles.len(), 6);
+
+    // Verify diamond DAG structure:
+    // - planner has no dependencies
+    let planner = plan_json
+        .roles
+        .iter()
+        .find(|r| r.role().as_str() == "planner")
+        .expect("planner exists");
+    assert!(planner.depends_on().is_empty());
+
+    // - specialists all depend on planner
+    let specialists: Vec<_> = plan_json
+        .roles
+        .iter()
+        .filter(|r| matches!(r.role(), OrchestrationRole::Custom(_)))
+        .collect();
+    assert_eq!(specialists.len(), 3);
+    for spec in &specialists {
+        assert_eq!(spec.depends_on(), &[planner.id().clone()]);
+    }
+
+    // - synthesizer depends on all 3 specialists
+    let synthesizer = plan_json
+        .roles
+        .iter()
+        .find(|r| r.role().as_str() == "maker")
+        .expect("synthesizer maker exists");
+    for spec in &specialists {
+        assert!(synthesizer.depends_on().contains(spec.id()));
+    }
+
+    // - canary verifier depends on synthesizer
+    let canary = plan_json
+        .roles
+        .iter()
+        .find(|r| r.role().as_str() == "verifier")
+        .expect("canary verifier exists");
+    assert_eq!(canary.depends_on(), &[synthesizer.id().clone()]);
+
+    // Convert to OrchestrationPlan to ensure valid contract DAG
+    let plan = plan_json.to_orchestration_plan().expect("convert to plan");
+    assert_eq!(plan.roles().len(), 6);
+
+    // 3. Synthesize with default roles
+    let default_resp = fixture.run(&[
+        "orchestration",
+        "synthesize",
+        "--intent",
+        "Automated code review and refactoring pipeline",
+    ]);
+    let default_val = default_resp.success("orchestration synthesize");
+    assert_eq!(default_val["topology"], "diamond");
+    assert_eq!(default_val["roles_count"], 5); // Planner + 2 default specialists + Synthesizer + Canary Verifier
 }

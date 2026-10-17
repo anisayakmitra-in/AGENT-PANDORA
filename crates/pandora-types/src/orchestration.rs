@@ -410,6 +410,58 @@ impl OrchestrationPlan {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct OrchestrationPlanJson {
+    pub id: String,
+    pub intent: String,
+    pub topology: ExecutionTopology,
+    pub roles: Vec<RoleAssignment>,
+    pub max_parallelism: usize,
+    pub max_handoffs: u32,
+    pub handoffs: Vec<Handoff>,
+}
+
+impl OrchestrationPlanJson {
+    pub fn new(
+        id: impl Into<String>,
+        intent: impl Into<String>,
+        topology: ExecutionTopology,
+        roles: Vec<RoleAssignment>,
+        max_parallelism: usize,
+        max_handoffs: u32,
+        handoffs: Vec<Handoff>,
+    ) -> Result<Self, OrchestrationContractError> {
+        let id_str = id.into();
+        let plan_id = PlanId::new(&id_str)?;
+        let plan = OrchestrationPlan::new(
+            plan_id,
+            roles.clone(),
+            max_parallelism,
+            max_handoffs,
+            handoffs.clone(),
+        )?;
+        Ok(Self {
+            id: plan.id().as_str().to_string(),
+            intent: intent.into(),
+            topology,
+            roles,
+            max_parallelism,
+            max_handoffs,
+            handoffs,
+        })
+    }
+
+    pub fn to_orchestration_plan(&self) -> Result<OrchestrationPlan, OrchestrationContractError> {
+        OrchestrationPlan::new(
+            PlanId::new(&self.id)?,
+            self.roles.clone(),
+            self.max_parallelism,
+            self.max_handoffs,
+            self.handoffs.clone(),
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DomainProfileMode {

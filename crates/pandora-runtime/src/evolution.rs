@@ -1,8 +1,8 @@
 use pandora_types::{
     ArtifactSignature, EvolutionContractError, EvolutionPolicy, EvolutionPromotionApproval,
     EvolutionRollout, EvolutionRolloutBinding, EvolutionScorecard, EvolutionStageLimits,
-    EvolutionState, HoldoutEvaluation, MutationProposal, ParliamentApproval, PrincipalId,
-    ProposalId, RequestDigest, Timestamp,
+    EvolutionState, HoldoutEvaluation, MemoryIntent, MutationProposal, ParliamentApproval,
+    PrincipalId, ProposalId, RequestDigest, SopDefinition, SopStep, Timestamp,
 };
 use rusqlite::{Connection, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
@@ -895,6 +895,633 @@ impl BayesianCanaryGate {
             baseline_rate,
             promoted,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IslandNiche {
+    QualityFirst,
+    CostMinimal,
+    LatencyOptimized,
+}
+
+impl IslandNiche {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::QualityFirst => "quality_first",
+            Self::CostMinimal => "cost_minimal",
+            Self::LatencyOptimized => "latency_optimized",
+        }
+    }
+
+    pub fn standard_niches() -> [Self; 3] {
+        [
+            Self::QualityFirst,
+            Self::CostMinimal,
+            Self::LatencyOptimized,
+        ]
+    }
+
+    pub fn compute_fitness(&self, pass_rate: f64, token_cost: u32, latency_ms: u64) -> f64 {
+        let pr = if pass_rate.is_nan() {
+            0.0
+        } else {
+            pass_rate.clamp(0.0, 1.0)
+        };
+        match self {
+            Self::QualityFirst => {
+                pr * 1000.0 - (token_cost as f64 * 0.01) - (latency_ms as f64 * 0.02)
+            }
+            Self::CostMinimal => {
+                let cost_score = (10_000.0 - (token_cost as f64).min(10_000.0)).max(0.0);
+                cost_score + (pr * 500.0) - (latency_ms as f64 * 0.01)
+            }
+            Self::LatencyOptimized => {
+                let latency_score = (5_000.0 - (latency_ms as f64).min(5_000.0)).max(0.0);
+                latency_score + (pr * 500.0) - (token_cost as f64 * 0.005)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct IslandCandidate {
+    pub id: String,
+    pub generation: u32,
+    pub sop: SopDefinition,
+    pub pass_rate: f64,
+    pub token_cost: u32,
+    pub latency_ms: u64,
+    pub fitness: f64,
+    pub origin_island: String,
+}
+
+impl IslandCandidate {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        id: impl Into<String>,
+        generation: u32,
+        sop: SopDefinition,
+        pass_rate: f64,
+        token_cost: u32,
+        latency_ms: u64,
+        niche: IslandNiche,
+        origin_island: impl Into<String>,
+    ) -> Self {
+        let fitness = niche.compute_fitness(pass_rate, token_cost, latency_ms);
+        Self {
+            id: id.into(),
+            generation,
+            sop,
+            pass_rate,
+            token_cost,
+            latency_ms,
+            fitness,
+            origin_island: origin_island.into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Island {
+    pub id: String,
+    pub niche: IslandNiche,
+    pub population: Vec<IslandCandidate>,
+    pub generation: u32,
+}
+
+impl Island {
+    pub fn new(id: impl Into<String>, niche: IslandNiche) -> Self {
+        Self {
+            id: id.into(),
+            niche,
+            population: Vec::new(),
+            generation: 0,
+        }
+    }
+
+    pub fn sort_by_fitness(&mut self) {
+        self.population.sort_by(|a, b| {
+            b.fitness
+                .partial_cmp(&a.fitness)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
+
+    pub fn best_candidate(&self) -> Option<&IslandCandidate> {
+        self.population.iter().max_by(|a, b| {
+            a.fitness
+                .partial_cmp(&b.fitness)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+    }
+}
+
+pub fn evaluate_sop_metrics(sop: &SopDefinition) -> (f64, u32, u64) {
+    let step_count = sop.steps.len() as f64;
+    let has_verification = sop.verification_command.is_some();
+    let has_audit_step = sop.steps.iter().any(|s| {
+        s.command.contains("verify") || s.command.contains("check") || s.command.contains("test")
+    });
+
+    let mut quality = 0.70 + (step_count * 0.03).min(0.15);
+    if has_verification {
+        quality += 0.08;
+    }
+    if has_audit_step {
+        quality += 0.06;
+    }
+    let pass_rate = quality.min(0.99);
+
+    let command_tokens: usize = sop.steps.iter().map(|s| s.command.len() / 4).sum();
+    let token_cost =
+        (500 + (sop.steps.len() * 180) + if has_verification { 250 } else { 0 } + command_tokens)
+            as u32;
+
+    let latency_ms =
+        (200 + (sop.steps.len() * 120) + if has_verification { 150 } else { 0 }) as u64;
+
+    (pass_rate, token_cost, latency_ms)
+}
+
+pub fn tournament_selection(island: &Island, k: usize, seed: u64) -> Option<&IslandCandidate> {
+    if island.population.is_empty() {
+        return None;
+    }
+    let pop_len = island.population.len();
+    let k = k.clamp(1, pop_len);
+    let mut best: Option<&IslandCandidate> = None;
+    for i in 0..k {
+        let idx = ((seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(i as u64 + 1)) as usize)
+            % pop_len;
+        let cand = &island.population[idx];
+        match best {
+            None => best = Some(cand),
+            Some(curr) if cand.fitness > curr.fitness => best = Some(cand),
+            _ => {}
+        }
+    }
+    best
+}
+
+pub fn crossover_sop_steps(
+    parent_a: &SopDefinition,
+    parent_b: &SopDefinition,
+    child_id: &str,
+    crossover_point: usize,
+) -> Result<SopDefinition, pandora_types::MemoryContractError> {
+    let mut child_steps: Vec<SopStep> = Vec::new();
+    let mut seen_ids = std::collections::HashSet::new();
+
+    let split = crossover_point.min(parent_a.steps.len());
+    for step in &parent_a.steps[..split] {
+        if seen_ids.insert(step.id.clone()) {
+            child_steps.push(step.clone());
+        }
+    }
+
+    for step in &parent_b.steps {
+        if !seen_ids.contains(&step.id) {
+            seen_ids.insert(step.id.clone());
+            let valid_deps: Vec<String> = step
+                .depends_on
+                .iter()
+                .filter(|dep| child_steps.iter().any(|s| &s.id == *dep))
+                .cloned()
+                .collect();
+            let mut step_clone = step.clone();
+            step_clone.depends_on = valid_deps;
+            child_steps.push(step_clone);
+        }
+    }
+
+    if child_steps.is_empty() {
+        child_steps = parent_a.steps.clone();
+    }
+
+    for i in 0..child_steps.len() {
+        let valid_prior: Vec<String> = child_steps[..i].iter().map(|s| s.id.clone()).collect();
+        child_steps[i]
+            .depends_on
+            .retain(|dep| valid_prior.contains(dep));
+    }
+
+    let verification_cmd = parent_a
+        .verification_command
+        .clone()
+        .or_else(|| parent_b.verification_command.clone());
+
+    SopDefinition::new(
+        child_id,
+        format!("Recombined SOP {child_id}"),
+        parent_a.trigger_intent,
+        child_steps,
+        verification_cmd,
+    )
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MutationKind {
+    PromptCommand,
+    StepReorder,
+    AddVerificationCheckpoint,
+}
+
+pub fn mutate_sop(
+    parent: &SopDefinition,
+    child_id: &str,
+    kind: MutationKind,
+) -> Result<SopDefinition, pandora_types::MemoryContractError> {
+    let mut steps = parent.steps.clone();
+    let mut verification = parent.verification_command.clone();
+
+    match kind {
+        MutationKind::PromptCommand => {
+            if let Some(first) = steps.first_mut() {
+                if !first.command.contains("--strict") {
+                    first.command.push_str(" --strict");
+                } else {
+                    first.command = first.command.replace(" --strict", " --cached");
+                }
+            }
+        }
+        MutationKind::StepReorder => {
+            if steps.len() >= 2 {
+                for i in 0..steps.len() - 1 {
+                    if !steps[i + 1].depends_on.contains(&steps[i].id) {
+                        steps.swap(i, i + 1);
+                        break;
+                    }
+                }
+            }
+        }
+        MutationKind::AddVerificationCheckpoint => {
+            let checkpoint_id = format!("verify-check-{}", steps.len() + 1);
+            let prev_id = steps.last().map(|s| s.id.clone());
+            let deps = match prev_id {
+                Some(id) => vec![id],
+                None => Vec::new(),
+            };
+            steps.push(SopStep::new(
+                checkpoint_id,
+                "Canary checkpoint audit",
+                "pandora decision evaluate --question 'Verify candidate state' --binary",
+                deps,
+            )?);
+            verification = Some("cargo test --workspace --locked".to_string());
+        }
+    }
+
+    for i in 0..steps.len() {
+        let valid_prior: Vec<String> = steps[..i].iter().map(|s| s.id.clone()).collect();
+        steps[i].depends_on.retain(|dep| valid_prior.contains(dep));
+    }
+
+    SopDefinition::new(
+        child_id,
+        format!("Mutated SOP {child_id}"),
+        parent.trigger_intent,
+        steps,
+        verification,
+    )
+}
+
+pub fn default_evolution_sop() -> SopDefinition {
+    SopDefinition::new(
+        "sop-base-evolution",
+        "Standard Operational Procedure for Autonomous Verification",
+        MemoryIntent::Coding,
+        vec![
+            SopStep::new(
+                "step-1-inspect",
+                "Inspect Environment State",
+                "pandora decision evaluate --question 'Verify system readiness' --binary",
+                Vec::new(),
+            )
+            .unwrap(),
+            SopStep::new(
+                "step-2-execute",
+                "Execute Surgical Operations",
+                "cargo check --workspace --locked",
+                vec!["step-1-inspect".to_string()],
+            )
+            .unwrap(),
+        ],
+        Some("cargo test --workspace --locked".to_string()),
+    )
+    .unwrap()
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct IslandSummary {
+    pub island_id: String,
+    pub niche: IslandNiche,
+    pub generation: u32,
+    pub population_size: usize,
+    pub best_fitness: f64,
+    pub best_pass_rate: f64,
+    pub best_token_cost: u32,
+    pub best_latency_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EvolutionStepReport {
+    pub generation: u32,
+    pub islands: Vec<IslandSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MigrationExchange {
+    pub from_island: String,
+    pub to_island: String,
+    pub candidate_id: String,
+    pub fitness_in_target: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MigrationReport {
+    pub generation: u32,
+    pub migrated_count: usize,
+    pub exchanges: Vec<MigrationExchange>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct IslandRunReport {
+    pub total_generations: u32,
+    pub islands: Vec<IslandSummary>,
+    pub step_reports: Vec<EvolutionStepReport>,
+    pub migration_reports: Vec<MigrationReport>,
+    pub pareto_frontier_size: usize,
+    pub pareto_candidates: Vec<ParetoCandidate>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct IslandModelEvolver {
+    pub islands: Vec<Island>,
+    pub migration_interval: u32,
+    pub migration_count: usize,
+    pub current_generation: u32,
+}
+
+impl IslandModelEvolver {
+    pub fn new(islands: Vec<Island>, migration_interval: u32, migration_count: usize) -> Self {
+        Self {
+            islands,
+            migration_interval: migration_interval.max(1),
+            migration_count: migration_count.max(1),
+            current_generation: 0,
+        }
+    }
+
+    pub fn new_default(base_sop: SopDefinition, population_size: usize) -> Self {
+        let mut islands = Vec::new();
+        for niche in IslandNiche::standard_niches() {
+            let island_id = format!("island-{}", niche.as_str());
+            let mut island = Island::new(&island_id, niche);
+            let pop_size = population_size.max(4);
+            for p in 0..pop_size {
+                let cand_sop = if p == 0 {
+                    base_sop.clone()
+                } else {
+                    let mut variant = base_sop.clone();
+                    variant.id = format!("{island_id}-0-p{p}");
+                    if p % 3 == 0 {
+                        variant = mutate_sop(&base_sop, &variant.id, MutationKind::PromptCommand)
+                            .unwrap_or_else(|_| base_sop.clone());
+                    } else if p % 3 == 1 {
+                        variant = mutate_sop(&base_sop, &variant.id, MutationKind::StepReorder)
+                            .unwrap_or_else(|_| base_sop.clone());
+                    } else {
+                        variant = mutate_sop(
+                            &base_sop,
+                            &variant.id,
+                            MutationKind::AddVerificationCheckpoint,
+                        )
+                        .unwrap_or_else(|_| base_sop.clone());
+                    }
+                    variant
+                };
+                let (pass_rate, token_cost, latency_ms) = evaluate_sop_metrics(&cand_sop);
+                let cand = IslandCandidate::new(
+                    format!("cand-{}-0-{}", niche.as_str(), p),
+                    0,
+                    cand_sop,
+                    pass_rate,
+                    token_cost,
+                    latency_ms,
+                    niche,
+                    &island_id,
+                );
+                island.population.push(cand);
+            }
+            island.sort_by_fitness();
+            islands.push(island);
+        }
+        Self::new(islands, 3, 1)
+    }
+
+    pub fn step(&mut self) -> EvolutionStepReport {
+        self.current_generation += 1;
+        let generation = self.current_generation;
+        let mut summaries = Vec::new();
+
+        for (island_idx, island) in self.islands.iter_mut().enumerate() {
+            island.generation = generation;
+            island.sort_by_fitness();
+
+            let pop_len = island.population.len();
+            let mut next_population = Vec::with_capacity(pop_len);
+
+            if let Some(elite) = island.population.first() {
+                next_population.push(elite.clone());
+            }
+
+            let mut seed = (generation as u64)
+                .wrapping_mul(1000)
+                .wrapping_add(island_idx as u64);
+            while next_population.len() < pop_len {
+                seed = seed.wrapping_add(17);
+                let parent_a = tournament_selection(island, 3, seed)
+                    .cloned()
+                    .unwrap_or_else(|| island.population[0].clone());
+                seed = seed.wrapping_add(31);
+                let parent_b = tournament_selection(island, 3, seed)
+                    .cloned()
+                    .unwrap_or_else(|| island.population[0].clone());
+
+                let child_id = format!(
+                    "sop-{}-g{}-{}",
+                    island.niche.as_str(),
+                    generation,
+                    next_population.len()
+                );
+                let crossed = crossover_sop_steps(&parent_a.sop, &parent_b.sop, &child_id, 1)
+                    .unwrap_or_else(|_| parent_a.sop.clone());
+
+                let mut child_sop = crossed;
+                if next_population.len() % 2 == 1 {
+                    let mut_kind = match (next_population.len() + generation as usize) % 3 {
+                        0 => MutationKind::PromptCommand,
+                        1 => MutationKind::StepReorder,
+                        _ => MutationKind::AddVerificationCheckpoint,
+                    };
+                    child_sop = mutate_sop(&child_sop, &child_id, mut_kind).unwrap_or(child_sop);
+                }
+
+                let (pr, cost, lat) = evaluate_sop_metrics(&child_sop);
+                let cand = IslandCandidate::new(
+                    format!(
+                        "cand-{}-g{}-{}",
+                        island.niche.as_str(),
+                        generation,
+                        next_population.len()
+                    ),
+                    generation,
+                    child_sop,
+                    pr,
+                    cost,
+                    lat,
+                    island.niche,
+                    &island.id,
+                );
+                next_population.push(cand);
+            }
+
+            island.population = next_population;
+            island.sort_by_fitness();
+
+            let best = island.best_candidate().cloned();
+            summaries.push(IslandSummary {
+                island_id: island.id.clone(),
+                niche: island.niche,
+                generation,
+                population_size: island.population.len(),
+                best_fitness: best.as_ref().map(|b| b.fitness).unwrap_or(0.0),
+                best_pass_rate: best.as_ref().map(|b| b.pass_rate).unwrap_or(0.0),
+                best_token_cost: best.as_ref().map(|b| b.token_cost).unwrap_or(0),
+                best_latency_ms: best.as_ref().map(|b| b.latency_ms).unwrap_or(0),
+            });
+        }
+
+        EvolutionStepReport {
+            generation,
+            islands: summaries,
+        }
+    }
+
+    pub fn migrate(&mut self) -> MigrationReport {
+        let n = self.islands.len();
+        if n <= 1 {
+            return MigrationReport {
+                generation: self.current_generation,
+                migrated_count: 0,
+                exchanges: Vec::new(),
+            };
+        }
+
+        let mut elites_to_send: Vec<Vec<IslandCandidate>> = Vec::with_capacity(n);
+        for island in &mut self.islands {
+            island.sort_by_fitness();
+            let count = self.migration_count.min(island.population.len());
+            let elites: Vec<IslandCandidate> = island.population[..count].to_vec();
+            elites_to_send.push(elites);
+        }
+
+        let mut exchanges = Vec::new();
+        let mut migrated_total = 0;
+
+        for (from_idx, candidates) in elites_to_send.iter().enumerate().take(n) {
+            let to_idx = (from_idx + 1) % n;
+            let target_niche = self.islands[to_idx].niche;
+            let target_island_id = self.islands[to_idx].id.clone();
+            let from_island_id = self.islands[from_idx].id.clone();
+
+            for mut immigrant in candidates.clone() {
+                immigrant.id = format!("migrated-{}-to-{}", immigrant.id, target_island_id);
+                immigrant.fitness = target_niche.compute_fitness(
+                    immigrant.pass_rate,
+                    immigrant.token_cost,
+                    immigrant.latency_ms,
+                );
+                let target_pop = &mut self.islands[to_idx].population;
+                if let Some(worst) = target_pop.last_mut() {
+                    *worst = immigrant.clone();
+                    migrated_total += 1;
+                }
+                exchanges.push(MigrationExchange {
+                    from_island: from_island_id.clone(),
+                    to_island: target_island_id.clone(),
+                    candidate_id: immigrant.id,
+                    fitness_in_target: immigrant.fitness,
+                });
+            }
+            self.islands[to_idx].sort_by_fitness();
+        }
+
+        MigrationReport {
+            generation: self.current_generation,
+            migrated_count: migrated_total,
+            exchanges,
+        }
+    }
+
+    pub fn run(&mut self, generations: u32) -> IslandRunReport {
+        let mut steps = Vec::new();
+        let mut migrations = Vec::new();
+
+        for _ in 0..generations {
+            let step_report = self.step();
+            if self
+                .current_generation
+                .is_multiple_of(self.migration_interval)
+            {
+                let mig_report = self.migrate();
+                migrations.push(mig_report);
+            }
+            steps.push(step_report);
+        }
+
+        let frontier = self.frontier();
+        let island_summaries = self
+            .islands
+            .iter()
+            .map(|island| {
+                let best = island.best_candidate().cloned();
+                IslandSummary {
+                    island_id: island.id.clone(),
+                    niche: island.niche,
+                    generation: self.current_generation,
+                    population_size: island.population.len(),
+                    best_fitness: best.as_ref().map(|b| b.fitness).unwrap_or(0.0),
+                    best_pass_rate: best.as_ref().map(|b| b.pass_rate).unwrap_or(0.0),
+                    best_token_cost: best.as_ref().map(|b| b.token_cost).unwrap_or(0),
+                    best_latency_ms: best.as_ref().map(|b| b.latency_ms).unwrap_or(0),
+                }
+            })
+            .collect();
+
+        IslandRunReport {
+            total_generations: self.current_generation,
+            islands: island_summaries,
+            step_reports: steps,
+            migration_reports: migrations,
+            pareto_frontier_size: frontier.len(),
+            pareto_candidates: frontier.candidates().to_vec(),
+        }
+    }
+
+    pub fn frontier(&self) -> ParetoFrontier {
+        let mut frontier = ParetoFrontier::new();
+        for island in &self.islands {
+            for c in &island.population {
+                let p = ParetoCandidate::new(&c.id, c.pass_rate, c.token_cost, c.latency_ms);
+                frontier.try_insert(p);
+            }
+        }
+        frontier
     }
 }
 

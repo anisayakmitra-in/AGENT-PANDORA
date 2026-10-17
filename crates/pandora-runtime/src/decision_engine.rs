@@ -1,7 +1,8 @@
-use pandora_types::{
+pub use pandora_types::{
     ConvergenceChoice, DecisionCandidate, DecisionChoice, DecisionDistribution,
     DecisionDriverConfig, DecisionDriverKind, DecisionEvolutionRecord, DecisionQuestion,
-    DecisionVerdict, DynamicVerdict, IntentTierChoice, Timestamp, ToolSafetyChoice,
+    DecisionVerdict, DpoPair, DynamicVerdict, FineTuningSample, GoldenEvaluationCase,
+    GoldenSuiteDefinition, GoldenTargetRef, IntentTierChoice, Timestamp, ToolSafetyChoice,
 };
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
@@ -675,6 +676,104 @@ impl SinglePassLogitEngine {
             }
         }
         records
+    }
+
+    pub fn harvest_uncertain_decisions_with_margin(
+        &self,
+        verdicts: &[DynamicVerdict],
+        questions: &[DecisionQuestion],
+        max_margin: Option<f64>,
+        limit: Option<usize>,
+    ) -> Vec<DecisionEvolutionRecord> {
+        let threshold = max_margin.unwrap_or(self.uncertainty_threshold);
+        let unix_now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let now = Timestamp::from_unix_seconds(unix_now);
+        let mut records = Vec::new();
+
+        for (v, q) in verdicts.iter().zip(questions.iter()) {
+            if v.is_uncertain || v.margin <= threshold {
+                records.push(DecisionEvolutionRecord {
+                    id: format!("evo-dec-{}", v.question_id),
+                    question_id: v.question_id.clone(),
+                    prompt: q.prompt.clone(),
+                    selected_label: v.selected_label.clone(),
+                    confidence: v.confidence,
+                    margin: v.margin,
+                    candidate_probabilities: v.probabilities.clone(),
+                    recorded_at: now,
+                });
+                if let Some(lim) = limit
+                    && records.len() >= lim
+                {
+                    break;
+                }
+            }
+        }
+        records
+    }
+
+    pub fn synthesize_golden_suite(
+        &self,
+        records: &[DecisionEvolutionRecord],
+        suite_id: Option<&str>,
+    ) -> GoldenSuiteDefinition {
+        let cases = records
+            .iter()
+            .enumerate()
+            .map(|(i, r)| {
+                GoldenEvaluationCase::new(
+                    format!("case-harvest-{}", r.question_id),
+                    format!("exec-harvest-{}", i + 1),
+                    r.selected_label.clone(),
+                    r.selected_label.clone(),
+                )
+                .with_target(GoldenTargetRef {
+                    kind: "prompt".to_string(),
+                    id: format!("target-{}", r.question_id),
+                })
+                .with_task(r.prompt.clone())
+            })
+            .collect();
+        GoldenSuiteDefinition::new(suite_id, cases)
+    }
+
+    pub fn synthesize_dpo_pairs(&self, records: &[DecisionEvolutionRecord]) -> Vec<DpoPair> {
+        records
+            .iter()
+            .filter_map(|r| {
+                let mut sorted: Vec<(&String, &f64)> = r.candidate_probabilities.iter().collect();
+                sorted.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
+                if sorted.len() >= 2 {
+                    Some(DpoPair {
+                        id: format!("dpo-{}", r.question_id),
+                        prompt: r.prompt.clone(),
+                        chosen: sorted[0].0.clone(),
+                        rejected: sorted[1].0.clone(),
+                        margin: r.margin,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    pub fn synthesize_fine_tuning_pairs(
+        &self,
+        records: &[DecisionEvolutionRecord],
+    ) -> Vec<FineTuningSample> {
+        records
+            .iter()
+            .map(|r| FineTuningSample {
+                id: format!("ft-{}", r.question_id),
+                prompt: r.prompt.clone(),
+                completion: r.selected_label.clone(),
+                weight: (1.0 - r.margin).clamp(0.1, 1.0),
+            })
+            .collect()
     }
 
     /// Computes numerically stable Softmax:

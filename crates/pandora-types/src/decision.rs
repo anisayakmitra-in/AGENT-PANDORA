@@ -434,6 +434,99 @@ pub struct DecisionEvolutionRecord {
     pub recorded_at: Timestamp,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct GoldenTargetRef {
+    pub kind: String,
+    pub id: String,
+}
+
+impl GoldenTargetRef {
+    pub fn new(kind: impl Into<String>, id: impl Into<String>) -> Self {
+        Self {
+            kind: kind.into(),
+            id: id.into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct GoldenEvaluationCase {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<GoldenTargetRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    pub expected_output: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub policy_violations: Vec<String>,
+}
+
+impl GoldenEvaluationCase {
+    pub fn new(
+        id: impl Into<String>,
+        execution_id: impl Into<String>,
+        output: impl Into<String>,
+        expected_output: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            target: None,
+            task: None,
+            execution_id: Some(execution_id.into()),
+            output: Some(output.into()),
+            expected_output: expected_output.into(),
+            policy_violations: Vec::new(),
+        }
+    }
+
+    pub fn with_task(mut self, task: impl Into<String>) -> Self {
+        self.task = Some(task.into());
+        self
+    }
+
+    pub fn with_target(mut self, target: GoldenTargetRef) -> Self {
+        self.target = Some(target);
+        self
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct GoldenSuiteDefinition {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suite_id: Option<String>,
+    pub cases: Vec<GoldenEvaluationCase>,
+}
+
+impl GoldenSuiteDefinition {
+    pub fn new(suite_id: Option<impl Into<String>>, cases: Vec<GoldenEvaluationCase>) -> Self {
+        Self {
+            suite_id: suite_id.map(Into::into),
+            cases,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DpoPair {
+    pub id: String,
+    pub prompt: String,
+    pub chosen: String,
+    pub rejected: String,
+    pub margin: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FineTuningSample {
+    pub id: String,
+    pub prompt: String,
+    pub completion: String,
+    pub weight: f64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

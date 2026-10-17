@@ -1,6 +1,7 @@
+pub use pandora_types::OrchestrationPlanJson;
 use pandora_types::{
-    ArtifactRef, DomainAgentProfile, ExecutionTopology, OrchestrationPlan, PlanId, RoleAssignment,
-    RoleId,
+    ArtifactRef, DomainAgentProfile, ExecutionTopology, Handoff, HarnessId, OrchestrationPlan,
+    OrchestrationRole, PlanId, RoleAssignment, RoleId,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -403,6 +404,159 @@ impl OrchestrationEngine {
             aggregate_digest,
         })
     }
+
+    pub fn synthesize_diamond_plan(
+        intent: &str,
+        custom_roles: Option<&[String]>,
+    ) -> Result<OrchestrationPlanJson, OrchestrationError> {
+        let trimmed_intent = intent.trim();
+        if trimmed_intent.is_empty() {
+            return Err(OrchestrationError::Plan(
+                pandora_types::OrchestrationContractError::EmptyField("intent"),
+            ));
+        }
+
+        let specialist_names: Vec<String> = if let Some(roles) = custom_roles {
+            let filtered: Vec<String> = roles
+                .iter()
+                .map(|r| r.trim().to_lowercase())
+                .filter(|r| !r.is_empty())
+                .collect();
+            if filtered.is_empty() {
+                infer_specialists(trimmed_intent)
+            } else {
+                filtered
+            }
+        } else {
+            infer_specialists(trimmed_intent)
+        };
+
+        let mut final_specialists = specialist_names;
+        if final_specialists.len() < 2 {
+            final_specialists.push("support_analyst".to_string());
+        }
+
+        let plan_id_str = format!("diamond-plan-{}", deterministic_slug(trimmed_intent));
+
+        let planner_id = RoleId::new("role-planner")
+            .map_err(pandora_types::OrchestrationContractError::InvalidId)?;
+        let synthesizer_id = RoleId::new("role-synthesizer")
+            .map_err(pandora_types::OrchestrationContractError::InvalidId)?;
+        let canary_id = RoleId::new("role-canary-verifier")
+            .map_err(pandora_types::OrchestrationContractError::InvalidId)?;
+
+        let mut roles = Vec::with_capacity(final_specialists.len() + 3);
+
+        roles.push(RoleAssignment::new(
+            planner_id.clone(),
+            OrchestrationRole::Planner,
+            HarnessId::new("coordination-meta")
+                .map_err(pandora_types::OrchestrationContractError::InvalidId)?,
+            Vec::new(),
+        )?);
+
+        let mut specialist_role_ids = Vec::with_capacity(final_specialists.len());
+        for spec_name in &final_specialists {
+            let spec_id = RoleId::new(format!("role-{spec_name}"))
+                .map_err(pandora_types::OrchestrationContractError::InvalidId)?;
+            specialist_role_ids.push(spec_id.clone());
+            roles.push(RoleAssignment::new(
+                spec_id,
+                OrchestrationRole::Custom(spec_name.clone()),
+                HarnessId::new("domain-specialist")
+                    .map_err(pandora_types::OrchestrationContractError::InvalidId)?,
+                vec![planner_id.clone()],
+            )?);
+        }
+
+        roles.push(RoleAssignment::new(
+            synthesizer_id.clone(),
+            OrchestrationRole::Maker,
+            HarnessId::new("synthesis-domain")
+                .map_err(pandora_types::OrchestrationContractError::InvalidId)?,
+            specialist_role_ids.clone(),
+        )?);
+
+        roles.push(RoleAssignment::new(
+            canary_id.clone(),
+            OrchestrationRole::Verifier,
+            HarnessId::new("verification-meta")
+                .map_err(pandora_types::OrchestrationContractError::InvalidId)?,
+            vec![synthesizer_id.clone()],
+        )?);
+
+        let meta_harness = HarnessId::new("coordination-meta")
+            .map_err(pandora_types::OrchestrationContractError::InvalidId)?;
+
+        let mut handoffs = Vec::with_capacity(final_specialists.len() * 2 + 1);
+        for spec_id in &specialist_role_ids {
+            handoffs.push(Handoff::new(
+                planner_id.clone(),
+                spec_id.clone(),
+                Some(meta_harness.clone()),
+            ));
+            handoffs.push(Handoff::new(
+                spec_id.clone(),
+                synthesizer_id.clone(),
+                Some(meta_harness.clone()),
+            ));
+        }
+        handoffs.push(Handoff::new(synthesizer_id, canary_id, Some(meta_harness)));
+
+        let max_parallelism = final_specialists.len();
+        let max_handoffs = handoffs.len() as u32;
+
+        let plan_json = OrchestrationPlanJson::new(
+            plan_id_str,
+            trimmed_intent,
+            ExecutionTopology::Diamond,
+            roles,
+            max_parallelism,
+            max_handoffs,
+            handoffs,
+        )?;
+
+        Ok(plan_json)
+    }
+}
+
+fn infer_specialists(intent: &str) -> Vec<String> {
+    let lower = intent.to_lowercase();
+    let mut specs = Vec::new();
+    if lower.contains("security") || lower.contains("auth") || lower.contains("guard") {
+        specs.push("security_auditor".to_string());
+    }
+    if lower.contains("perf")
+        || lower.contains("latency")
+        || lower.contains("speed")
+        || lower.contains("cache")
+    {
+        specs.push("perf_optimizer".to_string());
+    }
+    if lower.contains("data")
+        || lower.contains("store")
+        || lower.contains("database")
+        || lower.contains("sql")
+    {
+        specs.push("data_architect".to_string());
+    }
+    if lower.contains("test") || lower.contains("qa") || lower.contains("coverage") {
+        specs.push("test_engineer".to_string());
+    }
+    if specs.is_empty() {
+        specs.push("research_specialist".to_string());
+        specs.push("implementation_specialist".to_string());
+    } else if specs.len() == 1 {
+        specs.push("core_engineer".to_string());
+    }
+    specs
+}
+
+fn deterministic_slug(intent: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(intent.as_bytes());
+    let hex = format!("{:x}", hasher.finalize());
+    hex[..8].to_string()
 }
 
 pub struct OrchestrationRun {

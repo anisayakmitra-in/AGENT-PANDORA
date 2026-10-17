@@ -51,7 +51,8 @@ pub use context::{
 pub use decision::{
     ConvergenceChoice, DecisionCandidate, DecisionChoice, DecisionDistribution,
     DecisionDriverConfig, DecisionDriverKind, DecisionEvolutionRecord, DecisionQuestion,
-    DecisionVerdict, DynamicVerdict, IntentTierChoice, QuestionSchema, ToolSafetyChoice,
+    DecisionVerdict, DpoPair, DynamicVerdict, FineTuningSample, GoldenEvaluationCase,
+    GoldenSuiteDefinition, GoldenTargetRef, IntentTierChoice, QuestionSchema, ToolSafetyChoice,
 };
 pub use effect::{
     EffectOutcome, EffectPermit, EffectReceipt, EffectTarget, OperationRequest, RequestError,
@@ -105,8 +106,8 @@ pub use observability::{
 pub use orchestration::{
     DomainAgentProfile, DomainProfileMode, ExecutionTopology, Handoff, IterationOutcome,
     LoopDecision, LoopTermination, MAX_ORCHESTRATION_HANDOFFS, MAX_ORCHESTRATION_ROLES,
-    OrchestrationContractError, OrchestrationPlan, OrchestrationRole, RoleAssignment,
-    RunLoopConfig, RunLoopSnapshot, RunLoopState, Usage,
+    OrchestrationContractError, OrchestrationPlan, OrchestrationPlanJson, OrchestrationRole,
+    RoleAssignment, RunLoopConfig, RunLoopSnapshot, RunLoopState, Usage,
 };
 pub use package::{
     DomainRoutingProfile, GeneExecutionMode, GenePackageContract, MAX_DOMAIN_ROUTE_HINT_BYTES,

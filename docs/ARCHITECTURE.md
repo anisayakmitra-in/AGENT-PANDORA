@@ -229,7 +229,38 @@ The `DecisionEngine` (`crates/pandora-runtime/src/decision_engine.rs`) introduce
    - `CustomApiDecisionDriver`: Interfaces with OpenAI-compatible `/v1/chat/completions` endpoints requesting `logprobs: true` and extracting candidate probabilities from top logprob distributions.
    - `MockDecisionDriver`: FIFO queue for deterministic unit test assertions and replaying edge cases.
 3. **Calibrated Confidence & Softmax**: Extreme logits are normalized via numerically stable Softmax with max-logit subtraction, followed by temperature scaling and confidence margin calculation (top-1 minus top-2 probability).
-4. **Active Learning Uncertainty Harvesting**: Decisions falling below the calibrated uncertainty threshold are harvested as `DecisionEvolutionRecord` items for continuous active learning, canary regression generation, and self-evolution.
+4. **Active-Learning Uncertainty Harvester & Golden Dataset Synthesis (Hermes-inspired)**: Decisions falling below the calibrated confidence margin threshold (`--min-margin <float>`) are automatically harvested as `DecisionEvolutionRecord` items. The engine directly synthesizes:
+   - `GoldenSuiteDefinition` & `GoldenEvaluationCase`: Validated evaluation suites consumable directly by `pandora evaluation golden` without manual annotation.
+   - `DpoPair`: Direct Preference Optimization pairs (`prompt`, `chosen`, `rejected`, `margin`) for downstream alignment.
+   - `FineTuningSample`: Supervised fine-tuning prompt/completion pairs with calibrated sample weights.
+
+### Darwinian Island-Model Multi-Population Genetic Evolver
+
+Inspired by Darwinian multi-agent evolver architectures, the `IslandModelEvolver` (`crates/pandora-runtime/src/evolution.rs`) eliminates single-population premature convergence through isolated subpopulations across distinct niches:
+
+1. **Niche Specialization**:
+   - `QualityFirst`: Prioritizes pass rate and rigorous verification above all else.
+   - `CostMinimal`: Enforces minimal token cost and lean execution pathways.
+   - `LatencyOptimized`: Optimizes execution speed and minimized step latency.
+2. **Genetic Operators**:
+   - **Tournament Selection**: K-candidate tournament selection picking top fitness performers within each niche.
+   - **SOP Step Crossover**: Recombines Standard Operating Procedure steps from two parent procedures while preserving trigger intent and step ordering.
+   - **Mutation Operators**: Contextual prompt mutations, step reordering, and verification checkpoint insertion.
+3. **Ring Elite Migration**: Periodic migration of top elite candidates across a unidirectional ring topology (`QualityFirst` -> `CostMinimal` -> `LatencyOptimized` -> `QualityFirst`), injecting high-fitness genetic diversity without homogenizing niches.
+4. **Pareto Frontier Generation**: Tracks global non-dominated solutions across the three competing objectives (pass rate, token cost, and latency ms).
+
+### Dynamic Emergent Swarm Topology Synthesis
+
+Inspired by OpenViking dynamic agent architectures, the `OrchestrationEngine` (`crates/pandora-runtime/src/orchestration_engine.rs`) compiles natural language architectural intent into validated Diamond execution DAGs:
+
+1. **Topology Synthesis**:
+   - **Planner (`coordination-meta`)**: Root node establishing execution scope and task partitioning.
+   - **Parallel Specialist Roles (`domain-specialist`)**: Concurrently executed domain roles inferred from task intent (e.g. security auditors, cache specialists, load testers).
+   - **Synthesizer (`synthesis-domain`)**: Aggregates and merges multi-role outputs into a coherent artifact candidate.
+   - **Canary Verification Gate (`verification-meta`)**: Downstream verification checkpoint asserting quality gates prior to execution commit.
+2. **Contract Safety & Cross-Domain Coordination**:
+   - Every synthesized plan validates DAG acyclicity, bounded parallelism, and bounded handoffs.
+   - Cross-domain handoffs between distinct harnesses are strictly coordinated through declared Meta Harness routing.
 
 ## Extending Pandora
 

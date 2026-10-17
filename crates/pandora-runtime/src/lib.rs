@@ -98,7 +98,8 @@ pub use context_engine::{ContextCacheStats, ContextEngine, ContextError};
 pub use context_recovery::{ContextRecovery, RecoveryDecision, RecoveryInput, RecoveryStep};
 pub use context_vfs::{ContextVfs, VfsError};
 pub use decision_engine::{
-    CustomApiDecisionDriver, DecisionDriver, DecisionEngine, DecisionError,
+    CustomApiDecisionDriver, DecisionDriver, DecisionEngine, DecisionError, DpoPair,
+    FineTuningSample, GoldenEvaluationCase, GoldenSuiteDefinition, GoldenTargetRef,
     HeuristicDecisionDriver, MockDecisionDriver, OllamaDecisionDriver, SinglePassLogitEngine,
 };
 pub use device_trust::{
@@ -127,7 +128,9 @@ pub use evaluation_suite::{
 };
 pub use evolution::{
     BayesianCanaryGate, BayesianCanaryVerdict, EvolutionEngine, EvolutionError, EvolutionRecord,
-    ParetoCandidate, ParetoFrontier,
+    EvolutionStepReport, Island, IslandCandidate, IslandModelEvolver, IslandNiche, IslandRunReport,
+    IslandSummary, MigrationExchange, MigrationReport, MutationKind, ParetoCandidate,
+    ParetoFrontier, default_evolution_sop,
 };
 pub use execution_controller::{
     ExecutionController, RunStatus, RunSummary, RuntimeError, WorktreeExecutionContext,
@@ -186,7 +189,8 @@ pub use observability::{
 pub use operations::{OperationalEvent, OperationalRecorder, OperationalStatus};
 pub use orchestration_engine::{
     DiamondReceipt, DomainProfileRun, EdgeVerificationError, EdgeVerifierPolicy,
-    OrchestrationEngine, OrchestrationError, OrchestrationRun, OrchestrationRunSnapshot,
+    OrchestrationEngine, OrchestrationError, OrchestrationPlanJson, OrchestrationRun,
+    OrchestrationRunSnapshot,
 };
 pub use orchestration_store::{
     OrchestrationBudgetReservationRecord, OrchestrationBudgetReservationState,

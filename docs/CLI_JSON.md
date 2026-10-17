@@ -90,6 +90,8 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora decision evaluate ... --json` | `decision evaluate` | `question_id`, `selected`, `confidence`, `margin`, `is_uncertain`, `probabilities`, `latency_ms`, `driver` |
 | `pandora decision tool-gate --tool <name> ... --json` | `decision tool-gate` | `tool`, `selected`, `confidence`, `latency_ms`, `distribution` |
 | `pandora decision intent-route --prompt <text> --json` | `decision intent-route` | `prompt`, `selected`, `confidence`, `latency_ms`, `distribution` |
+| `pandora decision harvest --min-margin <float> ... --json` | `decision harvest` | `harvested_count`, `min_margin`, `limit`, `suite_id`, `exported_golden`, `exported_dpo`, `cases` |
+| `pandora orchestration synthesize --intent <text> ... --json` | `orchestration synthesize` | `plan_id`, `intent`, `topology`, `max_parallelism`, `max_handoffs`, `roles_count`, `handoffs_count`, `out_path`, `plan` |
 | `pandora backup lifecycle preview --input <path> --json` | `backup lifecycle preview` | `dry_run`, `would_record`, validated `manifest`, and the non-execution/non-erasure `boundary` |
 | `pandora backup lifecycle record --input <path> --yes --json` | `backup lifecycle record` | `created`, `idempotent_replay`, append-only `receipt`, and the non-execution/non-erasure `boundary` |
 | `pandora backup lifecycle list|inspect ... --json` | `backup lifecycle list` or `backup lifecycle inspect` | append-only operator-attested receipt manifests, manifest digests, recorded times, evidence status, and external-action boundary |
@@ -104,6 +106,10 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora evolution rollout promote|pause|resume|reject|retry|rollback ... --json` | matching `evolution rollout` command | the same durable rollout projection; exact idempotent retry returns `changed: false` and a conflicting transition identity fails closed |
 | `pandora evolution activate --id <proposal-id> --json` | `evolution activate` | `proposal_id`, `state`, `base_artifact`, `candidate_artifact`, `activated_at`, `activation_scope`, `runtime_authority_changed`, `durability` |
 | `pandora evolution rollback --id <proposal-id> --reason <text> --json` | `evolution rollback` | `proposal_id`, `state`, `restored_artifact`, `rolled_back_at`, `reason`, `durability` |
+| `pandora evolution island init ... --json` | `evolution island init` | `islands_count`, `population_per_island`, `state_path`, `islands` |
+| `pandora evolution island step ... --json` | `evolution island step` | `current_generation`, `generations_run`, `reports`, `islands` |
+| `pandora evolution island migrate ... --json` | `evolution island migrate` | `generation`, `migrated_count`, `exchanges` |
+| `pandora evolution island run ... --json` | `evolution island run` | `total_generations`, `pareto_frontier_size`, `islands`, `pareto_candidates` |
 | `pandora evaluation suite ... --json` | `evaluation suite` | register/inspect: `id`, `digest`, `definition_bytes`, `created_at`, `durability`; register with `--candidate` also returns `candidate_id` and `review_gate`; run: `total`, `passed`, `failed`, `digest`, typed `artifact_scorecards`, `cases` with typed `target` and `task`; list: `suites`, `count`, `durability`
 | `pandora evaluation inspect --session <id> --json` | `evaluation inspect` | `session_id`, `execution_id`, `count`, `result_counts`, `receipts`, `durability` |
 | `pandora evaluation scorecard --session <id> [--fail-on-non-passed] --json` | `evaluation scorecard` | `session_id`, `receipt_count`, `result_count`, `result_counts`, `score_sum`, `average_score`, `pass_rate_percent`, `by_kind`, `digest`, `durability`; with the gate, non-passed results return the same data under an execution error |
