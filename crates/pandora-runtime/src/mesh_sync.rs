@@ -253,22 +253,57 @@ impl MeshSyncEngine {
             )));
         }
 
-        let mut visited = HashSet::new();
-        let mut queue = package.parent_capsule_ids.clone();
-
-        while let Some(parent) = queue.pop() {
-            if parent == capsule_id {
+        // Detect any cycle in the reachable ancestry graph using DFS recursion-stack tracking
+        fn check_ancestry_cycle(
+            current: &str,
+            target_capsule: &str,
+            known_ancestors: &HashMap<String, Vec<String>>,
+            visited: &mut HashSet<String>,
+            in_stack: &mut HashSet<String>,
+        ) -> Result<(), MeshError> {
+            if current == target_capsule {
                 return Err(MeshError::DagCycle(format!(
-                    "cycle detected in capsule lineage reaching {capsule_id}"
+                    "cycle detected in capsule lineage reaching {target_capsule}"
                 )));
             }
-            if visited.insert(parent.clone()) {
-                if let Some(ancestors) = known_ancestors.get(&parent) {
-                    for ancestor in ancestors {
-                        queue.push(ancestor.clone());
-                    }
+            if in_stack.contains(current) {
+                return Err(MeshError::DagCycle(format!(
+                    "cycle detected in capsule ancestry lineage at node {current}"
+                )));
+            }
+            if visited.contains(current) {
+                return Ok(());
+            }
+
+            visited.insert(current.to_string());
+            in_stack.insert(current.to_string());
+
+            if let Some(parents) = known_ancestors.get(current) {
+                for parent in parents {
+                    check_ancestry_cycle(
+                        parent,
+                        target_capsule,
+                        known_ancestors,
+                        visited,
+                        in_stack,
+                    )?;
                 }
             }
+
+            in_stack.remove(current);
+            Ok(())
+        }
+
+        let mut visited = HashSet::new();
+        let mut in_stack = HashSet::new();
+        for parent in &package.parent_capsule_ids {
+            check_ancestry_cycle(
+                parent,
+                &capsule_id,
+                known_ancestors,
+                &mut visited,
+                &mut in_stack,
+            )?;
         }
 
         Ok(CapsuleValidationVerdict {
@@ -356,33 +391,43 @@ impl MeshSyncEngine {
                         || path.to_string_lossy().ends_with(".capsule.json")
                     {
                         if let Ok(content) = fs::read_to_string(&path) {
-                            if let Ok(package) =
-                                serde_json::from_str::<SignedCapsulePackage>(&content)
-                            {
-                                match Self::validate_capsule_package(&package, &known_ancestors) {
-                                    Ok(verdict) => {
-                                        let cap_id = verdict.capsule_id.clone();
-                                        let _ = store.store_mesh_capsule(&package);
-                                        known_ancestors.insert(
-                                            cap_id.clone(),
-                                            package.parent_capsule_ids.clone(),
-                                        );
-                                        admitted.push(cap_id.clone());
+                            let filename = path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .to_string();
+                            match serde_json::from_str::<SignedCapsulePackage>(&content) {
+                                Ok(package) => {
+                                    match Self::validate_capsule_package(&package, &known_ancestors)
+                                    {
+                                        Ok(verdict) => {
+                                            let cap_id = verdict.capsule_id.clone();
+                                            let _ = store.store_mesh_capsule(&package);
+                                            known_ancestors.insert(
+                                                cap_id.clone(),
+                                                package.parent_capsule_ids.clone(),
+                                            );
+                                            admitted.push(cap_id.clone());
 
-                                        if auto_promote {
-                                            if let Ok(stored) = store.store_sop(
-                                                tenant_id,
-                                                workspace_id,
-                                                &package.capsule.sop,
-                                                timestamp,
-                                            ) {
-                                                promoted.push(stored.sop.id);
+                                            if auto_promote {
+                                                if let Ok(stored) = store.store_sop(
+                                                    tenant_id,
+                                                    workspace_id,
+                                                    &package.capsule.sop,
+                                                    timestamp,
+                                                ) {
+                                                    promoted.push(stored.sop.id);
+                                                }
                                             }
                                         }
+                                        Err(e) => {
+                                            rejected
+                                                .push((package.capsule.capsule_id, e.to_string()));
+                                        }
                                     }
-                                    Err(e) => {
-                                        rejected.push((package.capsule.capsule_id, e.to_string()));
-                                    }
+                                }
+                                Err(e) => {
+                                    rejected.push((filename, format!("invalid capsule JSON: {e}")));
                                 }
                             }
                         }
@@ -450,6 +495,60 @@ impl MeshSyncEngine {
         }
 
         Ok(peers)
+    }
+
+    /// Broadcasts an Ed25519 identity handshake announcement over UDP broadcast or unicast.
+    pub fn broadcast_peer_announcement(
+        identity: &PeerIdentity,
+        listen_addr: &str,
+        target_addr: &str,
+    ) -> Result<MeshHandshake, MeshError> {
+        let handshake = identity.create_handshake(listen_addr, vec!["capsule_gossip".to_string()]);
+        let payload =
+            serde_json::to_vec(&handshake).map_err(|e| MeshError::Serialization(e.to_string()))?;
+
+        if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
+            let _ = socket.set_broadcast(true);
+            let _ = socket.send_to(&payload, target_addr);
+        }
+        Ok(handshake)
+    }
+
+    /// Listens briefly for incoming UDP peer announcements and records verified peers to SQLite.
+    pub fn receive_peer_announcements(
+        store: &SessionStore,
+        bind_addr: &str,
+        timeout: std::time::Duration,
+    ) -> Result<Vec<MeshPeerEntry>, MeshError> {
+        let socket = match std::net::UdpSocket::bind(bind_addr) {
+            Ok(s) => s,
+            Err(e) => return Err(MeshError::Io(format!("UDP bind error on {bind_addr}: {e}"))),
+        };
+        let _ = socket.set_read_timeout(Some(timeout));
+        let mut buf = [0u8; 4096];
+        let mut discovered = Vec::new();
+
+        while let Ok((amt, src)) = socket.recv_from(&mut buf) {
+            if let Ok(handshake) = serde_json::from_slice::<MeshHandshake>(&buf[..amt]) {
+                if handshake.verify().unwrap_or(false) {
+                    let entry = MeshPeerEntry {
+                        peer_id: handshake.peer_id.clone(),
+                        address: if handshake.listen_addr.is_empty() {
+                            src.to_string()
+                        } else {
+                            handshake.listen_addr.clone()
+                        },
+                        public_key: handshake.public_key.clone(),
+                        status: "discovered".to_string(),
+                        last_seen: handshake.timestamp,
+                        trust_score: 0.90,
+                    };
+                    let _ = store.store_mesh_peer(&entry);
+                    discovered.push(entry);
+                }
+            }
+        }
+        Ok(discovered)
     }
 }
 
@@ -548,5 +647,68 @@ mod tests {
         assert!(verdict.sha256_verified);
         assert!(verdict.signature_verified);
         assert!(verdict.dag_acyclic);
+    }
+
+    #[test]
+    fn test_dag_cycle_detection_in_ancestor_lineage() {
+        let id = PeerIdentity::new_random();
+        let step = SopStep::new("s1", "Step 1", "echo 1", vec![]).unwrap();
+        let sop = SopDefinition::new(
+            "sop-test-mesh-cycle",
+            "Mesh SOP Cycle",
+            MemoryIntent::Procedure,
+            vec![step],
+            None,
+        )
+        .unwrap();
+
+        let capsule = MemoryCapsule::new(
+            "capsule-leaf",
+            sop,
+            id.peer_id.clone(),
+            Timestamp::from_unix_seconds(100),
+        )
+        .unwrap();
+
+        let package = SignedCapsulePackage {
+            capsule: capsule.clone(),
+            author_public_key: id.public_key_hex(),
+            author_signature: id.sign_digest(&capsule.sha256_digest),
+            parent_capsule_ids: vec!["node_1".to_string()],
+            gossip_hops: 0,
+        };
+
+        // Construct cyclic ancestor graph: node_1 -> node_2 -> node_3 -> node_1
+        let mut cyclic_ancestors = HashMap::new();
+        cyclic_ancestors.insert("node_1".to_string(), vec!["node_2".to_string()]);
+        cyclic_ancestors.insert("node_2".to_string(), vec!["node_3".to_string()]);
+        cyclic_ancestors.insert("node_3".to_string(), vec!["node_1".to_string()]);
+
+        let result = MeshSyncEngine::validate_capsule_package(&package, &cyclic_ancestors);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), MeshError::DagCycle(_)));
+
+        // Test diamond DAG (valid, non-cyclic multi-parent graph):
+        // leaf -> [node_b, node_c]
+        // node_b -> [node_d]
+        // node_c -> [node_d]
+        // node_d -> []
+        let mut diamond_ancestors = HashMap::new();
+        diamond_ancestors.insert("node_b".to_string(), vec!["node_d".to_string()]);
+        diamond_ancestors.insert("node_c".to_string(), vec!["node_d".to_string()]);
+        diamond_ancestors.insert("node_d".to_string(), vec![]);
+
+        let diamond_package = SignedCapsulePackage {
+            capsule: capsule.clone(),
+            author_public_key: id.public_key_hex(),
+            author_signature: id.sign_digest(&capsule.sha256_digest),
+            parent_capsule_ids: vec!["node_b".to_string(), "node_c".to_string()],
+            gossip_hops: 0,
+        };
+
+        let diamond_verdict =
+            MeshSyncEngine::validate_capsule_package(&diamond_package, &diamond_ancestors).unwrap();
+        assert!(diamond_verdict.valid);
+        assert!(diamond_verdict.dag_acyclic);
     }
 }

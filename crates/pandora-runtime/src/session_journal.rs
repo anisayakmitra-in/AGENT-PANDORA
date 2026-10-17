@@ -138,17 +138,13 @@ impl SessionJournalEngine {
         }
     }
 
-    /// Rewinds workspace and session state back to exact prior step index `target_step`.
-    pub fn rewind(
+    fn load_or_synthesize_steps(
         store: &SessionStore,
         session_id: &SessionId,
-        target_step: usize,
-        workspace: Option<&Path>,
-    ) -> Result<RewindResult, SessionError> {
-        // 1. Load journal steps from SQLite
+    ) -> Result<Vec<JournalStep>, SessionError> {
         let mut steps = store.load_journal_steps(session_id)?;
 
-        // If no journal steps were persisted, synthesize steps from snapshot so rewind works on any session
+        // If no journal steps were persisted, synthesize steps from snapshot so rewind/fork/diff works on any session
         if steps.is_empty() {
             let (p, t, w) = default_scope();
             if let Ok(snap) = store.resume(session_id, &p, &t, &w) {
@@ -181,19 +177,28 @@ impl SessionJournalEngine {
             return Err(SessionError::SessionNotFound);
         }
 
-        if target_step >= steps.len() {
-            return Err(SessionError::InvalidStep(format!(
-                "target step {target_step} exceeds total recorded steps ({})",
-                steps.len()
-            )));
-        }
+        Ok(steps)
+    }
 
-        let max_step = steps.last().map(|s| s.step_index).unwrap_or(0);
+    /// Rewinds workspace and session state back to exact prior step index `target_step`.
+    pub fn rewind(
+        store: &SessionStore,
+        session_id: &SessionId,
+        target_step: usize,
+        workspace: Option<&Path>,
+    ) -> Result<RewindResult, SessionError> {
+        let steps = Self::load_or_synthesize_steps(store, session_id)?;
+
         let target_step_record = steps
             .iter()
             .find(|s| s.step_index == target_step)
-            .ok_or_else(|| SessionError::InvalidStep(format!("step {target_step} not found")))?;
+            .ok_or_else(|| {
+                SessionError::InvalidStep(format!(
+                    "target step {target_step} not found in recorded steps"
+                ))
+            })?;
 
+        let max_step = steps.iter().map(|s| s.step_index).max().unwrap_or(0);
         let target_digest = target_step_record.sha256_digest.clone();
         let restored_env = target_step_record.environment_state.clone();
 
@@ -238,45 +243,11 @@ impl SessionJournalEngine {
         workspace_id: &WorkspaceId,
         timestamp: Timestamp,
     ) -> Result<ForkResult, SessionError> {
-        let mut steps = store.load_journal_steps(parent_session_id)?;
+        let steps = Self::load_or_synthesize_steps(store, parent_session_id)?;
 
-        // If no journal steps in DB, synthesize from snapshot
-        if steps.is_empty() {
-            let (p, t, w) = default_scope();
-            if let Ok(snap) = store.resume(parent_session_id, &p, &t, &w) {
-                let mut prev = None;
-                for (idx, msg) in snap.agent_messages().iter().enumerate() {
-                    let tool_name = msg
-                        .tool_calls()
-                        .ok()
-                        .and_then(|c| c.first().map(|tc| tc.name().to_string()));
-                    let step = Self::capture_turn_step(
-                        parent_session_id.clone(),
-                        idx,
-                        tool_name,
-                        None,
-                        None,
-                        Some(msg.content().to_string()),
-                        String::new(),
-                        HashMap::new(),
-                        prev.as_deref(),
-                        Timestamp::from_unix_seconds(100 + idx as u64),
-                    );
-                    prev = Some(step.sha256_digest.clone());
-                    let _ = store.store_journal_step(&step);
-                    steps.push(step);
-                }
-            }
-        }
-
-        if steps.is_empty() {
-            return Err(SessionError::SessionNotFound);
-        }
-
-        if step_k >= steps.len() {
+        if !steps.iter().any(|s| s.step_index == step_k) {
             return Err(SessionError::InvalidStep(format!(
-                "step {step_k} exceeds recorded steps ({})",
-                steps.len()
+                "step {step_k} not found in recorded steps"
             )));
         }
 
@@ -318,7 +289,7 @@ impl SessionJournalEngine {
 
         if workspace.join(".git").exists() {
             let _ = fs::create_dir_all(&forks_dir);
-            let _ = Command::new("git")
+            let output = Command::new("git")
                 .args([
                     "worktree",
                     "add",
@@ -329,6 +300,9 @@ impl SessionJournalEngine {
                 ])
                 .current_dir(workspace)
                 .output();
+            if output.as_ref().map(|o| !o.status.success()).unwrap_or(true) {
+                let _ = fs::create_dir_all(&worktree_path);
+            }
         } else {
             let _ = fs::create_dir_all(&worktree_path);
         }
@@ -351,7 +325,7 @@ impl SessionJournalEngine {
         step_a: usize,
         step_b: usize,
     ) -> Result<SessionStepDiff, SessionError> {
-        let steps = store.load_journal_steps(session_id)?;
+        let steps = Self::load_or_synthesize_steps(store, session_id)?;
 
         let a = steps
             .iter()
@@ -363,19 +337,44 @@ impl SessionJournalEngine {
             .find(|s| s.step_index == step_b)
             .ok_or_else(|| SessionError::InvalidStep(format!("step {step_b} not found")))?;
 
-        let tool_diff = format!(
-            "Step {step_a} tool: {:?} | Step {step_b} tool: {:?}",
-            a.tool_name, b.tool_name
-        );
+        let tool_diff = if a.tool_name == b.tool_name && a.arguments == b.arguments {
+            format!(
+                "Step {step_a} and Step {step_b} invoked identical tool: {:?}",
+                a.tool_name
+            )
+        } else {
+            format!(
+                "Step {step_a}: {:?} (args: {}) -> Step {step_b}: {:?} (args: {})",
+                a.tool_name,
+                a.arguments
+                    .as_ref()
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                b.tool_name,
+                b.arguments
+                    .as_ref()
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "none".to_string())
+            )
+        };
 
-        let ws_diff = format!(
-            "Diff Step {step_a} -> Step {step_b}:\n{}",
-            if a.workspace_diff == b.workspace_diff {
-                "No workspace diff change between steps"
-            } else {
-                "Workspace state modified across turn interval"
-            }
-        );
+        let ws_diff = if a.workspace_diff == b.workspace_diff {
+            format!("Diff Step {step_a} -> Step {step_b}: No workspace changes between steps")
+        } else {
+            format!(
+                "Diff Step {step_a} -> Step {step_b}:\n--- Step {step_a}\n+++ Step {step_b}\n{}\n{}",
+                if a.workspace_diff.is_empty() {
+                    "  (clean workspace)"
+                } else {
+                    &a.workspace_diff
+                },
+                if b.workspace_diff.is_empty() {
+                    "  (clean workspace)"
+                } else {
+                    &b.workspace_diff
+                }
+            )
+        };
 
         let mut env_diff = HashMap::new();
         let mut all_keys: Vec<_> = a

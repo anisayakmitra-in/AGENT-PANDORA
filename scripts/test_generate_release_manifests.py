@@ -10,6 +10,7 @@ from scripts.generate_release_manifests import (
     generate_homebrew_formula,
     generate_release_manifests,
     generate_scoop_manifest,
+    generate_winget_default_locale_manifest,
     generate_winget_installer_manifest,
     generate_winget_version_manifest,
     main,
@@ -88,6 +89,18 @@ class GenerateReleaseManifestsTests(unittest.TestCase):
         self.assertIn(SAMPLE_CHECKSUMS["pandora-x86_64-pc-windows-msvc.exe"], inst)
         self.assertIn("ManifestType: installer", inst)
 
+        loc = generate_winget_default_locale_manifest("2.0.0")
+        self.assertIn("PackageIdentifier: AnisayakmitraIn.AGENT-PANDORA", loc)
+        self.assertIn("ManifestType: defaultLocale", loc)
+        self.assertIn("PackageLocale: en-US", loc)
+
+    def test_require_cosign_missing_signature_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            checksums_file = self._create_checksum_file(root)
+            with self.assertRaises(ManifestGenerationError):
+                validate_release_checksums(checksums_file, require_cosign=True)
+
     def test_generate_release_manifests_end_to_end(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -105,6 +118,7 @@ class GenerateReleaseManifestsTests(unittest.TestCase):
             self.assertTrue(results["scoop_manifest"].is_file())
             self.assertTrue(results["winget_version"].is_file())
             self.assertTrue(results["winget_installer"].is_file())
+            self.assertTrue(results["winget_default_locale"].is_file())
 
             # Check json parsing of scoop manifest
             parsed_scoop = json.loads(results["scoop_manifest"].read_text(encoding="utf-8"))
@@ -128,6 +142,7 @@ class GenerateReleaseManifestsTests(unittest.TestCase):
             self.assertTrue((out_dir / "bucket" / "pandora.json").is_file())
             self.assertTrue((out_dir / "winget" / "manifest.version.yaml").is_file())
             self.assertTrue((out_dir / "winget" / "manifest.installer.yaml").is_file())
+            self.assertTrue((out_dir / "winget" / "manifest.defaultLocale.yaml").is_file())
 
 
 if __name__ == "__main__":

@@ -1133,20 +1133,28 @@ fn contract_reflexion_crystallize_and_evolution_loop() {
     let fixture = Fixture::new();
     fixture.setup();
 
-    // 1. Run CLI memory crystallize --all
+    // 1. Run CLI memory crystallize --session with non-existent session ID -> must fail
+    let err_resp = fixture.run(&[
+        "memory",
+        "crystallize",
+        "--session",
+        "non-existent-session-404",
+    ]);
+    assert!(!err_resp.status.success(), "non-existent session must fail");
+
+    // 2. Run CLI memory crystallize --all
     let crys_resp = fixture.run(&["memory", "crystallize", "--all"]);
     let crys_val = crys_resp.success("memory crystallize");
     assert!(crys_val["results"].is_array());
 
-    // 2. Run CLI evolution loop --once
+    // 3. Run CLI evolution loop --once
     let evo_resp = fixture.run(&["evolution", "loop", "--once"]);
     let evo_val = evo_resp.success("evolution loop");
     assert_eq!(evo_val["status"], "completed");
     assert_eq!(evo_val["mode"], "once");
     assert_eq!(evo_val["cycles_completed"], 1);
 
-    // 3. Test in-memory ReflexionCrystallizer with BayesianCanaryGate
-    let _crystallizer = ReflexionCrystallizer::default();
+    // 4. Test in-memory ReflexionCrystallizer with BayesianCanaryGate
     let sample_prompt = "Execute command in /tmp/work/AGENT-PANDORA with commit 0123456789abcdef0123456789abcdef01234567 session 12345678-1234-1234-1234-123456789abc and sha256:aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899";
     let (parameterized, literals) = ReflexionCrystallizer::parameterize_literals(
         sample_prompt,
@@ -1156,9 +1164,9 @@ fn contract_reflexion_crystallize_and_evolution_loop() {
     assert!(parameterized.contains("{{COMMIT_SHA}}"));
     assert!(parameterized.contains("{{SESSION_ID}}"));
     assert!(parameterized.contains("{{SHA256_DIGEST}}"));
-    assert!(!literals.is_empty());
+    assert_eq!(literals.len(), 4);
 
-    // 4. Test BayesianCanaryGate evaluation
+    // 5. Test BayesianCanaryGate evaluation
     let canary = BayesianCanaryGate::new(0.95);
     let v_pass = canary.evaluate(20, 0, 0.80);
     assert!(v_pass.promoted);
@@ -1245,6 +1253,13 @@ fn contract_session_journal_rewind_fork_diff() {
     let diff_val = diff_resp.success("session diff");
     assert_eq!(diff_val["step_a"], 0);
     assert_eq!(diff_val["step_b"], 1);
+    assert!(diff_val["tool_diff"].as_str().unwrap().contains("Step 0"));
+    assert!(
+        diff_val["workspace_diff"]
+            .as_str()
+            .unwrap()
+            .contains("--- Step 0")
+    );
 
     // Test CLI session fork
     let fork_resp = fixture.run(&[
@@ -1272,6 +1287,7 @@ fn contract_session_journal_rewind_fork_diff() {
     let rewind_val = rewind_resp.success("session rewind");
     assert_eq!(rewind_val["rolled_back_to_step"], 0);
     assert_eq!(rewind_val["rolled_back_from_step"], 2);
+    assert_eq!(rewind_val["confirmed"], true);
 
     // Verify DB truncation
     let remaining_steps = store
@@ -1296,6 +1312,11 @@ fn contract_mesh_sync_gossip_and_3_point_validation() {
     let handshake = peer.create_handshake("127.0.0.1:9099", vec!["gossip".to_string()]);
     assert!(handshake.verify().unwrap());
     assert_eq!(handshake.peer_id, peer.peer_id);
+
+    // Test UDP peer announcement broadcast
+    let udp_announcement =
+        MeshSyncEngine::broadcast_peer_announcement(&peer, "127.0.0.1:9099", "127.0.0.1:49999");
+    assert!(udp_announcement.is_ok());
 
     // 3. Create test SOP and MemoryCapsule
     let step = SopStep::new("step-1", "Compile Code", "cargo check", vec![]).unwrap();
@@ -1343,6 +1364,16 @@ fn contract_mesh_sync_gossip_and_3_point_validation() {
         MeshSyncEngine::validate_capsule_package(&bad_package, &std::collections::HashMap::new())
             .is_err()
     );
+
+    // Cyclic ancestry check
+    let mut cyclic_ancestors = std::collections::HashMap::new();
+    cyclic_ancestors.insert("anc-1".to_string(), vec!["anc-2".to_string()]);
+    cyclic_ancestors.insert("anc-2".to_string(), vec!["anc-3".to_string()]);
+    cyclic_ancestors.insert("anc-3".to_string(), vec!["anc-1".to_string()]);
+    let mut cyclic_package = package.clone();
+    cyclic_package.parent_capsule_ids = vec!["anc-1".to_string()];
+    let cyc_res = MeshSyncEngine::validate_capsule_package(&cyclic_package, &cyclic_ancestors);
+    assert!(cyc_res.is_err());
 
     // 5. Store capsule in DB and test CLI memory mesh sync
     let store =
@@ -1401,11 +1432,13 @@ fn contract_release_manifests_generation_and_cosign_validation() {
     let scoop_file = out_dir.join("bucket").join("pandora.json");
     let winget_ver_file = out_dir.join("winget").join("manifest.version.yaml");
     let winget_inst_file = out_dir.join("winget").join("manifest.installer.yaml");
+    let winget_loc_file = out_dir.join("winget").join("manifest.defaultLocale.yaml");
 
     assert!(formula_file.is_file());
     assert!(scoop_file.is_file());
     assert!(winget_ver_file.is_file());
     assert!(winget_inst_file.is_file());
+    assert!(winget_loc_file.is_file());
 
     let formula = fs::read_to_string(&formula_file).unwrap();
     assert!(formula.contains("class Pandora < Formula"));
@@ -1414,4 +1447,8 @@ fn contract_release_manifests_generation_and_cosign_validation() {
     let scoop_str = fs::read_to_string(&scoop_file).unwrap();
     let scoop_json: serde_json::Value = serde_json::from_str(&scoop_str).unwrap();
     assert_eq!(scoop_json["version"], "2.0.0-beta.8");
+
+    let loc_str = fs::read_to_string(&winget_loc_file).unwrap();
+    assert!(loc_str.contains("ManifestType: defaultLocale"));
+    assert!(loc_str.contains("PackageLocale: en-US"));
 }

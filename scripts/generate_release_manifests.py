@@ -124,10 +124,10 @@ def validate_release_checksums(
             raise ManifestGenerationError(
                 f"cosign signature or certificate missing for {checksums_path}"
             )
-        if identity:
-            verify_cosign_signature(
-                checksums_path, sig_path, cert_path, identity=identity, issuer=issuer
-            )
+        resolved_identity = identity or "https://github.com/anisayakmitra-in/AGENT-PANDORA"
+        verify_cosign_signature(
+            checksums_path, sig_path, cert_path, identity=resolved_identity, issuer=issuer
+        )
 
     return checksums
 
@@ -255,6 +255,28 @@ ManifestVersion: 1.6.0
 """
 
 
+def generate_winget_default_locale_manifest(version: str) -> str:
+    """Generate winget default locale YAML manifest."""
+    return f"""# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: AnisayakmitraIn.AGENT-PANDORA
+PackageVersion: {version}
+PackageLocale: en-US
+Publisher: ANISAYAK MITRA
+PackageName: AGENT-PANDORA
+License: MIT
+ShortDescription: Terminal-first agent runtime
+Description: High-performance terminal-first autonomous agent platform and runtime.
+Moniker: pandora
+Tags:
+  - agent
+  - ai
+  - cli
+  - runtime
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0
+"""
+
+
 def generate_release_manifests(
     output_dir: Path,
     checksums_path: Path,
@@ -313,20 +335,27 @@ def generate_release_manifests(
     winget_dir.mkdir(parents=True, exist_ok=True)
     ver_file = winget_dir / "manifest.version.yaml"
     inst_file = winget_dir / "manifest.installer.yaml"
+    loc_file = winget_dir / "manifest.defaultLocale.yaml"
 
     ver_content = generate_winget_version_manifest(version)
     inst_content = generate_winget_installer_manifest(version, clean_tag, checksums)
+    loc_content = generate_winget_default_locale_manifest(version)
 
     ver_file.write_text(ver_content, encoding="utf-8")
     inst_file.write_text(inst_content, encoding="utf-8")
+    loc_file.write_text(loc_content, encoding="utf-8")
 
     results["winget_version"] = ver_file
     results["winget_installer"] = inst_file
+    results["winget_default_locale"] = loc_file
 
     # Also root-level convenience winget
     (output_dir / "manifest.version.yaml").write_text(ver_content, encoding="utf-8")
     (output_dir / "manifest.installer.yaml").write_text(
         inst_content, encoding="utf-8"
+    )
+    (output_dir / "manifest.defaultLocale.yaml").write_text(
+        loc_content, encoding="utf-8"
     )
 
     return results

@@ -89,21 +89,36 @@ impl ReflexionCrystallizer {
         {
             let normalized_root = root.replace('\\', "/");
             let norm_lower = normalized_root.to_lowercase();
-            let mut lower_res = result.replace('\\', "/").to_lowercase();
+            let mut search_idx = 0;
 
-            while let Some(pos) = lower_res.find(&norm_lower) {
-                let orig_slice = &result[pos..pos + root.len()];
-                literals.push(ParameterizedLiteral {
-                    original: orig_slice.to_string(),
-                    template: "{{WORKSPACE_ROOT}}".to_string(),
-                    kind: "workspace_root".to_string(),
-                });
-                result.replace_range(pos..pos + root.len(), "{{WORKSPACE_ROOT}}");
-                lower_res = result.replace('\\', "/").to_lowercase();
+            while search_idx < result.len() {
+                let lower_res = result.replace('\\', "/").to_lowercase();
+                if let Some(pos) = lower_res[search_idx..].find(&norm_lower) {
+                    let abs_pos = search_idx + pos;
+                    let end_pos = abs_pos + root.len();
+                    if abs_pos <= result.len()
+                        && end_pos <= result.len()
+                        && result.is_char_boundary(abs_pos)
+                        && result.is_char_boundary(end_pos)
+                    {
+                        let orig_slice = result[abs_pos..end_pos].to_string();
+                        if !orig_slice.is_empty() {
+                            literals.push(ParameterizedLiteral {
+                                original: orig_slice,
+                                template: "{{WORKSPACE_ROOT}}".to_string(),
+                                kind: "workspace_root".to_string(),
+                            });
+                            result.replace_range(abs_pos..end_pos, "{{WORKSPACE_ROOT}}");
+                            search_idx = abs_pos + "{{WORKSPACE_ROOT}}".len();
+                            continue;
+                        }
+                    }
+                }
+                break;
             }
         }
 
-        // 2. Scan and replace UUIDs (Session IDs)
+        // 2. Scan and replace UUIDs (Session IDs), Commit SHAs, SHA256 digests, and absolute paths
         let words: Vec<String> = result
             .split(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '`')
             .filter(|s| !s.is_empty())
@@ -111,54 +126,88 @@ impl ReflexionCrystallizer {
             .collect();
 
         for word in &words {
+            let clean = word.trim_matches(|c: char| {
+                c == ','
+                    || c == '.'
+                    || c == ';'
+                    || c == ':'
+                    || c == '('
+                    || c == ')'
+                    || c == '['
+                    || c == ']'
+                    || c == '{'
+                    || c == '}'
+                    || c == '<'
+                    || c == '>'
+                    || c == '"'
+                    || c == '\''
+                    || c == '`'
+                    || c == '='
+            });
+
+            if clean.is_empty() || !result.contains(clean) {
+                continue;
+            }
+
             // Check for UUID format: 8-4-4-4-12 hex chars
-            if word.len() == 36 && is_uuid(word) && !result.contains(&format!("{{{{{word}}}}}")) {
-                literals.push(ParameterizedLiteral {
-                    original: word.clone(),
-                    template: "{{SESSION_ID}}".to_string(),
-                    kind: "session_id".to_string(),
-                });
-                result = result.replace(word.as_str(), "{{SESSION_ID}}");
+            if clean.len() == 36 && is_uuid(clean) {
+                if !literals.iter().any(|l| l.original == clean) {
+                    literals.push(ParameterizedLiteral {
+                        original: clean.to_string(),
+                        template: "{{SESSION_ID}}".to_string(),
+                        kind: "session_id".to_string(),
+                    });
+                }
+                result = result.replace(clean, "{{SESSION_ID}}");
             }
             // Check for git 40-character commit hash
-            else if word.len() == 40 && word.chars().all(|c| c.is_ascii_hexdigit()) {
-                literals.push(ParameterizedLiteral {
-                    original: word.clone(),
-                    template: "{{COMMIT_SHA}}".to_string(),
-                    kind: "commit_hash".to_string(),
-                });
-                result = result.replace(word.as_str(), "{{COMMIT_SHA}}");
+            else if clean.len() == 40 && clean.chars().all(|c| c.is_ascii_hexdigit()) {
+                if !literals.iter().any(|l| l.original == clean) {
+                    literals.push(ParameterizedLiteral {
+                        original: clean.to_string(),
+                        template: "{{COMMIT_SHA}}".to_string(),
+                        kind: "commit_hash".to_string(),
+                    });
+                }
+                result = result.replace(clean, "{{COMMIT_SHA}}");
             }
             // Check for sha256 digests
-            else if word.starts_with("sha256:")
-                && word.len() == 71
-                && word[7..].chars().all(|c| c.is_ascii_hexdigit())
+            else if clean.starts_with("sha256:")
+                && clean.len() == 71
+                && clean[7..].chars().all(|c| c.is_ascii_hexdigit())
             {
-                literals.push(ParameterizedLiteral {
-                    original: word.clone(),
-                    template: "{{SHA256_DIGEST}}".to_string(),
-                    kind: "sha256_digest".to_string(),
-                });
-                result = result.replace(word.as_str(), "{{SHA256_DIGEST}}");
+                if !literals.iter().any(|l| l.original == clean) {
+                    literals.push(ParameterizedLiteral {
+                        original: clean.to_string(),
+                        template: "{{SHA256_DIGEST}}".to_string(),
+                        kind: "sha256_digest".to_string(),
+                    });
+                }
+                result = result.replace(clean, "{{SHA256_DIGEST}}");
             }
-            // Check for standalone absolute path patterns: e.g. C:\... or /work/...
-            else if is_absolute_path_token(word) {
-                let template_token = if word.ends_with(".rs")
-                    || word.ends_with(".json")
-                    || word.ends_with(".toml")
-                    || word.ends_with(".py")
-                    || word.ends_with(".md")
+            // Check for standalone absolute path patterns: e.g. C:\... or /...
+            else if is_absolute_path_token(clean) {
+                let template_token = if clean.ends_with(".rs")
+                    || clean.ends_with(".json")
+                    || clean.ends_with(".toml")
+                    || clean.ends_with(".py")
+                    || clean.ends_with(".md")
+                    || clean.ends_with(".ts")
+                    || clean.ends_with(".js")
+                    || clean.ends_with(".txt")
                 {
                     "{{TARGET_FILE}}"
                 } else {
                     "{{WORKSPACE_PATH}}"
                 };
-                literals.push(ParameterizedLiteral {
-                    original: word.clone(),
-                    template: template_token.to_string(),
-                    kind: "path_literal".to_string(),
-                });
-                result = result.replace(word.as_str(), template_token);
+                if !literals.iter().any(|l| l.original == clean) {
+                    literals.push(ParameterizedLiteral {
+                        original: clean.to_string(),
+                        template: template_token.to_string(),
+                        kind: "path_literal".to_string(),
+                    });
+                }
+                result = result.replace(clean, template_token);
             }
         }
 
@@ -172,9 +221,10 @@ impl ReflexionCrystallizer {
         archive: &SessionArchiveRecord,
         snapshot: Option<&SessionSnapshot>,
         workspace_root: Option<&str>,
-    ) -> Result<SopDefinition, ReflexionError> {
+    ) -> Result<(SopDefinition, Vec<ParameterizedLiteral>), ReflexionError> {
         let mut steps = Vec::new();
         let mut step_counter = 0;
+        let mut collected_literals = Vec::new();
 
         if let Some(snap) = snapshot {
             // 1. Inspect agent messages for assistant tool calls
@@ -185,7 +235,16 @@ impl ReflexionCrystallizer {
                     for call in tool_calls {
                         step_counter += 1;
                         let raw_cmd = format!("tool_call: {} {}", call.name(), call.arguments());
-                        let (param_cmd, _) = Self::parameterize_literals(&raw_cmd, workspace_root);
+                        let (param_cmd, lits) =
+                            Self::parameterize_literals(&raw_cmd, workspace_root);
+                        for lit in lits {
+                            if !collected_literals
+                                .iter()
+                                .any(|l: &ParameterizedLiteral| l.original == lit.original)
+                            {
+                                collected_literals.push(lit);
+                            }
+                        }
                         let step_id = format!("step-{step_counter}");
                         let step_name = format!("Step {step_counter}: {}", call.name());
                         let depends_on = if step_counter > 1 {
@@ -205,10 +264,18 @@ impl ReflexionCrystallizer {
             if steps.is_empty() {
                 for event in snap.events() {
                     step_counter += 1;
-                    let (cmd, _) = Self::parameterize_literals(
+                    let (cmd, lits) = Self::parameterize_literals(
                         &format!("{:?}", event.payload()),
                         workspace_root,
                     );
+                    for lit in lits {
+                        if !collected_literals
+                            .iter()
+                            .any(|l: &ParameterizedLiteral| l.original == lit.original)
+                        {
+                            collected_literals.push(lit);
+                        }
+                    }
                     let step_id = format!("step-{step_counter}");
                     let step_name = format!("Event Step {step_counter}: {:?}", event.event_type());
                     let depends_on = if step_counter > 1 {
@@ -226,8 +293,18 @@ impl ReflexionCrystallizer {
 
         // 3. If steps are still empty, synthesize from archive diff stats and summary
         if steps.is_empty() {
-            let (param_summary, _) = Self::parameterize_literals(&archive.summary, workspace_root);
-            let (param_diff, _) = Self::parameterize_literals(&archive.diff_stats, workspace_root);
+            let (param_summary, lits1) =
+                Self::parameterize_literals(&archive.summary, workspace_root);
+            let (param_diff, lits2) =
+                Self::parameterize_literals(&archive.diff_stats, workspace_root);
+            for lit in lits1.into_iter().chain(lits2) {
+                if !collected_literals
+                    .iter()
+                    .any(|l: &ParameterizedLiteral| l.original == lit.original)
+                {
+                    collected_literals.push(lit);
+                }
+            }
 
             let s1 = SopStep::new(
                 "step-1",
@@ -265,14 +342,16 @@ impl ReflexionCrystallizer {
         let sop_name = format!("Crystallized SOP: {}", archive.summary);
         let verification = Some("git status --porcelain".to_string());
 
-        SopDefinition::new(
+        let sop = SopDefinition::new(
             sop_id,
             sop_name,
             MemoryIntent::Procedure,
             steps,
             verification,
         )
-        .map_err(|e| ReflexionError::InvalidSop(e.to_string()))
+        .map_err(|e| ReflexionError::InvalidSop(e.to_string()))?;
+
+        Ok((sop, collected_literals))
     }
 
     /// Evaluates candidate SOP with BayesianCanaryGate and automatically promotes to active L3 storage in SQLite.
@@ -334,12 +413,10 @@ impl ReflexionCrystallizer {
         let archive = match archive_opt {
             Some(arc) => arc,
             None => {
-                // If not archived yet, construct an archive record from snapshot or fallback
-                let summary = if let Some(ref _snap) = snapshot {
-                    format!("Archive synthesized from active session {}", session_id)
-                } else {
-                    format!("Archive record for {}", session_id)
-                };
+                if snapshot.is_none() {
+                    return Err(ReflexionError::SessionNotFound(session_id.to_string()));
+                }
+                let summary = format!("Archive synthesized from active session {}", session_id);
                 let record = SessionArchiveRecord::new(
                     format!("archive-{}", session_id.as_str()),
                     tenant_id.clone(),
@@ -357,7 +434,8 @@ impl ReflexionCrystallizer {
         };
 
         // 2. Extract parameterized SOP
-        let sop = self.extract_sop_from_archive(&archive, snapshot.as_ref(), workspace_root)?;
+        let (sop, literals) =
+            self.extract_sop_from_archive(&archive, snapshot.as_ref(), workspace_root)?;
 
         // 3. Count passes/failures from session evaluations if available
         let (passes, failures) = if let Some(ref snap) = snapshot
@@ -394,6 +472,7 @@ impl ReflexionCrystallizer {
 
         result.archive_id = archive.archive_id;
         result.session_id = session_id.clone();
+        result.parameterized_literals = literals;
         Ok(result)
     }
 
@@ -417,7 +496,8 @@ impl ReflexionCrystallizer {
             let snapshot = store
                 .resume(&session_id, principal_id, tenant_id, workspace_id)
                 .ok();
-            let sop = self.extract_sop_from_archive(&archive, snapshot.as_ref(), workspace_root)?;
+            let (sop, literals) =
+                self.extract_sop_from_archive(&archive, snapshot.as_ref(), workspace_root)?;
 
             let (passes, failures) = if let Some(ref snap) = snapshot
                 && !snap.evaluations().is_empty()
@@ -450,6 +530,7 @@ impl ReflexionCrystallizer {
             )?;
             res.archive_id = archive.archive_id;
             res.session_id = session_id;
+            res.parameterized_literals = literals;
             results.push(res);
         }
 
@@ -481,11 +562,8 @@ fn is_absolute_path_token(s: &str) -> bool {
     {
         return true;
     }
-    // Unix path e.g. /work/... or /home/...
-    if s.starts_with('/')
-        && s.len() >= 4
-        && (s.contains("/work/") || s.contains("/home/") || s.contains("/tmp/"))
-    {
+    // Unix path e.g. /work/... or /home/... or /var/... or /tmp/...
+    if s.starts_with('/') && s.len() >= 3 && s[1..].contains('/') {
         return true;
     }
     false
@@ -516,6 +594,21 @@ mod tests {
         assert!(output.contains("{{SESSION_ID}}"));
         assert!(output.contains("{{WORKSPACE_ROOT}}"));
         assert_eq!(literals.len(), 3);
+    }
+
+    #[test]
+    fn test_parameterize_substring_workspace_and_punctuation() {
+        // Workspace root is "work", which is also a substring of "{{WORKSPACE_ROOT}}"
+        let input = "Running in /work/src/lib.rs with commit (94ecc933c0b35bb9162806d423e0837479da189b), session=550e8400-e29b-41d4-a716-446655440000; digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.";
+        let (output, literals) = ReflexionCrystallizer::parameterize_literals(input, Some("/work"));
+        assert!(output.contains("{{WORKSPACE_ROOT}}"));
+        assert!(output.contains("{{COMMIT_SHA}}"));
+        assert!(output.contains("{{SESSION_ID}}"));
+        assert!(output.contains("{{SHA256_DIGEST}}"));
+        assert!(literals.iter().any(|l| l.template == "{{WORKSPACE_ROOT}}"));
+        assert!(literals.iter().any(|l| l.template == "{{COMMIT_SHA}}"));
+        assert!(literals.iter().any(|l| l.template == "{{SESSION_ID}}"));
+        assert!(literals.iter().any(|l| l.template == "{{SHA256_DIGEST}}"));
     }
 
     #[test]

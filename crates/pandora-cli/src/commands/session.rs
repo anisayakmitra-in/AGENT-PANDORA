@@ -317,8 +317,14 @@ fn rewind(args: &[String]) -> Result<CommandResult, CliError> {
         SessionJournalEngine::rewind(&store, &session_id, step, Some(config.workspace_dir()))
             .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
 
-    let val = serde_json::to_value(&result)
+    let mut val = serde_json::to_value(&result)
         .map_err(|_| CliError::internal("could not serialize rewind result", json!({})))?;
+    if let serde_json::Value::Object(ref mut map) = val {
+        map.insert(
+            "confirmed".to_string(),
+            serde_json::json!(parsed.values.contains_key("yes")),
+        );
+    }
 
     Ok(success(
         "session rewind",
