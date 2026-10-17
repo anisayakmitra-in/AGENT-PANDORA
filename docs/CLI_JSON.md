@@ -83,6 +83,10 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora memory sop inspect --id <id> --json` | `memory sop inspect` | `sop`, `durability` |
 | `pandora memory archive list ... --json` | `memory archive list` | `archives`, `count`, `limit`, `durability` |
 | `pandora memory archive inspect --id <id> --json` | `memory archive inspect` | `archive`, `durability` |
+| `pandora memory vfs ls [<uri>] --json` | `memory vfs ls` | `uri`, `entries`, `count`, `durability` |
+| `pandora memory vfs cat <uri> --json` | `memory vfs cat` | `uri`, `fragment`, `durability` |
+| `pandora memory capsule export --sop <id> --output <path> --json` | `memory capsule export` | `output`, `capsule_id`, `sop_id`, `sha256_digest`, `author`, `durability` |
+| `pandora memory capsule import --file <path> --json` | `memory capsule import` | `file`, `capsule_id`, `sop_id`, `sha256_digest`, `author`, `admitted`, `durability` |
 | `pandora backup lifecycle preview --input <path> --json` | `backup lifecycle preview` | `dry_run`, `would_record`, validated `manifest`, and the non-execution/non-erasure `boundary` |
 | `pandora backup lifecycle record --input <path> --yes --json` | `backup lifecycle record` | `created`, `idempotent_replay`, append-only `receipt`, and the non-execution/non-erasure `boundary` |
 | `pandora backup lifecycle list|inspect ... --json` | `backup lifecycle list` or `backup lifecycle inspect` | append-only operator-attested receipt manifests, manifest digests, recorded times, evidence status, and external-action boundary |

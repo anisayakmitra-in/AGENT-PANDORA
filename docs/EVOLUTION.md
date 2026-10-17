@@ -24,6 +24,8 @@ Pandora records improvement evidence without allowing the improvement system to 
 - `ReplacementEngine` requires a passed canary and an idle execution boundary registered with that engine before activation. Activation and rollback produce typed receipts, and failed catalog changes compensate by rolling evolution state back closed.
 - Admitted custom WebAssembly Genes resolve the active catalog chain once while Pandora assembles the selected Domain Harness. The resulting execution profile keeps the base Gene ID and version while binding the exact resolved artifact hash. A catalog change can affect a later profile, but cannot replace the module inside an in-flight profile.
 - The CLI and local service expose the proposal's exact memory-evidence IDs alongside its evidence digest. Legacy proposals deserialize with an empty list. The service exposes active catalog bindings read-only and does not expose approval or staging controls, and activation or rollback stays an explicit exact-confirmation operation.
+- `ParetoFrontier` evaluates research candidate generations across three non-dominated dimensions: pass rate, token cost, and step latency. Non-dominated candidates form an optimal frontier; dominated candidates are automatically pruned.
+- `BayesianCanaryGate` computes a Beta distribution 95% lower credible bound over canary evaluations, ensuring statistically sound candidate promotion without relying on heuristic pass-rate thresholds.
 
 ## Authority
 
@@ -46,6 +48,43 @@ Every rollout contains exactly four ordered stages: `canary`, `limited`, `expand
 Promotion requires a non-expired human approval bound to the proposal, current and next stage, exact rollout binding, and latest scorecard digest. The scorecard actor must be its named evaluator, and that evaluator principal cannot be the approver. Approval identities and transition identities are SHA-256 values. Every transition also stores an internally computed request fingerprint: an exact payload retry is idempotent, while using the same identity for another action or changed payload is rejected. Pause, resume, reject, retry, promotion, and rollback each append bounded transition evidence to the same SQLite proposal record. Rejection and rollback consume any pending approval so it can never be reused.
 
 The final `complete` stage also needs a passing scorecard and separate human approval. Its promotion sets `activation_ready`; it does not activate the artifact. `pandora evolution activate` remains the only artifact-catalog activation path, with its existing quiescence, admission, backup, and replacement receipts. A rollout rollback changes the rollout state only and cannot replay an uncertain artifact effect.
+
+## Multi-objective Pareto frontier (GEPA)
+
+GEPA candidate generation evaluates evolutionary candidates across multiple competing criteria rather than a single aggregated scalar. The `ParetoFrontier` tracks non-dominated sets across three orthogonal dimensions:
+
+1. **Pass Rate (`pass_rate`)**: Proportion of holdout evaluation tasks successfully completed (higher is better).
+2. **Token Cost (`token_cost`)**: Total input and output tokens consumed across all test runs (lower is better).
+3. **Step Latency (`latency_ms`)**: Wall-clock duration in milliseconds per execution step (lower is better).
+
+A candidate $A$ strictly dominates candidate $B$ ($A \succ B$) if and only if $A$ is no worse than $B$ across all three dimensions, and strictly better in at least one:
+
+```text
+pass_rate(A) >= pass_rate(B) AND token_cost(A) <= token_cost(B) AND latency(A) <= latency(B)
+AND (pass_rate(A) > pass_rate(B) OR token_cost(A) < token_cost(B) OR latency(A) < latency(B))
+```
+
+When a new candidate is evaluated via `try_insert(candidate)`:
+- If any existing frontier candidate dominates the new candidate, it is rejected.
+- If the new candidate is non-dominated, it is inserted into the frontier, and any existing candidates dominated by the newcomer are pruned.
+- The frontier maintains the optimal Pareto trade-off surface, allowing operators or downstream selection policies to query the best candidate by pass rate (`best_by_pass_rate()`) or by cost/latency trade-offs.
+
+## Bayesian multi-sample canary gate
+
+To prevent flaky evaluations and statistical variance from prematurely advancing unstable candidates, `BayesianCanaryGate` evaluates canary stage results using Bayesian credible bounds.
+
+Given $k$ passed trials out of $n$ total evaluations (with $n - k$ failures), the true pass rate $\theta$ is modeled under a uniform uninformative prior $\text{Beta}(1, 1)$, yielding the posterior distribution:
+
+$$\theta \sim \text{Beta}(\alpha, \beta) \quad \text{where} \quad \alpha = 1 + k, \; \beta = 1 + (n - k)$$
+
+The gate computes the lower bound of the 95% credible interval ($\theta_{0.05}$) such that:
+
+$$P(\theta > \theta_{0.05} \mid \text{data}) = 0.95$$
+
+Promotion criteria:
+- **Small-to-moderate sample sizes ($N \le 500$)**: Exact numerical integration via Simpson's composite rule evaluates the regularized incomplete beta function $I_x(\alpha, \beta)$ to locate the precise quantile.
+- **Large sample regimes ($N > 500$, supported up to $N \ge 10,000$)**: An Abramowitz & Stegun normal approximation with continuity correction computes the quantile with bounded floating-point stability and $O(1)$ latency.
+- **Decision Verdict**: Candidate promotion (`promoted == true`) requires the 95% lower credible bound $\theta_{0.05}$ to strictly exceed the target baseline rate (`baseline_rate`). If uncertainty is too wide (insufficient sample size) or failure rate is too high, the canary fails closed without promotion.
 
 ## Not shipped
 

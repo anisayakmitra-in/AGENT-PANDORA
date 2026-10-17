@@ -1013,6 +1013,8 @@ pandora memory schedule create --id <id> --name <name> --session <id> --provider
 pandora memory schedule list | disable --id <id> | claim --worker <id> [--limit <n>] | run --id <id> --worker <id> | runs [--id <id>]
 pandora memory sop list [--intent <repo|procedure|coding|user>] [--workspace <id>] | inspect --id <id> [--workspace <id>]
 pandora memory archive list [--limit <1-256>] [--workspace <id>] | inspect --id <id> [--workspace <id>]
+pandora memory vfs ls [<uri>] [--workspace <id>] | cat <uri> [--workspace <id>]
+pandora memory capsule export --sop <sop-id> --output <path> [--workspace <id>] | import --file <path> [--workspace <id>]
 pandora mcp set <id> --program <absolute-path> --arguments-json <json-array> --mode <auto|modern-only|legacy-only>
 pandora mcp list
 pandora mcp inspect <id>
@@ -1300,6 +1302,24 @@ history. A worker claim has a lease, and `schedule run` re-reads the exact sourc
 scope before committing an L1 candidate. Changed, missing, revoked, expired, or
 empty evidence fails without promotion or effect authority. Disablement prevents
 future claims but preserves prior run evidence.
+
+`memory sop list` and `memory sop inspect --id <id>` query crystallized L3 Standard Operating
+Procedures. An SOP represents a validated execution DAG with topological execution order
+(`execution_order()`), bounded step definitions, and trigger intent categorization.
+
+`memory archive list` and `memory archive inspect --id <id>` inspect crystallized L4 session
+archives, exposing diff statistics, receipt digests, and lifecycle summaries without loading
+raw event logs.
+
+`memory vfs ls [<uri>]` and `memory vfs cat <uri>` expose the hierarchical virtual context
+filesystem (`pandora://`). `ls` lists directory nodes (`meta`, `index`, `facts`, `sops`,
+`archives`, `features`), while `cat` retrieves and renders the leaf fragment content. Path
+traversal (`.` and `..`) and backslashes fail closed.
+
+`memory capsule export --sop <sop-id> --output <path>` validates an L3 SOP, computes its
+cryptographic SHA-256 digest, and exports a standalone `.capsule.json` package.
+`memory capsule import --file <path>` re-validates the SHA-256 digest and DAG acyclicity
+before admitting the SOP into the target workspace database.
 
 Remote admission currently accepts Gene records with no unresolved capability
 requirements and one valid Pandora runtime requirement. Other package kinds fail

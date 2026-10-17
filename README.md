@@ -94,7 +94,7 @@ create a second runtime or permission path. See [TypeScript client](docs/TYPESCR
 
 Pandora is designed to be cleanly extensible through governed packages:
 
-- **Architecture and 21 Runtime Engines**: Detailed overview of the crate structure, the 21 discrete engines in `crates/pandora-runtime`, and the Parliament/ReferenceMonitor authority chain in [Architecture](docs/ARCHITECTURE.md).
+- **Architecture and 23 Runtime Engines**: Detailed overview of the crate structure, the 23 discrete engines in `crates/pandora-runtime`, and the Parliament/ReferenceMonitor authority chain in [Architecture](docs/ARCHITECTURE.md).
 - **Authoring Custom Domain Harnesses, Meta Harnesses & Genes**: Step-by-step developer guide to scaffold, package, admit, and enable custom extensions in [Authoring Custom Harnesses and Genes](docs/CUSTOM_HARNESSES_AND_GENES.md).
 - **Starter Templates**: Copyable starter packages are available at [`sdk/domain-harness-starter`](sdk/domain-harness-starter/README.md), [`sdk/meta-harness-starter`](sdk/meta-harness-starter/README.md), and [`sdk/gene-pack`](sdk/gene-pack/README.md).
 
@@ -161,10 +161,28 @@ cargo test --workspace --lib --tests
 cargo run -p pandora-cli -- --version
 ```
 
-For scripted setup, use `pandora setup --interactive` or pass provider options
-to `pandora setup`. In an interactive terminal, `pandora` starts the wizard
-when configuration is missing, then opens the Ratatui client. Use `pandora chat`
-for the line-oriented client and explicit subcommands for automation.
+For scripted setup, use `pandora setup --interactive`, configure provider flags, or select a built-in provider preset:
+
+```text
+pandora setup --preset ollama
+pandora setup --preset deepseek
+pandora setup --preset openrouter
+```
+
+In an interactive terminal, `pandora` starts the wizard when configuration is missing, then opens the Ratatui client. Use `pandora chat` for the line-oriented client and explicit subcommands for automation.
+
+Inspect crystallized 5-layer memory (L0-L4), the virtual context filesystem (`pandora://`), signed capsules, and codebase feature maps:
+
+```text
+pandora memory recall --tier l3 --intent coding
+pandora memory sop list
+pandora memory vfs ls pandora://
+pandora memory vfs cat pandora://meta/rules
+pandora memory capsule export --sop sop-1 --output ./sop-1.capsule.json
+pandora memory capsule import --file ./sop-1.capsule.json
+pandora map validate
+pandora map show
+```
 
 Headless workers can queue the same governed `run` command without a second
 execution path:

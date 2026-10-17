@@ -86,11 +86,39 @@ The public CLI exposes scoped L1-L4 summaries through `memory recall` (`--tier <
 `memory audit`. `memory recall` and `memory synthesize` accept `--intent <repo|procedure|coding|user>`
 for partitioned queries and candidate tagging. `memory sop list|inspect` and `memory archive list|inspect`
 provide direct inspection of crystallized SOP workflows and session archive records.
+`memory vfs ls [uri]` and `memory vfs cat <uri>` provide hierarchical directory and leaf inspection
+over the virtual context filesystem (`pandora://`). `memory capsule export` and `memory capsule import`
+enable exporting and importing verified L3 SOP workflows into standalone `.capsule.json` packages
+with cryptographic SHA-256 digest validation and author provenance.
 `memory forget` requires explicit confirmation before durable
 revocation, and `memory promote` requires an exact approval resolved through the
 existing approval store. L0 remains process-local and is not exposed as a
 durable record. These commands do not create a second memory store or bypass
 Pandora's approval, permit, receipt, and event authority.
+
+## Virtual context filesystem (`pandora://`)
+
+`ContextVfs` resolves hierarchical virtual URIs over the crystallized memory tiers, codebase feature maps, and active skills:
+
+- `pandora://meta/rules`: Resolves L0 constitutional boundaries and behavioral rules.
+- `pandora://index/{intent}/{id}`: Resolves L1 insight index records partitioned by intent (`repo`, `procedure`, `coding`, `user`).
+- `pandora://facts/{topic}/{id}`: Resolves L2 durable global facts and repository truths.
+- `pandora://sops/{sop_id}`: Resolves L3 validated Standard Operating Procedure DAGs.
+- `pandora://archives/{archive_id}`: Resolves L4 session archives with diff statistics and receipt digests.
+- `pandora://features/{module}`: Resolves codebase feature map invariants for targeted subsystems.
+
+Querying a directory node returns its child directory entries; querying a leaf node returns the resolved `ContextFragment`. Path traversal segments (`.` and `..`) and backslashes are rejected fail-closed to prevent escape vulnerabilities.
+
+## Evolutionary capsule protocol
+
+`MemoryCapsule` packages verified L3 SOP workflows into portable, cryptographically signed JSON artifacts. Each capsule binds:
+
+1. An immutable `SopDefinition` with topologically sorted execution steps and trigger intent.
+2. A cryptographic SHA-256 digest calculated over the canonical SOP payload.
+3. The author identity and creation timestamp.
+
+`memory capsule export --sop <id> --output <path>` validates the SOP before writing. `memory capsule import --file <path>` re-verifies the SHA-256 digest and validates DAG acyclicity before admitting the SOP into the workspace database. Tampered, cyclic, or self-dependent capsules fail closed.
+
 
 `memory compact --before <unix-seconds>` is the explicit retention boundary for
 already-revoked logical records. Its default mode reports how many exact-scope
