@@ -4,7 +4,7 @@
 
 ## v2.0.0-beta.8
 
-- **5-Tier Layered Crystallized Memory Architecture (L0–L4)**: Crystallizes memory
+- **5-Tier Layered Crystallized Memory Architecture (L0-L4)**: Crystallizes memory
   across task execution stages: L0 (Constitutional Meta Rules), L1 (Insight Index
   partitioned across `repo`, `procedure`, `coding`, and `user` intents), L2 (Durable
   Global Facts), L3 (Task Skills / Standard Operating Procedure DAGs), and L4
