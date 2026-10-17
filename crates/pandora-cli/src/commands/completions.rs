@@ -78,8 +78,12 @@ fn powershell() -> &'static str {
         'list','inspect'
     } elseif ($elements.Count -gt 2 -and $elements[1] -eq 'memory' -and $elements[2] -eq 'archive') {
         'list','inspect'
+    } elseif ($elements.Count -gt 2 -and $elements[1] -eq 'memory' -and $elements[2] -eq 'capsule') {
+        'export','import'
+    } elseif ($elements.Count -gt 2 -and $elements[1] -eq 'memory' -and $elements[2] -eq 'vfs') {
+        'ls','cat'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'memory') {
-        'recall','audit','forget','compact','promote','synthesize','consolidate','provenance','schedule','sop','archive'
+        'recall','audit','forget','compact','promote','synthesize','consolidate','provenance','schedule','sop','archive','capsule','vfs'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'approval') {
         'list','inspect','resolve'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'provider') {
@@ -179,8 +183,12 @@ fn bash() -> &'static str {
         COMPREPLY=( $(compgen -W 'list inspect' -- "$current") )
     elif [[ "${COMP_WORDS[1]}" == "memory" && "$previous" == "archive" ]]; then
         COMPREPLY=( $(compgen -W 'list inspect' -- "$current") )
+    elif [[ "${COMP_WORDS[1]}" == "memory" && "$previous" == "capsule" ]]; then
+        COMPREPLY=( $(compgen -W 'export import' -- "$current") )
+    elif [[ "${COMP_WORDS[1]}" == "memory" && "$previous" == "vfs" ]]; then
+        COMPREPLY=( $(compgen -W 'ls cat' -- "$current") )
     elif [[ "$previous" == "memory" ]]; then
-        COMPREPLY=( $(compgen -W 'recall audit forget compact promote synthesize consolidate provenance schedule sop archive' -- "$current") )
+        COMPREPLY=( $(compgen -W 'recall audit forget compact promote synthesize consolidate provenance schedule sop archive capsule vfs' -- "$current") )
     elif [[ "$previous" == "approval" ]]; then
         COMPREPLY=( $(compgen -W 'list inspect resolve' -- "$current") )
     elif [[ "$previous" == "provider" ]]; then
@@ -280,8 +288,12 @@ elif [[ ${words[2]} == memory && ${words[3]} == sop ]]; then
     _arguments '3:memory sop command:(list inspect)'
 elif [[ ${words[2]} == memory && ${words[3]} == archive ]]; then
     _arguments '3:memory archive command:(list inspect)'
+elif [[ ${words[2]} == memory && ${words[3]} == capsule ]]; then
+    _arguments '3:memory capsule command:(export import)'
+elif [[ ${words[2]} == memory && ${words[3]} == vfs ]]; then
+    _arguments '3:memory vfs command:(ls cat)'
 elif [[ ${words[2]} == memory ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration operations strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:memory command:(recall audit forget compact promote synthesize consolidate provenance schedule sop archive)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration operations strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:memory command:(recall audit forget compact promote synthesize consolidate provenance schedule sop archive capsule vfs)'
 elif [[ ${words[2]} == approval ]]; then
     _arguments '1:command:(help setup backup service auth secret rollout run chat tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration operations strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor)' '2:approval command:(list inspect resolve)'
 elif [[ ${words[2]} == provider ]]; then
@@ -348,10 +360,12 @@ complete -c pandora -f -n '__fish_seen_subcommand_from package; and __fish_seen_
 complete -c pandora -f -n '__fish_seen_subcommand_from registry' -a 'list set use remove'
 complete -c pandora -f -n '__fish_seen_subcommand_from runtime; and __fish_seen_subcommand_from engines' -a 'list inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from runtime; and not __fish_seen_subcommand_from engines' -a 'engines'
-complete -c pandora -f -n '__fish_seen_subcommand_from memory; and not __fish_seen_subcommand_from schedule; and not __fish_seen_subcommand_from sop; and not __fish_seen_subcommand_from archive' -a 'recall audit forget compact promote synthesize consolidate provenance schedule sop archive'
+complete -c pandora -f -n '__fish_seen_subcommand_from memory; and not __fish_seen_subcommand_from schedule; and not __fish_seen_subcommand_from sop; and not __fish_seen_subcommand_from archive; and not __fish_seen_subcommand_from capsule; and not __fish_seen_subcommand_from vfs' -a 'recall audit forget compact promote synthesize consolidate provenance schedule sop archive capsule vfs'
 complete -c pandora -f -n '__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from schedule' -a 'create list disable claim run runs'
 complete -c pandora -f -n '__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from sop' -a 'list inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from archive' -a 'list inspect'
+complete -c pandora -f -n '__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from capsule' -a 'export import'
+complete -c pandora -f -n '__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from vfs' -a 'ls cat'
 complete -c pandora -f -n '__fish_seen_subcommand_from approval' -a 'list inspect resolve'
 complete -c pandora -f -n '__fish_seen_subcommand_from provider' -a 'list set use test'
 complete -c pandora -f -n '__fish_seen_subcommand_from mcp' -a 'list inspect set remove catalog call'
@@ -429,7 +443,7 @@ mod tests {
             "'scaffold','admit','admit-cached','validate','sign','keygen','discover','download','download-github','install','install-github','cache','list','inspect','enable','disable','rollback','lock','verify-lock','trust-root','transparency','remove'",
             "'list','inspect','verify','events'",
             "'list','set','use','remove'",
-            "'recall','audit','forget','compact','promote','synthesize','consolidate','provenance','schedule','sop','archive'",
+            "'recall','audit','forget','compact','promote','synthesize','consolidate','provenance','schedule','sop','archive','capsule','vfs'",
             "'list','inspect','resolve'",
             "'list','set','use','test'",
             "'list','inspect','set','remove','catalog','call'",
@@ -454,7 +468,7 @@ mod tests {
                 "scaffold admit admit-cached validate sign keygen discover download download-github install install-github cache list inspect enable disable rollback lock verify-lock trust-root transparency remove",
                 "list inspect verify events",
                 "list set use remove",
-                "recall audit forget compact promote synthesize consolidate provenance schedule sop archive",
+                "recall audit forget compact promote synthesize consolidate provenance schedule sop archive capsule vfs",
                 "list inspect resolve",
                 "list set use test",
                 "list inspect set remove",
@@ -490,18 +504,29 @@ mod tests {
                 "missing governed rollout completions in {script}"
             );
         }
-        assert!(powershell.contains("-eq 'sop'") && powershell.contains("-eq 'archive'"));
+        assert!(
+            powershell.contains("-eq 'sop'")
+                && powershell.contains("-eq 'archive'")
+                && powershell.contains("-eq 'capsule'")
+                && powershell.contains("-eq 'vfs'")
+        );
         assert!(
             bash.contains("\"$previous\" == \"sop\"")
                 && bash.contains("\"$previous\" == \"archive\"")
+                && bash.contains("\"$previous\" == \"capsule\"")
+                && bash.contains("\"$previous\" == \"vfs\"")
         );
         assert!(
             zsh.contains("${words[2]} == memory && ${words[3]} == sop")
                 && zsh.contains("${words[2]} == memory && ${words[3]} == archive")
+                && zsh.contains("${words[2]} == memory && ${words[3]} == capsule")
+                && zsh.contains("${words[2]} == memory && ${words[3]} == vfs")
         );
         assert!(
             fish.contains("__fish_seen_subcommand_from sop")
                 && fish.contains("__fish_seen_subcommand_from archive")
+                && fish.contains("__fish_seen_subcommand_from capsule")
+                && fish.contains("__fish_seen_subcommand_from vfs")
         );
     }
 

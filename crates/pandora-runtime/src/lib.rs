@@ -11,6 +11,8 @@ pub mod containment;
 pub mod content_guard;
 pub mod context_engine;
 pub mod context_recovery;
+pub mod context_vfs;
+pub mod decision_engine;
 pub mod device_trust;
 pub mod efficiency_engine;
 pub mod efficiency_store;
@@ -94,6 +96,8 @@ pub use content_guard::{
 };
 pub use context_engine::{ContextCacheStats, ContextEngine, ContextError};
 pub use context_recovery::{ContextRecovery, RecoveryDecision, RecoveryInput, RecoveryStep};
+pub use context_vfs::{ContextVfs, VfsError};
+pub use decision_engine::{DecisionEngine, DecisionError, SinglePassLogitEngine};
 pub use device_trust::{
     DeviceKeyError, DeviceKeyStore, DeviceProofRequest, device_proof_message, verify_device_proof,
 };
@@ -118,7 +122,10 @@ pub use evaluation_suite::{
     MAX_EVALUATION_SUITE_ID_BYTES, MAX_EVALUATION_SUITES, MAX_REGRESSION_CANDIDATE_ID_BYTES,
     MAX_REGRESSION_CANDIDATES, RegressionCandidate, RegressionCandidateStatus,
 };
-pub use evolution::{EvolutionEngine, EvolutionError, EvolutionRecord};
+pub use evolution::{
+    BayesianCanaryGate, BayesianCanaryVerdict, EvolutionEngine, EvolutionError, EvolutionRecord,
+    ParetoCandidate, ParetoFrontier,
+};
 pub use execution_controller::{
     ExecutionController, RunStatus, RunSummary, RuntimeError, WorktreeExecutionContext,
 };

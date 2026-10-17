@@ -737,6 +737,277 @@ impl EvolutionEngine {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ParetoCandidate {
+    pub id: String,
+    pub pass_rate: f64,
+    pub token_cost: u32,
+    pub latency_ms: u64,
+}
+
+impl ParetoCandidate {
+    pub fn new(id: impl Into<String>, pass_rate: f64, token_cost: u32, latency_ms: u64) -> Self {
+        let pr = if pass_rate.is_nan() {
+            0.0
+        } else {
+            pass_rate.clamp(0.0, 1.0)
+        };
+        Self {
+            id: id.into(),
+            pass_rate: pr,
+            token_cost,
+            latency_ms,
+        }
+    }
+
+    /// Returns true if `self` dominates `other`.
+    /// Dominance condition: at least as good in all 3 objectives, strictly better in at least one.
+    /// Objectives:
+    /// - pass_rate: maximize
+    /// - token_cost: minimize
+    /// - latency_ms: minimize
+    pub fn dominates(&self, other: &Self) -> bool {
+        let no_worse = self.pass_rate >= other.pass_rate
+            && self.token_cost <= other.token_cost
+            && self.latency_ms <= other.latency_ms;
+        let strictly_better = self.pass_rate > other.pass_rate
+            || self.token_cost < other.token_cost
+            || self.latency_ms < other.latency_ms;
+        no_worse && strictly_better
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ParetoFrontier {
+    candidates: Vec<ParetoCandidate>,
+}
+
+impl ParetoFrontier {
+    pub fn new() -> Self {
+        Self {
+            candidates: Vec::new(),
+        }
+    }
+
+    pub fn candidates(&self) -> &[ParetoCandidate] {
+        &self.candidates
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.candidates.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.candidates.len()
+    }
+
+    pub fn is_dominated(&self, candidate: &ParetoCandidate) -> bool {
+        self.candidates
+            .iter()
+            .any(|existing| existing.dominates(candidate))
+    }
+
+    /// Attempts to insert a candidate into the Pareto frontier.
+    /// Returns true if candidate is accepted (non-dominated).
+    /// If accepted, any existing candidates that are dominated by this candidate are pruned.
+    pub fn try_insert(&mut self, candidate: ParetoCandidate) -> bool {
+        if self.is_dominated(&candidate) {
+            return false;
+        }
+        self.candidates
+            .retain(|existing| !candidate.dominates(existing));
+        if !self.candidates.iter().any(|c| c.id == candidate.id) {
+            self.candidates.push(candidate);
+        } else if let Some(existing) = self.candidates.iter_mut().find(|c| c.id == candidate.id) {
+            *existing = candidate;
+        }
+        true
+    }
+
+    pub fn best_by_pass_rate(&self) -> Option<&ParetoCandidate> {
+        self.candidates.iter().max_by(|a, b| {
+            a.pass_rate
+                .partial_cmp(&b.pass_rate)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BayesianCanaryVerdict {
+    pub passes: u32,
+    pub failures: u32,
+    pub alpha: f64,
+    pub beta: f64,
+    pub lower_bound_95: f64,
+    pub baseline_rate: f64,
+    pub promoted: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BayesianCanaryGate {
+    credible_level: f64,
+}
+
+impl Default for BayesianCanaryGate {
+    fn default() -> Self {
+        Self::new(0.95)
+    }
+}
+
+impl BayesianCanaryGate {
+    pub fn new(credible_level: f64) -> Self {
+        let level = if credible_level.is_nan() || credible_level <= 0.0 || credible_level >= 1.0 {
+            0.95
+        } else {
+            credible_level
+        };
+        Self {
+            credible_level: level,
+        }
+    }
+
+    pub fn credible_level(&self) -> f64 {
+        self.credible_level
+    }
+
+    /// Evaluates Beta(1 + passes, 1 + failures) distribution.
+    /// Calculates the lower credible bound at credible_level (e.g. 95%).
+    /// Promotes the canary only when the lower bound strictly exceeds baseline_rate.
+    pub fn evaluate(
+        &self,
+        passes: u32,
+        failures: u32,
+        baseline_rate: f64,
+    ) -> BayesianCanaryVerdict {
+        let alpha = 1.0 + f64::from(passes);
+        let beta = 1.0 + f64::from(failures);
+        let target_quantile = (1.0 - self.credible_level).clamp(1e-6, 1.0 - 1e-6);
+        let lower_bound_95 = beta_quantile(alpha, beta, target_quantile);
+        let promoted = !baseline_rate.is_nan() && lower_bound_95 > baseline_rate;
+
+        BayesianCanaryVerdict {
+            passes,
+            failures,
+            alpha,
+            beta,
+            lower_bound_95,
+            baseline_rate,
+            promoted,
+        }
+    }
+}
+
+fn ln_gamma(z: f64) -> f64 {
+    let coef = [
+        76.18009172947146,
+        -86.50532032941677,
+        24.01409824083091,
+        -1.231739572450155,
+        0.1208650973866179e-2,
+        -0.5395239384953e-5,
+    ];
+    let mut y = z;
+    let x = z;
+    let mut tmp = x + 5.5;
+    tmp -= (x + 0.5) * tmp.ln();
+    let mut ser = 1.000000000190015;
+    for c in &coef {
+        y += 1.0;
+        ser += c / y;
+    }
+    -tmp + (2.5066282746310005 * ser / x).ln()
+}
+
+fn ln_fact(n: u32) -> f64 {
+    if n <= 1 {
+        0.0
+    } else {
+        ln_gamma(f64::from(n + 1))
+    }
+}
+
+fn normal_cdf(z: f64) -> f64 {
+    0.5 * (1.0 + erf_approx(z / std::f64::consts::SQRT_2))
+}
+
+fn erf_approx(x: f64) -> f64 {
+    let sign = if x < 0.0 { -1.0 } else { 1.0 };
+    let x = x.abs();
+    // Abramowitz and Stegun formula 7.1.26 (max error 1.5e-7)
+    let a1 = 0.254829592;
+    let a2 = -0.284496736;
+    let a3 = 1.421413741;
+    let a4 = -1.453152027;
+    let a5 = 1.061405429;
+    let p = 0.3275911;
+
+    let t = 1.0 / (1.0 + p * x);
+    let y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * (-x * x).exp();
+    sign * y
+}
+
+fn beta_cdf(alpha: u32, beta: u32, x: f64) -> f64 {
+    if x <= 0.0 {
+        return 0.0;
+    }
+    if x >= 1.0 {
+        return 1.0;
+    }
+
+    let n = alpha + beta - 1;
+    if n > 500 {
+        let a = f64::from(alpha);
+        let b = f64::from(beta);
+        let ab = a + b;
+        let mu = a / ab;
+        let var = (a * b) / (ab * ab * (ab + 1.0));
+        let sigma = var.sqrt();
+        if sigma <= 0.0 {
+            return if x >= mu { 1.0 } else { 0.0 };
+        }
+        let z = (x - mu) / sigma;
+        return normal_cdf(z).clamp(0.0, 1.0);
+    }
+
+    if alpha > n / 2 {
+        // Sum beta terms from alpha to n
+        let mut sum = 0.0;
+        for k in alpha..=n {
+            let log_comb = ln_fact(n) - ln_fact(k) - ln_fact(n - k);
+            let log_term = log_comb + (f64::from(k) * x.ln()) + (f64::from(n - k) * (1.0 - x).ln());
+            sum += log_term.exp();
+        }
+        sum.clamp(0.0, 1.0)
+    } else {
+        // Reflection identity: I_x(a, b) = 1 - I_{1-x}(b, a)
+        let mut sum = 0.0;
+        for k in beta..=n {
+            let log_comb = ln_fact(n) - ln_fact(k) - ln_fact(n - k);
+            let log_term = log_comb + (f64::from(k) * (1.0 - x).ln()) + (f64::from(n - k) * x.ln());
+            sum += log_term.exp();
+        }
+        (1.0 - sum).clamp(0.0, 1.0)
+    }
+}
+
+fn beta_quantile(alpha: f64, beta: f64, target_prob: f64) -> f64 {
+    let a = (alpha.round() as u32).max(1);
+    let b = (beta.round() as u32).max(1);
+    let mut low = 0.0;
+    let mut high = 1.0;
+    for _ in 0..50 {
+        let mid = (low + high) * 0.5;
+        let cdf = beta_cdf(a, b, mid);
+        if cdf < target_prob {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    (low + high) * 0.5
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1056,5 +1327,73 @@ mod tests {
         );
         assert_eq!(rollout.transitions().len(), 2);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn pareto_frontier_dominance_and_pruning() {
+        let mut frontier = ParetoFrontier::new();
+
+        // Baseline candidate
+        let c1 = ParetoCandidate::new("c1", 0.80, 1000, 500);
+        assert!(frontier.try_insert(c1.clone()));
+        assert_eq!(frontier.len(), 1);
+
+        // Dominated candidate (lower pass rate, higher cost, higher latency)
+        let dominated = ParetoCandidate::new("dominated", 0.70, 1200, 600);
+        assert!(c1.dominates(&dominated));
+        assert!(frontier.is_dominated(&dominated));
+        assert!(!frontier.try_insert(dominated));
+        assert_eq!(frontier.len(), 1);
+
+        // Trade-off candidate (lower pass rate, but much lower cost and latency) -> non-dominated!
+        let trade_off = ParetoCandidate::new("trade_off", 0.78, 400, 200);
+        assert!(!c1.dominates(&trade_off));
+        assert!(!trade_off.dominates(&c1));
+        assert!(frontier.try_insert(trade_off));
+        assert_eq!(frontier.len(), 2);
+
+        // Dominant candidate (better pass rate, lower cost, lower latency than c1) -> should prune c1!
+        let superior = ParetoCandidate::new("superior", 0.90, 800, 400);
+        assert!(superior.dominates(&c1));
+        assert!(frontier.try_insert(superior));
+        // c1 pruned, trade_off kept, superior added -> len is 2
+        assert_eq!(frontier.len(), 2);
+        assert!(!frontier.candidates().iter().any(|c| c.id == "c1"));
+        assert!(frontier.candidates().iter().any(|c| c.id == "superior"));
+        assert!(frontier.candidates().iter().any(|c| c.id == "trade_off"));
+    }
+
+    #[test]
+    fn bayesian_canary_gate_lower_bound_and_promotion() {
+        let gate = BayesianCanaryGate::new(0.95);
+
+        // Low sample count with 100% pass (e.g. 3 passes, 0 failures)
+        // High empirical mean (1.0), but lower 95% bound is uncertain (< 0.60)
+        let verdict_few = gate.evaluate(3, 0, 0.75);
+        assert_eq!(verdict_few.passes, 3);
+        assert_eq!(verdict_few.failures, 0);
+        assert!(verdict_few.lower_bound_95 < 0.75);
+        assert!(!verdict_few.promoted);
+
+        // High sample count with robust performance (e.g. 95 passes, 5 failures = 95% pass rate)
+        // Lower bound is high (~0.89), comfortably exceeding baseline 0.80
+        let verdict_robust = gate.evaluate(95, 5, 0.80);
+        assert!(verdict_robust.lower_bound_95 > 0.80);
+        assert!(verdict_robust.promoted);
+
+        // Mediocre performance (e.g. 60 passes, 40 failures = 60% pass rate)
+        // Cannot exceed 0.75 baseline
+        let verdict_poor = gate.evaluate(60, 40, 0.75);
+        assert!(!verdict_poor.promoted);
+
+        // Extreme sample count (e.g. 9,500 passes, 500 failures = 10,000 runs)
+        // High confidence, lower bound very tight around 0.946, exceeding 0.90 baseline
+        let verdict_large = gate.evaluate(9500, 500, 0.90);
+        assert!(verdict_large.lower_bound_95 > 0.94);
+        assert!(verdict_large.promoted);
+
+        // NaN baseline rate fails closed
+        let verdict_nan = gate.evaluate(9500, 500, f64::NAN);
+        assert!(!verdict_nan.promoted);
     }
 }

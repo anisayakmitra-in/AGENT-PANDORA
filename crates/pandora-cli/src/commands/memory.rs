@@ -5,12 +5,13 @@ use super::{
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::sessions::{MAX_MEMORY_RECALL_RECORDS, SessionStore};
 use pandora_runtime::{
-    ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, MemoryEngine, MemoryError,
-    MemorySynthesisScheduleError, MemorySynthesisScheduleStore,
+    ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, ContextVfs, MemoryEngine,
+    MemoryError, MemorySynthesisScheduleError, MemorySynthesisScheduleStore, VfsError,
 };
 use pandora_types::{
-    ContextClassification, ExecutionId, GeneId, JobWorkerId, MemoryApproval, MemoryConflictRule,
-    MemoryConsolidationBoundary, MemoryConsolidationPolicy, MemoryId, MemoryIntent, MemoryKind,
+    ContextClassification, ContextUri, ExecutionId, FeatureMap, GeneId, JobWorkerId,
+    MemoryApproval, MemoryCapsule, MemoryConflictRule, MemoryConsolidationBoundary,
+    MemoryConsolidationPolicy, MemoryContractError, MemoryId, MemoryIntent, MemoryKind,
     MemoryRecord, MemoryScope, MemoryTier, RequestDigest, RunLoopId, SessionArchiveRecord,
     StoredSop, Timestamp, WorkspaceId, hash_artifact,
 };
@@ -25,7 +26,7 @@ const MEMORY_PROMOTION_GENE: &str = "memory.promote";
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "memory requires 'recall', 'audit', 'forget', 'compact', 'promote', 'synthesize', 'consolidate', 'provenance', 'schedule', 'sop', or 'archive'",
+            "memory requires 'recall', 'audit', 'forget', 'compact', 'promote', 'synthesize', 'consolidate', 'provenance', 'schedule', 'sop', 'archive', 'capsule', or 'vfs'",
         )
     })?;
     match subcommand.as_str() {
@@ -40,6 +41,8 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "schedule" => schedule(&args[1..]),
         "sop" => sop(&args[1..]),
         "archive" => archive(&args[1..]),
+        "capsule" => capsule(&args[1..]),
+        "vfs" => vfs(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown memory command '{unknown}'"
         ))),
@@ -560,6 +563,334 @@ fn archive_inspect(args: &[String]) -> Result<CommandResult, CliError> {
         }),
         format!("Inspected session archive {}", archive.archive_id),
     ))
+}
+
+fn capsule(args: &[String]) -> Result<CommandResult, CliError> {
+    let subcommand = args
+        .first()
+        .ok_or_else(|| CliError::usage("memory capsule requires 'export' or 'import'"))?;
+    match subcommand.as_str() {
+        "export" => capsule_export(&args[1..]),
+        "import" => capsule_import(&args[1..]),
+        unknown => Err(CliError::usage(format!(
+            "unknown memory capsule command '{unknown}'"
+        ))),
+    }
+}
+
+fn capsule_export(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "sop",
+            "sop-id",
+            "output",
+            "out",
+            "author",
+        ],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory capsule export does not accept positional arguments",
+        ));
+    }
+    let sop_id = parsed
+        .value("sop")
+        .or_else(|| parsed.value("sop-id"))
+        .ok_or_else(|| {
+            CliError::usage(
+                "memory capsule export requires '--sop <sop_id>' or '--sop-id <sop_id>'",
+            )
+        })?;
+    let output_path = parsed
+        .value("output")
+        .or_else(|| parsed.value("out"))
+        .ok_or_else(|| {
+            CliError::usage("memory capsule export requires '--output <path>' or '--out <path>'")
+        })?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let (principal, tenant, default_workspace) = session_scope();
+    let workspace = parsed
+        .value("workspace")
+        .map(|v| WorkspaceId::new(v.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("workspace ID is invalid"))?
+        .unwrap_or(default_workspace);
+    let author = parsed.value("author").unwrap_or(principal.as_str());
+
+    let store = session_store(&config)?;
+    let stored_sop = store
+        .load_sop(&tenant, &workspace, sop_id)
+        .map_err(session_error)?
+        .ok_or_else(|| {
+            CliError::execution(
+                "standard operating procedure was not found",
+                json!({"sop_id": sop_id}),
+            )
+        })?;
+
+    let capsule_id = format!("capsule-{}", stored_sop.sop.id);
+    let capsule = MemoryCapsule::new(capsule_id, stored_sop.sop, author, timestamp())
+        .map_err(|e| CliError::execution(e.to_string(), json!({})))?;
+
+    let json_bytes = serde_json::to_vec_pretty(&capsule)
+        .map_err(|e| CliError::execution(format!("failed to serialize capsule: {e}"), json!({})))?;
+
+    if let Some(parent) = std::path::Path::new(output_path)
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            CliError::execution(
+                format!(
+                    "failed to create output directory {}: {e}",
+                    parent.display()
+                ),
+                json!({}),
+            )
+        })?;
+    }
+
+    std::fs::write(output_path, json_bytes).map_err(|e| {
+        CliError::execution(
+            format!("failed to write capsule to {output_path}: {e}"),
+            json!({}),
+        )
+    })?;
+
+    Ok(success(
+        "memory capsule export",
+        json!({
+            "capsule_id": capsule.capsule_id,
+            "sop_id": sop_id,
+            "sha256_digest": capsule.sha256_digest,
+            "author": capsule.author,
+            "output": output_path,
+        }),
+        format!(
+            "Exported SOP {} to signed capsule at {}",
+            sop_id, output_path
+        ),
+    ))
+}
+
+fn capsule_import(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "file", "in"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory capsule import does not accept positional arguments",
+        ));
+    }
+    let file_path = parsed
+        .value("file")
+        .or_else(|| parsed.value("in"))
+        .ok_or_else(|| CliError::usage("memory capsule import requires '--file <path>'"))?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let (_, tenant, default_workspace) = session_scope();
+    let workspace = parsed
+        .value("workspace")
+        .map(|v| WorkspaceId::new(v.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("workspace ID is invalid"))?
+        .unwrap_or(default_workspace);
+
+    let content = std::fs::read(file_path).map_err(|e| {
+        CliError::execution(
+            format!("failed to read capsule file {file_path}: {e}"),
+            json!({}),
+        )
+    })?;
+    let capsule: MemoryCapsule = serde_json::from_slice(&content).map_err(|e| {
+        CliError::execution(format!("failed to parse memory capsule: {e}"), json!({}))
+    })?;
+
+    capsule.validate().map_err(|e| {
+        let message = match e {
+            MemoryContractError::InvalidDigest => {
+                "memory capsule SHA-256 digest mismatch (tampered or corrupted)".to_string()
+            }
+            other => format!("memory capsule verification failed: {other}"),
+        };
+        CliError::execution(
+            message,
+            json!({
+                "capsule_id": capsule.capsule_id,
+                "recorded_digest": capsule.sha256_digest,
+            }),
+        )
+    })?;
+
+    let store = session_store(&config)?;
+    let stored = store
+        .store_sop(&tenant, &workspace, &capsule.sop, capsule.created_at)
+        .map_err(session_error)?;
+
+    Ok(success(
+        "memory capsule import",
+        json!({
+            "capsule_id": capsule.capsule_id,
+            "sop_id": stored.sop.id,
+            "sha256_digest": capsule.sha256_digest,
+            "author": capsule.author,
+            "source_file": file_path,
+        }),
+        format!(
+            "Imported signed capsule {} (SOP {})",
+            capsule.capsule_id, stored.sop.id
+        ),
+    ))
+}
+
+fn vfs(args: &[String]) -> Result<CommandResult, CliError> {
+    let subcommand = args
+        .first()
+        .ok_or_else(|| CliError::usage("memory vfs requires 'ls' or 'cat'"))?;
+    match subcommand.as_str() {
+        "ls" => vfs_ls(&args[1..]),
+        "cat" => vfs_cat(&args[1..]),
+        unknown => Err(CliError::usage(format!(
+            "unknown memory vfs command '{unknown}'"
+        ))),
+    }
+}
+
+fn vfs_ls(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "uri"])?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let (_, tenant, default_workspace) = session_scope();
+    let workspace = parsed
+        .value("workspace")
+        .map(|v| WorkspaceId::new(v.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("workspace ID is invalid"))?
+        .unwrap_or(default_workspace);
+
+    let raw_uri = parsed
+        .positionals
+        .first()
+        .cloned()
+        .or_else(|| parsed.value("uri").map(str::to_owned))
+        .unwrap_or_else(|| "pandora://".to_owned());
+
+    let canonical_uri = if raw_uri.starts_with("pandora://") {
+        raw_uri
+    } else if let Some(stripped) = raw_uri.strip_prefix('/') {
+        format!("pandora://{stripped}")
+    } else {
+        format!("pandora://{raw_uri}")
+    };
+
+    let uri = ContextUri::new(canonical_uri)
+        .map_err(|e| CliError::usage(format!("invalid context VFS URI: {e}")))?;
+
+    let store = session_store(&config)?;
+    let vfs = ContextVfs::from_session_store(&store, &tenant, &workspace)
+        .map_err(|e| CliError::execution(e.to_string(), json!({})))?;
+
+    load_workspace_feature_map(config.workspace_dir(), &vfs);
+
+    let entries = vfs
+        .list(&uri)
+        .map_err(|e| CliError::execution(e.to_string(), json!({"uri": uri.as_str()})))?;
+
+    let count = entries.len();
+    Ok(success(
+        "memory vfs ls",
+        json!({
+            "uri": uri.as_str(),
+            "entries": entries.iter().map(|e| json!({
+                "uri": e.uri.as_str(),
+                "name": e.name,
+                "kind": e.kind.as_str(),
+                "size_bytes": e.size_bytes,
+            })).collect::<Vec<_>>(),
+            "count": count,
+        }),
+        format!("Listed {count} node(s) under {}", uri.as_str()),
+    ))
+}
+
+fn vfs_cat(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "uri"])?;
+    let raw_uri = parsed
+        .positionals
+        .first()
+        .cloned()
+        .or_else(|| parsed.value("uri").map(str::to_owned))
+        .ok_or_else(|| CliError::usage("memory vfs cat requires '<uri>'"))?;
+
+    let canonical_uri = if raw_uri.starts_with("pandora://") {
+        raw_uri
+    } else if let Some(stripped) = raw_uri.strip_prefix('/') {
+        format!("pandora://{stripped}")
+    } else {
+        format!("pandora://{raw_uri}")
+    };
+
+    let uri = ContextUri::new(canonical_uri)
+        .map_err(|e| CliError::usage(format!("invalid context VFS URI: {e}")))?;
+
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let (_, tenant, default_workspace) = session_scope();
+    let workspace = parsed
+        .value("workspace")
+        .map(|v| WorkspaceId::new(v.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("workspace ID is invalid"))?
+        .unwrap_or(default_workspace);
+
+    let store = session_store(&config)?;
+    let vfs = ContextVfs::from_session_store(&store, &tenant, &workspace)
+        .map_err(|e| CliError::execution(e.to_string(), json!({})))?;
+
+    load_workspace_feature_map(config.workspace_dir(), &vfs);
+
+    let fragment = vfs.resolve(&uri).map_err(|e| match e {
+        VfsError::NotFound(_) => {
+            CliError::execution("context node was not found", json!({"uri": uri.as_str()}))
+        }
+        VfsError::IsADirectory(_) => CliError::execution(
+            "cannot cat directory; use 'pandora memory vfs ls' instead",
+            json!({"uri": uri.as_str()}),
+        ),
+        other => CliError::execution(other.to_string(), json!({"uri": uri.as_str()})),
+    })?;
+
+    let text = fragment.content().to_owned();
+    Ok(success(
+        "memory vfs cat",
+        json!({
+            "uri": uri.as_str(),
+            "fragment_id": fragment.id(),
+            "source": fragment.source().as_str(),
+            "trust": fragment.trust().as_str(),
+            "classification": fragment.classification().as_str(),
+            "token_cost": fragment.token_cost(),
+            "content_digest": fragment.content_digest(),
+            "content": text,
+        }),
+        text,
+    ))
+}
+
+fn load_workspace_feature_map(workspace_dir: &std::path::Path, vfs: &ContextVfs) {
+    let feature_map_path = workspace_dir.join(".pandora/feature_map.json");
+    let Ok(bytes) = std::fs::read(&feature_map_path) else {
+        return;
+    };
+    let Ok(map) = serde_json::from_slice::<FeatureMap>(&bytes) else {
+        return;
+    };
+    if map.validate().is_ok() {
+        vfs.add_feature_map("workspace", map);
+    }
 }
 
 fn sop_value(stored: &StoredSop) -> serde_json::Value {

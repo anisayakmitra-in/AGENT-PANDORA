@@ -209,6 +209,7 @@ pub enum ContextContractError {
     EmptyField(&'static str),
     FieldTooLong(&'static str),
     ControlCharacter(&'static str),
+    InvalidUri(&'static str),
 }
 
 impl fmt::Display for ContextContractError {
@@ -219,6 +220,7 @@ impl fmt::Display for ContextContractError {
             Self::ControlCharacter(field) => {
                 write!(formatter, "{field} contains a control character")
             }
+            Self::InvalidUri(msg) => write!(formatter, "invalid URI: {msg}"),
         }
     }
 }
@@ -854,6 +856,131 @@ fn digest_text(hasher: &mut Sha256, value: &str) {
     hasher.update(value.as_bytes());
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ContextUri(String);
+
+impl ContextUri {
+    pub fn new(uri: impl Into<String>) -> Result<Self, ContextContractError> {
+        let uri = uri.into();
+        let trimmed = uri.trim();
+        if !trimmed.starts_with("pandora://") {
+            return Err(ContextContractError::InvalidUri(
+                "URI must start with 'pandora://'",
+            ));
+        }
+        if trimmed.chars().any(char::is_control) {
+            return Err(ContextContractError::ControlCharacter("uri"));
+        }
+        if trimmed.len() > 1024 {
+            return Err(ContextContractError::FieldTooLong("uri"));
+        }
+        if trimmed.contains('\\') {
+            return Err(ContextContractError::InvalidUri(
+                "URI must not contain backslashes",
+            ));
+        }
+        let path = &trimmed["pandora://".len()..];
+        for segment in path.split('/') {
+            if segment == "." || segment == ".." {
+                return Err(ContextContractError::InvalidUri(
+                    "URI must not contain path traversal segments ('.' or '..')",
+                ));
+            }
+        }
+        Ok(Self(trimmed.to_owned()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn path(&self) -> &str {
+        &self.0["pandora://".len()..]
+    }
+
+    pub fn segments(&self) -> Vec<&str> {
+        let p = self.path().trim_matches('/');
+        if p.is_empty() {
+            Vec::new()
+        } else {
+            p.split('/').filter(|s| !s.is_empty()).collect()
+        }
+    }
+}
+
+impl fmt::Display for ContextUri {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::str::FromStr for ContextUri {
+    type Err = ContextContractError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::new(s)
+    }
+}
+
+impl TryFrom<&str> for ContextUri {
+    type Error = ContextContractError;
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        Self::new(s)
+    }
+}
+
+impl TryFrom<String> for ContextUri {
+    type Error = ContextContractError;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        Self::new(s)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VfsNodeKind {
+    Directory,
+    Fragment,
+    FeatureMap,
+    Sop,
+    Archive,
+}
+
+impl VfsNodeKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Directory => "directory",
+            Self::Fragment => "fragment",
+            Self::FeatureMap => "feature_map",
+            Self::Sop => "sop",
+            Self::Archive => "archive",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct VfsDirectoryEntry {
+    pub uri: ContextUri,
+    pub name: String,
+    pub kind: VfsNodeKind,
+    pub size_bytes: usize,
+}
+
+impl VfsDirectoryEntry {
+    pub fn new(
+        uri: ContextUri,
+        name: impl Into<String>,
+        kind: VfsNodeKind,
+        size_bytes: usize,
+    ) -> Self {
+        Self {
+            uri,
+            name: name.into(),
+            kind,
+            size_bytes,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -956,5 +1083,49 @@ mod tests {
         assert_eq!(first.token_budget(), 20);
         assert_eq!(second.token_budget(), 21);
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn context_uri_validation_and_segments() {
+        let uri = ContextUri::new("pandora://meta/rules").unwrap();
+        assert_eq!(uri.as_str(), "pandora://meta/rules");
+        assert_eq!(uri.path(), "meta/rules");
+        assert_eq!(uri.segments(), vec!["meta", "rules"]);
+        assert_eq!(format!("{uri}"), "pandora://meta/rules");
+
+        let root = ContextUri::new("pandora://").unwrap();
+        assert_eq!(root.path(), "");
+        assert!(root.segments().is_empty());
+
+        assert!(matches!(
+            ContextUri::new("https://example.com"),
+            Err(ContextContractError::InvalidUri(_))
+        ));
+        assert!(matches!(
+            ContextUri::new("pandora://bad\0uri"),
+            Err(ContextContractError::ControlCharacter(_))
+        ));
+        assert!(matches!(
+            ContextUri::new("pandora://sops/../meta"),
+            Err(ContextContractError::InvalidUri(_))
+        ));
+        assert!(matches!(
+            ContextUri::new("pandora://sops/./meta"),
+            Err(ContextContractError::InvalidUri(_))
+        ));
+        assert!(matches!(
+            ContextUri::new("pandora://sops\\meta"),
+            Err(ContextContractError::InvalidUri(_))
+        ));
+
+        let entry = VfsDirectoryEntry::new(uri.clone(), "rules", VfsNodeKind::Fragment, 42);
+        assert_eq!(entry.uri, uri);
+        assert_eq!(entry.name, "rules");
+        assert_eq!(entry.kind, VfsNodeKind::Fragment);
+        assert_eq!(entry.size_bytes, 42);
+
+        let json = serde_json::to_string(&entry).unwrap();
+        let deserialized: VfsDirectoryEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, entry);
     }
 }

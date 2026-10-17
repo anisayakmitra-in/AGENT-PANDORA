@@ -5,6 +5,7 @@ pub mod artifact;
 pub mod capability;
 pub mod containment;
 pub mod context;
+pub mod decision;
 pub mod effect;
 pub mod efficiency;
 pub mod evaluation;
@@ -45,7 +46,11 @@ pub use context::{
     CONTEXT_PROJECTION_VERSION, ContextAssembly, ContextCacheDisposition, ContextCacheKey,
     ContextClassification, ContextContractError, ContextEntry, ContextFragment,
     ContextFragmentManifest, ContextManifest, ContextOrigin, ContextOriginKind, ContextReceipt,
-    ContextRequest, ContextSource, ContextTrust,
+    ContextRequest, ContextSource, ContextTrust, ContextUri, VfsDirectoryEntry, VfsNodeKind,
+};
+pub use decision::{
+    ConvergenceChoice, DecisionCandidate, DecisionChoice, DecisionDistribution, DecisionVerdict,
+    IntentTierChoice, ToolSafetyChoice,
 };
 pub use effect::{
     EffectOutcome, EffectPermit, EffectReceipt, EffectTarget, OperationRequest, RequestError,
@@ -88,9 +93,10 @@ pub use ids::{
 pub use jobs::{JobCommand, JobContractError, JobRequest, JobStatus, MAX_JOB_ARGUMENT_BYTES};
 pub use memory::{
     MAX_MEMORY_SYNTHESIS_EVIDENCE, MEMORY_CONSOLIDATION_POLICY_VERSION, MemoryApproval,
-    MemoryAuditAction, MemoryAuditEntry, MemoryConflictRule, MemoryConsolidationBoundary,
-    MemoryConsolidationPolicy, MemoryContractError, MemoryIntent, MemoryKind, MemoryOrigin,
-    MemoryRecord, MemoryScope, MemoryTier, SessionArchiveRecord, SopDefinition, SopStep, StoredSop,
+    MemoryAuditAction, MemoryAuditEntry, MemoryCapsule, MemoryConflictRule,
+    MemoryConsolidationBoundary, MemoryConsolidationPolicy, MemoryContractError, MemoryIntent,
+    MemoryKind, MemoryOrigin, MemoryRecord, MemoryScope, MemoryTier, SessionArchiveRecord,
+    SopDefinition, SopStep, StoredSop,
 };
 pub use observability::{
     ObservabilityContractError, ObservabilitySample, ObservabilitySnapshot, SpanView, TraceView,

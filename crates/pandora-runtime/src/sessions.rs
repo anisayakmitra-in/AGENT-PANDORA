@@ -1617,6 +1617,107 @@ impl SessionStore {
         Ok(archives)
     }
 
+    pub fn list_memory_records_by_workspace(
+        &self,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        tier: Option<MemoryTier>,
+        limit: u16,
+    ) -> Result<Vec<MemoryRecord>, SessionError> {
+        let connection = self.lock()?;
+        let mut statement = if tier.is_some() {
+            connection.prepare(
+                "SELECT s.id, mr.provider, mr.tier, mr.kind, mr.classification, mr.summary,
+                        mr.provenance, mr.created_at, mr.memory_id, mr.approval_id, mr.approver,
+                        mr.origin, mr.evidence_ids, mr.intent
+                 FROM memory_records mr
+                 JOIN sessions s ON s.id = mr.session_id
+                 WHERE s.tenant_id = ?1 AND s.workspace_id = ?2 AND mr.tier = ?3
+                   AND NOT EXISTS (
+                       SELECT 1 FROM memory_revocations rev
+                       WHERE rev.session_id = mr.session_id
+                         AND rev.provider = mr.provider
+                         AND rev.memory_id = mr.memory_id
+                   )
+                 ORDER BY mr.created_at DESC, mr.memory_id DESC
+                 LIMIT ?4",
+            )?
+        } else {
+            connection.prepare(
+                "SELECT s.id, mr.provider, mr.tier, mr.kind, mr.classification, mr.summary,
+                        mr.provenance, mr.created_at, mr.memory_id, mr.approval_id, mr.approver,
+                        mr.origin, mr.evidence_ids, mr.intent
+                 FROM memory_records mr
+                 JOIN sessions s ON s.id = mr.session_id
+                 WHERE s.tenant_id = ?1 AND s.workspace_id = ?2
+                   AND NOT EXISTS (
+                       SELECT 1 FROM memory_revocations rev
+                       WHERE rev.session_id = mr.session_id
+                         AND rev.provider = mr.provider
+                         AND rev.memory_id = mr.memory_id
+                   )
+                 ORDER BY mr.created_at DESC, mr.memory_id DESC
+                 LIMIT ?3",
+            )?
+        };
+
+        let map_row =
+            |row: &rusqlite::Row<'_>| -> rusqlite::Result<(String, String, RawMemoryRecord)> {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    (
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                        row.get(8)?,
+                        row.get(9)?,
+                        row.get(10)?,
+                        row.get(11)?,
+                        row.get(12)?,
+                        row.get(13)?,
+                    ),
+                ))
+            };
+
+        let rows = if let Some(t) = tier {
+            statement.query_map(
+                params![
+                    tenant_id.as_str(),
+                    workspace_id.as_str(),
+                    t.as_str(),
+                    i64::from(limit)
+                ],
+                map_row,
+            )?
+        } else {
+            statement.query_map(
+                params![tenant_id.as_str(), workspace_id.as_str(), i64::from(limit)],
+                map_row,
+            )?
+        };
+
+        let mut records = Vec::new();
+        for row in rows {
+            let (session_id_str, provider, raw_record) = row?;
+            let session_id =
+                SessionId::new(session_id_str).map_err(|_| SessionError::CorruptRecord)?;
+            let scope = MemoryScope::new(
+                tenant_id.clone(),
+                workspace_id.clone(),
+                session_id,
+                provider,
+            )
+            .map_err(|_| SessionError::CorruptRecord)?;
+            let record = decode_memory_record(scope, raw_record)?;
+            records.push(record);
+        }
+        Ok(records)
+    }
+
     fn lock(&self) -> Result<MutexGuard<'_, Connection>, SessionError> {
         self.connection
             .lock()

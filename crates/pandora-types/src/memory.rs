@@ -2,6 +2,7 @@ use crate::context::ContextClassification;
 use crate::effect::Timestamp;
 use crate::ids::{IdError, MemoryId, SessionId, TenantId, WorkspaceId};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fmt;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, Hash, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -178,6 +179,7 @@ pub enum MemoryContractError {
     UnknownDependency(String),
     SelfDependency(String),
     DependencyCycle,
+    InvalidDigest,
 }
 
 impl fmt::Display for MemoryContractError {
@@ -227,6 +229,9 @@ impl fmt::Display for MemoryContractError {
                 write!(formatter, "SOP step '{step}' cannot depend on itself")
             }
             Self::DependencyCycle => formatter.write_str("SOP steps contain a dependency cycle"),
+            Self::InvalidDigest => {
+                formatter.write_str("cryptographic SHA-256 digest mismatch (tampered or corrupted)")
+            }
         }
     }
 }
@@ -1059,6 +1064,91 @@ impl StoredSop {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MemoryCapsule {
+    pub capsule_id: String,
+    pub sop: SopDefinition,
+    pub sha256_digest: String,
+    pub author: String,
+    pub created_at: Timestamp,
+}
+
+impl MemoryCapsule {
+    pub fn compute_digest(
+        capsule_id: &str,
+        sop: &SopDefinition,
+        author: &str,
+        created_at: Timestamp,
+    ) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(b"pandora-memory-capsule:v1\n");
+        hasher.update(capsule_id.as_bytes());
+        hasher.update(b"\n");
+        let sop_json = serde_json::to_string(sop).unwrap_or_default();
+        hasher.update(sop_json.as_bytes());
+        hasher.update(b"\n");
+        hasher.update(author.as_bytes());
+        hasher.update(b"\n");
+        hasher.update(created_at.as_unix_seconds().to_string().as_bytes());
+        format!("sha256:{:x}", hasher.finalize())
+    }
+
+    pub fn new(
+        capsule_id: impl Into<String>,
+        sop: SopDefinition,
+        author: impl Into<String>,
+        created_at: Timestamp,
+    ) -> Result<Self, MemoryContractError> {
+        let capsule_id = validate_text("capsule id", capsule_id.into())?;
+        let author = validate_text("capsule author", author.into())?;
+        sop.validate()?;
+        let sha256_digest = Self::compute_digest(&capsule_id, &sop, &author, created_at);
+        Ok(Self {
+            capsule_id,
+            sop,
+            sha256_digest,
+            author,
+            created_at,
+        })
+    }
+
+    pub fn new_with_digest(
+        capsule_id: impl Into<String>,
+        sop: SopDefinition,
+        sha256_digest: impl Into<String>,
+        author: impl Into<String>,
+        created_at: Timestamp,
+    ) -> Result<Self, MemoryContractError> {
+        let capsule_id = validate_text("capsule id", capsule_id.into())?;
+        let author = validate_text("capsule author", author.into())?;
+        let sha256_digest = validate_text("capsule digest", sha256_digest.into())?;
+        sop.validate()?;
+        Ok(Self {
+            capsule_id,
+            sop,
+            sha256_digest,
+            author,
+            created_at,
+        })
+    }
+
+    pub fn verify_digest(&self) -> bool {
+        let expected =
+            Self::compute_digest(&self.capsule_id, &self.sop, &self.author, self.created_at);
+        self.sha256_digest == expected
+    }
+
+    pub fn validate(&self) -> Result<(), MemoryContractError> {
+        validate_text("capsule id", self.capsule_id.clone())?;
+        validate_text("capsule author", self.author.clone())?;
+        self.sop.validate()?;
+        if !self.verify_digest() {
+            return Err(MemoryContractError::InvalidDigest);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SessionArchiveRecord {
     pub archive_id: String,
     pub tenant_id: TenantId,
@@ -1465,5 +1555,52 @@ mod tests {
         let json = serde_json::to_string(&archive).unwrap();
         let deserialized: SessionArchiveRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized, archive);
+    }
+
+    #[test]
+    fn memory_capsule_digest_and_tampering() {
+        let step = SopStep::new("step-1", "compile", "cargo check", vec![]).unwrap();
+        let sop = SopDefinition::new(
+            "sop-test-1",
+            "Verification SOP",
+            MemoryIntent::Procedure,
+            vec![step],
+            Some("cargo test".into()),
+        )
+        .unwrap();
+
+        let capsule = MemoryCapsule::new(
+            "capsule-test-1",
+            sop.clone(),
+            "author-1",
+            Timestamp::from_unix_seconds(1000),
+        )
+        .unwrap();
+
+        assert!(capsule.verify_digest());
+        assert!(capsule.validate().is_ok());
+        assert!(capsule.sha256_digest.starts_with("sha256:"));
+
+        // Roundtrip JSON
+        let json = serde_json::to_string(&capsule).unwrap();
+        let deserialized: MemoryCapsule = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, capsule);
+        assert!(deserialized.verify_digest());
+        assert!(deserialized.validate().is_ok());
+
+        // Tampering with author breaks verification
+        let mut tampered = capsule.clone();
+        tampered.author = "impostor".into();
+        assert!(!tampered.verify_digest());
+        assert_eq!(tampered.validate(), Err(MemoryContractError::InvalidDigest));
+
+        // Tampering with sop breaks verification
+        let mut tampered_sop = capsule;
+        tampered_sop.sop.name = "Tampered name".into();
+        assert!(!tampered_sop.verify_digest());
+        assert_eq!(
+            tampered_sop.validate(),
+            Err(MemoryContractError::InvalidDigest)
+        );
     }
 }
