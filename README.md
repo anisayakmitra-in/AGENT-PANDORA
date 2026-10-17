@@ -227,6 +227,47 @@ existing governed run or subagent path. Aggregate reservations and measured
 receipt usage are enforced transactionally across every dependent role and
 repository. See [durable orchestration workers](docs/ORCHESTRATION.md).
 
+### Dynamic Swarm Topology Synthesis
+
+Dynamic swarm synthesis compiles high-level architectural intent into verified, acyclic Diamond DAG orchestration plans on demand:
+
+```text
+pandora orchestration synthesize --intent "Security audit, cache tuning, and load validation" --roles "security_auditor,cache_specialist,load_tester" --out diamond_plan.json
+```
+
+- Dynamically derives role allocations: Root Planner -> Parallel Specialists -> Aggregating Synthesizer -> Canary Verification Gate.
+- Wires cross-domain handoffs governed by Meta Harness coordination.
+- Enforces topological acyclicity, role deduplication, and execution parallelism invariants.
+
+### Active-Learning Uncertainty Harvester & Golden Sets
+
+Pandora's non-generative System 1 Decision Engine harvests uncertain decisions near classification boundaries to synthesize verified golden test cases and fine-tuning datasets:
+
+```text
+pandora decision evaluate --question "Verify system readiness" --binary
+pandora decision harvest --min-margin 0.35 --export-golden harvested_golden.json --dpo-export dpo_pairs.json
+pandora evaluation golden --input harvested_golden.json
+```
+
+- Harvests decisions with confidence margin below the calibrated threshold (`--min-margin <float>`).
+- Directly synthesizes `GoldenSuiteDefinition` test suites executable via `pandora evaluation golden`.
+- Generates Direct Preference Optimization (DPO) and fine-tuning prompt-completion datasets.
+
+### Darwinian Island-Model Multi-Population Evolution
+
+Isolated subpopulations evolve across competing fitness niches (`QualityFirst`, `CostMinimal`, `LatencyOptimized`) to prevent premature convergence:
+
+```text
+pandora evolution island init --population 4 --out island_state.json
+pandora evolution island step --state island_state.json --generations 2
+pandora evolution island migrate --state island_state.json --count 1
+pandora evolution island run --state island_state.json --generations 5
+```
+
+- Manages discrete subpopulations with niche-specific objective weighting.
+- Implements tournament selection, dynamic step crossover, and structured SOP mutations.
+- Periodic elite ring migration maintains diversity and produces non-dominated Pareto frontiers across pass rate, token cost, and latency.
+
 Local isolated subagents use the same governed runtime path with durable,
 scoped records and exact-commit Git worktrees:
 

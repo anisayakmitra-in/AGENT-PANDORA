@@ -431,9 +431,39 @@ impl OrchestrationEngine {
             infer_specialists(trimmed_intent)
         };
 
-        let mut final_specialists = specialist_names;
-        if final_specialists.len() < 2 {
-            final_specialists.push("support_analyst".to_string());
+        let mut seen = std::collections::HashSet::new();
+        let mut final_specialists = Vec::new();
+        for raw_name in specialist_names {
+            let clean = raw_name.trim().to_lowercase().replace([' ', '-'], "_");
+            let safe_name = if clean == "planner"
+                || clean == "synthesizer"
+                || clean == "canary_verifier"
+                || clean == "canary"
+                || clean == "maker"
+                || clean == "verifier"
+            {
+                format!("specialist_{clean}")
+            } else {
+                clean
+            };
+            if !safe_name.is_empty() && seen.insert(safe_name.clone()) {
+                final_specialists.push(safe_name);
+            }
+        }
+
+        let fallbacks = [
+            "support_analyst",
+            "coordination_analyst",
+            "core_engineer",
+            "systems_architect",
+        ];
+        for fb in fallbacks {
+            if final_specialists.len() >= 2 {
+                break;
+            }
+            if seen.insert(fb.to_string()) {
+                final_specialists.push(fb.to_string());
+            }
         }
 
         let plan_id_str = format!("diamond-plan-{}", deterministic_slug(trimmed_intent));

@@ -685,7 +685,8 @@ impl SinglePassLogitEngine {
         max_margin: Option<f64>,
         limit: Option<usize>,
     ) -> Vec<DecisionEvolutionRecord> {
-        let threshold = max_margin.unwrap_or(self.uncertainty_threshold);
+        let q_by_id: std::collections::BTreeMap<&str, &DecisionQuestion> =
+            questions.iter().map(|q| (q.id.as_str(), q)).collect();
         let unix_now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -693,12 +694,21 @@ impl SinglePassLogitEngine {
         let now = Timestamp::from_unix_seconds(unix_now);
         let mut records = Vec::new();
 
-        for (v, q) in verdicts.iter().zip(questions.iter()) {
-            if v.is_uncertain || v.margin <= threshold {
+        for (idx, v) in verdicts.iter().enumerate() {
+            let passes = match max_margin {
+                Some(threshold) => v.margin <= threshold,
+                None => v.is_uncertain || v.margin <= self.uncertainty_threshold,
+            };
+            if passes {
+                let prompt = q_by_id
+                    .get(v.question_id.as_str())
+                    .map(|q| q.prompt.clone())
+                    .or_else(|| questions.get(idx).map(|q| q.prompt.clone()))
+                    .unwrap_or_default();
                 records.push(DecisionEvolutionRecord {
                     id: format!("evo-dec-{}", v.question_id),
                     question_id: v.question_id.clone(),
-                    prompt: q.prompt.clone(),
+                    prompt,
                     selected_label: v.selected_label.clone(),
                     confidence: v.confidence,
                     margin: v.margin,
@@ -747,11 +757,17 @@ impl SinglePassLogitEngine {
                 let mut sorted: Vec<(&String, &f64)> = r.candidate_probabilities.iter().collect();
                 sorted.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
                 if sorted.len() >= 2 {
+                    let chosen = r.selected_label.clone();
+                    let rejected = sorted
+                        .iter()
+                        .find(|(k, _)| **k != chosen)
+                        .map(|(k, _)| (*k).clone())
+                        .unwrap_or_else(|| sorted[1].0.clone());
                     Some(DpoPair {
                         id: format!("dpo-{}", r.question_id),
                         prompt: r.prompt.clone(),
-                        chosen: sorted[0].0.clone(),
-                        rejected: sorted[1].0.clone(),
+                        chosen,
+                        rejected,
                         margin: r.margin,
                     })
                 } else {

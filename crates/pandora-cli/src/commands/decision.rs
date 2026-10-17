@@ -233,10 +233,30 @@ fn harvest(args: &[String]) -> Result<CommandResult, CliError> {
         ],
     )?;
 
-    let min_margin = parsed
-        .value("min-margin")
-        .and_then(|s| s.parse::<f64>().ok());
-    let limit = parsed.value("limit").and_then(|s| s.parse::<usize>().ok());
+    let min_margin = if let Some(raw) = parsed.value("min-margin") {
+        let v = raw
+            .parse::<f64>()
+            .map_err(|_| CliError::usage(format!("invalid float for --min-margin: '{raw}'")))?;
+        if !(0.0..=1.0).contains(&v) {
+            return Err(CliError::usage("--min-margin must be between 0.0 and 1.0"));
+        }
+        Some(v)
+    } else {
+        None
+    };
+
+    let limit = if let Some(raw) = parsed.value("limit") {
+        let l = raw
+            .parse::<usize>()
+            .map_err(|_| CliError::usage(format!("invalid integer for --limit: '{raw}'")))?;
+        if l == 0 {
+            return Err(CliError::usage("--limit must be at least 1"));
+        }
+        Some(l)
+    } else {
+        None
+    };
+
     let suite_id = parsed
         .value("suite-id")
         .unwrap_or("golden-harvested-suite")

@@ -1141,10 +1141,12 @@ pub fn mutate_sop(
     match kind {
         MutationKind::PromptCommand => {
             if let Some(first) = steps.first_mut() {
-                if !first.command.contains("--strict") {
-                    first.command.push_str(" --strict");
-                } else {
+                if first.command.contains(" --cached") {
+                    first.command = first.command.replace(" --cached", "");
+                } else if first.command.contains(" --strict") {
                     first.command = first.command.replace(" --strict", " --cached");
+                } else {
+                    first.command.push_str(" --strict");
                 }
             }
         }
@@ -1281,7 +1283,7 @@ impl IslandModelEvolver {
         for niche in IslandNiche::standard_niches() {
             let island_id = format!("island-{}", niche.as_str());
             let mut island = Island::new(&island_id, niche);
-            let pop_size = population_size.max(4);
+            let pop_size = population_size.max(2);
             for p in 0..pop_size {
                 let cand_sop = if p == 0 {
                     base_sop.clone()
@@ -1358,8 +1360,14 @@ impl IslandModelEvolver {
                     generation,
                     next_population.len()
                 );
-                let crossed = crossover_sop_steps(&parent_a.sop, &parent_b.sop, &child_id, 1)
-                    .unwrap_or_else(|_| parent_a.sop.clone());
+                let crossover_pt = if parent_a.sop.steps.len() > 1 {
+                    ((seed as usize) % (parent_a.sop.steps.len() - 1)) + 1
+                } else {
+                    1
+                };
+                let crossed =
+                    crossover_sop_steps(&parent_a.sop, &parent_b.sop, &child_id, crossover_pt)
+                        .unwrap_or_else(|_| parent_a.sop.clone());
 
                 let mut child_sop = crossed;
                 if next_population.len() % 2 == 1 {
@@ -1439,18 +1447,23 @@ impl IslandModelEvolver {
             let target_island_id = self.islands[to_idx].id.clone();
             let from_island_id = self.islands[from_idx].id.clone();
 
-            for mut immigrant in candidates.clone() {
+            let target_pop = &mut self.islands[to_idx].population;
+            let k = candidates.len().min(target_pop.len());
+            for _ in 0..k {
+                target_pop.pop();
+            }
+
+            for immigrant_cand in candidates.iter().take(k) {
+                let mut immigrant = immigrant_cand.clone();
                 immigrant.id = format!("migrated-{}-to-{}", immigrant.id, target_island_id);
+                immigrant.origin_island = from_island_id.clone();
                 immigrant.fitness = target_niche.compute_fitness(
                     immigrant.pass_rate,
                     immigrant.token_cost,
                     immigrant.latency_ms,
                 );
-                let target_pop = &mut self.islands[to_idx].population;
-                if let Some(worst) = target_pop.last_mut() {
-                    *worst = immigrant.clone();
-                    migrated_total += 1;
-                }
+                target_pop.push(immigrant.clone());
+                migrated_total += 1;
                 exchanges.push(MigrationExchange {
                     from_island: from_island_id.clone(),
                     to_island: target_island_id.clone(),

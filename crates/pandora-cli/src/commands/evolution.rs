@@ -1846,13 +1846,25 @@ fn island(args: &[String]) -> Result<CommandResult, CliError> {
 
 fn island_init(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(args, &["out", "population"])?;
-    let population = parsed
-        .value("population")
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(4);
+    let population = if let Some(raw) = parsed.value("population") {
+        let p = raw
+            .parse::<usize>()
+            .map_err(|_| CliError::usage(format!("invalid integer for --population: '{raw}'")))?;
+        if p == 0 {
+            return Err(CliError::usage("--population must be at least 1"));
+        }
+        p
+    } else {
+        4
+    };
     let out_path = parsed.value("out").map(str::to_string);
 
     let evolver = IslandModelEvolver::new_default(default_evolution_sop(), population);
+    let actual_pop = evolver
+        .islands
+        .first()
+        .map(|i| i.population.len())
+        .unwrap_or(population);
 
     if let Some(ref path_str) = out_path {
         let path = Path::new(path_str);
@@ -1871,7 +1883,7 @@ fn island_init(args: &[String]) -> Result<CommandResult, CliError> {
         "command": "evolution island init",
         "islands_count": evolver.islands.len(),
         "current_generation": 0,
-        "population_per_island": population,
+        "population_per_island": actual_pop,
         "out_path": out_path,
         "islands": evolver.islands.iter().map(|isl| json!({
             "id": isl.id,
@@ -1882,7 +1894,7 @@ fn island_init(args: &[String]) -> Result<CommandResult, CliError> {
     });
 
     let rendered = format!(
-        "Initialized Darwinian Island Evolver (3 islands, population {population}/island)\nOutput: {}",
+        "Initialized Darwinian Island Evolver (3 islands, population {actual_pop}/island)\nOutput: {}",
         out_path.as_deref().unwrap_or("stdout"),
     );
 
@@ -1891,10 +1903,17 @@ fn island_init(args: &[String]) -> Result<CommandResult, CliError> {
 
 fn island_step(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(args, &["state", "out", "generations"])?;
-    let generations = parsed
-        .value("generations")
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(1);
+    let generations = if let Some(raw) = parsed.value("generations") {
+        let g = raw
+            .parse::<u32>()
+            .map_err(|_| CliError::usage(format!("invalid integer for --generations: '{raw}'")))?;
+        if g == 0 {
+            return Err(CliError::usage("--generations must be at least 1"));
+        }
+        g
+    } else {
+        1
+    };
     let state_path = parsed.value("state").map(str::to_string);
     let out_path = parsed.value("out").map(str::to_string);
 
@@ -1966,7 +1985,17 @@ fn island_step(args: &[String]) -> Result<CommandResult, CliError> {
 
 fn island_migrate(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(args, &["state", "out", "count"])?;
-    let migration_count = parsed.value("count").and_then(|s| s.parse::<usize>().ok());
+    let migration_count = if let Some(raw) = parsed.value("count") {
+        let c = raw
+            .parse::<usize>()
+            .map_err(|_| CliError::usage(format!("invalid integer for --count: '{raw}'")))?;
+        if c == 0 {
+            return Err(CliError::usage("--count must be at least 1"));
+        }
+        Some(c)
+    } else {
+        None
+    };
     let state_path = parsed.value("state").map(str::to_string);
     let out_path = parsed.value("out").map(str::to_string);
 
@@ -2018,14 +2047,28 @@ fn island_migrate(args: &[String]) -> Result<CommandResult, CliError> {
 
 fn island_run(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(args, &["generations", "state", "out", "population"])?;
-    let generations = parsed
-        .value("generations")
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(3);
-    let population = parsed
-        .value("population")
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(4);
+    let generations = if let Some(raw) = parsed.value("generations") {
+        let g = raw
+            .parse::<u32>()
+            .map_err(|_| CliError::usage(format!("invalid integer for --generations: '{raw}'")))?;
+        if g == 0 {
+            return Err(CliError::usage("--generations must be at least 1"));
+        }
+        g
+    } else {
+        3
+    };
+    let population = if let Some(raw) = parsed.value("population") {
+        let p = raw
+            .parse::<usize>()
+            .map_err(|_| CliError::usage(format!("invalid integer for --population: '{raw}'")))?;
+        if p == 0 {
+            return Err(CliError::usage("--population must be at least 1"));
+        }
+        p
+    } else {
+        4
+    };
     let state_path = parsed.value("state").map(str::to_string);
     let out_path = parsed.value("out").map(str::to_string);
 

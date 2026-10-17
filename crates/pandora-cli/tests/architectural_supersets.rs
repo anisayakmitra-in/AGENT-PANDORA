@@ -782,8 +782,27 @@ fn contract_active_learning_uncertainty_harvester_and_golden_export() {
     let engine = SinglePassLogitEngine::new();
     let q = DecisionQuestion::binary("q-test", "should we deploy this canary?", "true", "false");
     let v = engine.evaluate_dynamic(&q).expect("evaluate dynamic");
-    let harvested = engine.harvest_uncertain_decisions_with_margin(&[v], &[q], Some(0.99), None);
+    let harvested = engine.harvest_uncertain_decisions_with_margin(
+        std::slice::from_ref(&v),
+        std::slice::from_ref(&q),
+        Some(0.99),
+        None,
+    );
     assert_eq!(harvested.len(), 1);
+    assert_eq!(harvested[0].selected_label, v.selected_label);
+
+    let dpo_direct = engine.synthesize_dpo_pairs(&harvested);
+    assert_eq!(dpo_direct.len(), 1);
+    assert_eq!(dpo_direct[0].chosen, v.selected_label);
+    assert_ne!(dpo_direct[0].rejected, v.selected_label);
+
+    // Verify tight margin filtering: margin threshold lower than actual margin rejects candidate
+    let strict_harvested =
+        engine.harvest_uncertain_decisions_with_margin(&[v], &[q], Some(0.0001), None);
+    assert!(
+        strict_harvested.is_empty(),
+        "tight margin threshold must filter out decisions with higher margins"
+    );
 
     let ft_samples = engine.synthesize_fine_tuning_pairs(&harvested);
     assert_eq!(ft_samples.len(), 1);
@@ -970,4 +989,140 @@ fn contract_dynamic_emergent_swarm_topology_synthesis() {
     let default_val = default_resp.success("orchestration synthesize");
     assert_eq!(default_val["topology"], "diamond");
     assert_eq!(default_val["roles_count"], 5); // Planner + 2 default specialists + Synthesizer + Canary Verifier
+}
+
+#[test]
+fn contract_island_migration_multi_candidate_exchange_and_clamping() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    let state_file = fixture.workspace.join("island_multi_mig.json");
+
+    // 1. Initialize island evolver with population 4
+    let init_resp = fixture.run(&[
+        "evolution",
+        "island",
+        "init",
+        "--population",
+        "4",
+        "--out",
+        state_file.to_str().unwrap(),
+    ]);
+    init_resp.success("evolution island init");
+
+    // 2. Perform multi-candidate migration (count = 2)
+    let mig_resp = fixture.run(&[
+        "evolution",
+        "island",
+        "migrate",
+        "--state",
+        state_file.to_str().unwrap(),
+        "--count",
+        "2",
+    ]);
+    let mig_val = mig_resp.success("evolution island migrate");
+    assert_eq!(mig_val["migrated_count"], 6); // 2 candidates * 3 islands
+
+    // 3. Verify each island preserved BOTH immigrants without overwriting
+    let content = fs::read_to_string(&state_file).expect("read island state");
+    let evolver: IslandModelEvolver = serde_json::from_str(&content).expect("parse evolver");
+    for island in &evolver.islands {
+        assert_eq!(island.population.len(), 4, "population size must remain 4");
+        let immigrant_count = island
+            .population
+            .iter()
+            .filter(|c| c.id.starts_with("migrated-"))
+            .count();
+        assert_eq!(
+            immigrant_count, 2,
+            "island {} must retain exactly 2 immigrants, none clobbered",
+            island.id
+        );
+    }
+
+    // 4. Test migration where count exceeds population (--count 10 > --population 2)
+    let small_state = fixture.workspace.join("island_small_mig.json");
+    let small_init = fixture.run(&[
+        "evolution",
+        "island",
+        "init",
+        "--population",
+        "2",
+        "--out",
+        small_state.to_str().unwrap(),
+    ]);
+    small_init.success("evolution island init");
+
+    let over_mig = fixture.run(&[
+        "evolution",
+        "island",
+        "migrate",
+        "--state",
+        small_state.to_str().unwrap(),
+        "--count",
+        "10",
+    ]);
+    let over_val = over_mig.success("evolution island migrate");
+    assert_eq!(over_val["migrated_count"], 6); // clamped to 2 per island * 3 islands
+
+    let small_content = fs::read_to_string(&small_state).expect("read small state");
+    let small_evolver: IslandModelEvolver =
+        serde_json::from_str(&small_content).expect("parse small evolver");
+    for island in &small_evolver.islands {
+        assert_eq!(island.population.len(), 2, "population size must remain 2");
+    }
+}
+
+#[test]
+fn contract_swarm_topology_synthesis_duplicate_and_reserved_roles() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // 1. Single specialist role matching fallback name "support_analyst"
+    let resp1 = fixture.run(&[
+        "orchestration",
+        "synthesize",
+        "--intent",
+        "Support triage and ticket remediation workflow",
+        "--roles",
+        "support_analyst",
+    ]);
+    let val1 = resp1.success("orchestration synthesize");
+    assert_eq!(val1["roles_count"], 5); // Planner + support_analyst + coordination_analyst + Synthesizer + Canary Verifier
+
+    // 2. Duplicate roles provided by operator
+    let resp2 = fixture.run(&[
+        "orchestration",
+        "synthesize",
+        "--intent",
+        "Refactoring backend microservices",
+        "--roles",
+        "dev,dev",
+    ]);
+    let val2 = resp2.success("orchestration synthesize");
+    assert_eq!(val2["roles_count"], 5); // Planner + dev + support_analyst + Synthesizer + Canary Verifier
+
+    // 3. Reserved role name "planner"
+    let resp3 = fixture.run(&[
+        "orchestration",
+        "synthesize",
+        "--intent",
+        "System architecture planning and roadmapping",
+        "--roles",
+        "planner",
+    ]);
+    let val3 = resp3.success("orchestration synthesize");
+    assert_eq!(val3["roles_count"], 5); // Planner + specialist_planner + support_analyst + Synthesizer + Canary Verifier
+
+    // 4. Roles with spaces and hyphens
+    let resp4 = fixture.run(&[
+        "orchestration",
+        "synthesize",
+        "--intent",
+        "Comprehensive database and security audit",
+        "--roles",
+        "data architect, security-tester",
+    ]);
+    let val4 = resp4.success("orchestration synthesize");
+    assert_eq!(val4["roles_count"], 5);
 }
