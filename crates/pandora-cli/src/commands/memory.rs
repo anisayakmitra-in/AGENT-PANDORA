@@ -407,9 +407,11 @@ fn consolidate(args: &[String]) -> Result<CommandResult, CliError> {
             "source-id",
             "target-id",
             "conflict",
+            "intent",
             "yes",
         ],
     )?;
+    let intent = parse_intent(parsed.value("intent"))?;
     if !parsed.positionals.is_empty() {
         return Err(CliError::usage(
             "memory consolidate does not accept positional arguments",
@@ -569,6 +571,7 @@ fn consolidate(args: &[String]) -> Result<CommandResult, CliError> {
         hash_artifact(source.provenance().as_bytes()),
     );
     let now = timestamp();
+    let selected_intent = intent.unwrap_or_else(|| source.intent());
     let candidate = MemoryRecord::new_l1(
         target_id.as_str(),
         source.kind(),
@@ -578,7 +581,8 @@ fn consolidate(args: &[String]) -> Result<CommandResult, CliError> {
         now,
         provenance,
     )
-    .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+    .map_err(|error| CliError::execution(error.to_string(), json!({})))?
+    .with_intent(selected_intent);
     if !parsed.values.contains_key("yes") {
         return Ok(success(
             "memory consolidate",
@@ -620,10 +624,11 @@ fn consolidate(args: &[String]) -> Result<CommandResult, CliError> {
         ));
     }
     let consolidated = engine
-        .distill_l1(
+        .distill_l1_with_intent(
             candidate.scope().clone(),
             candidate.id().as_str(),
             candidate.kind(),
+            candidate.intent(),
             candidate.summary().to_owned(),
             candidate.classification(),
             candidate.created_at(),

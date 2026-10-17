@@ -1083,14 +1083,21 @@ impl AgentLoop {
             "pandora-runtime",
             CONTEXT_CONSTITUTION_ID,
         )?];
-        let map_path = std::path::Path::new(".pandora/feature_map.json");
-        if map_path.is_file()
-            && let Ok(bytes) = std::fs::read(map_path)
-            && let Ok(map) = serde_json::from_slice::<pandora_types::FeatureMap>(&bytes)
-            && map.validate().is_ok()
-        {
-            let feature_fragments = ContextEngine::fragments_from_feature_map(&map, task);
-            fragments.extend(feature_fragments);
+        let candidate_paths = [
+            std::path::PathBuf::from(".pandora/feature_map.json"),
+            std::path::PathBuf::from(session.workspace_id().as_str())
+                .join(".pandora/feature_map.json"),
+        ];
+        for map_path in &candidate_paths {
+            if map_path.is_file()
+                && let Ok(bytes) = std::fs::read(map_path)
+                && let Ok(map) = serde_json::from_slice::<pandora_types::FeatureMap>(&bytes)
+                && map.validate().is_ok()
+            {
+                let feature_fragments = ContextEngine::fragments_from_feature_map(&map, task);
+                fragments.extend(feature_fragments);
+                break;
+            }
         }
         if let Some(l1_evidence) = l1_evidence {
             if !l1_evidence.matches(session, provider.manifest().id().as_str()) {

@@ -1008,7 +1008,7 @@ pandora memory compact --session <id> --provider <name> --before <unix-seconds> 
 pandora memory promote --session <id> --provider <name> <memory-id> [--approval <id>]
 pandora memory synthesize --session <id> --provider <name> --id <memory-id> --summary <text> [--kind <kind>] [--classification <public|internal>] [--intent <repo|procedure|coding|user>] [--yes]
 pandora memory provenance --session <id> --provider <name> <memory-id>
-pandora memory consolidate --source-session <id> --target-session <id> --provider <name> --source-id <memory-id> --target-id <memory-id> [--source-workspace <id> --target-workspace <id> --conflict reject|keep-target] [--yes]
+pandora memory consolidate --source-session <id> --target-session <id> --provider <name> --source-id <memory-id> --target-id <memory-id> [--source-workspace <id> --target-workspace <id> --conflict reject|keep-target] [--intent <repo|procedure|coding|user>] [--yes]
 pandora memory schedule create --id <id> --name <name> --session <id> --provider <name> --memory-id <memory-id> --summary <text> --interval-seconds <seconds> [--kind <kind>] [--classification <public|internal>]
 pandora memory schedule list | disable --id <id> | claim --worker <id> [--limit <n>] | run --id <id> --worker <id> | runs [--id <id>]
 pandora mcp set <id> --program <absolute-path> --arguments-json <json-array> --mode <auto|modern-only|legacy-only>

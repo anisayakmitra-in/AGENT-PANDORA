@@ -984,7 +984,8 @@ fn memory_recall_and_synthesize_contract_with_intent() {
 
     let scope =
         MemoryScope::new(tenant, workspace, session_id.clone(), "openai-compatible").unwrap();
-    let engine = MemoryEngine::open(fixture.data.join("sessions.sqlite3"), 64, principal).unwrap();
+    let engine =
+        MemoryEngine::open(fixture.data.join("sessions.sqlite3"), 64, principal.clone()).unwrap();
     engine
         .distill_l1_with_intent(
             scope.clone(),
@@ -1095,4 +1096,102 @@ fn memory_recall_and_synthesize_contract_with_intent() {
         "synthesized-intent-memory"
     );
     assert_eq!(synth_preview["candidate"]["intent"], "coding");
+
+    // Consolidate across sessions preserving source intent
+    let target_session_id = SessionId::new("intent-session-2").unwrap();
+    let sessions = SessionStore::open(fixture.data.join("sessions.sqlite3")).unwrap();
+    sessions
+        .create(&Session::new(
+            target_session_id.clone(),
+            principal.clone(),
+            TenantId::new("local-tenant").unwrap(),
+            WorkspaceId::new("local-workspace").unwrap(),
+            Timestamp::from_unix_seconds(20),
+        ))
+        .expect("target session should be created");
+    drop(sessions);
+
+    let consolidated = fixture
+        .run(&[
+            "memory",
+            "consolidate",
+            "--provider",
+            "openai-compatible",
+            "--source-session",
+            session_id.as_str(),
+            "--target-session",
+            target_session_id.as_str(),
+            "--source-id",
+            "coding-memory-1",
+            "--target-id",
+            "consolidated-code-1",
+            "--yes",
+            "--json",
+        ])
+        .success("memory consolidate");
+    assert_eq!(consolidated["consolidated"]["intent"], "coding");
+
+    let recalled_target = fixture
+        .run(&[
+            "memory",
+            "recall",
+            "--session",
+            target_session_id.as_str(),
+            "--provider",
+            "openai-compatible",
+            "--tier",
+            "l1",
+            "--intent",
+            "coding",
+            "--json",
+        ])
+        .success("memory recall");
+    assert_eq!(recalled_target["count"], 1);
+    assert_eq!(recalled_target["records"][0]["id"], "consolidated-code-1");
+    assert_eq!(recalled_target["records"][0]["intent"], "coding");
+
+    // Consolidate with explicit intent override
+    let consolidated_proc = fixture
+        .run(&[
+            "memory",
+            "consolidate",
+            "--provider",
+            "openai-compatible",
+            "--source-session",
+            session_id.as_str(),
+            "--target-session",
+            target_session_id.as_str(),
+            "--source-id",
+            "coding-memory-1",
+            "--target-id",
+            "consolidated-proc-1",
+            "--intent",
+            "procedure",
+            "--yes",
+            "--json",
+        ])
+        .success("memory consolidate");
+    assert_eq!(consolidated_proc["consolidated"]["intent"], "procedure");
+
+    let recalled_target_proc = fixture
+        .run(&[
+            "memory",
+            "recall",
+            "--session",
+            target_session_id.as_str(),
+            "--provider",
+            "openai-compatible",
+            "--tier",
+            "l1",
+            "--intent",
+            "procedure",
+            "--json",
+        ])
+        .success("memory recall");
+    assert_eq!(recalled_target_proc["count"], 1);
+    assert_eq!(
+        recalled_target_proc["records"][0]["id"],
+        "consolidated-proc-1"
+    );
+    assert_eq!(recalled_target_proc["records"][0]["intent"], "procedure");
 }

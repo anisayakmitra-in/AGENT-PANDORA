@@ -52,4 +52,14 @@
   safety policies; feature map validation and inspection (`graph map
   validate|show`) with runtime agent context injection; and CLI setup polish
   (`--preset`).
+- [x] F3: Hardened intent memory consolidation, diamond verifiers, and path resolution.
+  Aligned SQLite migration 9 intent backfill with `MemoryKind::default_intent()`
+  (`policy_decision` -> `user`, `decision` -> `coding`, `replacement` -> `coding`,
+  `benchmark` -> `procedure`); enabled L1 admission for `PolicyDecision` and
+  `Replacement`; wired intent preservation and `--intent` flag into `pandora
+  memory consolidate`; hardened `EdgeVerifierPolicy` against rooted, drive-relative,
+  alternate data stream, and whitespace artifact paths; added duplicate artifact
+  path rejection (`OrchestrationError::DuplicateArtifactPath`) to diamond orchestration
+  join; and added session workspace candidate path resolution for `.pandora/feature_map.json`.
+
 

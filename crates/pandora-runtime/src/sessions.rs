@@ -1501,8 +1501,9 @@ fn migrate(connection: &mut Connection) -> Result<(), SessionError> {
         transaction.execute_batch(
             "ALTER TABLE memory_records ADD COLUMN intent TEXT NOT NULL DEFAULT 'coding';
              UPDATE memory_records SET intent = CASE
-                 WHEN kind IN ('lesson', 'decision', 'policy_decision') THEN 'procedure'
-                 WHEN kind IN ('lineage', 'replacement') THEN 'repo'
+                 WHEN kind IN ('lesson', 'benchmark') THEN 'procedure'
+                 WHEN kind = 'lineage' THEN 'repo'
+                 WHEN kind = 'policy_decision' THEN 'user'
                  ELSE 'coding'
              END;
              CREATE INDEX memory_records_intent_idx
@@ -3088,7 +3089,11 @@ mod tests {
                      INSERT INTO memory_records VALUES
                          ('s1', 'prov1', 'm1', 'l1', 'lesson', 'internal', 'lesson sum', 10, 'prov', null, null, 'explicit', '[]'),
                          ('s1', 'prov1', 'm2', 'l1', 'lineage', 'internal', 'lineage sum', 11, 'prov', null, null, 'explicit', '[]'),
-                         ('s1', 'prov1', 'm3', 'l1', 'execution_evidence', 'internal', 'exec sum', 12, 'prov', null, null, 'explicit', '[]');",
+                         ('s1', 'prov1', 'm3', 'l1', 'execution_evidence', 'internal', 'exec sum', 12, 'prov', null, null, 'explicit', '[]'),
+                         ('s1', 'prov1', 'm4', 'l1', 'policy_decision', 'internal', 'policy sum', 13, 'prov', null, null, 'explicit', '[]'),
+                         ('s1', 'prov1', 'm5', 'l1', 'decision', 'internal', 'decision sum', 14, 'prov', null, null, 'explicit', '[]'),
+                         ('s1', 'prov1', 'm6', 'l1', 'replacement', 'internal', 'replacement sum', 15, 'prov', null, null, 'explicit', '[]'),
+                         ('s1', 'prov1', 'm7', 'l1', 'benchmark', 'internal', 'benchmark sum', 16, 'prov', null, null, 'explicit', '[]');",
                 )
                 .unwrap();
         }
@@ -3111,9 +3116,18 @@ mod tests {
                 10,
             )
             .unwrap();
-        assert_eq!(procedure_mem.len(), 1);
-        assert_eq!(procedure_mem[0].id().as_str(), "m1");
-        assert_eq!(procedure_mem[0].intent(), MemoryIntent::Procedure);
+        assert_eq!(procedure_mem.len(), 2);
+        let proc_ids = procedure_mem
+            .iter()
+            .map(|m| m.id().as_str())
+            .collect::<Vec<_>>();
+        assert!(proc_ids.contains(&"m1"));
+        assert!(proc_ids.contains(&"m7"));
+        assert!(
+            procedure_mem
+                .iter()
+                .all(|m| m.intent() == MemoryIntent::Procedure)
+        );
 
         let repo_mem = store
             .recall_memory_by_intent(
@@ -3131,6 +3145,22 @@ mod tests {
         assert_eq!(repo_mem[0].id().as_str(), "m2");
         assert_eq!(repo_mem[0].intent(), MemoryIntent::Repo);
 
+        let user_mem = store
+            .recall_memory_by_intent(
+                &session_id,
+                &principal_id,
+                &tenant_id,
+                &workspace_id,
+                "prov1",
+                MemoryTier::L1,
+                MemoryIntent::User,
+                10,
+            )
+            .unwrap();
+        assert_eq!(user_mem.len(), 1);
+        assert_eq!(user_mem[0].id().as_str(), "m4");
+        assert_eq!(user_mem[0].intent(), MemoryIntent::User);
+
         let coding_mem = store
             .recall_memory_by_intent(
                 &session_id,
@@ -3143,9 +3173,19 @@ mod tests {
                 10,
             )
             .unwrap();
-        assert_eq!(coding_mem.len(), 1);
-        assert_eq!(coding_mem[0].id().as_str(), "m3");
-        assert_eq!(coding_mem[0].intent(), MemoryIntent::Coding);
+        assert_eq!(coding_mem.len(), 3);
+        let coding_ids = coding_mem
+            .iter()
+            .map(|m| m.id().as_str())
+            .collect::<Vec<_>>();
+        assert!(coding_ids.contains(&"m3"));
+        assert!(coding_ids.contains(&"m5"));
+        assert!(coding_ids.contains(&"m6"));
+        assert!(
+            coding_mem
+                .iter()
+                .all(|m| m.intent() == MemoryIntent::Coding)
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }

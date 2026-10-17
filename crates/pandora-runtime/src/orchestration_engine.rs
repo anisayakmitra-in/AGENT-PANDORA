@@ -76,21 +76,35 @@ impl EdgeVerifierPolicy {
     }
 
     pub fn verify(&self, artifact: &ArtifactRef) -> Result<(), EdgeVerificationError> {
-        if artifact.path.as_os_str().is_empty() {
+        let path_str = artifact.path.to_string_lossy();
+        if path_str.trim().is_empty() {
             return Err(EdgeVerificationError::PolicyViolation(
                 "artifact path cannot be empty".to_string(),
             ));
         }
-        if artifact.path.is_absolute() {
+        if artifact.path.is_absolute() || path_str.starts_with('/') || path_str.starts_with('\\') {
             return Err(EdgeVerificationError::PolicyViolation(
                 "artifact path must be relative to workspace".to_string(),
             ));
         }
+        if path_str.contains(':') {
+            return Err(EdgeVerificationError::PolicyViolation(
+                "artifact path cannot contain ':' or stream specifiers".to_string(),
+            ));
+        }
         for component in artifact.path.components() {
-            if matches!(component, std::path::Component::ParentDir) {
-                return Err(EdgeVerificationError::PolicyViolation(
-                    "artifact path traversal ('..') is prohibited".to_string(),
-                ));
+            match component {
+                std::path::Component::ParentDir => {
+                    return Err(EdgeVerificationError::PolicyViolation(
+                        "artifact path traversal ('..') is prohibited".to_string(),
+                    ));
+                }
+                std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                    return Err(EdgeVerificationError::PolicyViolation(
+                        "artifact path must be relative to workspace".to_string(),
+                    ));
+                }
+                std::path::Component::CurDir | std::path::Component::Normal(_) => {}
             }
         }
         if let Some(max) = self.max_size_bytes
@@ -150,6 +164,7 @@ pub enum OrchestrationError {
     },
     EmptyWorkers,
     DuplicateArtifact(pandora_types::ArtifactId),
+    DuplicateArtifactPath(std::path::PathBuf),
 }
 
 impl fmt::Display for OrchestrationError {
@@ -186,6 +201,13 @@ impl fmt::Display for OrchestrationError {
                 write!(
                     formatter,
                     "duplicate artifact '{id}' produced across workers"
+                )
+            }
+            Self::DuplicateArtifactPath(path) => {
+                write!(
+                    formatter,
+                    "duplicate artifact path '{}' produced across workers",
+                    path.display()
                 )
             }
         }
@@ -337,6 +359,7 @@ impl OrchestrationEngine {
 
         let mut verified_artifacts = Vec::with_capacity(results.len());
         let mut seen_ids = std::collections::BTreeSet::new();
+        let mut seen_paths = std::collections::BTreeSet::new();
         for (name, result) in results {
             let artifact = result.map_err(|err| OrchestrationError::WorkerFailed {
                 worker: name.clone(),
@@ -344,6 +367,9 @@ impl OrchestrationEngine {
             })?;
             if !seen_ids.insert(artifact.artifact_id.clone()) {
                 return Err(OrchestrationError::DuplicateArtifact(artifact.artifact_id));
+            }
+            if !seen_paths.insert(artifact.path.clone()) {
+                return Err(OrchestrationError::DuplicateArtifactPath(artifact.path));
             }
             verifier.verify(&artifact).map_err(|err| {
                 OrchestrationError::EdgeVerificationFailed {
@@ -917,6 +943,43 @@ mod tests {
     }
 
     #[test]
+    fn orchestration_diamond_rejects_duplicate_artifact_paths() {
+        let engine = OrchestrationEngine::new();
+        let verifier = EdgeVerifierPolicy::new();
+
+        let workers: Vec<(String, WorkerTask)> = vec![
+            (
+                "worker_1".to_string(),
+                Box::new(|| {
+                    Ok(ArtifactRef::compute(
+                        pandora_types::ArtifactId::new("art-path-1").unwrap(),
+                        "out/collision.txt",
+                        b"data 1",
+                        "text/plain",
+                    ))
+                }),
+            ),
+            (
+                "worker_2".to_string(),
+                Box::new(|| {
+                    Ok(ArtifactRef::compute(
+                        pandora_types::ArtifactId::new("art-path-2").unwrap(),
+                        "out/collision.txt",
+                        b"data 2",
+                        "text/plain",
+                    ))
+                }),
+            ),
+        ];
+
+        let result = engine.execute_diamond("Duplicate path task", workers, &verifier);
+        assert!(matches!(
+            result,
+            Err(OrchestrationError::DuplicateArtifactPath(path)) if path == std::path::Path::new("out/collision.txt")
+        ));
+    }
+
+    #[test]
     fn edge_verifier_policy_rejects_empty_path_absolute_path_and_path_traversal() {
         let verifier = EdgeVerifierPolicy::new();
 
@@ -928,6 +991,17 @@ mod tests {
         );
         assert!(matches!(
             verifier.verify(&empty_path_art),
+            Err(EdgeVerificationError::PolicyViolation(msg)) if msg.contains("cannot be empty")
+        ));
+
+        let whitespace_path_art = ArtifactRef::compute(
+            pandora_types::ArtifactId::new("art-ws").unwrap(),
+            "   ",
+            b"data",
+            "text/plain",
+        );
+        assert!(matches!(
+            verifier.verify(&whitespace_path_art),
             Err(EdgeVerificationError::PolicyViolation(msg)) if msg.contains("cannot be empty")
         ));
 
@@ -945,6 +1019,61 @@ mod tests {
         assert!(matches!(
             verifier.verify(&abs_path_art),
             Err(EdgeVerificationError::PolicyViolation(msg)) if msg.contains("must be relative")
+        ));
+
+        let rooted_art = ArtifactRef::compute(
+            pandora_types::ArtifactId::new("art-rooted").unwrap(),
+            "/workspace/out.txt",
+            b"data",
+            "text/plain",
+        );
+        assert!(matches!(
+            verifier.verify(&rooted_art),
+            Err(EdgeVerificationError::PolicyViolation(msg)) if msg.contains("must be relative")
+        ));
+
+        let backslash_rooted_art = ArtifactRef::compute(
+            pandora_types::ArtifactId::new("art-bs-rooted").unwrap(),
+            "\\workspace\\out.txt",
+            b"data",
+            "text/plain",
+        );
+        assert!(matches!(
+            verifier.verify(&backslash_rooted_art),
+            Err(EdgeVerificationError::PolicyViolation(msg)) if msg.contains("must be relative")
+        ));
+
+        let drive_rel_art = ArtifactRef::compute(
+            pandora_types::ArtifactId::new("art-drive-rel").unwrap(),
+            "C:relative/out.txt",
+            b"data",
+            "text/plain",
+        );
+        assert!(matches!(
+            verifier.verify(&drive_rel_art),
+            Err(EdgeVerificationError::PolicyViolation(msg)) if msg.contains("stream") || msg.contains("must be relative")
+        ));
+
+        let stream_art = ArtifactRef::compute(
+            pandora_types::ArtifactId::new("art-stream").unwrap(),
+            "out.txt:stream",
+            b"data",
+            "text/plain",
+        );
+        assert!(matches!(
+            verifier.verify(&stream_art),
+            Err(EdgeVerificationError::PolicyViolation(msg)) if msg.contains("stream")
+        ));
+
+        let ads_data_art = ArtifactRef::compute(
+            pandora_types::ArtifactId::new("art-ads").unwrap(),
+            "out.txt::$DATA",
+            b"data",
+            "text/plain",
+        );
+        assert!(matches!(
+            verifier.verify(&ads_data_art),
+            Err(EdgeVerificationError::PolicyViolation(msg)) if msg.contains("stream")
         ));
 
         let traversal_art = ArtifactRef::compute(
