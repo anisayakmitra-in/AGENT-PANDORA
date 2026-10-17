@@ -24,11 +24,14 @@ impl MemoryIntent {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Ord, Hash, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MemoryTier {
     L0,
     L1,
     L2,
+    L3,
+    L4,
 }
 
 pub const MAX_MEMORY_SYNTHESIS_EVIDENCE: usize = 16;
@@ -85,11 +88,14 @@ impl MemoryTier {
             Self::L0 => "l0",
             Self::L1 => "l1",
             Self::L2 => "l2",
+            Self::L3 => "l3",
+            Self::L4 => "l4",
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Ord, Hash, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MemoryKind {
     Trace,
     ExecutionEvidence,
@@ -100,6 +106,8 @@ pub enum MemoryKind {
     Lineage,
     PolicyDecision,
     Replacement,
+    Sop,
+    SessionArchive,
 }
 
 impl MemoryKind {
@@ -114,18 +122,28 @@ impl MemoryKind {
             Self::Lineage => "lineage",
             Self::PolicyDecision => "policy_decision",
             Self::Replacement => "replacement",
+            Self::Sop => "sop",
+            Self::SessionArchive => "session_archive",
         }
     }
 
-    const fn can_be_l1(self) -> bool {
-        !matches!(self, Self::Trace)
+    pub const fn can_be_l1(self) -> bool {
+        !matches!(self, Self::Trace | Self::Sop | Self::SessionArchive)
     }
 
-    const fn can_be_l2(self) -> bool {
+    pub const fn can_be_l2(self) -> bool {
         matches!(
             self,
             Self::Lesson | Self::Lineage | Self::PolicyDecision | Self::Replacement
         )
+    }
+
+    pub const fn can_be_l3(self) -> bool {
+        matches!(self, Self::Sop)
+    }
+
+    pub const fn can_be_l4(self) -> bool {
+        matches!(self, Self::SessionArchive)
     }
 
     pub const fn default_intent(self) -> MemoryIntent {
@@ -134,8 +152,8 @@ impl MemoryKind {
             Self::ExecutionEvidence | Self::Decision | Self::Failure | Self::Replacement => {
                 MemoryIntent::Coding
             }
-            Self::Benchmark | Self::Lesson => MemoryIntent::Procedure,
-            Self::Lineage => MemoryIntent::Repo,
+            Self::Benchmark | Self::Lesson | Self::Sop => MemoryIntent::Procedure,
+            Self::Lineage | Self::SessionArchive => MemoryIntent::Repo,
             Self::PolicyDecision => MemoryIntent::User,
         }
     }
@@ -156,6 +174,10 @@ pub enum MemoryContractError {
     CrossProviderConsolidation,
     ConsolidationBoundaryMismatch,
     InvalidTier { kind: MemoryKind, tier: MemoryTier },
+    DuplicateStep(String),
+    UnknownDependency(String),
+    SelfDependency(String),
+    DependencyCycle,
 }
 
 impl fmt::Display for MemoryContractError {
@@ -197,6 +219,14 @@ impl fmt::Display for MemoryContractError {
                     tier.as_str()
                 )
             }
+            Self::DuplicateStep(step) => write!(formatter, "duplicate SOP step '{step}'"),
+            Self::UnknownDependency(dep) => {
+                write!(formatter, "unknown SOP step dependency '{dep}'")
+            }
+            Self::SelfDependency(step) => {
+                write!(formatter, "SOP step '{step}' cannot depend on itself")
+            }
+            Self::DependencyCycle => formatter.write_str("SOP steps contain a dependency cycle"),
         }
     }
 }
@@ -510,6 +540,52 @@ impl MemoryRecord {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn new_l3_sop(
+        id: impl Into<String>,
+        scope: MemoryScope,
+        summary: impl Into<String>,
+        classification: ContextClassification,
+        created_at: Timestamp,
+        provenance: impl Into<String>,
+    ) -> Result<Self, MemoryContractError> {
+        Self::new(
+            id,
+            MemoryTier::L3,
+            MemoryKind::Sop,
+            scope,
+            summary,
+            classification,
+            created_at,
+            None,
+            provenance,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_l4_archive(
+        id: impl Into<String>,
+        scope: MemoryScope,
+        summary: impl Into<String>,
+        classification: ContextClassification,
+        created_at: Timestamp,
+        provenance: impl Into<String>,
+    ) -> Result<Self, MemoryContractError> {
+        Self::new(
+            id,
+            MemoryTier::L4,
+            MemoryKind::SessionArchive,
+            scope,
+            summary,
+            classification,
+            created_at,
+            None,
+            provenance,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn new(
         id: impl Into<String>,
         tier: MemoryTier,
@@ -559,6 +635,8 @@ impl MemoryRecord {
         if tier == MemoryTier::L0 && kind != MemoryKind::Trace
             || tier == MemoryTier::L1 && !kind.can_be_l1()
             || tier == MemoryTier::L2 && !kind.can_be_l2()
+            || tier == MemoryTier::L3 && !kind.can_be_l3()
+            || tier == MemoryTier::L4 && !kind.can_be_l4()
         {
             return Err(MemoryContractError::InvalidTier { kind, tier });
         }
@@ -748,6 +826,255 @@ fn validate_text(field: &'static str, value: String) -> Result<String, MemoryCon
     Ok(trimmed.to_owned())
 }
 
+fn validate_multiline_text(
+    field: &'static str,
+    value: String,
+) -> Result<String, MemoryContractError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(MemoryContractError::EmptyField(field));
+    }
+    if value.len() > 65_536 {
+        return Err(MemoryContractError::FieldTooLong(field));
+    }
+    if value
+        .chars()
+        .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+    {
+        return Err(MemoryContractError::ControlCharacter(field));
+    }
+    Ok(trimmed.to_owned())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SopStep {
+    pub id: String,
+    pub name: String,
+    pub command: String,
+    pub depends_on: Vec<String>,
+}
+
+impl SopStep {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        command: impl Into<String>,
+        depends_on: Vec<String>,
+    ) -> Result<Self, MemoryContractError> {
+        let id = validate_text("step id", id.into())?;
+        let name = validate_text("step name", name.into())?;
+        let command = validate_multiline_text("step command", command.into())?;
+        let mut seen = std::collections::BTreeSet::new();
+        for dep in &depends_on {
+            validate_text("step dependency", dep.clone())?;
+            if !seen.insert(dep) {
+                return Err(MemoryContractError::DuplicateStep(dep.clone()));
+            }
+        }
+        Ok(Self {
+            id,
+            name,
+            command,
+            depends_on,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SopDefinition {
+    pub id: String,
+    pub name: String,
+    pub trigger_intent: MemoryIntent,
+    pub steps: Vec<SopStep>,
+    pub verification_command: Option<String>,
+}
+
+impl SopDefinition {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        trigger_intent: MemoryIntent,
+        steps: Vec<SopStep>,
+        verification_command: Option<String>,
+    ) -> Result<Self, MemoryContractError> {
+        let id = validate_text("SOP id", id.into())?;
+        let name = validate_text("SOP name", name.into())?;
+        let verification_command = verification_command
+            .map(|cmd| validate_multiline_text("verification command", cmd))
+            .transpose()?;
+
+        if steps.is_empty() {
+            return Err(MemoryContractError::EmptyField("steps"));
+        }
+
+        let mut step_ids = std::collections::HashSet::new();
+        for step in &steps {
+            if !step_ids.insert(step.id.clone()) {
+                return Err(MemoryContractError::DuplicateStep(step.id.clone()));
+            }
+        }
+
+        for step in &steps {
+            for dep in &step.depends_on {
+                if !step_ids.contains(dep) {
+                    return Err(MemoryContractError::UnknownDependency(dep.clone()));
+                }
+                if dep == &step.id {
+                    return Err(MemoryContractError::SelfDependency(step.id.clone()));
+                }
+            }
+        }
+
+        if has_sop_cycle(&steps) {
+            return Err(MemoryContractError::DependencyCycle);
+        }
+
+        Ok(Self {
+            id,
+            name,
+            trigger_intent,
+            steps,
+            verification_command,
+        })
+    }
+
+    pub fn ready_steps(&self, completed: &[String]) -> Vec<SopStep> {
+        let completed_set: std::collections::HashSet<&str> =
+            completed.iter().map(String::as_str).collect();
+        self.steps
+            .iter()
+            .filter(|step| {
+                !completed_set.contains(step.id.as_str())
+                    && step
+                        .depends_on
+                        .iter()
+                        .all(|dep| completed_set.contains(dep.as_str()))
+            })
+            .cloned()
+            .collect()
+    }
+}
+
+fn has_sop_cycle(steps: &[SopStep]) -> bool {
+    let mut in_degrees: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    let mut dependents: std::collections::HashMap<&str, Vec<&str>> =
+        std::collections::HashMap::new();
+
+    for step in steps {
+        in_degrees.entry(&step.id).or_insert(0);
+        for dep in &step.depends_on {
+            dependents.entry(dep.as_str()).or_default().push(&step.id);
+            *in_degrees.entry(&step.id).or_insert(0) += 1;
+        }
+    }
+
+    let mut queue: std::collections::VecDeque<&str> = in_degrees
+        .iter()
+        .filter(|(_, deg)| **deg == 0)
+        .map(|(&id, _)| id)
+        .collect();
+
+    let mut visited = 0;
+    while let Some(node) = queue.pop_front() {
+        visited += 1;
+        if let Some(children) = dependents.get(node) {
+            for &child in children {
+                if let Some(deg) = in_degrees.get_mut(child) {
+                    *deg -= 1;
+                    if *deg == 0 {
+                        queue.push_back(child);
+                    }
+                }
+            }
+        }
+    }
+
+    visited != steps.len()
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct StoredSop {
+    pub sop: SopDefinition,
+    pub tenant_id: TenantId,
+    pub workspace_id: WorkspaceId,
+    pub success_count: u32,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+impl StoredSop {
+    pub fn new(
+        sop: SopDefinition,
+        tenant_id: TenantId,
+        workspace_id: WorkspaceId,
+        success_count: u32,
+        created_at: Timestamp,
+        updated_at: Timestamp,
+    ) -> Self {
+        Self {
+            sop,
+            tenant_id,
+            workspace_id,
+            success_count,
+            created_at,
+            updated_at,
+        }
+    }
+
+    pub fn sop_id(&self) -> &str {
+        &self.sop.id
+    }
+
+    pub fn name(&self) -> &str {
+        &self.sop.name
+    }
+
+    pub const fn intent(&self) -> MemoryIntent {
+        self.sop.trigger_intent
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SessionArchiveRecord {
+    pub archive_id: String,
+    pub tenant_id: TenantId,
+    pub workspace_id: WorkspaceId,
+    pub session_id: SessionId,
+    pub summary: String,
+    pub diff_stats: String,
+    pub receipt_digest: String,
+    pub created_at: Timestamp,
+}
+
+impl SessionArchiveRecord {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        archive_id: impl Into<String>,
+        tenant_id: TenantId,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+        summary: impl Into<String>,
+        diff_stats: impl Into<String>,
+        receipt_digest: impl Into<String>,
+        created_at: Timestamp,
+    ) -> Result<Self, MemoryContractError> {
+        let archive_id = validate_text("archive ID", archive_id.into())?;
+        let summary = validate_text("summary", summary.into())?;
+        let diff_stats = validate_multiline_text("diff stats", diff_stats.into())?;
+        let receipt_digest = validate_text("receipt digest", receipt_digest.into())?;
+        Ok(Self {
+            archive_id,
+            tenant_id,
+            workspace_id,
+            session_id,
+            summary,
+            diff_stats,
+            receipt_digest,
+            created_at,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -869,5 +1196,211 @@ mod tests {
             MemoryRecord::promote_l2(lesson, approval, Timestamp::from_unix_seconds(200)).unwrap();
         assert_eq!(promoted.intent(), MemoryIntent::Procedure);
         assert_eq!(promoted.explicit_intent(), Some(MemoryIntent::Procedure));
+    }
+
+    #[test]
+    fn memory_tier_and_kind_serde_and_rules() {
+        for (tier, expected_str) in [
+            (MemoryTier::L0, "l0"),
+            (MemoryTier::L1, "l1"),
+            (MemoryTier::L2, "l2"),
+            (MemoryTier::L3, "l3"),
+            (MemoryTier::L4, "l4"),
+        ] {
+            assert_eq!(tier.as_str(), expected_str);
+            let json = serde_json::to_string(&tier).unwrap();
+            assert_eq!(json, format!("\"{expected_str}\""));
+            let deserialized: MemoryTier = serde_json::from_str(&json).unwrap();
+            assert_eq!(deserialized, tier);
+        }
+
+        assert_eq!(MemoryKind::Sop.as_str(), "sop");
+        assert_eq!(MemoryKind::SessionArchive.as_str(), "session_archive");
+        assert!(MemoryKind::Sop.can_be_l3());
+        assert!(!MemoryKind::Sop.can_be_l1());
+        assert!(!MemoryKind::Sop.can_be_l2());
+        assert!(!MemoryKind::Sop.can_be_l4());
+
+        assert!(MemoryKind::SessionArchive.can_be_l4());
+        assert!(!MemoryKind::SessionArchive.can_be_l1());
+        assert!(!MemoryKind::SessionArchive.can_be_l2());
+        assert!(!MemoryKind::SessionArchive.can_be_l3());
+
+        assert_eq!(MemoryKind::Sop.default_intent(), MemoryIntent::Procedure);
+        assert_eq!(
+            MemoryKind::SessionArchive.default_intent(),
+            MemoryIntent::Repo
+        );
+    }
+
+    #[test]
+    fn memory_record_l3_and_l4_constructors_and_tier_invariants() {
+        let sc = scope("project-a", "session-a", "provider-a");
+        let sop_record = MemoryRecord::new_l3_sop(
+            "sop-rec-1",
+            sc.clone(),
+            "workflow for release build",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(300),
+            "test-provenance",
+        )
+        .unwrap();
+
+        assert_eq!(sop_record.tier(), MemoryTier::L3);
+        assert_eq!(sop_record.kind(), MemoryKind::Sop);
+        assert_eq!(sop_record.intent(), MemoryIntent::Procedure);
+
+        let archive_record = MemoryRecord::new_l4_archive(
+            "archive-rec-1",
+            sc,
+            "session archive summary",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(400),
+            "test-provenance",
+        )
+        .unwrap();
+
+        assert_eq!(archive_record.tier(), MemoryTier::L4);
+        assert_eq!(archive_record.kind(), MemoryKind::SessionArchive);
+        assert_eq!(archive_record.intent(), MemoryIntent::Repo);
+    }
+
+    #[test]
+    fn sop_dag_validation_and_execution_order() {
+        let step1 = SopStep::new(
+            "step-build",
+            "Build binary",
+            "cargo build --release",
+            vec![],
+        )
+        .unwrap();
+        let step2 = SopStep::new(
+            "step-test",
+            "Run tests",
+            "cargo test",
+            vec!["step-build".into()],
+        )
+        .unwrap();
+        let step3 = SopStep::new(
+            "step-package",
+            "Package artifact",
+            "tar -czf bin.tar.gz bin",
+            vec!["step-test".into()],
+        )
+        .unwrap();
+
+        let sop = SopDefinition::new(
+            "sop-release",
+            "Release Build SOP",
+            MemoryIntent::Procedure,
+            vec![step1.clone(), step2.clone(), step3.clone()],
+            Some("cargo check".into()),
+        )
+        .unwrap();
+
+        // Check DAG execution order via ready_steps
+        let initial_ready = sop.ready_steps(&[]);
+        assert_eq!(initial_ready.len(), 1);
+        assert_eq!(initial_ready[0].id, "step-build");
+
+        let after_build = sop.ready_steps(&["step-build".into()]);
+        assert_eq!(after_build.len(), 1);
+        assert_eq!(after_build[0].id, "step-test");
+
+        let after_test = sop.ready_steps(&["step-build".into(), "step-test".into()]);
+        assert_eq!(after_test.len(), 1);
+        assert_eq!(after_test[0].id, "step-package");
+
+        let all_done = sop.ready_steps(&[
+            "step-build".into(),
+            "step-test".into(),
+            "step-package".into(),
+        ]);
+        assert!(all_done.is_empty());
+
+        // Test serde round-trip
+        let json = serde_json::to_string(&sop).unwrap();
+        let deserialized: SopDefinition = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, sop);
+
+        // Negative: duplicate step IDs
+        let dup_step = SopStep::new("step-build", "Build again", "cargo build", vec![]).unwrap();
+        assert_eq!(
+            SopDefinition::new(
+                "sop-dup",
+                "Dup",
+                MemoryIntent::Procedure,
+                vec![step1.clone(), dup_step],
+                None
+            ),
+            Err(MemoryContractError::DuplicateStep("step-build".into()))
+        );
+
+        // Negative: unknown dependency
+        let bad_dep_step =
+            SopStep::new("step-orphan", "Orphan", "run", vec!["non-existent".into()]).unwrap();
+        assert_eq!(
+            SopDefinition::new(
+                "sop-bad-dep",
+                "BadDep",
+                MemoryIntent::Procedure,
+                vec![bad_dep_step],
+                None
+            ),
+            Err(MemoryContractError::UnknownDependency(
+                "non-existent".into()
+            ))
+        );
+
+        // Negative: self dependency
+        let self_dep_step =
+            SopStep::new("step-loop", "Self", "run", vec!["step-loop".into()]).unwrap();
+        assert_eq!(
+            SopDefinition::new(
+                "sop-self",
+                "SelfDep",
+                MemoryIntent::Procedure,
+                vec![self_dep_step],
+                None
+            ),
+            Err(MemoryContractError::SelfDependency("step-loop".into()))
+        );
+
+        // Negative: cycle detection
+        let cycle_a = SopStep::new("step-a", "A", "run", vec!["step-b".into()]).unwrap();
+        let cycle_b = SopStep::new("step-b", "B", "run", vec!["step-a".into()]).unwrap();
+        assert_eq!(
+            SopDefinition::new(
+                "sop-cycle",
+                "Cycle",
+                MemoryIntent::Procedure,
+                vec![cycle_a, cycle_b],
+                None
+            ),
+            Err(MemoryContractError::DependencyCycle)
+        );
+    }
+
+    #[test]
+    fn session_archive_record_contract_and_serde() {
+        let archive = SessionArchiveRecord::new(
+            "arch-123",
+            TenantId::new("tenant-a").unwrap(),
+            WorkspaceId::new("workspace-a").unwrap(),
+            SessionId::new("session-1").unwrap(),
+            "Refactored memory subsystem to 5 layers",
+            "+150 -20 in 3 files",
+            "sha256:abcdef123456",
+            Timestamp::from_unix_seconds(500),
+        )
+        .unwrap();
+
+        assert_eq!(archive.archive_id, "arch-123");
+        assert_eq!(archive.summary, "Refactored memory subsystem to 5 layers");
+        assert_eq!(archive.diff_stats, "+150 -20 in 3 files");
+
+        let json = serde_json::to_string(&archive).unwrap();
+        let deserialized: SessionArchiveRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, archive);
     }
 }

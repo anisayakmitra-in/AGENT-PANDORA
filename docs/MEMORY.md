@@ -2,14 +2,18 @@
 
 ## Shipped
 
-`pandora-runtime::MemoryEngine` provides three bounded memory tiers:
+`pandora-runtime::MemoryEngine` provides five crystallized memory tiers:
 
-- `L0` is an expiring in-memory trace ring buffer with a fixed capacity.
-- `L1` durably stores bounded execution summaries, decisions, failures,
+- `L0` (Meta Rules): An expiring in-memory trace ring buffer with a fixed capacity.
+- `L1` (Insight Index): Durably stores bounded execution summaries, decisions, failures,
   benchmarks, and provenance in the scoped session database.
-- `L2` durably stores only an `L1` lesson or lineage candidate promoted with
+- `L2` (Global Facts): Durably stores only an `L1` lesson or lineage candidate promoted with
   an explicit approval record. Promoted records retain provenance and approval
   identity.
+- `L3` (Task Skills / SOPs): Standard Operating Procedures representing validated, multi-step
+  DAG workflows with declared trigger intents and verification checks.
+- `L4` (Session Archive): Immutable records of completed session executions, summarising diff
+  statistics, receipt digests, and lifecycle metadata.
 
 Every record is scoped to a tenant, workspace, session, and provider. Recall and revocation require the exact same scope, preventing cross-workspace, cross-session, and cross-provider reuse.
 
@@ -34,6 +38,10 @@ summaries, and provenance. Invalid rows, invalid limits, and scope mismatches
 fail closed. SQLite migration 9 partitions records by intent (`repo`, `procedure`,
 `coding`, `user`), backfills existing entries from their record kind, and indexes
 them via `memory_records_intent_idx` for bounded, domain-isolated recall.
+SQLite migration 10 expands the memory tier constraint to `('l0', 'l1', 'l2', 'l3', 'l4')`,
+introduces `sop` and `session_archive` memory kinds, updates memory audit logging, and adds
+dedicated tables `memory_sops` and `memory_archives` with compound indexes (`idx_memory_sops_intent`,
+`idx_memory_archives_created`) for fast scoped queries.
 
 ## Verified synthesis
 
@@ -74,9 +82,11 @@ the exact same tenant, workspace, session, and provider scope. Arbitrary
 `Lesson` records do not enter agent context. Retrieved records are
 non-cacheable descriptive history, never instructions or authority.
 
-The public CLI exposes scoped L1/L2 summaries through `memory recall` and
+The public CLI exposes scoped L1-L4 summaries through `memory recall` (`--tier <l1|l2|l3|l4>`) and
 `memory audit`. `memory recall` and `memory synthesize` accept `--intent <repo|procedure|coding|user>`
-for partitioned queries and candidate tagging. `memory forget` requires explicit confirmation before durable
+for partitioned queries and candidate tagging. `memory sop list|inspect` and `memory archive list|inspect`
+provide direct inspection of crystallized SOP workflows and session archive records.
+`memory forget` requires explicit confirmation before durable
 revocation, and `memory promote` requires an exact approval resolved through the
 existing approval store. L0 remains process-local and is not exposed as a
 durable record. These commands do not create a second memory store or bypass

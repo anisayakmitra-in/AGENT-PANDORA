@@ -4,7 +4,8 @@ use crate::sessions::{
 use pandora_types::{
     ContextClassification, MAX_MEMORY_SYNTHESIS_EVIDENCE, MemoryApproval, MemoryAuditAction,
     MemoryAuditEntry, MemoryContractError, MemoryId, MemoryIntent, MemoryKind, MemoryOrigin,
-    MemoryRecord, MemoryScope, MemoryTier, PrincipalId, Timestamp, hash_artifact,
+    MemoryRecord, MemoryScope, MemoryTier, PrincipalId, SessionArchiveRecord, SopDefinition,
+    StoredSop, TenantId, Timestamp, WorkspaceId, hash_artifact,
 };
 use std::collections::{HashSet, VecDeque};
 use std::path::Path;
@@ -50,6 +51,10 @@ struct MemoryStore {
     l0: VecDeque<MemoryRecord>,
     l1: Vec<MemoryRecord>,
     l2: Vec<MemoryRecord>,
+    l3: Vec<MemoryRecord>,
+    l4: Vec<MemoryRecord>,
+    sops: Vec<StoredSop>,
+    archives: Vec<SessionArchiveRecord>,
     revoked: HashSet<MemoryKey>,
     audit: Vec<MemoryAuditEntry>,
 }
@@ -126,6 +131,10 @@ impl MemoryEngine {
                 l0: VecDeque::new(),
                 l1: Vec::new(),
                 l2: Vec::new(),
+                l3: Vec::new(),
+                l4: Vec::new(),
+                sops: Vec::new(),
+                archives: Vec::new(),
                 revoked: HashSet::new(),
                 audit: Vec::new(),
             }),
@@ -339,6 +348,267 @@ impl MemoryEngine {
         Ok(record)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn remember_l3_sop(
+        &self,
+        scope: MemoryScope,
+        id: impl Into<String>,
+        summary: impl Into<String>,
+        classification: ContextClassification,
+        created_at: Timestamp,
+        provenance: impl Into<String>,
+    ) -> Result<MemoryRecord, MemoryError> {
+        let _synthesis_guard = self
+            .synthesis_gate
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        let record =
+            MemoryRecord::new_l3_sop(id, scope, summary, classification, created_at, provenance)?;
+        if let Some(durable) = &self.durable {
+            durable
+                .store
+                .record_memory(&durable.principal_id, &record)
+                .map_err(memory_store_error)?;
+            return Ok(record);
+        }
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        store.l3.push(record.clone());
+        record_added(
+            &mut store,
+            &record,
+            MemoryAuditAction::Added,
+            created_at,
+            None,
+        );
+        Ok(record)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn remember_l4_archive(
+        &self,
+        scope: MemoryScope,
+        id: impl Into<String>,
+        summary: impl Into<String>,
+        classification: ContextClassification,
+        created_at: Timestamp,
+        provenance: impl Into<String>,
+    ) -> Result<MemoryRecord, MemoryError> {
+        let _synthesis_guard = self
+            .synthesis_gate
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        let record = MemoryRecord::new_l4_archive(
+            id,
+            scope,
+            summary,
+            classification,
+            created_at,
+            provenance,
+        )?;
+        if let Some(durable) = &self.durable {
+            durable
+                .store
+                .record_memory(&durable.principal_id, &record)
+                .map_err(memory_store_error)?;
+            return Ok(record);
+        }
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        store.l4.push(record.clone());
+        record_added(
+            &mut store,
+            &record,
+            MemoryAuditAction::Added,
+            created_at,
+            None,
+        );
+        Ok(record)
+    }
+
+    pub fn store_sop(
+        &self,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        sop: &SopDefinition,
+        timestamp: Timestamp,
+    ) -> Result<StoredSop, MemoryError> {
+        if let Some(durable) = &self.durable {
+            return durable
+                .store
+                .store_sop(tenant_id, workspace_id, sop, timestamp)
+                .map_err(memory_store_error);
+        }
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        if let Some(existing) = store.sops.iter_mut().find(|s| {
+            s.sop.id == sop.id && &s.tenant_id == tenant_id && &s.workspace_id == workspace_id
+        }) {
+            existing.sop = sop.clone();
+            existing.success_count += 1;
+            existing.updated_at = timestamp;
+            Ok(existing.clone())
+        } else {
+            let stored = StoredSop::new(
+                sop.clone(),
+                tenant_id.clone(),
+                workspace_id.clone(),
+                1,
+                timestamp,
+                timestamp,
+            );
+            store.sops.push(stored.clone());
+            Ok(stored)
+        }
+    }
+
+    pub fn load_sop(
+        &self,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        sop_id: &str,
+    ) -> Result<Option<StoredSop>, MemoryError> {
+        if let Some(durable) = &self.durable {
+            return durable
+                .store
+                .load_sop(tenant_id, workspace_id, sop_id)
+                .map_err(memory_store_error);
+        }
+        let store = self
+            .store
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        Ok(store
+            .sops
+            .iter()
+            .find(|s| {
+                s.sop.id == sop_id && &s.tenant_id == tenant_id && &s.workspace_id == workspace_id
+            })
+            .cloned())
+    }
+
+    pub fn query_sops(
+        &self,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        intent: Option<MemoryIntent>,
+    ) -> Result<Vec<StoredSop>, MemoryError> {
+        if let Some(durable) = &self.durable {
+            return durable
+                .store
+                .list_sops_by_intent(tenant_id, workspace_id, intent)
+                .map_err(memory_store_error);
+        }
+        let store = self
+            .store
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        let mut results: Vec<StoredSop> = store
+            .sops
+            .iter()
+            .filter(|s| {
+                &s.tenant_id == tenant_id
+                    && &s.workspace_id == workspace_id
+                    && intent.is_none_or(|i| s.intent() == i)
+            })
+            .cloned()
+            .collect();
+        results.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
+        Ok(results)
+    }
+
+    pub fn crystallize_sop(
+        &self,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        sop: &SopDefinition,
+        timestamp: Timestamp,
+    ) -> Result<StoredSop, MemoryError> {
+        self.store_sop(tenant_id, workspace_id, sop, timestamp)
+    }
+
+    pub fn store_archive(&self, archive: &SessionArchiveRecord) -> Result<(), MemoryError> {
+        if let Some(durable) = &self.durable {
+            return durable
+                .store
+                .store_archive(archive)
+                .map_err(memory_store_error);
+        }
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        store
+            .archives
+            .retain(|a| a.archive_id != archive.archive_id);
+        store.archives.push(archive.clone());
+        Ok(())
+    }
+
+    pub fn load_archive(
+        &self,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        archive_id: &str,
+    ) -> Result<Option<SessionArchiveRecord>, MemoryError> {
+        if let Some(durable) = &self.durable {
+            return durable
+                .store
+                .load_archive(tenant_id, workspace_id, archive_id)
+                .map_err(memory_store_error);
+        }
+        let store = self
+            .store
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        Ok(store
+            .archives
+            .iter()
+            .find(|a| {
+                a.archive_id == archive_id
+                    && &a.tenant_id == tenant_id
+                    && &a.workspace_id == workspace_id
+            })
+            .cloned())
+    }
+
+    pub fn query_archives(
+        &self,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        limit: usize,
+    ) -> Result<Vec<SessionArchiveRecord>, MemoryError> {
+        if let Some(durable) = &self.durable {
+            return durable
+                .store
+                .list_recent_archives(tenant_id, workspace_id, limit)
+                .map_err(memory_store_error);
+        }
+        let store = self
+            .store
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        let mut results: Vec<SessionArchiveRecord> = store
+            .archives
+            .iter()
+            .filter(|a| &a.tenant_id == tenant_id && &a.workspace_id == workspace_id)
+            .cloned()
+            .collect();
+        results.sort_by_key(|b| std::cmp::Reverse(b.created_at));
+        results.truncate(limit);
+        Ok(results)
+    }
+
+    pub fn crystallize_archive(&self, archive: &SessionArchiveRecord) -> Result<(), MemoryError> {
+        self.store_archive(archive)
+    }
+
     pub fn recall(
         &self,
         scope: &MemoryScope,
@@ -380,6 +650,8 @@ impl MemoryEngine {
             MemoryTier::L0 => store.l0.iter().collect::<Vec<_>>(),
             MemoryTier::L1 => store.l1.iter().collect::<Vec<_>>(),
             MemoryTier::L2 => store.l2.iter().collect::<Vec<_>>(),
+            MemoryTier::L3 => store.l3.iter().collect::<Vec<_>>(),
+            MemoryTier::L4 => store.l4.iter().collect::<Vec<_>>(),
         };
         Ok(records
             .into_iter()

@@ -1001,7 +1001,7 @@ pandora package lock
 pandora package verify-lock
 pandora package remove <id> <version> --dry-run
 pandora package remove <id> <version> --yes
-pandora memory recall --session <id> --provider <name> --tier <l1|l2> [--id <memory-id>] [--limit <1-256>] [--intent <repo|procedure|coding|user>]
+pandora memory recall --session <id> --provider <name> --tier <l1|l2|l3|l4> [--id <memory-id>] [--limit <1-256>] [--intent <repo|procedure|coding|user>]
 pandora memory audit --session <id> --provider <name>
 pandora memory forget --session <id> --provider <name> <memory-id> [--yes]
 pandora memory compact --session <id> --provider <name> --before <unix-seconds> [--yes]
@@ -1011,6 +1011,8 @@ pandora memory provenance --session <id> --provider <name> <memory-id>
 pandora memory consolidate --source-session <id> --target-session <id> --provider <name> --source-id <memory-id> --target-id <memory-id> [--source-workspace <id> --target-workspace <id> --conflict reject|keep-target] [--intent <repo|procedure|coding|user>] [--yes]
 pandora memory schedule create --id <id> --name <name> --session <id> --provider <name> --memory-id <memory-id> --summary <text> --interval-seconds <seconds> [--kind <kind>] [--classification <public|internal>]
 pandora memory schedule list | disable --id <id> | claim --worker <id> [--limit <n>] | run --id <id> --worker <id> | runs [--id <id>]
+pandora memory sop list [--intent <repo|procedure|coding|user>] [--workspace <id>] | inspect --id <id> [--workspace <id>]
+pandora memory archive list [--limit <1-256>] [--workspace <id>] | inspect --id <id> [--workspace <id>]
 pandora mcp set <id> --program <absolute-path> --arguments-json <json-array> --mode <auto|modern-only|legacy-only>
 pandora mcp list
 pandora mcp inspect <id>
@@ -1260,7 +1262,7 @@ reports `runtime_authority: false`; it cannot admit, enable, or execute a
 package. The TUI `/trust-transparency` command is guidance only, and the CLI
 renders the same read-only ledger.
 
-`memory recall` exposes only the selected, redacted L1 or L2 records from the exact
+`memory recall` exposes only the selected, redacted L1, L2, L3, or L4 records from the exact
 tenant, workspace, session, and provider scope, with optional `--intent <repo|procedure|coding|user>`
 partition filtering. L0 remains process-local and is not
 available after the process exits. `memory audit` lists durable additions, promotions,

@@ -90,7 +90,7 @@ pub use memory::{
     MAX_MEMORY_SYNTHESIS_EVIDENCE, MEMORY_CONSOLIDATION_POLICY_VERSION, MemoryApproval,
     MemoryAuditAction, MemoryAuditEntry, MemoryConflictRule, MemoryConsolidationBoundary,
     MemoryConsolidationPolicy, MemoryContractError, MemoryIntent, MemoryKind, MemoryOrigin,
-    MemoryRecord, MemoryScope, MemoryTier,
+    MemoryRecord, MemoryScope, MemoryTier, SessionArchiveRecord, SopDefinition, SopStep, StoredSop,
 };
 pub use observability::{
     ObservabilityContractError, ObservabilitySample, ObservabilitySnapshot, SpanView, TraceView,

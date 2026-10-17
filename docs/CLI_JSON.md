@@ -79,6 +79,10 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora memory provenance ... --json` | `memory provenance` | `root_id`, `scope`, `nodes`, `edges`, `bounded`, `max_nodes`, `durability` |
 | `pandora memory consolidate ... --json` | `memory consolidate` | `dry_run`, `applied`, `source`, `candidate` or `consolidated`, compatibility `policy`, versioned `transfer_policy`, `conflict`, `durability` |
 | `pandora memory schedule ... --json` | `memory schedule` | create/list/disable: schedule identity, exact scope, interval, enabled state, and claim count; claim/run history: worker lease, status, snapshot digest, result memory ID or bounded failure, plus `durability`; successful run also returns the committed L1 candidate and `promotion_required` |
+| `pandora memory sop list ... --json` | `memory sop list` | `sops`, `count`, `intent`, `durability` |
+| `pandora memory sop inspect --id <id> --json` | `memory sop inspect` | `sop`, `durability` |
+| `pandora memory archive list ... --json` | `memory archive list` | `archives`, `count`, `limit`, `durability` |
+| `pandora memory archive inspect --id <id> --json` | `memory archive inspect` | `archive`, `durability` |
 | `pandora backup lifecycle preview --input <path> --json` | `backup lifecycle preview` | `dry_run`, `would_record`, validated `manifest`, and the non-execution/non-erasure `boundary` |
 | `pandora backup lifecycle record --input <path> --yes --json` | `backup lifecycle record` | `created`, `idempotent_replay`, append-only `receipt`, and the non-execution/non-erasure `boundary` |
 | `pandora backup lifecycle list|inspect ... --json` | `backup lifecycle list` or `backup lifecycle inspect` | append-only operator-attested receipt manifests, manifest digests, recorded times, evidence status, and external-action boundary |

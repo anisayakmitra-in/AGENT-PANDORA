@@ -61,5 +61,7 @@
   alternate data stream, and whitespace artifact paths; added duplicate artifact
   path rejection (`OrchestrationError::DuplicateArtifactPath`) to diamond orchestration
   join; and added session workspace candidate path resolution for `.pandora/feature_map.json`.
+- [x] F4: Deliverable 1 Layered Memory System. Expanded memory architecture into 5 crystallized tiers: L0 (Meta Rules), L1 (Insight Index), L2 (Global Facts), L3 (Task Skills / SOPs), and L4 (Session Archive). Implemented DAG validation for SOP steps with cycle detection and dependency ordering in `pandora-types`; SQLite Migration 10 in `pandora-runtime` creating `memory_sops` and `memory_archives` with compound indexes; `SessionStore` and `MemoryEngine` APIs; and CLI commands `memory recall --tier <l1|l2|l3|l4>`, `memory sop list|inspect`, and `memory archive list|inspect` with shell completion parity across PowerShell, bash, zsh, and fish.
+
 
 

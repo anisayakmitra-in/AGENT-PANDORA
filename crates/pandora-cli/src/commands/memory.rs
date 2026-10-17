@@ -1,4 +1,7 @@
-use super::{load_config, parse_options, require_config_file, session_scope, timestamp};
+use super::{
+    load_config, parse_options, require_config_file, session_error, session_scope, session_store,
+    timestamp,
+};
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::sessions::{MAX_MEMORY_RECALL_RECORDS, SessionStore};
 use pandora_runtime::{
@@ -8,8 +11,8 @@ use pandora_runtime::{
 use pandora_types::{
     ContextClassification, ExecutionId, GeneId, JobWorkerId, MemoryApproval, MemoryConflictRule,
     MemoryConsolidationBoundary, MemoryConsolidationPolicy, MemoryId, MemoryIntent, MemoryKind,
-    MemoryRecord, MemoryScope, MemoryTier, RequestDigest, RunLoopId, Timestamp, WorkspaceId,
-    hash_artifact,
+    MemoryRecord, MemoryScope, MemoryTier, RequestDigest, RunLoopId, SessionArchiveRecord,
+    StoredSop, Timestamp, WorkspaceId, hash_artifact,
 };
 use serde_json::json;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -22,7 +25,7 @@ const MEMORY_PROMOTION_GENE: &str = "memory.promote";
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "memory requires 'recall', 'audit', 'forget', 'compact', 'promote', 'synthesize', 'consolidate', 'provenance', or 'schedule'",
+            "memory requires 'recall', 'audit', 'forget', 'compact', 'promote', 'synthesize', 'consolidate', 'provenance', 'schedule', 'sop', or 'archive'",
         )
     })?;
     match subcommand.as_str() {
@@ -35,6 +38,8 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "consolidate" => consolidate(&args[1..]),
         "provenance" => provenance(&args[1..]),
         "schedule" => schedule(&args[1..]),
+        "sop" => sop(&args[1..]),
+        "archive" => archive(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown memory command '{unknown}'"
         ))),
@@ -390,6 +395,204 @@ fn schedule_runs(args: &[String]) -> Result<CommandResult, CliError> {
         }),
         format!("Listed {count} memory synthesis run(s)"),
     ))
+}
+
+fn sop(args: &[String]) -> Result<CommandResult, CliError> {
+    let subcommand = args
+        .first()
+        .ok_or_else(|| CliError::usage("memory sop requires 'list' or 'inspect'"))?;
+    match subcommand.as_str() {
+        "list" => sop_list(&args[1..]),
+        "inspect" => sop_inspect(&args[1..]),
+        unknown => Err(CliError::usage(format!(
+            "unknown memory sop command '{unknown}'"
+        ))),
+    }
+}
+
+fn sop_list(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "intent"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory sop list does not accept positional arguments",
+        ));
+    }
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let (_, tenant, default_workspace) = session_scope();
+    let workspace = parsed
+        .value("workspace")
+        .map(|v| WorkspaceId::new(v.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("workspace ID is invalid"))?
+        .unwrap_or(default_workspace);
+    let intent = parse_intent(parsed.value("intent"))?;
+    let store = session_store(&config)?;
+    let sops = store
+        .list_sops_by_intent(&tenant, &workspace, intent)
+        .map_err(session_error)?;
+    let count = sops.len();
+    Ok(success(
+        "memory sop list",
+        json!({
+            "sops": sops.iter().map(sop_value).collect::<Vec<_>>(),
+            "count": count,
+            "intent": intent.map(|value| value.as_str()),
+            "durability": "session-store",
+        }),
+        format!("Listed {count} standard operating procedure(s)"),
+    ))
+}
+
+fn sop_inspect(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "id"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory sop inspect does not accept positional arguments",
+        ));
+    }
+    let id = required_option(&parsed, "id", "memory sop inspect requires '--id <id>'")?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let (_, tenant, default_workspace) = session_scope();
+    let workspace = parsed
+        .value("workspace")
+        .map(|v| WorkspaceId::new(v.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("workspace ID is invalid"))?
+        .unwrap_or(default_workspace);
+    let store = session_store(&config)?;
+    let sop = store
+        .load_sop(&tenant, &workspace, id)
+        .map_err(session_error)?
+        .ok_or_else(|| {
+            CliError::execution(
+                "standard operating procedure was not found",
+                json!({"sop_id": id}),
+            )
+        })?;
+    Ok(success(
+        "memory sop inspect",
+        json!({
+            "sop": sop_value(&sop),
+            "durability": "session-store",
+        }),
+        format!("Inspected standard operating procedure {}", sop.sop.id),
+    ))
+}
+
+fn archive(args: &[String]) -> Result<CommandResult, CliError> {
+    let subcommand = args
+        .first()
+        .ok_or_else(|| CliError::usage("memory archive requires 'list' or 'inspect'"))?;
+    match subcommand.as_str() {
+        "list" => archive_list(&args[1..]),
+        "inspect" => archive_inspect(&args[1..]),
+        unknown => Err(CliError::usage(format!(
+            "unknown memory archive command '{unknown}'"
+        ))),
+    }
+}
+
+fn archive_list(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "limit"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory archive list does not accept positional arguments",
+        ));
+    }
+    let limit = parse_limit(parsed.value("limit"))?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let (_, tenant, default_workspace) = session_scope();
+    let workspace = parsed
+        .value("workspace")
+        .map(|v| WorkspaceId::new(v.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("workspace ID is invalid"))?
+        .unwrap_or(default_workspace);
+    let store = session_store(&config)?;
+    let archives = store
+        .list_recent_archives(&tenant, &workspace, usize::from(limit))
+        .map_err(session_error)?;
+    let count = archives.len();
+    Ok(success(
+        "memory archive list",
+        json!({
+            "archives": archives.iter().map(archive_value).collect::<Vec<_>>(),
+            "count": count,
+            "limit": limit,
+            "durability": "session-store",
+        }),
+        format!("Listed {count} session archive(s)"),
+    ))
+}
+
+fn archive_inspect(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "id"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory archive inspect does not accept positional arguments",
+        ));
+    }
+    let id = required_option(&parsed, "id", "memory archive inspect requires '--id <id>'")?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let (_, tenant, default_workspace) = session_scope();
+    let workspace = parsed
+        .value("workspace")
+        .map(|v| WorkspaceId::new(v.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("workspace ID is invalid"))?
+        .unwrap_or(default_workspace);
+    let store = session_store(&config)?;
+    let archive = store
+        .load_archive(&tenant, &workspace, id)
+        .map_err(session_error)?
+        .ok_or_else(|| {
+            CliError::execution("session archive was not found", json!({"archive_id": id}))
+        })?;
+    Ok(success(
+        "memory archive inspect",
+        json!({
+            "archive": archive_value(&archive),
+            "durability": "session-store",
+        }),
+        format!("Inspected session archive {}", archive.archive_id),
+    ))
+}
+
+fn sop_value(stored: &StoredSop) -> serde_json::Value {
+    json!({
+        "id": stored.sop.id,
+        "name": stored.sop.name,
+        "trigger_intent": stored.sop.trigger_intent.as_str(),
+        "steps": stored.sop.steps.iter().map(|s| json!({
+            "id": s.id,
+            "name": s.name,
+            "command": s.command,
+            "depends_on": s.depends_on,
+        })).collect::<Vec<_>>(),
+        "verification_command": stored.sop.verification_command,
+        "tenant_id": stored.tenant_id,
+        "workspace_id": stored.workspace_id,
+        "success_count": stored.success_count,
+        "created_at": stored.created_at.as_unix_seconds(),
+        "updated_at": stored.updated_at.as_unix_seconds(),
+    })
+}
+
+fn archive_value(archive: &SessionArchiveRecord) -> serde_json::Value {
+    json!({
+        "id": archive.archive_id,
+        "tenant_id": archive.tenant_id,
+        "workspace_id": archive.workspace_id,
+        "session_id": archive.session_id,
+        "summary": archive.summary,
+        "diff_stats": archive.diff_stats,
+        "receipt_digest": archive.receipt_digest,
+        "created_at": archive.created_at.as_unix_seconds(),
+    })
 }
 
 fn consolidate(args: &[String]) -> Result<CommandResult, CliError> {
@@ -1363,11 +1566,17 @@ fn parse_tier(value: Option<&str>) -> Result<MemoryTier, CliError> {
     match value {
         Some("l1") => Ok(MemoryTier::L1),
         Some("l2") => Ok(MemoryTier::L2),
+        Some("l3") => Ok(MemoryTier::L3),
+        Some("l4") => Ok(MemoryTier::L4),
         Some("l0") => Err(CliError::usage(
             "L0 memory is process-local and cannot be recalled from the CLI",
         )),
-        Some(_) => Err(CliError::usage("memory tier must be 'l1' or 'l2'")),
-        None => Err(CliError::usage("memory recall requires '--tier <l1|l2>'")),
+        Some(_) => Err(CliError::usage(
+            "memory tier must be 'l1', 'l2', 'l3', or 'l4'",
+        )),
+        None => Err(CliError::usage(
+            "memory recall requires '--tier <l1|l2|l3|l4>'",
+        )),
     }
 }
 
