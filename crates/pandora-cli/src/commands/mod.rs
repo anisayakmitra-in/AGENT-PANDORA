@@ -130,6 +130,10 @@ impl ParsedArgs {
     pub fn value(&self, name: &str) -> Option<&str> {
         self.values.get(name).map(String::as_str)
     }
+
+    pub fn has_flag(&self, name: &str) -> bool {
+        self.values.contains_key(name)
+    }
 }
 
 pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
@@ -278,12 +282,15 @@ fn is_flag(name: &str) -> bool {
     matches!(
         name,
         "agent"
+            | "all"
             | "allow"
+            | "auto-promote"
             | "deny"
             | "dry-run"
             | "fail-on-failure"
             | "fail-on-non-passed"
             | "interactive"
+            | "once"
             | "plan"
             | "rollback"
             | "yes"

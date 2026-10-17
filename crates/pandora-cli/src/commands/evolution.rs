@@ -12,8 +12,8 @@ use pandora_runtime::{
     ArtifactCatalog, CANARY_POLICY_VERSION, CanaryPolicy, EvaluationEngine, EvolutionEngine,
     EvolutionError, EvolutionRecord, ExecutionController, FleetEngine, FleetQuiescenceGuard,
     HoldoutCase, HoldoutSetReport, IslandModelEvolver, MAX_HOLDOUT_CASES, MemoryEngine,
-    PackageStore, ReplacementEngine, ReplacementError, ResearchArtifactError,
-    ResearchArtifactStore, default_evolution_sop,
+    PackageStore, ReflexionCrystallizer, ReplacementEngine, ReplacementError,
+    ResearchArtifactError, ResearchArtifactStore, default_evolution_sop,
 };
 use pandora_types::{
     ArtifactId, ArtifactSignature, CanaryResult, Capability, ContextClassification,
@@ -169,7 +169,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         .first()
         .ok_or_else(|| {
             CliError::usage(
-                "evolution requires 'generate', 'list', 'inspect', 'submit', 'evaluate', 'approve', 'stage', 'canary', 'rollout', 'activate', 'rollback', or 'island'",
+                "evolution requires 'generate', 'list', 'inspect', 'submit', 'evaluate', 'approve', 'stage', 'canary', 'rollout', 'activate', 'rollback', 'island', or 'loop'",
             )
         })?;
     match subcommand.as_str() {
@@ -185,8 +185,9 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "activate" => activate(&args[1..]),
         "rollback" => rollback(&args[1..]),
         "island" => island(&args[1..]),
+        "loop" => evolution_loop(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown evolution command '{unknown}', expected 'generate', 'list', 'inspect', 'submit', 'evaluate', 'approve', 'stage', 'canary', 'rollout', 'activate', 'rollback', or 'island'"
+            "unknown evolution command '{unknown}', expected 'generate', 'list', 'inspect', 'submit', 'evaluate', 'approve', 'stage', 'canary', 'rollout', 'activate', 'rollback', 'island', or 'loop'"
         ))),
     }
 }
@@ -2118,6 +2119,90 @@ fn island_run(args: &[String]) -> Result<CommandResult, CliError> {
     );
 
     Ok(success("evolution island run", payload, rendered))
+}
+
+fn evolution_loop(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "watch",
+            "once",
+            "baseline",
+            "iterations",
+        ],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evolution loop does not accept positional arguments",
+        ));
+    }
+    let is_watch = parsed.has_flag("watch");
+    let max_iterations = if is_watch {
+        parsed
+            .value("iterations")
+            .map(|v| v.parse::<usize>())
+            .transpose()
+            .map_err(|_| CliError::usage("iterations must be an integer"))?
+            .unwrap_or(3)
+    } else {
+        1
+    };
+
+    let baseline = parsed
+        .value("baseline")
+        .map(|v| v.parse::<f64>())
+        .transpose()
+        .map_err(|_| CliError::usage("baseline rate must be a valid float between 0.0 and 1.0"))?
+        .unwrap_or(0.50);
+
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+    let (principal, tenant, workspace) = session_scope();
+    let now = timestamp();
+    let ws_root = config.workspace_dir().to_string_lossy().to_string();
+
+    let crystallizer = ReflexionCrystallizer::default();
+    let mut total_crystallized = 0;
+    let mut total_promoted = 0;
+    let mut cycles_completed = 0;
+
+    for _ in 0..max_iterations {
+        cycles_completed += 1;
+        if let Ok(results) = crystallizer.crystallize_all(
+            &store,
+            &principal,
+            &tenant,
+            &workspace,
+            baseline,
+            Some(&ws_root),
+            now,
+        ) {
+            total_crystallized += results.len();
+            total_promoted += results.iter().filter(|r| r.promoted).count();
+        }
+        if is_watch && cycles_completed < max_iterations {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    Ok(success(
+        "evolution loop",
+        json!({
+            "mode": if is_watch { "watch" } else { "once" },
+            "cycles_completed": cycles_completed,
+            "crystallized_count": total_crystallized,
+            "promoted_count": total_promoted,
+            "status": "completed"
+        }),
+        format!(
+            "Autonomous evolution loop completed {} cycle(s): crystallized {}, promoted {}",
+            cycles_completed, total_crystallized, total_promoted
+        ),
+    ))
 }
 
 #[cfg(test)]

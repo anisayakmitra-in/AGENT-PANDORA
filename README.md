@@ -94,7 +94,7 @@ create a second runtime or permission path. See [TypeScript client](docs/TYPESCR
 
 Pandora is designed to be cleanly extensible through governed packages:
 
-- **Architecture and 23 Runtime Engines**: Detailed overview of the crate structure, the 23 discrete engines in `crates/pandora-runtime`, and the Parliament/ReferenceMonitor authority chain in [Architecture](docs/ARCHITECTURE.md).
+- **Architecture and 26 Runtime Engines**: Detailed overview of the crate structure, the 26 discrete engines in `crates/pandora-runtime`, and the Parliament/ReferenceMonitor authority chain in [Architecture](docs/ARCHITECTURE.md).
 - **Authoring Custom Domain Harnesses, Meta Harnesses & Genes**: Step-by-step developer guide to scaffold, package, admit, and enable custom extensions in [Authoring Custom Harnesses and Genes](docs/CUSTOM_HARNESSES_AND_GENES.md).
 - **Starter Templates**: Copyable starter packages are available at [`sdk/domain-harness-starter`](sdk/domain-harness-starter/README.md), [`sdk/meta-harness-starter`](sdk/meta-harness-starter/README.md), and [`sdk/gene-pack`](sdk/gene-pack/README.md).
 
@@ -180,6 +180,13 @@ pandora memory vfs ls pandora://
 pandora memory vfs cat pandora://meta/rules
 pandora memory capsule export --sop sop-1 --output ./sop-1.capsule.json
 pandora memory capsule import --file ./sop-1.capsule.json
+pandora memory crystallize --all
+pandora memory mesh peers
+pandora memory mesh sync --auto-promote
+pandora session rewind sess-1 --step 0 --yes
+pandora session fork sess-1 --step 0 --prompt "alternative path"
+pandora session diff sess-1 --step-a 0 --step-b 1
+pandora evolution loop --once
 pandora map validate
 pandora map show
 ```

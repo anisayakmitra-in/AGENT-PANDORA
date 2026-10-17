@@ -218,6 +218,9 @@ pandora tui --session <session-id>
 pandora session list
 pandora session inspect <session-id>
 pandora session resume <session-id>
+pandora session rewind <session-id> --step <step-index> [--yes]
+pandora session fork <session-id> --step <step-index> --prompt "<text>"
+pandora session diff <session-id> --step-a <step-a> --step-b <step-b>
 pandora job submit -- --agent "Review this workspace"
 pandora job work
 pandora job work --max-jobs 8
@@ -1015,6 +1018,8 @@ pandora memory sop list [--intent <repo|procedure|coding|user>] [--workspace <id
 pandora memory archive list [--limit <1-256>] [--workspace <id>] | inspect --id <id> [--workspace <id>]
 pandora memory vfs ls [<uri>] [--workspace <id>] | cat <uri> [--workspace <id>]
 pandora memory capsule export --sop <sop-id> --output <path> [--workspace <id>] | import --file <path> [--workspace <id>]
+pandora memory crystallize [--session <id> | --all] [--baseline <rate>]
+pandora memory mesh peers | broadcast --sop <id> | sync [--auto-promote]
 pandora mcp set <id> --program <absolute-path> --arguments-json <json-array> --mode <auto|modern-only|legacy-only>
 pandora mcp list
 pandora mcp inspect <id>
@@ -1066,6 +1071,7 @@ pandora evolution island init [--population <n>] [--out <path>]
 pandora evolution island step [--state <path>] [--out <path>] [--generations <n>]
 pandora evolution island migrate [--state <path>] [--out <path>] [--count <n>]
 pandora evolution island run [--state <path>] [--out <path>] [--generations <n>] [--population <n>]
+pandora evolution loop [--watch | --once] [--baseline <rate>] [--iterations <n>]
 pandora rollout inspect --session <id> [--execution <id>]
 pandora graph code|knowledge|review|architecture --input <path> [--store <path>] [--tenant <id>] [--workspace <id>]
 pandora graph map [validate|show] [--path <path>]

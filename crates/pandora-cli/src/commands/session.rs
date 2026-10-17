@@ -1,19 +1,26 @@
 use super::run::evaluation_receipt_json;
-use super::{load_config, parse_options, require_config_file, session_scope, session_store};
+use super::{
+    load_config, parse_options, require_config_file, session_scope, session_store, timestamp,
+};
 use crate::output::{CliError, CommandResult, success};
-use pandora_runtime::{ObservabilityEngine, sessions::SessionSnapshot};
+use pandora_runtime::{ObservabilityEngine, SessionJournalEngine, sessions::SessionSnapshot};
 use pandora_types::{EventType, ObservabilitySample, SessionId};
 use serde_json::json;
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
-        CliError::usage("session requires 'list', 'resume', 'inspect', or 'events'")
+        CliError::usage(
+            "session requires 'list', 'resume', 'inspect', 'events', 'rewind', 'fork', or 'diff'",
+        )
     })?;
     match subcommand.as_str() {
         "list" => list(&args[1..]),
         "resume" => resume(&args[1..]),
         "inspect" => inspect(&args[1..]),
         "events" => events(&args[1..]),
+        "rewind" => rewind(&args[1..]),
+        "fork" => fork(&args[1..]),
+        "diff" => diff(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown session command '{unknown}'"
         ))),
@@ -284,4 +291,141 @@ fn observability_error_code(event_type: EventType) -> Option<&'static str> {
         EventType::PolicyDenied => Some("policy_denied"),
         _ => None,
     }
+}
+
+fn rewind(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "step", "yes"])?;
+    if parsed.positionals.len() != 1 {
+        return Err(CliError::usage(
+            "session rewind requires exactly one session ID positional argument",
+        ));
+    }
+    let session_id = SessionId::new(parsed.positionals[0].clone())
+        .map_err(|_| CliError::usage("session ID is invalid"))?;
+
+    let step = parsed
+        .value("step")
+        .ok_or_else(|| CliError::usage("session rewind requires '--step <n>'"))?
+        .parse::<usize>()
+        .map_err(|_| CliError::usage("step must be a non-negative integer"))?;
+
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+
+    let result =
+        SessionJournalEngine::rewind(&store, &session_id, step, Some(config.workspace_dir()))
+            .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+
+    let val = serde_json::to_value(&result)
+        .map_err(|_| CliError::internal("could not serialize rewind result", json!({})))?;
+
+    Ok(success(
+        "session rewind",
+        val,
+        format!(
+            "Session {} rewound from step {} to step {} (target digest: {})",
+            result.session_id,
+            result.rolled_back_from_step,
+            result.rolled_back_to_step,
+            result.target_digest
+        ),
+    ))
+}
+
+fn fork(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "step", "prompt"])?;
+    if parsed.positionals.len() != 1 {
+        return Err(CliError::usage(
+            "session fork requires exactly one session ID positional argument",
+        ));
+    }
+    let session_id = SessionId::new(parsed.positionals[0].clone())
+        .map_err(|_| CliError::usage("session ID is invalid"))?;
+
+    let step = parsed
+        .value("step")
+        .ok_or_else(|| CliError::usage("session fork requires '--step <n>'"))?
+        .parse::<usize>()
+        .map_err(|_| CliError::usage("step must be a non-negative integer"))?;
+
+    let prompt = parsed
+        .value("prompt")
+        .ok_or_else(|| CliError::usage("session fork requires '--prompt \"<text>\"'"))?;
+
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+    let (principal, tenant, workspace) = session_scope();
+    let now = timestamp();
+
+    let result = SessionJournalEngine::fork(
+        &store,
+        &session_id,
+        step,
+        prompt,
+        config.workspace_dir(),
+        &principal,
+        &tenant,
+        &workspace,
+        now,
+    )
+    .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+
+    let val = serde_json::to_value(&result)
+        .map_err(|_| CliError::internal("could not serialize fork result", json!({})))?;
+
+    Ok(success(
+        "session fork",
+        val,
+        format!(
+            "Forked session {} from parent {} at step {} (branch: {})",
+            result.forked_session_id, result.parent_session_id, result.at_step, result.git_branch
+        ),
+    ))
+}
+
+fn diff(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "step-a", "step-b"],
+    )?;
+    if parsed.positionals.len() != 1 {
+        return Err(CliError::usage(
+            "session diff requires exactly one session ID positional argument",
+        ));
+    }
+    let session_id = SessionId::new(parsed.positionals[0].clone())
+        .map_err(|_| CliError::usage("session ID is invalid"))?;
+
+    let step_a = parsed
+        .value("step-a")
+        .ok_or_else(|| CliError::usage("session diff requires '--step-a <m>'"))?
+        .parse::<usize>()
+        .map_err(|_| CliError::usage("step-a must be a non-negative integer"))?;
+
+    let step_b = parsed
+        .value("step-b")
+        .ok_or_else(|| CliError::usage("session diff requires '--step-b <n>'"))?
+        .parse::<usize>()
+        .map_err(|_| CliError::usage("step-b must be a non-negative integer"))?;
+
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+
+    let result = SessionJournalEngine::diff(&store, &session_id, step_a, step_b)
+        .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+
+    let val = serde_json::to_value(&result)
+        .map_err(|_| CliError::internal("could not serialize diff result", json!({})))?;
+
+    Ok(success(
+        "session diff",
+        val,
+        format!(
+            "Diff for session {} between step {} ({}) and step {} ({})",
+            result.session_id, result.step_a, result.digest_a, result.step_b, result.digest_b
+        ),
+    ))
 }

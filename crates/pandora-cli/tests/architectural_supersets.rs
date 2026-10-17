@@ -1,6 +1,7 @@
 use pandora_runtime::{
-    BayesianCanaryGate, ContextVfs, IslandModelEvolver, IslandNiche, ParetoCandidate,
-    ParetoFrontier, SessionStore, SinglePassLogitEngine,
+    BayesianCanaryGate, ContextVfs, IslandModelEvolver, IslandNiche, MeshSyncEngine,
+    ParetoCandidate, ParetoFrontier, PeerIdentity, ReflexionCrystallizer, SessionJournalEngine,
+    SessionStore, SignedCapsulePackage, SinglePassLogitEngine,
 };
 use pandora_types::{
     ContextClassification, ContextContractError, ContextUri, ConvergenceChoice, DecisionQuestion,
@@ -1125,4 +1126,292 @@ fn contract_swarm_topology_synthesis_duplicate_and_reserved_roles() {
     ]);
     let val4 = resp4.success("orchestration synthesize");
     assert_eq!(val4["roles_count"], 5);
+}
+
+#[test]
+fn contract_reflexion_crystallize_and_evolution_loop() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // 1. Run CLI memory crystallize --all
+    let crys_resp = fixture.run(&["memory", "crystallize", "--all"]);
+    let crys_val = crys_resp.success("memory crystallize");
+    assert!(crys_val["results"].is_array());
+
+    // 2. Run CLI evolution loop --once
+    let evo_resp = fixture.run(&["evolution", "loop", "--once"]);
+    let evo_val = evo_resp.success("evolution loop");
+    assert_eq!(evo_val["status"], "completed");
+    assert_eq!(evo_val["mode"], "once");
+    assert_eq!(evo_val["cycles_completed"], 1);
+
+    // 3. Test in-memory ReflexionCrystallizer with BayesianCanaryGate
+    let _crystallizer = ReflexionCrystallizer::default();
+    let sample_prompt = "Execute command in /tmp/work/AGENT-PANDORA with commit 0123456789abcdef0123456789abcdef01234567 session 12345678-1234-1234-1234-123456789abc and sha256:aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899";
+    let (parameterized, literals) = ReflexionCrystallizer::parameterize_literals(
+        sample_prompt,
+        Some("/tmp/work/AGENT-PANDORA"),
+    );
+    assert!(parameterized.contains("{{WORKSPACE_ROOT}}"));
+    assert!(parameterized.contains("{{COMMIT_SHA}}"));
+    assert!(parameterized.contains("{{SESSION_ID}}"));
+    assert!(parameterized.contains("{{SHA256_DIGEST}}"));
+    assert!(!literals.is_empty());
+
+    // 4. Test BayesianCanaryGate evaluation
+    let canary = BayesianCanaryGate::new(0.95);
+    let v_pass = canary.evaluate(20, 0, 0.80);
+    assert!(v_pass.promoted);
+    assert!(v_pass.lower_bound_95 > 0.80);
+
+    let v_fail = canary.evaluate(1, 10, 0.80);
+    assert!(!v_fail.promoted);
+}
+
+#[test]
+fn contract_session_journal_rewind_fork_diff() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // Create a real session first in DB so session commands can operate on it
+    let store =
+        SessionStore::open(fixture.data.join("sessions.sqlite3")).expect("open sessions db");
+    let session_id = SessionId::new("arch-journal-session-1").expect("session id");
+    let principal = PrincipalId::new("principal-1").expect("principal id");
+    let tenant = TenantId::new(LOCAL_TENANT).expect("tenant id");
+    let workspace = WorkspaceId::new(LOCAL_WORKSPACE).expect("workspace id");
+    let session = Session::new(
+        session_id.clone(),
+        principal.clone(),
+        tenant.clone(),
+        workspace.clone(),
+        Timestamp::from_unix_seconds(100),
+    );
+    store.create(&session).expect("create session");
+
+    // Add 3 journal steps
+    let s0 = SessionJournalEngine::capture_turn_step(
+        session_id.clone(),
+        0,
+        Some("file_write".to_string()),
+        Some("call-0".to_string()),
+        Some(json!({"path": "file1.txt"})),
+        Some("written".to_string()),
+        "+hello".to_string(),
+        std::collections::HashMap::new(),
+        None,
+        Timestamp::from_unix_seconds(101),
+    );
+    store.store_journal_step(&s0).expect("store step 0");
+
+    let s1 = SessionJournalEngine::capture_turn_step(
+        session_id.clone(),
+        1,
+        Some("run_command".to_string()),
+        Some("call-1".to_string()),
+        Some(json!({"cmd": "cargo check"})),
+        Some("ok".to_string()),
+        "+build".to_string(),
+        std::collections::HashMap::new(),
+        Some(&s0.sha256_digest),
+        Timestamp::from_unix_seconds(102),
+    );
+    store.store_journal_step(&s1).expect("store step 1");
+
+    let s2 = SessionJournalEngine::capture_turn_step(
+        session_id.clone(),
+        2,
+        Some("file_edit".to_string()),
+        Some("call-2".to_string()),
+        Some(json!({"path": "file1.txt"})),
+        Some("edited".to_string()),
+        "+world".to_string(),
+        std::collections::HashMap::new(),
+        Some(&s1.sha256_digest),
+        Timestamp::from_unix_seconds(103),
+    );
+    store.store_journal_step(&s2).expect("store step 2");
+
+    // Test CLI session diff
+    let diff_resp = fixture.run(&[
+        "session",
+        "diff",
+        session_id.as_str(),
+        "--step-a",
+        "0",
+        "--step-b",
+        "1",
+    ]);
+    let diff_val = diff_resp.success("session diff");
+    assert_eq!(diff_val["step_a"], 0);
+    assert_eq!(diff_val["step_b"], 1);
+
+    // Test CLI session fork
+    let fork_resp = fixture.run(&[
+        "session",
+        "fork",
+        session_id.as_str(),
+        "--step",
+        "1",
+        "--prompt",
+        "Exploring alternative optimization path",
+    ]);
+    let fork_val = fork_resp.success("session fork");
+    assert_eq!(fork_val["at_step"], 1);
+    assert!(fork_val["forked_session_id"].as_str().is_some());
+
+    // Test CLI session rewind
+    let rewind_resp = fixture.run(&[
+        "session",
+        "rewind",
+        session_id.as_str(),
+        "--step",
+        "0",
+        "--yes",
+    ]);
+    let rewind_val = rewind_resp.success("session rewind");
+    assert_eq!(rewind_val["rolled_back_to_step"], 0);
+    assert_eq!(rewind_val["rolled_back_from_step"], 2);
+
+    // Verify DB truncation
+    let remaining_steps = store
+        .load_journal_steps(&session_id)
+        .expect("load remaining steps");
+    assert_eq!(remaining_steps.len(), 1);
+    assert_eq!(remaining_steps[0].step_index, 0);
+}
+
+#[test]
+fn contract_mesh_sync_gossip_and_3_point_validation() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // 1. Test CLI memory mesh peers
+    let peers_resp = fixture.run(&["memory", "mesh", "peers"]);
+    let peers_val = peers_resp.success("memory mesh peers");
+    assert!(peers_val["peers"].is_array());
+
+    // 2. Test in-memory PeerIdentity & Handshake
+    let peer = PeerIdentity::new_random();
+    let handshake = peer.create_handshake("127.0.0.1:9099", vec!["gossip".to_string()]);
+    assert!(handshake.verify().unwrap());
+    assert_eq!(handshake.peer_id, peer.peer_id);
+
+    // 3. Create test SOP and MemoryCapsule
+    let step = SopStep::new("step-1", "Compile Code", "cargo check", vec![]).unwrap();
+    let sop = SopDefinition::new(
+        "sop-mesh-test",
+        "Mesh Synchronization SOP",
+        MemoryIntent::Procedure,
+        vec![step],
+        None,
+    )
+    .unwrap();
+
+    let capsule = MemoryCapsule::new(
+        "capsule-mesh-alpha",
+        sop.clone(),
+        peer.peer_id.clone(),
+        Timestamp::from_unix_seconds(200),
+    )
+    .unwrap();
+
+    let author_signature = peer.sign_digest(&capsule.sha256_digest);
+    let author_public_key = peer.public_key_hex();
+
+    let package = SignedCapsulePackage {
+        capsule: capsule.clone(),
+        author_public_key: author_public_key.clone(),
+        author_signature: author_signature.clone(),
+        parent_capsule_ids: vec![],
+        gossip_hops: 0,
+    };
+
+    // 4. Strict 3-point security pipeline verification
+    let verdict =
+        MeshSyncEngine::validate_capsule_package(&package, &std::collections::HashMap::new())
+            .expect("validate signed capsule package");
+    assert!(verdict.valid);
+    assert!(verdict.sha256_verified);
+    assert!(verdict.signature_verified);
+    assert!(verdict.dag_acyclic);
+
+    // Tampered digest check
+    let mut bad_package = package.clone();
+    bad_package.capsule.sha256_digest = "0".repeat(64);
+    assert!(
+        MeshSyncEngine::validate_capsule_package(&bad_package, &std::collections::HashMap::new())
+            .is_err()
+    );
+
+    // 5. Store capsule in DB and test CLI memory mesh sync
+    let store =
+        SessionStore::open(fixture.data.join("sessions.sqlite3")).expect("open sessions db");
+    store
+        .store_mesh_capsule(&package)
+        .expect("store mesh capsule");
+
+    let sync_resp = fixture.run(&["memory", "mesh", "sync", "--auto-promote"]);
+    let sync_val = sync_resp.success("memory mesh sync");
+    assert!(sync_val["admitted"].is_array());
+}
+
+#[test]
+fn contract_release_manifests_generation_and_cosign_validation() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    let dist_dir = fixture.workspace.join("dist");
+    fs::create_dir_all(&dist_dir).expect("create dist dir");
+    let checksums_file = dist_dir.join("checksums.txt");
+    let checksum_content = "\
+1111111111111111111111111111111111111111111111111111111111111111  pandora-aarch64-apple-darwin\n\
+2222222222222222222222222222222222222222222222222222222222222222  pandora-x86_64-apple-darwin\n\
+3333333333333333333333333333333333333333333333333333333333333333  pandora-x86_64-unknown-linux-gnu\n\
+4444444444444444444444444444444444444444444444444444444444444444  pandora-x86_64-pc-windows-msvc.exe\n";
+    fs::write(&checksums_file, checksum_content).expect("write checksums");
+
+    let out_dir = fixture.workspace.join("manifests_out");
+
+    let status = Command::new("python")
+        .args([
+            "scripts/generate_release_manifests.py",
+            "v2.0.0-beta.8",
+            "--checksums",
+            checksums_file.to_str().unwrap(),
+            "--output-dir",
+            out_dir.to_str().unwrap(),
+        ])
+        .current_dir(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap(),
+        )
+        .status()
+        .expect("run generate_release_manifests.py");
+
+    assert!(
+        status.success(),
+        "generate_release_manifests script must exit 0"
+    );
+
+    let formula_file = out_dir.join("Formula").join("pandora.rb");
+    let scoop_file = out_dir.join("bucket").join("pandora.json");
+    let winget_ver_file = out_dir.join("winget").join("manifest.version.yaml");
+    let winget_inst_file = out_dir.join("winget").join("manifest.installer.yaml");
+
+    assert!(formula_file.is_file());
+    assert!(scoop_file.is_file());
+    assert!(winget_ver_file.is_file());
+    assert!(winget_inst_file.is_file());
+
+    let formula = fs::read_to_string(&formula_file).unwrap();
+    assert!(formula.contains("class Pandora < Formula"));
+    assert!(formula.contains("1111111111111111111111111111111111111111111111111111111111111111"));
+
+    let scoop_str = fs::read_to_string(&scoop_file).unwrap();
+    let scoop_json: serde_json::Value = serde_json::from_str(&scoop_str).unwrap();
+    assert_eq!(scoop_json["version"], "2.0.0-beta.8");
 }

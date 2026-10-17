@@ -13,7 +13,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
-const CURRENT_SCHEMA_VERSION: i64 = 10;
+const CURRENT_SCHEMA_VERSION: i64 = 11;
 const MAX_EVENT_BYTES: usize = 1_048_576;
 const MAX_AGENT_MESSAGE_BYTES: usize = 1_048_576;
 const MAX_AGENT_TRANSCRIPT_BYTES: usize = 8 * 1_048_576;
@@ -51,6 +51,7 @@ pub enum SessionError {
     InvalidMemoryLimit,
     InvalidEvaluation,
     InvalidEventPage,
+    InvalidStep(String),
     UnsupportedSchemaVersion(i64),
 }
 
@@ -90,6 +91,7 @@ impl fmt::Display for SessionError {
             Self::InvalidMemoryLimit => formatter.write_str("memory recall limit is invalid"),
             Self::InvalidEvaluation => formatter.write_str("execution evaluation is invalid"),
             Self::InvalidEventPage => formatter.write_str("session event page is invalid"),
+            Self::InvalidStep(msg) => write!(formatter, "invalid session step: {msg}"),
             Self::UnsupportedSchemaVersion(version) => {
                 write!(
                     formatter,
@@ -1617,6 +1619,163 @@ impl SessionStore {
         Ok(archives)
     }
 
+    pub fn store_journal_step(
+        &self,
+        step: &crate::session_journal::JournalStep,
+    ) -> Result<(), SessionError> {
+        let step_json = serde_json::to_string(step).map_err(SessionError::Serialization)?;
+        let time_sec = timestamp_i64(step.timestamp)?;
+        let connection = self.lock()?;
+        connection.execute(
+            "INSERT INTO session_journal_steps (
+                 session_id, step_index, step_json, digest, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT (session_id, step_index) DO UPDATE SET
+                 step_json = excluded.step_json,
+                 digest = excluded.digest,
+                 created_at = excluded.created_at",
+            params![
+                step.session_id.as_str(),
+                step.step_index as i64,
+                step_json,
+                step.sha256_digest.as_str(),
+                time_sec,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn load_journal_steps(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<crate::session_journal::JournalStep>, SessionError> {
+        let connection = self.lock()?;
+        let mut statement = connection.prepare(
+            "SELECT step_json FROM session_journal_steps
+             WHERE session_id = ?1
+             ORDER BY step_index ASC",
+        )?;
+        let rows =
+            statement.query_map(params![session_id.as_str()], |row| row.get::<_, String>(0))?;
+        let mut steps = Vec::new();
+        for row in rows {
+            let json_str = row?;
+            let step = serde_json::from_str(&json_str).map_err(SessionError::Serialization)?;
+            steps.push(step);
+        }
+        Ok(steps)
+    }
+
+    pub fn truncate_journal_after(
+        &self,
+        session_id: &SessionId,
+        step_index: usize,
+    ) -> Result<usize, SessionError> {
+        let connection = self.lock()?;
+        let count = connection.execute(
+            "DELETE FROM session_journal_steps
+             WHERE session_id = ?1 AND step_index > ?2",
+            params![session_id.as_str(), step_index as i64],
+        )?;
+        Ok(count)
+    }
+
+    pub fn store_mesh_peer(
+        &self,
+        peer: &crate::mesh_sync::MeshPeerEntry,
+    ) -> Result<(), SessionError> {
+        let connection = self.lock()?;
+        connection.execute(
+            "INSERT INTO mesh_peers (
+                 peer_id, address, public_key, status, last_seen, trust_score
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT (peer_id) DO UPDATE SET
+                 address = excluded.address,
+                 public_key = excluded.public_key,
+                 status = excluded.status,
+                 last_seen = excluded.last_seen,
+                 trust_score = excluded.trust_score",
+            params![
+                peer.peer_id.as_str(),
+                peer.address.as_str(),
+                peer.public_key.as_str(),
+                peer.status.as_str(),
+                peer.last_seen as i64,
+                peer.trust_score,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_mesh_peers(&self) -> Result<Vec<crate::mesh_sync::MeshPeerEntry>, SessionError> {
+        let connection = self.lock()?;
+        let mut statement = connection.prepare(
+            "SELECT peer_id, address, public_key, status, last_seen, trust_score
+             FROM mesh_peers
+             ORDER BY last_seen DESC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(crate::mesh_sync::MeshPeerEntry {
+                peer_id: row.get(0)?,
+                address: row.get(1)?,
+                public_key: row.get(2)?,
+                status: row.get(3)?,
+                last_seen: row.get::<_, i64>(4)? as u64,
+                trust_score: row.get(5)?,
+            })
+        })?;
+        let mut peers = Vec::new();
+        for row in rows {
+            peers.push(row?);
+        }
+        Ok(peers)
+    }
+
+    pub fn store_mesh_capsule(
+        &self,
+        package: &crate::mesh_sync::SignedCapsulePackage,
+    ) -> Result<(), SessionError> {
+        let package_json = serde_json::to_string(package).map_err(SessionError::Serialization)?;
+        let connection = self.lock()?;
+        let time_sec = timestamp_i64(package.capsule.created_at)?;
+        connection.execute(
+            "INSERT INTO mesh_capsules (
+                 capsule_id, package_json, sha256_digest, author_public_key, author_signature, admitted_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT (capsule_id) DO UPDATE SET
+                 package_json = excluded.package_json,
+                 sha256_digest = excluded.sha256_digest,
+                 author_public_key = excluded.author_public_key,
+                 author_signature = excluded.author_signature,
+                 admitted_at = excluded.admitted_at",
+            params![
+                package.capsule.capsule_id.as_str(),
+                package_json,
+                package.capsule.sha256_digest.as_str(),
+                package.author_public_key.as_str(),
+                package.author_signature.as_str(),
+                time_sec,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_mesh_capsules(
+        &self,
+    ) -> Result<Vec<crate::mesh_sync::SignedCapsulePackage>, SessionError> {
+        let connection = self.lock()?;
+        let mut statement = connection
+            .prepare("SELECT package_json FROM mesh_capsules ORDER BY admitted_at DESC")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        let mut list = Vec::new();
+        for row in rows {
+            let json_str = row?;
+            let package = serde_json::from_str(&json_str).map_err(SessionError::Serialization)?;
+            list.push(package);
+        }
+        Ok(list)
+    }
+
     pub fn list_memory_records_by_workspace(
         &self,
         tenant_id: &TenantId,
@@ -2031,6 +2190,41 @@ fn migrate(connection: &mut Connection) -> Result<(), SessionError> {
              INSERT INTO schema_migrations (version, applied_at) VALUES (10, strftime('%s', 'now'));",
         )?;
         version = 10;
+    }
+    if version < 11 {
+        transaction.execute_batch(
+            "CREATE TABLE IF NOT EXISTS session_journal_steps (
+                 session_id TEXT NOT NULL,
+                 step_index INTEGER NOT NULL,
+                 step_json TEXT NOT NULL,
+                 digest TEXT NOT NULL,
+                 created_at INTEGER NOT NULL,
+                 PRIMARY KEY (session_id, step_index)
+             );
+             CREATE INDEX IF NOT EXISTS idx_journal_steps_session
+                 ON session_journal_steps (session_id, step_index);
+
+             CREATE TABLE IF NOT EXISTS mesh_peers (
+                 peer_id TEXT PRIMARY KEY NOT NULL,
+                 address TEXT NOT NULL,
+                 public_key TEXT NOT NULL,
+                 status TEXT NOT NULL,
+                 last_seen INTEGER NOT NULL,
+                 trust_score REAL NOT NULL
+             );
+
+             CREATE TABLE IF NOT EXISTS mesh_capsules (
+                 capsule_id TEXT PRIMARY KEY NOT NULL,
+                 package_json TEXT NOT NULL,
+                 sha256_digest TEXT NOT NULL,
+                 author_public_key TEXT NOT NULL,
+                 author_signature TEXT NOT NULL,
+                 admitted_at INTEGER NOT NULL
+             );
+
+             INSERT INTO schema_migrations (version, applied_at) VALUES (11, strftime('%s', 'now'));",
+        )?;
+        version = 11;
     }
     let _ = version;
     transaction.commit()?;

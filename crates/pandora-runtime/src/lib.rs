@@ -35,6 +35,7 @@ pub mod mcp;
 pub mod mcp_catalog;
 pub mod memory_engine;
 pub mod memory_schedule;
+pub mod mesh_sync;
 pub mod mutation;
 pub mod observability;
 pub mod operations;
@@ -48,6 +49,7 @@ pub mod permit_store;
 mod receipt_id;
 pub mod recovery_archive;
 pub mod reference_monitor;
+pub mod reflexion;
 pub mod registry_client;
 pub mod replacement;
 pub mod research_artifact;
@@ -57,6 +59,7 @@ pub mod secret_vault;
 pub mod self_healing;
 pub mod service;
 pub mod service_token;
+pub mod session_journal;
 pub mod sessions;
 pub mod shadow_council;
 pub mod skill_engine;
@@ -182,6 +185,10 @@ pub use memory_schedule::{
     MemorySynthesisSchedule, MemorySynthesisScheduleError, MemorySynthesisScheduleRun,
     MemorySynthesisScheduleRunStatus, MemorySynthesisScheduleStore,
 };
+pub use mesh_sync::{
+    CapsuleValidationVerdict, MeshError, MeshHandshake, MeshPeerEntry, MeshSyncEngine,
+    MeshSyncResult, PeerIdentity, SignedCapsulePackage,
+};
 pub use mutation::{MutationEngine, MutationError};
 pub use observability::{
     DEFAULT_MAX_OBSERVABILITY_SAMPLES, ObservabilityEngine, ObservabilityError,
@@ -214,6 +221,9 @@ pub use parliament::Parliament;
 pub use permit_store::{ConsumedPermit, PermitError, PermitStore};
 pub use recovery_archive::{RecoveryArchive, RecoveryArchiveError, RecoveryBundle, RecoveryEntry};
 pub use reference_monitor::{AuthorizationError, ReferenceMonitor};
+pub use reflexion::{
+    ParameterizedLiteral, ReflexionCrystallizeResult, ReflexionCrystallizer, ReflexionError,
+};
 pub use registry_client::{PackageRegistryClient, PackageRegistryError, RegistryPackageDownload};
 pub use replacement::{CANARY_POLICY_VERSION, CanaryPolicy, ReplacementEngine, ReplacementError};
 pub use research_artifact::{
@@ -226,6 +236,10 @@ pub use secret_vault::{SecretVault, SecretVaultEntry, SecretVaultError, VaultSec
 pub use self_healing::{SelfHealingEngine, SelfHealingError};
 pub use service::{RuntimeService, RuntimeServiceError, RuntimeServiceScope};
 pub use service_token::{ServiceToken, ServiceTokenError, ServiceTokenStore};
+pub use session_journal::{
+    ForkResult, JournalStep, RewindResult, SessionJournalEngine, SessionStepDiff,
+    compute_step_digest,
+};
 pub use sessions::{RolloutSummary, SessionEventPage, SessionSnapshot, SessionStore};
 pub use skill_engine::{
     RemovalReceipt, SkillEngine, SkillError, SkillInspection, SkillProvenance, SkillRecord,

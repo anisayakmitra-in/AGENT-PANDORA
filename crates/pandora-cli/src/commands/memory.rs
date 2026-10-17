@@ -6,14 +6,15 @@ use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::sessions::{MAX_MEMORY_RECALL_RECORDS, SessionStore};
 use pandora_runtime::{
     ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, ContextVfs, MemoryEngine,
-    MemoryError, MemorySynthesisScheduleError, MemorySynthesisScheduleStore, VfsError,
+    MemoryError, MemorySynthesisScheduleError, MemorySynthesisScheduleStore, MeshSyncEngine,
+    PeerIdentity, ReflexionCrystallizer, VfsError,
 };
 use pandora_types::{
     ContextClassification, ContextUri, ExecutionId, FeatureMap, GeneId, JobWorkerId,
     MemoryApproval, MemoryCapsule, MemoryConflictRule, MemoryConsolidationBoundary,
     MemoryConsolidationPolicy, MemoryContractError, MemoryId, MemoryIntent, MemoryKind,
     MemoryRecord, MemoryScope, MemoryTier, RequestDigest, RunLoopId, SessionArchiveRecord,
-    StoredSop, Timestamp, WorkspaceId, hash_artifact,
+    SessionId, StoredSop, Timestamp, WorkspaceId, hash_artifact,
 };
 use serde_json::json;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -26,7 +27,7 @@ const MEMORY_PROMOTION_GENE: &str = "memory.promote";
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "memory requires 'recall', 'audit', 'forget', 'compact', 'promote', 'synthesize', 'consolidate', 'provenance', 'schedule', 'sop', 'archive', 'capsule', or 'vfs'",
+            "memory requires 'recall', 'audit', 'forget', 'compact', 'promote', 'synthesize', 'consolidate', 'provenance', 'schedule', 'sop', 'archive', 'capsule', 'vfs', 'crystallize', or 'mesh'",
         )
     })?;
     match subcommand.as_str() {
@@ -43,6 +44,8 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "archive" => archive(&args[1..]),
         "capsule" => capsule(&args[1..]),
         "vfs" => vfs(&args[1..]),
+        "crystallize" => crystallize(&args[1..]),
+        "mesh" => mesh(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown memory command '{unknown}'"
         ))),
@@ -2153,4 +2156,231 @@ fn approval_error(error: ApprovalError) -> CliError {
         }
         other => CliError::internal(other.to_string(), json!({})),
     }
+}
+
+fn crystallize(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "session",
+            "all",
+            "baseline",
+        ],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory crystallize does not accept positional arguments",
+        ));
+    }
+    let is_all = parsed.has_flag("all");
+    let session_opt = parsed.value("session");
+    if is_all == session_opt.is_some() {
+        return Err(CliError::usage(
+            "memory crystallize requires either '--session <id>' or '--all'",
+        ));
+    }
+
+    let baseline = parsed
+        .value("baseline")
+        .map(|v| v.parse::<f64>())
+        .transpose()
+        .map_err(|_| CliError::usage("baseline rate must be a valid float between 0.0 and 1.0"))?
+        .unwrap_or(0.50);
+
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+    let (principal, tenant, workspace) = session_scope();
+    let now = timestamp();
+    let ws_root = config.workspace_dir().to_string_lossy().to_string();
+
+    let crystallizer = ReflexionCrystallizer::default();
+
+    if let Some(session_id_str) = session_opt {
+        let session_id =
+            SessionId::new(session_id_str).map_err(|_| CliError::usage("session ID is invalid"))?;
+        let result = crystallizer
+            .crystallize_session(
+                &store,
+                &principal,
+                &tenant,
+                &workspace,
+                &session_id,
+                baseline,
+                Some(&ws_root),
+                now,
+            )
+            .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+
+        let val = serde_json::to_value(&result)
+            .map_err(|_| CliError::internal("could not serialize crystallize result", json!({})))?;
+
+        Ok(success(
+            "memory crystallize",
+            val,
+            format!(
+                "Crystallized SOP '{}' for session {}: promoted = {}",
+                result.sop.id, result.session_id, result.promoted
+            ),
+        ))
+    } else {
+        let results = crystallizer
+            .crystallize_all(
+                &store,
+                &principal,
+                &tenant,
+                &workspace,
+                baseline,
+                Some(&ws_root),
+                now,
+            )
+            .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+
+        let promoted_count = results.iter().filter(|r| r.promoted).count();
+        let val = serde_json::to_value(&results).map_err(|_| {
+            CliError::internal("could not serialize crystallize results", json!({}))
+        })?;
+
+        Ok(success(
+            "memory crystallize",
+            json!({
+                "count": results.len(),
+                "promoted_count": promoted_count,
+                "results": val
+            }),
+            format!(
+                "Crystallized {} SOP(s) (promoted {promoted_count}) across all session archives",
+                results.len()
+            ),
+        ))
+    }
+}
+
+fn mesh(args: &[String]) -> Result<CommandResult, CliError> {
+    let subcommand = args
+        .first()
+        .ok_or_else(|| CliError::usage("memory mesh requires 'peers', 'broadcast', or 'sync'"))?;
+    match subcommand.as_str() {
+        "peers" => mesh_peers(&args[1..]),
+        "broadcast" => mesh_broadcast(&args[1..]),
+        "sync" => mesh_sync(&args[1..]),
+        unknown => Err(CliError::usage(format!(
+            "unknown memory mesh command '{unknown}'"
+        ))),
+    }
+}
+
+fn mesh_peers(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory mesh peers does not accept positional arguments",
+        ));
+    }
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+
+    let peers = MeshSyncEngine::list_peers(&store, config.data_dir())
+        .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+
+    let val = serde_json::to_value(&peers)
+        .map_err(|_| CliError::internal("could not serialize mesh peers", json!({})))?;
+
+    Ok(success(
+        "memory mesh peers",
+        json!({
+            "count": peers.len(),
+            "peers": val
+        }),
+        format!("Discovered {} mesh peer(s)", peers.len()),
+    ))
+}
+
+fn mesh_broadcast(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "sop"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory mesh broadcast does not accept positional arguments",
+        ));
+    }
+    let sop_id = required_option(
+        &parsed,
+        "sop",
+        "memory mesh broadcast requires '--sop <id>'",
+    )?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+    let (_principal, tenant, workspace) = session_scope();
+    let now = timestamp();
+
+    let identity_path = config.data_dir().join("mesh").join("peer_identity.key");
+    let identity = PeerIdentity::load_or_generate(&identity_path)
+        .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+
+    let package = MeshSyncEngine::broadcast_sop(
+        &store,
+        &identity,
+        sop_id,
+        &tenant,
+        &workspace,
+        config.data_dir(),
+        now,
+    )
+    .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+
+    let val = serde_json::to_value(&package)
+        .map_err(|_| CliError::internal("could not serialize broadcast package", json!({})))?;
+
+    Ok(success(
+        "memory mesh broadcast",
+        val,
+        format!(
+            "Broadcasted SOP '{sop_id}' in capsule '{}' (digest: {})",
+            package.capsule.capsule_id, package.capsule.sha256_digest
+        ),
+    ))
+}
+
+fn mesh_sync(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "auto-promote"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory mesh sync does not accept positional arguments",
+        ));
+    }
+    let auto_promote = parsed.has_flag("auto-promote");
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+    let (_principal, tenant, workspace) = session_scope();
+    let now = timestamp();
+
+    let sync_result = MeshSyncEngine::sync_capsules(
+        &store,
+        &tenant,
+        &workspace,
+        config.data_dir(),
+        auto_promote,
+        now,
+    )
+    .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+
+    let val = serde_json::to_value(&sync_result)
+        .map_err(|_| CliError::internal("could not serialize mesh sync result", json!({})))?;
+
+    Ok(success(
+        "memory mesh sync",
+        val,
+        format!(
+            "Mesh sync completed: admitted {}, rejected {}, auto-promoted {}",
+            sync_result.admitted.len(),
+            sync_result.rejected.len(),
+            sync_result.promoted.len()
+        ),
+    ))
 }

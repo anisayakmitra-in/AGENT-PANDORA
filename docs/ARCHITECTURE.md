@@ -217,6 +217,9 @@ The core runtime (`crates/pandora-runtime/src/`) is composed of 23 discrete engi
 | **`ContentGuard`** | `src/content_guard.rs` | Detects prompt injection markers and quarantines untrusted tool outputs. | Pre-filters context before provider dispatch |
 | **`RolloutReducer`** | `src/rollout_reducer.rs` | Deterministically reduces stage rollouts and evaluates stability thresholds. | Validates stage advancement in evolution |
 | **`AgentLoop`** | `src/agent_loop.rs` | Multi-turn autonomous agent state machine with turn caps, anti-thrash tracking, and checkpointing. | Drives tool turns within execution leases |
+| **`ReflexionCrystallizer`** | `src/reflexion.rs` | Parameterized literal abstraction and Bayesian canary gate verification for self-crystallizing L3 SOPs from past sessions. | Evaluates archives and auto-promotes to SQLite L3 |
+| **`SessionJournalEngine`** | `src/session_journal.rs` | Deterministic differential turn snapshots, SHA-256 step digests, time-travel rewind, and Git worktree checkpoint forking. | Backed by `session_journal_steps` in SQLite |
+| **`MeshSyncEngine`** | `src/mesh_sync.rs` | Decentralized P2P gossip capsule synchronization, Ed25519 identity exchange, and strict 3-point security verification (SHA-256, Ed25519, DAG acyclicity). | Synchronizes capsules across local and peer meshes |
 
 ### System 1 Decision & Reflex Engine
 
@@ -261,6 +264,35 @@ Inspired by OpenViking dynamic agent architectures, the `OrchestrationEngine` (`
 2. **Contract Safety & Cross-Domain Coordination**:
    - Every synthesized plan validates DAG acyclicity, bounded parallelism, and bounded handoffs.
    - Cross-domain handoffs between distinct harnesses are strictly coordinated through declared Meta Harness routing.
+
+### Autonomous Reflexion & Memory Self-Crystallization
+
+The `ReflexionCrystallizer` (`crates/pandora-runtime/src/reflexion.rs`) automatically distills proven multi-turn trajectories from completed sessions into reusable, high-confidence Standard Operating Procedures (SOPs):
+
+1. **Parameterized Literal Abstraction**: Replaces fragile workspace-specific strings, UUIDs, Git commit hashes, and SHA-256 digests with parameterized placeholders (`{{WORKSPACE_ROOT}}`, `{{COMMIT_SHA}}`, `{{SESSION_ID}}`, `{{SHA256_DIGEST}}`, `{{TARGET_FILE}}`), ensuring crystallizations generalize cleanly across workspaces.
+2. **Bayesian Canary Gate Verification**: Evaluates candidate SOP reliability against a Beta(1 + passes, 1 + failures) distribution. Candidates whose 95% credible lower bound strictly exceeds the baseline pass rate are promoted.
+3. **Durable L3 SQLite Promotion**: Promoted SOPs are committed to SQLite L3 storage (`memory_sops`) and become immediately queryable via `pandora memory sop list` and usable in autonomous execution loops via `pandora evolution loop`.
+
+### Deterministic Time-Travel Replay & Checkpoint Forking
+
+The `SessionJournalEngine` (`crates/pandora-runtime/src/session_journal.rs`) provides time-travel capabilities for debugging and exploring alternative execution paths:
+
+1. **Differential Step Digests**: Each turn records tool invocations, arguments, results, workspace git diffs, and environment state, bound cryptographically by a SHA-256 step digest.
+2. **State Rewind (`pandora session rewind`)**: Rolls back session state and truncates subsequent journal entries in SQLite back to any chosen prior step index `k`, restoring environment variables and working directory state.
+3. **Worktree Checkpoint Forking (`pandora session fork`)**: Spawns an isolated Git worktree branching from step `k` to test alternative prompts or model pathways without disturbing the parent session.
+4. **Step Diffing (`pandora session diff`)**: Computes structural and semantic diffs between any two historical journal steps `m` and `n`.
+
+### Decentralized P2P Capsule Mesh Synchronization
+
+The `MeshSyncEngine` (`crates/pandora-runtime/src/mesh_sync.rs`) enables sovereign agent nodes to exchange evolutionary memories and SOP capsules across a peer-to-peer gossip network:
+
+1. **Cryptographic Identity & Handshake**: Nodes generate Ed25519 keypairs and sign timestamped handshake envelopes declaring listen addresses and mesh capabilities.
+2. **Signed Evolutionary Capsules**: SOPs are packaged into signed `SignedCapsulePackage` structures containing author public keys and Ed25519 signatures over the canonical capsule SHA-256 digest.
+3. **Strict 3-Point Security Pipeline**: Every received capsule package must pass:
+   - SHA-256 digest integrity verification.
+   - Author Ed25519 cryptographic signature verification.
+   - Complete DAG acyclicity check across both SOP step dependencies and capsule ancestry lineage.
+4. **Gossip Broadcast & Synchronization**: CLI commands (`pandora memory mesh peers`, `broadcast`, `sync`) discover local mesh capsules and support optional auto-promotion into local L3 SQLite memory storage.
 
 ## Extending Pandora
 
