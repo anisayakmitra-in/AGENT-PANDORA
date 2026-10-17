@@ -120,7 +120,7 @@ impl ReflexionCrystallizer {
 
         // 2. Scan and replace UUIDs (Session IDs), Commit SHAs, SHA256 digests, and absolute paths
         let words: Vec<String> = result
-            .split(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '`')
+            .split(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '`' || c == '=')
             .filter(|s| !s.is_empty())
             .map(ToString::to_string)
             .collect();
@@ -149,18 +149,26 @@ impl ReflexionCrystallizer {
                 continue;
             }
 
-            // Check for UUID format: 8-4-4-4-12 hex chars
-            if clean.len() == 36 && is_uuid(clean) {
-                if !literals.iter().any(|l| l.original == clean) {
-                    literals.push(ParameterizedLiteral {
-                        original: clean.to_string(),
-                        template: "{{SESSION_ID}}".to_string(),
-                        kind: "session_id".to_string(),
-                    });
+            // Check for sha256 digests (exact or with prefix/suffix)
+            if let Some(idx) = clean.find("sha256:") {
+                let rest = &clean[idx..];
+                if rest.len() >= 71 {
+                    let candidate = &rest[..71];
+                    if candidate[7..].chars().all(|c| c.is_ascii_hexdigit())
+                        && result.contains(candidate)
+                    {
+                        if !literals.iter().any(|l| l.original == candidate) {
+                            literals.push(ParameterizedLiteral {
+                                original: candidate.to_string(),
+                                template: "{{SHA256_DIGEST}}".to_string(),
+                                kind: "sha256_digest".to_string(),
+                            });
+                        }
+                        result = result.replace(candidate, "{{SHA256_DIGEST}}");
+                    }
                 }
-                result = result.replace(clean, "{{SESSION_ID}}");
             }
-            // Check for git 40-character commit hash
+            // Check for git 40-character commit hash (exact or embedded)
             else if clean.len() == 40 && clean.chars().all(|c| c.is_ascii_hexdigit()) {
                 if !literals.iter().any(|l| l.original == clean) {
                     literals.push(ParameterizedLiteral {
@@ -170,20 +178,59 @@ impl ReflexionCrystallizer {
                     });
                 }
                 result = result.replace(clean, "{{COMMIT_SHA}}");
+            } else if clean.len() > 40 && !clean.contains('-') {
+                for i in 0..=(clean.len() - 40) {
+                    let candidate = &clean[i..i + 40];
+                    let prefix_ok =
+                        i == 0 || !clean[..i].chars().last().unwrap().is_ascii_alphanumeric();
+                    let suffix_ok = i + 40 == clean.len()
+                        || !clean[i + 40..]
+                            .chars()
+                            .next()
+                            .unwrap()
+                            .is_ascii_alphanumeric();
+                    if prefix_ok
+                        && suffix_ok
+                        && candidate.chars().all(|c| c.is_ascii_hexdigit())
+                        && result.contains(candidate)
+                    {
+                        if !literals.iter().any(|l| l.original == candidate) {
+                            literals.push(ParameterizedLiteral {
+                                original: candidate.to_string(),
+                                template: "{{COMMIT_SHA}}".to_string(),
+                                kind: "commit_hash".to_string(),
+                            });
+                        }
+                        result = result.replace(candidate, "{{COMMIT_SHA}}");
+                        break;
+                    }
+                }
             }
-            // Check for sha256 digests
-            else if clean.starts_with("sha256:")
-                && clean.len() == 71
-                && clean[7..].chars().all(|c| c.is_ascii_hexdigit())
-            {
+            // Check for UUID format: 8-4-4-4-12 hex chars (exact or embedded)
+            else if clean.len() == 36 && is_uuid(clean) {
                 if !literals.iter().any(|l| l.original == clean) {
                     literals.push(ParameterizedLiteral {
                         original: clean.to_string(),
-                        template: "{{SHA256_DIGEST}}".to_string(),
-                        kind: "sha256_digest".to_string(),
+                        template: "{{SESSION_ID}}".to_string(),
+                        kind: "session_id".to_string(),
                     });
                 }
-                result = result.replace(clean, "{{SHA256_DIGEST}}");
+                result = result.replace(clean, "{{SESSION_ID}}");
+            } else if clean.len() > 36 && clean.contains('-') {
+                for i in 0..=(clean.len() - 36) {
+                    let candidate = &clean[i..i + 36];
+                    if is_uuid(candidate) && result.contains(candidate) {
+                        if !literals.iter().any(|l| l.original == candidate) {
+                            literals.push(ParameterizedLiteral {
+                                original: candidate.to_string(),
+                                template: "{{SESSION_ID}}".to_string(),
+                                kind: "session_id".to_string(),
+                            });
+                        }
+                        result = result.replace(candidate, "{{SESSION_ID}}");
+                        break;
+                    }
+                }
             }
             // Check for standalone absolute path patterns: e.g. C:\... or /...
             else if is_absolute_path_token(clean) {
