@@ -184,6 +184,14 @@ pandora map validate
 pandora map show
 ```
 
+Evaluate non-generative System 1 decisions, tool safety gating, and intent routing:
+
+```text
+pandora decision evaluate --question "is this safe to run?" --binary
+pandora decision tool-gate --tool run_command --args '{"command":"rm -rf /"}'
+pandora decision intent-route --prompt "architect and redesign the memory supersets"
+```
+
 Headless workers can queue the same governed `run` command without a second
 execution path:
 

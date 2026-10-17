@@ -627,3 +627,89 @@ fn contract_bayesian_canary_gate_bisection_and_evaluations() {
     let bad_gate = BayesianCanaryGate::new(f64::NAN);
     assert_eq!(bad_gate.credible_level(), 0.95);
 }
+
+#[test]
+fn contract_decision_cli_and_drivers() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // 1. evaluate with binary flag
+    let resp_eval_bin = fixture.run(&[
+        "decision",
+        "evaluate",
+        "--question",
+        "is it safe to read documentation?",
+        "--binary",
+    ]);
+    let val_bin = resp_eval_bin.success("decision evaluate");
+    assert_eq!(val_bin["selected"], "true");
+    assert!(val_bin["confidence"].as_f64().unwrap() > 0.5);
+    assert_eq!(val_bin["driver"], "heuristic");
+
+    // 2. evaluate with custom choices
+    let resp_eval_choices = fixture.run(&[
+        "decision",
+        "evaluate",
+        "--question",
+        "select the best operation tier",
+        "--choices",
+        "fast,balanced,deep",
+    ]);
+    let val_choices = resp_eval_choices.success("decision evaluate");
+    assert!(["fast", "balanced", "deep"].contains(&val_choices["selected"].as_str().unwrap()));
+    assert!(val_choices["probabilities"].is_object());
+
+    // 3. tool-gate dangerous command
+    let resp_gate_danger = fixture.run(&[
+        "decision",
+        "tool-gate",
+        "--tool",
+        "run_command",
+        "--args",
+        "{\"command\":\"rm -rf /\"}",
+    ]);
+    let val_danger = resp_gate_danger.success("decision tool-gate");
+    assert_eq!(val_danger["tool"], "run_command");
+    assert_eq!(val_danger["selected"], "reject");
+
+    // 4. tool-gate safe read
+    let resp_gate_safe = fixture.run(&[
+        "decision",
+        "tool-gate",
+        "--tool",
+        "read_file",
+        "--args",
+        "{\"path\":\"docs/ARCHITECTURE.md\"}",
+    ]);
+    let val_safe = resp_gate_safe.success("decision tool-gate");
+    assert_eq!(val_safe["tool"], "read_file");
+    assert_eq!(val_safe["selected"], "allow");
+
+    // 5. intent-route architectural prompt
+    let resp_route_arch = fixture.run(&[
+        "decision",
+        "intent-route",
+        "--prompt",
+        "architect and redesign the memory supersets",
+    ]);
+    let val_route_arch = resp_route_arch.success("decision intent-route");
+    assert_eq!(val_route_arch["selected"], "l2_architect");
+
+    // 6. intent-route surgical prompt
+    let resp_route_surg = fixture.run(&["decision", "intent-route", "--prompt", "fix bug in test"]);
+    let val_route_surg = resp_route_surg.success("decision intent-route");
+    assert_eq!(val_route_surg["selected"], "l1_surgical");
+
+    // 7. Verify runtime decision alias works identically
+    let resp_alias = fixture.run(&[
+        "runtime",
+        "decision",
+        "evaluate",
+        "--question",
+        "should we proceed?",
+        "--choices",
+        "allow,reject",
+    ]);
+    let val_alias = resp_alias.success("decision evaluate");
+    assert!(["allow", "reject"].contains(&val_alias["selected"].as_str().unwrap()));
+}

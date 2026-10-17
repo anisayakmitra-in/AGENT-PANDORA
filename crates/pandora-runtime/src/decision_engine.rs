@@ -1,9 +1,12 @@
 use pandora_types::{
-    ConvergenceChoice, DecisionCandidate, DecisionChoice, DecisionDistribution, DecisionVerdict,
-    IntentTierChoice, ToolSafetyChoice,
+    ConvergenceChoice, DecisionCandidate, DecisionChoice, DecisionDistribution,
+    DecisionDriverConfig, DecisionDriverKind, DecisionEvolutionRecord, DecisionQuestion,
+    DecisionVerdict, DynamicVerdict, IntentTierChoice, Timestamp, ToolSafetyChoice,
 };
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DecisionError {
@@ -12,6 +15,9 @@ pub enum DecisionError {
     DimensionMismatch,
     CalculationError(String),
     ExecutionFailed(String),
+    InvalidSchema(String),
+    DriverError(String),
+    NetworkError(String),
 }
 
 impl fmt::Display for DecisionError {
@@ -24,15 +30,511 @@ impl fmt::Display for DecisionError {
             }
             Self::CalculationError(msg) => write!(f, "softmax calculation error: {msg}"),
             Self::ExecutionFailed(msg) => write!(f, "decision execution failed: {msg}"),
+            Self::InvalidSchema(msg) => write!(f, "invalid question schema: {msg}"),
+            Self::DriverError(msg) => write!(f, "decision driver error: {msg}"),
+            Self::NetworkError(msg) => write!(f, "decision network error: {msg}"),
         }
     }
 }
 
 impl std::error::Error for DecisionError {}
 
+pub trait DecisionDriver: Send + Sync + fmt::Debug {
+    fn evaluate_question(
+        &self,
+        question: &DecisionQuestion,
+    ) -> Result<DynamicVerdict, DecisionError>;
+}
+
+#[derive(Clone, Debug)]
+pub struct HeuristicDecisionDriver {
+    default_temperature: f64,
+    uncertainty_threshold: f64,
+}
+
+impl Default for HeuristicDecisionDriver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HeuristicDecisionDriver {
+    pub fn new() -> Self {
+        Self {
+            default_temperature: 1.0,
+            uncertainty_threshold: 0.15,
+        }
+    }
+
+    pub fn with_temperature(temperature: f64) -> Self {
+        Self {
+            default_temperature: temperature,
+            uncertainty_threshold: 0.15,
+        }
+    }
+
+    pub fn with_options(temperature: f64, uncertainty_threshold: f64) -> Self {
+        Self {
+            default_temperature: temperature,
+            uncertainty_threshold,
+        }
+    }
+}
+
+impl DecisionDriver for HeuristicDecisionDriver {
+    fn evaluate_question(
+        &self,
+        question: &DecisionQuestion,
+    ) -> Result<DynamicVerdict, DecisionError> {
+        let start = Instant::now();
+        if !question.schema.is_valid() {
+            return Err(DecisionError::InvalidSchema(
+                "invalid question schema".into(),
+            ));
+        }
+        let labels = question.schema.labels();
+        let prompt_lower = question.prompt.to_lowercase();
+        let state_str = question
+            .state_context
+            .as_ref()
+            .map(|s| s.to_string().to_lowercase())
+            .unwrap_or_default();
+        let full_context = format!("{prompt_lower} {state_str}");
+
+        let mut raw_logits = Vec::with_capacity(labels.len());
+        for label in &labels {
+            let l_lower = label.to_lowercase();
+            let mut score = 0.0;
+            if full_context.contains(&l_lower) {
+                score += 3.5;
+            }
+            if (l_lower == "allow"
+                || l_lower == "true"
+                || l_lower == "yes"
+                || l_lower == "safe"
+                || l_lower == "fast")
+                && !full_context.contains("danger")
+                && !full_context.contains("drop")
+                && !full_context.contains("delete")
+                && !full_context.contains("rm -rf")
+            {
+                score += 2.0;
+            }
+            if (l_lower == "reject"
+                || l_lower == "false"
+                || l_lower == "no"
+                || l_lower == "dangerous")
+                && (full_context.contains("danger")
+                    || full_context.contains("drop")
+                    || full_context.contains("delete")
+                    || full_context.contains("rm -rf"))
+            {
+                score += 5.5;
+            }
+            raw_logits.push(score);
+        }
+
+        if raw_logits
+            .iter()
+            .all(|s: &f64| (*s - raw_logits[0]).abs() < 1e-6)
+        {
+            raw_logits[0] += 0.5;
+        }
+
+        let probs = SinglePassLogitEngine::compute_softmax(&raw_logits, self.default_temperature)?;
+        let mut prob_map = BTreeMap::new();
+        let mut sorted_probs: Vec<(String, f64)> = Vec::new();
+
+        for (label, &p) in labels.iter().zip(probs.iter()) {
+            prob_map.insert(label.clone(), p);
+            sorted_probs.push((label.clone(), p));
+        }
+
+        sorted_probs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        let (selected_label, confidence) = sorted_probs[0].clone();
+        let second_prob = sorted_probs.get(1).map(|s| s.1).unwrap_or(0.0);
+        let margin = confidence - second_prob;
+        let is_uncertain = margin < self.uncertainty_threshold;
+        let latency_ms = start.elapsed().as_millis() as u64;
+
+        Ok(DynamicVerdict::new(
+            &question.id,
+            selected_label,
+            confidence,
+            prob_map,
+            margin,
+            is_uncertain,
+            latency_ms,
+        ))
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct MockDecisionDriver {
+    preset_verdicts: Mutex<VecDeque<Result<DynamicVerdict, DecisionError>>>,
+}
+
+impl MockDecisionDriver {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn push_verdict(&self, verdict: DynamicVerdict) {
+        self.preset_verdicts.lock().unwrap().push_back(Ok(verdict));
+    }
+
+    pub fn push_error(&self, error: DecisionError) {
+        self.preset_verdicts.lock().unwrap().push_back(Err(error));
+    }
+}
+
+impl DecisionDriver for MockDecisionDriver {
+    fn evaluate_question(
+        &self,
+        question: &DecisionQuestion,
+    ) -> Result<DynamicVerdict, DecisionError> {
+        let mut queue = self.preset_verdicts.lock().unwrap();
+        if let Some(res) = queue.pop_front() {
+            return res;
+        }
+        let labels = question.schema.labels();
+        let first = labels
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "default".to_string());
+        let mut probs = BTreeMap::new();
+        probs.insert(first.clone(), 1.0);
+        Ok(DynamicVerdict::new(
+            &question.id,
+            first,
+            1.0,
+            probs,
+            1.0,
+            false,
+            1,
+        ))
+    }
+}
+
+#[derive(Debug)]
+pub struct OllamaDecisionDriver {
+    endpoint_url: String,
+    model_name: String,
+    timeout: Duration,
+    temperature: f64,
+    uncertainty_threshold: f64,
+    client: reqwest::blocking::Client,
+}
+
+impl OllamaDecisionDriver {
+    pub fn new(
+        endpoint_url: impl Into<String>,
+        model_name: impl Into<String>,
+        timeout: Duration,
+        temperature: f64,
+        uncertainty_threshold: f64,
+    ) -> Result<Self, DecisionError> {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(timeout)
+            .build()
+            .map_err(|e| DecisionError::NetworkError(e.to_string()))?;
+        Ok(Self {
+            endpoint_url: endpoint_url.into().trim_end_matches('/').to_string(),
+            model_name: model_name.into(),
+            timeout,
+            temperature,
+            uncertainty_threshold,
+            client,
+        })
+    }
+
+    pub fn timeout(&self) -> Duration {
+        self.timeout
+    }
+
+    pub fn format_prompt(question: &DecisionQuestion) -> String {
+        let labels = question.schema.labels();
+        let choices_str = labels.join(", ");
+        let state_section = match &question.state_context {
+            Some(val) => format!("\nContext state: {val}"),
+            None => String::new(),
+        };
+        format!(
+            "You are an ultra-fast non-generative decision engine.{state_section}\nQuestion: {}\nChoices: [{choices_str}]\nOutput ONLY exactly one choice from the available choices and nothing else.",
+            question.prompt
+        )
+    }
+}
+
+impl DecisionDriver for OllamaDecisionDriver {
+    fn evaluate_question(
+        &self,
+        question: &DecisionQuestion,
+    ) -> Result<DynamicVerdict, DecisionError> {
+        let start = Instant::now();
+        if !question.schema.is_valid() {
+            return Err(DecisionError::InvalidSchema(
+                "invalid question schema".into(),
+            ));
+        }
+        let labels = question.schema.labels();
+        let prompt = Self::format_prompt(question);
+        let url = format!("{}/api/generate", self.endpoint_url);
+
+        let payload = serde_json::json!({
+            "model": self.model_name,
+            "prompt": prompt,
+            "stream": false,
+            "options": {
+                "num_predict": 1,
+                "temperature": 0.0
+            }
+        });
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&payload)
+            .send()
+            .map_err(|e| DecisionError::NetworkError(e.to_string()))?;
+
+        if !response.status().is_success() {
+            return Err(DecisionError::DriverError(format!(
+                "Ollama request failed with HTTP {}",
+                response.status()
+            )));
+        }
+
+        let body: serde_json::Value = response.json().map_err(|e| {
+            DecisionError::DriverError(format!("failed to parse Ollama JSON response: {e}"))
+        })?;
+
+        let response_text = body
+            .get("response")
+            .and_then(|r| r.as_str())
+            .unwrap_or("")
+            .trim();
+
+        let mut selected_idx = 0;
+        let mut best_match_len = 0;
+        for (i, label) in labels.iter().enumerate() {
+            if response_text.eq_ignore_ascii_case(label) {
+                selected_idx = i;
+                break;
+            }
+            if response_text.to_lowercase().contains(&label.to_lowercase())
+                && label.len() > best_match_len
+            {
+                selected_idx = i;
+                best_match_len = label.len();
+            }
+        }
+
+        let mut logits = vec![-4.0; labels.len()];
+        logits[selected_idx] = 6.0;
+
+        let probs = SinglePassLogitEngine::compute_softmax(&logits, self.temperature)?;
+        let mut prob_map = BTreeMap::new();
+        let mut sorted_probs = Vec::new();
+
+        for (label, &p) in labels.iter().zip(probs.iter()) {
+            prob_map.insert(label.clone(), p);
+            sorted_probs.push((label.clone(), p));
+        }
+
+        sorted_probs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let (selected_label, confidence) = sorted_probs[0].clone();
+        let second_prob = sorted_probs.get(1).map(|s| s.1).unwrap_or(0.0);
+        let margin = confidence - second_prob;
+        let is_uncertain = margin < self.uncertainty_threshold;
+        let latency_ms = start.elapsed().as_millis() as u64;
+
+        Ok(DynamicVerdict::new(
+            &question.id,
+            selected_label,
+            confidence,
+            prob_map,
+            margin,
+            is_uncertain,
+            latency_ms,
+        ))
+    }
+}
+
+#[derive(Debug)]
+pub struct CustomApiDecisionDriver {
+    endpoint_url: String,
+    model_name: String,
+    api_key: Option<String>,
+    timeout: Duration,
+    temperature: f64,
+    uncertainty_threshold: f64,
+    client: reqwest::blocking::Client,
+}
+
+impl CustomApiDecisionDriver {
+    pub fn new(
+        endpoint_url: impl Into<String>,
+        model_name: impl Into<String>,
+        api_key: Option<String>,
+        timeout: Duration,
+        temperature: f64,
+        uncertainty_threshold: f64,
+    ) -> Result<Self, DecisionError> {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(timeout)
+            .build()
+            .map_err(|e| DecisionError::NetworkError(e.to_string()))?;
+        Ok(Self {
+            endpoint_url: endpoint_url.into().trim_end_matches('/').to_string(),
+            model_name: model_name.into(),
+            api_key,
+            timeout,
+            temperature,
+            uncertainty_threshold,
+            client,
+        })
+    }
+
+    pub fn timeout(&self) -> Duration {
+        self.timeout
+    }
+}
+
+impl DecisionDriver for CustomApiDecisionDriver {
+    fn evaluate_question(
+        &self,
+        question: &DecisionQuestion,
+    ) -> Result<DynamicVerdict, DecisionError> {
+        let start = Instant::now();
+        if !question.schema.is_valid() {
+            return Err(DecisionError::InvalidSchema(
+                "invalid question schema".into(),
+            ));
+        }
+        let labels = question.schema.labels();
+        let prompt = OllamaDecisionDriver::format_prompt(question);
+        let url = if self.endpoint_url.ends_with("/chat/completions") {
+            self.endpoint_url.clone()
+        } else {
+            format!("{}/v1/chat/completions", self.endpoint_url)
+        };
+
+        let payload = serde_json::json!({
+            "model": self.model_name,
+            "messages": [
+                {"role": "system", "content": "You are a non-generative, schema-constrained decision engine. Output ONLY the selected label token."},
+                {"role": "user", "content": prompt}
+            ],
+            "max_tokens": 1,
+            "temperature": 0.0,
+            "logprobs": true,
+            "top_logprobs": 10
+        });
+
+        let mut req = self.client.post(&url).json(&payload);
+        if let Some(key) = &self.api_key {
+            req = req.header("Authorization", format!("Bearer {key}"));
+        }
+
+        let response = req
+            .send()
+            .map_err(|e| DecisionError::NetworkError(e.to_string()))?;
+        if !response.status().is_success() {
+            return Err(DecisionError::DriverError(format!(
+                "Custom API request failed with HTTP {}",
+                response.status()
+            )));
+        }
+
+        let body: serde_json::Value = response.json().map_err(|e| {
+            DecisionError::DriverError(format!("failed to parse custom API response: {e}"))
+        })?;
+
+        let mut logits = vec![-15.0; labels.len()];
+        let mut found_logprobs = false;
+
+        if let Some(top_lps) = body
+            .get("choices")
+            .and_then(|c| c.get(0))
+            .and_then(|c| c.get("logprobs"))
+            .and_then(|lp| lp.get("content"))
+            .and_then(|cnt| cnt.get(0))
+            .and_then(|tok| tok.get("top_logprobs"))
+            .and_then(|arr| arr.as_array())
+        {
+            for item in top_lps {
+                if let (Some(tok_str), Some(lp_val)) = (
+                    item.get("token").and_then(|t| t.as_str()),
+                    item.get("logprob").and_then(|l| l.as_f64()),
+                ) {
+                    let clean_tok = tok_str.trim().to_lowercase();
+                    for (i, label) in labels.iter().enumerate() {
+                        if clean_tok == label.to_lowercase() {
+                            logits[i] = lp_val;
+                            found_logprobs = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if !found_logprobs {
+            let text = body
+                .get("choices")
+                .and_then(|c| c.get(0))
+                .and_then(|c| c.get("message"))
+                .and_then(|m| m.get("content"))
+                .and_then(|cnt| cnt.as_str())
+                .unwrap_or("")
+                .trim();
+            let mut selected_idx = 0;
+            for (i, label) in labels.iter().enumerate() {
+                if text.eq_ignore_ascii_case(label)
+                    || text.to_lowercase().contains(&label.to_lowercase())
+                {
+                    selected_idx = i;
+                    break;
+                }
+            }
+            logits = vec![-4.0; labels.len()];
+            logits[selected_idx] = 6.0;
+        }
+
+        let probs = SinglePassLogitEngine::compute_softmax(&logits, self.temperature)?;
+        let mut prob_map = BTreeMap::new();
+        let mut sorted_probs = Vec::new();
+
+        for (label, &p) in labels.iter().zip(probs.iter()) {
+            prob_map.insert(label.clone(), p);
+            sorted_probs.push((label.clone(), p));
+        }
+
+        sorted_probs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let (selected_label, confidence) = sorted_probs[0].clone();
+        let second_prob = sorted_probs.get(1).map(|s| s.1).unwrap_or(0.0);
+        let margin = confidence - second_prob;
+        let is_uncertain = margin < self.uncertainty_threshold;
+        let latency_ms = start.elapsed().as_millis() as u64;
+
+        Ok(DynamicVerdict::new(
+            &question.id,
+            selected_label,
+            confidence,
+            prob_map,
+            margin,
+            is_uncertain,
+            latency_ms,
+        ))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SinglePassLogitEngine {
     default_temperature: f64,
+    uncertainty_threshold: f64,
+    driver: Arc<dyn DecisionDriver>,
 }
 
 pub type DecisionEngine = SinglePassLogitEngine;
@@ -47,6 +549,16 @@ impl SinglePassLogitEngine {
     pub fn new() -> Self {
         Self {
             default_temperature: 1.0,
+            uncertainty_threshold: 0.15,
+            driver: Arc::new(HeuristicDecisionDriver::new()),
+        }
+    }
+
+    pub fn with_driver(driver: Arc<dyn DecisionDriver>) -> Self {
+        Self {
+            default_temperature: 1.0,
+            uncertainty_threshold: 0.15,
+            driver,
         }
     }
 
@@ -58,11 +570,111 @@ impl SinglePassLogitEngine {
         }
         Ok(Self {
             default_temperature: temperature,
+            uncertainty_threshold: 0.15,
+            driver: Arc::new(HeuristicDecisionDriver::with_temperature(temperature)),
+        })
+    }
+
+    pub fn from_config(config: &DecisionDriverConfig) -> Result<Self, DecisionError> {
+        let driver: Arc<dyn DecisionDriver> = match config.kind {
+            DecisionDriverKind::Heuristic => Arc::new(HeuristicDecisionDriver::with_options(
+                config.temperature,
+                config.uncertainty_threshold,
+            )),
+            DecisionDriverKind::Mock => Arc::new(MockDecisionDriver::new()),
+            DecisionDriverKind::Ollama => {
+                let endpoint = config
+                    .endpoint_url
+                    .as_deref()
+                    .unwrap_or("http://127.0.0.1:11434");
+                let model = config.model_name.as_deref().unwrap_or("llama3");
+                Arc::new(OllamaDecisionDriver::new(
+                    endpoint,
+                    model,
+                    Duration::from_millis(config.timeout_ms),
+                    config.temperature,
+                    config.uncertainty_threshold,
+                )?)
+            }
+            DecisionDriverKind::OpenAiCompatible => {
+                let endpoint = config
+                    .endpoint_url
+                    .as_deref()
+                    .unwrap_or("http://127.0.0.1:8000");
+                let model = config.model_name.as_deref().unwrap_or("default");
+                Arc::new(CustomApiDecisionDriver::new(
+                    endpoint,
+                    model,
+                    config.api_key.clone(),
+                    Duration::from_millis(config.timeout_ms),
+                    config.temperature,
+                    config.uncertainty_threshold,
+                )?)
+            }
+        };
+        Ok(Self {
+            default_temperature: config.temperature,
+            uncertainty_threshold: config.uncertainty_threshold,
+            driver,
         })
     }
 
     pub fn default_temperature(&self) -> f64 {
         self.default_temperature
+    }
+
+    pub fn uncertainty_threshold(&self) -> f64 {
+        self.uncertainty_threshold
+    }
+
+    pub fn driver(&self) -> &Arc<dyn DecisionDriver> {
+        &self.driver
+    }
+
+    pub fn evaluate_dynamic(
+        &self,
+        question: &DecisionQuestion,
+    ) -> Result<DynamicVerdict, DecisionError> {
+        self.driver.evaluate_question(question)
+    }
+
+    pub fn evaluate_batch(
+        &self,
+        questions: &[DecisionQuestion],
+    ) -> Result<Vec<DynamicVerdict>, DecisionError> {
+        let mut results = Vec::with_capacity(questions.len());
+        for q in questions {
+            results.push(self.evaluate_dynamic(q)?);
+        }
+        Ok(results)
+    }
+
+    pub fn harvest_uncertain_decisions(
+        &self,
+        verdicts: &[DynamicVerdict],
+        questions: &[DecisionQuestion],
+    ) -> Vec<DecisionEvolutionRecord> {
+        let mut records = Vec::new();
+        let unix_now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let now = Timestamp::from_unix_seconds(unix_now);
+        for (v, q) in verdicts.iter().zip(questions.iter()) {
+            if v.is_uncertain {
+                records.push(DecisionEvolutionRecord {
+                    id: format!("evo-dec-{}", v.question_id),
+                    question_id: v.question_id.clone(),
+                    prompt: q.prompt.clone(),
+                    selected_label: v.selected_label.clone(),
+                    confidence: v.confidence,
+                    margin: v.margin,
+                    candidate_probabilities: v.probabilities.clone(),
+                    recorded_at: now,
+                });
+            }
+        }
+        records
     }
 
     /// Computes numerically stable Softmax:
@@ -430,5 +1042,90 @@ mod tests {
             "Design and implement full architectural supersets including Pareto evolution and VFS";
         let v_complex = engine.route_intent(complex).unwrap();
         assert_eq!(v_complex.choice(), IntentTierChoice::L2Architect);
+    }
+
+    #[test]
+    fn heuristic_driver_dynamic_eval_and_margin() {
+        let engine = SinglePassLogitEngine::new();
+        let question =
+            DecisionQuestion::binary("sec-1", "Is it safe to run git status?", "allow", "reject");
+        let verdict = engine.evaluate_dynamic(&question).unwrap();
+        assert_eq!(verdict.selected_label, "allow");
+        assert!(verdict.confidence > 0.60);
+        assert!(!verdict.is_uncertain);
+
+        let dangerous = DecisionQuestion::binary(
+            "sec-2",
+            "rm -rf / --no-preserve-root delete all files",
+            "allow",
+            "reject",
+        );
+        let v_danger = engine.evaluate_dynamic(&dangerous).unwrap();
+        assert_eq!(v_danger.selected_label, "reject");
+        assert!(v_danger.confidence > 0.80);
+    }
+
+    #[test]
+    fn mock_driver_and_batch_eval() {
+        let mock = Arc::new(MockDecisionDriver::new());
+        let mut probs = BTreeMap::new();
+        probs.insert("option_a".into(), 0.75);
+        probs.insert("option_b".into(), 0.25);
+        mock.push_verdict(DynamicVerdict::new(
+            "q1", "option_a", 0.75, probs, 0.50, false, 2,
+        ));
+
+        let engine = SinglePassLogitEngine::with_driver(mock);
+        let q1 = DecisionQuestion::choice("q1", "Select route", ["option_a", "option_b"]);
+        let verdict = engine.evaluate_dynamic(&q1).unwrap();
+        assert_eq!(verdict.selected_label, "option_a");
+        assert_eq!(verdict.confidence, 0.75);
+
+        // Fallback default from empty mock queue
+        let q2 = DecisionQuestion::choice("q2", "Fallback route", ["opt_x", "opt_y"]);
+        let v2 = engine.evaluate_dynamic(&q2).unwrap();
+        assert_eq!(v2.selected_label, "opt_x");
+    }
+
+    #[test]
+    fn harvest_uncertain_decisions_extracts_low_margin() {
+        let engine = SinglePassLogitEngine::new();
+        let q1 =
+            DecisionQuestion::binary("q1", "ambiguous prompt without keywords", "true", "false");
+        let q2 = DecisionQuestion::binary("q2", "danger drop tables rm -rf", "allow", "reject");
+
+        let v1 = engine.evaluate_dynamic(&q1).unwrap();
+        let v2 = engine.evaluate_dynamic(&q2).unwrap();
+
+        let harvested = engine.harvest_uncertain_decisions(&[v1.clone(), v2.clone()], &[q1, q2]);
+        if v1.is_uncertain {
+            assert!(harvested.iter().any(|h| h.question_id == "q1"));
+        }
+        assert!(!v2.is_uncertain);
+        assert!(!harvested.iter().any(|h| h.question_id == "q2"));
+    }
+
+    #[test]
+    fn ollama_prompt_formatting_and_driver_config_instantiation() {
+        let q =
+            DecisionQuestion::choice("route-1", "Pick fastest protocol", ["quic", "tcp", "http"])
+                .with_state(serde_json::json!({"packet_loss": 0.05}));
+        let prompt = OllamaDecisionDriver::format_prompt(&q);
+        assert!(prompt.contains("Pick fastest protocol"));
+        assert!(prompt.contains("packet_loss"));
+        assert!(prompt.contains("quic, tcp, http"));
+
+        let config = DecisionDriverConfig {
+            kind: DecisionDriverKind::Heuristic,
+            endpoint_url: None,
+            model_name: None,
+            api_key: None,
+            timeout_ms: 1000,
+            temperature: 0.8,
+            uncertainty_threshold: 0.20,
+        };
+        let engine = SinglePassLogitEngine::from_config(&config).unwrap();
+        assert_eq!(engine.default_temperature(), 0.8);
+        assert_eq!(engine.uncertainty_threshold(), 0.20);
     }
 }

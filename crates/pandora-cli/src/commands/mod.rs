@@ -17,6 +17,7 @@ mod auth;
 mod backup;
 mod chat;
 mod completions;
+pub(crate) mod decision;
 mod doctor;
 mod efficiency;
 mod evaluation;
@@ -188,6 +189,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "fleet" => fleet::execute(&args[1..]),
         "graph" => graph::execute(&args[1..]),
         "map" => graph::map_command(&args[1..]),
+        "decision" => decision::execute(&args[1..]),
         "--help" | "help" => {
             if args.len() != 1 {
                 return Err(CliError::usage("help does not accept additional arguments"));
@@ -289,6 +291,7 @@ fn is_flag(name: &str) -> bool {
             | "value-stdin"
             | "watch"
             | "daemon"
+            | "binary"
     )
 }
 

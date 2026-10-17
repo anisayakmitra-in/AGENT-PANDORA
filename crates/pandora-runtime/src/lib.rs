@@ -97,7 +97,10 @@ pub use content_guard::{
 pub use context_engine::{ContextCacheStats, ContextEngine, ContextError};
 pub use context_recovery::{ContextRecovery, RecoveryDecision, RecoveryInput, RecoveryStep};
 pub use context_vfs::{ContextVfs, VfsError};
-pub use decision_engine::{DecisionEngine, DecisionError, SinglePassLogitEngine};
+pub use decision_engine::{
+    CustomApiDecisionDriver, DecisionDriver, DecisionEngine, DecisionError,
+    HeuristicDecisionDriver, MockDecisionDriver, OllamaDecisionDriver, SinglePassLogitEngine,
+};
 pub use device_trust::{
     DeviceKeyError, DeviceKeyStore, DeviceProofRequest, device_proof_message, verify_device_proof,
 };

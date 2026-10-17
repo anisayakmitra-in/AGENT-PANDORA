@@ -197,7 +197,7 @@ The core runtime (`crates/pandora-runtime/src/`) is composed of 23 discrete engi
 | **`AdaptiveEngine`** | `src/adaptive_engine.rs` | Dynamically adapts execution strategies based on real-time task complexity. | Feeds `ExecutionController` |
 | **`ContextEngine`** | `src/context_engine.rs` | Manages prompt context assembly and stable-prefix cache invalidation. | Coordinates with `pandora-provider` |
 | **`ContextVfs`** | `src/context_vfs.rs` | Hierarchical virtual filesystem (`pandora://`) resolving L0-L4 memory, feature maps, and skills. | Provides selective hydration to `ContextEngine` |
-| **`DecisionEngine`** | `src/decision_engine.rs` | Single-pass logprob scorer for System 1 fast tool safety gating and anti-thrash loop detection. | Pre-screens actions before `AgentLoop` |
+| **`DecisionEngine`** | `src/decision_engine.rs` | Non-generative System 1 logprob/reflex engine with pluggable drivers (Heuristic, Ollama, OpenAI-compatible, Mock), schema DSL, and active learning uncertainty harvesting. | Pre-screens actions before `AgentLoop` |
 | **`EfficiencyEngine`** | `src/efficiency_engine.rs` | Enforces sample and token budget ceilings per target. | Tracks usage against `FleetBudget` |
 | **`EvaluationEngine`** | `src/evaluation_engine.rs` | Executes golden sets, holdout suites, and produces deterministic scorecards. | Drives canary gates in `EvolutionEngine` |
 | **`EvolutionEngine`** | `src/evolution.rs` | Governs self-evolution proposals across 4 rollout stages (Canary, Limited, Expanded, Complete). | Requires `Parliament` approval |
@@ -217,6 +217,19 @@ The core runtime (`crates/pandora-runtime/src/`) is composed of 23 discrete engi
 | **`ContentGuard`** | `src/content_guard.rs` | Detects prompt injection markers and quarantines untrusted tool outputs. | Pre-filters context before provider dispatch |
 | **`RolloutReducer`** | `src/rollout_reducer.rs` | Deterministically reduces stage rollouts and evaluates stability thresholds. | Validates stage advancement in evolution |
 | **`AgentLoop`** | `src/agent_loop.rs` | Multi-turn autonomous agent state machine with turn caps, anti-thrash tracking, and checkpointing. | Drives tool turns within execution leases |
+
+### System 1 Decision & Reflex Engine
+
+The `DecisionEngine` (`crates/pandora-runtime/src/decision_engine.rs`) introduces an open-source non-generative paradigm inspired by fast-path logit classifiers. Rather than generating variable-length text responses with auto-regressive decoding, System 1 actions are classified directly over single-token logprobs and discrete candidate schemas:
+
+1. **Schema DSL**: Defines strict question contracts (`QuestionSchema::Binary`, `QuestionSchema::Choice`, `QuestionSchema::Score`) ensuring only declared valid labels can be evaluated.
+2. **Pluggable Drivers (`DecisionDriver`)**:
+   - `HeuristicDecisionDriver`: Pure local, sub-millisecond regex and semantic logit evaluation with zero network overhead.
+   - `OllamaDecisionDriver`: Formats a single-token prompt querying local Ollama `/api/generate` instances with temperature calibration.
+   - `CustomApiDecisionDriver`: Interfaces with OpenAI-compatible `/v1/chat/completions` endpoints requesting `logprobs: true` and extracting candidate probabilities from top logprob distributions.
+   - `MockDecisionDriver`: FIFO queue for deterministic unit test assertions and replaying edge cases.
+3. **Calibrated Confidence & Softmax**: Extreme logits are normalized via numerically stable Softmax with max-logit subtraction, followed by temperature scaling and confidence margin calculation (top-1 minus top-2 probability).
+4. **Active Learning Uncertainty Harvesting**: Decisions falling below the calibrated uncertainty threshold are harvested as `DecisionEvolutionRecord` items for continuous active learning, canary regression generation, and self-evolution.
 
 ## Extending Pandora
 

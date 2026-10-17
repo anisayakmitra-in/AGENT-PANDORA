@@ -87,6 +87,9 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora memory vfs cat <uri> --json` | `memory vfs cat` | `uri`, `fragment`, `durability` |
 | `pandora memory capsule export --sop <id> --output <path> --json` | `memory capsule export` | `output`, `capsule_id`, `sop_id`, `sha256_digest`, `author`, `durability` |
 | `pandora memory capsule import --file <path> --json` | `memory capsule import` | `file`, `capsule_id`, `sop_id`, `sha256_digest`, `author`, `admitted`, `durability` |
+| `pandora decision evaluate ... --json` | `decision evaluate` | `question_id`, `selected`, `confidence`, `margin`, `is_uncertain`, `probabilities`, `latency_ms`, `driver` |
+| `pandora decision tool-gate --tool <name> ... --json` | `decision tool-gate` | `tool`, `selected`, `confidence`, `latency_ms`, `distribution` |
+| `pandora decision intent-route --prompt <text> --json` | `decision intent-route` | `prompt`, `selected`, `confidence`, `latency_ms`, `distribution` |
 | `pandora backup lifecycle preview --input <path> --json` | `backup lifecycle preview` | `dry_run`, `would_record`, validated `manifest`, and the non-execution/non-erasure `boundary` |
 | `pandora backup lifecycle record --input <path> --yes --json` | `backup lifecycle record` | `created`, `idempotent_replay`, append-only `receipt`, and the non-execution/non-erasure `boundary` |
 | `pandora backup lifecycle list|inspect ... --json` | `backup lifecycle list` or `backup lifecycle inspect` | append-only operator-attested receipt manifests, manifest digests, recorded times, evidence status, and external-action boundary |

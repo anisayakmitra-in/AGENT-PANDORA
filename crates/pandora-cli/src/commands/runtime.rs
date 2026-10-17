@@ -18,6 +18,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     };
     match group {
         "engines" => engines(rest),
+        "decision" => super::decision::execute(rest),
         unknown => Err(CliError::usage(format!(
             "unknown runtime command '{unknown}'"
         ))),

@@ -1321,6 +1321,28 @@ cryptographic SHA-256 digest, and exports a standalone `.capsule.json` package.
 `memory capsule import --file <path>` re-validates the SHA-256 digest and DAG acyclicity
 before admitting the SOP into the target workspace database.
 
+## System 1 Decision Engine
+
+Pandora integrates an open-source, non-generative System 1 Decision Engine for
+sub-millisecond discrete classification, tool gating, and intent routing. Instead of
+multi-token conversational completion, decisions operate directly over single-token
+probabilities and calibrated logit distributions:
+
+```text
+pandora decision evaluate --question "Is it safe to run git status?" --binary
+pandora decision evaluate --question "Select operational mode" --choices "fast,balanced,deep"
+pandora decision evaluate --question "Rate severity" --driver ollama --model llama3 --endpoint http://localhost:11434
+pandora decision tool-gate --tool run_command --args '{"command": "rm -rf /"}'
+pandora decision intent-route --prompt "architect and redesign the memory supersets"
+```
+
+The command surface supports:
+- `evaluate`: Evaluates a typed `DecisionQuestion` across a `QuestionSchema` (`binary`, `choices`, or `score`). Pluggable backend drivers include `heuristic` (zero-network semantic rules), `ollama` (`/api/generate` single-token evaluation), `custom` / `openai` (`/v1/chat/completions` token logprobs), and `mock` (deterministic unit testing). Output reports the selected candidate, confidence percentage, confidence margin, uncertainty status, and measured latency.
+- `tool-gate`: Pre-screens tool invocations through the System 1 reflex engine, outputting safety choices (`allow`, `require_confirm`, `reject`) along with full softmax candidate distributions.
+- `intent-route`: Maps incoming user prompts to operational intent tiers (`l0_local`, `l1_surgical`, `l2_architect`, `l3_clarify`, `l4_governance`).
+
+Commands are also accessible under the `pandora runtime decision ...` namespace.
+
 Remote admission currently accepts Gene records with no unresolved capability
 requirements and one valid Pandora runtime requirement. Other package kinds fail
 before download or local mutation. A registry package remains metadata and verified

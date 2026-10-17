@@ -49,8 +49,9 @@ pub use context::{
     ContextRequest, ContextSource, ContextTrust, ContextUri, VfsDirectoryEntry, VfsNodeKind,
 };
 pub use decision::{
-    ConvergenceChoice, DecisionCandidate, DecisionChoice, DecisionDistribution, DecisionVerdict,
-    IntentTierChoice, ToolSafetyChoice,
+    ConvergenceChoice, DecisionCandidate, DecisionChoice, DecisionDistribution,
+    DecisionDriverConfig, DecisionDriverKind, DecisionEvolutionRecord, DecisionQuestion,
+    DecisionVerdict, DynamicVerdict, IntentTierChoice, QuestionSchema, ToolSafetyChoice,
 };
 pub use effect::{
     EffectOutcome, EffectPermit, EffectReceipt, EffectTarget, OperationRequest, RequestError,
