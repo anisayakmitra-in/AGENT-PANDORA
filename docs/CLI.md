@@ -1020,6 +1020,9 @@ pandora memory vfs ls [<uri>] [--workspace <id>] | cat <uri> [--workspace <id>]
 pandora memory capsule export --sop <sop-id> --output <path> [--workspace <id>] | import --file <path> [--workspace <id>]
 pandora memory crystallize [--session <id> | --all] [--baseline <rate>]
 pandora memory mesh peers | broadcast --sop <id> | sync [--auto-promote]
+pandora curator run [--once] [--interval <seconds>] [--max-passes <n>]
+pandora curator status
+pandora memory curator run [--once] [--interval <seconds>] [--max-passes <n>] | status
 pandora mcp set <id> --program <absolute-path> --arguments-json <json-array> --mode <auto|modern-only|legacy-only>
 pandora mcp list
 pandora mcp inspect <id>

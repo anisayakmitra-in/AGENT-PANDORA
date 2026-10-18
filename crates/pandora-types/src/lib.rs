@@ -5,6 +5,7 @@ pub mod artifact;
 pub mod capability;
 pub mod containment;
 pub mod context;
+pub mod curator;
 pub mod decision;
 pub mod effect;
 pub mod efficiency;
@@ -48,6 +49,7 @@ pub use context::{
     ContextFragmentManifest, ContextManifest, ContextOrigin, ContextOriginKind, ContextReceipt,
     ContextRequest, ContextSource, ContextTrust, ContextUri, VfsDirectoryEntry, VfsNodeKind,
 };
+pub use curator::{CuratorPassResult, CuratorStatus};
 pub use decision::{
     ConvergenceChoice, DecisionCandidate, DecisionChoice, DecisionDistribution,
     DecisionDriverConfig, DecisionDriverKind, DecisionEvolutionRecord, DecisionQuestion,

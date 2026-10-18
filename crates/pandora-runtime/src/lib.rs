@@ -12,6 +12,7 @@ pub mod content_guard;
 pub mod context_engine;
 pub mod context_recovery;
 pub mod context_vfs;
+pub mod curator;
 pub mod decision_engine;
 pub mod device_trust;
 pub mod efficiency_engine;
@@ -100,6 +101,7 @@ pub use content_guard::{
 pub use context_engine::{ContextCacheStats, ContextEngine, ContextError};
 pub use context_recovery::{ContextRecovery, RecoveryDecision, RecoveryInput, RecoveryStep};
 pub use context_vfs::{ContextVfs, VfsError};
+pub use curator::{CuratorEngine, CuratorError};
 pub use decision_engine::{
     CustomApiDecisionDriver, DecisionDriver, DecisionEngine, DecisionError, DpoPair,
     FineTuningSample, GoldenEvaluationCase, GoldenSuiteDefinition, GoldenTargetRef,

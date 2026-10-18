@@ -27,7 +27,7 @@ const MEMORY_PROMOTION_GENE: &str = "memory.promote";
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "memory requires 'recall', 'audit', 'forget', 'compact', 'promote', 'synthesize', 'consolidate', 'provenance', 'schedule', 'sop', 'archive', 'capsule', 'vfs', 'crystallize', or 'mesh'",
+            "memory requires 'recall', 'audit', 'forget', 'compact', 'promote', 'synthesize', 'consolidate', 'provenance', 'schedule', 'sop', 'archive', 'capsule', 'vfs', 'crystallize', 'mesh', or 'curator'",
         )
     })?;
     match subcommand.as_str() {
@@ -46,6 +46,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "vfs" => vfs(&args[1..]),
         "crystallize" => crystallize(&args[1..]),
         "mesh" => mesh(&args[1..]),
+        "curator" => super::curator::execute(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown memory command '{unknown}'"
         ))),

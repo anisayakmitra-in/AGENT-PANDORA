@@ -91,6 +91,8 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora memory mesh peers --json` | `memory mesh peers` | `peers` |
 | `pandora memory mesh broadcast --sop <id> --json` | `memory mesh broadcast` | `capsule`, `author_public_key`, `author_signature`, `parent_capsule_ids`, `gossip_hops` |
 | `pandora memory mesh sync [--auto-promote] --json` | `memory mesh sync` | `admitted`, `rejected`, `promoted`, `peer_count` |
+| `pandora curator run [--once] ... --json` | `curator run` | `started_at`, `completed_at`, `sessions_evaluated`, `sops_crystallized`, `sops_promoted`, `stale_supervisors_reaped`, `wal_checkpointed`, `database_size_before`, `database_size_after`, `reclaimed_bytes`, `duration_ms` |
+| `pandora curator status --json` | `curator status` | `total_sessions`, `crystallized_sops`, `total_supervisors`, `database_size_bytes`, `wal_size_bytes`, `last_curation_timestamp` |
 | `pandora session rewind <id> --step <n> --yes --json` | `session rewind` | `session_id`, `rolled_back_from_step`, `rolled_back_to_step`, `target_digest`, `restored_environment`, `workspace_restored` |
 | `pandora session fork <id> --step <n> --prompt <text> --json` | `session fork` | `parent_session_id`, `forked_session_id`, `at_step`, `worktree_path`, `git_branch`, `prompt`, `created_at` |
 | `pandora session diff <id> --step-a <m> --step-b <n> --json` | `session diff` | `session_id`, `step_a`, `step_b`, `digest_a`, `digest_b`, `tool_diff`, `workspace_diff`, `environment_diff` |

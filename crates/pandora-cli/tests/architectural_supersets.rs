@@ -1452,3 +1452,27 @@ fn contract_release_manifests_generation_and_cosign_validation() {
     assert!(loc_str.contains("ManifestType: defaultLocale"));
     assert!(loc_str.contains("PackageLocale: en-US"));
 }
+
+#[test]
+fn contract_curator_daemon_maintenance_and_status() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // 1. Initial status query
+    let status_resp = fixture.run(&["curator", "status"]);
+    let status_val = status_resp.success("curator status");
+    assert_eq!(status_val["total_sessions"], 0);
+    assert_eq!(status_val["crystallized_sops"], 0);
+
+    // 2. Run single-pass maintenance
+    let run_resp = fixture.run(&["curator", "run", "--once"]);
+    let run_val = run_resp.success("curator run");
+    assert_eq!(run_val["sessions_evaluated"], 0);
+    assert_eq!(run_val["sops_crystallized"], 0);
+    assert!(run_val["wal_checkpointed"].as_bool().unwrap_or(false));
+
+    // 3. Memory alias access
+    let mem_status_resp = fixture.run(&["memory", "curator", "status"]);
+    let mem_status_val = mem_status_resp.success("curator status");
+    assert_eq!(mem_status_val["total_sessions"], 0);
+}

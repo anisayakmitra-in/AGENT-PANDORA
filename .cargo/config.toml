@@ -1,2 +1,6 @@
 [build]
 target-dir = "target"
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-Wl,-adhoc_codesign"]
+

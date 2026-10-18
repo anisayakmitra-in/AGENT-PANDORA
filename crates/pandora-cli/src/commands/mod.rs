@@ -17,6 +17,7 @@ mod auth;
 mod backup;
 mod chat;
 mod completions;
+pub(crate) mod curator;
 pub(crate) mod decision;
 mod doctor;
 mod efficiency;
@@ -194,6 +195,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "graph" => graph::execute(&args[1..]),
         "map" => graph::map_command(&args[1..]),
         "decision" => decision::execute(&args[1..]),
+        "curator" => curator::execute(&args[1..]),
         "--help" | "help" => {
             if args.len() != 1 {
                 return Err(CliError::usage("help does not accept additional arguments"));
