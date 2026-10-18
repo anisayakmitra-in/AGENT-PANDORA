@@ -56,6 +56,10 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora peer read <id> --json` | `peer read` | `message_id`, `thread_id`, `from_handle`, `to_handle`, `subject`, `body`, `payload`, `status`, `created_at`, `updated_at` |
 | `pandora peer reply <id> --from <f> --body <b> ... --json` | `peer reply` | `message_id`, `thread_id`, `from_handle`, `to_handle`, `subject`, `status`, `created_at` |
 | `pandora peer thread <thread-id> --json` | `peer thread` | `thread_id`, `subject`, `participants`, `message_count`, `messages`, `last_activity_at` |
+| `pandora peer a2a card [--node-id <id>] --json` | `peer a2a card` | `id`, `name`, `version`, `description`, `capabilities`, `supported_models`, `endpoints`, `auth_mode` |
+| `pandora peer a2a rpc --request '<json>' --json` | `peer a2a rpc` | `jsonrpc`, `id`, `result`, `error` |
+| `pandora peer a2a delegate --endpoint <e> --to <t> --intent <i> ... --json` | `peer a2a delegate` | `task_id`, `status`, `output`, `error`, `evidence_digest`, `completed_at` |
+| `pandora peer a2a status --task-id <id> --json` | `peer a2a status` | `jsonrpc`, `id`, `result` |
 | `pandora backup create ... --json` | `backup create` | `output`, `entries`, `encrypted`, `format_version` |
 | `pandora backup inspect ... --json` | `backup inspect` | `input`, `created_at`, `entries`, `authenticated`, `paths_exposed` |
 | `pandora backup restore ... --json` | `backup restore` | `input`, `restored_entries`, `pre_restore_backup`, `authenticated` |

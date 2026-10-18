@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args
         .first()
-        .ok_or_else(|| CliError::usage("peer requires 'list', 'roster', 'register', 'inspect', 'delete', 'send', 'inbox', 'read', 'reply', or 'thread'"))?;
+        .ok_or_else(|| CliError::usage("peer requires 'list', 'roster', 'register', 'inspect', 'delete', 'send', 'inbox', 'read', 'reply', 'thread', or 'a2a'"))?;
 
     match subcommand.as_str() {
         "list" | "roster" => roster(&args[1..]),
@@ -20,6 +20,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "read" => read(&args[1..]),
         "reply" => reply(&args[1..]),
         "thread" => thread(&args[1..]),
+        "a2a" => a2a(&args[1..]),
         unknown => Err(CliError::usage(format!("unknown peer command '{unknown}'"))),
     }
 }
@@ -415,4 +416,172 @@ fn thread(args: &[String]) -> Result<CommandResult, CliError> {
     }
 
     Ok(success("peer thread", json!(th), lines.join("\n")))
+}
+
+fn a2a(args: &[String]) -> Result<CommandResult, CliError> {
+    let action = args.first().ok_or_else(|| {
+        CliError::usage("peer a2a requires 'card', 'rpc', 'delegate', or 'status'")
+    })?;
+
+    match action.as_str() {
+        "card" => a2a_card(&args[1..]),
+        "rpc" => a2a_rpc(&args[1..]),
+        "delegate" => a2a_delegate(&args[1..]),
+        "status" => a2a_status(&args[1..]),
+        unknown => Err(CliError::usage(format!(
+            "unknown peer a2a action '{unknown}'"
+        ))),
+    }
+}
+
+fn a2a_card(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "node-id"])?;
+    let node_id = parsed.value("node-id").unwrap_or("pandora-primary");
+    let card = pandora_runtime::A2aEngine::local_agent_card(node_id);
+
+    let val = serde_json::to_value(&card)
+        .map_err(|_| CliError::internal("could not serialize agent card", json!({})))?;
+
+    let text = format!(
+        "Agent ID:       {}\nName:           {}\nVersion:        {}\nDescription:    {}\nAuth Mode:      {}\nEndpoints:      {}\nCapabilities:   {}\nModels:         {}",
+        card.id,
+        card.name,
+        card.version,
+        card.description,
+        card.auth_mode,
+        card.endpoints.join(", "),
+        card.capabilities.join(", "),
+        card.supported_models.join(", "),
+    );
+
+    Ok(success("peer a2a card", val, text))
+}
+
+fn a2a_rpc(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "request"])?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+
+    let raw_req = parsed
+        .value("request")
+        .or_else(|| parsed.positionals.first().map(String::as_str))
+        .ok_or_else(|| {
+            CliError::usage(
+                "peer a2a rpc requires --request '<json>' or a JSON positional argument",
+            )
+        })?;
+
+    let rpc_req: pandora_types::A2aRpcRequest = serde_json::from_str(raw_req)
+        .map_err(|e| CliError::usage(format!("invalid A2A JSON-RPC 2.0 request: {e}")))?;
+
+    let rpc_res =
+        pandora_runtime::A2aEngine::handle_rpc(&rpc_req, &store).map_err(session_error)?;
+
+    let val = serde_json::to_value(&rpc_res)
+        .map_err(|_| CliError::internal("could not serialize RPC response", json!({})))?;
+
+    let text = serde_json::to_string_pretty(&val).unwrap_or_default();
+    Ok(success("peer a2a rpc", val, text))
+}
+
+fn a2a_delegate(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "endpoint",
+            "from",
+            "to",
+            "intent",
+            "payload",
+            "timeout",
+        ],
+    )?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+
+    let endpoint = parsed.value("endpoint").unwrap_or("local");
+    let from = parsed.value("from").unwrap_or("operator");
+    let to = parsed
+        .value("to")
+        .ok_or_else(|| CliError::usage("peer a2a delegate requires --to <target_agent>"))?;
+    let intent = parsed
+        .value("intent")
+        .ok_or_else(|| CliError::usage("peer a2a delegate requires --intent <task_description>"))?;
+
+    let payload: Option<serde_json::Value> = if let Some(raw) = parsed.value("payload") {
+        serde_json::from_str(raw)
+            .map(Some)
+            .map_err(|e| CliError::usage(format!("invalid JSON payload: {e}")))?
+    } else {
+        None
+    };
+
+    let timeout_seconds = parsed
+        .value("timeout")
+        .map(|v| v.parse::<u64>())
+        .transpose()
+        .map_err(|_| CliError::usage("timeout must be an integer (seconds)"))?
+        .unwrap_or(300);
+
+    let response = pandora_runtime::A2aEngine::delegate(
+        endpoint,
+        from,
+        to,
+        intent,
+        payload,
+        timeout_seconds,
+        &store,
+    )
+    .map_err(|e| CliError::internal(e, json!({})))?;
+
+    let val = serde_json::to_value(&response)
+        .map_err(|_| CliError::internal("could not serialize task response", json!({})))?;
+
+    let text = format!(
+        "Delegated Task ID: {}\nStatus:            {}\nDigest:            {}\nOutput:            {}",
+        response.task_id,
+        response.status.as_str(),
+        response.evidence_digest.as_deref().unwrap_or("<none>"),
+        response.output.as_deref().unwrap_or("<none>"),
+    );
+
+    Ok(success("peer a2a delegate", val, text))
+}
+
+fn a2a_status(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "task-id"])?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+
+    let task_id = parsed
+        .value("task-id")
+        .or_else(|| parsed.positionals.first().map(String::as_str))
+        .ok_or_else(|| {
+            CliError::usage("peer a2a status requires --task-id <id> or positional task ID")
+        })?;
+
+    let rpc_req = pandora_types::A2aRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: serde_json::json!(1),
+        method: "a2a.query".to_string(),
+        params: serde_json::json!({"task_id": task_id}),
+    };
+
+    let rpc_res =
+        pandora_runtime::A2aEngine::handle_rpc(&rpc_req, &store).map_err(session_error)?;
+
+    let val = serde_json::to_value(&rpc_res)
+        .map_err(|_| CliError::internal("could not serialize RPC response", json!({})))?;
+
+    Ok(success(
+        "peer a2a status",
+        val,
+        format!("Task '{task_id}' status retrieved successfully"),
+    ))
 }

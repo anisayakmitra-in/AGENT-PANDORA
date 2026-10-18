@@ -1467,6 +1467,22 @@ pandora peer delete <handle>
 - `thread`: Displays complete threaded conversation history between agent personas in chronological order.
 - `delete`: Removes a custom persona from the registry.
 
+### Agent-to-Agent (A2A) RPC Protocol v1.0
+
+`pandora peer a2a` provides standard JSON-RPC 2.0 cross-machine agent discovery, capability handshakes, and remote task delegation:
+
+```text
+pandora peer a2a card [--node-id <id>]
+pandora peer a2a rpc --request '{"jsonrpc":"2.0","id":1,"method":"a2a.discover","params":{"node_id":"cluster-1"}}'
+pandora peer a2a delegate --endpoint <local|url> --to coder --intent "Implement integration tests" [--from <agent>] [--payload <json>]
+pandora peer a2a status --task-id <id>
+```
+
+- `card`: Generates and exports the local node Agent Card declaring protocol endpoints, supported models, auth requirements, and capabilities (`vram_autopilot`, `kanban_coordination`, `peer_messaging`, `memory_vfs`, `capsule_sync`).
+- `rpc`: Dispatches a JSON-RPC 2.0 request envelope to the local A2A engine (`a2a.discover`, `a2a.delegate`, `a2a.query`, `a2a.cancel`).
+- `delegate`: Dispatches a bounded task intent to a target A2A node, computing cryptographic SHA-256 evidence digests and returning structured task completion receipts.
+- `status`: Queries the real-time execution status of a delegated task.
+
 Remote admission currently accepts Gene records with no unresolved capability
 requirements and one valid Pandora runtime requirement. Other package kinds fail
 before download or local mutation. A registry package remains metadata and verified

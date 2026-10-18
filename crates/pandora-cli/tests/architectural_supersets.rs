@@ -1921,3 +1921,61 @@ fn contract_session_prune_and_vacuum_cli() {
     assert_eq!(val_prune["dry_run"], false);
     assert_eq!(val_prune["older_than_seconds"], 0);
 }
+
+#[test]
+fn contract_a2a_protocol_cli() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // 1. Peer A2A card: inspect local node agent card
+    let resp_card = fixture.run(&["peer", "a2a", "card", "--node-id", "test-cluster-node"]);
+    let val_card = resp_card.success("peer a2a card");
+    assert_eq!(val_card["id"], "test-cluster-node");
+    assert_eq!(val_card["auth_mode"], "bearer_token");
+    let caps = val_card["capabilities"].as_array().unwrap();
+    assert!(caps.iter().any(|c| c == "kanban_coordination"));
+    assert!(caps.iter().any(|c| c == "peer_messaging"));
+
+    // 2. Peer A2A rpc: execute JSON-RPC discover request
+    let resp_rpc = fixture.run(&[
+        "peer",
+        "a2a",
+        "rpc",
+        "--request",
+        r#"{"jsonrpc":"2.0","id":1,"method":"a2a.discover","params":{"node_id":"remote-node-1"}}"#,
+    ]);
+    let val_rpc = resp_rpc.success("peer a2a rpc");
+    assert_eq!(val_rpc["jsonrpc"], "2.0");
+    assert_eq!(val_rpc["result"]["id"], "remote-node-1");
+
+    // 3. Peer A2A delegate: dispatch task intent over A2A
+    let resp_del = fixture.run(&[
+        "peer",
+        "a2a",
+        "delegate",
+        "--endpoint",
+        "local",
+        "--from",
+        "coordinator",
+        "--to",
+        "coder",
+        "--intent",
+        "Implement unit test fixtures",
+    ]);
+    let val_del = resp_del.success("peer a2a delegate");
+    let task_id = val_del["task_id"].as_str().unwrap().to_string();
+    assert_eq!(val_del["status"], "completed");
+    assert!(
+        val_del["evidence_digest"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:")
+    );
+
+    // 4. Peer A2A status: query delegation status
+    let resp_stat = fixture.run(&["peer", "a2a", "status", "--task-id", &task_id]);
+    let val_stat = resp_stat.success("peer a2a status");
+    assert_eq!(val_stat["jsonrpc"], "2.0");
+    assert_eq!(val_stat["result"]["task_id"], task_id);
+    assert_eq!(val_stat["result"]["status"], "completed");
+}

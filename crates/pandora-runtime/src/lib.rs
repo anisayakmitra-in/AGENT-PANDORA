@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod a2a_engine;
 pub mod adaptive_engine;
 pub mod agent_loop;
 pub mod approvals;
@@ -77,6 +78,7 @@ pub mod wasm;
 #[cfg(test)]
 mod test_support;
 
+pub use a2a_engine::A2aEngine;
 pub use adaptive_engine::{AdaptationResult, AdaptiveEngine, AdaptiveError};
 pub use agent_loop::{
     AgentApprovalContext, AgentCheckpoint, AgentCheckpointKind, AgentControlStop, AgentLoop,

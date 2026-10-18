@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod a2a;
 pub mod adaptation;
 pub mod artifact;
 pub mod capability;
@@ -36,6 +37,10 @@ pub mod storage_lifecycle;
 pub mod subagent;
 pub mod workspace_orchestration;
 
+pub use a2a::{
+    A2aAgentCard, A2aRpcError, A2aRpcRequest, A2aRpcResponse, A2aTaskRequest, A2aTaskResponse,
+    A2aTaskStatus,
+};
 pub use adaptation::{
     AdaptationCandidate, AdaptationContractError, AdaptationDecision, AdaptationPolicy,
     AdaptationReceipt, AdaptationRequest, AdaptationTarget,
