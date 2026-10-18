@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use std::fmt;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const CURRENT_SCHEMA_VERSION: i64 = 12;
 const MAX_EVENT_BYTES: usize = 1_048_576;
@@ -2132,6 +2132,160 @@ impl SessionStore {
             records.push(record);
         }
         Ok(records)
+    }
+
+    /// Prunes inactive sessions older than `older_than_seconds`.
+    /// If `dry_run` is true, returns candidate sessions without executing deletion.
+    pub fn prune_sessions(
+        &self,
+        principal_id: &PrincipalId,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        older_than_seconds: u64,
+        dry_run: bool,
+    ) -> Result<pandora_types::SessionPruneReport, SessionError> {
+        let connection = self.lock()?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let cutoff = now.saturating_sub(older_than_seconds);
+
+        let mut statement = connection.prepare(
+            "SELECT id FROM sessions
+              WHERE principal_id = ?1
+                AND tenant_id = ?2
+                AND workspace_id = ?3
+                AND created_at < ?4
+              ORDER BY created_at ASC",
+        )?;
+        let rows = statement.query_map(
+            params![
+                principal_id.as_str(),
+                tenant_id.as_str(),
+                workspace_id.as_str(),
+                cutoff as i64,
+            ],
+            |row| row.get::<_, String>(0),
+        )?;
+
+        let mut candidate_ids = Vec::new();
+        for r in rows {
+            candidate_ids.push(r?);
+        }
+
+        let sessions_examined: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM sessions
+              WHERE principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3",
+            params![
+                principal_id.as_str(),
+                tenant_id.as_str(),
+                workspace_id.as_str(),
+            ],
+            |row| row.get(0),
+        )?;
+
+        let mut events_reclaimed = 0usize;
+        for session_id in &candidate_ids {
+            let mut ev_stmt =
+                connection.prepare("SELECT COUNT(*) FROM session_events WHERE session_id = ?1")?;
+            let ev_count: i64 = ev_stmt.query_row([session_id], |row| row.get(0))?;
+            events_reclaimed += ev_count as usize;
+        }
+
+        let pruned_count = candidate_ids.len();
+
+        if !dry_run && !candidate_ids.is_empty() {
+            let tx = connection.unchecked_transaction()?;
+            for session_id in &candidate_ids {
+                tx.execute("DELETE FROM sessions WHERE id = ?1", [session_id])?;
+            }
+            tx.commit()?;
+        }
+
+        Ok(pandora_types::SessionPruneReport {
+            older_than_seconds,
+            sessions_examined: sessions_examined as usize,
+            sessions_pruned: if dry_run { 0 } else { pruned_count },
+            events_reclaimed: if dry_run { 0 } else { events_reclaimed },
+            dry_run,
+            pruned_session_ids: candidate_ids,
+        })
+    }
+
+    /// Queries SQLite storage metrics: total pages, free pages, page size, total size, reclaimable bytes/pct.
+    pub fn storage_stats(&self) -> Result<pandora_types::StorageStats, SessionError> {
+        let connection = self.lock()?;
+        let page_count: i64 = connection.query_row("PRAGMA page_count;", [], |row| row.get(0))?;
+        let freelist_count: i64 =
+            connection.query_row("PRAGMA freelist_count;", [], |row| row.get(0))?;
+        let page_size: i64 = connection.query_row("PRAGMA page_size;", [], |row| row.get(0))?;
+
+        let total_pages = page_count.max(0) as u64;
+        let free_pages = freelist_count.max(0) as u64;
+        let page_size_bytes = page_size.max(0) as u64;
+        let total_size_bytes = total_pages * page_size_bytes;
+        let reclaimable_bytes = free_pages * page_size_bytes;
+        let reclaimable_percent = if total_pages > 0 {
+            (free_pages as f64 / total_pages as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        Ok(pandora_types::StorageStats {
+            total_pages,
+            free_pages,
+            page_size_bytes,
+            total_size_bytes,
+            reclaimable_bytes,
+            reclaimable_percent,
+        })
+    }
+
+    /// Runs VACUUM on the session SQLite database if reclaimable percentage meets or exceeds threshold.
+    pub fn vacuum_database(
+        &self,
+        threshold_percent: Option<f64>,
+    ) -> Result<pandora_types::VacuumReport, SessionError> {
+        let pre_stats = self.storage_stats()?;
+        let threshold = threshold_percent.unwrap_or(25.0);
+
+        if pre_stats.reclaimable_percent >= threshold || threshold == 0.0 {
+            {
+                let connection = self.lock()?;
+                connection.execute_batch("VACUUM;")?;
+            }
+            let post_stats = self.storage_stats()?;
+            let reclaimed_bytes = pre_stats
+                .total_size_bytes
+                .saturating_sub(post_stats.total_size_bytes);
+
+            Ok(pandora_types::VacuumReport {
+                pre_size_bytes: pre_stats.total_size_bytes,
+                post_size_bytes: post_stats.total_size_bytes,
+                reclaimed_bytes,
+                pre_reclaimable_pct: pre_stats.reclaimable_percent,
+                post_reclaimable_pct: post_stats.reclaimable_percent,
+                vacuum_executed: true,
+                reason: format!(
+                    "Reclaimable space ({:.1}%) exceeded threshold ({:.1}%)",
+                    pre_stats.reclaimable_percent, threshold
+                ),
+            })
+        } else {
+            Ok(pandora_types::VacuumReport {
+                pre_size_bytes: pre_stats.total_size_bytes,
+                post_size_bytes: pre_stats.total_size_bytes,
+                reclaimed_bytes: 0,
+                pre_reclaimable_pct: pre_stats.reclaimable_percent,
+                post_reclaimable_pct: pre_stats.reclaimable_percent,
+                vacuum_executed: false,
+                reason: format!(
+                    "Reclaimable space ({:.1}%) did not meet threshold ({:.1}%)",
+                    pre_stats.reclaimable_percent, threshold
+                ),
+            })
+        }
     }
 
     fn lock(&self) -> Result<MutexGuard<'_, Connection>, SessionError> {

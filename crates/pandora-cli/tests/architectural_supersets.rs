@@ -1891,3 +1891,33 @@ fn contract_society_peer_messaging_cli() {
     let val_del = resp_del.success("peer delete");
     assert_eq!(val_del["deleted"], true);
 }
+
+#[test]
+fn contract_session_prune_and_vacuum_cli() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // 1. Session vacuum analyze: inspect storage stats
+    let resp_analyze = fixture.run(&["session", "vacuum", "--analyze"]);
+    let val_analyze = resp_analyze.success("session vacuum analyze");
+    assert!(val_analyze["total_pages"].as_u64().unwrap() > 0);
+    assert!(val_analyze["page_size_bytes"].as_u64().unwrap() > 0);
+    assert!(val_analyze["total_size_bytes"].as_u64().unwrap() > 0);
+
+    // 2. Session vacuum with force: run VACUUM
+    let resp_vac = fixture.run(&["session", "vacuum", "--force"]);
+    let val_vac = resp_vac.success("session vacuum");
+    assert_eq!(val_vac["vacuum_executed"], true);
+
+    // 3. Session prune dry-run: preview candidates
+    let resp_dry = fixture.run(&["session", "prune", "--older-than", "0s", "--dry-run"]);
+    let val_dry = resp_dry.success("session prune");
+    assert_eq!(val_dry["dry_run"], true);
+    assert_eq!(val_dry["older_than_seconds"], 0);
+
+    // 4. Session prune live with --yes
+    let resp_prune = fixture.run(&["session", "prune", "--older-than", "0s", "--yes"]);
+    let val_prune = resp_prune.success("session prune");
+    assert_eq!(val_prune["dry_run"], false);
+    assert_eq!(val_prune["older_than_seconds"], 0);
+}

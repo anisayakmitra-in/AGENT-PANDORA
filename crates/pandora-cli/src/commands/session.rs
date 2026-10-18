@@ -10,7 +10,7 @@ use serde_json::json;
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "session requires 'list', 'resume', 'inspect', 'events', 'rewind', 'fork', or 'diff'",
+            "session requires 'list', 'resume', 'inspect', 'events', 'rewind', 'fork', 'diff', 'prune', or 'vacuum'",
         )
     })?;
     match subcommand.as_str() {
@@ -21,6 +21,8 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "rewind" => rewind(&args[1..]),
         "fork" => fork(&args[1..]),
         "diff" => diff(&args[1..]),
+        "prune" => prune(&args[1..]),
+        "vacuum" => vacuum(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown session command '{unknown}'"
         ))),
@@ -434,4 +436,161 @@ fn diff(args: &[String]) -> Result<CommandResult, CliError> {
             result.session_id, result.step_a, result.digest_a, result.step_b, result.digest_b
         ),
     ))
+}
+
+fn parse_duration_seconds(raw: &str) -> Result<u64, CliError> {
+    if let Some(days) = raw.strip_suffix('d') {
+        let d = days
+            .parse::<u64>()
+            .map_err(|_| CliError::usage("invalid days format; expected e.g. '90d'"))?;
+        Ok(d * 86400)
+    } else if let Some(hours) = raw.strip_suffix('h') {
+        let h = hours
+            .parse::<u64>()
+            .map_err(|_| CliError::usage("invalid hours format; expected e.g. '24h'"))?;
+        Ok(h * 3600)
+    } else if let Some(secs) = raw.strip_suffix('s') {
+        let s = secs
+            .parse::<u64>()
+            .map_err(|_| CliError::usage("invalid seconds format; expected e.g. '300s'"))?;
+        Ok(s)
+    } else {
+        raw.parse::<u64>().map_err(|_| {
+            CliError::usage("invalid duration; expected e.g. '90d', '24h', or seconds")
+        })
+    }
+}
+
+fn prune(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "older-than",
+            "dry-run",
+            "yes",
+        ],
+    )?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+
+    let older_than_secs = match parsed.value("older-than") {
+        Some(val) => parse_duration_seconds(val)?,
+        None => 90 * 86400,
+    };
+
+    let dry_run = parsed.has_flag("dry-run");
+    let confirmed = parsed.has_flag("yes");
+
+    if !dry_run && !confirmed {
+        return Err(CliError::usage(
+            "session prune requires '--yes' to execute, or '--dry-run' to preview candidates",
+        ));
+    }
+
+    let (principal_id, tenant_id, workspace_id) = session_scope();
+    let report = store
+        .prune_sessions(
+            &principal_id,
+            &tenant_id,
+            &workspace_id,
+            older_than_secs,
+            dry_run,
+        )
+        .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+
+    let val = serde_json::to_value(&report)
+        .map_err(|_| CliError::internal("could not serialize prune report", json!({})))?;
+
+    let message = if dry_run {
+        format!(
+            "Dry-run prune: {} candidate session(s) older than {}s (out of {} examined)",
+            report.pruned_session_ids.len(),
+            report.older_than_seconds,
+            report.sessions_examined
+        )
+    } else {
+        format!(
+            "Pruned {} session(s) and reclaimed {} event(s) older than {}s",
+            report.sessions_pruned, report.events_reclaimed, report.older_than_seconds
+        )
+    };
+
+    Ok(success("session prune", val, message))
+}
+
+fn vacuum(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "threshold",
+            "force",
+            "analyze",
+        ],
+    )?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+
+    if parsed.has_flag("analyze") {
+        let stats = store
+            .storage_stats()
+            .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+        let val = serde_json::to_value(&stats)
+            .map_err(|_| CliError::internal("could not serialize storage stats", json!({})))?;
+        let text = format!(
+            "Total Size:     {} bytes ({} pages x {} bytes)\nReclaimable:    {} bytes ({} free pages, {:.2}%)\nVacuum Advice:  {}",
+            stats.total_size_bytes,
+            stats.total_pages,
+            stats.page_size_bytes,
+            stats.reclaimable_bytes,
+            stats.free_pages,
+            stats.reclaimable_percent,
+            if stats.reclaimable_percent >= 25.0 {
+                "Recommended (reclaimable space >= 25%)"
+            } else {
+                "Optimal (fragmentation is low)"
+            }
+        );
+        return Ok(success("session vacuum analyze", val, text));
+    }
+
+    let threshold = if parsed.has_flag("force") {
+        Some(0.0)
+    } else if let Some(raw) = parsed.value("threshold") {
+        let t = raw
+            .parse::<f64>()
+            .map_err(|_| CliError::usage("threshold must be a valid float percentage e.g. 25.0"))?;
+        Some(t)
+    } else {
+        Some(25.0)
+    };
+
+    let report = store
+        .vacuum_database(threshold)
+        .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+
+    let val = serde_json::to_value(&report)
+        .map_err(|_| CliError::internal("could not serialize vacuum report", json!({})))?;
+
+    let text = if report.vacuum_executed {
+        format!(
+            "Vacuum executed: reclaimed {} bytes (Size: {} -> {} bytes, Reclaimable: {:.1}% -> {:.1}%)",
+            report.reclaimed_bytes,
+            report.pre_size_bytes,
+            report.post_size_bytes,
+            report.pre_reclaimable_pct,
+            report.post_reclaimable_pct
+        )
+    } else {
+        format!("Vacuum skipped: {}", report.reason)
+    };
+
+    Ok(success("session vacuum", val, text))
 }

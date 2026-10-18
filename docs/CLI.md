@@ -229,6 +229,8 @@ pandora session resume <session-id>
 pandora session rewind <session-id> --step <step-index> [--yes]
 pandora session fork <session-id> --step <step-index> --prompt "<text>"
 pandora session diff <session-id> --step-a <step-a> --step-b <step-b>
+pandora session prune [--older-than <days|seconds>] [--dry-run] [--yes]
+pandora session vacuum [--analyze] [--threshold <percent>] [--force]
 pandora job submit -- --agent "Review this workspace"
 pandora job work
 pandora job work --max-jobs 8
@@ -431,6 +433,8 @@ receipt evaluates trajectory and policy; outcome remains unavailable without
 an explicit expected result. New CLI events include their recorded time; older
 events remain explicitly untimestamped. `session resume` returns the evaluation
 and evidence counts with the full bounded transcript.
+
+`session prune` identifies and removes inactive sessions older than a duration boundary (e.g. `--older-than 90d`, default 90 days), cascading deletions across session events and evidence while reporting reclaimed metrics. Pass `--dry-run` to preview candidates or `--yes` to execute. `session vacuum` analyzes fragmentation (`--analyze`) or runs an online SQLite database compaction when reclaimable space meets or exceeds a target threshold (default 25%, or `--force`).
 
 Agent runs retrieve at most eight canonical L1 execution-evidence records from
 the exact same session and provider. The context receipt lists generated record

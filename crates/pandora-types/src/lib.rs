@@ -151,7 +151,7 @@ pub use service::{
     ServiceRequest, ServiceResponse, ServiceRunRequest, ServiceRunResult, ServiceRunResumeRequest,
     ServiceSessionDetail, ServiceSessionSummary, ServiceToolSummary,
 };
-pub use session::{Session, TaskIntent};
+pub use session::{Session, SessionPruneReport, StorageStats, TaskIntent, VacuumReport};
 pub use skill::{SkillId, SkillManifest, SkillManifestError};
 pub use society::{AgentPersona, PeerDispatchReceipt, PeerMessage, PeerMessageStatus, PeerThread};
 pub use storage_lifecycle::{

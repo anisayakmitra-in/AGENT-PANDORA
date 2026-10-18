@@ -308,6 +308,8 @@ fn is_flag(name: &str) -> bool {
             | "daemon"
             | "binary"
             | "unread"
+            | "force"
+            | "analyze"
     )
 }
 

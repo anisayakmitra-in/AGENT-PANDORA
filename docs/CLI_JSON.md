@@ -125,6 +125,8 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora session rewind <id> --step <n> --yes --json` | `session rewind` | `session_id`, `rolled_back_from_step`, `rolled_back_to_step`, `target_digest`, `restored_environment`, `workspace_restored` |
 | `pandora session fork <id> --step <n> --prompt <text> --json` | `session fork` | `parent_session_id`, `forked_session_id`, `at_step`, `worktree_path`, `git_branch`, `prompt`, `created_at` |
 | `pandora session diff <id> --step-a <m> --step-b <n> --json` | `session diff` | `session_id`, `step_a`, `step_b`, `digest_a`, `digest_b`, `tool_diff`, `workspace_diff`, `environment_diff` |
+| `pandora session prune [--older-than <dur>] [--dry-run] [--yes] --json` | `session prune` | `older_than_seconds`, `sessions_examined`, `sessions_pruned`, `events_reclaimed`, `dry_run`, `pruned_session_ids` |
+| `pandora session vacuum [--analyze] [--threshold <pct>] [--force] --json` | `session vacuum` | `total_pages`, `page_size_bytes`, `reclaimable_percent` or `pre_size_bytes`, `post_size_bytes`, `reclaimed_bytes`, `vacuum_executed`, `reason` |
 | `pandora evolution loop [--watch | --once] --json` | `evolution loop` | `mode`, `cycles_completed`, `crystallized_count`, `promoted_count`, `status` |
 | `pandora decision evaluate ... --json` | `decision evaluate` | `question_id`, `selected`, `confidence`, `margin`, `is_uncertain`, `probabilities`, `latency_ms`, `driver` |
 | `pandora decision tool-gate --tool <name> ... --json` | `decision tool-gate` | `tool`, `selected`, `confidence`, `latency_ms`, `distribution` |
