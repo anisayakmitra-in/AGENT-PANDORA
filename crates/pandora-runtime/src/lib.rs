@@ -75,6 +75,7 @@ pub mod strategies;
 pub mod subagent;
 pub mod subagent_store;
 pub mod tool_engine;
+pub mod voyager_curriculum;
 pub mod wasm;
 
 #[cfg(test)]
@@ -181,6 +182,10 @@ pub use identity::{
 };
 pub use job_store::{JobRecord, JobStore, JobStoreError, MAX_JOB_RESULT_BYTES};
 pub use kanban_engine::{KanbanEngine, KanbanError};
+pub use lats_engine::{
+    LatsEngine, LatsError, LatsNode, LatsSearchMetrics, LatsSearchResult, convergence_choice,
+    cosine_similarity, should_escalate,
+};
 pub use mcp::{
     MCP_LEGACY_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION, McpError, McpFailure, McpInvocation,
     McpProtocolMode, McpServer, McpStart, McpStdioConfig, McpToolResult, McpWireEra,
@@ -237,10 +242,6 @@ pub use reflexion::{
     ParameterizedLiteral, ReflexionCrystallizeResult, ReflexionCrystallizer, ReflexionDiagnostic,
     ReflexionDiagnosticEngine, ReflexionError, ReflexionFailureKind,
 };
-pub use lats_engine::{
-    LatsEngine, LatsError, LatsNode, LatsSearchMetrics, LatsSearchResult, convergence_choice,
-    cosine_similarity, should_escalate,
-};
 pub use registry_client::{PackageRegistryClient, PackageRegistryError, RegistryPackageDownload};
 pub use replacement::{CANARY_POLICY_VERSION, CanaryPolicy, ReplacementEngine, ReplacementError};
 pub use research_artifact::{
@@ -281,6 +282,7 @@ pub use subagent_store::{
 pub use tool_engine::{
     ToolContext, ToolDefinition, ToolEngine, ToolError, ToolInvocation, ToolPlan,
 };
+pub use voyager_curriculum::{CurriculumDifficulty, VoyagerCurriculum};
 pub use wasm::{
     DEFAULT_WASM_FUEL, MAX_WASM_INPUT_BYTES, MAX_WASM_MEMORY_BYTES, MAX_WASM_OUTPUT_BYTES,
     WasmError, WasmExecutor, WasmGene, WasmGeneRequest, WasmResult,
