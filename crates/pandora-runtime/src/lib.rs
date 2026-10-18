@@ -75,6 +75,7 @@ pub mod strategies;
 pub mod subagent;
 pub mod subagent_store;
 pub mod tool_engine;
+pub mod tripartite_governance;
 pub mod voyager_curriculum;
 pub mod wasm;
 
@@ -281,6 +282,10 @@ pub use subagent_store::{
 };
 pub use tool_engine::{
     ToolContext, ToolDefinition, ToolEngine, ToolError, ToolInvocation, ToolPlan,
+};
+pub use tripartite_governance::{
+    TripartiteApproval, TripartiteError, TripartiteEvaluation, TripartiteGovernance,
+    TripartiteProposal, TripartiteRole,
 };
 pub use voyager_curriculum::{CurriculumDifficulty, VoyagerCurriculum};
 pub use wasm::{
