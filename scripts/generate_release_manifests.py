@@ -365,7 +365,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Generate Homebrew, Scoop, and winget release manifests from checksums."
     )
-    parser.add_argument("tag", help="Release git tag (e.g. v2.0.0-beta.8)")
+    parser.add_argument("tag", help="Release git tag (e.g. v2.0.0-beta.9)")
     parser.add_argument(
         "--checksums",
         "--manifest",

@@ -30,11 +30,11 @@ class ReleaseScopeTests(unittest.TestCase):
         return root
 
     def test_current_source_scope_allows_a_cli_only_beta(self) -> None:
-        resolved = resolve_release_scope("v2.0.0-beta.8", ROOT)
+        resolved = resolve_release_scope("v2.0.0-beta.9", ROOT)
 
         self.assertEqual(resolved["scope"], "cli-only")
         self.assertEqual(resolved["channel"], "beta")
-        self.assertEqual(resolved["release_tag"], "v2.0.0-beta.8")
+        self.assertEqual(resolved["release_tag"], "v2.0.0-beta.9")
         self.assertNotIn("desktop_required", resolved)
 
     def test_the_desktop_tree_carries_no_desktop_requirement(self) -> None:

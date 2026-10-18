@@ -28,7 +28,7 @@ impl A2aEngine {
         A2aAgentCard::new(
             node_id,
             "Pandora Autonomous Node",
-            "2.0.0-beta.8",
+            "2.0.0-beta.9",
             "Autonomous systems and software engineering agent runtime",
             vec![
                 "code_synthesis".to_string(),

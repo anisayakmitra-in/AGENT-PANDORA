@@ -25,7 +25,7 @@ irm https://raw.githubusercontent.com/anisayakmitra-in/AGENT-PANDORA/main/script
 ```
 
 Pin a published tag with `PANDORA_VERSION`, for example
-`v2.0.0-beta.8`. Do not use a tag until its release page contains the binary
+`v2.0.0-beta.9`. Do not use a tag until its release page contains the binary
 for your platform and its checksum manifest.
 
 ## CLI source build
@@ -96,7 +96,7 @@ is not locally built and trusted.
 
 ## Support status
 
-The `2.0.0-beta.8` installers support the native CLI on Windows, macOS, and
+The `2.0.0-beta.9` installers support the native CLI on Windows, macOS, and
 Linux. The CLI is the only shipped surface; the desktop product was deleted on
 2026-10-05. No package is
 OS-signed on any channel; see

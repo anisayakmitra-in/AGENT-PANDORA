@@ -2821,7 +2821,7 @@ fn fleet_supervisor_restart_requires_a_stale_heartbeat() {
     let fleet = FleetEngine::open(fixture.data.join("fleet.sqlite3")).unwrap();
     let node = FleetNode::new(
         "node-restart".to_owned(),
-        "2.0.0-beta.8",
+        "2.0.0-beta.9",
         "local",
         vec!["subagent.work".to_owned()],
         1,
@@ -2863,7 +2863,7 @@ fn fleet_supervisor_reap_is_exposed_as_a_bounded_cli_operation() {
     let fleet = FleetEngine::open(fixture.data.join("fleet.sqlite3")).unwrap();
     let node = FleetNode::new(
         "node-reap".to_owned(),
-        "2.0.0-beta.8",
+        "2.0.0-beta.9",
         "local",
         vec!["subagent.work".to_owned()],
         1,
@@ -2899,7 +2899,7 @@ fn fleet_dashboard_aggregates_operations_without_sensitive_payloads() {
     let fleet = FleetEngine::open(fixture.data.join("fleet.sqlite3")).unwrap();
     let node = FleetNode::new(
         "node-dashboard".to_owned(),
-        "2.0.0-beta.8",
+        "2.0.0-beta.9",
         "local",
         vec!["job.work".to_owned()],
         1,

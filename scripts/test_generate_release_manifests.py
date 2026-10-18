@@ -110,7 +110,7 @@ class GenerateReleaseManifestsTests(unittest.TestCase):
             results = generate_release_manifests(
                 output_dir=out_dir,
                 checksums_path=checksums_file,
-                tag="v2.0.0-beta.8",
+                tag="v2.0.0-beta.9",
                 validate=True,
             )
 
@@ -122,7 +122,7 @@ class GenerateReleaseManifestsTests(unittest.TestCase):
 
             # Check json parsing of scoop manifest
             parsed_scoop = json.loads(results["scoop_manifest"].read_text(encoding="utf-8"))
-            self.assertEqual(parsed_scoop["version"], "2.0.0-beta.8")
+            self.assertEqual(parsed_scoop["version"], "2.0.0-beta.9")
 
     def test_cli_main_success(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -131,7 +131,7 @@ class GenerateReleaseManifestsTests(unittest.TestCase):
             out_dir = root / "out"
 
             ret = main([
-                "v2.0.0-beta.8",
+                "v2.0.0-beta.9",
                 "--checksums",
                 str(checksums_file),
                 "--output-dir",

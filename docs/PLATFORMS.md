@@ -160,7 +160,7 @@ identity.
 
 ## Product boundary
 
-The `2.0.0-beta.8` identity is the next CLI release line, and the CLI is the
+The `2.0.0-beta.9` identity is the next CLI release line, and the CLI is the
 only active product surface. Desktop packaging, signing, and publication are
 cancelled, so the retained adapter source takes part in no release gate this
 repository runs.

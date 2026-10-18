@@ -17,8 +17,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1`, `v2.0.0-beta.2`,
-`v2.0.0-beta.3`, `v2.0.0-beta.4`, `v2.0.0-beta.5`, `v2.0.0-beta.6`, and
-`v2.0.0-beta.7`. The next planned identity is `v2.0.0-beta.8`.
+`v2.0.0-beta.3`, `v2.0.0-beta.4`, `v2.0.0-beta.5`, `v2.0.0-beta.6`,
+`v2.0.0-beta.7`, and `v2.0.0-beta.8`. The next planned identity is `v2.0.0-beta.9`.
 
 ## Source-bound release scope
 
@@ -36,6 +36,15 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v2.0.0-beta.9
+
+This is the next coherent prerelease identity. It updates the coupled Rust,
+npm, installer, documentation, and SDK runtime surfaces to `2.0.0-beta.9` while
+retaining the source-bound `cli-only` release scope. It bundles durable Kanban
+coordination, inter-agent society bot mode, session auto-prune and SQLite vacuum
+compaction, agent-to-agent JSON-RPC 2.0 protocol v1.0, and browser PKCE OAuth 2.1
+SaaS connectors.
 
 ## v2.0.0-beta.8
 

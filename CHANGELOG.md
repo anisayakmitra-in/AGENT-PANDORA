@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## v2.0.0-beta.9
+
+- **Durable Multi-Agent Kanban Board (`pandora kanban`)**: SQLite-backed coordination
+  state machine managing task lifecycles (`to_do`, `in_progress`, `review`, `done`, `blocked`),
+  worker heartbeats, and automated zombie task reclamation (`pandora kanban task create|update|claim|heartbeat|reclaim|board`).
+- **Bot Mode & Inter-Agent Society (`pandora peer`)**: Multi-agent social collaboration
+  featuring built-in personas (`@architect`, `@coder`, `@reviewer`, `@curator`, `@auditor`),
+  custom persona registration, and threaded peer direct messaging (`pandora peer list|register|inspect|send|inbox|read|reply|thread|delete`).
+- **Session Auto-Pruning & SQLite Vacuum Optimizer (`pandora session`)**: Lifecycle storage
+  maintenance engine with age-based session/event/turn pruning and conditional or forced
+  SQLite VACUUM disk space reclamation (`pandora session prune`, `pandora session vacuum`).
+- **Agent-to-Agent (A2A) JSON-RPC 2.0 Protocol v1.0 (`pandora peer a2a`)**: Standards-compliant
+  cross-machine JSON-RPC 2.0 protocol for agent discovery, capability handshakes (Agent Cards),
+  and cryptographic SHA-256 verified remote task delegation (`pandora peer a2a card|rpc|delegate|status`).
+- **Browser PKCE OAuth 2.1 Connectors Platform (`pandora connector`)**: Secure RFC 7636
+  Proof Key for Code Exchange (PKCE) OAuth 2.1 platform for external SaaS integrations
+  (GitHub, Linear, Notion, Asana, Custom) with loopback code exchange and encrypted vault token storage (`pandora connector list|authorize|exchange|inspect|revoke`).
+
 ## v2.0.0-beta.8
 
 - **5-Tier Layered Crystallized Memory Architecture (L0-L4)**: Crystallizes memory
