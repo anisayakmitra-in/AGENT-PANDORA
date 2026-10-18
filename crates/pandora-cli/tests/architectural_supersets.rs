@@ -1979,3 +1979,83 @@ fn contract_a2a_protocol_cli() {
     assert_eq!(val_stat["result"]["task_id"], task_id);
     assert_eq!(val_stat["result"]["status"], "completed");
 }
+
+#[test]
+fn contract_connector_pkce_lifecycle_cli() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // 1. Initial list: should be empty
+    let resp_list = fixture.run(&["connector", "list"]);
+    let val_list = resp_list.success("connector list");
+    assert_eq!(val_list["count"], 0);
+
+    // 2. Authorize: initialize PKCE session for GitHub
+    let resp_auth = fixture.run(&[
+        "connector",
+        "authorize",
+        "--provider",
+        "github",
+        "--client-id",
+        "gh_client_test",
+        "--redirect-uri",
+        "http://localhost:8080/callback",
+        "--scopes",
+        "repo,read:user",
+    ]);
+    let val_auth = resp_auth.success("connector authorize");
+    let session_id = val_auth["session_id"].as_str().unwrap().to_string();
+    let state = val_auth["state"].as_str().unwrap().to_string();
+    let auth_url = val_auth["authorization_url"].as_str().unwrap();
+
+    assert!(auth_url.contains("github.com/login/oauth/authorize"));
+    assert!(auth_url.contains("code_challenge="));
+    assert_eq!(val_auth["provider"], "github");
+
+    // 3. Exchange: exchange code and state for authorized connector token
+    let resp_exch = fixture.run(&[
+        "connector",
+        "exchange",
+        "--session",
+        &session_id,
+        "--state",
+        &state,
+        "--code",
+        "gh_auth_code_98765",
+    ]);
+    let val_exch = resp_exch.success("connector exchange");
+    assert_eq!(val_exch["status"], "authorized");
+    let connector_id = val_exch["connector"]["connector_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(connector_id.starts_with("github-"));
+
+    // 4. Inspect: verify token record details
+    let resp_insp = fixture.run(&["connector", "inspect", &connector_id]);
+    let val_insp = resp_insp.success("connector inspect");
+    assert_eq!(val_insp["connector"]["connector_id"], connector_id);
+    assert_eq!(val_insp["connector"]["provider"], "github");
+    assert!(
+        val_insp["connector"]["token_masked"]
+            .as_str()
+            .unwrap()
+            .contains("...8765")
+    );
+
+    // 5. List: now contains 1 connector
+    let resp_list2 = fixture.run(&["connector", "list"]);
+    let val_list2 = resp_list2.success("connector list");
+    assert_eq!(val_list2["count"], 1);
+
+    // 6. Revoke: remove connector
+    let resp_rev = fixture.run(&["connector", "revoke", &connector_id]);
+    let val_rev = resp_rev.success("connector revoke");
+    assert_eq!(val_rev["status"], "revoked");
+    assert_eq!(val_rev["connector_id"], connector_id);
+
+    // 7. List: empty again
+    let resp_list3 = fixture.run(&["connector", "list"]);
+    let val_list3 = resp_list3.success("connector list");
+    assert_eq!(val_list3["count"], 0);
+}

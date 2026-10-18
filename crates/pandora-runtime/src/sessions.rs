@@ -13,7 +13,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const CURRENT_SCHEMA_VERSION: i64 = 12;
+const CURRENT_SCHEMA_VERSION: i64 = 13;
 const MAX_EVENT_BYTES: usize = 1_048_576;
 const MAX_AGENT_MESSAGE_BYTES: usize = 1_048_576;
 const MAX_AGENT_TRANSCRIPT_BYTES: usize = 8 * 1_048_576;
@@ -2288,6 +2288,218 @@ impl SessionStore {
         }
     }
 
+    /// Persists an active PKCE authorization session awaiting user code exchange.
+    pub fn save_connector_session(
+        &self,
+        session: &pandora_types::ConnectorSession,
+    ) -> Result<(), SessionError> {
+        let connection = self.lock()?;
+        let pkce_json = serde_json::to_string(&session.pkce)?;
+        let scopes_json = serde_json::to_string(&session.scopes)?;
+        connection.execute(
+            "INSERT OR REPLACE INTO connector_sessions (
+                session_id, provider, client_id, authorization_url, pkce_json, redirect_uri, scopes_json, created_at, expires_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                session.session_id.as_str(),
+                session.provider.as_str(),
+                session.client_id.as_str(),
+                session.authorization_url.as_str(),
+                pkce_json.as_str(),
+                session.redirect_uri.as_str(),
+                scopes_json.as_str(),
+                session.created_at as i64,
+                session.expires_at as i64,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieves an active PKCE authorization session by ID.
+    pub fn get_connector_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<pandora_types::ConnectorSession>, SessionError> {
+        let connection = self.lock()?;
+        let mut stmt = connection.prepare(
+            "SELECT session_id, provider, client_id, authorization_url, pkce_json, redirect_uri, scopes_json, created_at, expires_at
+             FROM connector_sessions WHERE session_id = ?1",
+        )?;
+        let mut rows = stmt.query_map([session_id], |row| {
+            let s_id: String = row.get(0)?;
+            let prov_str: String = row.get(1)?;
+            let client_id: String = row.get(2)?;
+            let auth_url: String = row.get(3)?;
+            let pkce_raw: String = row.get(4)?;
+            let redirect_uri: String = row.get(5)?;
+            let scopes_raw: String = row.get(6)?;
+            let created_at: i64 = row.get(7)?;
+            let expires_at: i64 = row.get(8)?;
+
+            let provider: pandora_types::ConnectorProvider = prov_str
+                .parse()
+                .unwrap_or(pandora_types::ConnectorProvider::Custom);
+            let pkce: pandora_types::PkceChallenge =
+                serde_json::from_str(&pkce_raw).unwrap_or(pandora_types::PkceChallenge {
+                    code_verifier: String::new(),
+                    code_challenge: String::new(),
+                    code_challenge_method: "S256".to_string(),
+                    state: String::new(),
+                });
+            let scopes: Vec<String> = serde_json::from_str(&scopes_raw).unwrap_or_default();
+
+            Ok(pandora_types::ConnectorSession {
+                session_id: s_id,
+                provider,
+                client_id,
+                authorization_url: auth_url,
+                pkce,
+                redirect_uri,
+                scopes,
+                created_at: created_at as u64,
+                expires_at: expires_at as u64,
+            })
+        })?;
+
+        if let Some(first) = rows.next() {
+            Ok(Some(first?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Deletes an active PKCE authorization session.
+    pub fn delete_connector_session(&self, session_id: &str) -> Result<bool, SessionError> {
+        let connection = self.lock()?;
+        let rows = connection.execute(
+            "DELETE FROM connector_sessions WHERE session_id = ?1",
+            params![session_id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    /// Persists an authorized connector token record.
+    pub fn save_connector_token(
+        &self,
+        token: &pandora_types::ConnectorTokenRecord,
+    ) -> Result<(), SessionError> {
+        let connection = self.lock()?;
+        let scopes_json = serde_json::to_string(&token.scopes)?;
+        connection.execute(
+            "INSERT OR REPLACE INTO connector_tokens (
+                connector_id, provider, token_masked, token_type, scopes_json, secret_key_id, created_at, expires_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                token.connector_id.as_str(),
+                token.provider.as_str(),
+                token.token_masked.as_str(),
+                token.token_type.as_str(),
+                scopes_json.as_str(),
+                token.secret_key_id.as_str(),
+                token.created_at as i64,
+                token.expires_at.map(|e| e as i64),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Lists all authorized connector token records.
+    pub fn list_connector_tokens(
+        &self,
+    ) -> Result<Vec<pandora_types::ConnectorTokenRecord>, SessionError> {
+        let connection = self.lock()?;
+        let mut stmt = connection.prepare(
+            "SELECT connector_id, provider, token_masked, token_type, scopes_json, secret_key_id, created_at, expires_at
+             FROM connector_tokens ORDER BY created_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let conn_id: String = row.get(0)?;
+            let prov_str: String = row.get(1)?;
+            let token_masked: String = row.get(2)?;
+            let token_type: String = row.get(3)?;
+            let scopes_raw: String = row.get(4)?;
+            let secret_key_id: String = row.get(5)?;
+            let created_at: i64 = row.get(6)?;
+            let expires_at: Option<i64> = row.get(7)?;
+
+            let provider: pandora_types::ConnectorProvider = prov_str
+                .parse()
+                .unwrap_or(pandora_types::ConnectorProvider::Custom);
+            let scopes: Vec<String> = serde_json::from_str(&scopes_raw).unwrap_or_default();
+
+            Ok(pandora_types::ConnectorTokenRecord {
+                connector_id: conn_id,
+                provider,
+                token_masked,
+                token_type,
+                scopes,
+                secret_key_id,
+                created_at: created_at as u64,
+                expires_at: expires_at.map(|e| e as u64),
+            })
+        })?;
+
+        let mut list = Vec::new();
+        for row in rows {
+            list.push(row?);
+        }
+        Ok(list)
+    }
+
+    /// Gets a single authorized connector token record by ID.
+    pub fn get_connector_token(
+        &self,
+        connector_id: &str,
+    ) -> Result<Option<pandora_types::ConnectorTokenRecord>, SessionError> {
+        let connection = self.lock()?;
+        let mut stmt = connection.prepare(
+            "SELECT connector_id, provider, token_masked, token_type, scopes_json, secret_key_id, created_at, expires_at
+             FROM connector_tokens WHERE connector_id = ?1",
+        )?;
+        let mut rows = stmt.query_map([connector_id], |row| {
+            let conn_id: String = row.get(0)?;
+            let prov_str: String = row.get(1)?;
+            let token_masked: String = row.get(2)?;
+            let token_type: String = row.get(3)?;
+            let scopes_raw: String = row.get(4)?;
+            let secret_key_id: String = row.get(5)?;
+            let created_at: i64 = row.get(6)?;
+            let expires_at: Option<i64> = row.get(7)?;
+
+            let provider: pandora_types::ConnectorProvider = prov_str
+                .parse()
+                .unwrap_or(pandora_types::ConnectorProvider::Custom);
+            let scopes: Vec<String> = serde_json::from_str(&scopes_raw).unwrap_or_default();
+
+            Ok(pandora_types::ConnectorTokenRecord {
+                connector_id: conn_id,
+                provider,
+                token_masked,
+                token_type,
+                scopes,
+                secret_key_id,
+                created_at: created_at as u64,
+                expires_at: expires_at.map(|e| e as u64),
+            })
+        })?;
+
+        if let Some(first) = rows.next() {
+            Ok(Some(first?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Deletes an authorized connector token record.
+    pub fn delete_connector_token(&self, connector_id: &str) -> Result<bool, SessionError> {
+        let connection = self.lock()?;
+        let rows = connection.execute(
+            "DELETE FROM connector_tokens WHERE connector_id = ?1",
+            params![connector_id],
+        )?;
+        Ok(rows > 0)
+    }
+
     fn lock(&self) -> Result<MutexGuard<'_, Connection>, SessionError> {
         self.connection
             .lock()
@@ -2671,6 +2883,37 @@ fn migrate(connection: &mut Connection) -> Result<(), SessionError> {
              INSERT INTO schema_migrations (version, applied_at) VALUES (12, strftime('%s', 'now'));",
         )?;
         version = 12;
+    }
+    if version < 13 {
+        transaction.execute_batch(
+            "CREATE TABLE IF NOT EXISTS connector_sessions (
+                 session_id TEXT PRIMARY KEY NOT NULL,
+                 provider TEXT NOT NULL,
+                 client_id TEXT NOT NULL,
+                 authorization_url TEXT NOT NULL,
+                 pkce_json TEXT NOT NULL,
+                 redirect_uri TEXT NOT NULL,
+                 scopes_json TEXT NOT NULL,
+                 created_at INTEGER NOT NULL,
+                 expires_at INTEGER NOT NULL
+             );
+
+             CREATE TABLE IF NOT EXISTS connector_tokens (
+                 connector_id TEXT PRIMARY KEY NOT NULL,
+                 provider TEXT NOT NULL,
+                 token_masked TEXT NOT NULL,
+                 token_type TEXT NOT NULL,
+                 scopes_json TEXT NOT NULL,
+                 secret_key_id TEXT NOT NULL,
+                 created_at INTEGER NOT NULL,
+                 expires_at INTEGER
+             );
+             CREATE INDEX IF NOT EXISTS idx_connector_tokens_provider
+                 ON connector_tokens (provider);
+
+             INSERT INTO schema_migrations (version, applied_at) VALUES (13, strftime('%s', 'now'));",
+        )?;
+        version = 13;
     }
     let _ = version;
     transaction.commit()?;

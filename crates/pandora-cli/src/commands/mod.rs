@@ -17,6 +17,7 @@ mod auth;
 mod backup;
 mod chat;
 mod completions;
+pub(crate) mod connector;
 pub(crate) mod curator;
 pub(crate) mod decision;
 mod doctor;
@@ -202,6 +203,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "hardware" => hardware::execute(&args[1..]),
         "kanban" => kanban::execute(&args[1..]),
         "peer" => peer::execute(&args[1..]),
+        "connector" => connector::execute(&args[1..]),
         "--help" | "help" => {
             if args.len() != 1 {
                 return Err(CliError::usage("help does not accept additional arguments"));
@@ -315,6 +317,20 @@ fn is_flag(name: &str) -> bool {
 
 pub(crate) fn load_config(parsed: &ParsedArgs) -> Result<RuntimeConfig, CliError> {
     RuntimeConfig::load(overrides(parsed)).map_err(config_error)
+}
+
+pub(crate) fn load_config_storage(parsed: &ParsedArgs) -> Result<RuntimeConfig, CliError> {
+    let mut overrides = ConfigOverrides::default();
+    if let Some(path) = path_option(parsed, "config") {
+        overrides = overrides.with_config_path(path);
+    }
+    if let Some(path) = path_option(parsed, "data-dir") {
+        overrides = overrides.with_data_dir(path);
+    }
+    if let Some(path) = path_option(parsed, "workspace") {
+        overrides = overrides.with_workspace_dir(path);
+    }
+    RuntimeConfig::load(overrides).map_err(config_error)
 }
 
 pub(crate) fn write_config(config: &RuntimeConfig) -> Result<(), CliError> {

@@ -1483,6 +1483,24 @@ pandora peer a2a status --task-id <id>
 - `delegate`: Dispatches a bounded task intent to a target A2A node, computing cryptographic SHA-256 evidence digests and returning structured task completion receipts.
 - `status`: Queries the real-time execution status of a delegated task.
 
+## Browser PKCE OAuth 2.1 Connectors Platform
+
+`pandora connector` provides secure Proof Key for Code Exchange (PKCE) OAuth 2.1 authentication with external SaaS platforms and services (GitHub, Linear, Notion, Asana, Custom):
+
+```text
+pandora connector list
+pandora connector authorize --provider <github|linear|notion|asana|custom> [--client-id <id>] [--redirect-uri <uri>] [--scopes <s1,s2>]
+pandora connector exchange --session <session_id> --state <state> --code <code>
+pandora connector inspect <connector_id>
+pandora connector revoke <connector_id>
+```
+
+- `list`: Lists all authorized connectors, showing connector ID, SaaS provider, masked token digest, and authorized scopes.
+- `authorize`: Generates a high-entropy RFC 7636 PKCE code verifier and SHA-256 challenge, creates a temporary 10-minute authorization session, synthesizes the complete browser authorization URL, and outputs instructions for user authorization.
+- `exchange`: Validates the returned CSRF state token against the active PKCE session, exchanges the authorization code for a connector credential record, stores the masked reference and encrypted token in the vault, and marks the connector active.
+- `inspect`: Displays complete token record metadata including provider, token type, scopes, vault secret reference, and expiration timestamps.
+- `revoke`: Revokes and deletes an authorized connector credential record.
+
 Remote admission currently accepts Gene records with no unresolved capability
 requirements and one valid Pandora runtime requirement. Other package kinds fail
 before download or local mutation. A registry package remains metadata and verified

@@ -4,6 +4,7 @@ pub mod a2a;
 pub mod adaptation;
 pub mod artifact;
 pub mod capability;
+pub mod connector;
 pub mod containment;
 pub mod context;
 pub mod curator;
@@ -47,6 +48,7 @@ pub use adaptation::{
 };
 pub use artifact::ArtifactRef;
 pub use capability::{Capability, Operation, ToolSearchResult};
+pub use connector::{ConnectorProvider, ConnectorSession, ConnectorTokenRecord, PkceChallenge};
 pub use containment::{
     CONTAINMENT_EVIDENCE_VERSION, ContainmentBoundary, ContainmentBoundaryKind,
     ContainmentContractError, ContainmentControl, ContainmentEvidence, ContainmentLevel,

@@ -8,6 +8,7 @@ pub mod artifact_catalog;
 pub mod coding_feedback;
 pub mod composition_ledger;
 pub mod config;
+pub mod connector_engine;
 pub mod containment;
 pub mod content_guard;
 pub mod context_engine;
@@ -96,6 +97,7 @@ pub use composition_ledger::{
     COMPOSITION_LEDGER_VERSION, CompositionBinding, CompositionLedger, CompositionLedgerError,
     CompositionSource, MAX_COMPOSITION_BINDINGS,
 };
+pub use connector_engine::{ConnectorEngine, ConnectorError};
 pub use containment::shipped_executor_containment;
 pub use content_guard::{
     CONTENT_GUARD_POLICY_VERSION, CONTEXT_QUARANTINE_REASON, ContentGuardError,
