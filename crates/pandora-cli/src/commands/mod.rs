@@ -29,6 +29,7 @@ mod graph;
 pub(crate) mod hardware;
 mod harness;
 mod job;
+pub(crate) mod kanban;
 mod mcp;
 mod memory;
 mod migration;
@@ -198,6 +199,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "decision" => decision::execute(&args[1..]),
         "curator" => curator::execute(&args[1..]),
         "hardware" => hardware::execute(&args[1..]),
+        "kanban" => kanban::execute(&args[1..]),
         "--help" | "help" => {
             if args.len() != 1 {
                 return Err(CliError::usage("help does not accept additional arguments"));

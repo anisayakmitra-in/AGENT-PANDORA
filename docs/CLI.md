@@ -1415,6 +1415,28 @@ pandora hardware presets
 - `fit`: Calculates memory footprint (weights memory, KV cache, runtime headroom) for a specified parameter size (`--params <billions>`), quantization format (`--quant <q4_k_m|q5_k_m|q8_0|fp16|fp32>`), and context window (`--context <tokens>`). Returns fit score, VRAM/RAM fit booleans, recommended backend, and sizing verdict.
 - `presets`: Evaluates and tabulates sizing recommendations for standard local models (Qwen 2.5 3B/7B/14B/32B, DeepSeek-R1 8B/14B, Llama 3.1 8B/70B, Phi-4 14B).
 
+## Durable Multi-Agent Kanban State Machine
+
+`pandora kanban` manages durable, crash-resilient multi-agent task boards with heartbeat monitoring, dependency gating, and automatic zombie worker reclaim:
+
+```text
+pandora kanban task create --title "Analyze memory footprint" --priority 1 --board dev
+pandora kanban task create --title "Implement patch" --deps <task-id> --priority 2 --board dev
+pandora kanban task list --board dev
+pandora kanban task update <task-id> --status in_progress --worker worker-alpha
+pandora kanban task heartbeat <task-id> --worker worker-alpha
+pandora kanban task reclaim --board dev --timeout 300
+pandora kanban task inspect <task-id>
+pandora kanban board --board dev
+```
+
+- `task create`: Enqueues a durable task with priority (`1-5`), optional dependencies (`--deps <id1,id2>`), assignee, and board identity.
+- `task list`: Lists active tasks on a board ordered by priority and creation time, with optional `--status` filtering (`backlog`, `to_do`, `in_progress`, `blocked`, `review`, `done`).
+- `task update`: Advances task state. Moving to `in_progress` verifies that all declared dependencies are in `done` status.
+- `task heartbeat`: Records live progress from active workers, updating `last_heartbeat_epoch_secs`.
+- `task reclaim`: Scans for zombie workers exceeding `--timeout <secs>` (default 300s). Reclaims tasks back to `to_do` with incremented retry count, or marks them `blocked` if retry budget (`max_retries`) is exhausted.
+- `board`: Inspects entire board overview and aggregate task distribution.
+
 Remote admission currently accepts Gene records with no unresolved capability
 requirements and one valid Pandora runtime requirement. Other package kinds fail
 before download or local mutation. A registry package remains metadata and verified

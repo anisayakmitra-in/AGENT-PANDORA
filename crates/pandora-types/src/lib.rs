@@ -20,6 +20,7 @@ pub mod hardware;
 pub mod harness;
 pub mod ids;
 pub mod jobs;
+pub mod kanban;
 pub mod memory;
 pub mod observability;
 pub mod orchestration;
@@ -100,6 +101,7 @@ pub use ids::{
     TenantId, WorkspaceId,
 };
 pub use jobs::{JobCommand, JobContractError, JobRequest, JobStatus, MAX_JOB_ARGUMENT_BYTES};
+pub use kanban::{KanbanBoard, KanbanReclaimReport, KanbanStatus, KanbanTask};
 pub use memory::{
     MAX_MEMORY_SYNTHESIS_EVIDENCE, MEMORY_CONSOLIDATION_POLICY_VERSION, MemoryApproval,
     MemoryAuditAction, MemoryAuditEntry, MemoryCapsule, MemoryConflictRule,

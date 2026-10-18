@@ -39,6 +39,14 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora hardware probe --json` | `hardware probe` | `cpu_cores`, `total_ram_bytes`, `free_ram_bytes`, `gpus`, `primary_backend`, `total_usable_vram_bytes` |
 | `pandora hardware fit ... --json` | `hardware fit` | `model_id`, `parameters_billion`, `quantization`, `context_window`, `weights_memory_bytes`, `kv_cache_memory_bytes`, `headroom_bytes`, `total_required_bytes`, `fits_in_vram`, `fits_in_ram`, `recommended_backend`, `fit_score`, `fit_verdict` |
 | `pandora hardware presets --json` | `hardware presets` | `recommendations` |
+| `pandora kanban task create ... --json` | `kanban task create` | `id`, `board_id`, `title`, `description`, `status`, `priority`, `assignee`, `dependencies`, `retry_count`, `max_retries` |
+| `pandora kanban task list ... --json` | `kanban task list` | `board_id`, `tasks`, `count` |
+| `pandora kanban task update <id> ... --json` | `kanban task update` | `id`, `board_id`, `status`, `assignee`, `updated_at` |
+| `pandora kanban task heartbeat <id> --worker <w> --json` | `kanban task heartbeat` | `id`, `assignee`, `last_heartbeat_epoch_secs` |
+| `pandora kanban task reclaim ... --json` | `kanban task reclaim` | `reclaimed_task_ids`, `blocked_exhausted_ids` |
+| `pandora kanban task inspect <id> --json` | `kanban task inspect` | `id`, `board_id`, `title`, `status`, `priority`, `assignee`, `dependencies` |
+| `pandora kanban task delete <id> --yes --json` | `kanban task delete` | `id`, `deleted` |
+| `pandora kanban board ... --json` | `kanban board` | `id`, `name`, `tasks` |
 | `pandora backup create ... --json` | `backup create` | `output`, `entries`, `encrypted`, `format_version` |
 | `pandora backup inspect ... --json` | `backup inspect` | `input`, `created_at`, `entries`, `authenticated`, `paths_exposed` |
 | `pandora backup restore ... --json` | `backup restore` | `input`, `restored_entries`, `pre_restore_backup`, `authenticated` |

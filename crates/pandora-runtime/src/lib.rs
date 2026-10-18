@@ -33,6 +33,7 @@ pub mod hooks;
 pub mod human_review;
 pub mod identity;
 pub mod job_store;
+pub mod kanban_engine;
 pub mod mcp;
 pub mod mcp_catalog;
 pub mod memory_engine;
@@ -173,6 +174,7 @@ pub use identity::{
     ServiceIdentity,
 };
 pub use job_store::{JobRecord, JobStore, JobStoreError, MAX_JOB_RESULT_BYTES};
+pub use kanban_engine::{KanbanEngine, KanbanError};
 pub use mcp::{
     MCP_LEGACY_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION, McpError, McpFailure, McpInvocation,
     McpProtocolMode, McpServer, McpStart, McpStdioConfig, McpToolResult, McpWireEra,

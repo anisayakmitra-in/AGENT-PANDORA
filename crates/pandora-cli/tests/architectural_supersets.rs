@@ -1643,3 +1643,149 @@ fn contract_hardware_autopilot_cli() {
     assert!(!resp_invalid.status.success());
     assert!(resp_invalid.text.contains("unknown quantization"));
 }
+
+#[test]
+fn contract_kanban_multi_agent_board_cli() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // 1. Create root task
+    let resp1 = fixture.run(&[
+        "kanban",
+        "task",
+        "create",
+        "--id",
+        "task-1",
+        "--title",
+        "Design schema",
+        "--desc",
+        "Architecture review",
+        "--priority",
+        "1",
+        "--board",
+        "board-test",
+    ]);
+    let val1 = resp1.success("kanban task create");
+    assert_eq!(val1["id"], "task-1");
+    assert_eq!(val1["status"], "todo");
+    assert_eq!(val1["priority"], 1);
+
+    // 2. Create dependent task
+    let resp2 = fixture.run(&[
+        "kanban",
+        "task",
+        "create",
+        "--id",
+        "task-2",
+        "--title",
+        "Implement migration",
+        "--deps",
+        "task-1",
+        "--priority",
+        "2",
+        "--board",
+        "board-test",
+    ]);
+    let val2 = resp2.success("kanban task create");
+    assert_eq!(val2["id"], "task-2");
+
+    // 3. List tasks on board
+    let resp_list = fixture.run(&["kanban", "task", "list", "--board", "board-test"]);
+    let val_list = resp_list.success("kanban task list");
+    assert_eq!(val_list["count"], 2);
+
+    // 4. Starting task-2 before task-1 completes fails
+    let resp_fail = fixture.run(&[
+        "kanban",
+        "task",
+        "update",
+        "task-2",
+        "--status",
+        "in_progress",
+        "--worker",
+        "worker-alpha",
+    ]);
+    assert!(!resp_fail.status.success());
+    assert!(
+        resp_fail
+            .text
+            .contains("dependency task 'task-1' is not completed")
+    );
+
+    // 5. Start and complete task-1
+    let resp_t1_start = fixture.run(&[
+        "kanban",
+        "task",
+        "update",
+        "task-1",
+        "--status",
+        "in_progress",
+        "--worker",
+        "worker-alpha",
+    ]);
+    assert_eq!(
+        resp_t1_start.success("kanban task update")["status"],
+        "in_progress"
+    );
+
+    // Heartbeat on task-1
+    let resp_hb = fixture.run(&[
+        "kanban",
+        "task",
+        "heartbeat",
+        "task-1",
+        "--worker",
+        "worker-alpha",
+    ]);
+    assert_eq!(resp_hb.success("kanban task heartbeat")["id"], "task-1");
+
+    // Complete task-1
+    let resp_t1_done = fixture.run(&["kanban", "task", "update", "task-1", "--status", "done"]);
+    assert_eq!(resp_t1_done.success("kanban task update")["status"], "done");
+
+    // 6. Now task-2 can start
+    let resp_t2_start = fixture.run(&[
+        "kanban",
+        "task",
+        "update",
+        "task-2",
+        "--status",
+        "in_progress",
+        "--worker",
+        "worker-beta",
+    ]);
+    assert_eq!(
+        resp_t2_start.success("kanban task update")["status"],
+        "in_progress"
+    );
+
+    // 7. Zombie reclaim pass resets worker-beta's task-2 to todo
+    let resp_reclaim = fixture.run(&[
+        "kanban",
+        "task",
+        "reclaim",
+        "--board",
+        "board-test",
+        "--timeout",
+        "0",
+    ]);
+    let val_reclaim = resp_reclaim.success("kanban task reclaim");
+    let reclaimed = val_reclaim["reclaimed_task_ids"].as_array().unwrap();
+    assert!(reclaimed.iter().any(|id| id == "task-2"));
+
+    // 8. Inspect task-2 reflects todo status
+    let resp_insp = fixture.run(&["kanban", "task", "inspect", "task-2"]);
+    let val_insp = resp_insp.success("kanban task inspect");
+    assert_eq!(val_insp["status"], "todo");
+    assert_eq!(val_insp["retry_count"], 1);
+
+    // 9. Inspect board
+    let resp_board = fixture.run(&["kanban", "board", "--board", "board-test"]);
+    let val_board = resp_board.success("kanban board");
+    assert_eq!(val_board["tasks"].as_array().unwrap().len(), 2);
+
+    // 10. Delete task
+    let resp_del = fixture.run(&["kanban", "task", "delete", "task-1", "--yes"]);
+    let val_del = resp_del.success("kanban task delete");
+    assert_eq!(val_del["deleted"], true);
+}

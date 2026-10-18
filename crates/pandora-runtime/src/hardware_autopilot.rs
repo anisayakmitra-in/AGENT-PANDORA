@@ -201,10 +201,8 @@ fn detect_total_ram() -> u64 {
             for line in meminfo.lines() {
                 if let Some(rest) = line.strip_prefix("MemTotal:") {
                     let parts: Vec<&str> = rest.split_whitespace().collect();
-                    if let Some(first) = parts.first() {
-                        if let Ok(kb) = first.parse::<u64>() {
-                            return kb * 1024;
-                        }
+                    if let Some(kb) = parts.first().and_then(|first| first.parse::<u64>().ok()) {
+                        return kb * 1024;
                     }
                 }
             }
@@ -222,10 +220,8 @@ fn detect_free_ram(total_ram: u64) -> u64 {
             for line in meminfo.lines() {
                 if let Some(rest) = line.strip_prefix("MemAvailable:") {
                     let parts: Vec<&str> = rest.split_whitespace().collect();
-                    if let Some(first) = parts.first() {
-                        if let Ok(kb) = first.parse::<u64>() {
-                            return kb * 1024;
-                        }
+                    if let Some(kb) = parts.first().and_then(|first| first.parse::<u64>().ok()) {
+                        return kb * 1024;
                     }
                 }
             }
