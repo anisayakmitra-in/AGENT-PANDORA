@@ -1,5 +1,5 @@
 use crate::manifest::{ManifestError, ModelId, ProviderId, ProviderManifest, ProviderProtocol};
-use pandora_types::{ExecutionId, SessionId};
+use pandora_types::{ExecutionId, ReasoningEffort, SessionId};
 use reqwest::blocking::{Client, Response};
 use reqwest::redirect::Policy;
 use serde::{Deserialize, Serialize};
@@ -324,6 +324,7 @@ pub struct ModelRequest {
     timeout: Duration,
     trace: TraceMetadata,
     prompt_cache_ttl: Option<PromptCacheTtl>,
+    reasoning_effort: Option<ReasoningEffort>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -358,6 +359,7 @@ impl ModelRequest {
             timeout: DEFAULT_TIMEOUT,
             trace: TraceMetadata::default(),
             prompt_cache_ttl: None,
+            reasoning_effort: None,
         };
         request.validate()?;
         Ok(request)
@@ -388,6 +390,11 @@ impl ModelRequest {
 
     pub fn with_prompt_cache(mut self, ttl: PromptCacheTtl) -> Self {
         self.prompt_cache_ttl = Some(ttl);
+        self
+    }
+
+    pub fn with_reasoning_effort(mut self, effort: ReasoningEffort) -> Self {
+        self.reasoning_effort = Some(effort);
         self
     }
 
@@ -471,6 +478,10 @@ impl ModelRequest {
         self.prompt_cache_ttl
     }
 
+    pub const fn reasoning_effort(&self) -> Option<ReasoningEffort> {
+        self.reasoning_effort
+    }
+
     pub fn authorization_payload(&self) -> Result<Vec<u8>, ProviderError> {
         Self::encode_authorization_payload(&self.canonical_authorization_request())
     }
@@ -504,6 +515,7 @@ impl ModelRequest {
             trace_execution_id: self.trace.execution_id().map(|id| id.as_str()),
             trace_session_id: self.trace.session_id().map(|id| id.as_str()),
             prompt_cache_ttl: self.prompt_cache_ttl,
+            reasoning_effort: self.reasoning_effort.map(|e| e.as_str()),
         }
     }
 
@@ -527,6 +539,8 @@ struct CanonicalModelRequest<'a> {
     trace_execution_id: Option<&'a str>,
     trace_session_id: Option<&'a str>,
     prompt_cache_ttl: Option<PromptCacheTtl>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -865,6 +879,8 @@ struct OpenAiRequest {
     messages: Vec<OpenAiRequestMessage>,
     tools: Vec<OpenAiTool>,
     max_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
 }
 
 impl OpenAiRequest {
@@ -882,6 +898,10 @@ impl OpenAiRequest {
                 .map(OpenAiTool::from_schema)
                 .collect(),
             max_tokens: request.max_output_tokens(),
+            reasoning_effort: request
+                .reasoning_effort()
+                .and_then(|effort| effort.openai_reasoning_effort())
+                .map(str::to_owned),
         }
     }
 }
@@ -1007,6 +1027,14 @@ struct OpenAiPromptTokenDetails {
 }
 
 #[derive(Serialize)]
+struct AnthropicThinking {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    budget_tokens: Option<u32>,
+}
+
+#[derive(Serialize)]
 struct AnthropicRequest {
     model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1014,6 +1042,8 @@ struct AnthropicRequest {
     messages: Vec<AnthropicMessage>,
     tools: Vec<AnthropicTool>,
     max_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<AnthropicThinking>,
 }
 
 impl AnthropicRequest {
@@ -1047,6 +1077,18 @@ impl AnthropicRequest {
             }]),
             None => AnthropicSystem::Text(text),
         });
+        let thinking = request.reasoning_effort().and_then(|effort| {
+            effort
+                .anthropic_thinking_budget()
+                .map(|budget| AnthropicThinking {
+                    kind: "enabled",
+                    budget_tokens: Some(budget),
+                })
+        });
+        let max_tokens = match thinking.as_ref().and_then(|t| t.budget_tokens) {
+            Some(budget) if request.max_output_tokens() <= budget => budget + 1024,
+            _ => request.max_output_tokens(),
+        };
         Ok(Self {
             model: request.model_id().as_str().to_owned(),
             system,
@@ -1056,7 +1098,8 @@ impl AnthropicRequest {
                 .iter()
                 .map(AnthropicTool::from_schema)
                 .collect(),
-            max_tokens: request.max_output_tokens(),
+            max_tokens,
+            thinking,
         })
     }
 }
@@ -1911,6 +1954,40 @@ mod tests {
             json!({"role": "user", "content": "Dynamic task."})
         );
         assert!(body["messages"][0].get("cache_control").is_none());
+    }
+
+    #[test]
+    fn reasoning_effort_serializes_for_openai_and_anthropic() {
+        let manifest = ProviderManifest::new_with_protocol(
+            "anthropic",
+            "Anthropic",
+            ProviderProtocol::AnthropicMessages,
+            "https://api.anthropic.com/v1",
+            "claude-3-7-sonnet-20250219",
+            "PANDORA_ANTHROPIC_API_KEY",
+        )
+        .unwrap();
+        let request = ModelRequest::new(
+            manifest.id().clone(),
+            manifest.default_model().clone(),
+            vec![ChatMessage::user("Solve this puzzle.").unwrap()],
+        )
+        .unwrap()
+        .with_reasoning_effort(ReasoningEffort::Medium);
+
+        let anthropic_body =
+            serde_json::to_value(AnthropicRequest::from_request(&request).unwrap()).unwrap();
+        assert_eq!(
+            anthropic_body["thinking"],
+            json!({
+                "type": "enabled",
+                "budget_tokens": 4096
+            })
+        );
+        assert!(anthropic_body["max_tokens"].as_u64().unwrap() > 4096);
+
+        let openai_body = serde_json::to_value(OpenAiRequest::from_request(&request)).unwrap();
+        assert_eq!(openai_body["reasoning_effort"], "medium");
     }
 
     #[test]

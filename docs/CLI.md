@@ -1597,3 +1597,24 @@ Uninstall requires `--yes` for deletion and preserves the configured workspace.
 It refuses a data directory that contains that workspace, and removes a
 configuration stored inside the data directory as part of that one data-root
 deletion. Use `--dry-run` to inspect the exact paths first.
+
+## Multi-model reasoning effort and prompt cache control
+
+Pandora provides unified multi-model reasoning effort controls across OpenAI,
+Anthropic, and local model inference providers, mapped directly to
+protocol-specific parameters (`reasoning_effort` for OpenAI o1/o3/o4, and
+extended `thinking` token budgets for Anthropic Claude 3.7+). Prompt caching
+policies preserve frozen static prefixes to optimize KV-cache reuse.
+
+```text
+pandora reasoning list
+pandora reasoning inspect --effort <none|low|medium|high>
+pandora reasoning profile
+pandora reasoning set --effort <none|low|medium|high> [--cache <auto|interactive|subagent|disabled>]
+```
+
+- `pandora reasoning list`: Lists supported effort levels (`none`, `low`, `medium`, `high`) and prompt cache retention strategies.
+- `pandora reasoning inspect`: Inspects token budget mappings (e.g. 1024 for low, 4096 for medium, 16384 for high) and prefix freezing guarantees.
+- `pandora reasoning profile`: Inspects current workspace reasoning and cache policy defaults.
+- `pandora reasoning set`: Applies reasoning effort and prompt cache TTL policies for subsequent agent turns.
+

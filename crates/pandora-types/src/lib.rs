@@ -28,6 +28,7 @@ pub mod observability;
 pub mod orchestration;
 pub mod package;
 pub mod population;
+pub mod reasoning;
 pub mod rollout;
 pub mod secret;
 pub mod service;
@@ -140,6 +141,7 @@ pub use population::{
     PopulationCandidate, PopulationContractError, PopulationEvaluation, PopulationMutationRequest,
     PopulationPolicy, PopulationScope, PrecheckDisposition, PrecheckFailure,
 };
+pub use reasoning::{PromptCachePolicy, PromptCacheStrategy, ReasoningEffort};
 pub use rollout::{
     MAX_ROLLOUT_RECORDS, ROLLOUT_PROJECTION_VERSION, Rollout, RolloutContractError, RolloutDigest,
     RolloutEffectOutcome, RolloutEventEvidence, RolloutEvidence, RolloutRecord, RolloutRecordKind,

@@ -39,6 +39,7 @@ mod orchestration;
 mod package;
 pub(crate) mod peer;
 mod provider;
+pub(crate) mod reasoning;
 mod registry;
 mod restore_journal;
 mod rollout;
@@ -204,6 +205,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "kanban" => kanban::execute(&args[1..]),
         "peer" => peer::execute(&args[1..]),
         "connector" => connector::execute(&args[1..]),
+        "reasoning" => reasoning::execute(&args[1..]),
         "--help" | "help" => {
             if args.len() != 1 {
                 return Err(CliError::usage("help does not accept additional arguments"));

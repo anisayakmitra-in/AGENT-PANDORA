@@ -2059,3 +2059,50 @@ fn contract_connector_pkce_lifecycle_cli() {
     let val_list3 = resp_list3.success("connector list");
     assert_eq!(val_list3["count"], 0);
 }
+
+#[test]
+fn contract_reasoning_cli_lifecycle() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // 1. List reasoning effort levels & prompt cache strategies
+    let resp_list = fixture.run(&["reasoning", "list"]);
+    let val_list = resp_list.success("reasoning list");
+    assert_eq!(val_list["reasoning_levels"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        val_list["prompt_cache_strategies"]
+            .as_array()
+            .unwrap()
+            .len(),
+        4
+    );
+
+    // 2. Inspect specific effort level
+    let resp_insp = fixture.run(&["reasoning", "inspect", "--effort", "medium"]);
+    let val_insp = resp_insp.success("reasoning inspect");
+    assert_eq!(val_insp["effort"], "medium");
+    assert_eq!(val_insp["anthropic_thinking_budget"], 4096);
+    assert_eq!(val_insp["openai_reasoning_effort"], "medium");
+    assert_eq!(val_insp["static_prefix_frozen"], true);
+
+    // 3. Inspect high effort
+    let resp_high = fixture.run(&["reasoning", "inspect", "--effort", "high"]);
+    let val_high = resp_high.success("reasoning inspect");
+    assert_eq!(val_high["effort"], "high");
+    assert_eq!(val_high["anthropic_thinking_budget"], 16384);
+    assert_eq!(val_high["openai_reasoning_effort"], "high");
+
+    // 4. View profile
+    let resp_prof = fixture.run(&["reasoning", "profile"]);
+    let val_prof = resp_prof.success("reasoning profile");
+    assert_eq!(val_prof["default_reasoning_effort"], "medium");
+    assert_eq!(val_prof["prompt_cache"]["strategy"], "auto");
+
+    // 5. Set reasoning effort and cache strategy
+    let resp_set = fixture.run(&["reasoning", "set", "--effort", "low", "--cache", "subagent"]);
+    let val_set = resp_set.success("reasoning set");
+    assert_eq!(val_set["applied_effort"], "low");
+    assert_eq!(val_set["applied_cache_strategy"], "subagent");
+    assert_eq!(val_set["anthropic_budget"], 1024);
+    assert_eq!(val_set["openai_parameter"], "low");
+}
