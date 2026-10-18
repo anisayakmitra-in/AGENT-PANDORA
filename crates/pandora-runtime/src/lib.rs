@@ -36,6 +36,7 @@ pub mod human_review;
 pub mod identity;
 pub mod job_store;
 pub mod kanban_engine;
+pub mod lats_engine;
 pub mod mcp;
 pub mod mcp_catalog;
 pub mod memory_engine;
