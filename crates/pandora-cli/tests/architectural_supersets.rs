@@ -83,6 +83,7 @@ impl Fixture {
             .env("PANDORA_CONFIG", &self.config)
             .env("PANDORA_DATA_DIR", &self.data)
             .env("PANDORA_WORKSPACE", &self.workspace)
+            .env("PANDORA_MASTER_KEY", "test-master-key-1234")
             .output()
             .expect("Pandora command should execute");
         JsonResponse::from_output(output)
@@ -1499,4 +1500,98 @@ fn contract_tool_search_cli() {
             .iter()
             .any(|r| r["tool_id"] == "workspace.diff")
     );
+}
+
+#[test]
+fn contract_secret_pool_cli() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // 1. Add primary key to pool
+    let resp = fixture.run(&[
+        "secret",
+        "pool",
+        "add",
+        "openai-pool",
+        "--key",
+        "OPENAI_KEY_1",
+        "--priority",
+        "1",
+        "--strategy",
+        "priority",
+    ]);
+    let val = resp.success("secret pool add");
+    assert_eq!(val["pool_id"], "openai-pool");
+    assert_eq!(val["key_id"], "OPENAI_KEY_1");
+    assert_eq!(val["priority"], 1);
+
+    // 2. Add secondary key to pool
+    let resp2 = fixture.run(&[
+        "secret",
+        "pool",
+        "add",
+        "openai-pool",
+        "--key",
+        "OPENAI_KEY_2",
+        "--priority",
+        "2",
+    ]);
+    let val2 = resp2.success("secret pool add");
+    assert_eq!(val2["total_keys"], 2);
+
+    // 3. List pools
+    let resp_list = fixture.run(&["secret", "pool", "list"]);
+    let val_list = resp_list.success("secret pool list");
+    assert_eq!(val_list["count"], 1);
+
+    // 4. Inspect pool status
+    let resp_status = fixture.run(&["secret", "pool", "status", "openai-pool"]);
+    let val_status = resp_status.success("secret pool status");
+    assert_eq!(val_status["status"]["total_keys"], 2);
+    assert_eq!(val_status["status"]["active_keys"], 2);
+    assert_eq!(val_status["status"]["cooldown_keys"], 0);
+    assert_eq!(val_status["status"]["selected_key_id"], "OPENAI_KEY_1");
+
+    // 5. Rotate pool (select primary)
+    let resp_rot = fixture.run(&["secret", "pool", "rotate", "openai-pool"]);
+    let val_rot = resp_rot.success("secret pool rotate");
+    assert_eq!(val_rot["selected_key"]["key_id"], "OPENAI_KEY_1");
+
+    // 6. Report 429 rate limit on primary key
+    let resp_429 = fixture.run(&[
+        "secret",
+        "pool",
+        "report-429",
+        "openai-pool",
+        "--key",
+        "OPENAI_KEY_1",
+        "--cooldown",
+        "120",
+    ]);
+    let val_429 = resp_429.success("secret pool report-429");
+    assert_eq!(val_429["key_id"], "OPENAI_KEY_1");
+    assert!(val_429["next_reset_seconds"].as_u64().unwrap() > 0);
+
+    // 7. Rotate pool after 429 -> must failover to OPENAI_KEY_2!
+    let resp_rot2 = fixture.run(&["secret", "pool", "rotate", "openai-pool"]);
+    let val_rot2 = resp_rot2.success("secret pool rotate");
+    assert_eq!(val_rot2["selected_key"]["key_id"], "OPENAI_KEY_2");
+
+    // 8. Remove key from pool
+    let resp_rem_key = fixture.run(&[
+        "secret",
+        "pool",
+        "remove",
+        "openai-pool",
+        "--key",
+        "OPENAI_KEY_1",
+        "--yes",
+    ]);
+    let val_rem_key = resp_rem_key.success("secret pool remove");
+    assert_eq!(val_rem_key["removed"], true);
+
+    // 9. Remove entire pool
+    let resp_rem_pool = fixture.run(&["secret", "pool", "remove", "openai-pool", "--yes"]);
+    let val_rem_pool = resp_rem_pool.success("secret pool remove");
+    assert_eq!(val_rem_pool["removed"], true);
 }

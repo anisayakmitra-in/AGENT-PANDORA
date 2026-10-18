@@ -83,6 +83,12 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 set(artifacts),
             )
 
+    def test_custom_release_scope_is_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            dist, _ = self._write_dist(Path(temporary), include_bundle=False)
+            evidence = build_release_evidence("v2.0.0-beta.7", dist, scope="cli-only")
+            self.assertEqual(evidence["release_scope"]["name"], "cli-only")
+
     def test_evidence_carries_only_cli_artifacts(self) -> None:
         """A deleted product must not reappear in a release's evidence index."""
         with tempfile.TemporaryDirectory() as temporary:

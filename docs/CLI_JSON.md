@@ -26,7 +26,16 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora setup --json` | `setup` | `config_path`, `data_dir`, `workspace`, `provider_configured`, `provider_profiles`, `active_provider`, `provider_model`, `api_key_env`, `interactive` |
 | `pandora provider test --json` | `provider test` | `provider`, `model`, `status`, `output`, `usage`, `metrics` |
 | `pandora auth enroll ... --json` | `auth enroll` | `identity`, `token_path`, `device_key_path`, `token_exposed`, `private_key_exposed` |
+| `pandora secret set <NAME> --value-stdin --json` | `secret set` | `name`, `stored`, `vault_path`, `created_at`, `updated_at` |
 | `pandora secret list --json` | `secret list` | `secrets`, `count`, `values_exposed` |
+| `pandora secret status <NAME> --json` | `secret status` | `name`, `configured`, `value_exposed` |
+| `pandora secret remove <NAME> --yes --json` | `secret remove` | `name`, `removed` |
+| `pandora secret pool add <pool-id> --key <name> ... --json` | `secret pool add` | `pool_id`, `key_id`, `secret_name`, `priority`, `strategy`, `cooldown`, `total_keys` |
+| `pandora secret pool list [--pool <pool-id>] --json` | `secret pool list` | `pools`, `count` or `pool` |
+| `pandora secret pool status <pool-id> --json` | `secret pool status` | `status` |
+| `pandora secret pool rotate <pool-id> --json` | `secret pool rotate` | `pool_id`, `selected_key` |
+| `pandora secret pool report-429 <pool-id> --key <key-id> ... --json` | `secret pool report-429` | `pool_id`, `key_id`, `next_reset_seconds` |
+| `pandora secret pool remove <pool-id> [--key <key-id>] --yes --json` | `secret pool remove` | `pool_id`, optional `key_id`, `removed` |
 | `pandora backup create ... --json` | `backup create` | `output`, `entries`, `encrypted`, `format_version` |
 | `pandora backup inspect ... --json` | `backup inspect` | `input`, `created_at`, `entries`, `authenticated`, `paths_exposed` |
 | `pandora backup restore ... --json` | `backup restore` | `input`, `restored_entries`, `pre_restore_backup`, `authenticated` |

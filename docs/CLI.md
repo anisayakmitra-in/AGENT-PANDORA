@@ -117,6 +117,14 @@ payloads are excluded from that audit summary.
     pandora auth list
     pandora auth revoke <identity-id> --yes
     pandora secret set OPENAI_API_KEY --value-stdin
+    pandora secret list
+    pandora secret status OPENAI_API_KEY
+    pandora secret pool add <pool-id> --key <secret-name> [--priority <n>] [--strategy <round-robin|least-used|priority>]
+    pandora secret pool list [--pool <pool-id>]
+    pandora secret pool status <pool-id>
+    pandora secret pool rotate <pool-id>
+    pandora secret pool report-429 <pool-id> --key <key-id> [--cooldown <secs>]
+    pandora secret pool remove <pool-id> [--key <key-id>] --yes
     pandora backup create --output pandora-recovery.json
     pandora backup inspect --input pandora-recovery.json
     pandora backup restore --input pandora-recovery.json --yes

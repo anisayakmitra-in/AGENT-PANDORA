@@ -4,7 +4,7 @@ use chacha20poly1305::{
     KeyInit, XChaCha20Poly1305, XNonce,
     aead::{Aead, Payload},
 };
-use pandora_types::{TenantId, WorkspaceId};
+use pandora_types::{CredentialPool, TenantId, WorkspaceId};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -114,6 +114,8 @@ struct VaultContents {
     tenant_id: String,
     workspace_id: String,
     secrets: BTreeMap<String, StoredSecret>,
+    #[serde(default)]
+    pools: BTreeMap<String, CredentialPool>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -157,6 +159,7 @@ impl SecretVault {
                 tenant_id: tenant_id.as_str().to_owned(),
                 workspace_id: workspace_id.as_str().to_owned(),
                 secrets: BTreeMap::new(),
+                pools: BTreeMap::new(),
             }
         };
         Ok(Self {
@@ -236,6 +239,33 @@ impl SecretVault {
     pub fn remove(&mut self, name: &str) -> Result<bool, SecretVaultError> {
         validate_name(name)?;
         let removed = self.contents.secrets.remove(name).is_some();
+        if removed {
+            self.persist()?;
+        }
+        Ok(removed)
+    }
+
+    pub fn list_pools(&self) -> Vec<CredentialPool> {
+        self.contents.pools.values().cloned().collect()
+    }
+
+    pub fn get_pool(&self, pool_id: &str) -> Option<&CredentialPool> {
+        self.contents.pools.get(pool_id)
+    }
+
+    pub fn get_pool_mut(&mut self, pool_id: &str) -> Option<&mut CredentialPool> {
+        self.contents.pools.get_mut(pool_id)
+    }
+
+    pub fn put_pool(&mut self, pool: CredentialPool) -> Result<(), SecretVaultError> {
+        validate_pool_id(&pool.pool_id)?;
+        self.contents.pools.insert(pool.pool_id.clone(), pool);
+        self.persist()
+    }
+
+    pub fn remove_pool(&mut self, pool_id: &str) -> Result<bool, SecretVaultError> {
+        validate_pool_id(pool_id)?;
+        let removed = self.contents.pools.remove(pool_id).is_some();
         if removed {
             self.persist()?;
         }
@@ -378,6 +408,19 @@ fn validate_name(name: &str) -> Result<(), SecretVaultError> {
         && name.bytes().enumerate().all(|(index, byte)| {
             byte == b'_' || byte.is_ascii_uppercase() || (index > 0 && byte.is_ascii_digit())
         })
+    {
+        Ok(())
+    } else {
+        Err(SecretVaultError::InvalidName)
+    }
+}
+
+fn validate_pool_id(id: &str) -> Result<(), SecretVaultError> {
+    if !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|byte| byte == b'_' || byte == b'-' || byte.is_ascii_alphanumeric())
     {
         Ok(())
     } else {

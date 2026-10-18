@@ -100,6 +100,7 @@ def build_release_evidence(
     dist: Path,
     *,
     commit: str | None = None,
+    scope: str = "cli-only",
 ) -> dict[str, object]:
     if _RELEASE_TAG.fullmatch(tag) is None:
         raise ReleaseEvidenceError(f"invalid release tag: {tag}")
@@ -138,7 +139,7 @@ def build_release_evidence(
         "release_tag": tag,
         "source_commit": normalized_commit,
         "release_scope": {
-            "name": "cli-only",
+            "name": scope,
         },
         "checksum_manifest": {
             "path": "checksums.txt",
@@ -187,6 +188,7 @@ def main() -> int:
     parser.add_argument("tag")
     parser.add_argument("--dist", type=Path, default=Path("dist"))
     parser.add_argument("--commit")
+    parser.add_argument("--scope", default="cli-only")
     parser.add_argument("--output", type=Path, default=Path("dist/release-evidence.json"))
     arguments = parser.parse_args()
 
@@ -194,7 +196,8 @@ def main() -> int:
         evidence = build_release_evidence(
             arguments.tag,
             arguments.dist,
-                commit=arguments.commit,
+            commit=arguments.commit,
+            scope=arguments.scope,
         )
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
         arguments.output.write_text(

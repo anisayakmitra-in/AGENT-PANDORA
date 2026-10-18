@@ -25,6 +25,7 @@ pub mod orchestration;
 pub mod package;
 pub mod population;
 pub mod rollout;
+pub mod secret;
 pub mod service;
 pub mod session;
 pub mod skill;
@@ -130,6 +131,7 @@ pub use rollout::{
     RolloutEffectOutcome, RolloutEventEvidence, RolloutEvidence, RolloutRecord, RolloutRecordKind,
     RolloutScope,
 };
+pub use secret::{CredentialPool, CredentialPoolStatus, PoolKeyEntry, PoolStrategy};
 pub use service::{
     LOCAL_SERVICE_PROTOCOL_VERSION, MAX_SERVICE_EVENT_PAGE, MAX_SERVICE_SESSION_PAGE,
     ServiceAgentResumeRequest, ServiceAgentRunRequest, ServiceAgentRunResult,
