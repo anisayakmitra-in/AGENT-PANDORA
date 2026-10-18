@@ -89,7 +89,6 @@ impl VoyagerCurriculum {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::decision_engine::SinglePassLogitEngine;
 
     #[test]
     fn from_records_assigns_difficulty() {
