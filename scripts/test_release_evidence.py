@@ -89,6 +89,21 @@ class ReleaseEvidenceTests(unittest.TestCase):
             evidence = build_release_evidence("v2.0.0-beta.7", dist, scope="cli-only")
             self.assertEqual(evidence["release_scope"]["name"], "cli-only")
 
+    def test_ignores_derived_channel_manifests(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            dist, _ = self._write_dist(Path(temporary))
+            # Simulate files copied by render_channel_manifests step
+            (dist / "pandora.rb").write_text("class Pandora < Formula; end\n", encoding="utf-8")
+            (dist / "pandora.json").write_text("{}", encoding="utf-8")
+            (dist / "AnisayakmitraIn.AGENT-PANDORA.yaml").write_text("PackageIdentifier: AnisayakmitraIn.AGENT-PANDORA\n", encoding="utf-8")
+
+            evidence = build_release_evidence("v2.0.0-beta.7", dist)
+            self.assertEqual(evidence["schema_version"], SCHEMA_VERSION)
+            artifact_paths = {item["path"] for item in evidence["artifacts"]}
+            self.assertNotIn("pandora.rb", artifact_paths)
+            self.assertNotIn("pandora.json", artifact_paths)
+            self.assertNotIn("AnisayakmitraIn.AGENT-PANDORA.yaml", artifact_paths)
+
     def test_evidence_carries_only_cli_artifacts(self) -> None:
         """A deleted product must not reappear in a release's evidence index."""
         with tempfile.TemporaryDirectory() as temporary:

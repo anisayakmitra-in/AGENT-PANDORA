@@ -27,6 +27,7 @@ pub mod executors;
 pub mod fleet;
 pub mod github_client;
 pub mod graph_intelligence;
+pub mod hardware_autopilot;
 pub mod harness_registry;
 pub mod hooks;
 pub mod human_review;
@@ -157,6 +158,7 @@ pub use graph_intelligence::{
     GraphNodeKind, GraphScope, GraphSnapshot, GraphStore, GraphStoreError, MAX_GRAPH_EDGES,
     MAX_GRAPH_INPUT_BYTES, MAX_GRAPH_INPUTS, MAX_GRAPH_NODES, MAX_GRAPH_SNAPSHOT_BYTES,
 };
+pub use hardware_autopilot::HardwareAutopilot;
 pub use harness_registry::{
     HarnessRegistry, HarnessRegistryError, PackageRecord, PackageState, PublisherTrustRoot,
     PublisherTrustRoots,

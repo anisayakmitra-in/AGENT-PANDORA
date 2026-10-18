@@ -1595,3 +1595,51 @@ fn contract_secret_pool_cli() {
     let val_rem_pool = resp_rem_pool.success("secret pool remove");
     assert_eq!(val_rem_pool["removed"], true);
 }
+
+#[test]
+fn contract_hardware_autopilot_cli() {
+    let fixture = Fixture::new();
+
+    // 1. Probe host hardware
+    let resp_probe = fixture.run(&["hardware", "probe"]);
+    let val_probe = resp_probe.success("hardware probe");
+    assert!(val_probe["cpu_cores"].as_u64().unwrap() > 0);
+    assert!(val_probe["total_ram_bytes"].as_u64().unwrap() > 0);
+    assert!(val_probe["primary_backend"].is_string());
+
+    // 2. Evaluate model fit
+    let resp_fit = fixture.run(&[
+        "hardware",
+        "fit",
+        "--model",
+        "deepseek-r1:8b",
+        "--params",
+        "8.0",
+        "--quant",
+        "q4_k_m",
+        "--context",
+        "8192",
+    ]);
+    let val_fit = resp_fit.success("hardware fit");
+    assert_eq!(val_fit["model_id"], "deepseek-r1:8b");
+    assert_eq!(val_fit["parameters_billion"], 8.0);
+    assert_eq!(val_fit["context_window"], 8192);
+    assert!(val_fit["total_required_bytes"].as_u64().unwrap() > 0);
+    assert!(val_fit["fit_score"].as_f64().unwrap() > 0.0);
+    assert!(val_fit["fit_verdict"].is_string());
+
+    // 3. Preset recommendations
+    let resp_presets = fixture.run(&["hardware", "presets"]);
+    let val_presets = resp_presets.success("hardware presets");
+    let recs = val_presets["recommendations"]
+        .as_array()
+        .expect("array of presets");
+    assert!(!recs.is_empty());
+    assert!(recs.iter().any(|r| r["model_id"] == "qwen2.5:7b"));
+    assert!(recs.iter().any(|r| r["model_id"] == "llama3.1:70b"));
+
+    // 4. Invalid quantization error handling
+    let resp_invalid = fixture.run(&["hardware", "fit", "--quant", "nonexistent_quant"]);
+    assert!(!resp_invalid.status.success());
+    assert!(resp_invalid.text.contains("unknown quantization"));
+}

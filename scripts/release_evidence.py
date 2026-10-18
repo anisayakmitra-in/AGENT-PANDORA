@@ -23,7 +23,27 @@ _REQUIRED_FILES = (
     "pandora.spdx.json",
 )
 _SIGNATURE_FILES = {"checksums.txt.sig", "checksums.txt.pem"}
-_METADATA_FILES = {"checksums.txt", *_SIGNATURE_FILES, "release-evidence.json"}
+_DERIVED_CHANNEL_FILES = {
+    "pandora.rb",
+    "pandora.json",
+    "AnisayakmitraIn.AGENT-PANDORA.yaml",
+}
+_METADATA_FILES = {
+    "checksums.txt",
+    *_SIGNATURE_FILES,
+    "release-evidence.json",
+    *_DERIVED_CHANNEL_FILES,
+}
+
+
+def is_metadata_or_channel_manifest(name: str) -> bool:
+    if name in _METADATA_FILES or name in _DERIVED_CHANNEL_FILES:
+        return True
+    if name.endswith((".yaml", ".yml", ".rb")):
+        return True
+    if name.startswith("AnisayakmitraIn."):
+        return True
+    return False
 _GIT_COMMIT = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 
 # Schema 2 drops the platform_signing block: Pandora is a terminal CLI whose
@@ -115,7 +135,7 @@ def build_release_evidence(
 
     artifacts: list[dict[str, object]] = []
     for name, path in files.items():
-        if name in _METADATA_FILES:
+        if is_metadata_or_channel_manifest(name):
             continue
         actual = sha256_file(path)
         try:

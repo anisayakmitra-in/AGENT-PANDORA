@@ -26,6 +26,7 @@ mod evolution;
 mod feedback;
 mod fleet;
 mod graph;
+pub(crate) mod hardware;
 mod harness;
 mod job;
 mod mcp;
@@ -196,6 +197,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "map" => graph::map_command(&args[1..]),
         "decision" => decision::execute(&args[1..]),
         "curator" => curator::execute(&args[1..]),
+        "hardware" => hardware::execute(&args[1..]),
         "--help" | "help" => {
             if args.len() != 1 {
                 return Err(CliError::usage("help does not accept additional arguments"));

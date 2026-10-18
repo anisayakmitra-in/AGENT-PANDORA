@@ -36,6 +36,9 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora secret pool rotate <pool-id> --json` | `secret pool rotate` | `pool_id`, `selected_key` |
 | `pandora secret pool report-429 <pool-id> --key <key-id> ... --json` | `secret pool report-429` | `pool_id`, `key_id`, `next_reset_seconds` |
 | `pandora secret pool remove <pool-id> [--key <key-id>] --yes --json` | `secret pool remove` | `pool_id`, optional `key_id`, `removed` |
+| `pandora hardware probe --json` | `hardware probe` | `cpu_cores`, `total_ram_bytes`, `free_ram_bytes`, `gpus`, `primary_backend`, `total_usable_vram_bytes` |
+| `pandora hardware fit ... --json` | `hardware fit` | `model_id`, `parameters_billion`, `quantization`, `context_window`, `weights_memory_bytes`, `kv_cache_memory_bytes`, `headroom_bytes`, `total_required_bytes`, `fits_in_vram`, `fits_in_ram`, `recommended_backend`, `fit_score`, `fit_verdict` |
+| `pandora hardware presets --json` | `hardware presets` | `recommendations` |
 | `pandora backup create ... --json` | `backup create` | `output`, `entries`, `encrypted`, `format_version` |
 | `pandora backup inspect ... --json` | `backup inspect` | `input`, `created_at`, `entries`, `authenticated`, `paths_exposed` |
 | `pandora backup restore ... --json` | `backup restore` | `input`, `restored_entries`, `pre_restore_backup`, `authenticated` |

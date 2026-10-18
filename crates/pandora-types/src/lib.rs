@@ -16,6 +16,7 @@ pub mod execution_profile;
 pub mod feature_map;
 pub mod gene;
 pub mod governance;
+pub mod hardware;
 pub mod harness;
 pub mod ids;
 pub mod jobs;
@@ -86,6 +87,9 @@ pub use execution_profile::{
 pub use feature_map::{FeatureEntry, FeatureMap};
 pub use gene::{Gene, GeneError, GeneInput, GeneKind, GeneManifest};
 pub use governance::{ParliamentDecision, PolicyContext};
+pub use hardware::{
+    GpuBackend, GpuDevice, HostHardwareProfile, ModelFootprintEstimation, Quantization,
+};
 pub use harness::{
     Harness, HarnessKind, HarnessManifest, MAX_META_DOMAINS, MAX_META_HANDOFFS, MetaComposition,
 };

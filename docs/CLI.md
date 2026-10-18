@@ -1401,6 +1401,20 @@ The synthesized plan automatically wires:
 4. `Canary Verification Gate` (verification-meta harness) gating execution prior to commit.
 5. Cross-domain handoff declarations bound to Meta Harness coordination.
 
+## Local Model Hardware Autopilot & VRAM Sizing
+
+`pandora hardware` inspects host system accelerator and memory capabilities and calculates local model fit across GGUF quantization formats:
+
+```text
+pandora hardware probe
+pandora hardware fit --model deepseek-r1:8b --params 8.0 --quant q4_k_m --context 8192
+pandora hardware presets
+```
+
+- `probe`: Detects CPU cores, system RAM, detected GPU accelerators (CUDA, Metal Unified Memory, ROCm, Vulkan), and total usable VRAM.
+- `fit`: Calculates memory footprint (weights memory, KV cache, runtime headroom) for a specified parameter size (`--params <billions>`), quantization format (`--quant <q4_k_m|q5_k_m|q8_0|fp16|fp32>`), and context window (`--context <tokens>`). Returns fit score, VRAM/RAM fit booleans, recommended backend, and sizing verdict.
+- `presets`: Evaluates and tabulates sizing recommendations for standard local models (Qwen 2.5 3B/7B/14B/32B, DeepSeek-R1 8B/14B, Llama 3.1 8B/70B, Phi-4 14B).
+
 Remote admission currently accepts Gene records with no unresolved capability
 requirements and one valid Pandora runtime requirement. Other package kinds fail
 before download or local mutation. A registry package remains metadata and verified
