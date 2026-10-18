@@ -31,6 +31,7 @@ pub mod secret;
 pub mod service;
 pub mod session;
 pub mod skill;
+pub mod society;
 pub mod storage_lifecycle;
 pub mod subagent;
 pub mod workspace_orchestration;
@@ -152,6 +153,7 @@ pub use service::{
 };
 pub use session::{Session, TaskIntent};
 pub use skill::{SkillId, SkillManifest, SkillManifestError};
+pub use society::{AgentPersona, PeerDispatchReceipt, PeerMessage, PeerMessageStatus, PeerThread};
 pub use storage_lifecycle::{
     MAX_STORAGE_LIFECYCLE_PROVIDER_FIELDS, STORAGE_LIFECYCLE_POLICY_VERSION,
     StorageLifecycleAction, StorageLifecycleContractError, StorageLifecycleManifest,

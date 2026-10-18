@@ -13,7 +13,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
-const CURRENT_SCHEMA_VERSION: i64 = 11;
+const CURRENT_SCHEMA_VERSION: i64 = 12;
 const MAX_EVENT_BYTES: usize = 1_048_576;
 const MAX_AGENT_MESSAGE_BYTES: usize = 1_048_576;
 const MAX_AGENT_TRANSCRIPT_BYTES: usize = 8 * 1_048_576;
@@ -1776,6 +1776,263 @@ impl SessionStore {
         Ok(list)
     }
 
+    pub fn store_bot_persona(
+        &self,
+        persona: &pandora_types::AgentPersona,
+    ) -> Result<(), SessionError> {
+        let connection = self.lock()?;
+        let caps_json =
+            serde_json::to_string(&persona.capabilities).map_err(SessionError::Serialization)?;
+        connection.execute(
+            "INSERT INTO bot_personas (
+                 handle, display_name, role, system_prompt, model, avatar_seed, capabilities_json, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT (handle) DO UPDATE SET
+                 display_name = excluded.display_name,
+                 role = excluded.role,
+                 system_prompt = excluded.system_prompt,
+                 model = excluded.model,
+                 avatar_seed = excluded.avatar_seed,
+                 capabilities_json = excluded.capabilities_json,
+                 updated_at = excluded.updated_at",
+            params![
+                persona.handle.as_str(),
+                persona.display_name.as_str(),
+                persona.role.as_str(),
+                persona.system_prompt.as_str(),
+                persona.model.as_deref(),
+                persona.avatar_seed.as_str(),
+                caps_json,
+                persona.created_at as i64,
+                persona.updated_at as i64,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_bot_persona(
+        &self,
+        handle: &str,
+    ) -> Result<Option<pandora_types::AgentPersona>, SessionError> {
+        let clean_handle = handle.trim().trim_start_matches('@').to_lowercase();
+        let connection = self.lock()?;
+        let mut statement = connection.prepare(
+            "SELECT handle, display_name, role, system_prompt, model, avatar_seed, capabilities_json, created_at, updated_at
+             FROM bot_personas
+             WHERE handle = ?1",
+        )?;
+        let mut rows = statement.query([clean_handle.as_str()])?;
+        if let Some(row) = rows.next()? {
+            let caps_raw: String = row.get(6)?;
+            let capabilities = serde_json::from_str(&caps_raw).unwrap_or_default();
+            Ok(Some(pandora_types::AgentPersona {
+                handle: row.get(0)?,
+                display_name: row.get(1)?,
+                role: row.get(2)?,
+                system_prompt: row.get(3)?,
+                model: row.get(4)?,
+                avatar_seed: row.get(5)?,
+                capabilities,
+                created_at: row.get::<_, i64>(7)? as u64,
+                updated_at: row.get::<_, i64>(8)? as u64,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn list_bot_personas(&self) -> Result<Vec<pandora_types::AgentPersona>, SessionError> {
+        let connection = self.lock()?;
+        let mut statement = connection.prepare(
+            "SELECT handle, display_name, role, system_prompt, model, avatar_seed, capabilities_json, created_at, updated_at
+             FROM bot_personas
+             ORDER BY handle ASC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            let caps_raw: String = row.get(6)?;
+            let capabilities = serde_json::from_str(&caps_raw).unwrap_or_default();
+            Ok(pandora_types::AgentPersona {
+                handle: row.get(0)?,
+                display_name: row.get(1)?,
+                role: row.get(2)?,
+                system_prompt: row.get(3)?,
+                model: row.get(4)?,
+                avatar_seed: row.get(5)?,
+                capabilities,
+                created_at: row.get::<_, i64>(7)? as u64,
+                updated_at: row.get::<_, i64>(8)? as u64,
+            })
+        })?;
+        let mut list = Vec::new();
+        for row in rows {
+            list.push(row?);
+        }
+        Ok(list)
+    }
+
+    pub fn delete_bot_persona(&self, handle: &str) -> Result<bool, SessionError> {
+        let clean_handle = handle.trim().trim_start_matches('@').to_lowercase();
+        let connection = self.lock()?;
+        let rows = connection.execute(
+            "DELETE FROM bot_personas WHERE handle = ?1",
+            params![clean_handle.as_str()],
+        )?;
+        Ok(rows > 0)
+    }
+
+    pub fn store_peer_message(
+        &self,
+        message: &pandora_types::PeerMessage,
+    ) -> Result<(), SessionError> {
+        let connection = self.lock()?;
+        let payload_str = message.payload_json.as_ref().map(|v| v.to_string());
+        connection.execute(
+            "INSERT INTO peer_messages (
+                 message_id, thread_id, from_handle, to_handle, subject, body, payload_json, status, created_at, delivered_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ON CONFLICT (message_id) DO UPDATE SET
+                 status = excluded.status,
+                 delivered_at = excluded.delivered_at",
+            params![
+                message.message_id.as_str(),
+                message.thread_id.as_str(),
+                message.from_handle.as_str(),
+                message.to_handle.as_str(),
+                message.subject.as_str(),
+                message.body.as_str(),
+                payload_str.as_deref(),
+                message.status.as_str(),
+                message.created_at as i64,
+                message.delivered_at.map(|t| t as i64),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_peer_message(
+        &self,
+        message_id: &str,
+    ) -> Result<Option<pandora_types::PeerMessage>, SessionError> {
+        let connection = self.lock()?;
+        let mut statement = connection.prepare(
+            "SELECT message_id, thread_id, from_handle, to_handle, subject, body, payload_json, status, created_at, delivered_at
+             FROM peer_messages
+             WHERE message_id = ?1",
+        )?;
+        let mut rows = statement.query([message_id])?;
+        if let Some(row) = rows.next()? {
+            let status_str: String = row.get(7)?;
+            let status = status_str
+                .parse()
+                .unwrap_or(pandora_types::PeerMessageStatus::Queued);
+            let payload_raw: Option<String> = row.get(6)?;
+            let payload_json = payload_raw.and_then(|raw| serde_json::from_str(&raw).ok());
+            Ok(Some(pandora_types::PeerMessage {
+                message_id: row.get(0)?,
+                thread_id: row.get(1)?,
+                from_handle: row.get(2)?,
+                to_handle: row.get(3)?,
+                subject: row.get(4)?,
+                body: row.get(5)?,
+                payload_json,
+                status,
+                created_at: row.get::<_, i64>(8)? as u64,
+                delivered_at: row.get::<_, Option<i64>>(9)?.map(|t| t as u64),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn update_peer_message_status(
+        &self,
+        message_id: &str,
+        status: pandora_types::PeerMessageStatus,
+        delivered_at: Option<u64>,
+    ) -> Result<bool, SessionError> {
+        let connection = self.lock()?;
+        let rows = connection.execute(
+            "UPDATE peer_messages SET status = ?1, delivered_at = ?2 WHERE message_id = ?3",
+            params![status.as_str(), delivered_at.map(|t| t as i64), message_id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    pub fn list_peer_messages(
+        &self,
+        recipient: Option<&str>,
+        unread_only: bool,
+    ) -> Result<Vec<pandora_types::PeerMessage>, SessionError> {
+        let connection = self.lock()?;
+        let clean_recipient = recipient.map(|r| r.trim().trim_start_matches('@').to_lowercase());
+        let mut query = String::from(
+            "SELECT message_id, thread_id, from_handle, to_handle, subject, body, payload_json, status, created_at, delivered_at
+             FROM peer_messages WHERE 1=1",
+        );
+        if clean_recipient.is_some() {
+            query.push_str(" AND to_handle = ?1");
+        }
+        if unread_only {
+            query.push_str(" AND status IN ('queued', 'delivered')");
+        }
+        query.push_str(" ORDER BY created_at DESC");
+
+        let mut statement = connection.prepare(&query)?;
+        let rows = if let Some(ref r) = clean_recipient {
+            statement.query_map(params![r.as_str()], Self::map_peer_message_row)?
+        } else {
+            statement.query_map([], Self::map_peer_message_row)?
+        };
+
+        let mut list = Vec::new();
+        for row in rows {
+            list.push(row?);
+        }
+        Ok(list)
+    }
+
+    pub fn list_thread_messages(
+        &self,
+        thread_id: &str,
+    ) -> Result<Vec<pandora_types::PeerMessage>, SessionError> {
+        let connection = self.lock()?;
+        let mut statement = connection.prepare(
+            "SELECT message_id, thread_id, from_handle, to_handle, subject, body, payload_json, status, created_at, delivered_at
+             FROM peer_messages
+             WHERE thread_id = ?1
+             ORDER BY created_at ASC",
+        )?;
+        let rows = statement.query_map([thread_id], Self::map_peer_message_row)?;
+        let mut list = Vec::new();
+        for row in rows {
+            list.push(row?);
+        }
+        Ok(list)
+    }
+
+    fn map_peer_message_row(
+        row: &rusqlite::Row<'_>,
+    ) -> rusqlite::Result<pandora_types::PeerMessage> {
+        let status_str: String = row.get(7)?;
+        let status = status_str
+            .parse()
+            .unwrap_or(pandora_types::PeerMessageStatus::Queued);
+        let payload_raw: Option<String> = row.get(6)?;
+        let payload_json = payload_raw.and_then(|raw| serde_json::from_str(&raw).ok());
+        Ok(pandora_types::PeerMessage {
+            message_id: row.get(0)?,
+            thread_id: row.get(1)?,
+            from_handle: row.get(2)?,
+            to_handle: row.get(3)?,
+            subject: row.get(4)?,
+            body: row.get(5)?,
+            payload_json,
+            status,
+            created_at: row.get::<_, i64>(8)? as u64,
+            delivered_at: row.get::<_, Option<i64>>(9)?.map(|t| t as u64),
+        })
+    }
+
     pub fn list_memory_records_by_workspace(
         &self,
         tenant_id: &TenantId,
@@ -2225,6 +2482,41 @@ fn migrate(connection: &mut Connection) -> Result<(), SessionError> {
              INSERT INTO schema_migrations (version, applied_at) VALUES (11, strftime('%s', 'now'));",
         )?;
         version = 11;
+    }
+    if version < 12 {
+        transaction.execute_batch(
+            "CREATE TABLE IF NOT EXISTS bot_personas (
+                 handle TEXT PRIMARY KEY NOT NULL,
+                 display_name TEXT NOT NULL,
+                 role TEXT NOT NULL,
+                 system_prompt TEXT NOT NULL,
+                 model TEXT,
+                 avatar_seed TEXT NOT NULL,
+                 capabilities_json TEXT NOT NULL,
+                 created_at INTEGER NOT NULL,
+                 updated_at INTEGER NOT NULL
+             );
+
+             CREATE TABLE IF NOT EXISTS peer_messages (
+                 message_id TEXT PRIMARY KEY NOT NULL,
+                 thread_id TEXT NOT NULL,
+                 from_handle TEXT NOT NULL,
+                 to_handle TEXT NOT NULL,
+                 subject TEXT NOT NULL,
+                 body TEXT NOT NULL,
+                 payload_json TEXT,
+                 status TEXT NOT NULL,
+                 created_at INTEGER NOT NULL,
+                 delivered_at INTEGER
+             );
+             CREATE INDEX IF NOT EXISTS idx_peer_messages_thread
+                 ON peer_messages (thread_id);
+             CREATE INDEX IF NOT EXISTS idx_peer_messages_recipient
+                 ON peer_messages (to_handle, status);
+
+             INSERT INTO schema_migrations (version, applied_at) VALUES (12, strftime('%s', 'now'));",
+        )?;
+        version = 12;
     }
     let _ = version;
     transaction.commit()?;

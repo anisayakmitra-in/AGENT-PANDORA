@@ -1789,3 +1789,105 @@ fn contract_kanban_multi_agent_board_cli() {
     let val_del = resp_del.success("kanban task delete");
     assert_eq!(val_del["deleted"], true);
 }
+
+#[test]
+fn contract_society_peer_messaging_cli() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // 1. Peer list: should contain auto-seeded default personas
+    let resp_list = fixture.run(&["peer", "list"]);
+    let val_list = resp_list.success("peer list");
+    assert!(val_list["count"].as_u64().unwrap() >= 5);
+    let personas = val_list["personas"].as_array().unwrap();
+    assert!(personas.iter().any(|p| p["handle"] == "architect"));
+    assert!(personas.iter().any(|p| p["handle"] == "coder"));
+
+    // 2. Peer register: register custom persona @oracle
+    let resp_reg = fixture.run(&[
+        "peer",
+        "register",
+        "--handle",
+        "oracle",
+        "--role",
+        "Synthesis and Strategic Projections",
+        "--display",
+        "Oracle",
+        "--model",
+        "hermes-custom",
+        "--capabilities",
+        "planning,synthesis,forecasting",
+    ]);
+    let val_reg = resp_reg.success("peer register");
+    assert_eq!(val_reg["handle"], "oracle");
+    assert_eq!(val_reg["display_name"], "Oracle");
+
+    // 3. Peer inspect: inspect registered persona
+    let resp_insp = fixture.run(&["peer", "inspect", "oracle"]);
+    let val_insp = resp_insp.success("peer inspect");
+    assert_eq!(val_insp["handle"], "oracle");
+    assert_eq!(val_insp["role"], "Synthesis and Strategic Projections");
+
+    // 4. Peer send: dispatch direct message from @oracle to @architect
+    let resp_send = fixture.run(&[
+        "peer",
+        "send",
+        "--from",
+        "oracle",
+        "--to",
+        "architect",
+        "--subject",
+        "Architecture Verification Request",
+        "--body",
+        "Please review the micro-kernel boundary specification.",
+    ]);
+    let val_send = resp_send.success("peer send");
+    let msg_id = val_send["message_id"].as_str().unwrap().to_string();
+    let thread_id = val_send["thread_id"].as_str().unwrap().to_string();
+    assert_eq!(val_send["from_handle"], "oracle");
+    assert_eq!(val_send["to_handle"], "architect");
+    assert_eq!(val_send["status"], "delivered");
+
+    // 5. Peer inbox: recipient @architect checks unread inbox
+    let resp_inbox = fixture.run(&["peer", "inbox", "--handle", "architect", "--unread"]);
+    let val_inbox = resp_inbox.success("peer inbox");
+    assert_eq!(val_inbox["count"], 1);
+    let in_msg = &val_inbox["messages"].as_array().unwrap()[0];
+    assert_eq!(in_msg["message_id"], msg_id);
+
+    // 6. Peer read: message transition to read
+    let resp_read = fixture.run(&["peer", "read", &msg_id]);
+    let val_read = resp_read.success("peer read");
+    assert_eq!(val_read["message_id"], msg_id);
+    assert_eq!(val_read["status"], "read");
+
+    // 7. Peer reply: @architect replies back to @oracle
+    let resp_reply = fixture.run(&[
+        "peer",
+        "reply",
+        &msg_id,
+        "--from",
+        "architect",
+        "--body",
+        "Micro-kernel specifications reviewed and approved.",
+    ]);
+    let val_reply = resp_reply.success("peer reply");
+    assert_eq!(val_reply["to_handle"], "oracle");
+    assert_eq!(val_reply["from_handle"], "architect");
+    assert_eq!(val_reply["thread_id"], thread_id);
+
+    // 8. Peer thread: inspect entire discussion history
+    let resp_thread = fixture.run(&["peer", "thread", &thread_id]);
+    let val_thread = resp_thread.success("peer thread");
+    assert_eq!(val_thread["thread_id"], thread_id);
+    assert_eq!(val_thread["message_count"], 2);
+    let msgs = val_thread["messages"].as_array().unwrap();
+    assert_eq!(msgs.len(), 2);
+    assert_eq!(msgs[0]["message_id"], msg_id);
+    assert_eq!(msgs[1]["message_id"], val_reply["message_id"]);
+
+    // 9. Peer delete: remove @oracle
+    let resp_del = fixture.run(&["peer", "delete", "oracle"]);
+    let val_del = resp_del.success("peer delete");
+    assert_eq!(val_del["deleted"], true);
+}

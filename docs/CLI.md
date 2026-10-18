@@ -1437,6 +1437,32 @@ pandora kanban board --board dev
 - `task reclaim`: Scans for zombie workers exceeding `--timeout <secs>` (default 300s). Reclaims tasks back to `to_do` with incremented retry count, or marks them `blocked` if retry budget (`max_retries`) is exhausted.
 - `board`: Inspects entire board overview and aggregate task distribution.
 
+## Bot Mode & Inter-Agent Society
+
+`pandora peer` enables multi-agent social collaboration, specialized personas, and direct peer-to-peer messaging:
+
+```text
+pandora peer list
+pandora peer register --handle oracle --role "Synthesis and Predictions" --display Oracle --model hermes-custom --capabilities "planning,synthesis"
+pandora peer inspect <handle>
+pandora peer send --from oracle --to architect --subject "Micro-kernel Review" --body "Please review system boundaries."
+pandora peer inbox --handle architect [--unread]
+pandora peer read <message-id>
+pandora peer reply <message-id> --from architect --body "Review approved."
+pandora peer thread <thread-id>
+pandora peer delete <handle>
+```
+
+- `list` (or `roster`): Lists registered agent personas, including default personas (`@architect`, `@coder`, `@reviewer`, `@curator`, `@auditor`) and custom personas.
+- `register`: Registers a new agent persona with `--handle <name>`, `--role <role>`, optional `--display <name>`, `--model <model>`, `--prompt <text>`, `--avatar <seed>`, and comma-separated `--capabilities <c1,c2>`.
+- `inspect`: Displays detailed metadata, role, avatar seed, capabilities, and system prompt for a persona.
+- `send`: Dispatches a peer message from `--from <handle>` to `--to <handle>` with `--subject <subj>`, `--body <body>`, optional `--thread <id>`, and optional `--payload <json>`.
+- `inbox`: Lists incoming peer messages for a persona (or all personas), with optional `--unread` filtering.
+- `read`: Reads the full message body and transitions status to `read`.
+- `reply`: Dispatches a reply within the message's thread back to the sender.
+- `thread`: Displays complete threaded conversation history between agent personas in chronological order.
+- `delete`: Removes a custom persona from the registry.
+
 Remote admission currently accepts Gene records with no unresolved capability
 requirements and one valid Pandora runtime requirement. Other package kinds fail
 before download or local mutation. A registry package remains metadata and verified

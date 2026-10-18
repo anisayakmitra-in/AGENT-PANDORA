@@ -47,6 +47,15 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora kanban task inspect <id> --json` | `kanban task inspect` | `id`, `board_id`, `title`, `status`, `priority`, `assignee`, `dependencies` |
 | `pandora kanban task delete <id> --yes --json` | `kanban task delete` | `id`, `deleted` |
 | `pandora kanban board ... --json` | `kanban board` | `id`, `name`, `tasks` |
+| `pandora peer list --json` | `peer list` | `count`, `personas` |
+| `pandora peer register --handle <h> --role <r> ... --json` | `peer register` | `handle`, `display_name`, `role`, `system_prompt`, `model`, `avatar_seed`, `capabilities`, `created_at` |
+| `pandora peer inspect <handle> --json` | `peer inspect` | `handle`, `display_name`, `role`, `system_prompt`, `model`, `avatar_seed`, `capabilities`, `created_at` |
+| `pandora peer delete <handle> --json` | `peer delete` | `handle`, `deleted` |
+| `pandora peer send --from <f> --to <t> --subject <s> --body <b> ... --json` | `peer send` | `message_id`, `thread_id`, `from_handle`, `to_handle`, `subject`, `status`, `created_at` |
+| `pandora peer inbox [--handle <h>] [--unread] --json` | `peer inbox` | `count`, `messages` |
+| `pandora peer read <id> --json` | `peer read` | `message_id`, `thread_id`, `from_handle`, `to_handle`, `subject`, `body`, `payload`, `status`, `created_at`, `updated_at` |
+| `pandora peer reply <id> --from <f> --body <b> ... --json` | `peer reply` | `message_id`, `thread_id`, `from_handle`, `to_handle`, `subject`, `status`, `created_at` |
+| `pandora peer thread <thread-id> --json` | `peer thread` | `thread_id`, `subject`, `participants`, `message_count`, `messages`, `last_activity_at` |
 | `pandora backup create ... --json` | `backup create` | `output`, `entries`, `encrypted`, `format_version` |
 | `pandora backup inspect ... --json` | `backup inspect` | `input`, `created_at`, `entries`, `authenticated`, `paths_exposed` |
 | `pandora backup restore ... --json` | `backup restore` | `input`, `restored_entries`, `pre_restore_backup`, `authenticated` |

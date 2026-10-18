@@ -36,6 +36,7 @@ mod migration;
 mod operations;
 mod orchestration;
 mod package;
+pub(crate) mod peer;
 mod provider;
 mod registry;
 mod restore_journal;
@@ -200,6 +201,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "curator" => curator::execute(&args[1..]),
         "hardware" => hardware::execute(&args[1..]),
         "kanban" => kanban::execute(&args[1..]),
+        "peer" => peer::execute(&args[1..]),
         "--help" | "help" => {
             if args.len() != 1 {
                 return Err(CliError::usage("help does not accept additional arguments"));
@@ -305,6 +307,7 @@ fn is_flag(name: &str) -> bool {
             | "watch"
             | "daemon"
             | "binary"
+            | "unread"
     )
 }
 

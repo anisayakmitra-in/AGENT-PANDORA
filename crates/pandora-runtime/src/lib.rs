@@ -66,6 +66,7 @@ pub mod session_journal;
 pub mod sessions;
 pub mod shadow_council;
 pub mod skill_engine;
+pub mod society_engine;
 pub mod storage_lifecycle;
 pub mod strategies;
 pub mod subagent;
@@ -251,6 +252,7 @@ pub use skill_engine::{
     RemovalReceipt, SkillEngine, SkillError, SkillInspection, SkillProvenance, SkillRecord,
     SkillState,
 };
+pub use society_engine::SocietyEngine;
 pub use storage_lifecycle::{
     MAX_STORAGE_LIFECYCLE_LIST, MAX_STORAGE_LIFECYCLE_RECEIPTS, StorageLifecycleReceipt,
     StorageLifecycleRecordResult, StorageLifecycleStore, StorageLifecycleStoreError,
