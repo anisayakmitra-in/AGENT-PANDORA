@@ -1,6 +1,7 @@
 use crate::harness::{
-    CodingHarness, CoordinationMetaHarness, CoreSourceHarness, DataHarness, DebuggingHarness,
-    DesignHarness, OperationsHarness, ResearchHarness, SecurityHarness,
+    ArchitectureHarness, CodingHarness, CoordinationMetaHarness, CoreSourceHarness, DataHarness,
+    DebuggingHarness, DesignHarness, EvolutionMetaHarness, OperationsHarness, ResearchHarness,
+    SecurityHarness, SwarmMetaHarness, VerificationHarness,
 };
 use crate::profile::{
     DeclarativeDomainHarness, DeclarativeMetaHarness, DomainProfileError, MetaProfileError,
@@ -11,9 +12,16 @@ use std::fmt;
 
 pub fn replaceable_builtin_harness_kind(id: &str) -> Option<HarnessKind> {
     match id {
-        "coding-domain" | "research-domain" | "design-domain" | "operations-domain"
-        | "security-domain" | "debugging-domain" | "data-domain" => Some(HarnessKind::Domain),
-        "coordination-meta" => Some(HarnessKind::Meta),
+        "coding-domain"
+        | "research-domain"
+        | "design-domain"
+        | "operations-domain"
+        | "security-domain"
+        | "debugging-domain"
+        | "data-domain"
+        | "architecture-domain"
+        | "verification-domain" => Some(HarnessKind::Domain),
+        "coordination-meta" | "evolution-meta" | "swarm-meta" => Some(HarnessKind::Meta),
         _ => None,
     }
 }
@@ -63,7 +71,11 @@ impl HarnessCatalog {
                 Box::new(SecurityHarness::new()),
                 Box::new(DebuggingHarness::new()),
                 Box::new(DataHarness::new()),
+                Box::new(ArchitectureHarness::new()),
+                Box::new(VerificationHarness::new()),
                 Box::new(CoordinationMetaHarness::new()),
+                Box::new(EvolutionMetaHarness::new()),
+                Box::new(SwarmMetaHarness::new()),
             ],
             domain_routing: BTreeMap::new(),
         }

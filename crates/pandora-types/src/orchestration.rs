@@ -81,6 +81,8 @@ pub enum OrchestrationContractError {
         workers: usize,
         max_parallelism: usize,
     },
+    InvalidSubagentDepth,
+    SpecialistRoleNotInPlan(OrchestrationRole),
     TooManyHandoffs,
 }
 
@@ -124,6 +126,16 @@ impl fmt::Display for OrchestrationContractError {
                 formatter,
                 "Swarm worker count {workers} exceeds plan parallelism {max_parallelism}"
             ),
+            Self::InvalidSubagentDepth => {
+                formatter.write_str("Subagent profiles require a max_depth greater than zero")
+            }
+            Self::SpecialistRoleNotInPlan(role) => {
+                write!(
+                    formatter,
+                    "specialist role '{}' is not present in the orchestration plan",
+                    role.as_str()
+                )
+            }
             Self::TooManyHandoffs => formatter.write_str("plan exceeds its handoff limit"),
         }
     }
@@ -462,11 +474,13 @@ impl OrchestrationPlanJson {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DomainProfileMode {
     Agent,
+    Subagent { max_depth: usize },
     Swarm { workers: usize },
+    Specialist { role: OrchestrationRole },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -494,15 +508,30 @@ impl DomainAgentProfile {
                 actual: role.harness_id().clone(),
             });
         }
-        if let DomainProfileMode::Swarm { workers } = mode {
-            if workers < 2 {
-                return Err(OrchestrationContractError::InvalidSwarmWorkers);
+        match &mode {
+            DomainProfileMode::Agent => {}
+            DomainProfileMode::Subagent { max_depth } => {
+                if *max_depth == 0 {
+                    return Err(OrchestrationContractError::InvalidSubagentDepth);
+                }
             }
-            if workers > plan.max_parallelism() {
-                return Err(OrchestrationContractError::SwarmExceedsParallelism {
-                    workers,
-                    max_parallelism: plan.max_parallelism(),
-                });
+            DomainProfileMode::Swarm { workers } => {
+                if *workers < 2 {
+                    return Err(OrchestrationContractError::InvalidSwarmWorkers);
+                }
+                if *workers > plan.max_parallelism() {
+                    return Err(OrchestrationContractError::SwarmExceedsParallelism {
+                        workers: *workers,
+                        max_parallelism: plan.max_parallelism(),
+                    });
+                }
+            }
+            DomainProfileMode::Specialist { role } => {
+                if !plan.roles().iter().any(|r| r.role() == role) {
+                    return Err(OrchestrationContractError::SpecialistRoleNotInPlan(
+                        role.clone(),
+                    ));
+                }
             }
         }
         Ok(Self {
@@ -511,6 +540,56 @@ impl DomainAgentProfile {
             loop_config,
             mode,
         })
+    }
+
+    pub fn new_agent(
+        harness_id: HarnessId,
+        plan: OrchestrationPlan,
+        loop_config: RunLoopConfig,
+    ) -> Result<Self, OrchestrationContractError> {
+        Self::new(harness_id, plan, loop_config, DomainProfileMode::Agent)
+    }
+
+    pub fn new_subagent(
+        harness_id: HarnessId,
+        plan: OrchestrationPlan,
+        loop_config: RunLoopConfig,
+        max_depth: usize,
+    ) -> Result<Self, OrchestrationContractError> {
+        Self::new(
+            harness_id,
+            plan,
+            loop_config,
+            DomainProfileMode::Subagent { max_depth },
+        )
+    }
+
+    pub fn new_swarm(
+        harness_id: HarnessId,
+        plan: OrchestrationPlan,
+        loop_config: RunLoopConfig,
+        workers: usize,
+    ) -> Result<Self, OrchestrationContractError> {
+        Self::new(
+            harness_id,
+            plan,
+            loop_config,
+            DomainProfileMode::Swarm { workers },
+        )
+    }
+
+    pub fn new_specialist(
+        harness_id: HarnessId,
+        plan: OrchestrationPlan,
+        loop_config: RunLoopConfig,
+        role: OrchestrationRole,
+    ) -> Result<Self, OrchestrationContractError> {
+        Self::new(
+            harness_id,
+            plan,
+            loop_config,
+            DomainProfileMode::Specialist { role },
+        )
     }
 
     pub fn harness_id(&self) -> &HarnessId {
@@ -525,8 +604,49 @@ impl DomainAgentProfile {
         &self.loop_config
     }
 
-    pub const fn mode(&self) -> DomainProfileMode {
-        self.mode
+    pub fn mode(&self) -> DomainProfileMode {
+        self.mode.clone()
+    }
+
+    pub fn mode_ref(&self) -> &DomainProfileMode {
+        &self.mode
+    }
+
+    pub fn is_agent(&self) -> bool {
+        matches!(self.mode, DomainProfileMode::Agent)
+    }
+
+    pub fn is_subagent(&self) -> bool {
+        matches!(self.mode, DomainProfileMode::Subagent { .. })
+    }
+
+    pub fn subagent_depth(&self) -> Option<usize> {
+        match self.mode {
+            DomainProfileMode::Subagent { max_depth } => Some(max_depth),
+            _ => None,
+        }
+    }
+
+    pub fn is_swarm(&self) -> bool {
+        matches!(self.mode, DomainProfileMode::Swarm { .. })
+    }
+
+    pub fn swarm_workers(&self) -> Option<usize> {
+        match self.mode {
+            DomainProfileMode::Swarm { workers } => Some(workers),
+            _ => None,
+        }
+    }
+
+    pub fn is_specialist(&self) -> bool {
+        matches!(self.mode, DomainProfileMode::Specialist { .. })
+    }
+
+    pub fn specialist_role(&self) -> Option<&OrchestrationRole> {
+        match &self.mode {
+            DomainProfileMode::Specialist { role } => Some(role),
+            _ => None,
+        }
     }
 }
 
@@ -1197,6 +1317,99 @@ mod tests {
                 workers: 3,
                 max_parallelism: 2,
             })
+        );
+    }
+
+    #[test]
+    fn subagent_profile_validates_depth_and_exposes_queries() {
+        let harness_id = HarnessId::new("coding-domain").unwrap();
+        let plan = OrchestrationPlan::new(
+            PlanId::new("subagent-plan").unwrap(),
+            vec![role(
+                "subagent-worker",
+                OrchestrationRole::Maker,
+                "coding-domain",
+                &[],
+            )],
+            1,
+            0,
+            Vec::new(),
+        )
+        .unwrap();
+        let loop_config =
+            RunLoopConfig::new(2, 500, 2, 30, 500, 0, LoopTermination::GoalReached).unwrap();
+
+        let profile = DomainAgentProfile::new_subagent(
+            harness_id.clone(),
+            plan.clone(),
+            loop_config.clone(),
+            3,
+        )
+        .unwrap();
+
+        assert!(profile.is_subagent());
+        assert!(!profile.is_agent());
+        assert!(!profile.is_swarm());
+        assert!(!profile.is_specialist());
+        assert_eq!(profile.subagent_depth(), Some(3));
+        assert_eq!(profile.mode(), DomainProfileMode::Subagent { max_depth: 3 });
+
+        assert_eq!(
+            DomainAgentProfile::new_subagent(harness_id, plan, loop_config, 0),
+            Err(OrchestrationContractError::InvalidSubagentDepth)
+        );
+    }
+
+    #[test]
+    fn specialist_profile_validates_role_membership() {
+        let harness_id = HarnessId::new("coding-domain").unwrap();
+        let plan = OrchestrationPlan::new(
+            PlanId::new("specialist-plan").unwrap(),
+            vec![
+                role(
+                    "critic-role",
+                    OrchestrationRole::Critic,
+                    "coding-domain",
+                    &[],
+                ),
+                role("maker-role", OrchestrationRole::Maker, "coding-domain", &[]),
+            ],
+            2,
+            0,
+            Vec::new(),
+        )
+        .unwrap();
+        let loop_config =
+            RunLoopConfig::new(2, 500, 2, 30, 500, 0, LoopTermination::GoalReached).unwrap();
+
+        let profile = DomainAgentProfile::new_specialist(
+            harness_id.clone(),
+            plan.clone(),
+            loop_config.clone(),
+            OrchestrationRole::Critic,
+        )
+        .unwrap();
+
+        assert!(profile.is_specialist());
+        assert_eq!(profile.specialist_role(), Some(&OrchestrationRole::Critic));
+        assert_eq!(
+            profile.mode(),
+            DomainProfileMode::Specialist {
+                role: OrchestrationRole::Critic
+            }
+        );
+
+        let missing = DomainAgentProfile::new_specialist(
+            harness_id,
+            plan,
+            loop_config,
+            OrchestrationRole::Verifier,
+        );
+        assert_eq!(
+            missing,
+            Err(OrchestrationContractError::SpecialistRoleNotInPlan(
+                OrchestrationRole::Verifier
+            ))
         );
     }
 }

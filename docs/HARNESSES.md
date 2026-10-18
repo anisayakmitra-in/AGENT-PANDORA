@@ -56,8 +56,12 @@ engine checks those limits before registering a plan, so a plan cannot introduce
 an undeclared Domain Harness through a Meta Harness.
 
 Its built-in composition contains `coding-domain`, `research-domain`,
-`design-domain`, `operations-domain`, `security-domain`, and
-`debugging-domain`, and `data-domain`.
+`design-domain`, `operations-domain`, `security-domain`,
+`debugging-domain`, `data-domain`, `architecture-domain`, and `verification-domain`.
+
+The built-in `evolution-meta` Meta Harness coordinates closed-loop evolutionary cycles across `research-domain`, `architecture-domain`, `coding-domain`, `debugging-domain`, `security-domain`, and `verification-domain`, with a handoff ceiling of 12.
+
+The built-in `swarm-meta` Meta Harness coordinates dynamic diamond and peer swarming topologies across all 9 domain harnesses with a handoff ceiling of 16.
 
 `pandora harness inspect coordination-meta --json` exposes that composition
 boundary as `meta_composition.allowed_domains` and
@@ -476,6 +480,14 @@ The Debugging short aliases are `/debugging`, `/debugging-inventory`,
 `/debugging-failures`, `/debugging-tests`, `/debugging-regressions`,
 `/debugging-diagnostics`, and `/debugging-guide`.
 
+The Architecture short aliases are `/architecture`, `/architecture-inventory`,
+`/architecture-boundaries`, `/architecture-invariants`, and `/architecture-guide`.
+
+The Verification short aliases are `/verification`, `/verification-contract`,
+`/verification-golden`, `/verification-property`, and `/verification-guide`.
+
+The Meta Harness short aliases are `/coordination` (`coordination-meta`), `/evolution` (`evolution-meta`), and `/swarm` (`swarm-meta`).
+
 Admitted custom Domain and Meta profiles receive exact-version Harness commands.
 Custom Domain profiles receive Gene commands for dependencies that resolve to
 an available built-in Gene or an installed WebAssembly Gene at the declared
@@ -491,9 +503,13 @@ belong to the same Domain Harness and keeps the existing Gene and effect
 policy. Provider selection remains a provider-runtime concern and is not
 embedded in the Harness or package contract.
 
-A `Swarm` is the `DomainProfileMode::Swarm` form of that same runtime profile.
-It records a bounded worker count within the plan's parallelism limit. A Swarm
-does not create a parallel execution hierarchy. Cross-domain work still goes
+The runtime supports four specialized `DomainProfileMode` operational modes:
+- `Agent`: Standard single-agent execution mode within domain boundaries.
+- `Subagent`: Bounded hierarchical subagent execution with a strictly enforced `max_depth` ceiling.
+- `Swarm`: High-parallelism collaborative worker pool with a bounded worker count within the plan's parallelism limit.
+- `Specialist`: Pinned specialist role profile executing an assigned role (such as Planner, Maker, Critic, or Verifier) from the orchestration plan.
+
+A Swarm or Subagent does not create an uncoordinated execution hierarchy. Cross-domain work still goes
 through a Meta Harness and its declared composition.
 
 ## Package kinds

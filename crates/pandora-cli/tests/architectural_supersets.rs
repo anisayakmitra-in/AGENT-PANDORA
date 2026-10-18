@@ -5,11 +5,12 @@ use pandora_runtime::{
 };
 use pandora_types::{
     ContextClassification, ContextContractError, ContextUri, ConvergenceChoice, DecisionQuestion,
-    DpoPair, ExecutionTopology, FeatureEntry, FeatureMap, GoldenSuiteDefinition, IntentTierChoice,
-    MemoryCapsule, MemoryContractError, MemoryIntent, MemoryKind, MemoryOrigin, MemoryRecord,
-    MemoryScope, OrchestrationPlanJson, OrchestrationRole, PrincipalId, Session,
-    SessionArchiveRecord, SessionId, SopDefinition, SopStep, TenantId, Timestamp, ToolSafetyChoice,
-    VfsNodeKind, WorkspaceId,
+    DomainAgentProfile, DomainProfileMode, DpoPair, ExecutionTopology, FeatureEntry, FeatureMap,
+    GoldenSuiteDefinition, HarnessId, IntentTierChoice, LoopTermination, MemoryCapsule,
+    MemoryContractError, MemoryIntent, MemoryKind, MemoryOrigin, MemoryRecord, MemoryScope,
+    OrchestrationPlan, OrchestrationPlanJson, OrchestrationRole, PlanId, PrincipalId,
+    RoleAssignment, RoleId, RunLoopConfig, Session, SessionArchiveRecord, SessionId, SopDefinition,
+    SopStep, TenantId, Timestamp, ToolSafetyChoice, VfsNodeKind, WorkspaceId,
 };
 use serde_json::{Value, json};
 use std::fs;
@@ -2105,4 +2106,135 @@ fn contract_reasoning_cli_lifecycle() {
     assert_eq!(val_set["applied_cache_strategy"], "subagent");
     assert_eq!(val_set["anthropic_budget"], 1024);
     assert_eq!(val_set["openai_parameter"], "low");
+}
+
+#[test]
+fn contract_inner_architecture_harnesses_and_subagent_profiles() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // 1. List harnesses and verify discovery of new Domain and Meta harnesses
+    let resp_list = fixture.run(&["harness", "list"]);
+    let val_list = resp_list.success("harness list");
+    let harnesses = val_list["harnesses"].as_array().unwrap();
+
+    let arch = harnesses
+        .iter()
+        .find(|h| h["id"] == "architecture-domain")
+        .expect("architecture-domain should be discovered");
+    assert_eq!(arch["kind"], "domain");
+    assert_eq!(arch["execution"]["runnable"], true);
+
+    let verif = harnesses
+        .iter()
+        .find(|h| h["id"] == "verification-domain")
+        .expect("verification-domain should be discovered");
+    assert_eq!(verif["kind"], "domain");
+    assert_eq!(verif["execution"]["runnable"], true);
+
+    let evo = harnesses
+        .iter()
+        .find(|h| h["id"] == "evolution-meta")
+        .expect("evolution-meta should be discovered");
+    assert_eq!(evo["kind"], "meta");
+    assert_eq!(evo["execution"]["runnable"], false);
+    assert_eq!(evo["meta_composition"]["max_handoffs"], 12);
+
+    let swarm = harnesses
+        .iter()
+        .find(|h| h["id"] == "swarm-meta")
+        .expect("swarm-meta should be discovered");
+    assert_eq!(swarm["kind"], "meta");
+    assert_eq!(swarm["execution"]["runnable"], false);
+    assert_eq!(swarm["meta_composition"]["max_handoffs"], 16);
+
+    // 2. Inspect architecture-domain
+    let resp_arch = fixture.run(&["harness", "inspect", "architecture-domain"]);
+    let val_arch = resp_arch.success("harness inspect");
+    assert_eq!(val_arch["harness"]["kind"], "domain");
+    assert_eq!(val_arch["harness"]["genes"].as_array().unwrap().len(), 4);
+
+    // 3. Inspect verification-domain
+    let resp_verif = fixture.run(&["harness", "inspect", "verification-domain"]);
+    let val_verif = resp_verif.success("harness inspect");
+    assert_eq!(val_verif["harness"]["kind"], "domain");
+    assert_eq!(val_verif["harness"]["genes"].as_array().unwrap().len(), 4);
+
+    // 4. Inspect evolution-meta
+    let resp_evo = fixture.run(&["harness", "inspect", "evolution-meta"]);
+    let val_evo = resp_evo.success("harness inspect");
+    assert_eq!(val_evo["harness"]["kind"], "meta");
+    assert_eq!(val_evo["harness"]["meta_composition"]["max_handoffs"], 12);
+
+    // 5. Inspect swarm-meta
+    let resp_swarm = fixture.run(&["harness", "inspect", "swarm-meta"]);
+    let val_swarm = resp_swarm.success("harness inspect");
+    assert_eq!(val_swarm["harness"]["kind"], "meta");
+    assert_eq!(val_swarm["harness"]["meta_composition"]["max_handoffs"], 16);
+
+    // 6. Subagent and Specialist Domain Profiles contract
+    let arch_harness_id = HarnessId::new("architecture-domain").unwrap();
+    let plan = OrchestrationPlan::new(
+        PlanId::new("arch-subagent-plan").unwrap(),
+        vec![
+            RoleAssignment::new(
+                RoleId::new("maker-arch").unwrap(),
+                OrchestrationRole::Maker,
+                arch_harness_id.clone(),
+                Vec::new(),
+            )
+            .unwrap(),
+            RoleAssignment::new(
+                RoleId::new("critic-arch").unwrap(),
+                OrchestrationRole::Critic,
+                arch_harness_id.clone(),
+                vec![RoleId::new("maker-arch").unwrap()],
+            )
+            .unwrap(),
+        ],
+        2,
+        2,
+        Vec::new(),
+    )
+    .unwrap();
+    let loop_config =
+        RunLoopConfig::new(3, 1000, 2, 60, 1000, 0, LoopTermination::GoalReached).unwrap();
+
+    // Verify Subagent profile
+    let subagent_profile = DomainAgentProfile::new_subagent(
+        arch_harness_id.clone(),
+        plan.clone(),
+        loop_config.clone(),
+        4,
+    )
+    .unwrap();
+    assert!(subagent_profile.is_subagent());
+    assert!(!subagent_profile.is_agent());
+    assert!(!subagent_profile.is_swarm());
+    assert!(!subagent_profile.is_specialist());
+    assert_eq!(subagent_profile.subagent_depth(), Some(4));
+    assert_eq!(
+        subagent_profile.mode(),
+        DomainProfileMode::Subagent { max_depth: 4 }
+    );
+
+    // Verify Specialist profile
+    let specialist_profile = DomainAgentProfile::new_specialist(
+        arch_harness_id,
+        plan,
+        loop_config,
+        OrchestrationRole::Critic,
+    )
+    .unwrap();
+    assert!(specialist_profile.is_specialist());
+    assert_eq!(
+        specialist_profile.specialist_role(),
+        Some(&OrchestrationRole::Critic)
+    );
+    assert_eq!(
+        specialist_profile.mode(),
+        DomainProfileMode::Specialist {
+            role: OrchestrationRole::Critic
+        }
+    );
 }

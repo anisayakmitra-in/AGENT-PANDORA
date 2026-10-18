@@ -17,8 +17,16 @@ pub const DEBUGGING_HARNESS_ID: &str = "debugging-domain";
 pub const DEBUGGING_HARNESS_VERSION: &str = "0.1.0";
 pub const DATA_HARNESS_ID: &str = "data-domain";
 pub const DATA_HARNESS_VERSION: &str = "0.1.0";
+pub const ARCHITECTURE_HARNESS_ID: &str = "architecture-domain";
+pub const ARCHITECTURE_HARNESS_VERSION: &str = "0.1.0";
+pub const VERIFICATION_HARNESS_ID: &str = "verification-domain";
+pub const VERIFICATION_HARNESS_VERSION: &str = "0.1.0";
 pub const COORDINATION_META_HARNESS_ID: &str = "coordination-meta";
 pub const COORDINATION_META_HARNESS_VERSION: &str = "0.4.0";
+pub const EVOLUTION_META_HARNESS_ID: &str = "evolution-meta";
+pub const EVOLUTION_META_HARNESS_VERSION: &str = "0.1.0";
+pub const SWARM_META_HARNESS_ID: &str = "swarm-meta";
+pub const SWARM_META_HARNESS_VERSION: &str = "0.1.0";
 
 pub fn core_source_manifest() -> Result<HarnessManifest, ManifestError> {
     HarnessManifest::new_source(
@@ -210,6 +218,46 @@ pub fn data_manifest() -> Result<HarnessManifest, ManifestError> {
     )
 }
 
+pub fn architecture_manifest() -> Result<HarnessManifest, ManifestError> {
+    let genes = [
+        "architecture.inventory",
+        "architecture.boundaries",
+        "architecture.invariants",
+        "architecture.guide",
+    ]
+    .into_iter()
+    .map(|id| GeneId::new(id).expect("built-in Gene ID is valid"))
+    .collect();
+    HarnessManifest::new(
+        ARCHITECTURE_HARNESS_ID,
+        ARCHITECTURE_HARNESS_VERSION,
+        "Architecture Domain",
+        HarnessKind::Domain,
+        None,
+        genes,
+    )
+}
+
+pub fn verification_manifest() -> Result<HarnessManifest, ManifestError> {
+    let genes = [
+        "verification.contract",
+        "verification.golden",
+        "verification.property",
+        "verification.guide",
+    ]
+    .into_iter()
+    .map(|id| GeneId::new(id).expect("built-in Gene ID is valid"))
+    .collect();
+    HarnessManifest::new(
+        VERIFICATION_HARNESS_ID,
+        VERIFICATION_HARNESS_VERSION,
+        "Verification Domain",
+        HarnessKind::Domain,
+        None,
+        genes,
+    )
+}
+
 pub fn coordination_meta_manifest() -> Result<HarnessManifest, ManifestError> {
     let composition = MetaComposition::new(
         vec![
@@ -220,6 +268,8 @@ pub fn coordination_meta_manifest() -> Result<HarnessManifest, ManifestError> {
             HarnessId::new(SECURITY_HARNESS_ID)?,
             HarnessId::new(DEBUGGING_HARNESS_ID)?,
             HarnessId::new(DATA_HARNESS_ID)?,
+            HarnessId::new(ARCHITECTURE_HARNESS_ID)?,
+            HarnessId::new(VERIFICATION_HARNESS_ID)?,
         ],
         8,
     )?;
@@ -227,6 +277,49 @@ pub fn coordination_meta_manifest() -> Result<HarnessManifest, ManifestError> {
         COORDINATION_META_HARNESS_ID,
         COORDINATION_META_HARNESS_VERSION,
         "Coordination Meta",
+        composition,
+    )
+}
+
+pub fn evolution_meta_manifest() -> Result<HarnessManifest, ManifestError> {
+    let composition = MetaComposition::new(
+        vec![
+            HarnessId::new(RESEARCH_HARNESS_ID)?,
+            HarnessId::new(ARCHITECTURE_HARNESS_ID)?,
+            HarnessId::new(CODING_HARNESS_ID)?,
+            HarnessId::new(DEBUGGING_HARNESS_ID)?,
+            HarnessId::new(SECURITY_HARNESS_ID)?,
+            HarnessId::new(VERIFICATION_HARNESS_ID)?,
+        ],
+        12,
+    )?;
+    HarnessManifest::new_meta(
+        EVOLUTION_META_HARNESS_ID,
+        EVOLUTION_META_HARNESS_VERSION,
+        "Evolution Meta",
+        composition,
+    )
+}
+
+pub fn swarm_meta_manifest() -> Result<HarnessManifest, ManifestError> {
+    let composition = MetaComposition::new(
+        vec![
+            HarnessId::new(CODING_HARNESS_ID)?,
+            HarnessId::new(RESEARCH_HARNESS_ID)?,
+            HarnessId::new(DESIGN_HARNESS_ID)?,
+            HarnessId::new(OPERATIONS_HARNESS_ID)?,
+            HarnessId::new(SECURITY_HARNESS_ID)?,
+            HarnessId::new(DEBUGGING_HARNESS_ID)?,
+            HarnessId::new(DATA_HARNESS_ID)?,
+            HarnessId::new(ARCHITECTURE_HARNESS_ID)?,
+            HarnessId::new(VERIFICATION_HARNESS_ID)?,
+        ],
+        16,
+    )?;
+    HarnessManifest::new_meta(
+        SWARM_META_HARNESS_ID,
+        SWARM_META_HARNESS_VERSION,
+        "Swarm Meta",
         composition,
     )
 }
