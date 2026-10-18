@@ -1,5 +1,6 @@
 use crate::adaptive_engine::{AdaptationResult, AdaptiveEngine, AdaptiveError};
 use crate::evaluation_engine::EvaluationEngine;
+use crate::reflexion::ReflexionDiagnostic;
 use crate::run_loop::{RunLoop, RunLoopError};
 use crate::self_healing::{SelfHealingEngine, SelfHealingError};
 use crate::strategies::StrategyError;
@@ -102,6 +103,7 @@ impl CodingFeedbackInput {
 pub struct CodingFeedbackResult {
     evaluation_receipt: EvaluationReceipt,
     reflexion: Option<ReflexionArtifact>,
+    diagnostic: Option<ReflexionDiagnostic>,
     adaptation: Option<AdaptationResult>,
     decision: LoopDecision,
     snapshot: RunLoopSnapshot,
@@ -118,6 +120,10 @@ impl CodingFeedbackResult {
 
     pub fn reflexion(&self) -> Option<&ReflexionArtifact> {
         self.reflexion.as_ref()
+    }
+
+    pub fn diagnostic(&self) -> Option<&ReflexionDiagnostic> {
+        self.diagnostic.as_ref()
     }
 
     pub fn adaptation(&self) -> Option<&AdaptationResult> {
@@ -178,23 +184,34 @@ impl CodingFeedbackLoop {
             .results()
             .iter()
             .all(EvaluationResult::passed);
-        let reflexion = if passed {
-            None
+        let failure_signals: Vec<String> = if passed {
+            Vec::new()
         } else {
-            let failure_signals = evaluation_receipt
+            evaluation_receipt
                 .results()
                 .iter()
                 .filter(|result| !result.passed())
                 .take(self.reflexion.max_failure_signals())
                 .map(|result| format!("{}: {}", result.kind().as_str(), result.reason()))
-                .collect();
+                .collect()
+        };
+        let reflexion = if passed {
+            None
+        } else {
             Some(self.reflexion.distill(
                 input.evaluation.execution_id().clone(),
                 "coding iteration did not satisfy verification",
-                failure_signals,
+                failure_signals.clone(),
                 "address the failed evaluation evidence and rerun verification before completion",
                 now,
             )?)
+        };
+        let diagnostic = if passed {
+            None
+        } else {
+            Some(crate::reflexion::ReflexionDiagnosticEngine::diagnose(
+                &failure_signals.join("\n"),
+            ))
         };
         let decision = self.run_loop.record_iteration(IterationOutcome::new(
             input.usage,
@@ -216,6 +233,7 @@ impl CodingFeedbackLoop {
         Ok(CodingFeedbackResult {
             evaluation_receipt,
             reflexion,
+            diagnostic,
             adaptation,
             decision,
             snapshot: self.run_loop.snapshot(),
