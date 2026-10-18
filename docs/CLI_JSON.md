@@ -101,6 +101,9 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora decision tool-gate --tool <name> ... --json` | `decision tool-gate` | `tool`, `selected`, `confidence`, `latency_ms`, `distribution` |
 | `pandora decision intent-route --prompt <text> --json` | `decision intent-route` | `prompt`, `selected`, `confidence`, `latency_ms`, `distribution` |
 | `pandora decision harvest --min-margin <float> ... --json` | `decision harvest` | `harvested_count`, `min_margin`, `limit`, `suite_id`, `exported_golden`, `exported_dpo`, `cases` |
+| `pandora tool list [--catalog <builtin|active>] --json` | `tool list` | `tools`, optional `catalog` |
+| `pandora tool inspect <id> [--catalog <builtin|active>] --json` | `tool inspect` | `tool`, optional `catalog` |
+| `pandora tool search <query> [--catalog <builtin|active>] [--limit <n>] --json` | `tool search` | `query`, `catalog`, `count`, `results` |
 | `pandora orchestration synthesize --intent <text> ... --json` | `orchestration synthesize` | `plan_id`, `intent`, `topology`, `max_parallelism`, `max_handoffs`, `roles_count`, `handoffs_count`, `out_path`, `plan` |
 | `pandora backup lifecycle preview --input <path> --json` | `backup lifecycle preview` | `dry_run`, `would_record`, validated `manifest`, and the non-execution/non-erasure `boundary` |
 | `pandora backup lifecycle record --input <path> --yes --json` | `backup lifecycle record` | `created`, `idempotent_replay`, append-only `receipt`, and the non-execution/non-erasure `boundary` |

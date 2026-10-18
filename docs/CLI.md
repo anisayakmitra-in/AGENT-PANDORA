@@ -963,6 +963,7 @@ pandora /deployment-evidence
 pandora /operations-guide
 pandora tool list
 pandora tool inspect <id>
+pandora tool search <query> [--catalog <builtin|active>] [--limit <n>]
 pandora skill list
 pandora skill inspect <id>
 pandora skill install <local-skill-directory>

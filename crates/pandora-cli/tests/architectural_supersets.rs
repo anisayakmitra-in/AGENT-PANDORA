@@ -1476,3 +1476,27 @@ fn contract_curator_daemon_maintenance_and_status() {
     let mem_status_val = mem_status_resp.success("curator status");
     assert_eq!(mem_status_val["total_sessions"], 0);
 }
+
+#[test]
+fn contract_tool_search_cli() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // 1. Search for workspace tools
+    let resp = fixture.run(&["tool", "search", "read workspace", "--limit", "3"]);
+    let val = resp.success("tool search");
+    assert_eq!(val["query"], "read workspace");
+    let results = val["results"].as_array().unwrap();
+    assert!(!results.is_empty());
+    assert_eq!(results[0]["tool_id"], "workspace.read");
+
+    // 2. Search for git diff
+    let resp_diff = fixture.run(&["tool", "search", "git diff"]);
+    let val_diff = resp_diff.success("tool search");
+    let results_diff = val_diff["results"].as_array().unwrap();
+    assert!(
+        results_diff
+            .iter()
+            .any(|r| r["tool_id"] == "workspace.diff")
+    );
+}

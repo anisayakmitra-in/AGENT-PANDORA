@@ -989,6 +989,25 @@ impl AgentLoop {
             return Ok(ToolExecution::Output(guard_msg));
         }
 
+        if call.name() == "tool.search" {
+            let query = call
+                .arguments()
+                .get("query")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let limit = call
+                .arguments()
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize)
+                .unwrap_or(10);
+            let results = self.tools.search(query, limit);
+            let output =
+                serde_json::to_string_pretty(&results).unwrap_or_else(|_| "[]".to_string());
+            convergence.record_success(sig);
+            return Ok(ToolExecution::Output(output));
+        }
+
         let invocation = match trusted_harness {
             Some(harness) => {
                 self.tools

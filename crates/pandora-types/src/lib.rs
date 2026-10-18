@@ -37,7 +37,7 @@ pub use adaptation::{
     AdaptationReceipt, AdaptationRequest, AdaptationTarget,
 };
 pub use artifact::ArtifactRef;
-pub use capability::{Capability, Operation};
+pub use capability::{Capability, Operation, ToolSearchResult};
 pub use containment::{
     CONTAINMENT_EVIDENCE_VERSION, ContainmentBoundary, ContainmentBoundaryKind,
     ContainmentContractError, ContainmentControl, ContainmentEvidence, ContainmentLevel,

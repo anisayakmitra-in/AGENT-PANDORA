@@ -57,3 +57,13 @@ impl Operation {
         }
     }
 }
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ToolSearchResult {
+    pub tool_id: String,
+    pub name: String,
+    pub version: String,
+    pub capability: String,
+    pub operation: String,
+    pub score: f64,
+}
