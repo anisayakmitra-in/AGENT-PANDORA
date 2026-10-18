@@ -576,6 +576,14 @@ impl SinglePassLogitEngine {
         })
     }
 
+    /// System 1 -> System 2 escalation gate. Returns `true` when the given
+    /// verdict's margin is below this engine's uncertainty threshold, i.e. the
+    /// fast reflex path is unsafe and the caller should hand off to
+    /// [`LatsEngine::search`].
+    pub fn should_escalate(&self, verdict: &pandora_types::DynamicVerdict) -> bool {
+        crate::lats_engine::should_escalate(verdict.margin, self.uncertainty_threshold)
+    }
+
     pub fn from_config(config: &DecisionDriverConfig) -> Result<Self, DecisionError> {
         let driver: Arc<dyn DecisionDriver> = match config.kind {
             DecisionDriverKind::Heuristic => Arc::new(HeuristicDecisionDriver::with_options(
