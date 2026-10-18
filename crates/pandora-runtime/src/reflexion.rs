@@ -628,6 +628,178 @@ fn sanitize_identifier(s: &str) -> String {
         .collect()
 }
 
+// ---------------------------------------------------------------------------
+// Deep Reflexion Diagnostic Engine (Phase 14.1)
+// ---------------------------------------------------------------------------
+
+/// The kind of failure a diagnostic was derived from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReflexionFailureKind {
+    Compiler,
+    Test,
+    Tool,
+    Assertion,
+    Unknown,
+}
+
+impl ReflexionFailureKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Compiler => "compiler",
+            Self::Test => "test",
+            Self::Tool => "tool",
+            Self::Assertion => "assertion",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// A structured semantic failure delta extracted from a raw failure.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReflexionDiagnostic {
+    pub kind: ReflexionFailureKind,
+    pub invariant_violated: String,
+    pub root_cause: String,
+    pub avoidance_guidance: String,
+    pub severity: u8,
+}
+
+/// Severity levels for diagnostics (1 = low, 5 = critical).
+impl ReflexionDiagnostic {
+    pub fn is_critical(&self) -> bool {
+        self.severity >= 4
+    }
+}
+
+/// Analyzes raw failure text (compiler errors, test failures, tool errors) and
+/// produces a structured semantic delta without invoking an LLM.
+pub struct ReflexionDiagnosticEngine;
+
+impl ReflexionDiagnosticEngine {
+    pub fn diagnose(failure: &str) -> ReflexionDiagnostic {
+        let lower = failure.to_lowercase();
+
+        // Compiler errors
+        if lower.contains("error[e")
+            || lower.contains("error: ")
+                && (lower.contains("compile")
+                    || lower.contains("cannot find")
+                    || lower.contains("mismatched types"))
+        {
+            let root = extract_first_line(failure, "error")
+                .unwrap_or_else(|| first_non_empty_line(failure));
+            return ReflexionDiagnostic {
+                kind: ReflexionFailureKind::Compiler,
+                invariant_violated: "code must type-check".to_owned(),
+                root_cause: root,
+                avoidance_guidance: "Fix the type or path error before retrying; do not weaken tests to bypass compilation.".to_owned(),
+                severity: 4,
+            };
+        }
+
+        // Assertions (before test failures, since "assertion failed" is a runtime invariant)
+        if lower.contains("assert") {
+            return ReflexionDiagnostic {
+                kind: ReflexionFailureKind::Assertion,
+                invariant_violated: "runtime invariant must hold".to_owned(),
+                root_cause: first_non_empty_line(failure),
+                avoidance_guidance: "Strengthen the precondition or fix the violating code path."
+                    .to_owned(),
+                severity: 3,
+            };
+        }
+
+        // Test failures
+        if lower.contains("test result: FAILED")
+            || lower.contains("panicked at")
+            || (lower.contains("expected") && lower.contains("got"))
+        {
+            let root = extract_first_line(failure, "panicked")
+                .or_else(|| extract_first_line(failure, "assert"))
+                .unwrap_or_else(|| first_non_empty_line(failure));
+            return ReflexionDiagnostic {
+                kind: ReflexionFailureKind::Test,
+                invariant_violated: "behavior must match the test oracle".to_owned(),
+                root_cause: root,
+                avoidance_guidance: "Inspect the failing assertion and the code path; fix the implementation, not the test.".to_owned(),
+                severity: 3,
+            };
+        }
+
+        // Tool errors
+        if lower.contains("tool execution failed")
+            || lower.contains("permission denied")
+            || lower.contains("not found") && lower.contains("command")
+        {
+            return ReflexionDiagnostic {
+                kind: ReflexionFailureKind::Tool,
+                invariant_violated: "tool invocation must succeed".to_owned(),
+                root_cause: first_non_empty_line(failure),
+                avoidance_guidance: "Verify tool arguments and environment; do not retry the identical failing effect.".to_owned(),
+                severity: 2,
+            };
+        }
+
+        ReflexionDiagnostic {
+            kind: ReflexionFailureKind::Unknown,
+            invariant_violated: "unclassified failure".to_owned(),
+            root_cause: first_non_empty_line(failure),
+            avoidance_guidance: "Inspect the failure manually before retrying.".to_owned(),
+            severity: 1,
+        }
+    }
+}
+
+fn first_non_empty_line(text: &str) -> String {
+    text.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("")
+        .to_owned()
+}
+
+fn extract_first_line(text: &str, needle: &str) -> Option<String> {
+    text.lines()
+        .map(str::trim)
+        .find(|l| l.to_lowercase().contains(needle))
+        .map(str::to_owned)
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn compiler_error_classified() {
+        let d =
+            ReflexionDiagnosticEngine::diagnose("error[E0308]: mismatched types\n  expected i32");
+        assert_eq!(d.kind, ReflexionFailureKind::Compiler);
+        assert!(d.is_critical());
+    }
+
+    #[test]
+    fn test_failure_classified() {
+        let d = ReflexionDiagnosticEngine::diagnose(
+            "test result: FAILED. 1 failed\nthread panicked at foo.rs:42",
+        );
+        assert_eq!(d.kind, ReflexionFailureKind::Test);
+        assert_eq!(d.severity, 3);
+    }
+
+    #[test]
+    fn assertion_classified() {
+        let d = ReflexionDiagnosticEngine::diagnose("assertion failed: x == y");
+        assert_eq!(d.kind, ReflexionFailureKind::Assertion);
+    }
+
+    #[test]
+    fn unknown_fallback() {
+        let d = ReflexionDiagnosticEngine::diagnose("something odd happened");
+        assert_eq!(d.kind, ReflexionFailureKind::Unknown);
+        assert_eq!(d.severity, 1);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
