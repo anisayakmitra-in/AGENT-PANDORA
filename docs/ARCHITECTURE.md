@@ -220,6 +220,10 @@ The core runtime (`crates/pandora-runtime/src/`) is composed of 23 discrete engi
 | **`ReflexionCrystallizer`** | `src/reflexion.rs` | Parameterized literal abstraction and Bayesian canary gate verification for self-crystallizing L3 SOPs from past sessions. | Evaluates archives and auto-promotes to SQLite L3 |
 | **`SessionJournalEngine`** | `src/session_journal.rs` | Deterministic differential turn snapshots, SHA-256 step digests, time-travel rewind, and Git worktree checkpoint forking. | Backed by `session_journal_steps` in SQLite |
 | **`MeshSyncEngine`** | `src/mesh_sync.rs` | Decentralized P2P gossip capsule synchronization, Ed25519 identity exchange, and strict 3-point security verification (SHA-256, Ed25519, DAG acyclicity). | Synchronizes capsules across local and peer meshes |
+| **`LatsEngine`** | `src/lats_engine.rs` | Language Agent Tree Search (LATS) MCTS engine with PUCT selection, budget enforcement, and System 1 -> System 2 escalation gate. | Escalation path for uncertain decisions |
+| **`ReflexionDiagnosticEngine`**| `src/reflexion.rs` | Semantic failure classification (Compiler, Test, Tool, Assertion) producing actionable root cause, invariant, and avoidance guidance. | Informs `CodingFeedbackLoop` self-healing |
+| **`VoyagerCurriculum`** | `src/voyager_curriculum.rs`| Synthesizes progressive difficulty challenge suites (Easy/Medium/Hard) from harvested uncertain decision records. | Outputs `GoldenSuiteDefinition` for evaluation |
+| **`TripartiteGovernance`** | `src/tripartite_governance.rs`| Tripartite Cognitive Governance enforcing separation of Generator, Critic, and Governor roles with Pareto and Bayesian canary gates. | Governs self-improvement proposal promotion |
 
 ### System 1 Decision & Reflex Engine
 
@@ -293,6 +297,54 @@ The `MeshSyncEngine` (`crates/pandora-runtime/src/mesh_sync.rs`) enables soverei
    - Author Ed25519 cryptographic signature verification.
    - Complete DAG acyclicity check across both SOP step dependencies and capsule ancestry lineage.
 4. **Gossip Broadcast & Synchronization**: CLI commands (`pandora memory mesh peers`, `broadcast`, `sync`) discover local mesh capsules and support optional auto-promotion into local L3 SQLite memory storage.
+
+### Language Agent Tree Search (LATS) & MCTS Engine
+
+The `LatsEngine` (`crates/pandora-runtime/src/lats_engine.rs`) implements Monte Carlo Tree Search over multi-step agent actions, tool sequences, and gene modifications:
+
+1. **PUCT Path Selection**: Balances exploitation of known high-value paths with exploration of high-prior branches:
+   $$U(s, a) = Q(s, a) + c_{\text{puct}} \cdot P(a \mid s) \cdot \frac{\sqrt{\sum_b N(s, b)}}{1 + N(s, a)}$$
+   where $P(a \mid s)$ is the calibrated softmax prior produced by the System 1 fast-path logit engine.
+2. **Deterministic 4-Step MCTS Loop**:
+   - **Selection**: Traverses from root to an unexpanded or leaf node via PUCT.
+   - **Expansion**: Instantiates child nodes corresponding to available candidate actions.
+   - **Leaf Simulation**: Evaluates leaf state value via caller-supplied heuristic without recursive LLM generation.
+   - **Backpropagation**: Propagates leaf rewards up the trajectory tree, updating visit counts and value sums.
+3. **Budget Ceilings**: Governed strictly by `StrategyBudget`, enforcing maximum rollouts, tree depth, token budgets, tool count, and duration.
+4. **System 1 -> System 2 Escalation Gate**: When a fast reflex decision's margin falls below the uncertainty threshold, execution transparently escalates to System 2 MCTS exploration.
+5. **Anti-Thrash Terminal Safety**: Evaluates cosine similarity between successive action trajectories, forcing loop termination with `ConvergenceChoice::Stuck` when oscillations occur.
+
+### Deep Reflexion Diagnostic Engine & Voyager Curriculum
+
+Combining linguistic error feedback with progressive capability synthesis:
+
+1. **Reflexion Diagnostic Engine (`ReflexionDiagnosticEngine`)**:
+   - Analyzes raw execution failure traces (rustc compiler errors, test failures, panics, tool contract errors, assertion failures).
+   - Classifies failures into typed categories (`ReflexionFailureKind::Compiler`, `Test`, `Tool`, `Assertion`, `Unknown`).
+   - Extracts structured semantic deltas: exact invariant violated, root cause snippet, avoidance guidance, and severity (1 to 5).
+   - Feeds directly into `CodingFeedbackLoop` to synthesize self-healing recovery candidates.
+2. **Voyager Automatic Curriculum Generator (`VoyagerCurriculum`)**:
+   - Mines harvested decision records where the decision margin was narrow.
+   - Assigns progressive difficulty levels (`CurriculumDifficulty::Easy`, `Medium`, `Hard`) based on decision entropy and margin.
+   - Generates deterministic `GoldenSuiteDefinition` files consumable by `pandora evaluation golden`.
+3. **Signed Memory Capsule Crystallization**:
+   - Auto-promotes verified crystallized SOPs into cryptographically signed `MemoryCapsule` packages with SHA-256 digests and author provenance.
+
+### Tripartite Cognitive Governance & Worktree Isolation
+
+The `TripartiteGovernance` orchestrator (`crates/pandora-runtime/src/tripartite_governance.rs`) enforces strict separation of concerns for recursive self-modification:
+
+1. **Tripartite Role Separation**:
+   - **Generator**: Formulates and submits self-modification proposals (`TripartiteProposal`).
+   - **Critic**: Evaluates proposals against objective benchmarks and empirical verifiers (`TripartiteEvaluation`).
+   - **Governor**: Holds sole approval and promotion authority (`TripartiteApproval`).
+2. **Universal Self-Approval Invariant**:
+   - The proposer role (`Generator`) is strictly prohibited from approving its own modifications (`TripartiteError::SelfApprovalForbidden`).
+3. **Multi-Objective Pareto & Bayesian Canary Verification**:
+   - The Critic evaluates candidates against the multi-objective `ParetoFrontier` (pass rate, token cost, step latency ms). Dominated candidates are rejected immediately (`TripartiteError::ParetoDominated`).
+   - Candidate proposals must pass `BayesianCanaryGate` evaluation, requiring the Beta distribution 95% lower credible bound ($\text{LCB}_{95}$) to exceed the baseline pass rate.
+4. **Isolated Git Worktree Branch Derivation**:
+   - `branch_name_for_proposal` derives isolated Git worktree branch names (`experiment/<role>-<id>`) ensuring competing evolutionary proposals never mutate the active working tree until full promotion.
 
 ## Extending Pandora
 

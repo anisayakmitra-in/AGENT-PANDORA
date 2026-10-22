@@ -285,7 +285,7 @@ pub use tool_engine::{
 };
 pub use tripartite_governance::{
     TripartiteApproval, TripartiteError, TripartiteEvaluation, TripartiteGovernance,
-    TripartiteProposal, TripartiteRole,
+    TripartiteProposal, TripartiteRole, branch_name_for_proposal,
 };
 pub use voyager_curriculum::{CurriculumDifficulty, VoyagerCurriculum};
 pub use wasm::{

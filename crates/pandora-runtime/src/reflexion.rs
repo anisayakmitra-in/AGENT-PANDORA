@@ -1,8 +1,8 @@
 use crate::evolution::{BayesianCanaryGate, BayesianCanaryVerdict};
 use crate::sessions::{SessionError, SessionSnapshot, SessionStore};
 use pandora_types::{
-    MemoryIntent, PrincipalId, SessionArchiveRecord, SessionId, SopDefinition, SopStep, StoredSop,
-    TenantId, Timestamp, WorkspaceId,
+    MemoryCapsule, MemoryContractError, MemoryIntent, PrincipalId, SessionArchiveRecord, SessionId,
+    SopDefinition, SopStep, StoredSop, TenantId, Timestamp, WorkspaceId,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -52,6 +52,25 @@ pub struct ReflexionCrystallizeResult {
     pub promoted: bool,
     pub stored_sop: Option<StoredSop>,
     pub parameterized_literals: Vec<ParameterizedLiteral>,
+}
+
+impl ReflexionCrystallizeResult {
+    /// Exports the crystallized SOP as a cryptographically signed MemoryCapsule.
+    pub fn export_capsule(
+        &self,
+        author: impl Into<String>,
+        timestamp: Option<Timestamp>,
+    ) -> Result<MemoryCapsule, MemoryContractError> {
+        let capsule_id = format!("capsule-{}", self.sop.id);
+        let ts = timestamp.unwrap_or_else(|| {
+            let unix = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            Timestamp::from_unix_seconds(unix)
+        });
+        MemoryCapsule::new(capsule_id, self.sop.clone(), author, ts)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -523,6 +542,41 @@ impl ReflexionCrystallizer {
         Ok(result)
     }
 
+    /// Crystallizes a session archive and automatically packages it into a signed MemoryCapsule if promoted.
+    #[allow(clippy::too_many_arguments)]
+    pub fn crystallize_and_export_capsule(
+        &self,
+        store: &SessionStore,
+        principal_id: &PrincipalId,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        session_id: &SessionId,
+        baseline_rate: f64,
+        workspace_root: Option<&str>,
+        timestamp: Timestamp,
+        author: impl Into<String>,
+    ) -> Result<(ReflexionCrystallizeResult, Option<MemoryCapsule>), ReflexionError> {
+        let result = self.crystallize_session(
+            store,
+            principal_id,
+            tenant_id,
+            workspace_id,
+            session_id,
+            baseline_rate,
+            workspace_root,
+            timestamp,
+        )?;
+        let capsule = if result.promoted {
+            let cap = result
+                .export_capsule(author, Some(timestamp))
+                .map_err(|e| ReflexionError::ContractViolation(e.to_string()))?;
+            Some(cap)
+        } else {
+            None
+        };
+        Ok((result, capsule))
+    }
+
     /// Crystallizes all known session archives for the workspace.
     #[allow(clippy::too_many_arguments)]
     pub fn crystallize_all(
@@ -842,5 +896,40 @@ mod tests {
         // 1 pass, 10 failures: lower bound is ~0.03 < 0.50 -> not promoted
         let verdict_fail = crystallizer.canary_gate().evaluate(1, 10, 0.50);
         assert!(!verdict_fail.promoted);
+    }
+
+    #[test]
+    fn test_export_capsule_from_crystallize_result() {
+        let step = SopStep::new("step-1", "compile", "cargo check", vec![]).unwrap();
+        let sop = SopDefinition::new(
+            "sop-test-1",
+            "test workflow",
+            MemoryIntent::Procedure,
+            vec![step],
+            Some("cargo test".to_string()),
+        )
+        .unwrap();
+        let verdict = BayesianCanaryVerdict {
+            passes: 10,
+            failures: 0,
+            alpha: 11.0,
+            beta: 1.0,
+            lower_bound_95: 0.76,
+            baseline_rate: 0.50,
+            promoted: true,
+        };
+        let res = ReflexionCrystallizeResult {
+            archive_id: "arch-1".into(),
+            session_id: SessionId::new("sess-1").unwrap(),
+            sop,
+            verdict,
+            promoted: true,
+            stored_sop: None,
+            parameterized_literals: vec![],
+        };
+        let capsule = res.export_capsule("ANISAYAK MITRA", None).unwrap();
+        assert_eq!(capsule.author, "ANISAYAK MITRA");
+        assert!(capsule.sha256_digest.starts_with("sha256:"));
+        assert_eq!(capsule.sop.id, "sop-test-1");
     }
 }

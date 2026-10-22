@@ -1,16 +1,20 @@
 use pandora_runtime::{
-    BayesianCanaryGate, ContextVfs, IslandModelEvolver, IslandNiche, MeshSyncEngine,
-    ParetoCandidate, ParetoFrontier, PeerIdentity, ReflexionCrystallizer, SessionJournalEngine,
-    SessionStore, SignedCapsulePackage, SinglePassLogitEngine,
+    BayesianCanaryGate, BayesianCanaryVerdict, ContextVfs, CurriculumDifficulty,
+    IslandModelEvolver, IslandNiche, LatsEngine, MeshSyncEngine, ParetoCandidate, ParetoFrontier,
+    PeerIdentity, ReflexionCrystallizer, ReflexionDiagnosticEngine, ReflexionFailureKind,
+    SessionJournalEngine, SessionStore, SignedCapsulePackage, SinglePassLogitEngine,
+    StrategyBudget, TripartiteError, TripartiteGovernance, TripartiteProposal, TripartiteRole,
+    VoyagerCurriculum, branch_name_for_proposal,
 };
 use pandora_types::{
-    ContextClassification, ContextContractError, ContextUri, ConvergenceChoice, DecisionQuestion,
-    DomainAgentProfile, DomainProfileMode, DpoPair, ExecutionTopology, FeatureEntry, FeatureMap,
-    GoldenSuiteDefinition, HarnessId, IntentTierChoice, LoopTermination, MemoryCapsule,
-    MemoryContractError, MemoryIntent, MemoryKind, MemoryOrigin, MemoryRecord, MemoryScope,
-    OrchestrationPlan, OrchestrationPlanJson, OrchestrationRole, PlanId, PrincipalId,
-    RoleAssignment, RoleId, RunLoopConfig, Session, SessionArchiveRecord, SessionId, SopDefinition,
-    SopStep, TenantId, Timestamp, ToolSafetyChoice, VfsNodeKind, WorkspaceId,
+    ContextClassification, ContextContractError, ContextUri, ConvergenceChoice,
+    DecisionEvolutionRecord, DecisionQuestion, DomainAgentProfile, DomainProfileMode, DpoPair,
+    ExecutionTopology, FeatureEntry, FeatureMap, GoldenSuiteDefinition, HarnessId,
+    IntentTierChoice, LoopTermination, MemoryCapsule, MemoryContractError, MemoryIntent,
+    MemoryKind, MemoryOrigin, MemoryRecord, MemoryScope, OrchestrationPlan, OrchestrationPlanJson,
+    OrchestrationRole, PlanId, PrincipalId, RoleAssignment, RoleId, RunLoopConfig, Session,
+    SessionArchiveRecord, SessionId, SopDefinition, SopStep, TenantId, Timestamp, ToolSafetyChoice,
+    VfsNodeKind, WorkspaceId,
 };
 use serde_json::{Value, json};
 use std::fs;
@@ -2237,4 +2241,229 @@ fn contract_inner_architecture_harnesses_and_subagent_profiles() {
             role: OrchestrationRole::Critic
         }
     );
+}
+
+#[test]
+fn contract_rsi_lats_reflexion_voyager_and_tripartite_governance() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // 1. LATS MCTS Engine contract (Phase 13.1 & 13.3)
+    let logit_engine = SinglePassLogitEngine::new();
+    let budget = StrategyBudget::new(8, 4, 1000, 8, 10, 1000).expect("valid strategy budget");
+    let lats = LatsEngine::new(budget, logit_engine).with_escalation_threshold(0.15);
+
+    // Escalation gate: low margin (<0.15) must trigger escalation from System 1 reflex to System 2 MCTS
+    assert!(lats.should_escalate(0.04));
+    assert!(lats.should_escalate(0.12));
+    assert!(!lats.should_escalate(0.25));
+
+    // MCTS search: tree expansion and PUCT evaluation
+    let actions = [0usize, 1, 2];
+    let priors = [0.2, 0.5, 0.3];
+    let search_result = lats
+        .search(100u32, &actions, &priors, |_state, action| match action {
+            1 => 0.95,
+            2 => 0.60,
+            _ => 0.10,
+        })
+        .expect("LATS search should succeed");
+
+    assert_eq!(search_result.best_action, Some(1));
+    assert!(search_result.metrics.rollouts > 0);
+    assert!(search_result.metrics.nodes_created > 1);
+    assert!(search_result.metrics.best_value > 0.0);
+
+    // 2. Reflexion Diagnostic Engine contract (Phase 14.1)
+    let raw_compiler_error = r#"
+error[E0308]: mismatched types
+  --> src/main.rs:14:5
+   |
+14 |     let x: u32 = "hello";
+   |            ---   ^^^^^^^ expected `u32`, found `&str`
+"#;
+    let diag = ReflexionDiagnosticEngine::diagnose(raw_compiler_error);
+    assert_eq!(diag.kind, ReflexionFailureKind::Compiler);
+    assert!(diag.root_cause.contains("mismatched types"));
+    assert_eq!(diag.invariant_violated, "code must type-check");
+    assert!(diag.severity >= 3);
+
+    let raw_assertion_error = "FAILED: assertion failed: left == right\n left: 42\n right: 99";
+    let assertion_diag = ReflexionDiagnosticEngine::diagnose(raw_assertion_error);
+    assert_eq!(assertion_diag.kind, ReflexionFailureKind::Assertion);
+
+    // 3. Voyager Curriculum Generator contract (Phase 14.2)
+    let records = vec![
+        DecisionEvolutionRecord {
+            id: "rec-1".to_string(),
+            question_id: "q_compile".to_string(),
+            prompt: "fix type mismatch".to_string(),
+            selected_label: "apply_type_fix".to_string(),
+            confidence: 0.85,
+            margin: 0.15,
+            candidate_probabilities: std::collections::BTreeMap::new(),
+            recorded_at: Timestamp::from_unix_seconds(1000),
+        },
+        DecisionEvolutionRecord {
+            id: "rec-2".to_string(),
+            question_id: "q_perf".to_string(),
+            prompt: "optimize memory buffer".to_string(),
+            selected_label: "zero_copy".to_string(),
+            confidence: 0.55,
+            margin: 0.05,
+            candidate_probabilities: std::collections::BTreeMap::new(),
+            recorded_at: Timestamp::from_unix_seconds(1001),
+        },
+        DecisionEvolutionRecord {
+            id: "rec-3".to_string(),
+            question_id: "q_concurrency".to_string(),
+            prompt: "resolve data race".to_string(),
+            selected_label: "rwlock_guard".to_string(),
+            confidence: 0.51,
+            margin: 0.01,
+            candidate_probabilities: std::collections::BTreeMap::new(),
+            recorded_at: Timestamp::from_unix_seconds(1002),
+        },
+    ];
+
+    let curriculum_suite = VoyagerCurriculum::from_records(&records);
+    assert_eq!(curriculum_suite.cases.len(), 3);
+    assert_eq!(
+        CurriculumDifficulty::from_margin(records[0].margin),
+        CurriculumDifficulty::Easy
+    );
+    assert_eq!(
+        CurriculumDifficulty::from_margin(records[1].margin),
+        CurriculumDifficulty::Medium
+    );
+    assert_eq!(
+        CurriculumDifficulty::from_margin(records[2].margin),
+        CurriculumDifficulty::Hard
+    );
+    assert!(curriculum_suite.cases[0].id.contains("easy"));
+    assert!(curriculum_suite.cases[1].id.contains("medium"));
+    assert!(curriculum_suite.cases[2].id.contains("hard"));
+
+    // 4. Tripartite Cognitive Governance contract (Phase 15.1)
+    let gov = TripartiteGovernance::new(1);
+    let proposal =
+        TripartiteProposal::new("prop-rsi-optimization", "optimize lats search").unwrap();
+    assert_eq!(proposal.proposed_by, TripartiteRole::Generator);
+
+    // Generator cannot approve (role mismatch: expected Governor)
+    let generator_approve_err = gov.approve(
+        &proposal,
+        TripartiteRole::Generator,
+        None,
+        true,
+        "generator approval attempt",
+    );
+    assert_eq!(
+        generator_approve_err,
+        Err(TripartiteError::RoleMismatch {
+            expected: TripartiteRole::Governor,
+            actual: TripartiteRole::Generator,
+        })
+    );
+
+    // Self-approval is forbidden even if proposer is Governor
+    let mut gov_proposal = proposal.clone();
+    gov_proposal.proposed_by = TripartiteRole::Governor;
+    let self_approve_err = gov.approve(
+        &gov_proposal,
+        TripartiteRole::Governor,
+        None,
+        true,
+        "self-approval attempt",
+    );
+    assert_eq!(
+        self_approve_err,
+        Err(TripartiteError::SelfApprovalForbidden)
+    );
+
+    // Derive dedicated worktree branch for competing proposal
+    let branch = branch_name_for_proposal(&proposal);
+    assert_eq!(branch, "experiment/generator-prop-rsi-optimization");
+
+    // Critic evaluation with Pareto frontier tracking and Bayesian canary gate
+    let mut frontier = ParetoFrontier::new();
+    let canary_gate = BayesianCanaryGate::new(0.95);
+
+    // Initial proposal evaluates cleanly
+    let eval = gov
+        .evaluate_with_verifiers(
+            &proposal,
+            TripartiteRole::Critic,
+            1.0,
+            120.0,
+            45,
+            &mut frontier,
+            Some((&canary_gate, 50, 0, 0.85)),
+        )
+        .expect("critic evaluation with verifiers should succeed");
+
+    assert!(eval.is_pareto_accepted());
+    assert!(eval.is_canary_promoted());
+
+    // Governor approves proposal
+    let approval = gov
+        .approve(
+            &proposal,
+            TripartiteRole::Governor,
+            Some(&eval),
+            true,
+            "governor verified pareto and canary criteria",
+        )
+        .expect("governor approval should succeed");
+
+    // Promotion gate succeeds
+    assert!(
+        gov.promote(&proposal, Some(&eval), Some(&approval))
+            .expect("promotion should succeed")
+    );
+
+    // 5. Signed Memory Capsule export from crystallized result (Phase 14.3)
+    let step = SopStep::new(
+        "step-rsi-1",
+        "mcts-rollout",
+        "pandora run --lats",
+        Vec::new(),
+    )
+    .unwrap();
+    let sop = SopDefinition::new(
+        "sop-rsi-lats-v1",
+        "LATS MCTS Automated Recovery",
+        MemoryIntent::Procedure,
+        vec![step],
+        Some("pandora evaluation golden".to_string()),
+    )
+    .unwrap();
+    let verdict = BayesianCanaryVerdict {
+        passes: 100,
+        failures: 0,
+        alpha: 101.0,
+        beta: 1.0,
+        lower_bound_95: 0.96,
+        baseline_rate: 0.85,
+        promoted: true,
+    };
+    let crystallize_result = pandora_runtime::ReflexionCrystallizeResult {
+        archive_id: "arch-session-rsi-01".to_string(),
+        session_id: SessionId::new("sess-rsi-01").unwrap(),
+        sop,
+        verdict,
+        promoted: true,
+        stored_sop: None,
+        parameterized_literals: Vec::new(),
+    };
+
+    let author_identity = "ANISAYAK MITRA <266799942+anisayakmitra-in@users.noreply.github.com>";
+    let capsule = crystallize_result
+        .export_capsule(author_identity, None)
+        .expect("capsule export should succeed");
+
+    assert_eq!(capsule.author, author_identity);
+    assert_eq!(capsule.sop.id, "sop-rsi-lats-v1");
+    assert!(capsule.sha256_digest.starts_with("sha256:"));
+    assert_eq!(capsule.capsule_id, "capsule-sop-rsi-lats-v1");
 }

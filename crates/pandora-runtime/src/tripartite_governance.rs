@@ -8,6 +8,9 @@
 //!
 //! The Generator can *never* approve its own modifications.
 
+use crate::evolution::{
+    BayesianCanaryGate, BayesianCanaryVerdict, ParetoCandidate, ParetoFrontier,
+};
 use std::fmt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,7 +30,7 @@ impl TripartiteRole {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TripartiteError {
     SelfApprovalForbidden,
     RoleMismatch {
@@ -37,6 +40,11 @@ pub enum TripartiteError {
     MissingCriticEvaluation,
     MissingGovernorApproval,
     EmptyProposal,
+    ParetoDominated(String),
+    CanaryCheckFailed {
+        lower_bound: f64,
+        baseline: f64,
+    },
 }
 
 impl fmt::Display for TripartiteError {
@@ -58,6 +66,21 @@ impl fmt::Display for TripartiteError {
                 formatter.write_str("governor approval is required before promotion")
             }
             Self::EmptyProposal => formatter.write_str("proposal must not be empty"),
+            Self::ParetoDominated(id) => {
+                write!(
+                    formatter,
+                    "proposal {id} is dominated on the Pareto frontier"
+                )
+            }
+            Self::CanaryCheckFailed {
+                lower_bound,
+                baseline,
+            } => {
+                write!(
+                    formatter,
+                    "canary LCB95 ({lower_bound:.4}) did not exceed baseline ({baseline:.4})"
+                )
+            }
         }
     }
 }
@@ -94,6 +117,8 @@ pub struct TripartiteEvaluation {
     pub token_cost: f64,
     pub step_latency_ms: u64,
     pub evaluated_by: TripartiteRole,
+    pub pareto_candidate: Option<ParetoCandidate>,
+    pub canary_verdict: Option<BayesianCanaryVerdict>,
 }
 
 impl TripartiteEvaluation {
@@ -109,7 +134,27 @@ impl TripartiteEvaluation {
             token_cost,
             step_latency_ms,
             evaluated_by: TripartiteRole::Critic,
+            pareto_candidate: None,
+            canary_verdict: None,
         }
+    }
+
+    pub fn with_pareto(mut self, candidate: ParetoCandidate) -> Self {
+        self.pareto_candidate = Some(candidate);
+        self
+    }
+
+    pub fn with_canary(mut self, verdict: BayesianCanaryVerdict) -> Self {
+        self.canary_verdict = Some(verdict);
+        self
+    }
+
+    pub fn is_pareto_accepted(&self) -> bool {
+        self.pareto_candidate.is_some()
+    }
+
+    pub fn is_canary_promoted(&self) -> bool {
+        self.canary_verdict.as_ref().is_none_or(|v| v.promoted)
     }
 }
 
@@ -175,6 +220,47 @@ impl TripartiteGovernance {
         ))
     }
 
+    /// Critic evaluates a proposal using Pareto frontier tracking and optional Bayesian canary gating.
+    #[allow(clippy::too_many_arguments)]
+    pub fn evaluate_with_verifiers(
+        &self,
+        proposal: &TripartiteProposal,
+        evaluator: TripartiteRole,
+        pass_rate: f64,
+        token_cost: f64,
+        step_latency_ms: u64,
+        frontier: &mut ParetoFrontier,
+        canary_eval: Option<(&BayesianCanaryGate, u32, u32, f64)>,
+    ) -> Result<TripartiteEvaluation, TripartiteError> {
+        if evaluator != TripartiteRole::Critic {
+            return Err(TripartiteError::RoleMismatch {
+                expected: TripartiteRole::Critic,
+                actual: evaluator,
+            });
+        }
+        let candidate =
+            ParetoCandidate::new(&proposal.id, pass_rate, token_cost as u32, step_latency_ms);
+        if !frontier.try_insert(candidate.clone()) {
+            return Err(TripartiteError::ParetoDominated(proposal.id.clone()));
+        }
+        let mut eval =
+            TripartiteEvaluation::new(proposal.id.clone(), pass_rate, token_cost, step_latency_ms)
+                .with_pareto(candidate);
+
+        if let Some((gate, passes, failures, baseline)) = canary_eval {
+            let verdict = gate.evaluate(passes, failures, baseline);
+            if !verdict.promoted {
+                return Err(TripartiteError::CanaryCheckFailed {
+                    lower_bound: verdict.lower_bound_95,
+                    baseline: verdict.baseline_rate,
+                });
+            }
+            eval = eval.with_canary(verdict);
+        }
+
+        Ok(eval)
+    }
+
     /// Governor approves or rejects. The approver must be the Governor role,
     /// and the proposal's submitter (Generator) can never be the approver.
     pub fn approve(
@@ -200,6 +286,14 @@ impl TripartiteGovernance {
         let eval = evaluation.unwrap();
         if eval.proposal_id != proposal.id {
             return Err(TripartiteError::MissingCriticEvaluation);
+        }
+        if let Some(ref verdict) = eval.canary_verdict
+            && !verdict.promoted
+        {
+            return Err(TripartiteError::CanaryCheckFailed {
+                lower_bound: verdict.lower_bound_95,
+                baseline: verdict.baseline_rate,
+            });
         }
         Ok(TripartiteApproval::new(
             proposal.id.clone(),
@@ -228,6 +322,15 @@ impl TripartiteGovernance {
         }
         Ok(true)
     }
+}
+
+/// Helper to derive an isolated Git worktree branch name for testing competing proposals.
+pub fn branch_name_for_proposal(proposal: &TripartiteProposal) -> String {
+    format!(
+        "experiment/{}-{}",
+        proposal.proposed_by.as_str(),
+        proposal.id
+    )
 }
 
 #[cfg(test)]
@@ -306,5 +409,91 @@ mod tests {
             .approve(&p, TripartiteRole::Governor, Some(&eval), false, "no")
             .unwrap();
         assert!(!g.promote(&p, Some(&eval), Some(&appr)).unwrap());
+    }
+
+    #[test]
+    fn critic_evaluates_with_pareto_and_canary() {
+        let g = gov();
+        let p = TripartiteProposal::new("p_pareto", "better candidate").unwrap();
+        let mut frontier = ParetoFrontier::new();
+        let canary_gate = BayesianCanaryGate::new(0.95);
+
+        // 100 passes, 0 failures, baseline 0.90 -> passes canary gate
+        let eval = g
+            .evaluate_with_verifiers(
+                &p,
+                TripartiteRole::Critic,
+                1.0,
+                50.0,
+                10,
+                &mut frontier,
+                Some((&canary_gate, 100, 0, 0.90)),
+            )
+            .unwrap();
+
+        assert!(eval.is_pareto_accepted());
+        assert!(eval.is_canary_promoted());
+
+        let appr = g
+            .approve(&p, TripartiteRole::Governor, Some(&eval), true, "verified")
+            .unwrap();
+        assert!(g.promote(&p, Some(&eval), Some(&appr)).unwrap());
+    }
+
+    #[test]
+    fn critic_rejects_pareto_dominated_proposal() {
+        let g = gov();
+        let mut frontier = ParetoFrontier::new();
+        // Add strong incumbent: pass_rate: 1.0, token_cost: 10, latency: 5ms
+        let incumbent = ParetoCandidate::new("incumbent", 1.0, 10, 5);
+        frontier.try_insert(incumbent);
+
+        // Worse candidate: pass_rate: 0.8, token_cost: 20, latency: 15ms -> dominated
+        let p_worse = TripartiteProposal::new("p_worse", "worse candidate").unwrap();
+        let err = g.evaluate_with_verifiers(
+            &p_worse,
+            TripartiteRole::Critic,
+            0.8,
+            20.0,
+            15,
+            &mut frontier,
+            None,
+        );
+        assert_eq!(
+            err,
+            Err(TripartiteError::ParetoDominated("p_worse".to_string()))
+        );
+    }
+
+    #[test]
+    fn critic_rejects_failing_canary_gate() {
+        let g = gov();
+        let mut frontier = ParetoFrontier::new();
+        let canary_gate = BayesianCanaryGate::new(0.95);
+
+        // High failure rate: 10 passes, 90 failures, baseline 0.80 -> fails canary
+        let p_fail = TripartiteProposal::new("p_fail", "flaky candidate").unwrap();
+        let err = g.evaluate_with_verifiers(
+            &p_fail,
+            TripartiteRole::Critic,
+            0.5,
+            10.0,
+            5,
+            &mut frontier,
+            Some((&canary_gate, 10, 90, 0.80)),
+        );
+        assert!(matches!(
+            err,
+            Err(TripartiteError::CanaryCheckFailed { .. })
+        ));
+    }
+
+    #[test]
+    fn branch_name_formatting() {
+        let p = TripartiteProposal::new("sop-crystallize-42", "crystallized sop").unwrap();
+        assert_eq!(
+            branch_name_for_proposal(&p),
+            "experiment/generator-sop-crystallize-42"
+        );
     }
 }
