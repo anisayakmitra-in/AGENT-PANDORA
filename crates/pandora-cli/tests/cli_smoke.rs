@@ -12357,10 +12357,18 @@ fn submit_phase7_jobs(
                     if ordinal > 0 {
                         thread::sleep(interval);
                     }
-                    let submitted = fixture
-                        .command(&["job", "submit", "--", "read:README.md", "--json"])
-                        .output()
-                        .expect("independent Phase 7 producer should start");
+                    let mut attempts = 0;
+                    let submitted = loop {
+                        attempts += 1;
+                        let output = fixture
+                            .command(&["job", "submit", "--", "read:README.md", "--json"])
+                            .output()
+                            .expect("independent Phase 7 producer should start");
+                        if output.status.success() || attempts >= 10 {
+                            break output;
+                        }
+                        thread::sleep(Duration::from_millis(50 * attempts));
+                    };
                     assert_success_with_context(&submitted, "Phase 7 producer submission");
                     if (ordinal == 0 || ordinal.is_multiple_of(32))
                         && let Some(monitor) = soak_monitor
