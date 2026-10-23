@@ -219,6 +219,9 @@ pandora run --harness coding --gene workspace.refs "refs"
 pandora run "read:README.md" --expected-output "fixture" --retryable --json
 pandora run --plan "inspect the README and report what it contains"
 pandora run --approval <approval-id> "patch:README.md:approved content"
+pandora run --strategy lats "refactor the error handling module"
+pandora run --strategy lats --lats-rollouts 32 --lats-depth 8 --puct-c 1.0 "design a new caching layer"
+pandora run --strategy lats --escalation-threshold 0.4 "review the authentication flow"
 pandora chat
 pandora chat --session <session-id>
 pandora tui
@@ -543,6 +546,23 @@ when no suitable evidence exists. Cost selection ignores runs without explicit
 pricing. The option cannot be combined with `--provider`, `--model`, or
 `--approval`; it does not change configuration, policy, permissions, or
 credentials.
+
+### LATS MCTS Strategy (`--strategy lats`)
+
+`pandora run --strategy lats <task>` activates the Monte Carlo Tree Search
+planning layer before the agent loop. The LATS engine runs PUCT-guided rollouts
+and reports search metrics in the JSON output (`lats_metrics` field).
+
+| Flag | Default | Range | Description |
+|------|---------|-------|-------------|
+| `--strategy lats` | — | `react\|reflexion\|lats` | Select planning strategy |
+| `--lats-rollouts <n>` | 16 | 1–100 | Number of MCTS rollouts |
+| `--lats-depth <n>` | 6 | 1–16 | Maximum tree depth per rollout |
+| `--puct-c <f>` | 1.41 | > 0 | PUCT exploration constant |
+| `--escalation-threshold <f>` | 0.5 | 0–1 | System 1 → System 2 escalation gate |
+
+`--lats-rollouts`, `--lats-depth`, `--puct-c`, and `--escalation-threshold`
+require `--strategy lats` and are rejected otherwise.
 
 ## Golden-set evaluation
 
@@ -1372,6 +1392,38 @@ The command surface supports:
 - `harvest`: Active-learning uncertainty harvester. Identifies decisions with low confidence margin (`--min-margin <float>`) and synthesizes `GoldenSuiteDefinition` datasets ready for immediate verification with `pandora evaluation golden`, Direct Preference Optimization (DPO) pairs (`--dpo-export <path>`), and fine-tuning prompt/completion pairs.
 
 Commands are also accessible under the `pandora runtime decision ...` namespace.
+
+## Voyager Curriculum CLI
+
+`curriculum` builds progressive challenge suites (Voyager-style) from recorded decision
+history or from a seed list of questions, then exports them as `GoldenSuiteDefinition`
+JSON files ready for `pandora evaluation golden`.
+
+```text
+pandora curriculum list
+pandora curriculum generate
+pandora curriculum generate --input decisions.json --out suite.json --difficulty hard
+pandora curriculum generate --suite-id my-suite --difficulty medium --limit 20
+pandora curriculum generate --input questions.json --out suite.json --min-margin 0.1
+pandora curriculum inspect --input suite.json
+```
+
+Subcommands:
+
+- `generate`: Harvests uncertain decision records (or synthesizes from a seed list), classifies
+  cases into `Easy` / `Medium` / `Hard` difficulty tiers (derived from the decision confidence
+  margin), and emits a `GoldenSuiteDefinition` JSON.
+  Options: `--suite-id <id>`, `--input <path>`, `--out <path>` / `--export-golden <path>`,
+  `--difficulty easy|medium|hard|all`, `--min-margin <float>`, `--limit <n>`, `--json`.
+- `inspect`: Parses a previously generated `GoldenSuiteDefinition` file and displays
+  case counts, difficulty distribution, and a sample of cases.
+- `list`: Lists available difficulty tiers and their margin thresholds.
+
+The `decision curriculum` alias is also supported:
+
+```text
+pandora decision curriculum generate --difficulty hard --out hard_suite.json
+```
 
 ## Darwinian Island-Model Evolution
 

@@ -19,6 +19,7 @@ mod chat;
 mod completions;
 pub(crate) mod connector;
 pub(crate) mod curator;
+pub(crate) mod curriculum;
 pub(crate) mod decision;
 mod doctor;
 mod efficiency;
@@ -78,6 +79,8 @@ pub(crate) const ROOT_COMMANDS: &[&str] = &[
     "rollout",
     "run",
     "chat",
+    "curriculum",
+    "decision",
     "tui",
     "harness",
     "slash",
@@ -200,6 +203,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "graph" => graph::execute(&args[1..]),
         "map" => graph::map_command(&args[1..]),
         "decision" => decision::execute(&args[1..]),
+        "curriculum" => curriculum::execute(&args[1..]),
         "curator" => curator::execute(&args[1..]),
         "hardware" => hardware::execute(&args[1..]),
         "kanban" => kanban::execute(&args[1..]),
@@ -436,17 +440,19 @@ pub(crate) fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|tui|harness|slash|session|job|subagent|skill|package|registry|runtime|memory|approval|provider|mcp|tool|orchestration|operations|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor> [options]
+    r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|curriculum|decision|tui|harness|slash|session|job|subagent|skill|package|registry|runtime|memory|approval|provider|mcp|tool|orchestration|operations|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor> [options]
 
 commands:
   help (or --help)
   setup [--interactive] [--provider-url <url>] [--model <model>] [--api-key-env <name>]
-  run [--provider <name>] [--session <id>] [--agent] [--max-turns <n>] [--max-tools <n>] [--harness <id>] [--harness-version <version>] [--gene <id>] [--plan] [--model <model>] [--task-class <name>] [--approval <id>] [--optimize <cost|latency|tokens|certainty>] <task>
+  run [--provider <name>] [--session <id>] [--agent] [--max-turns <n>] [--max-tools <n>] [--harness <id>] [--harness-version <version>] [--gene <id>] [--plan] [--model <model>] [--task-class <name>] [--approval <id>] [--optimize <cost|latency|tokens|certainty>] [--strategy react|reflexion|lats] [--lats-rollouts <1-100>] [--lats-depth <1-16>] [--puct-c <float>] [--escalation-threshold <float>] <task>
   service start [--port <port>]
   auth enroll --principal <id> --tenant <id> --workspace-id <id> --role <viewer|operator|administrator> [--device-key-file <path>] [--token-file <path>] | list | revoke <identity-id> --yes
   secret set <ENV_NAME> --value-stdin | list | status <ENV_NAME> | remove <ENV_NAME> --yes
   backup create --output <path> [--passphrase-env <name>] | inspect --input <path> [--passphrase-env <name>] | restore --input <path> [--passphrase-env <name>] --yes | lifecycle preview --input <path> | record --input <path> --yes | list [--storage-provider <provider>] [--action <action>] [--limit <1-256>] | inspect --id <evidence-id> | recovery list | recovery inspect --transaction <id>
   chat [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>]
+  curriculum generate [--suite-id <id>] [--input <path>] [--out <path>] [--difficulty easy|medium|hard|all] [--min-margin <float>] [--limit <n>] | inspect --input <path> | list
+  decision harvest [--min-margin <float>] [--export-golden <path>] [--limit <n>] | list
   tui [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>] [--theme <auto|dark|light|mono>]
   harness list|inspect|run [--harness-version <version>]
   slash list|resolve <command>

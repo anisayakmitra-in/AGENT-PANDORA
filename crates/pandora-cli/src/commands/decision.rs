@@ -6,13 +6,16 @@ use serde_json::json;
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
-        CliError::usage("decision requires 'evaluate', 'tool-gate', 'intent-route', or 'harvest'")
+        CliError::usage(
+            "decision requires 'evaluate', 'tool-gate', 'intent-route', 'harvest', or 'curriculum'",
+        )
     })?;
     match subcommand.as_str() {
         "evaluate" => evaluate(&args[1..]),
         "tool-gate" => tool_gate(&args[1..]),
         "intent-route" => intent_route(&args[1..]),
         "harvest" => harvest(&args[1..]),
+        "curriculum" => super::curriculum::execute(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown decision command '{unknown}'"
         ))),

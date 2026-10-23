@@ -340,6 +340,25 @@ Phase 15 enforces separation of concerns for recursive self-modification:
 3. **Isolated Git Worktree Branch Derivation**:
    - Dedicated branch names (`experiment/<role>-<proposal_id>`) isolate competing proposals into independent worktrees before promotion.
 
+## CLI Ergonomic Enhancements (Optional Glue)
+
+Two optional ergonomic enhancements wiring Phase 13–14 primitives directly into the CLI:
+
+1. **`pandora curriculum` command** (`crates/pandora-cli/src/commands/curriculum.rs`):
+   - `generate`: harvests uncertain decision records (or synthesizes from a seed list of questions),
+     classifies cases into Easy / Medium / Hard difficulty tiers by confidence margin, and exports a
+     `GoldenSuiteDefinition` JSON ready for `pandora evaluation golden`.
+   - `inspect`: parses and displays an existing suite file (case counts, difficulty distribution, sample).
+   - `list`: lists available difficulty tiers and their margin thresholds.
+   - `--suite-id`, `--input`, `--out`/`--export-golden`, `--difficulty`, `--min-margin`, `--limit` flags.
+   - Also accessible via `pandora decision curriculum ...` alias.
+
+2. **`--strategy lats` on `pandora run`** (`crates/pandora-cli/src/commands/run.rs`):
+   - Activates the LATS MCTS planning layer before the agent loop.
+   - `--lats-rollouts <1-100>`, `--lats-depth <1-16>`, `--puct-c <float>`, `--escalation-threshold <float>`.
+   - LATS search metrics reported in JSON output (`lats_metrics` field) and human-readable summary.
+   - LATS-specific flags require `--strategy lats` and are rejected otherwise.
+
 ## Issue-sized contribution areas
 
 Good public issues have one observable result, one authority statement, and

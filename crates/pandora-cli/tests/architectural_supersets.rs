@@ -2467,3 +2467,170 @@ error[E0308]: mismatched types
     assert!(capsule.sha256_digest.starts_with("sha256:"));
     assert_eq!(capsule.capsule_id, "capsule-sop-rsi-lats-v1");
 }
+
+#[test]
+fn contract_curriculum_cli_generation_and_inspection() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // 1. Test curriculum list
+    let resp_list = fixture.run(&["curriculum", "list"]);
+    let val_list = resp_list.success("curriculum list");
+    let tiers = val_list["tiers"].as_array().expect("tiers array");
+    assert_eq!(tiers.len(), 3);
+    assert_eq!(tiers[0]["tier"], "easy");
+    assert_eq!(tiers[1]["tier"], "medium");
+    assert_eq!(tiers[2]["tier"], "hard");
+
+    // 2. Test curriculum generate with default questions
+    let resp_gen = fixture.run(&["curriculum", "generate", "--suite-id", "test-curr-suite"]);
+    let val_gen = resp_gen.success("curriculum generate");
+    assert_eq!(val_gen["suite_id"], "test-curr-suite");
+    let total_cases = val_gen["total_cases"].as_u64().unwrap();
+    assert!(total_cases > 0, "should generate challenge cases");
+    assert_eq!(val_gen["difficulty_filter"], "all");
+
+    // 3. Test curriculum generate with difficulty filter
+    let resp_hard = fixture.run(&[
+        "curriculum",
+        "generate",
+        "--suite-id",
+        "hard-suite",
+        "--difficulty",
+        "hard",
+    ]);
+    let val_hard = resp_hard.success("curriculum generate");
+    assert_eq!(val_hard["difficulty_filter"], "hard");
+    let cases = val_hard["cases"].as_array().unwrap();
+    for case in cases {
+        assert!(
+            case["id"].as_str().unwrap().contains("hard"),
+            "filtered cases must be hard"
+        );
+    }
+
+    // 4. Test export to disk and inspect
+    let out_file = fixture.root.join("exported-curriculum.json");
+    let out_str = out_file.to_str().unwrap();
+    let resp_export = fixture.run(&[
+        "curriculum",
+        "generate",
+        "--suite-id",
+        "disk-suite",
+        "--out",
+        out_str,
+    ]);
+    let val_export = resp_export.success("curriculum generate");
+    assert_eq!(val_export["output_file"].as_str(), Some(out_str));
+    assert!(out_file.exists(), "curriculum file should exist on disk");
+
+    // 5. Test curriculum inspect
+    let resp_inspect = fixture.run(&["curriculum", "inspect", "--input", out_str]);
+    let val_inspect = resp_inspect.success("curriculum inspect");
+    assert_eq!(val_inspect["suite_id"], "disk-suite");
+    assert_eq!(
+        val_inspect["total_cases"].as_u64().unwrap(),
+        val_export["total_cases"].as_u64().unwrap()
+    );
+
+    // 6. Test alias under decision curriculum
+    let resp_alias = fixture.run(&["decision", "curriculum", "list"]);
+    let val_alias = resp_alias.success("curriculum list");
+    assert_eq!(val_alias["tiers"].as_array().unwrap().len(), 3);
+}
+
+#[test]
+fn contract_run_cli_lats_strategy_validation() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // 1. Invalid strategy
+    let resp_invalid = fixture.run(&["run", "solve problem", "--strategy", "unknown"]);
+    assert!(!resp_invalid.status.success());
+    assert!(
+        resp_invalid.text.contains("unknown strategy 'unknown'"),
+        "expected unknown strategy error, got: {}",
+        resp_invalid.text
+    );
+
+    // 2. LATS flags require --strategy lats
+    let resp_no_strat = fixture.run(&["run", "solve problem", "--lats-rollouts", "10"]);
+    assert!(!resp_no_strat.status.success());
+    assert!(
+        resp_no_strat
+            .text
+            .contains("--lats-rollouts requires --strategy lats"),
+        "expected strategy requirement error, got: {}",
+        resp_no_strat.text
+    );
+
+    // 3. Rollouts out of bounds
+    let resp_zero_rollouts = fixture.run(&[
+        "run",
+        "solve problem",
+        "--strategy",
+        "lats",
+        "--lats-rollouts",
+        "0",
+    ]);
+    assert!(!resp_zero_rollouts.status.success());
+    assert!(
+        resp_zero_rollouts
+            .text
+            .contains("--lats-rollouts must be an integer between 1 and 100"),
+        "expected rollouts bounds error, got: {}",
+        resp_zero_rollouts.text
+    );
+
+    // 4. Depth out of bounds
+    let resp_depth = fixture.run(&[
+        "run",
+        "solve problem",
+        "--strategy",
+        "lats",
+        "--lats-depth",
+        "32",
+    ]);
+    assert!(!resp_depth.status.success());
+    assert!(
+        resp_depth
+            .text
+            .contains("--lats-depth must be an integer between 1 and 16"),
+        "expected depth bounds error, got: {}",
+        resp_depth.text
+    );
+
+    // 5. PUCT c not positive
+    let resp_puct = fixture.run(&[
+        "run",
+        "solve problem",
+        "--strategy",
+        "lats",
+        "--puct-c",
+        "0.0",
+    ]);
+    assert!(!resp_puct.status.success());
+    assert!(
+        resp_puct.text.contains("--puct-c must be a positive float"),
+        "expected puct error, got: {}",
+        resp_puct.text
+    );
+
+    // 6. Escalation threshold out of bounds
+    let resp_esc = fixture.run(&[
+        "run",
+        "solve problem",
+        "--strategy",
+        "lats",
+        "--escalation-threshold",
+        "1.5",
+    ]);
+    assert!(!resp_esc.status.success());
+    assert!(
+        resp_esc
+            .text
+            .contains("--escalation-threshold must be a float between 0.0 and 1.0"),
+        "expected escalation bounds error, got: {}",
+        resp_esc.text
+    );
+}

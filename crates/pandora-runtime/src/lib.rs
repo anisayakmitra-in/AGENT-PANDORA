@@ -287,7 +287,7 @@ pub use tripartite_governance::{
     TripartiteApproval, TripartiteError, TripartiteEvaluation, TripartiteGovernance,
     TripartiteProposal, TripartiteRole, branch_name_for_proposal,
 };
-pub use voyager_curriculum::{CurriculumDifficulty, VoyagerCurriculum};
+pub use voyager_curriculum::{CurriculumDifficulty, CurriculumSummary, VoyagerCurriculum};
 pub use wasm::{
     DEFAULT_WASM_FUEL, MAX_WASM_INPUT_BYTES, MAX_WASM_MEMORY_BYTES, MAX_WASM_OUTPUT_BYTES,
     WasmError, WasmExecutor, WasmGene, WasmGeneRequest, WasmResult,

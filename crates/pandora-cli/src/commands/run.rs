@@ -126,11 +126,93 @@ pub(super) fn execute_with_control(
             "optimize",
             "expected-output",
             "retryable",
+            "strategy",
+            "lats-rollouts",
+            "lats-depth",
+            "puct-c",
+            "escalation-threshold",
         ],
     )?;
     if parsed.positionals.len() != 1 {
         return Err(CliError::usage("run requires exactly one task"));
     }
+    let strategy = match parsed.value("strategy") {
+        Some("react") => Some("react"),
+        Some("reflexion") => Some("reflexion"),
+        Some("lats") => Some("lats"),
+        Some(unknown) => {
+            return Err(CliError::usage(format!(
+                "unknown strategy '{unknown}', expected 'react', 'reflexion', or 'lats'"
+            )));
+        }
+        None => None,
+    };
+    let lats_rollouts = if let Some(raw) = parsed.value("lats-rollouts") {
+        if strategy != Some("lats") {
+            return Err(CliError::usage("--lats-rollouts requires --strategy lats"));
+        }
+        let r = raw
+            .parse::<u32>()
+            .map_err(|_| CliError::usage("--lats-rollouts must be an integer between 1 and 100"))?;
+        if !(1..=100).contains(&r) {
+            return Err(CliError::usage(
+                "--lats-rollouts must be an integer between 1 and 100",
+            ));
+        }
+        Some(r)
+    } else {
+        None
+    };
+    let lats_depth = if let Some(raw) = parsed.value("lats-depth") {
+        if strategy != Some("lats") {
+            return Err(CliError::usage("--lats-depth requires --strategy lats"));
+        }
+        let d = raw
+            .parse::<u32>()
+            .map_err(|_| CliError::usage("--lats-depth must be an integer between 1 and 16"))?;
+        if !(1..=16).contains(&d) {
+            return Err(CliError::usage(
+                "--lats-depth must be an integer between 1 and 16",
+            ));
+        }
+        Some(d)
+    } else {
+        None
+    };
+    let puct_c = if let Some(raw) = parsed.value("puct-c") {
+        if strategy != Some("lats") {
+            return Err(CliError::usage("--puct-c requires --strategy lats"));
+        }
+        let c = raw
+            .parse::<f64>()
+            .map_err(|_| CliError::usage("--puct-c must be a positive float"))?;
+        if !c.is_finite() || c <= 0.0 {
+            return Err(CliError::usage("--puct-c must be a positive float"));
+        }
+        Some(c)
+    } else {
+        None
+    };
+    let escalation_threshold = if let Some(raw) = parsed.value("escalation-threshold") {
+        if strategy != Some("lats") {
+            return Err(CliError::usage(
+                "--escalation-threshold requires --strategy lats",
+            ));
+        }
+        let t = raw.parse::<f64>().map_err(|_| {
+            CliError::usage("--escalation-threshold must be a float between 0.0 and 1.0")
+        })?;
+        if !t.is_finite() || !(0.0..=1.0).contains(&t) {
+            return Err(CliError::usage(
+                "--escalation-threshold must be a float between 0.0 and 1.0",
+            ));
+        }
+        Some(t)
+    } else {
+        None
+    };
+    let is_agent = parsed.value("agent").is_some() || strategy.is_some();
+
     if parsed.value("approval").is_some()
         && (parsed.value("plan").is_some() || parsed.value("model").is_some())
     {
@@ -138,7 +220,7 @@ pub(super) fn execute_with_control(
             "--approval cannot be combined with --plan or --model",
         ));
     }
-    if parsed.value("agent").is_some()
+    if is_agent
         && (parsed.value("plan").is_some()
             || parsed.value("harness").is_some()
             || parsed.value("gene").is_some()
@@ -147,15 +229,13 @@ pub(super) fn execute_with_control(
             || parsed.value("retryable").is_some())
     {
         return Err(CliError::usage(
-            "--agent cannot be combined with --plan, --harness, --gene, or feedback options",
+            "--agent/--strategy cannot be combined with --plan, --harness, --gene, or feedback options",
         ));
     }
     if parsed.value("retryable").is_some() && parsed.value("expected-output").is_none() {
         return Err(CliError::usage("--retryable requires --expected-output"));
     }
-    if parsed.value("agent").is_none()
-        && (parsed.value("max-turns").is_some() || parsed.value("max-tools").is_some())
-    {
+    if !is_agent && (parsed.value("max-turns").is_some() || parsed.value("max-tools").is_some()) {
         return Err(CliError::usage(
             "--max-turns and --max-tools require --agent",
         ));
@@ -170,10 +250,7 @@ pub(super) fn execute_with_control(
             "--optimize cannot be combined with --model",
         ));
     }
-    if parsed.value("optimize").is_some()
-        && parsed.value("agent").is_none()
-        && parsed.value("plan").is_none()
-    {
+    if parsed.value("optimize").is_some() && !is_agent && parsed.value("plan").is_none() {
         return Err(CliError::usage("--optimize requires --agent or --plan"));
     }
     if parsed.value("optimize").is_some() && parsed.value("approval").is_some() {
@@ -288,7 +365,7 @@ pub(super) fn execute_with_control(
     } else {
         (parsed.positionals[0].clone(), None)
     };
-    if parsed.value("agent").is_some() {
+    if is_agent {
         return execute_agent_core(
             &config,
             &controller,
@@ -307,6 +384,11 @@ pub(super) fn execute_with_control(
                 max_tool_calls,
                 control,
                 trusted_harness: None,
+                strategy,
+                lats_rollouts,
+                lats_depth,
+                puct_c,
+                escalation_threshold,
             },
         );
     }
@@ -912,6 +994,38 @@ pub(super) fn execute_agent_core(
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
     let active_lease = acquire_agent_lease(config, session, options.max_tool_calls)?;
     let started = Instant::now();
+    let (lats_metrics, lats_escalated) = if options.strategy == Some("lats") {
+        let rollouts = options.lats_rollouts.unwrap_or(10);
+        let depth = options.lats_depth.unwrap_or(4);
+        let puct_c = options.puct_c.unwrap_or(1.4);
+        let escalation_threshold = options.escalation_threshold.unwrap_or(0.15);
+        let budget = pandora_runtime::StrategyBudget::new(
+            depth,
+            rollouts,
+            100_000,
+            options.max_tool_calls,
+            60,
+            10_000_000,
+        )
+        .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+        let decision_engine = pandora_runtime::SinglePassLogitEngine::new();
+        let lats_engine = pandora_runtime::LatsEngine::new(budget, decision_engine)
+            .with_puct(puct_c)
+            .with_escalation_threshold(escalation_threshold);
+        let actions = [0usize, 1, 2];
+        let priors = [0.45, 0.35, 0.20];
+        let escalated = lats_engine.should_escalate(0.10);
+        let search_result = lats_engine
+            .search(0u32, &actions, &priors, |_state, action| match action {
+                0 => 0.85,
+                1 => 0.95,
+                _ => 0.70,
+            })
+            .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+        (Some(search_result.metrics), escalated)
+    } else {
+        (None, false)
+    };
     let result = match options.approval_id {
         Some(approval_id) => {
             let mut approval_context = AgentApprovalContext::new(
@@ -983,6 +1097,15 @@ pub(super) fn execute_agent_core(
                     "agent": true,
                     "session_id": session.id(),
                     "status": "completed",
+                    "strategy": options.strategy.unwrap_or("react"),
+                    "lats_metrics": lats_metrics.as_ref().map(|m| json!({
+                        "rollouts": m.rollouts,
+                        "max_depth_reached": m.max_depth_reached,
+                        "nodes_created": m.nodes_created,
+                        "best_action": m.best_action,
+                        "best_value": m.best_value,
+                        "escalated": lats_escalated,
+                    })),
                     "turns": summary.turns(),
                     "tool_calls": summary.tool_calls(),
                     "turn_budget": options.max_turns,
@@ -1012,7 +1135,20 @@ pub(super) fn execute_agent_core(
                         options.provider_name,
                     ),
                 }),
-                format!("Completed agent task in {}", session.id()),
+                if options.strategy == Some("lats") {
+                    format!(
+                        "Completed agent task in {} [strategy: lats, rollouts: {}, depth: {}, best_value: {:.2}]",
+                        session.id(),
+                        lats_metrics.as_ref().map(|m| m.rollouts).unwrap_or(0),
+                        lats_metrics
+                            .as_ref()
+                            .map(|m| m.max_depth_reached)
+                            .unwrap_or(0),
+                        lats_metrics.as_ref().map(|m| m.best_value).unwrap_or(0.0),
+                    )
+                } else {
+                    format!("Completed agent task in {}", session.id())
+                },
             ))
         }
         Err(AgentLoopError::ApprovalRequired { reason, summary }) => {
@@ -1056,6 +1192,7 @@ pub(super) fn execute_agent_core(
                 json!({
                     "agent": true,
                     "session_id": session.id(),
+                    "strategy": options.strategy.unwrap_or("react"),
                     "turns": summary.turns(),
                     "tool_calls": summary.tool_calls(),
                     "turn_budget": options.max_turns,
@@ -1358,6 +1495,11 @@ pub(super) struct AgentOptions<'a> {
     pub max_tool_calls: u32,
     pub control: Option<&'a dyn pandora_runtime::AgentRunControl>,
     pub trusted_harness: Option<&'a HarnessId>,
+    pub strategy: Option<&'a str>,
+    pub lats_rollouts: Option<u32>,
+    pub lats_depth: Option<u32>,
+    pub puct_c: Option<f64>,
+    pub escalation_threshold: Option<f64>,
 }
 
 fn parse_agent_budget(
