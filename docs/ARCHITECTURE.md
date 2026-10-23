@@ -163,6 +163,18 @@ CLI → LocalService → ExecutionController → Parliament → ReferenceMonitor
 | Secrets | SecretVault | everything else | zeroizing wrappers, no plaintext persistence |
 | Device | DeviceTrust | other devices | OS keychain / TPM, attestation |
 | External | Provider, GitHub client, npm | internet | HTTPS, no secrets in logs |
+| Workspace Operations | Filesystem Executor | host files | canonical path resolution, symlink checks, size limits |
+| Native Process Execution | ProcessExecutor | child process | capability permits, argv verification, env scrubbing, bounded timeouts/costs; OS-level kernel confinement contract in progress (`pandora-sandbox`) |
+
+### Process Execution & Sandboxing Posture
+
+Pandora executes native processes (such as `cargo test` and `git status`) through the governed `ProcessExecutor`. The current execution boundary enforces:
+- Exact one-shot effect permits issued by Parliament and verified by ReferenceMonitor.
+- Strict argument and subprogram whitelisting; reject-closed traversal.
+- Environment scrubbing (stripping API keys and secrets from child process environments).
+- Bounded execution timeouts, output byte limits, and resource settlement.
+
+OS-level kernel confinement backends (Linux Landlock/seccomp namespaces, Windows Job Objects/Restricted Tokens, and macOS Seatbelt) are specified in the `pandora-sandbox` contract and helper. Until the kernel confinement backends complete platform-specific verification, native execution relies on application-level capability and path governance.
 
 ## External dependencies
 
@@ -181,7 +193,7 @@ Pandora is organized as a Cargo workspace with strict crate boundaries:
 | `crates/pandora-runtime` | `pandora-runtime` | The central execution engine. Houses the 23 discrete engines, Parliament, Shadow Council, ReferenceMonitor, 5-layer crystallized memory (L0-L4), ContextVfs, System 1 DecisionEngine, and SQLite state stores. |
 | `crates/pandora-harnesses` | `pandora-harnesses` | Built-in domain harnesses (`coding`, `research`, `design`, `security`, `debugging`, `data`, `operations`), meta-coordination harness, and catalog routing. |
 | `crates/pandora-provider` | `pandora-provider` | Multi-LLM provider abstraction (OpenAI, Vertex AI, Anthropic, Ollama, DeepSeek), token usage tracking, and stable prefix caching. |
-| `crates/pandora-sandbox` | `pandora-sandbox` | OS-level kernel confinement: Linux Landlock ABI + seccomp-bpf, Windows Job Objects + Restricted Tokens, and macOS sandbox-exec. |
+| `crates/pandora-sandbox` | `pandora-sandbox` | OS-level kernel confinement contract and verification protocol (specifications for Linux Landlock ABI + seccomp-bpf, Windows Job Objects + Restricted Tokens, and macOS Seatbelt; currently in contract-stage verification). |
 | `crates/pandora-service` | `pandora-service` | Authenticated loopback IPC/RPC daemon service (`pandora-service`), session router, and token auth. |
 | `crates/pandora-cli` | `pandora-cli` | The 37 public user-facing commands (`run`, `package`, `harness`, `memory`, `evolution`, `fleet`, `job`, `tui`, etc.). |
 | `sdk/` | Extension Starters | Reference starter packages for [Domain Harnesses](../sdk/domain-harness-starter/README.md), [Meta Harnesses](../sdk/meta-harness-starter/README.md), and [Wasm Genes](../sdk/gene-pack/README.md). |
@@ -212,7 +224,7 @@ The core runtime (`crates/pandora-runtime/src/`) is composed of 23 discrete engi
 | **`SelfHealingEngine`** | `src/self_healing.rs` | Diagnoses runtime failures and derives bounded recovery plans. | Triggers `ContextRecovery` |
 | **`SkillEngine`** | `src/skill_engine.rs` | Manages the dynamic installation, suspension, and isolation of agent skills. | Exposes skills to `ToolEngine` |
 | **`ToolEngine`** | `src/tool_engine.rs` | Plans and validates tool invocations against schema definitions. | Submits `OperationRequest` to `Parliament` |
-| **`WasmExecutor`** | `src/wasm.rs` | Sandboxed WebAssembly Gene runtime with fuel metering and memory caps. | Executes inside `pandora-sandbox` |
+| **`WasmExecutor`** | `src/wasm.rs` | In-process sandboxed WebAssembly Gene runtime with fuel metering, instruction limits, and strict memory caps via `wasmi`. | Governed by `ReferenceMonitor` capability permits |
 | **`ExecutionController`** | `src/execution_controller.rs`| Primary pipeline driver; coordinates task intake through receipt generation. | Connects CLI/Service to Parliament |
 | **`ContentGuard`** | `src/content_guard.rs` | Detects prompt injection markers and quarantines untrusted tool outputs. | Pre-filters context before provider dispatch |
 | **`RolloutReducer`** | `src/rollout_reducer.rs` | Deterministically reduces stage rollouts and evaluates stability thresholds. | Validates stage advancement in evolution |

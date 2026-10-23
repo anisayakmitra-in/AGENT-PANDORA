@@ -13,16 +13,18 @@ platform binary and verifies it against the release checksum manifest.
 Unix:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/AGENT-PANDORA/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/AGENT-PANDORA/main/install.sh | sh
 pandora --version
 ```
+*(Also available at `.../main/scripts/install.sh`)*
 
 Windows PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/anisayakmitra-in/AGENT-PANDORA/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/anisayakmitra-in/AGENT-PANDORA/main/install.ps1 | iex
 & "$env:LOCALAPPDATA\Pandora\bin\pandora.exe" --version
 ```
+*(Also available at `.../main/scripts/install.ps1`)*
 
 Pin a published tag with `PANDORA_VERSION`, for example
 `v2.0.0-beta.9`. Do not use a tag until its release page contains the binary
