@@ -4,10 +4,13 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout, Position};
+use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
 use ratatui::style::{Color as TuiColor, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{
+    Block, BorderType, Borders, Clear, Gauge, List, ListItem, Paragraph, Scrollbar,
+    ScrollbarOrientation, ScrollbarState, Sparkline, Tabs,
+};
 use ratatui::{Frame, Terminal};
 use serde_json::{Value, json};
 use std::cmp::min;
@@ -17,7 +20,11 @@ use std::time::Duration;
 const MAX_DISPLAY_CHARS: usize = 64 * 1024;
 const MAX_TUI_MESSAGES: usize = 512;
 const MAX_TUI_HISTORY: usize = 100;
+const MAX_SPARKLINE_POINTS: usize = 32;
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
+const WIDE_LAYOUT_MIN_WIDTH: u16 = 88;
+const WIDE_LAYOUT_MIN_HEIGHT: u16 = 16;
+
 type TuiTerminal = Terminal<CrosstermBackend<Stdout>>;
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
@@ -107,6 +114,334 @@ impl Drop for TerminalSession {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TuiTab {
+    Console,
+    Kanban,
+    Memory,
+    Governance,
+}
+
+impl TuiTab {
+    const ALL: [Self; 4] = [Self::Console, Self::Kanban, Self::Memory, Self::Governance];
+
+    fn index(self) -> usize {
+        match self {
+            Self::Console => 0,
+            Self::Kanban => 1,
+            Self::Memory => 2,
+            Self::Governance => 3,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Console => "console",
+            Self::Kanban => "kanban",
+            Self::Memory => "memory",
+            Self::Governance => "governance",
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::Console => " 1:Console ",
+            Self::Kanban => " 2:Kanban & Fleet ",
+            Self::Memory => " 3:Memory & Graph ",
+            Self::Governance => " 4:Governance & Trust ",
+        }
+    }
+
+    fn next(self) -> Self {
+        Self::ALL[(self.index() + 1) % Self::ALL.len()]
+    }
+
+    fn previous(self) -> Self {
+        Self::ALL[(self.index() + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "console" | "chat" | "agent" => Some(Self::Console),
+            "2" | "kanban" | "fleet" | "board" => Some(Self::Kanban),
+            "3" | "memory" | "graph" | "context" => Some(Self::Memory),
+            "4" | "governance" | "trust" | "packages" => Some(Self::Governance),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PaletteEntry {
+    command: &'static str,
+    category: &'static str,
+    description: &'static str,
+    immediate: bool,
+}
+
+const PALETTE_ENTRIES: &[PaletteEntry] = &[
+    PaletteEntry {
+        command: "/help",
+        category: "Core",
+        description: "Show all TUI commands and workflow shortcuts",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/fleet-health",
+        category: "Fleet",
+        description: "Inspect local privacy-safe fleet & budget operations snapshot",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/kanban",
+        category: "Kanban",
+        description: "Load and display local Kanban board tasks by status column",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/packages",
+        category: "Packages",
+        description: "List locally admitted package identities and states",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/distribution",
+        category: "Packages",
+        description: "List verified downloads and their trust/admission state",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/approve",
+        category: "Governance",
+        description: "Approve and resume the currently pending governed task",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/deny",
+        category: "Governance",
+        description: "Deny and abort the currently pending governed task",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/status",
+        category: "Coding Gene",
+        description: "Run core Coding Gene: workspace git status inspection",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/diff",
+        category: "Coding Gene",
+        description: "Run core Coding Gene: inspect current workspace git diff",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/test",
+        category: "Coding Gene",
+        description: "Run core Coding Gene: execute workspace test verification",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/lint",
+        category: "Coding Gene",
+        description: "Run core Coding Gene: run static linter analysis",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/build",
+        category: "Coding Gene",
+        description: "Run core Coding Gene: run workspace build check",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/audit",
+        category: "Workflow Gene",
+        description: "Run Daedalus workspace architecture & inventory audit",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/debt",
+        category: "Workflow Gene",
+        description: "Run Ariadne technical debt marker inspection",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/measure",
+        category: "Workflow Gene",
+        description: "Run Hephaestus verification measurement workflow",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/guide",
+        category: "Workflow Gene",
+        description: "Run Athena architectural guidance workflow",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/coding",
+        category: "Harness",
+        description: "Inspect the Coding Domain Harness capabilities",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/tab console",
+        category: "View",
+        description: "Switch workspace view to Tab 1: Agent Console",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/tab kanban",
+        category: "View",
+        description: "Switch workspace view to Tab 2: Kanban & Fleet",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/tab memory",
+        category: "View",
+        description: "Switch workspace view to Tab 3: Memory & Graph",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/tab governance",
+        category: "View",
+        description: "Switch workspace view to Tab 4: Governance & Trust",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/sidebar",
+        category: "View",
+        description: "Toggle the right-hand Telemetry & Inspector sidebar",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/theme auto",
+        category: "Theme",
+        description: "Switch presentation palette to Auto (Cyan/Green)",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/theme dark",
+        category: "Theme",
+        description: "Switch presentation palette to High-Contrast Dark",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/theme light",
+        category: "Theme",
+        description: "Switch presentation palette to Daylight Blue/Green",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/theme mono",
+        category: "Theme",
+        description: "Switch presentation palette to Monochrome terminal style",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/rollout ",
+        category: "Evolution",
+        description: "Inspect staged rollout budgets, scorecards, and approvals by ID",
+        immediate: false,
+    },
+    PaletteEntry {
+        command: "/memory-retention",
+        category: "Memory",
+        description: "Show the scoped revoked-record compaction workflow",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/memory-transfer",
+        category: "Memory",
+        description: "Show the cross-project memory consolidation policy",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/storage-lifecycle",
+        category: "Governance",
+        description: "Show provider storage lifecycle evidence commands",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/trust-transparency",
+        category: "Governance",
+        description: "Show chained trust-root and package admission transparency commands",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/domain-starter",
+        category: "SDK",
+        description: "Show the safe Domain Harness scaffold workflow",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/meta-starter",
+        category: "SDK",
+        description: "Show the safe Meta Harness scaffold workflow",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/gene-pack",
+        category: "SDK",
+        description: "Show the declarative Gene pack evaluation workflow",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/canary-loop",
+        category: "Evolution",
+        description: "Show the governed scheduled-canary evaluation workflow",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/session",
+        category: "Core",
+        description: "Display the active governed session ID",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/activity",
+        category: "Core",
+        description: "Display the typed public TUI activity state",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/clear",
+        category: "Core",
+        description: "Clear the console transcript buffer",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/exit",
+        category: "Core",
+        description: "Close the Pandora TUI session",
+        immediate: true,
+    },
+];
+
+#[derive(Clone, Debug, Default)]
+struct KanbanSnapshot {
+    board_id: String,
+    todo: Vec<String>,
+    in_progress: Vec<String>,
+    blocked: Vec<String>,
+    done: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct FleetSnapshot {
+    status: String,
+    ready_nodes: u64,
+    running_supervisors: u64,
+    stale_supervisors: u64,
+    jobs_queued: u64,
+    jobs_running: u64,
+    orchestrations_queued: u64,
+    orchestrations_running: u64,
+    active_leases: u64,
+    run_count: u64,
+    tokens_consumed: u64,
+    tokens_ceiling: u64,
+    cost_display: String,
+}
+
 struct App {
     args: ParsedArgs,
     input: Vec<char>,
@@ -119,6 +454,17 @@ struct App {
     turns: u32,
     theme: TuiTheme,
     activity: TuiActivity,
+    active_tab: TuiTab,
+    sidebar_visible: bool,
+    scroll_offset: usize,
+    palette_open: bool,
+    palette_query: Vec<char>,
+    palette_index: usize,
+    sparkline_history: Vec<u64>,
+    kanban_snapshot: KanbanSnapshot,
+    fleet_snapshot: FleetSnapshot,
+    packages_cache: Vec<String>,
+    distribution_cache: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -138,6 +484,16 @@ impl TuiActivity {
             Self::Waiting => "waiting",
             Self::Success => "success",
             Self::Failure => "failure",
+        }
+    }
+
+    fn badge_label(self) -> &'static str {
+        match self {
+            Self::Idle => "● IDLE",
+            Self::Working => "◉ WORKING",
+            Self::Waiting => "⚠ WAITING APPROVAL",
+            Self::Success => "✔ SUCCESS",
+            Self::Failure => "✖ FAILURE",
         }
     }
 }
@@ -198,6 +554,64 @@ impl TuiTheme {
             Self::Mono => Style::default().add_modifier(Modifier::BOLD),
         }
     }
+
+    fn accent(self) -> Style {
+        match self {
+            Self::Auto => Style::default()
+                .fg(TuiColor::Magenta)
+                .add_modifier(Modifier::BOLD),
+            Self::Dark => Style::default()
+                .fg(TuiColor::LightMagenta)
+                .add_modifier(Modifier::BOLD),
+            Self::Light => Style::default()
+                .fg(TuiColor::Blue)
+                .add_modifier(Modifier::BOLD),
+            Self::Mono => Style::default().add_modifier(Modifier::UNDERLINED | Modifier::BOLD),
+        }
+    }
+
+    fn border(self) -> Style {
+        match self {
+            Self::Auto => Style::default().fg(TuiColor::Cyan),
+            Self::Dark => Style::default().fg(TuiColor::DarkGray),
+            Self::Light => Style::default().fg(TuiColor::Blue),
+            Self::Mono => Style::default(),
+        }
+    }
+
+    fn warning(self) -> Style {
+        match self {
+            Self::Auto | Self::Dark => Style::default()
+                .fg(TuiColor::Yellow)
+                .add_modifier(Modifier::BOLD),
+            Self::Light => Style::default()
+                .fg(TuiColor::LightRed)
+                .add_modifier(Modifier::BOLD),
+            Self::Mono => Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD),
+        }
+    }
+
+    fn error(self) -> Style {
+        match self {
+            Self::Auto | Self::Light => Style::default()
+                .fg(TuiColor::Red)
+                .add_modifier(Modifier::BOLD),
+            Self::Dark => Style::default()
+                .fg(TuiColor::LightRed)
+                .add_modifier(Modifier::BOLD),
+            Self::Mono => Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        }
+    }
+
+    fn activity_style(self, activity: TuiActivity) -> Style {
+        match activity {
+            TuiActivity::Idle => self.muted(),
+            TuiActivity::Working => self.title(),
+            TuiActivity::Waiting => self.warning(),
+            TuiActivity::Success => self.prompt(),
+            TuiActivity::Failure => self.error(),
+        }
+    }
 }
 
 struct PendingTask {
@@ -208,6 +622,14 @@ struct PendingTask {
 enum PendingInvocation {
     Agent(String),
     Slash(String),
+}
+
+impl PendingInvocation {
+    fn summary(&self) -> &str {
+        match self {
+            Self::Agent(task) | Self::Slash(task) => task.as_str(),
+        }
+    }
 }
 
 impl App {
@@ -227,6 +649,37 @@ impl App {
             pending: None,
             theme,
             activity: TuiActivity::Idle,
+            active_tab: TuiTab::Console,
+            sidebar_visible: true,
+            scroll_offset: 0,
+            palette_open: false,
+            palette_query: Vec::new(),
+            palette_index: 0,
+            sparkline_history: vec![1, 2, 1, 3, 2, 4, 2, 1],
+            kanban_snapshot: KanbanSnapshot {
+                board_id: "default".to_owned(),
+                todo: Vec::new(),
+                in_progress: Vec::new(),
+                blocked: Vec::new(),
+                done: Vec::new(),
+            },
+            fleet_snapshot: FleetSnapshot {
+                status: "idle".to_owned(),
+                ready_nodes: 0,
+                running_supervisors: 0,
+                stale_supervisors: 0,
+                jobs_queued: 0,
+                jobs_running: 0,
+                orchestrations_queued: 0,
+                orchestrations_running: 0,
+                active_leases: 0,
+                run_count: 0,
+                tokens_consumed: 0,
+                tokens_ceiling: 0,
+                cost_display: "0".to_owned(),
+            },
+            packages_cache: Vec::new(),
+            distribution_cache: Vec::new(),
         }
     }
 
@@ -252,8 +705,125 @@ impl App {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             return true;
         }
+
+        if self.palette_open {
+            return self.handle_palette_key(key);
+        }
+
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                KeyCode::Char('p') => {
+                    self.open_palette();
+                    return false;
+                }
+                KeyCode::Char('b') => {
+                    self.sidebar_visible = !self.sidebar_visible;
+                    return false;
+                }
+                KeyCode::Char('y') => {
+                    self.resolve_pending(true);
+                    return false;
+                }
+                KeyCode::Char('n') => {
+                    self.resolve_pending(false);
+                    return false;
+                }
+                KeyCode::Char('l') => {
+                    self.messages.clear();
+                    self.scroll_offset = 0;
+                    return false;
+                }
+                KeyCode::Char('a') => {
+                    self.cursor = 0;
+                    return false;
+                }
+                KeyCode::Char('e') => {
+                    self.cursor = self.input.len();
+                    return false;
+                }
+                KeyCode::Char('u') => {
+                    if self.cursor > 0 {
+                        self.input.drain(..self.cursor);
+                        self.cursor = 0;
+                    }
+                    return false;
+                }
+                KeyCode::Char('k') => {
+                    if self.cursor < self.input.len() {
+                        self.input.truncate(self.cursor);
+                    }
+                    return false;
+                }
+                KeyCode::Char('w') => {
+                    self.delete_previous_word();
+                    return false;
+                }
+                KeyCode::Up => {
+                    self.scroll_offset = self.scroll_offset.saturating_add(1);
+                    return false;
+                }
+                KeyCode::Down => {
+                    self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                    return false;
+                }
+                _ => {}
+            }
+        }
+
+        if key.modifiers.contains(KeyModifiers::ALT) {
+            match key.code {
+                KeyCode::Char('1') => {
+                    self.active_tab = TuiTab::Console;
+                    return false;
+                }
+                KeyCode::Char('2') => {
+                    self.active_tab = TuiTab::Kanban;
+                    self.refresh_kanban_silent();
+                    self.refresh_fleet_silent();
+                    return false;
+                }
+                KeyCode::Char('3') => {
+                    self.active_tab = TuiTab::Memory;
+                    return false;
+                }
+                KeyCode::Char('4') => {
+                    self.active_tab = TuiTab::Governance;
+                    return false;
+                }
+                _ => {}
+            }
+        }
+
         match key.code {
             KeyCode::Esc => true,
+            KeyCode::F(1) => {
+                self.open_palette();
+                false
+            }
+            KeyCode::Tab => {
+                self.active_tab = self.active_tab.next();
+                if self.active_tab == TuiTab::Kanban {
+                    self.refresh_kanban_silent();
+                    self.refresh_fleet_silent();
+                }
+                false
+            }
+            KeyCode::BackTab => {
+                self.active_tab = self.active_tab.previous();
+                if self.active_tab == TuiTab::Kanban {
+                    self.refresh_kanban_silent();
+                    self.refresh_fleet_silent();
+                }
+                false
+            }
+            KeyCode::PageUp => {
+                self.scroll_offset = self.scroll_offset.saturating_add(8);
+                false
+            }
+            KeyCode::PageDown => {
+                self.scroll_offset = self.scroll_offset.saturating_sub(8);
+                false
+            }
             KeyCode::Enter => self.submit(),
             KeyCode::Backspace => {
                 if self.cursor > 0 {
@@ -305,11 +875,118 @@ impl App {
         }
     }
 
+    fn open_palette(&mut self) {
+        self.palette_open = true;
+        self.palette_query.clear();
+        self.palette_index = 0;
+    }
+
+    fn filtered_palette_entries(&self) -> Vec<&'static PaletteEntry> {
+        let query = self
+            .palette_query
+            .iter()
+            .collect::<String>()
+            .trim()
+            .to_ascii_lowercase();
+        if query.is_empty() {
+            return PALETTE_ENTRIES.iter().collect();
+        }
+        PALETTE_ENTRIES
+            .iter()
+            .filter(|entry| {
+                let cmd = entry.command.to_ascii_lowercase();
+                let desc = entry.description.to_ascii_lowercase();
+                let cat = entry.category.to_ascii_lowercase();
+                cmd.contains(&query)
+                    || desc.contains(&query)
+                    || cat.contains(&query)
+                    || fuzzy_subsequence(&query, &cmd)
+            })
+            .collect()
+    }
+
+    fn handle_palette_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc => {
+                self.palette_open = false;
+                false
+            }
+            KeyCode::F(1) => {
+                self.palette_open = false;
+                false
+            }
+            KeyCode::Up => {
+                self.palette_index = self.palette_index.saturating_sub(1);
+                false
+            }
+            KeyCode::Down => {
+                let len = self.filtered_palette_entries().len();
+                if len > 0 {
+                    self.palette_index = min(self.palette_index.saturating_add(1), len - 1);
+                }
+                false
+            }
+            KeyCode::Backspace => {
+                self.palette_query.pop();
+                self.palette_index = 0;
+                false
+            }
+            KeyCode::Enter => {
+                let entries = self.filtered_palette_entries();
+                if let Some(selected) = entries.get(self.palette_index).copied() {
+                    self.palette_open = false;
+                    self.input = selected.command.chars().collect();
+                    self.cursor = self.input.len();
+                    if selected.immediate {
+                        return self.submit();
+                    }
+                } else {
+                    self.palette_open = false;
+                }
+                false
+            }
+            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.palette_open = false;
+                false
+            }
+            KeyCode::Char(ch)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                self.palette_query.push(ch);
+                self.palette_index = 0;
+                false
+            }
+            _ => false,
+        }
+    }
+
+    fn delete_previous_word(&mut self) {
+        while self.cursor > 0 && self.input[self.cursor - 1].is_whitespace() {
+            self.cursor -= 1;
+            self.input.remove(self.cursor);
+        }
+        while self.cursor > 0 && !self.input[self.cursor - 1].is_whitespace() {
+            self.cursor -= 1;
+            self.input.remove(self.cursor);
+        }
+    }
+
+    fn record_sparkline(&mut self, weight: u64) {
+        self.sparkline_history.push(weight.max(1));
+        if self.sparkline_history.len() > MAX_SPARKLINE_POINTS {
+            let excess = self.sparkline_history.len() - MAX_SPARKLINE_POINTS;
+            self.sparkline_history.drain(..excess);
+        }
+    }
+
     fn submit(&mut self) -> bool {
         let line = self.input.iter().collect::<String>();
         self.input.clear();
         self.cursor = 0;
         self.history_index = None;
+        self.scroll_offset = 0;
         let task = line.trim().to_owned();
         if task.is_empty() {
             return false;
@@ -326,6 +1003,10 @@ impl App {
                     "/clear      clear the transcript",
                     "/theme      show or select auto, dark, light, or mono",
                     "/activity   show the typed public TUI activity state",
+                    "/tab        switch workspace view (console, kanban, memory, governance)",
+                    "/sidebar    toggle the telemetry & context sidebar",
+                    "/palette    open the interactive fuzzy command palette (Ctrl-P / F1)",
+                    "/kanban     inspect local Kanban board tasks across status columns",
                     "/packages   list locally admitted package identities",
                     "/distribution list verified downloads and their trust/admission state",
                     "/domain-starter show the safe Domain Harness scaffold workflow",
@@ -354,7 +1035,10 @@ impl App {
                     None => "session: not started".to_owned(),
                 });
             }
-            "/clear" => self.messages.clear(),
+            "/clear" => {
+                self.messages.clear();
+                self.scroll_offset = 0;
+            }
             "/theme" => {
                 self.push_message(format!("theme> {}", self.theme.name()));
             }
@@ -364,6 +1048,40 @@ impl App {
                     self.activity.name()
                 ));
             }
+            "/tab" => {
+                self.push_message(format!("tab> {}", self.active_tab.name()));
+            }
+            value if value.starts_with("/tab ") => {
+                let target = value.trim_start_matches("/tab ").trim();
+                match TuiTab::parse(target) {
+                    Some(tab) => {
+                        self.active_tab = tab;
+                        if tab == TuiTab::Kanban {
+                            self.refresh_kanban_silent();
+                            self.refresh_fleet_silent();
+                        }
+                        self.push_message(format!("tab> {} (view switched)", tab.name()));
+                    }
+                    None => {
+                        self.push_message("usage> /tab <console|kanban|memory|governance>");
+                    }
+                }
+            }
+            "/sidebar" => {
+                self.sidebar_visible = !self.sidebar_visible;
+                self.push_message(format!(
+                    "sidebar> {}",
+                    if self.sidebar_visible {
+                        "visible"
+                    } else {
+                        "hidden"
+                    }
+                ));
+            }
+            "/palette" => {
+                self.open_palette();
+            }
+            "/kanban" => self.show_kanban(),
             "/packages" => self.show_packages(),
             "/distribution" => self.show_distribution(),
             "/domain-starter" => {
@@ -459,7 +1177,14 @@ impl App {
         if !line.trim().is_empty()
             && !matches!(
                 line.trim(),
-                "/exit" | "/quit" | "/help" | "/session" | "/clear" | "/approve" | "/deny"
+                "/exit"
+                    | "/quit"
+                    | "/help"
+                    | "/session"
+                    | "/clear"
+                    | "/approve"
+                    | "/deny"
+                    | "/palette"
             )
             && !line.trim().starts_with("/approve ")
             && !line.trim().starts_with("/deny ")
@@ -468,6 +1193,105 @@ impl App {
             self.remember_history(line.trim());
         }
         false
+    }
+
+    fn show_kanban(&mut self) {
+        self.activity = TuiActivity::Working;
+        let mut args = vec!["board".to_owned()];
+        for option in ["config", "data-dir", "workspace"] {
+            if let Some(value) = self.args.value(option) {
+                args.push(format!("--{option}"));
+                args.push(value.to_owned());
+            }
+        }
+        match super::kanban::execute(&args) {
+            Ok(result) => {
+                self.activity = TuiActivity::Success;
+                self.apply_kanban_data(&result.data);
+                let total = self.kanban_snapshot.todo.len()
+                    + self.kanban_snapshot.in_progress.len()
+                    + self.kanban_snapshot.blocked.len()
+                    + self.kanban_snapshot.done.len();
+                self.push_message(format!(
+                    "kanban> board '{}' · {} task(s) (todo: {}, in_progress: {}, blocked: {}, done: {})",
+                    self.kanban_snapshot.board_id,
+                    total,
+                    self.kanban_snapshot.todo.len(),
+                    self.kanban_snapshot.in_progress.len(),
+                    self.kanban_snapshot.blocked.len(),
+                    self.kanban_snapshot.done.len(),
+                ));
+                self.record_sparkline(3);
+            }
+            Err(error) => {
+                self.activity = TuiActivity::Failure;
+                self.push_message(format!("error> {}", clean_text(&error.message)));
+            }
+        }
+    }
+
+    fn refresh_kanban_silent(&mut self) {
+        let mut args = vec!["board".to_owned()];
+        for option in ["config", "data-dir", "workspace"] {
+            if let Some(value) = self.args.value(option) {
+                args.push(format!("--{option}"));
+                args.push(value.to_owned());
+            }
+        }
+        if let Ok(result) = super::kanban::execute(&args) {
+            self.apply_kanban_data(&result.data);
+        }
+    }
+
+    fn apply_kanban_data(&mut self, data: &Value) {
+        let board_id = data
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("default")
+            .to_owned();
+        let mut todo = Vec::new();
+        let mut in_progress = Vec::new();
+        let mut blocked = Vec::new();
+        let mut done = Vec::new();
+
+        if let Some(tasks) = data.get("tasks").and_then(Value::as_array) {
+            for task in tasks.iter().take(64) {
+                let id = task.get("id").and_then(Value::as_str).unwrap_or("task");
+                let title = task
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or("untitled");
+                let priority = task.get("priority").and_then(Value::as_u64).unwrap_or(3);
+                let status = task
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("todo")
+                    .to_ascii_lowercase();
+                let worker = task
+                    .get("assigned_worker")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let label = if worker.is_empty() {
+                    format!("[P{priority}] {id}: {title}")
+                } else {
+                    format!("[P{priority}] {id}: {title} (@{worker})")
+                };
+                match status.as_str() {
+                    "in_progress" | "inprogress" | "running" => in_progress.push(label),
+                    "blocked" | "review" | "failed" => blocked.push(label),
+                    "done" | "completed" => done.push(label),
+                    _ => todo.push(label),
+                }
+            }
+        }
+
+        self.kanban_snapshot = KanbanSnapshot {
+            board_id,
+            todo,
+            in_progress,
+            blocked,
+            done,
+        };
     }
 
     fn show_packages(&mut self) {
@@ -488,6 +1312,7 @@ impl App {
                     .and_then(Value::as_array)
                     .cloned()
                     .unwrap_or_default();
+                self.packages_cache.clear();
                 if packages.is_empty() {
                     self.push_message("packages> none admitted locally");
                     return;
@@ -511,9 +1336,11 @@ impl App {
                         .and_then(|activation| activation.get("state"))
                         .and_then(Value::as_str)
                         .unwrap_or("disabled");
-                    self.push_message(format!(
-                        "package> {id}@{version} · {kind} · {state} · authority none"
-                    ));
+                    let formatted =
+                        format!("package> {id}@{version} · {kind} · {state} · authority none");
+                    self.packages_cache
+                        .push(format!("{id}@{version} ({kind}) [{state}]"));
+                    self.push_message(formatted);
                 }
                 if total > 50 {
                     self.push_message(format!(
@@ -546,6 +1373,7 @@ impl App {
                     .and_then(Value::as_array)
                     .cloned()
                     .unwrap_or_default();
+                self.distribution_cache.clear();
                 if packages.is_empty() {
                     self.push_message("distribution> no verified downloads cached");
                     return;
@@ -585,6 +1413,9 @@ impl App {
                         .get("artifact_digest")
                         .and_then(Value::as_str)
                         .unwrap_or("unknown");
+                    self.distribution_cache.push(format!(
+                        "{id}@{version} · {verification} · {publisher}/{key_id}"
+                    ));
                     self.push_message(format!(
                         "distribution> {id}@{version} · {kind} · {state} · {verification} · publisher {publisher}/{key_id} · {digest} · authority none"
                     ));
@@ -702,6 +1533,7 @@ impl App {
         match super::fleet::execute(&args) {
             Ok(result) => {
                 self.activity = TuiActivity::Success;
+                self.apply_fleet_data(&result.data);
                 let health = &result.data["health"];
                 let jobs = &result.data["queue"]["jobs"];
                 let orchestrations = &result.data["queue"]["orchestrations"];
@@ -742,12 +1574,55 @@ impl App {
                     ceiling["tools"].as_u64().unwrap_or_default(),
                     consumed["unknown_cost_receipts"].as_u64().unwrap_or_default(),
                 ));
+                self.record_sparkline(4);
             }
             Err(error) => {
                 self.activity = TuiActivity::Failure;
                 self.push_message(format!("error> {}", clean_text(&error.message)));
             }
         }
+    }
+
+    fn refresh_fleet_silent(&mut self) {
+        let mut args = vec!["dashboard".to_owned()];
+        for option in ["config", "data-dir"] {
+            if let Some(value) = self.args.value(option) {
+                args.push(format!("--{option}"));
+                args.push(value.to_owned());
+            }
+        }
+        if let Ok(result) = super::fleet::execute(&args) {
+            self.apply_fleet_data(&result.data);
+        }
+    }
+
+    fn apply_fleet_data(&mut self, data: &Value) {
+        let health = &data["health"];
+        let jobs = &data["queue"]["jobs"];
+        let orchestrations = &data["queue"]["orchestrations"];
+        let leases = &data["fleet"]["leases"];
+        let budgets = &data["aggregate_budgets"];
+        let ceiling = &budgets["ceiling"];
+        let consumed = &budgets["consumed"];
+        let cost_display = consumed["cost_micros"]
+            .as_u64()
+            .map_or_else(|| "unknown".to_owned(), |value| value.to_string());
+
+        self.fleet_snapshot = FleetSnapshot {
+            status: health["status"].as_str().unwrap_or("idle").to_owned(),
+            ready_nodes: health["ready_nodes"].as_u64().unwrap_or_default(),
+            running_supervisors: health["running_supervisors"].as_u64().unwrap_or_default(),
+            stale_supervisors: health["stale_supervisors"].as_u64().unwrap_or_default(),
+            jobs_queued: jobs["queued"].as_u64().unwrap_or_default(),
+            jobs_running: jobs["running"].as_u64().unwrap_or_default(),
+            orchestrations_queued: orchestrations["queued"].as_u64().unwrap_or_default(),
+            orchestrations_running: orchestrations["running"].as_u64().unwrap_or_default(),
+            active_leases: leases["by_state"]["active"].as_u64().unwrap_or_default(),
+            run_count: budgets["run_count"].as_u64().unwrap_or_default(),
+            tokens_consumed: consumed["tokens"].as_u64().unwrap_or_default(),
+            tokens_ceiling: ceiling["tokens"].as_u64().unwrap_or_default(),
+            cost_display,
+        };
     }
 
     fn run_task(&mut self, task: String) {
@@ -773,6 +1648,8 @@ impl App {
                     .and_then(Value::as_str)
                     .unwrap_or(&result.human);
                 self.messages[message_index] = format!("pandora> {}", clean_text(output));
+                let weight = (output.len() as u64 / 64).clamp(2, 12);
+                self.record_sparkline(weight);
             }
             Err(error) => {
                 self.activity = TuiActivity::Failure;
@@ -787,6 +1664,7 @@ impl App {
                         approval_id: approval_id.to_owned(),
                     });
                 }
+                self.record_sparkline(5);
             }
         }
         self.turns = self.turns.saturating_add(1);
@@ -811,6 +1689,8 @@ impl App {
                     .and_then(Value::as_str)
                     .unwrap_or(&result.human);
                 self.messages[message_index] = format!("pandora> {}", clean_text(output));
+                let weight = (output.len() as u64 / 64).clamp(2, 10);
+                self.record_sparkline(weight);
             }
             Err(error) => {
                 self.activity = TuiActivity::Failure;
@@ -825,6 +1705,7 @@ impl App {
                         approval_id: approval_id.to_owned(),
                     });
                 }
+                self.record_sparkline(4);
             }
         }
         self.turns = self.turns.saturating_add(1);
@@ -960,6 +1841,45 @@ impl App {
 
     fn render(&self, frame: &mut Frame) {
         let area = frame.area();
+        let wide_mode =
+            area.width >= WIDE_LAYOUT_MIN_WIDTH && area.height >= WIDE_LAYOUT_MIN_HEIGHT;
+
+        if !wide_mode {
+            self.render_compact(frame, area);
+            if self.palette_open {
+                self.render_palette_modal(frame, area);
+            }
+            return;
+        }
+
+        let sections = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Min(8),
+                Constraint::Length(1),
+                Constraint::Length(3),
+            ])
+            .split(area);
+
+        self.render_top_bar(frame, sections[0]);
+
+        match self.active_tab {
+            TuiTab::Console => self.render_console_workspace(frame, sections[1]),
+            TuiTab::Kanban => self.render_kanban_workspace(frame, sections[1]),
+            TuiTab::Memory => self.render_memory_workspace(frame, sections[1]),
+            TuiTab::Governance => self.render_governance_workspace(frame, sections[1]),
+        }
+
+        self.render_status_bar(frame, sections[2]);
+        self.render_input_box(frame, sections[3]);
+
+        if self.palette_open {
+            self.render_palette_modal(frame, area);
+        }
+    }
+
+    fn render_compact(&self, frame: &mut Frame, area: Rect) {
         let sections = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -979,59 +1899,720 @@ impl App {
         ]);
         frame.render_widget(header, sections[0]);
 
+        self.render_transcript_pane(frame, sections[1]);
+        self.render_status_bar(frame, sections[2]);
+        self.render_input_box(frame, sections[3]);
+    }
+
+    fn render_top_bar(&self, frame: &mut Frame, area: Rect) {
+        let horizontal = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(28), Constraint::Min(40)])
+            .split(area);
+
+        let brand = Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled(" ◆ PANDORA TUI ", self.theme.title()),
+                Span::styled(
+                    format!("v{}", env!("CARGO_PKG_VERSION")),
+                    self.theme.muted(),
+                ),
+            ]),
+            Line::from(Span::styled(" Governed Agent Console", self.theme.muted())),
+        ])
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(self.theme.border()),
+        );
+        frame.render_widget(brand, horizontal[0]);
+
+        let tab_titles = TuiTab::ALL
+            .iter()
+            .map(|tab| Line::from(tab.title()))
+            .collect::<Vec<_>>();
+        let tabs = Tabs::new(tab_titles)
+            .select(self.active_tab.index())
+            .highlight_style(self.theme.accent())
+            .divider("│")
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(self.theme.border())
+                    .title(" Workspace Views (Tab / Alt+1..4 · Ctrl+P Palette · Ctrl+B Sidebar) "),
+            );
+        frame.render_widget(tabs, horizontal[1]);
+    }
+
+    fn render_console_workspace(&self, frame: &mut Frame, area: Rect) {
+        if !self.sidebar_visible {
+            self.render_transcript_pane(frame, area);
+            return;
+        }
+        let panes = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(68), Constraint::Percentage(32)])
+            .split(area);
+
+        self.render_transcript_pane(frame, panes[0]);
+        self.render_telemetry_sidebar(frame, panes[1]);
+    }
+
+    fn render_transcript_pane(&self, frame: &mut Frame, area: Rect) {
+        let inner_width = usize::from(area.width.saturating_sub(2));
         let mut lines = Vec::new();
         for message in &self.messages {
-            wrap_message(
-                message,
-                usize::from(sections[1].width.saturating_sub(2)),
-                &mut lines,
-            );
+            wrap_message(message, inner_width, &mut lines);
         }
-        let body_height = usize::from(sections[1].height.saturating_sub(2));
-        let first = lines.len().saturating_sub(body_height);
+        let body_height = usize::from(area.height.saturating_sub(2));
+        let max_scroll = lines.len().saturating_sub(body_height);
+        let effective_scroll = min(self.scroll_offset, max_scroll);
+        let first = max_scroll.saturating_sub(effective_scroll);
+
         let visible_lines = lines
             .iter()
             .skip(first)
             .take(body_height)
-            .map(|line| {
-                Line::from(truncate(
-                    line,
-                    usize::from(sections[1].width.saturating_sub(2)),
-                ))
-            })
+            .map(|line| style_transcript_line(line, inner_width, self.theme))
             .collect::<Vec<_>>();
-        let transcript = Paragraph::new(visible_lines)
-            .block(Block::default().borders(Borders::ALL).title("Transcript"));
-        frame.render_widget(transcript, sections[1]);
+
+        let title = if effective_scroll > 0 {
+            format!("Transcript (scrolled +{effective_scroll} · PageDown to follow)")
+        } else {
+            "Transcript".to_owned()
+        };
+
+        let transcript = Paragraph::new(visible_lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(self.theme.border())
+                .title(title),
+        );
+        frame.render_widget(transcript, area);
+
+        if lines.len() > body_height {
+            let mut scrollbar_state = ScrollbarState::new(lines.len()).position(first);
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("▲"))
+                .end_symbol(Some("▼"));
+            frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+        }
+    }
+
+    fn render_telemetry_sidebar(&self, frame: &mut Frame, area: Rect) {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(5),
+                Constraint::Length(4),
+                Constraint::Min(6),
+            ])
+            .split(area);
+
+        let sparkline = Sparkline::default()
+            .block(
+                Block::default()
+                    .title(" Activity Cadence ")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(self.theme.border()),
+            )
+            .data(&self.sparkline_history)
+            .style(self.theme.prompt());
+        frame.render_widget(sparkline, chunks[0]);
+
+        let max_turns = self
+            .args
+            .value("max-turns")
+            .and_then(|val| val.parse::<u32>().ok())
+            .unwrap_or(32)
+            .max(1);
+        let ratio_pct = min(100, ((self.turns.saturating_mul(100)) / max_turns) as u16);
+        let gauge = Gauge::default()
+            .block(
+                Block::default()
+                    .title(" Turn Budget ")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(self.theme.border()),
+            )
+            .gauge_style(self.theme.title())
+            .percent(ratio_pct)
+            .label(format!(
+                "{} / {} turns ({ratio_pct}%)",
+                self.turns, max_turns
+            ));
+        frame.render_widget(gauge, chunks[1]);
 
         let session = self.session_id.as_deref().unwrap_or("not started");
+        let provider = self.args.value("provider").unwrap_or("default");
+        let model = self.args.value("model").unwrap_or("configured-default");
+        let mut inspector_lines = vec![
+            Line::from(vec![
+                Span::styled(" Status:   ", self.theme.muted()),
+                Span::styled(
+                    self.activity.badge_label(),
+                    self.theme.activity_style(self.activity),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(" Session:  ", self.theme.muted()),
+                Span::raw(truncate(
+                    session,
+                    usize::from(chunks[2].width.saturating_sub(13)),
+                )),
+            ]),
+            Line::from(vec![
+                Span::styled(" Provider: ", self.theme.muted()),
+                Span::raw(truncate(
+                    provider,
+                    usize::from(chunks[2].width.saturating_sub(13)),
+                )),
+            ]),
+            Line::from(vec![
+                Span::styled(" Model:    ", self.theme.muted()),
+                Span::raw(truncate(
+                    model,
+                    usize::from(chunks[2].width.saturating_sub(13)),
+                )),
+            ]),
+            Line::from(vec![
+                Span::styled(" Theme:    ", self.theme.muted()),
+                Span::raw(self.theme.name()),
+            ]),
+        ];
+
+        if let Some(pending) = &self.pending {
+            inspector_lines.push(Line::from(""));
+            inspector_lines.push(Line::from(Span::styled(
+                " ⚠ PENDING APPROVAL ",
+                self.theme.warning(),
+            )));
+            inspector_lines.push(Line::from(Span::styled(
+                format!(" ID: {}", pending.approval_id),
+                self.theme.warning(),
+            )));
+            inspector_lines.push(Line::from(Span::styled(
+                format!(" Task: {}", pending.invocation.summary()),
+                self.theme.muted(),
+            )));
+            inspector_lines.push(Line::from(Span::styled(
+                " [Ctrl+Y] Approve · [Ctrl+N] Deny",
+                self.theme.prompt(),
+            )));
+        } else {
+            inspector_lines.push(Line::from(""));
+            inspector_lines.push(Line::from(Span::styled(
+                " Quick Shortcuts:",
+                self.theme.title(),
+            )));
+            inspector_lines.push(Line::from(Span::styled(
+                " • Ctrl+P / F1  Command Palette",
+                self.theme.muted(),
+            )));
+            inspector_lines.push(Line::from(Span::styled(
+                " • Tab / Alt+1-4 Switch Views",
+                self.theme.muted(),
+            )));
+            inspector_lines.push(Line::from(Span::styled(
+                " • PgUp / PgDn   Scroll History",
+                self.theme.muted(),
+            )));
+        }
+
+        let inspector = Paragraph::new(inspector_lines).block(
+            Block::default()
+                .title(" Runtime Telemetry ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(self.theme.border()),
+        );
+        frame.render_widget(inspector, chunks[2]);
+    }
+
+    fn render_kanban_workspace(&self, frame: &mut Frame, area: Rect) {
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(68), Constraint::Percentage(32)])
+            .split(area);
+
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+            ])
+            .split(rows[0]);
+
+        let board_cols = [
+            (
+                " TODO / BACKLOG ",
+                &self.kanban_snapshot.todo,
+                self.theme.muted(),
+            ),
+            (
+                " IN PROGRESS ",
+                &self.kanban_snapshot.in_progress,
+                self.theme.title(),
+            ),
+            (
+                " BLOCKED / REVIEW ",
+                &self.kanban_snapshot.blocked,
+                self.theme.warning(),
+            ),
+            (
+                " COMPLETED ",
+                &self.kanban_snapshot.done,
+                self.theme.prompt(),
+            ),
+        ];
+
+        for (idx, (title, items, style)) in board_cols.iter().enumerate() {
+            let list_items = if items.is_empty() {
+                vec![ListItem::new(" (empty) ").style(self.theme.muted())]
+            } else {
+                items
+                    .iter()
+                    .map(|item| {
+                        ListItem::new(truncate(
+                            item,
+                            usize::from(columns[idx].width.saturating_sub(3)),
+                        ))
+                        .style(*style)
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let list = List::new(list_items).block(
+                Block::default()
+                    .title(format!("{title}({}) ", items.len()))
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(self.theme.border()),
+            );
+            frame.render_widget(list, columns[idx]);
+        }
+
+        let f = &self.fleet_snapshot;
+        let fleet_lines = vec![
+            Line::from(vec![
+                Span::styled(" Fleet Status: ", self.theme.title()),
+                Span::raw(format!(
+                    "{} · {} ready nodes · {} running supervisors · {} stale supervisors",
+                    f.status, f.ready_nodes, f.running_supervisors, f.stale_supervisors
+                )),
+            ]),
+            Line::from(vec![
+                Span::styled(" Queue Depth:  ", self.theme.title()),
+                Span::raw(format!(
+                    "jobs {} queued / {} running · orchestrations {} queued / {} running · {} active leases",
+                    f.jobs_queued,
+                    f.jobs_running,
+                    f.orchestrations_queued,
+                    f.orchestrations_running,
+                    f.active_leases
+                )),
+            ]),
+            Line::from(vec![
+                Span::styled(" Budgets:      ", self.theme.title()),
+                Span::raw(format!(
+                    "{} governed run(s) · tokens {} / {} ceiling · actual cost {} micros",
+                    f.run_count, f.tokens_consumed, f.tokens_ceiling, f.cost_display
+                )),
+            ]),
+            Line::from(Span::styled(
+                " Tip: Run /kanban or /fleet-health in the prompt to refresh live store snapshots.",
+                self.theme.muted(),
+            )),
+        ];
+        let fleet_panel = Paragraph::new(fleet_lines).block(
+            Block::default()
+                .title(format!(
+                    " Fleet Operations & Kanban Board '{}' ",
+                    self.kanban_snapshot.board_id
+                ))
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(self.theme.border()),
+        );
+        frame.render_widget(fleet_panel, rows[1]);
+    }
+
+    fn render_memory_workspace(&self, frame: &mut Frame, area: Rect) {
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+            .split(area);
+
+        let tiers = vec![
+            Line::from(Span::styled(
+                " ◆ L0 Working Buffer (Ephemeral Turn Window)",
+                self.theme.title(),
+            )),
+            Line::from(Span::styled(
+                "   Active prompt assembly, bounded token budget & zero-copy cache hit validation.",
+                self.theme.muted(),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                " ◆ L1 Session Scratchpad (Scoped Session Store)",
+                self.theme.prompt(),
+            )),
+            Line::from(Span::styled(
+                "   SQLite WAL-backed session journal; eligible for non-sensitive cross-project transfer.",
+                self.theme.muted(),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                " ◆ L2 Episodic Memory (Temporal Trajectory Log)",
+                self.theme.accent(),
+            )),
+            Line::from(Span::styled(
+                "   Append-only execution receipts, reflexion episodes, and tool evidence digests.",
+                self.theme.muted(),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                " ◆ L3 Semantic Memory (Consolidated Knowledge Graph)",
+                self.theme.title(),
+            )),
+            Line::from(Span::styled(
+                "   Distilled workspace invariants, architectural relations, and feature map nodes.",
+                self.theme.muted(),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                " ◆ L4 Procedural Memory (Verified SOP DAGs & Skills)",
+                self.theme.prompt(),
+            )),
+            Line::from(Span::styled(
+                "   Executable workflow genes, Voyager curriculum skills, and governed playbooks.",
+                self.theme.muted(),
+            )),
+        ];
+
+        let left_panel = Paragraph::new(tiers).block(
+            Block::default()
+                .title(" 5-Tier Layered Memory Architecture ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(self.theme.border()),
+        );
+        frame.render_widget(left_panel, cols[0]);
+
+        let right_lines = vec![
+            Line::from(Span::styled(
+                " Memory Lifecycle & Graph Controls",
+                self.theme.title(),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(" • /memory-retention ", self.theme.prompt()),
+                Span::styled("Scoped revoked-record compaction", self.theme.muted()),
+            ]),
+            Line::from(vec![
+                Span::styled(" • /memory-transfer  ", self.theme.prompt()),
+                Span::styled("Cross-project L1 consolidation", self.theme.muted()),
+            ]),
+            Line::from(vec![
+                Span::styled(" • /storage-lifecycle", self.theme.prompt()),
+                Span::styled("Digest-bound lifecycle evidence", self.theme.muted()),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                " Coding & Architecture Workflow Genes",
+                self.theme.title(),
+            )),
+            Line::from(vec![
+                Span::styled(" • /audit        ", self.theme.accent()),
+                Span::styled("Daedalus bounded workspace inventory", self.theme.muted()),
+            ]),
+            Line::from(vec![
+                Span::styled(" • /argus-review ", self.theme.accent()),
+                Span::styled("Argus multi-perspective code review", self.theme.muted()),
+            ]),
+            Line::from(vec![
+                Span::styled(" • /debt         ", self.theme.accent()),
+                Span::styled("Ariadne technical debt marker scan", self.theme.muted()),
+            ]),
+            Line::from(vec![
+                Span::styled(" • /measure      ", self.theme.accent()),
+                Span::styled("Hephaestus verification measurement", self.theme.muted()),
+            ]),
+            Line::from(vec![
+                Span::styled(" • /guide        ", self.theme.accent()),
+                Span::styled("Athena static architectural guide", self.theme.muted()),
+            ]),
+        ];
+
+        let right_panel = Paragraph::new(right_lines).block(
+            Block::default()
+                .title(" Knowledge Graph & Workflow Genes ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(self.theme.border()),
+        );
+        frame.render_widget(right_panel, cols[1]);
+    }
+
+    fn render_governance_workspace(&self, frame: &mut Frame, area: Rect) {
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area);
+
+        let mut gov_lines = vec![
+            Line::from(Span::styled(
+                " Tripartite Constitutional Governance",
+                self.theme.title(),
+            )),
+            Line::from(Span::styled(
+                " • Legislature: Declarative policy rules & capability bounds",
+                self.theme.muted(),
+            )),
+            Line::from(Span::styled(
+                " • Executive:   Sandboxed runtime controller & one-shot permits",
+                self.theme.muted(),
+            )),
+            Line::from(Span::styled(
+                " • Judiciary:   Shadow Council & Reference Monitor audit trail",
+                self.theme.muted(),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                " Admitted Local Packages (/packages):",
+                self.theme.prompt(),
+            )),
+        ];
+
+        if self.packages_cache.is_empty() {
+            gov_lines.push(Line::from(Span::styled(
+                "   (none loaded — run /packages to query store)",
+                self.theme.muted(),
+            )));
+        } else {
+            for pkg in self.packages_cache.iter().take(6) {
+                gov_lines.push(Line::from(format!("   • {pkg}")));
+            }
+        }
+
+        let left_panel = Paragraph::new(gov_lines).block(
+            Block::default()
+                .title(" Constitutional Governance & Packages ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(self.theme.border()),
+        );
+        frame.render_widget(left_panel, cols[0]);
+
+        let mut trust_lines = vec![Line::from(Span::styled(
+            " Verified Distribution Cache (/distribution):",
+            self.theme.title(),
+        ))];
+        if self.distribution_cache.is_empty() {
+            trust_lines.push(Line::from(Span::styled(
+                "   (no cached downloads loaded — run /distribution)",
+                self.theme.muted(),
+            )));
+        } else {
+            for item in self.distribution_cache.iter().take(6) {
+                trust_lines.push(Line::from(format!("   • {item}")));
+            }
+        }
+        trust_lines.push(Line::from(""));
+        trust_lines.push(Line::from(Span::styled(
+            " Human-in-the-Loop Approval Gate:",
+            self.theme.warning(),
+        )));
+        if let Some(pending) = &self.pending {
+            trust_lines.push(Line::from(Span::styled(
+                format!("   Pending Approval ID: {}", pending.approval_id),
+                self.theme.warning(),
+            )));
+            trust_lines.push(Line::from(Span::styled(
+                format!("   Invocation: {}", pending.invocation.summary()),
+                self.theme.muted(),
+            )));
+            trust_lines.push(Line::from(Span::styled(
+                "   Press Ctrl+Y (/approve) or Ctrl+N (/deny)",
+                self.theme.prompt(),
+            )));
+        } else {
+            trust_lines.push(Line::from(Span::styled(
+                "   No pending approval requests.",
+                self.theme.muted(),
+            )));
+        }
+
+        let right_panel = Paragraph::new(trust_lines).block(
+            Block::default()
+                .title(" Supply-Chain Trust & Approvals ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(self.theme.border()),
+        );
+        frame.render_widget(right_panel, cols[1]);
+    }
+
+    fn render_status_bar(&self, frame: &mut Frame, area: Rect) {
+        let session = self.session_id.as_deref().unwrap_or("not started");
         let status = format!(
-            "session: {session} · turns: {} · state: {} · theme: {} · presentation only",
+            "session: {session} · turns: {} · state: {} · view: {} · theme: {} · presentation only",
             self.turns,
             self.activity.name(),
+            self.active_tab.name(),
             self.theme.name()
         );
         frame.render_widget(
-            Paragraph::new(truncate(&status, usize::from(sections[2].width)))
-                .style(self.theme.muted()),
-            sections[2],
+            Paragraph::new(truncate(&status, usize::from(area.width))).style(self.theme.muted()),
+            area,
         );
+    }
 
-        let (input, cursor) =
-            visible_input(&self.input, self.cursor, usize::from(sections[3].width));
+    fn render_input_box(&self, frame: &mut Frame, area: Rect) {
+        let (input, cursor) = visible_input(&self.input, self.cursor, usize::from(area.width));
         let input_line = Line::from(vec![
             Span::styled("> ", self.theme.prompt()),
             Span::raw(input),
         ]);
         frame.render_widget(
             Paragraph::new(input_line).block(Block::default().borders(Borders::TOP)),
-            sections[3],
+            area,
         );
-        frame.set_cursor_position(Position::new(
-            sections[3].x.saturating_add(cursor),
-            sections[3].y.saturating_add(1),
-        ));
+        if !self.palette_open {
+            frame.set_cursor_position(Position::new(
+                area.x.saturating_add(cursor),
+                area.y.saturating_add(1),
+            ));
+        }
     }
+
+    fn render_palette_modal(&self, frame: &mut Frame, area: Rect) {
+        let modal_area = centered_rect(72, 65, area);
+        frame.render_widget(Clear, modal_area);
+
+        let outer = Block::default()
+            .title(" ◆ Command Palette (Type to filter · Enter to run · Esc to close) ")
+            .borders(Borders::ALL)
+            .border_type(BorderType::Double)
+            .border_style(self.theme.accent());
+        let inner = outer.inner(modal_area);
+        frame.render_widget(outer, modal_area);
+
+        if inner.height < 3 || inner.width < 10 {
+            return;
+        }
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(2), Constraint::Min(1)])
+            .split(inner);
+
+        let query_str = self.palette_query.iter().collect::<String>();
+        let search_line = Line::from(vec![
+            Span::styled(" Search: ", self.theme.title()),
+            Span::raw(&query_str),
+        ]);
+        frame.render_widget(
+            Paragraph::new(search_line).block(Block::default().borders(Borders::BOTTOM)),
+            chunks[0],
+        );
+
+        let entries = self.filtered_palette_entries();
+        let max_items = usize::from(chunks[1].height.max(1));
+        let start = self
+            .palette_index
+            .saturating_sub(max_items.saturating_sub(1));
+        let items = entries
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(max_items)
+            .map(|(idx, entry)| {
+                let selected = idx == self.palette_index;
+                let prefix = if selected { " ▸ " } else { "   " };
+                let line_text = format!(
+                    "{prefix}{:<20} [{}] {}",
+                    entry.command, entry.category, entry.description
+                );
+                let style = if selected {
+                    self.theme.title()
+                } else {
+                    Style::default()
+                };
+                ListItem::new(truncate(&line_text, usize::from(chunks[1].width))).style(style)
+            })
+            .collect::<Vec<_>>();
+
+        frame.render_widget(List::new(items), chunks[1]);
+    }
+}
+
+fn style_transcript_line(line: &str, width: usize, theme: TuiTheme) -> Line<'static> {
+    let text = truncate(line, width);
+    if let Some(rest) = text.strip_prefix("you> ") {
+        Line::from(vec![
+            Span::styled("you> ", theme.prompt()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("pandora> ") {
+        Line::from(vec![
+            Span::styled("pandora> ", theme.title()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("error> ") {
+        Line::from(vec![
+            Span::styled("error> ", theme.error()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("approval> ") {
+        Line::from(vec![
+            Span::styled("approval> ", theme.warning()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if text.starts_with('+') && !text.starts_with("+++") {
+        Line::from(Span::styled(text, theme.prompt()))
+    } else if text.starts_with('-') && !text.starts_with("---") {
+        Line::from(Span::styled(text, theme.error()))
+    } else if text.starts_with("@@") {
+        Line::from(Span::styled(text, theme.title()))
+    } else {
+        Line::from(text)
+    }
+}
+
+fn fuzzy_subsequence(needle: &str, haystack: &str) -> bool {
+    let mut hay_chars = haystack.chars();
+    for n in needle.chars() {
+        if !hay_chars.any(|h| h == n) {
+            return false;
+        }
+    }
+    true
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(area);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(vertical[1])[1]
 }
 
 fn update_session(session_id: &mut Option<String>, value: Option<&Value>) {
@@ -1086,9 +2667,11 @@ fn terminal_error(error: impl std::fmt::Display) -> CliError {
 #[cfg(test)]
 mod tests {
     use super::{
-        App, MAX_TUI_HISTORY, MAX_TUI_MESSAGES, TuiActivity, TuiTheme, visible_input, wrap_message,
+        App, MAX_TUI_HISTORY, MAX_TUI_MESSAGES, TuiActivity, TuiTab, TuiTheme, visible_input,
+        wrap_message,
     };
     use crate::commands::ParsedArgs;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::{Terminal, backend::TestBackend};
     use std::collections::BTreeMap;
 
@@ -1513,5 +3096,136 @@ mod tests {
             .collect::<String>();
         assert!(rendered.contains("PANDORA TUI"));
         assert!(rendered.contains("Enter a task"));
+    }
+
+    #[test]
+    fn wide_dashboard_renders_tabs_and_telemetry_sidebar() {
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let mut app = app();
+        app.active_tab = TuiTab::Console;
+
+        terminal
+            .draw(|frame| app.render(frame))
+            .expect("render wide TUI");
+
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("PANDORA TUI"));
+        assert!(rendered.contains("1:Console"));
+        assert!(rendered.contains("2:Kanban & Fleet"));
+        assert!(rendered.contains("3:Memory & Graph"));
+        assert!(rendered.contains("4:Governance & Trust"));
+        assert!(rendered.contains("Activity Cadence"));
+        assert!(rendered.contains("Turn Budget"));
+        assert!(rendered.contains("Runtime Telemetry"));
+    }
+
+    #[test]
+    fn tab_switching_renders_kanban_memory_and_governance_views() {
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let mut app = app();
+
+        app.input = "/tab kanban".chars().collect();
+        app.submit();
+        assert_eq!(app.active_tab, TuiTab::Kanban);
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let kanban_view = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(kanban_view.contains("IN PROGRESS"));
+        assert!(kanban_view.contains("Fleet Operations"));
+
+        app.input = "/tab memory".chars().collect();
+        app.submit();
+        assert_eq!(app.active_tab, TuiTab::Memory);
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let memory_view = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(memory_view.contains("5-Tier Layered Memory Architecture"));
+        assert!(memory_view.contains("L0 Working Buffer"));
+
+        app.input = "/tab governance".chars().collect();
+        app.submit();
+        assert_eq!(app.active_tab, TuiTab::Governance);
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let gov_view = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(gov_view.contains("Tripartite Constitutional Governance"));
+        assert!(gov_view.contains("Supply-Chain Trust & Approvals"));
+    }
+
+    #[test]
+    fn command_palette_filters_and_executes_selected_command() {
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let mut app = app();
+
+        // Open palette with Ctrl+P
+        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL));
+        assert!(app.palette_open);
+
+        // Type "mono" to filter to "/theme mono"
+        for ch in "mono".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+        let filtered = app.filtered_palette_entries();
+        assert!(!filtered.is_empty());
+        assert_eq!(filtered[0].command, "/theme mono");
+
+        // Render modal overlay
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("Command Palette"));
+
+        // Press Enter to execute "/theme mono"
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(!app.palette_open);
+        assert_eq!(app.theme, TuiTheme::Mono);
+    }
+
+    #[test]
+    fn readline_shortcuts_manipulate_input_buffer() {
+        let mut app = app();
+        app.input = "hello world".chars().collect();
+        app.cursor = app.input.len();
+
+        // Ctrl+W deletes "world"
+        app.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL));
+        assert_eq!(app.input.iter().collect::<String>(), "hello ");
+
+        // Ctrl+A moves cursor to 0
+        app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
+        assert_eq!(app.cursor, 0);
+
+        // Ctrl+K truncates from cursor
+        app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
+        assert!(app.input.is_empty());
     }
 }
