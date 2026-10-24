@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/logo.jpg" alt="Pandora Logo" width="280" />
+</p>
+
 # AGENT-PANDORA (`pandora`)
 
 **Pandora** is a local-first, governed AI agent runtime and interactive terminal workbench written in Rust (`#[(forbid(unsafe_code))]` across all runtime, CLI, provider, harness, and service crates).
@@ -255,6 +259,17 @@ While `pandora` opens the interactive TUI by default in a terminal, all 42 root 
 pandora run --agent "Inspect workspace architecture and run tests"
 pandora slash /audit
 pandora slash /status
+
+# OAuth 2.0 PKCE Login, Multi-Account Switching & Custom OpenAI/Anthropic Providers
+pandora provider login --provider claude --no-browser
+pandora provider login --provider openai --no-browser
+pandora provider login --provider copilot --no-browser
+pandora provider login --provider openrouter --no-browser
+pandora provider login --provider ollama
+printf '%s' "$MY_API_KEY" | pandora provider add my-api --base-url https://llm.example.com/v1 --model my-model-id --api-key-stdin --set-default
+pandora provider add local-llm --base-url http://localhost:8080/v1 --model qwen2.5-coder --no-api-key --set-default
+pandora provider accounts
+pandora provider accounts use work --provider claude
 
 # 5-Tier Memory, Virtual Context FS (pandora://), and Signed Capsules
 pandora memory recall --tier l3 --intent coding

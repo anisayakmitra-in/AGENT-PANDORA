@@ -25,7 +25,9 @@ rusqlite = { workspace = true, features = ["backup"] }
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tokio.workspace = true
+url.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]

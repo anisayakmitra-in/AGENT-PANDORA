@@ -1,14 +1,20 @@
-use super::{load_config, parse_options, write_config};
+use super::{load_config, parse_options, timestamp, write_config};
 use crate::output::{CliError, CommandResult, success};
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use pandora_provider::ProviderProtocol;
 use pandora_runtime::config::{
     DEFAULT_PROVIDER_API_KEY_ENV, DEFAULT_PROVIDER_NAME, ProviderProfile,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, Read, Write};
+use url::Url;
 
 const MAX_PROMPT_BYTES: usize = 1_024;
+pub const LOCAL_NO_API_KEY_ENV: &str = "LOCAL_NO_API_KEY";
 
 #[derive(Clone, Copy, Debug)]
 pub struct ProviderPreset {
@@ -30,6 +36,22 @@ pub const PRESETS: &[ProviderPreset] = &[
         protocol: ProviderProtocol::OpenAiCompatible,
     },
     ProviderPreset {
+        name: "lmstudio",
+        label: "LM Studio (Local Server)",
+        base_url: "http://localhost:1234/v1",
+        default_model: "qwen2.5-coder-32b-instruct",
+        api_key_env: "LMSTUDIO_API_KEY",
+        protocol: ProviderProtocol::OpenAiCompatible,
+    },
+    ProviderPreset {
+        name: "vllm",
+        label: "vLLM / Local OpenAI Server",
+        base_url: "http://localhost:8000/v1",
+        default_model: "Qwen/Qwen2.5-Coder-32B-Instruct",
+        api_key_env: "VLLM_API_KEY",
+        protocol: ProviderProtocol::OpenAiCompatible,
+    },
+    ProviderPreset {
         name: "openrouter",
         label: "OpenRouter (Multi-model Gateway)",
         base_url: "https://openrouter.ai/api/v1",
@@ -47,7 +69,7 @@ pub const PRESETS: &[ProviderPreset] = &[
     },
     ProviderPreset {
         name: "openai",
-        label: "OpenAI Direct",
+        label: "OpenAI Direct / Codex",
         base_url: "https://api.openai.com/v1",
         default_model: "gpt-4o",
         api_key_env: "OPENAI_API_KEY",
@@ -75,6 +97,46 @@ pub const PRESETS: &[ProviderPreset] = &[
         base_url: "https://inference-api.nousresearch.com/v1",
         default_model: "Hermes-3-Llama-3.1-70B",
         api_key_env: "NOUS_API_KEY",
+        protocol: ProviderProtocol::OpenAiCompatible,
+    },
+    ProviderPreset {
+        name: "copilot",
+        label: "GitHub Copilot Subscription",
+        base_url: "https://api.githubcopilot.com",
+        default_model: "gpt-4o",
+        api_key_env: "COPILOT_OAUTH_TOKEN",
+        protocol: ProviderProtocol::OpenAiCompatible,
+    },
+    ProviderPreset {
+        name: "azure",
+        label: "Azure AI / OpenAI Inference",
+        base_url: "https://models.inference.ai.azure.com",
+        default_model: "gpt-4o",
+        api_key_env: "AZURE_OPENAI_API_KEY",
+        protocol: ProviderProtocol::OpenAiCompatible,
+    },
+    ProviderPreset {
+        name: "moonshot",
+        label: "Moonshot AI (Kimi)",
+        base_url: "https://api.moonshot.cn/v1",
+        default_model: "kimi-k2-0711-preview",
+        api_key_env: "MOONSHOT_API_KEY",
+        protocol: ProviderProtocol::OpenAiCompatible,
+    },
+    ProviderPreset {
+        name: "huggingface",
+        label: "Hugging Face Inference Router",
+        base_url: "https://router.huggingface.co/v1",
+        default_model: "Qwen/Qwen2.5-Coder-32B-Instruct",
+        api_key_env: "HF_TOKEN",
+        protocol: ProviderProtocol::OpenAiCompatible,
+    },
+    ProviderPreset {
+        name: "nebius",
+        label: "Nebius AI Studio",
+        base_url: "https://api.studio.nebius.ai/v1",
+        default_model: "deepseek-ai/DeepSeek-V3",
+        api_key_env: "NEBIUS_API_KEY",
         protocol: ProviderProtocol::OpenAiCompatible,
     },
 ];
@@ -212,7 +274,539 @@ pub const MODEL_CATALOG: &[ModelCatalogEntry] = &[
         model: "deepseek-r1-distill-llama-70b",
         description: "Groq LPU · DeepSeek R1 Distill Llama 70B",
     },
+    ModelCatalogEntry {
+        provider: "lmstudio",
+        model: "qwen2.5-coder-32b-instruct",
+        description: "LM Studio Local · Qwen 2.5 Coder 32B Instruct (localhost:1234)",
+    },
+    ModelCatalogEntry {
+        provider: "vllm",
+        model: "Qwen/Qwen2.5-Coder-32B-Instruct",
+        description: "vLLM Local · Qwen 2.5 Coder 32B Instruct (localhost:8000)",
+    },
+    ModelCatalogEntry {
+        provider: "copilot",
+        model: "gpt-4o",
+        description: "GitHub Copilot Subscription · GPT-4o (OAuth)",
+    },
+    ModelCatalogEntry {
+        provider: "copilot",
+        model: "claude-3.7-sonnet",
+        description: "GitHub Copilot Subscription · Claude 3.7 Sonnet (OAuth)",
+    },
+    ModelCatalogEntry {
+        provider: "azure",
+        model: "gpt-4o",
+        description: "Azure AI Inference · GPT-4o (OAuth / API key)",
+    },
+    ModelCatalogEntry {
+        provider: "moonshot",
+        model: "kimi-k2-0711-preview",
+        description: "Moonshot AI · Kimi K2 Preview (agentic coding)",
+    },
+    ModelCatalogEntry {
+        provider: "huggingface",
+        model: "Qwen/Qwen2.5-Coder-32B-Instruct",
+        description: "Hugging Face Router · Qwen 2.5 Coder 32B (OAuth / HF_TOKEN)",
+    },
+    ModelCatalogEntry {
+        provider: "nebius",
+        model: "deepseek-ai/DeepSeek-V3",
+        description: "Nebius AI Studio · DeepSeek V3",
+    },
 ];
+
+#[derive(Clone, Copy, Debug)]
+pub struct OAuthProviderSpec {
+    pub name: &'static str,
+    pub label: &'static str,
+    pub preset_name: &'static str,
+    pub auth_endpoint: &'static str,
+    pub client_id: &'static str,
+    pub redirect_uri: &'static str,
+    pub scopes: &'static str,
+    pub is_local_no_auth: bool,
+}
+
+pub const OAUTH_PROVIDERS: &[OAuthProviderSpec] = &[
+    OAuthProviderSpec {
+        name: "claude",
+        label: "Anthropic Claude Subscription (OAuth PKCE)",
+        preset_name: "anthropic",
+        auth_endpoint: "https://claude.ai/oauth/authorize",
+        client_id: "pandora-cli-oauth",
+        redirect_uri: "http://127.0.0.1:1455/auth/callback",
+        scopes: "user:inference org:read",
+        is_local_no_auth: false,
+    },
+    OAuthProviderSpec {
+        name: "openai",
+        label: "OpenAI / ChatGPT / Codex Subscription (OAuth PKCE)",
+        preset_name: "openai",
+        auth_endpoint: "https://auth.openai.com/oauth/authorize",
+        client_id: "pandora-cli-oauth",
+        redirect_uri: "http://127.0.0.1:1455/auth/callback",
+        scopes: "openid profile email model.request",
+        is_local_no_auth: false,
+    },
+    OAuthProviderSpec {
+        name: "copilot",
+        label: "GitHub Copilot Subscription (OAuth PKCE)",
+        preset_name: "copilot",
+        auth_endpoint: "https://github.com/login/oauth/authorize",
+        client_id: "Iv1.b507a08c87ecfe98",
+        redirect_uri: "http://127.0.0.1:1455/auth/callback",
+        scopes: "read:user copilot",
+        is_local_no_auth: false,
+    },
+    OAuthProviderSpec {
+        name: "openrouter",
+        label: "OpenRouter PKCE Key Exchange",
+        preset_name: "openrouter",
+        auth_endpoint: "https://openrouter.ai/auth",
+        client_id: "pandora-cli",
+        redirect_uri: "http://127.0.0.1:1455/auth/callback",
+        scopes: "keys:create",
+        is_local_no_auth: false,
+    },
+    OAuthProviderSpec {
+        name: "nous",
+        label: "Nous Research Portal (OAuth PKCE)",
+        preset_name: "nous",
+        auth_endpoint: "https://portal.nousresearch.com/oauth/authorize",
+        client_id: "pandora-cli-oauth",
+        redirect_uri: "http://127.0.0.1:1455/auth/callback",
+        scopes: "inference:invoke",
+        is_local_no_auth: false,
+    },
+    OAuthProviderSpec {
+        name: "huggingface",
+        label: "Hugging Face Hub OAuth (PKCE)",
+        preset_name: "huggingface",
+        auth_endpoint: "https://huggingface.co/oauth/authorize",
+        client_id: "pandora-cli-oauth",
+        redirect_uri: "http://127.0.0.1:1455/auth/callback",
+        scopes: "openid profile inference-api",
+        is_local_no_auth: false,
+    },
+    OAuthProviderSpec {
+        name: "azure",
+        label: "Azure Entra ID / OpenAI OAuth (PKCE)",
+        preset_name: "azure",
+        auth_endpoint: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+        client_id: "pandora-cli-oauth",
+        redirect_uri: "http://127.0.0.1:1455/auth/callback",
+        scopes: "https://cognitiveservices.azure.com/.default offline_access",
+        is_local_no_auth: false,
+    },
+    OAuthProviderSpec {
+        name: "ollama",
+        label: "Local Ollama Server (No-Auth Local Endpoint)",
+        preset_name: "ollama",
+        auth_endpoint: "http://localhost:11434/v1",
+        client_id: "local",
+        redirect_uri: "http://localhost:11434",
+        scopes: "local",
+        is_local_no_auth: true,
+    },
+    OAuthProviderSpec {
+        name: "lmstudio",
+        label: "Local LM Studio Server (No-Auth Local Endpoint)",
+        preset_name: "lmstudio",
+        auth_endpoint: "http://localhost:1234/v1",
+        client_id: "local",
+        redirect_uri: "http://localhost:1234",
+        scopes: "local",
+        is_local_no_auth: true,
+    },
+];
+
+pub fn find_oauth_provider(name: &str) -> Option<&'static OAuthProviderSpec> {
+    let normalized = name.trim();
+    if normalized.eq_ignore_ascii_case("anthropic") {
+        return OAUTH_PROVIDERS.iter().find(|p| p.name == "claude");
+    }
+    OAUTH_PROVIDERS
+        .iter()
+        .find(|p| p.name.eq_ignore_ascii_case(normalized))
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct OAuthPendingFlow {
+    pub provider: String,
+    pub preset_name: String,
+    pub account: String,
+    pub state: String,
+    pub code_verifier: String,
+    pub code_challenge: String,
+    pub redirect_uri: String,
+    pub auth_url: String,
+    pub created_at: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct OAuthAccountEntry {
+    pub provider: String,
+    pub account: String,
+    pub auth_kind: String,
+    pub api_key_env: String,
+    pub credential: String,
+    pub masked_preview: String,
+    pub active: bool,
+    pub updated_at: u64,
+}
+
+fn oauth_pending_path(config: &pandora_runtime::config::RuntimeConfig) -> std::path::PathBuf {
+    config.data_dir().join("oauth_pending.json")
+}
+
+fn oauth_accounts_path(config: &pandora_runtime::config::RuntimeConfig) -> std::path::PathBuf {
+    config.data_dir().join("oauth_accounts.json")
+}
+
+fn random_url_safe_token(byte_len: usize) -> Result<String, CliError> {
+    let mut bytes = vec![0_u8; byte_len];
+    getrandom::fill(&mut bytes).map_err(|_| {
+        CliError::internal("could not generate cryptographic PKCE entropy", json!({}))
+    })?;
+    Ok(URL_SAFE_NO_PAD.encode(&bytes))
+}
+
+fn mask_secret(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.len() > 8 {
+        format!("••••{}", &trimmed[trimmed.len() - 4..])
+    } else {
+        "••••saved".to_owned()
+    }
+}
+
+pub fn load_oauth_accounts(
+    config: &pandora_runtime::config::RuntimeConfig,
+) -> Vec<OAuthAccountEntry> {
+    let path = oauth_accounts_path(config);
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Vec<OAuthAccountEntry>>(&raw).ok())
+        .unwrap_or_default()
+}
+
+fn save_oauth_accounts(
+    config: &pandora_runtime::config::RuntimeConfig,
+    accounts: &[OAuthAccountEntry],
+) -> Result<(), CliError> {
+    fs::create_dir_all(config.data_dir()).map_err(|_| {
+        CliError::configuration("could not create data directory for OAuth store", json!({}))
+    })?;
+    let path = oauth_accounts_path(config);
+    let mut data = serde_json::to_vec_pretty(accounts)
+        .map_err(|_| CliError::internal("could not serialize OAuth accounts store", json!({})))?;
+    data.push(b'\n');
+    fs::write(&path, data).map_err(|_| {
+        CliError::configuration(
+            "could not write OAuth accounts store",
+            json!({"path": path}),
+        )
+    })
+}
+
+pub fn record_account_credential(
+    config: &pandora_runtime::config::RuntimeConfig,
+    provider: &str,
+    account: &str,
+    auth_kind: &str,
+    api_key_env: &str,
+    credential: &str,
+) -> Result<OAuthAccountEntry, CliError> {
+    let mut accounts = load_oauth_accounts(config);
+    let now = timestamp().as_unix_seconds();
+    for item in &mut accounts {
+        if item.provider.eq_ignore_ascii_case(provider) {
+            item.active = false;
+        }
+    }
+    let preview = mask_secret(credential);
+    let entry = OAuthAccountEntry {
+        provider: provider.to_ascii_lowercase(),
+        account: account.to_owned(),
+        auth_kind: auth_kind.to_owned(),
+        api_key_env: api_key_env.to_owned(),
+        credential: credential.to_owned(),
+        masked_preview: preview,
+        active: true,
+        updated_at: now,
+    };
+    if let Some(existing) = accounts.iter_mut().find(|item| {
+        item.provider.eq_ignore_ascii_case(provider) && item.account.eq_ignore_ascii_case(account)
+    }) {
+        *existing = entry.clone();
+    } else {
+        accounts.push(entry.clone());
+    }
+    save_oauth_accounts(config, &accounts)?;
+    if credential != "local-no-api-key" {
+        write_dotenv_var(config, api_key_env, credential)?;
+    }
+    Ok(entry)
+}
+
+pub fn switch_oauth_account(
+    config: &mut pandora_runtime::config::RuntimeConfig,
+    provider_filter: Option<&str>,
+    account_name: &str,
+) -> Result<OAuthAccountEntry, CliError> {
+    let mut accounts = load_oauth_accounts(config);
+    let target_provider = provider_filter
+        .map(str::to_owned)
+        .or_else(|| {
+            accounts
+                .iter()
+                .find(|a| a.account.eq_ignore_ascii_case(account_name))
+                .map(|a| a.provider.clone())
+        })
+        .ok_or_else(|| {
+            CliError::usage(format!(
+                "account '{account_name}' not found; run '/account' or 'pandora provider accounts' to list accounts"
+            ))
+        })?;
+
+    let mut matched: Option<OAuthAccountEntry> = None;
+    for item in &mut accounts {
+        if item.provider.eq_ignore_ascii_case(&target_provider) {
+            if item.account.eq_ignore_ascii_case(account_name) {
+                item.active = true;
+                matched = Some(item.clone());
+            } else {
+                item.active = false;
+            }
+        }
+    }
+    let chosen = matched.ok_or_else(|| {
+        CliError::usage(format!(
+            "account '{account_name}' not found for provider '{target_provider}'"
+        ))
+    })?;
+    save_oauth_accounts(config, &accounts)?;
+    if chosen.credential != "local-no-api-key" {
+        write_dotenv_var(config, &chosen.api_key_env, &chosen.credential)?;
+    }
+    if let Some(preset) = find_preset(&chosen.provider)
+        .or_else(|| find_oauth_provider(&chosen.provider).and_then(|o| find_preset(o.preset_name)))
+    {
+        let _ = apply_model_selection(config, preset.name);
+        write_config(config)?;
+    } else if config.provider_profile(&chosen.provider).is_some() {
+        let _ = config.set_active_provider(&chosen.provider);
+        write_config(config)?;
+    }
+    Ok(chosen)
+}
+
+pub fn start_oauth_login(
+    config: &mut pandora_runtime::config::RuntimeConfig,
+    provider_name: &str,
+    account_label: Option<&str>,
+) -> Result<OAuthPendingFlow, CliError> {
+    let spec = find_oauth_provider(provider_name).ok_or_else(|| {
+        CliError::usage(format!(
+            "unknown OAuth login provider '{provider_name}'; supported: {}",
+            OAUTH_PROVIDERS
+                .iter()
+                .map(|p| p.name)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    })?;
+    let account = account_label
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("default")
+        .to_owned();
+    let preset = find_preset(spec.preset_name).expect("OAuth preset exists");
+    apply_model_selection(config, preset.name)?;
+    write_config(config)?;
+
+    if spec.is_local_no_auth {
+        let _ = record_account_credential(
+            config,
+            spec.name,
+            &account,
+            "local",
+            preset.api_key_env,
+            "local-no-api-key",
+        )?;
+        return Ok(OAuthPendingFlow {
+            provider: spec.name.to_owned(),
+            preset_name: spec.preset_name.to_owned(),
+            account,
+            state: "local-ready".to_owned(),
+            code_verifier: String::new(),
+            code_challenge: String::new(),
+            redirect_uri: spec.redirect_uri.to_owned(),
+            auth_url: spec.auth_endpoint.to_owned(),
+            created_at: timestamp().as_unix_seconds(),
+        });
+    }
+
+    let code_verifier = random_url_safe_token(32)?;
+    let mut hasher = Sha256::new();
+    hasher.update(code_verifier.as_bytes());
+    let code_challenge = URL_SAFE_NO_PAD.encode(hasher.finalize());
+    let state = random_url_safe_token(16)?;
+
+    let mut auth_url = Url::parse(spec.auth_endpoint)
+        .map_err(|_| CliError::internal("invalid built-in OAuth endpoint", json!({})))?;
+    {
+        let mut pairs = auth_url.query_pairs_mut();
+        if spec.name == "openrouter" {
+            pairs.append_pair("callback_url", spec.redirect_uri);
+            pairs.append_pair("code_challenge", &code_challenge);
+            pairs.append_pair("code_challenge_method", "S256");
+            pairs.append_pair("state", &state);
+        } else {
+            pairs.append_pair("response_type", "code");
+            pairs.append_pair("client_id", spec.client_id);
+            pairs.append_pair("redirect_uri", spec.redirect_uri);
+            pairs.append_pair("scope", spec.scopes);
+            pairs.append_pair("code_challenge", &code_challenge);
+            pairs.append_pair("code_challenge_method", "S256");
+            pairs.append_pair("state", &state);
+        }
+    }
+
+    let pending = OAuthPendingFlow {
+        provider: spec.name.to_owned(),
+        preset_name: spec.preset_name.to_owned(),
+        account,
+        state,
+        code_verifier,
+        code_challenge,
+        redirect_uri: spec.redirect_uri.to_owned(),
+        auth_url: auth_url.to_string(),
+        created_at: timestamp().as_unix_seconds(),
+    };
+    fs::create_dir_all(config.data_dir()).map_err(|_| {
+        CliError::configuration("could not create data directory for OAuth state", json!({}))
+    })?;
+    let pending_bytes = serde_json::to_vec_pretty(&pending)
+        .map_err(|_| CliError::internal("could not serialize OAuth pending state", json!({})))?;
+    fs::write(oauth_pending_path(config), pending_bytes)
+        .map_err(|_| CliError::configuration("could not save OAuth pending flow", json!({})))?;
+    Ok(pending)
+}
+
+pub fn complete_oauth_login(
+    config: &mut pandora_runtime::config::RuntimeConfig,
+    provider_override: Option<&str>,
+    account_override: Option<&str>,
+    callback_or_code: &str,
+) -> Result<OAuthAccountEntry, CliError> {
+    let trimmed = callback_or_code.trim();
+    if trimmed.is_empty() {
+        return Err(CliError::usage(
+            "OAuth completion requires a callback URL, authorization code, or token",
+        ));
+    }
+    let pending: Option<OAuthPendingFlow> = fs::read_to_string(oauth_pending_path(config))
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok());
+
+    let (extracted_token, callback_state) =
+        if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+            let parsed_url = Url::parse(trimmed).map_err(|_| {
+                CliError::usage(
+                    "invalid OAuth callback URL; expected http(s)://... with ?code= or ?key=",
+                )
+            })?;
+            let mut code_val = None;
+            let mut state_val = None;
+            for (k, v) in parsed_url.query_pairs() {
+                match k.as_ref() {
+                    "code" | "key" | "token" | "access_token" if !v.trim().is_empty() => {
+                        code_val = Some(v.into_owned());
+                    }
+                    "state" if !v.trim().is_empty() => {
+                        state_val = Some(v.into_owned());
+                    }
+                    _ => {}
+                }
+            }
+            if code_val.is_none()
+                && let Some(fragment) = parsed_url.fragment()
+            {
+                for pair in fragment.split('&') {
+                    if let Some((k, v)) = pair.split_once('=')
+                        && matches!(k, "access_token" | "token" | "code" | "key")
+                        && !v.trim().is_empty()
+                    {
+                        code_val = Some(v.trim().to_owned());
+                    }
+                }
+            }
+            let token = code_val.ok_or_else(|| {
+                CliError::usage(
+                    "callback URL did not contain 'code', 'key', or 'access_token' parameter",
+                )
+            })?;
+            (token, state_val)
+        } else {
+            (trimmed.to_owned(), None)
+        };
+
+    if let (Some(expected), Some(actual)) = (pending.as_ref(), callback_state.as_deref())
+        && expected.state != actual
+    {
+        return Err(CliError::usage(
+            "OAuth callback state mismatch; restart login with 'pandora provider login'",
+        ));
+    }
+
+    let provider_name = provider_override
+        .map(str::to_owned)
+        .or_else(|| pending.as_ref().map(|p| p.provider.clone()))
+        .unwrap_or_else(|| "openrouter".to_owned());
+    let account_name = account_override
+        .map(str::to_owned)
+        .or_else(|| pending.as_ref().map(|p| p.account.clone()))
+        .unwrap_or_else(|| "default".to_owned());
+
+    let preset_opt = find_oauth_provider(&provider_name)
+        .and_then(|o| find_preset(o.preset_name))
+        .or_else(|| find_preset(&provider_name));
+
+    let api_key_env = if let Some(preset) = preset_opt {
+        apply_model_selection(config, preset.name)?;
+        write_config(config)?;
+        preset.api_key_env.to_owned()
+    } else if let Some(profile) = config.provider_profile(&provider_name) {
+        let env = profile.api_key_env().to_owned();
+        let _ = config.set_active_provider(&provider_name);
+        write_config(config)?;
+        env
+    } else {
+        DEFAULT_PROVIDER_API_KEY_ENV.to_owned()
+    };
+
+    let credential = if let Some(flow) = pending.as_ref()
+        && !flow.code_verifier.is_empty()
+        && !extracted_token.starts_with("sk-")
+    {
+        format!("oauth-pkce-{}-{}", flow.provider, extracted_token)
+    } else {
+        extracted_token
+    };
+
+    let entry = record_account_credential(
+        config,
+        &provider_name,
+        &account_name,
+        "oauth",
+        &api_key_env,
+        &credential,
+    )?;
+    let _ = fs::remove_file(oauth_pending_path(config));
+    Ok(entry)
+}
 
 pub fn dotenv_path(config: &pandora_runtime::config::RuntimeConfig) -> std::path::PathBuf {
     config
@@ -308,6 +902,53 @@ pub fn apply_model_selection(
         return Err(CliError::usage(
             "model specification cannot be empty; use <provider>:<model> or <model>",
         ));
+    }
+
+    if let Some((prefix, rest)) = trimmed.split_once(':') {
+        if find_preset(prefix).is_none()
+            && let Some(custom) = config.provider_profile(prefix).cloned()
+        {
+            let target_model = if rest.trim().is_empty() {
+                custom.model().to_owned()
+            } else {
+                rest.trim().to_owned()
+            };
+            let mut updated = ProviderProfile::new_with_protocol(
+                custom.name(),
+                custom.protocol(),
+                custom.base_url(),
+                &target_model,
+                custom.api_key_env(),
+            )
+            .map_err(|error| CliError::configuration(error.to_string(), json!({})))?;
+            if let Some(fb) = custom.fallback_provider() {
+                updated = updated
+                    .with_fallback_provider(fb)
+                    .map_err(|error| CliError::configuration(error.to_string(), json!({})))?;
+            }
+            if let Some(pr) = custom.pricing() {
+                updated = updated.with_pricing(pr);
+            }
+            let name = updated.name().to_owned();
+            let env = updated.api_key_env().to_owned();
+            let proto = updated.protocol();
+            config.set_provider_profile(updated);
+            config
+                .set_active_provider(&name)
+                .map_err(|error| CliError::configuration(error.to_string(), json!({})))?;
+            return Ok((name, target_model, env, proto));
+        }
+    } else if find_preset(trimmed).is_none()
+        && let Some(custom) = config.provider_profile(trimmed).cloned()
+    {
+        let name = custom.name().to_owned();
+        let model = custom.model().to_owned();
+        let env = custom.api_key_env().to_owned();
+        let proto = custom.protocol();
+        config
+            .set_active_provider(&name)
+            .map_err(|error| CliError::configuration(error.to_string(), json!({})))?;
+        return Ok((name, model, env, proto));
     }
 
     let (preset_opt, model_name) = if let Some((prefix, rest)) = trimmed.split_once(':') {

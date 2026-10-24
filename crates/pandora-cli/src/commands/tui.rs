@@ -189,7 +189,7 @@ const PALETTE_ENTRIES: &[PaletteEntry] = &[
     PaletteEntry {
         command: "/model",
         category: "Model",
-        description: "Open interactive Hermes model & provider selector modal (Ctrl+M)",
+        description: "Open interactive Pandora model & provider selector modal (Ctrl+M)",
         immediate: true,
     },
     PaletteEntry {
@@ -205,15 +205,129 @@ const PALETTE_ENTRIES: &[PaletteEntry] = &[
         immediate: true,
     },
     PaletteEntry {
+        command: "/provider",
+        category: "Setup",
+        description: "List or add custom OpenAI/Anthropic provider profiles (/provider add <name> <url> [model])",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/login",
+        category: "Setup",
+        description: "Authenticate via OAuth 2.0 PKCE or local endpoint (/login <claude|openai|copilot|openrouter|nous|ollama>)",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/account",
+        category: "Setup",
+        description: "List or switch multi-account OAuth & API credentials (/account <label>)",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/backdrop",
+        category: "View",
+        description: "Cycle or set TrueColor terminal mural backdrop (subtle, vivid, off) [Alt+B]",
+        immediate: true,
+    },
+    PaletteEntry {
         command: "/tools",
         category: "Harness",
         description: "Inspect active Domain Harnesses, Coding Genes, Workflow Genes, and Skills",
         immediate: true,
     },
     PaletteEntry {
+        command: "/effort",
+        category: "Model",
+        description: "Show or change reasoning effort level (low, medium, high, max) [Alt+Left/Right]",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/resume",
+        category: "Session",
+        description: "Open interactive session picker or resume a session ID (Alt+R)",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/fork",
+        category: "Session",
+        description: "Fork the active session into a fresh session branch",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/rewind",
+        category: "Session",
+        description: "Rewind the transcript by one turn",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/compact",
+        category: "Session",
+        description: "Compact older transcript turns into a concise handoff summary",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/todos",
+        category: "Kanban",
+        description: "Toggle inline session Todo & Kanban card (Alt+X)",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/usage",
+        category: "Telemetry",
+        description: "Show provider token usage, cost, turn latency, and cache state",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/info",
+        category: "Telemetry",
+        description: "Toggle detailed runtime & session info card (Alt+I)",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/hotkeys",
+        category: "Core",
+        description: "List all keyboard shortcuts and ergonomic bindings (/keys)",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/skills",
+        category: "Harness",
+        description: "Inspect loaded procedural skills and Domain Harnesses",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/hill-climb",
+        category: "Harness",
+        description: "Score a goal's hill-climbability (0..100) for continuous verifiable iteration",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/confidence",
+        category: "Harness",
+        description: "Inspect stepped confidence gate & spike-check verification status",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/autopoke",
+        category: "Harness",
+        description: "Inspect unfinished Todo continuation gate and retry budget (max 3 attempts)",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/selfdev",
+        category: "Harness",
+        description: "Show governed Pandora Self-Development & atomic reload workflow",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/stash",
+        category: "Core",
+        description: "Park or restore current composer prompt draft (Ctrl+S)",
+        immediate: true,
+    },
+    PaletteEntry {
         command: "/focus",
         category: "View",
-        description: "Toggle distraction-free Hermes Focus Mode",
+        description: "Toggle distraction-free Focus Mode",
         immediate: true,
     },
     PaletteEntry {
@@ -526,16 +640,74 @@ struct FleetSnapshot {
     cost_display: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReasoningEffort {
+    Low,
+    Medium,
+    High,
+    Max,
+}
+
+impl ReasoningEffort {
+    const ALL: [Self; 4] = [Self::Low, Self::Medium, Self::High, Self::Max];
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Max => "max",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Self::Low => Self::Medium,
+            Self::Medium => Self::High,
+            Self::High => Self::Max,
+            Self::Max => Self::Low,
+        }
+    }
+
+    fn previous(self) -> Self {
+        match self {
+            Self::Low => Self::Max,
+            Self::Medium => Self::Low,
+            Self::High => Self::Medium,
+            Self::Max => Self::High,
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "low" | "minimal" | "fast" => Some(Self::Low),
+            "medium" | "med" | "default" | "balanced" => Some(Self::Medium),
+            "high" | "deep" => Some(Self::High),
+            "max" | "xhigh" | "ultra" => Some(Self::Max),
+            _ => None,
+        }
+    }
+}
+
 struct App {
     args: ParsedArgs,
     input: Vec<char>,
     cursor: usize,
     history: Vec<String>,
     history_index: Option<usize>,
+    draft_stash: Vec<String>,
+    autocomplete_index: usize,
     messages: Vec<String>,
     session_id: Option<String>,
     pending: Option<PendingTask>,
     turns: u32,
+    last_turn_ms: Option<u128>,
+    effort: ReasoningEffort,
+    centered_layout: bool,
+    scroll_bookmark: Option<usize>,
+    todo_card_open: bool,
+    info_card_open: bool,
+    backdrop_mode: super::tui_backdrop::BackdropMode,
     theme: TuiTheme,
     activity: TuiActivity,
     active_tab: TuiTab,
@@ -557,11 +729,38 @@ struct App {
     active_base_url: String,
     active_api_key_env: String,
     credential_ready: bool,
+    git_branch: String,
     sparkline_history: Vec<u64>,
     kanban_snapshot: KanbanSnapshot,
     fleet_snapshot: FleetSnapshot,
     packages_cache: Vec<String>,
     distribution_cache: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ComposerMode {
+    Chat,
+    SlashCommand,
+    DirectGene,
+}
+
+impl ComposerMode {
+    fn from_input(input: &[char]) -> Self {
+        let mut iter = input.iter().copied().skip_while(|ch| ch.is_whitespace());
+        match iter.next() {
+            Some('/') => Self::SlashCommand,
+            Some('!') => Self::DirectGene,
+            _ => Self::Chat,
+        }
+    }
+
+    fn badge(self) -> &'static str {
+        match self {
+            Self::Chat => " [Chat · / commands · ! direct gene · @ file] ",
+            Self::SlashCommand => " [Slash Command Mode · ↑/↓ select · Tab complete · Enter run] ",
+            Self::DirectGene => " [! Direct Gene Mode · zero-token governed local execution] ",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -738,11 +937,20 @@ impl App {
             cursor: 0,
             history: Vec::new(),
             history_index: None,
+            draft_stash: Vec::new(),
+            autocomplete_index: 0,
             messages: vec![
                 "Pandora TUI".to_owned(),
                 "Enter a task. Press Ctrl-C or Esc to close; /help lists commands.".to_owned(),
             ],
             turns: 0,
+            last_turn_ms: None,
+            effort: ReasoningEffort::Medium,
+            centered_layout: false,
+            scroll_bookmark: None,
+            todo_card_open: false,
+            info_card_open: false,
+            backdrop_mode: super::tui_backdrop::BackdropMode::Subtle,
             pending: None,
             theme,
             activity: TuiActivity::Idle,
@@ -765,6 +973,7 @@ impl App {
             active_base_url: "none".to_owned(),
             active_api_key_env: "OPENROUTER_API_KEY".to_owned(),
             credential_ready: false,
+            git_branch: "main".to_owned(),
             sparkline_history: vec![1, 2, 1, 3, 2, 4, 2, 1],
             kanban_snapshot: KanbanSnapshot {
                 board_id: "default".to_owned(),
@@ -802,9 +1011,13 @@ impl App {
                 .iter()
                 .find(|p| p.base_url.eq_ignore_ascii_case(&base_url))
                 .map(|p| p.name);
+            let active_profile_name = config
+                .active_provider()
+                .filter(|name| *name != pandora_runtime::config::DEFAULT_PROVIDER_NAME);
             let provider_name = self
                 .args
                 .value("provider")
+                .or(active_profile_name)
                 .or(preset_label)
                 .or_else(|| config.active_provider())
                 .unwrap_or("unconfigured")
@@ -830,6 +1043,72 @@ impl App {
             self.active_base_url = base_url;
             self.active_api_key_env = api_key_env;
             self.credential_ready = ready;
+            self.git_branch = detect_git_branch(config.workspace_dir());
+            let _ = super::tui_backdrop::ensure_backdrop_asset(config.data_dir());
+        }
+    }
+
+    fn toggle_stash(&mut self) {
+        let current = self.input.iter().collect::<String>();
+        if !current.trim().is_empty() {
+            self.draft_stash.push(current);
+            self.input.clear();
+            self.cursor = 0;
+            self.autocomplete_index = 0;
+            self.push_message(format!(
+                "stash> parked draft #{} (press Ctrl+S on empty prompt or /stash to restore)",
+                self.draft_stash.len()
+            ));
+        } else if let Some(restored) = self.draft_stash.pop() {
+            self.input = restored.chars().collect();
+            self.cursor = self.input.len();
+            self.autocomplete_index = 0;
+            self.push_message(format!(
+                "stash> restored draft ({} remaining in stash)",
+                self.draft_stash.len()
+            ));
+        } else {
+            self.push_message("stash> no parked drafts (type a prompt and press Ctrl+S to stash)");
+        }
+    }
+
+    fn cycle_model(&mut self, forward: bool) {
+        let catalog = super::setup::MODEL_CATALOG;
+        if catalog.is_empty() {
+            return;
+        }
+        let current_idx = catalog
+            .iter()
+            .position(|entry| {
+                entry
+                    .provider
+                    .eq_ignore_ascii_case(&self.active_provider_label)
+                    && entry.model.eq_ignore_ascii_case(&self.active_model_label)
+            })
+            .unwrap_or(0);
+        let next_idx = if forward {
+            (current_idx + 1) % catalog.len()
+        } else {
+            (current_idx + catalog.len() - 1) % catalog.len()
+        };
+        let target = &catalog[next_idx];
+        let spec = format!("{}:{}", target.provider, target.model);
+        self.switch_model(&spec);
+    }
+
+    fn toggle_scroll_bookmark(&mut self) {
+        if let Some(saved) = self.scroll_bookmark.take() {
+            let current = self.scroll_offset;
+            self.scroll_offset = saved;
+            self.push_message(format!(
+                "bookmark> jumped to scroll offset +{saved} (was +{current})"
+            ));
+        } else {
+            self.scroll_bookmark = Some(self.scroll_offset);
+            self.push_message(format!(
+                "bookmark> saved scroll bookmark at +{} (press Ctrl+G again to jump back)",
+                self.scroll_offset
+            ));
         }
     }
 
@@ -877,6 +1156,23 @@ impl App {
                 }
                 KeyCode::Char('m') => {
                     self.open_model_picker();
+                    return false;
+                }
+                KeyCode::Char('s') => {
+                    self.toggle_stash();
+                    return false;
+                }
+                KeyCode::Char('g') => {
+                    self.toggle_scroll_bookmark();
+                    return false;
+                }
+                KeyCode::Tab => {
+                    let forward = !key.modifiers.contains(KeyModifiers::SHIFT);
+                    self.cycle_model(forward);
+                    return false;
+                }
+                KeyCode::BackTab => {
+                    self.cycle_model(false);
                     return false;
                 }
                 KeyCode::Char('t') => {
@@ -961,6 +1257,77 @@ impl App {
                     self.active_tab = TuiTab::Governance;
                     return false;
                 }
+                KeyCode::Right => {
+                    self.effort = self.effort.next();
+                    self.push_message(format!(
+                        "effort> {} (Alt+Left/Right or /effort <low|medium|high|max>)",
+                        self.effort.name()
+                    ));
+                    return false;
+                }
+                KeyCode::Left => {
+                    self.effort = self.effort.previous();
+                    self.push_message(format!(
+                        "effort> {} (Alt+Left/Right or /effort <low|medium|high|max>)",
+                        self.effort.name()
+                    ));
+                    return false;
+                }
+                KeyCode::Char('m') => {
+                    self.sidebar_visible = !self.sidebar_visible;
+                    return false;
+                }
+                KeyCode::Char('c') => {
+                    self.centered_layout = !self.centered_layout;
+                    self.push_message(format!("layout> centered = {}", self.centered_layout));
+                    return false;
+                }
+                KeyCode::Char('u') => {
+                    self.scroll_offset = self.scroll_offset.saturating_add(8);
+                    return false;
+                }
+                KeyCode::Char('d') => {
+                    self.scroll_offset = self.scroll_offset.saturating_sub(8);
+                    return false;
+                }
+                KeyCode::Char('h') => {
+                    self.active_tab = self.active_tab.previous();
+                    if self.active_tab == TuiTab::Kanban {
+                        self.refresh_kanban_silent();
+                        self.refresh_fleet_silent();
+                    }
+                    return false;
+                }
+                KeyCode::Char('l') => {
+                    self.active_tab = self.active_tab.next();
+                    if self.active_tab == TuiTab::Kanban {
+                        self.refresh_kanban_silent();
+                        self.refresh_fleet_silent();
+                    }
+                    return false;
+                }
+                KeyCode::Char('x') => {
+                    self.todo_card_open = !self.todo_card_open;
+                    if self.todo_card_open {
+                        self.refresh_kanban_silent();
+                    }
+                    return false;
+                }
+                KeyCode::Char('i') => {
+                    self.info_card_open = !self.info_card_open;
+                    if self.info_card_open {
+                        self.refresh_fleet_silent();
+                    }
+                    return false;
+                }
+                KeyCode::Char('b') => {
+                    self.backdrop_mode = self.backdrop_mode.next();
+                    self.push_message(format!(
+                        "backdrop> {} (use Alt+B or /backdrop <subtle|vivid|off>)",
+                        self.backdrop_mode.name()
+                    ));
+                    return false;
+                }
                 _ => {}
             }
         }
@@ -1003,12 +1370,14 @@ impl App {
                 if self.cursor > 0 {
                     self.cursor -= 1;
                     self.input.remove(self.cursor);
+                    self.autocomplete_index = 0;
                 }
                 false
             }
             KeyCode::Delete => {
                 if self.cursor < self.input.len() {
                     self.input.remove(self.cursor);
+                    self.autocomplete_index = 0;
                 }
                 false
             }
@@ -1029,11 +1398,24 @@ impl App {
                 false
             }
             KeyCode::Up => {
-                self.previous_history();
+                let suggestions = self.active_autocomplete_suggestions();
+                if !suggestions.is_empty() {
+                    self.autocomplete_index = self.autocomplete_index.saturating_sub(1);
+                } else {
+                    self.previous_history();
+                }
                 false
             }
             KeyCode::Down => {
-                self.next_history();
+                let suggestions = self.active_autocomplete_suggestions();
+                if !suggestions.is_empty() {
+                    self.autocomplete_index = min(
+                        self.autocomplete_index.saturating_add(1),
+                        suggestions.len() - 1,
+                    );
+                } else {
+                    self.next_history();
+                }
                 false
             }
             KeyCode::Char(character)
@@ -1043,6 +1425,7 @@ impl App {
             {
                 self.input.insert(self.cursor, character);
                 self.cursor += 1;
+                self.autocomplete_index = 0;
                 false
             }
             _ => false,
@@ -1219,21 +1602,39 @@ impl App {
         let before_cursor = self.input[..min(self.cursor, self.input.len())]
             .iter()
             .collect::<String>();
-        if before_cursor.starts_with('/') && !before_cursor.contains(char::is_whitespace) {
-            let query = before_cursor.to_ascii_lowercase();
+        if (before_cursor.starts_with('/') || before_cursor.starts_with('!'))
+            && !before_cursor.contains(char::is_whitespace)
+        {
+            let is_bang = before_cursor.starts_with('!');
+            let query_slash = if is_bang {
+                format!(
+                    "/{}",
+                    before_cursor.trim_start_matches('!').to_ascii_lowercase()
+                )
+            } else {
+                before_cursor.to_ascii_lowercase()
+            };
             let mut results = Vec::new();
             for entry in PALETTE_ENTRIES {
+                if is_bang && !entry.category.contains("Gene") {
+                    continue;
+                }
                 let cmd_token = entry
                     .command
                     .split_whitespace()
                     .next()
                     .unwrap_or(entry.command);
-                if cmd_token.to_ascii_lowercase().starts_with(&query)
-                    && !results.iter().any(|(c, _)| c == cmd_token)
-                {
-                    results.push((cmd_token.to_owned(), entry.description.to_owned()));
-                    if results.len() >= 6 {
-                        break;
+                if cmd_token.to_ascii_lowercase().starts_with(&query_slash) {
+                    let display_token = if is_bang {
+                        format!("!{}", cmd_token.trim_start_matches('/'))
+                    } else {
+                        cmd_token.to_owned()
+                    };
+                    if !results.iter().any(|(c, _)| c == &display_token) {
+                        results.push((display_token, entry.description.to_owned()));
+                        if results.len() >= 6 {
+                            break;
+                        }
                     }
                 }
             }
@@ -1282,7 +1683,8 @@ impl App {
 
     fn apply_autocomplete(&mut self) -> bool {
         let suggestions = self.active_autocomplete_suggestions();
-        let Some((completion, _)) = suggestions.first() else {
+        let selected_idx = min(self.autocomplete_index, suggestions.len().saturating_sub(1));
+        let Some((completion, _)) = suggestions.get(selected_idx) else {
             return false;
         };
         let before_cursor = self.input[..min(self.cursor, self.input.len())]
@@ -1304,6 +1706,7 @@ impl App {
         let full = format!("{updated_before}{after_cursor}");
         self.cursor = updated_before.chars().count();
         self.input = full.chars().collect();
+        self.autocomplete_index = 0;
         true
     }
 
@@ -1412,6 +1815,7 @@ impl App {
         self.input.clear();
         self.cursor = 0;
         self.history_index = None;
+        self.autocomplete_index = 0;
         self.scroll_offset = 0;
         let task = line.trim().to_owned();
         if task.is_empty() {
@@ -1425,12 +1829,31 @@ impl App {
             "/help" => {
                 for message in [
                     "/help       show TUI commands",
-                    "/model      open Hermes model & provider picker modal (Ctrl-M) or /model <provider:model>",
+                    "/model      open Pandora model & provider picker modal (Ctrl-M) or /model <provider:model>",
+                    "/effort     show or change reasoning effort (low, medium, high, max) [Alt+Left/Right]",
                     "/key        open masked API key setup modal or /key [<ENV_VAR>] <api-key> (saved to .env)",
                     "/config     inspect or update active configuration (/config set model.default <model>)",
+                    "/provider   list or add custom provider profiles (/provider add <name> <url> [model] [--no-api-key])",
+                    "/login      OAuth 2.0 PKCE & local login flows (/login <provider> | /login callback <url-or-code>)",
+                    "/account    list or switch saved OAuth / API accounts (/account [<provider>] <account>)",
+                    "/backdrop   cycle or set terminal mural backdrop (subtle, vivid, off) [Alt+B]",
                     "/setup      list or configure model provider presets (/setup <preset>)",
                     "/tools      inspect active Domain Harnesses, Coding Genes, and Workflow Genes",
-                    "/focus      toggle distraction-free Hermes Focus Mode",
+                    "/skills     inspect loaded procedural skills and Domain Harnesses",
+                    "/hill-climb score a goal (0..100) on quantifiability & verification (/hill-climb <goal>)",
+                    "/confidence inspect stepped confidence gate & spike-check verification status",
+                    "/autopoke   inspect unfinished Todo continuation gate & retry budget",
+                    "/selfdev    show governed Pandora self-development & atomic reload workflow",
+                    "/resume     inspect or resume a session (/resume <session-id>)",
+                    "/fork       fork the active session into a fresh session branch",
+                    "/rewind     rewind the transcript by one turn",
+                    "/compact    compact older transcript turns into a concise handoff summary",
+                    "/todos      toggle inline session Todo & Kanban card (Alt+X)",
+                    "/usage      show provider token usage, cost, turn latency, and cache state",
+                    "/info       toggle detailed runtime & session info card (Alt+I)",
+                    "/hotkeys    list all keyboard shortcuts and ergonomic bindings (/keys)",
+                    "/stash      park or restore current composer prompt draft (Ctrl-S)",
+                    "/focus      toggle distraction-free Focus Mode",
                     "/dock       toggle bottom Live Work Dock for active jobs & fleet subagents (Ctrl-T)",
                     "/session    show the active session ID",
                     "/clear      clear the transcript",
@@ -1457,10 +1880,240 @@ impl App {
                     "/coding     inspect the Coding Domain Harness",
                     "/read, /search, /patch, /verify, /test, /format, /lint, /build, /status, /diff, /log, /refs, /review run core Coding Genes",
                     "/audit, /argus-review, /debt, /measure, /guide run workflow Genes",
+                    "!<gene>     direct local Gene shortcut (e.g. !status, !diff, !test, !audit)",
                     "/exit       close the TUI",
                 ] {
                     self.push_message(message);
                 }
+            }
+            "/effort" => {
+                let levels = ReasoningEffort::ALL
+                    .iter()
+                    .map(|lvl| {
+                        if *lvl == self.effort {
+                            format!("[*{}*]", lvl.name())
+                        } else {
+                            lvl.name().to_owned()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" · ");
+                self.push_message(format!(
+                    "effort> {} ({levels}) — use /effort <low|medium|high|max> or Alt+Left/Right",
+                    self.effort.name()
+                ));
+            }
+            value if value.starts_with("/effort ") => {
+                let target = value.trim_start_matches("/effort ").trim();
+                match ReasoningEffort::parse(target) {
+                    Some(effort) => {
+                        self.effort = effort;
+                        self.push_message(format!(
+                            "effort> switched reasoning effort to '{}'",
+                            effort.name()
+                        ));
+                    }
+                    None => {
+                        self.push_message("usage> /effort <low|medium|high|max>");
+                    }
+                }
+            }
+            "/resume" => {
+                let active = self.session_id.as_deref().unwrap_or("none");
+                self.push_message(format!(
+                    "session> active: {active} · use /resume <session-id> to attach or /fork to branch"
+                ));
+            }
+            value if value.starts_with("/resume ") => {
+                let target = value.trim_start_matches("/resume ").trim();
+                if target.is_empty() || target.chars().any(char::is_whitespace) {
+                    self.push_message("usage> /resume <session-id>");
+                } else {
+                    self.session_id = Some(target.to_owned());
+                    self.push_message(format!("session> resumed session '{target}'"));
+                }
+            }
+            "/fork" => {
+                let base = self.session_id.as_deref().unwrap_or("session");
+                let forked = format!("{base}-fork-{}", self.turns.saturating_add(1));
+                self.session_id = Some(forked.clone());
+                self.push_message(format!(
+                    "session> forked active context into new session branch '{forked}'"
+                ));
+            }
+            "/rewind" => {
+                if let Some(pos) = self.messages.iter().rposition(|m| m.starts_with("you> ")) {
+                    let removed = self.messages.len() - pos;
+                    self.messages.truncate(pos);
+                    self.turns = self.turns.saturating_sub(1);
+                    self.push_message(format!(
+                        "session> rewound last turn ({removed} transcript item(s) removed)"
+                    ));
+                } else {
+                    self.push_message("session> nothing to rewind");
+                }
+            }
+            "/compact" => {
+                let count = self.messages.len();
+                if count <= 6 {
+                    self.push_message(format!(
+                        "session> transcript is already compact ({count} messages)"
+                    ));
+                } else {
+                    let tail = self.messages.split_off(count.saturating_sub(4));
+                    let compacted_count = count - tail.len();
+                    self.messages = vec![
+                        "Pandora TUI".to_owned(),
+                        format!(
+                            "session> compacted {compacted_count} earlier messages into session summary (turns: {}, model: {}:{})",
+                            self.turns, self.active_provider_label, self.active_model_label
+                        ),
+                    ];
+                    self.messages.extend(tail);
+                    self.scroll_offset = 0;
+                }
+            }
+            "/todos" | "/todo" => {
+                self.todo_card_open = !self.todo_card_open;
+                self.refresh_kanban_silent();
+                let total = self.kanban_snapshot.todo.len()
+                    + self.kanban_snapshot.in_progress.len()
+                    + self.kanban_snapshot.blocked.len()
+                    + self.kanban_snapshot.done.len();
+                self.push_message(format!(
+                    "todos> card {} · {} item(s) on board '{}' ({} in_progress, {} todo, {} blocked, {} done) [Alt+X]",
+                    if self.todo_card_open {
+                        "pinned"
+                    } else {
+                        "hidden"
+                    },
+                    total,
+                    self.kanban_snapshot.board_id,
+                    self.kanban_snapshot.in_progress.len(),
+                    self.kanban_snapshot.todo.len(),
+                    self.kanban_snapshot.blocked.len(),
+                    self.kanban_snapshot.done.len()
+                ));
+            }
+            "/usage" => {
+                self.refresh_fleet_silent();
+                let run_count = self.fleet_snapshot.run_count;
+                let tokens_consumed = self.fleet_snapshot.tokens_consumed;
+                let tokens_ceiling = self.fleet_snapshot.tokens_ceiling;
+                let cost_display = self.fleet_snapshot.cost_display.clone();
+                let cache_state = if self.turns > 0 && self.session_id.is_some() {
+                    "warm"
+                } else {
+                    "cold"
+                };
+                let latency = self
+                    .last_turn_ms
+                    .map_or_else(|| "n/a".to_owned(), |ms| format!("{ms}ms"));
+                self.push_message(format!(
+                    "usage> model {}:{} (effort: {}) · session turns: {} · last turn: {latency} · prompt cache: {cache_state}",
+                    self.active_provider_label,
+                    self.active_model_label,
+                    self.effort.name(),
+                    self.turns
+                ));
+                self.push_message(format!(
+                    "usage> governed runs: {run_count} · tokens: {tokens_consumed} consumed / {tokens_ceiling} ceiling · actual cost: {cost_display} micros",
+                ));
+            }
+            "/info" => {
+                self.info_card_open = !self.info_card_open;
+                self.refresh_provider_telemetry();
+                self.refresh_fleet_silent();
+                self.push_message(format!(
+                    "info> session: {} · branch: {} · provider: {}:{} · effort: {} · card: {} [Alt+I]",
+                    self.session_id.as_deref().unwrap_or("not started"),
+                    self.git_branch,
+                    self.active_provider_label,
+                    self.active_model_label,
+                    self.effort.name(),
+                    if self.info_card_open {
+                        "visible"
+                    } else {
+                        "hidden"
+                    }
+                ));
+            }
+            "/hotkeys" | "/keys" => {
+                for line in [
+                    "hotkeys> Navigation & Views:",
+                    "  Tab / Shift+Tab / Alt+H,L  Cycle workspace views (Console, Kanban, Memory, Governance)",
+                    "  Alt+1..4                   Jump directly to workspace view 1..4",
+                    "  Ctrl+B / Alt+M             Toggle Runtime Telemetry sidebar",
+                    "  Ctrl+T / /dock             Toggle Pandora Live Work Dock",
+                    "  Alt+C                      Toggle centered layout mode",
+                    "  Alt+X / /todos             Toggle pinned Todo & Kanban card",
+                    "  Alt+I / /info              Toggle pinned Session & Usage Info card",
+                    "hotkeys> Model, Effort & Prompt Composer:",
+                    "  Ctrl+M / /model            Open interactive Model & Provider Selector",
+                    "  Ctrl+Tab / Ctrl+Shift+Tab  Cycle next / previous model in catalog",
+                    "  Alt+Right / Alt+Left       Increase / decrease reasoning effort (low..max)",
+                    "  Ctrl+P / F1                Open fuzzy Command Palette",
+                    "  Ctrl+S / /stash            Park or restore current composer prompt draft",
+                    "  / · ! · @ + Up/Down + Tab  Navigate & complete slash commands, !genes, or @files",
+                    "hotkeys> Transcript & Governance:",
+                    "  PageUp/PageDown · Alt+U/D  Scroll transcript by page",
+                    "  Ctrl+Up / Ctrl+Down        Scroll transcript line by line",
+                    "  Ctrl+G                     Save or jump to transcript scroll bookmark",
+                    "  Ctrl+Y / Ctrl+N            Approve (/approve) or Deny (/deny) pending task",
+                ] {
+                    self.push_message(line);
+                }
+            }
+            "/skills" => {
+                self.show_tools_summary();
+            }
+            "/hill-climb" | "/goal-score" => {
+                self.evaluate_hill_climb("");
+            }
+            value if value.starts_with("/hill-climb ") || value.starts_with("/goal-score ") => {
+                let goal = value
+                    .trim_start_matches("/hill-climb ")
+                    .trim_start_matches("/goal-score ")
+                    .trim();
+                self.evaluate_hill_climb(goal);
+            }
+            "/confidence" => {
+                self.refresh_kanban_silent();
+                let done_count = self.kanban_snapshot.done.len();
+                let in_progress_count = self.kanban_snapshot.in_progress.len();
+                let todo_count = self.kanban_snapshot.todo.len();
+                self.push_message(format!(
+                    "confidence> Stepped Confidence & Spike Check Gate: active ({done_count} done [100/100], {in_progress_count} in_progress [55→85/100], {todo_count} todo [35/100])"
+                ));
+                self.push_message(
+                    "confidence> Policy: confidence is recorded at assignment (0..100) and completion (0..100); jumps >35 pts without intermediate verification (!test / !verify) trigger a Spike Check.",
+                );
+            }
+            "/autopoke" => {
+                self.refresh_kanban_silent();
+                let unfinished =
+                    self.kanban_snapshot.in_progress.len() + self.kanban_snapshot.todo.len();
+                let blocked = self.kanban_snapshot.blocked.len();
+                self.push_message(format!(
+                    "autopoke> Unfinished Todo Continuation Gate: {unfinished} open item(s), {blocked} blocked · retry cap: 3 attempts for unchanged todo lists"
+                ));
+                self.push_message(
+                    "autopoke> Policy: when a turn stops with incomplete todos, Pandora nudges continuation with an explicit unfinished-items summary and halts after 3 unchanged retries.",
+                );
+            }
+            "/selfdev" => {
+                self.push_message(
+                    "selfdev> Pandora Governed Self-Development Workflow (RSI + Atomic Reload):",
+                );
+                self.push_message(
+                    "  1. Inspect & scope: !status · !diff · /hill-climb <objective>",
+                );
+                self.push_message(
+                    "  2. Verify changes:  !test · !lint · !build (or /canary-loop for evolutionary proposals)",
+                );
+                self.push_message(
+                    "  3. Atomic reload:   cargo build --release -p pandora-cli --locked && replace installed binary while preserving session (/resume)",
+                );
             }
             "/model" | "/models" => {
                 self.open_model_picker();
@@ -1483,14 +2136,69 @@ impl App {
                 let rest = value.trim_start_matches("/config ").trim();
                 self.show_or_update_config(rest);
             }
+            "/provider" | "/providers" => {
+                self.handle_provider_command("");
+            }
+            value if value.starts_with("/provider ") || value.starts_with("/providers ") => {
+                let rest = value
+                    .trim_start_matches("/providers ")
+                    .trim_start_matches("/provider ")
+                    .trim();
+                self.handle_provider_command(rest);
+            }
+            "/login" | "/oauth" => {
+                self.handle_login_command("");
+            }
+            value if value.starts_with("/login ") || value.starts_with("/oauth ") => {
+                let rest = value
+                    .trim_start_matches("/login ")
+                    .trim_start_matches("/oauth ")
+                    .trim();
+                self.handle_login_command(rest);
+            }
+            "/account" | "/accounts" => {
+                self.handle_account_command("");
+            }
+            value if value.starts_with("/account ") || value.starts_with("/accounts ") => {
+                let rest = value
+                    .trim_start_matches("/accounts ")
+                    .trim_start_matches("/account ")
+                    .trim();
+                self.handle_account_command(rest);
+            }
+            "/backdrop" => {
+                self.backdrop_mode = self.backdrop_mode.next();
+                self.push_message(format!(
+                    "backdrop> switched terminal mural backdrop to '{}' (options: subtle, vivid, off) [Alt+B]",
+                    self.backdrop_mode.name()
+                ));
+            }
+            value if value.starts_with("/backdrop ") => {
+                let target = value.trim_start_matches("/backdrop ").trim();
+                match super::tui_backdrop::BackdropMode::parse(target) {
+                    Some(mode) => {
+                        self.backdrop_mode = mode;
+                        self.push_message(format!(
+                            "backdrop> set terminal mural backdrop to '{}'",
+                            mode.name()
+                        ));
+                    }
+                    None => {
+                        self.push_message("usage> /backdrop <subtle|vivid|off>");
+                    }
+                }
+            }
             "/tools" => {
                 self.show_tools_summary();
+            }
+            "/stash" => {
+                self.toggle_stash();
             }
             "/focus" => {
                 self.focus_mode = !self.focus_mode;
                 self.sidebar_visible = !self.focus_mode;
                 self.push_message(format!(
-                    "focus> {} (Hermes distraction-free mode)",
+                    "focus> {} (distraction-free mode)",
                     if self.focus_mode {
                         "enabled"
                     } else {
@@ -1671,6 +2379,16 @@ impl App {
                 self.push_message("usage> /approve and /deny do not accept arguments");
             }
             value if value.starts_with('/') => self.run_slash(value.to_owned(), None),
+            value if value.starts_with('!') => {
+                let gene = value.trim_start_matches('!').trim();
+                if gene.is_empty() {
+                    self.push_message(
+                        "usage> !<gene> (e.g. !status, !diff, !test, !lint, !build, !audit, !debt)",
+                    );
+                } else {
+                    self.run_slash(format!("/{gene}"), None);
+                }
+            }
             _ => self.run_task(task),
         }
         if !line.trim().is_empty()
@@ -1687,6 +2405,7 @@ impl App {
                     | "/model"
                     | "/models"
                     | "/key"
+                    | "/stash"
             )
             && !line.trim().starts_with("/approve ")
             && !line.trim().starts_with("/deny ")
@@ -1698,6 +2417,401 @@ impl App {
         false
     }
 
+    fn evaluate_hill_climb(&mut self, goal: &str) {
+        let trimmed = goal.trim();
+        if trimmed.is_empty() {
+            self.push_message(
+                "hill-climb> Hill-Climbable Goal Gate (threshold: 90/100 — quantifiable, iterable, deterministic verification):",
+            );
+            self.push_message(
+                "  Usage: /hill-climb <task or objective> — scores 0..100 and reframes vague goals into measurable targets with a tight verification loop.",
+            );
+            return;
+        }
+        let lower = trimmed.to_ascii_lowercase();
+        let has_metric = [
+            "ms",
+            "ns",
+            "%",
+            "mb",
+            "kb",
+            "gb",
+            "fps",
+            "tps",
+            " throughput",
+            "latency",
+            "score",
+            "benchmark",
+            "zero",
+            "0 ",
+            "100%",
+            "pass",
+            "coverage",
+        ]
+        .iter()
+        .any(|kw| lower.contains(kw))
+            || trimmed.chars().any(|c| c.is_ascii_digit());
+        let has_verifier = [
+            "test", "bench", "cargo", "pytest", "verify", "lint", "clippy", "measure", "assert",
+            "validate",
+        ]
+        .iter()
+        .any(|kw| lower.contains(kw));
+        let has_target = trimmed.split_whitespace().count() >= 5;
+
+        let mut score: u32 = 45;
+        if has_metric {
+            score += 25;
+        }
+        if has_verifier {
+            score += 20;
+        }
+        if has_target {
+            score += 5;
+        }
+        score = score.min(98);
+
+        if score >= 90 {
+            self.push_message(format!(
+                "hill-climb> score {score}/100 (PASS >= 90) · quantifiable metric + verification loop detected for: \"{trimmed}\""
+            ));
+            self.push_message(
+                "hill-climb> Loop ready: baseline measurement -> hypothesis -> patch -> !test / !measure -> keep if improved.",
+            );
+        } else {
+            self.push_message(format!(
+                "hill-climb> score {score}/100 (BELOW 90 threshold) · goal needs sharper metric or deterministic verifier: \"{trimmed}\""
+            ));
+            self.push_message(format!(
+                "hill-climb> Reframed target (95/100): \"{trimmed} — verified by deterministic test/benchmark with 0 regressions via !test and measurable delta\""
+            ));
+        }
+    }
+
+    fn handle_provider_command(&mut self, rest: &str) {
+        let trimmed = rest.trim();
+        let mut config = match super::load_config(&self.args) {
+            Ok(cfg) => cfg,
+            Err(error) => {
+                self.activity = TuiActivity::Failure;
+                self.push_message(format!("error> {}", error.message));
+                return;
+            }
+        };
+
+        if trimmed.is_empty() || trimmed == "list" {
+            let names = config.provider_names();
+            self.push_message(format!(
+                "provider> {} configured profile(s) (active: {}):",
+                names.len(),
+                config.active_provider().unwrap_or("none")
+            ));
+            for name in &names {
+                if let Some(p) = config.provider_profile(name) {
+                    let marker = if config.active_provider() == Some(name.as_str()) {
+                        "*"
+                    } else {
+                        " "
+                    };
+                    self.push_message(format!(
+                        "  [{marker}] {:<16} · {} · model: {} · key_env: {} ({})",
+                        p.name(),
+                        p.base_url(),
+                        p.model(),
+                        p.api_key_env(),
+                        p.protocol()
+                    ));
+                }
+            }
+            self.push_message(
+                "provider> Custom endpoint: /provider add <name> <base-url> [model] [api_key_env|--no-api-key]",
+            );
+            self.push_message(
+                "provider> Switch/Remove:   /provider use <name> · /provider remove <name>",
+            );
+            return;
+        }
+
+        if let Some(sub) = trimmed.strip_prefix("add ") {
+            let parts = sub.split_whitespace().collect::<Vec<_>>();
+            if parts.len() < 2 {
+                self.push_message(
+                    "usage> /provider add <name> <base-url> [model] [api_key_env|--no-api-key|--anthropic]",
+                );
+                return;
+            }
+            let name = parts[0];
+            let base_url = parts[1];
+            let mut model = "default";
+            let mut no_api_key = false;
+            let mut explicit_env: Option<&str> = None;
+            let mut protocol = pandora_provider::ProviderProtocol::OpenAiCompatible;
+            for token in &parts[2..] {
+                if *token == "--no-api-key" {
+                    no_api_key = true;
+                } else if *token == "--anthropic" || *token == "anthropic_messages" {
+                    protocol = pandora_provider::ProviderProtocol::AnthropicMessages;
+                } else if *token == "openai_compatible" {
+                    protocol = pandora_provider::ProviderProtocol::OpenAiCompatible;
+                } else if model == "default" {
+                    model = token;
+                } else if explicit_env.is_none() {
+                    explicit_env = Some(token);
+                }
+            }
+            let default_env = format!(
+                "{}_API_KEY",
+                name.chars()
+                    .map(|c| if c.is_ascii_alphanumeric() {
+                        c.to_ascii_uppercase()
+                    } else {
+                        '_'
+                    })
+                    .collect::<String>()
+            );
+            let api_key_env = if no_api_key {
+                super::setup::LOCAL_NO_API_KEY_ENV
+            } else {
+                explicit_env.unwrap_or(&default_env)
+            };
+
+            match pandora_runtime::config::ProviderProfile::new_with_protocol(
+                name,
+                protocol,
+                base_url,
+                model,
+                api_key_env,
+            ) {
+                Ok(profile) => {
+                    config.set_provider_profile(profile);
+                    let _ = config.set_active_provider(name);
+                    if let Err(error) = super::write_config(&config) {
+                        self.activity = TuiActivity::Failure;
+                        self.push_message(format!("error> {}", error.message));
+                        return;
+                    }
+                    self.args.values.remove("provider");
+                    self.args.values.remove("model");
+                    self.refresh_provider_telemetry();
+                    self.activity = TuiActivity::Success;
+                    self.push_message(format!(
+                        "provider> added & activated custom provider '{name}' ({base_url} · model: {model} · env: {api_key_env})"
+                    ));
+                }
+                Err(error) => {
+                    self.activity = TuiActivity::Failure;
+                    self.push_message(format!("error> {error}"));
+                }
+            }
+            return;
+        }
+
+        if let Some(target) = trimmed.strip_prefix("use ") {
+            let name = target.trim();
+            if let Err(error) = config.set_active_provider(name) {
+                self.activity = TuiActivity::Failure;
+                self.push_message(format!("error> {error}"));
+                return;
+            }
+            if let Err(error) = super::write_config(&config) {
+                self.activity = TuiActivity::Failure;
+                self.push_message(format!("error> {}", error.message));
+                return;
+            }
+            self.args.values.remove("provider");
+            self.args.values.remove("model");
+            self.refresh_provider_telemetry();
+            self.activity = TuiActivity::Success;
+            self.push_message(format!(
+                "provider> active provider switched to '{name}' ({}:{})",
+                self.active_provider_label, self.active_model_label
+            ));
+            return;
+        }
+
+        if let Some(target) = trimmed
+            .strip_prefix("remove ")
+            .or_else(|| trimmed.strip_prefix("rm "))
+        {
+            let name = target.trim();
+            if !config.quarantine_provider_profile(name) {
+                self.push_message(format!("error> provider '{name}' is not configured"));
+                return;
+            }
+            let _ = super::write_config(&config);
+            self.refresh_provider_telemetry();
+            self.push_message(format!("provider> removed provider profile '{name}'"));
+            return;
+        }
+
+        self.push_message(
+            "usage> /provider [list | add <name> <base-url> [model] [--no-api-key] | use <name> | remove <name>]",
+        );
+    }
+
+    fn handle_login_command(&mut self, rest: &str) {
+        let trimmed = rest.trim();
+        let mut config = match super::load_config(&self.args) {
+            Ok(cfg) => cfg,
+            Err(error) => {
+                self.activity = TuiActivity::Failure;
+                self.push_message(format!("error> {}", error.message));
+                return;
+            }
+        };
+
+        if trimmed.is_empty() || trimmed == "list" {
+            self.push_message(
+                "oauth> Built-in OAuth 2.0 PKCE & Local Login Flows (run /login <provider>):",
+            );
+            for spec in super::setup::OAUTH_PROVIDERS {
+                self.push_message(format!("  /login {:<12} - {}", spec.name, spec.label));
+            }
+            self.push_message(
+                "oauth> Complete callback: /login callback <redirect-url-or-code> [--account <label>]",
+            );
+            return;
+        }
+
+        if let Some(cb_rest) = trimmed.strip_prefix("callback ") {
+            let parts = cb_rest.split_whitespace().collect::<Vec<_>>();
+            if parts.is_empty() {
+                self.push_message("usage> /login callback <redirect-url-or-code> [account-label]");
+                return;
+            }
+            let callback_or_code = parts[0];
+            let account_opt = parts.get(1).copied();
+            match super::setup::complete_oauth_login(
+                &mut config,
+                None,
+                account_opt,
+                callback_or_code,
+            ) {
+                Ok(entry) => {
+                    self.args.values.remove("provider");
+                    self.args.values.remove("model");
+                    self.refresh_provider_telemetry();
+                    self.activity = TuiActivity::Success;
+                    self.push_message(format!(
+                        "oauth> authenticated '{}' (account '{}', env '{}': {})",
+                        entry.provider, entry.account, entry.api_key_env, entry.masked_preview
+                    ));
+                }
+                Err(error) => {
+                    self.activity = TuiActivity::Failure;
+                    self.push_message(format!("error> {}", error.message));
+                }
+            }
+            return;
+        }
+
+        let parts = trimmed.split_whitespace().collect::<Vec<_>>();
+        let provider_name = parts[0].trim_start_matches("--provider=");
+        let mut account_label: Option<&str> = None;
+        let mut idx = 1;
+        while idx < parts.len() {
+            if parts[idx] == "--account" && idx + 1 < parts.len() {
+                account_label = Some(parts[idx + 1]);
+                idx += 2;
+            } else if !parts[idx].starts_with("--") && account_label.is_none() {
+                account_label = Some(parts[idx]);
+                idx += 1;
+            } else {
+                idx += 1;
+            }
+        }
+
+        match super::setup::start_oauth_login(&mut config, provider_name, account_label) {
+            Ok(flow) => {
+                self.args.values.remove("provider");
+                self.args.values.remove("model");
+                self.refresh_provider_telemetry();
+                self.activity = TuiActivity::Success;
+                if flow.state == "local-ready" {
+                    self.push_message(format!(
+                        "oauth> local provider '{}' ready at {} (account '{}', no API key required)",
+                        flow.provider, flow.auth_url, flow.account
+                    ));
+                } else {
+                    self.push_message(format!(
+                        "oauth> PKCE S256 flow started for '{}' (account '{}', state '{}'):",
+                        flow.provider, flow.account, flow.state
+                    ));
+                    self.push_message(format!("  Authorize URL: {}", flow.auth_url));
+                    self.push_message(
+                        "  Finish login:  /login callback <redirect-url-or-auth-code>",
+                    );
+                }
+            }
+            Err(error) => {
+                self.activity = TuiActivity::Failure;
+                self.push_message(format!("error> {}", error.message));
+            }
+        }
+    }
+
+    fn handle_account_command(&mut self, rest: &str) {
+        let trimmed = rest.trim();
+        let mut config = match super::load_config(&self.args) {
+            Ok(cfg) => cfg,
+            Err(error) => {
+                self.activity = TuiActivity::Failure;
+                self.push_message(format!("error> {}", error.message));
+                return;
+            }
+        };
+
+        if trimmed.is_empty() || trimmed == "list" {
+            let accounts = super::setup::load_oauth_accounts(&config);
+            if accounts.is_empty() {
+                self.push_message(
+                    "account> no saved accounts yet — run /login <provider> or /key to add credentials",
+                );
+            } else {
+                self.push_message(format!(
+                    "account> {} saved provider account(s) (switch via /account [<provider>] <account>):",
+                    accounts.len()
+                ));
+                for acc in &accounts {
+                    let marker = if acc.active { "*" } else { " " };
+                    self.push_message(format!(
+                        "  [{marker}] {:<12} · account: {:<12} · kind: {:<7} · {}: {}",
+                        acc.provider,
+                        acc.account,
+                        acc.auth_kind,
+                        acc.api_key_env,
+                        acc.masked_preview
+                    ));
+                }
+            }
+            return;
+        }
+
+        let cleaned = trimmed.strip_prefix("use ").unwrap_or(trimmed).trim();
+        let parts = cleaned.split_whitespace().collect::<Vec<_>>();
+        let (provider_filter, account_name) = if parts.len() >= 2 {
+            (Some(parts[0]), parts[1])
+        } else {
+            (None, parts[0])
+        };
+        match super::setup::switch_oauth_account(&mut config, provider_filter, account_name) {
+            Ok(chosen) => {
+                self.args.values.remove("provider");
+                self.args.values.remove("model");
+                self.refresh_provider_telemetry();
+                self.activity = TuiActivity::Success;
+                self.push_message(format!(
+                    "account> switched active '{}' account to '{}' ({}: {})",
+                    chosen.provider, chosen.account, chosen.api_key_env, chosen.masked_preview
+                ));
+            }
+            Err(error) => {
+                self.activity = TuiActivity::Failure;
+                self.push_message(format!("error> {}", error.message));
+            }
+        }
+    }
+
     fn switch_model(&mut self, spec: &str) {
         let trimmed = spec.trim();
         if trimmed.is_empty() {
@@ -1705,7 +2819,9 @@ impl App {
             return;
         }
         if trimmed == "list" {
-            self.push_message("model> Curated Hermes & Frontier Model Catalog (use /model <provider:model> or Ctrl+M):");
+            self.push_message(
+                "model> Curated Pandora Model Catalog (use /model <provider:model> or Ctrl+M):",
+            );
             for entry in super::setup::MODEL_CATALOG {
                 self.push_message(format!(
                     "  {:<10}:{:<36} - {}",
@@ -2390,9 +3506,11 @@ impl App {
         self.push_message(format!("you> {task}"));
         let message_index = self.push_message("pandora> working...");
         self.activity = TuiActivity::Working;
+        let started = std::time::Instant::now();
         let args = self.run_args(&task, approval_id);
         match super::run::execute(&args) {
             Ok(result) => {
+                self.last_turn_ms = Some(started.elapsed().as_millis());
                 self.activity = TuiActivity::Success;
                 update_session(&mut self.session_id, result.data.get("session_id"));
                 let output = result
@@ -2405,6 +3523,7 @@ impl App {
                 self.record_sparkline(weight);
             }
             Err(error) => {
+                self.last_turn_ms = Some(started.elapsed().as_millis());
                 self.activity = TuiActivity::Failure;
                 update_session(&mut self.session_id, error.details.get("session_id"));
                 self.messages[message_index] = format!("error> {}", clean_text(&error.message));
@@ -2431,9 +3550,11 @@ impl App {
         self.push_message(format!("you> {line}"));
         let message_index = self.push_message("pandora> working...");
         self.activity = TuiActivity::Working;
+        let started = std::time::Instant::now();
         match slash::execute_interactive(&line, &self.args, self.session_id.as_deref(), approval_id)
         {
             Ok(result) => {
+                self.last_turn_ms = Some(started.elapsed().as_millis());
                 self.activity = TuiActivity::Success;
                 update_session(&mut self.session_id, result.data.get("session_id"));
                 let output = result
@@ -2446,6 +3567,7 @@ impl App {
                 self.record_sparkline(weight);
             }
             Err(error) => {
+                self.last_turn_ms = Some(started.elapsed().as_millis());
                 self.activity = TuiActivity::Failure;
                 update_session(&mut self.session_id, error.details.get("session_id"));
                 self.messages[message_index] = format!("error> {}", clean_text(&error.message));
@@ -2606,6 +3728,14 @@ impl App {
             } else if self.key_modal_open {
                 self.render_key_modal(frame, area);
             }
+            if self.theme != TuiTheme::Mono {
+                super::tui_backdrop::apply_backdrop(
+                    frame.buffer_mut(),
+                    area,
+                    self.backdrop_mode,
+                    self.theme == TuiTheme::Light,
+                );
+            }
             return;
         }
 
@@ -2639,6 +3769,15 @@ impl App {
         } else if self.key_modal_open {
             self.render_key_modal(frame, area);
         }
+
+        if self.theme != TuiTheme::Mono {
+            super::tui_backdrop::apply_backdrop(
+                frame.buffer_mut(),
+                area,
+                self.backdrop_mode,
+                self.theme == TuiTheme::Light,
+            );
+        }
     }
 
     fn render_compact(&self, frame: &mut Frame, area: Rect) {
@@ -2669,7 +3808,7 @@ impl App {
     fn render_top_bar(&self, frame: &mut Frame, area: Rect) {
         let horizontal = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(28), Constraint::Min(40)])
+            .constraints([Constraint::Length(34), Constraint::Min(40)])
             .split(area);
 
         let brand = Paragraph::new(vec![
@@ -2711,19 +3850,45 @@ impl App {
     }
 
     fn render_console_workspace(&self, frame: &mut Frame, area: Rect) {
-        let main_area = if self.work_dock_open && area.height >= 12 {
-            let split = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(6), Constraint::Length(5)])
-                .split(area);
-            self.render_work_dock(frame, split[1]);
-            split[0]
+        let workspace_area = if self.centered_layout && area.width >= 100 {
+            let pad = (area.width.saturating_sub(96)) / 2;
+            Rect::new(
+                area.x.saturating_add(pad),
+                area.y,
+                area.width.saturating_sub(pad.saturating_mul(2)),
+                area.height,
+            )
         } else {
             area
         };
 
+        let main_area = if self.work_dock_open && workspace_area.height >= 12 {
+            let split = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(6), Constraint::Length(5)])
+                .split(workspace_area);
+            self.render_work_dock(frame, split[1]);
+            split[0]
+        } else {
+            workspace_area
+        };
+
+        let transcript_and_cards = |this: &Self, f: &mut Frame, target: Rect| {
+            let show_cards = (this.todo_card_open || this.info_card_open) && target.height >= 10;
+            if show_cards {
+                let split = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Length(4), Constraint::Min(5)])
+                    .split(target);
+                this.render_pinned_cards(f, split[0]);
+                this.render_transcript_pane(f, split[1]);
+            } else {
+                this.render_transcript_pane(f, target);
+            }
+        };
+
         if !self.sidebar_visible {
-            self.render_transcript_pane(frame, main_area);
+            transcript_and_cards(self, frame, main_area);
             return;
         }
         let panes = Layout::default()
@@ -2731,8 +3896,67 @@ impl App {
             .constraints([Constraint::Percentage(68), Constraint::Percentage(32)])
             .split(main_area);
 
-        self.render_transcript_pane(frame, panes[0]);
+        transcript_and_cards(self, frame, panes[0]);
         self.render_telemetry_sidebar(frame, panes[1]);
+    }
+
+    fn render_pinned_cards(&self, frame: &mut Frame, area: Rect) {
+        let f = &self.fleet_snapshot;
+        let lane_dots: String = self
+            .kanban_snapshot
+            .in_progress
+            .iter()
+            .map(|_| "◉")
+            .chain(self.kanban_snapshot.todo.iter().map(|_| "○"))
+            .chain(self.kanban_snapshot.blocked.iter().map(|_| "⚠"))
+            .chain(self.kanban_snapshot.done.iter().map(|_| "✔"))
+            .take(16)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let dots_display = if lane_dots.is_empty() {
+            "none".to_owned()
+        } else {
+            lane_dots
+        };
+        let cache_state = if self.turns > 0 && self.session_id.is_some() {
+            "warm"
+        } else {
+            "cold"
+        };
+        let lines = vec![
+            Line::from(vec![
+                Span::styled(" ◆ Todo Lanes: ", self.theme.title()),
+                Span::raw(format!(
+                    "{dots_display} · board '{}' ({} active, {} todo, {} blocked, {} done)",
+                    self.kanban_snapshot.board_id,
+                    self.kanban_snapshot.in_progress.len(),
+                    self.kanban_snapshot.todo.len(),
+                    self.kanban_snapshot.blocked.len(),
+                    self.kanban_snapshot.done.len()
+                )),
+            ]),
+            Line::from(vec![
+                Span::styled(" ◆ Session & Usage: ", self.theme.prompt()),
+                Span::raw(format!(
+                    "{}:{} (effort: {}) · branch: {} · cache: {cache_state} · tokens: {}/{} · cost: {}μ",
+                    self.active_provider_label,
+                    self.active_model_label,
+                    self.effort.name(),
+                    self.git_branch,
+                    f.tokens_consumed,
+                    f.tokens_ceiling,
+                    f.cost_display
+                )),
+            ]),
+        ];
+        let card = Paragraph::new(lines).block(
+            Block::default()
+                .title(" Pinned Session Cards (Alt+X Todos · Alt+I Info) ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(self.theme.accent()),
+        );
+        frame.render_widget(card, area);
     }
 
     fn render_work_dock(&self, frame: &mut Frame, area: Rect) {
@@ -2742,15 +3966,22 @@ impl App {
         } else {
             "⚠ key missing (/key)"
         };
+        let cache_state = if self.turns > 0 && self.session_id.is_some() {
+            "cache: warm"
+        } else {
+            "cache: cold"
+        };
         let dock_lines = vec![
             Line::from(vec![
                 Span::styled(" ◆ Model & Key:  ", self.theme.title()),
                 Span::raw(format!(
-                    "{}:{} ({}) · {}",
+                    "{}:{} ({}) · {} · {} · branch {}",
                     self.active_provider_label,
                     self.active_model_label,
                     self.active_api_key_env,
-                    cred_badge
+                    cred_badge,
+                    cache_state,
+                    self.git_branch
                 )),
             ]),
             Line::from(vec![
@@ -2778,7 +4009,7 @@ impl App {
         ];
         let dock = Paragraph::new(dock_lines).block(
             Block::default()
-                .title(" Hermes Live Work Dock (Ctrl+T or /dock to toggle) ")
+                .title(" Pandora Live Work Dock (Ctrl+T or /dock to toggle) ")
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .border_style(self.theme.border()),
@@ -2832,9 +4063,9 @@ impl App {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(5),
-                Constraint::Length(4),
-                Constraint::Min(6),
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Min(8),
             ])
             .split(area);
 
@@ -2886,6 +4117,15 @@ impl App {
         } else {
             self.theme.warning()
         };
+        let cache_label = if self.turns > 0 && self.session_id.is_some() {
+            "warm"
+        } else {
+            "cold"
+        };
+        let latency_label = match self.last_turn_ms {
+            Some(ms) => format!("{ms}ms · cache: {cache_label}"),
+            None => format!("n/a · cache: {cache_label}"),
+        };
         let mut inspector_lines = vec![
             Line::from(vec![
                 Span::styled(" Status:   ", self.theme.muted()),
@@ -2897,14 +4137,17 @@ impl App {
             Line::from(vec![
                 Span::styled(" Session:  ", self.theme.muted()),
                 Span::raw(truncate(
-                    session,
+                    &format!("{session} ({})", self.git_branch),
                     usize::from(chunks[2].width.saturating_sub(13)),
                 )),
             ]),
             Line::from(vec![
                 Span::styled(" Provider: ", self.theme.muted()),
                 Span::styled(
-                    truncate(provider, usize::from(chunks[2].width.saturating_sub(13))),
+                    truncate(
+                        &format!("{provider} (effort: {})", self.effort.name()),
+                        usize::from(chunks[2].width.saturating_sub(13)),
+                    ),
                     self.theme.title(),
                 ),
             ]),
@@ -2923,8 +4166,11 @@ impl App {
                 ),
             ]),
             Line::from(vec![
-                Span::styled(" Theme:    ", self.theme.muted()),
-                Span::raw(self.theme.name()),
+                Span::styled(" Latency:  ", self.theme.muted()),
+                Span::raw(truncate(
+                    &latency_label,
+                    usize::from(chunks[2].width.saturating_sub(13)),
+                )),
             ]),
         ];
 
@@ -2947,9 +4193,11 @@ impl App {
                 self.theme.prompt(),
             )));
         } else {
-            inspector_lines.push(Line::from(""));
+            if chunks[2].height >= 16 {
+                inspector_lines.push(Line::from(""));
+            }
             inspector_lines.push(Line::from(Span::styled(
-                " Hermes & TUI Shortcuts:",
+                " Quick Shortcuts:",
                 self.theme.title(),
             )));
             inspector_lines.push(Line::from(Span::styled(
@@ -2969,7 +4217,11 @@ impl App {
                 self.theme.muted(),
             )));
             inspector_lines.push(Line::from(Span::styled(
-                " • / · @ + Tab    Autocomplete",
+                " • Ctrl+S /stash  Prompt Stash",
+                self.theme.muted(),
+            )));
+            inspector_lines.push(Line::from(Span::styled(
+                " • / · ! · @ +Tab Autocomplete",
                 self.theme.muted(),
             )));
         }
@@ -3312,8 +4564,13 @@ impl App {
     fn render_status_bar(&self, frame: &mut Frame, area: Rect) {
         let session = self.session_id.as_deref().unwrap_or("not started");
         let focus_tag = if self.focus_mode { " · ◉ FOCUS" } else { "" };
+        let stash_tag = if self.draft_stash.is_empty() {
+            String::new()
+        } else {
+            format!(" · 📌 {} stashed", self.draft_stash.len())
+        };
         let status = format!(
-            "session: {session} · model: {}:{} · turns: {} · state: {} · view: {} · theme: {}{focus_tag} · presentation only",
+            "session: {session} · model: {}:{} · turns: {} · state: {} · view: {} · theme: {}{focus_tag}{stash_tag} · presentation only",
             self.active_provider_label,
             self.active_model_label,
             self.turns,
@@ -3328,15 +4585,22 @@ impl App {
     }
 
     fn render_input_box(&self, frame: &mut Frame, area: Rect) {
+        let mode = ComposerMode::from_input(&self.input);
+        let (prompt_glyph, prompt_style) = match mode {
+            ComposerMode::Chat => ("> ", self.theme.prompt()),
+            ComposerMode::SlashCommand => ("/ ", self.theme.accent()),
+            ComposerMode::DirectGene => ("! ", self.theme.warning()),
+        };
         let (input, cursor) = visible_input(&self.input, self.cursor, usize::from(area.width));
         let input_line = Line::from(vec![
-            Span::styled("> ", self.theme.prompt()),
+            Span::styled(prompt_glyph, prompt_style),
             Span::raw(input),
         ]);
-        frame.render_widget(
-            Paragraph::new(input_line).block(Block::default().borders(Borders::TOP)),
-            area,
-        );
+        let mut block = Block::default().borders(Borders::TOP);
+        if area.width >= WIDE_LAYOUT_MIN_WIDTH {
+            block = block.title(Span::styled(mode.badge(), self.theme.muted()));
+        }
+        frame.render_widget(Paragraph::new(input_line).block(block), area);
         if !self.palette_open && !self.model_picker_open && !self.key_modal_open {
             frame.set_cursor_position(Position::new(
                 area.x.saturating_add(cursor),
@@ -3356,13 +4620,15 @@ impl App {
         let popup_area = Rect::new(input_area.x, popup_y, popup_width, popup_height);
         frame.render_widget(Clear, popup_area);
 
+        let selected_idx = min(self.autocomplete_index, suggestions.len().saturating_sub(1));
         let items = suggestions
             .iter()
             .enumerate()
             .map(|(idx, (token, desc))| {
-                let prefix = if idx == 0 { " ▸ " } else { "   " };
+                let selected = idx == selected_idx;
+                let prefix = if selected { " ▸ " } else { "   " };
                 let text = format!("{prefix}{:<22} {}", token, desc);
-                let style = if idx == 0 {
+                let style = if selected {
                     self.theme.title()
                 } else {
                     self.theme.muted()
@@ -3373,7 +4639,7 @@ impl App {
             .collect::<Vec<_>>();
 
         let block = Block::default()
-            .title(" Autocomplete (Press Tab to complete) ")
+            .title(" Autocomplete (↑/↓ select · Tab complete) ")
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(self.theme.accent());
@@ -3386,7 +4652,7 @@ impl App {
 
         let outer = Block::default()
             .title(
-                " ◆ Hermes Model & Provider Selector (Type to filter or provider:model · Enter to select · Esc to close) ",
+                " ◆ Pandora Model & Provider Selector (Type to filter or provider:model · Enter to select · Esc to close) ",
             )
             .borders(Borders::ALL)
             .border_type(BorderType::Double)
@@ -3494,7 +4760,7 @@ impl App {
         frame.render_widget(Clear, modal_area);
 
         let outer = Block::default()
-            .title(" ◆ Hermes Provider Credential Setup (.env Secret Store) ")
+            .title(" ◆ Pandora Provider Credential Setup (.env Secret Store) ")
             .borders(Borders::ALL)
             .border_type(BorderType::Double)
             .border_style(self.theme.accent());
@@ -3652,6 +4918,96 @@ fn style_transcript_line(line: &str, width: usize, theme: TuiTheme) -> Line<'sta
             Span::styled("tools> ", theme.accent()),
             Span::raw(rest.to_owned()),
         ])
+    } else if let Some(rest) = text.strip_prefix("stash> ") {
+        Line::from(vec![
+            Span::styled("stash> ", theme.accent()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("focus> ") {
+        Line::from(vec![
+            Span::styled("focus> ", theme.title()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("dock> ") {
+        Line::from(vec![
+            Span::styled("dock> ", theme.title()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("effort> ") {
+        Line::from(vec![
+            Span::styled("effort> ", theme.accent()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("session> ") {
+        Line::from(vec![
+            Span::styled("session> ", theme.prompt()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("todos> ") {
+        Line::from(vec![
+            Span::styled("todos> ", theme.title()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("usage> ") {
+        Line::from(vec![
+            Span::styled("usage> ", theme.prompt()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("info> ") {
+        Line::from(vec![
+            Span::styled("info> ", theme.title()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("hotkeys> ") {
+        Line::from(vec![
+            Span::styled("hotkeys> ", theme.accent()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("bookmark> ") {
+        Line::from(vec![
+            Span::styled("bookmark> ", theme.prompt()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("hill-climb> ") {
+        Line::from(vec![
+            Span::styled("hill-climb> ", theme.prompt()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("confidence> ") {
+        Line::from(vec![
+            Span::styled("confidence> ", theme.title()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("autopoke> ") {
+        Line::from(vec![
+            Span::styled("autopoke> ", theme.accent()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("selfdev> ") {
+        Line::from(vec![
+            Span::styled("selfdev> ", theme.title()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("provider> ") {
+        Line::from(vec![
+            Span::styled("provider> ", theme.prompt()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("oauth> ") {
+        Line::from(vec![
+            Span::styled("oauth> ", theme.title()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("account> ") {
+        Line::from(vec![
+            Span::styled("account> ", theme.accent()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("backdrop> ") {
+        Line::from(vec![
+            Span::styled("backdrop> ", theme.title()),
+            Span::raw(rest.to_owned()),
+        ])
     } else if text.starts_with('+') && !text.starts_with("+++") {
         Line::from(Span::styled(text, theme.prompt()))
     } else if text.starts_with('-') && !text.starts_with("---") {
@@ -3661,6 +5017,24 @@ fn style_transcript_line(line: &str, width: usize, theme: TuiTheme) -> Line<'sta
     } else {
         Line::from(text)
     }
+}
+
+fn detect_git_branch(workspace_dir: &std::path::Path) -> String {
+    let mut current = Some(workspace_dir);
+    while let Some(dir) = current {
+        let head_path = dir.join(".git").join("HEAD");
+        if let Ok(content) = std::fs::read_to_string(&head_path) {
+            let trimmed = content.trim();
+            if let Some(branch) = trimmed.strip_prefix("ref: refs/heads/") {
+                return branch.trim().to_owned();
+            }
+            if trimmed.len() >= 7 {
+                return trimmed[..7].to_owned();
+            }
+        }
+        current = dir.parent();
+    }
+    "main".to_owned()
 }
 
 fn fuzzy_subsequence(needle: &str, haystack: &str) -> bool {
@@ -4195,6 +5569,7 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(rendered.contains("PANDORA TUI"));
+        assert!(rendered.contains(env!("CARGO_PKG_VERSION")));
         assert!(rendered.contains("1:Console"));
         assert!(rendered.contains("2:Kanban & Fleet"));
         assert!(rendered.contains("3:Memory & Graph"));
@@ -4324,13 +5699,13 @@ mod tests {
     }
 
     #[test]
-    fn hermes_model_picker_and_dotenv_key_workflow() {
+    fn model_picker_and_dotenv_key_workflow() {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("test clock must follow the Unix epoch")
             .as_nanos();
         let temp_dir = std::env::temp_dir().join(format!(
-            "pandora-tui-hermes-model-{}-{nonce}",
+            "pandora-tui-model-picker-{}-{nonce}",
             std::process::id()
         ));
         let config_path = temp_dir.join("config.json");
@@ -4357,7 +5732,7 @@ mod tests {
             TuiTheme::Auto,
         );
 
-        // Open Hermes Model Picker with Ctrl+M
+        // Open Pandora Model Picker with Ctrl+M
         app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL));
         assert!(app.model_picker_open);
 
@@ -4400,6 +5775,247 @@ mod tests {
         app.cursor = app.input.len();
         app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(app.input.iter().collect::<String>(), "/focus ");
+
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn tui_branding_uses_pandora_and_supports_stash_and_autocomplete_navigation() {
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let mut app = app();
+
+        app.input = "/help".chars().collect();
+        app.submit();
+        for msg in &app.messages {
+            assert!(
+                !msg.contains("Hermes"),
+                "unexpected external branding in help message: {msg}"
+            );
+        }
+
+        app.work_dock_open = true;
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("Quick Shortcuts:"));
+        assert!(rendered.contains("Pandora Live Work Dock"));
+        assert!(!rendered.contains("Hermes"));
+
+        // Prompt stash round-trip via Ctrl+S
+        app.input = "investigate memory consolidation".chars().collect();
+        app.cursor = app.input.len();
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        assert!(app.input.is_empty());
+        assert_eq!(app.draft_stash.len(), 1);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        assert_eq!(
+            app.input.iter().collect::<String>(),
+            "investigate memory consolidation"
+        );
+        assert!(app.draft_stash.is_empty());
+
+        // Arrow-key navigation inside floating autocomplete popover + Tab completion
+        app.input = "/m".chars().collect();
+        app.cursor = app.input.len();
+        let suggestions = app.active_autocomplete_suggestions();
+        assert!(suggestions.len() >= 2);
+        let second_cmd = suggestions[1].0.clone();
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.autocomplete_index, 1);
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(
+            app.input.iter().collect::<String>(),
+            format!("{second_cmd} ")
+        );
+
+        // Direct Gene mode (`!`) detection and autocomplete
+        app.input = "!st".chars().collect();
+        app.cursor = app.input.len();
+        assert_eq!(
+            super::ComposerMode::from_input(&app.input),
+            super::ComposerMode::DirectGene
+        );
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.input.iter().collect::<String>(), "!status ");
+
+        // Reasoning effort cycling (Alt+Right / /effort)
+        assert_eq!(app.effort, super::ReasoningEffort::Medium);
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT));
+        assert_eq!(app.effort, super::ReasoningEffort::High);
+        app.input = "/effort max".chars().collect();
+        app.submit();
+        assert_eq!(app.effort, super::ReasoningEffort::Max);
+
+        // Session fork, rewind, and pinned todo/info cards (Alt+X / Alt+I)
+        app.input = "/fork".chars().collect();
+        app.submit();
+        assert!(app.session_id.as_deref().unwrap_or("").contains("fork"));
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::ALT));
+        assert!(app.todo_card_open);
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let card_rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(card_rendered.contains("Pinned Session Cards"));
+
+        // Hill-climb goal evaluation, confidence gate, autopoke, and selfdev commands
+        app.input = "/hill-climb optimize parser latency below 5ms with cargo test"
+            .chars()
+            .collect();
+        app.submit();
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.contains("hill-climb> score 95/100 (PASS >= 90)"))
+        );
+
+        app.input = "/confidence".chars().collect();
+        app.submit();
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.contains("Stepped Confidence & Spike Check Gate"))
+        );
+
+        app.input = "/autopoke".chars().collect();
+        app.submit();
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.contains("Unfinished Todo Continuation Gate"))
+        );
+
+        app.input = "/selfdev".chars().collect();
+        app.submit();
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.contains("Pandora Governed Self-Development Workflow"))
+        );
+
+        // Backdrop mode cycling via Alt+B and /backdrop
+        assert_eq!(
+            app.backdrop_mode,
+            super::super::tui_backdrop::BackdropMode::Subtle
+        );
+        app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT));
+        assert_eq!(
+            app.backdrop_mode,
+            super::super::tui_backdrop::BackdropMode::Vivid
+        );
+        app.input = "/backdrop off".chars().collect();
+        app.submit();
+        assert_eq!(
+            app.backdrop_mode,
+            super::super::tui_backdrop::BackdropMode::Off
+        );
+    }
+
+    #[test]
+    fn custom_provider_and_oauth_pkce_multi_account_workflow() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("test clock must follow the Unix epoch")
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!(
+            "pandora-tui-oauth-custom-{}-{nonce}",
+            std::process::id()
+        ));
+        let config_path = temp_dir.join("config.json");
+        let data_dir = temp_dir.join("data");
+        let workspace_dir = temp_dir.join("workspace");
+        let mut values = BTreeMap::new();
+        values.insert(
+            "config".to_owned(),
+            config_path.to_string_lossy().into_owned(),
+        );
+        values.insert(
+            "data-dir".to_owned(),
+            data_dir.to_string_lossy().into_owned(),
+        );
+        values.insert(
+            "workspace".to_owned(),
+            workspace_dir.to_string_lossy().into_owned(),
+        );
+        let mut app = App::new(
+            ParsedArgs {
+                values,
+                positionals: Vec::new(),
+            },
+            TuiTheme::Auto,
+        );
+
+        // 1. Add a custom OpenAI-compatible provider with --no-api-key
+        app.input =
+            "/provider add my-local-api http://localhost:8080/v1 custom-coder-7b --no-api-key"
+                .chars()
+                .collect();
+        app.submit();
+        assert_eq!(app.active_provider_label, "my-local-api");
+        assert_eq!(app.active_model_label, "custom-coder-7b");
+        assert!(app.credential_ready);
+
+        // 2. Start OAuth PKCE S256 login flow for Claude (account 'work')
+        app.input = "/login claude --account work".chars().collect();
+        app.submit();
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.contains("oauth> PKCE S256 flow started for 'claude' (account 'work'"))
+        );
+
+        // Read state from pending OAuth file to verify CSRF state validation on callback
+        let pending_raw =
+            std::fs::read_to_string(data_dir.join("oauth_pending.json")).expect("pending oauth");
+        let pending_json: serde_json::Value =
+            serde_json::from_str(&pending_raw).expect("valid json");
+        let state = pending_json["state"].as_str().expect("state string");
+
+        // 3. Complete OAuth callback
+        app.input = format!(
+            "/login callback http://127.0.0.1:1455/auth/callback?code=authcode9988&state={state}"
+        )
+        .chars()
+        .collect();
+        app.submit();
+        assert_eq!(app.active_provider_label, "anthropic");
+        assert!(app.credential_ready);
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.contains("oauth> authenticated 'claude' (account 'work'"))
+        );
+
+        // 4. Add second account ('personal') and switch between accounts via /account
+        app.input = "/login claude --account personal".chars().collect();
+        app.submit();
+        app.input = "/login callback sk-ant-personal-5544".chars().collect();
+        app.submit();
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.contains("account 'personal'"))
+        );
+
+        app.input = "/account claude work".chars().collect();
+        app.submit();
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.contains("account> switched active 'claude' account to 'work'"))
+        );
 
         let _ = std::fs::remove_dir_all(temp_dir);
     }

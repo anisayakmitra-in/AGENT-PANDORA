@@ -59,6 +59,7 @@ mod subagent;
 pub(crate) mod subagent_run;
 mod tool;
 mod tui;
+pub(crate) mod tui_backdrop;
 mod uninstall;
 mod update;
 
@@ -328,6 +329,12 @@ fn is_flag(name: &str) -> bool {
             | "force"
             | "analyze"
             | "trusted-process"
+            | "api-key-stdin"
+            | "no-api-key"
+            | "set-default"
+            | "no-browser"
+            | "print-auth-url"
+            | "all-configured"
     )
 }
 

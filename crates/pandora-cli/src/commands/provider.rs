@@ -136,8 +136,11 @@ pub(crate) fn configured_credential(
     if let Some(value) = super::setup::read_dotenv_var(config, name) {
         return Ok(Some(value));
     }
-    if name == "OLLAMA_API_KEY" {
-        return Ok(Some("ollama".to_owned()));
+    if matches!(
+        name,
+        "OLLAMA_API_KEY" | "LMSTUDIO_API_KEY" | "VLLM_API_KEY" | super::setup::LOCAL_NO_API_KEY_ENV
+    ) {
+        return Ok(Some("local-no-api-key".to_owned()));
     }
     let Some(passphrase) = std::env::var_os("PANDORA_MASTER_KEY") else {
         return Ok(None);
@@ -158,14 +161,19 @@ pub(crate) fn configured_credential(
 }
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
-    let subcommand = args
-        .first()
-        .ok_or_else(|| CliError::usage("provider requires 'list', 'set', 'use', or 'test'"))?;
+    let subcommand = args.first().ok_or_else(|| {
+        CliError::usage(
+            "provider requires 'list', 'set', 'add', 'remove', 'use', 'login', 'accounts', or 'test'",
+        )
+    })?;
     match subcommand.as_str() {
         "list" => list(&args[1..]),
-        "set" => set(&args[1..]),
+        "set" | "add" => set(&args[1..]),
+        "remove" | "rm" => remove_provider(&args[1..]),
         "use" => use_provider(&args[1..]),
-        "test" => test(&args[1..]),
+        "login" | "oauth" => login_provider(&args[1..]),
+        "accounts" | "account" => accounts_command(&args[1..]),
+        "test" | "auth-test" => test(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown provider command '{unknown}'"
         ))),
@@ -239,32 +247,99 @@ fn set(args: &[String]) -> Result<CommandResult, CliError> {
             "name",
             "protocol",
             "provider-url",
+            "base-url",
             "model",
             "api-key-env",
+            "api-key",
+            "api-key-stdin",
+            "no-api-key",
+            "set-default",
             "fallback-provider",
             "input-micros-per-million-tokens",
             "output-micros-per-million-tokens",
         ],
     )?;
-    if parsed.value("provider-url").is_none() {
+    if parsed.positionals.len() > 1 {
         return Err(CliError::usage(
-            "provider set requires '--provider-url <url>'",
+            "provider set/add accepts at most one positional provider profile name",
         ));
     }
+    let resolved_url = parsed
+        .value("provider-url")
+        .or_else(|| parsed.value("base-url"))
+        .ok_or_else(|| {
+            CliError::usage("provider set requires '--provider-url <url>' (or '--base-url <url>')")
+        })?;
     let mut config = load_config(&parsed)?;
-    let name = parsed.value("name").unwrap_or(DEFAULT_PROVIDER_NAME);
+    let name = parsed
+        .value("name")
+        .or_else(|| parsed.positionals.first().map(String::as_str))
+        .unwrap_or(DEFAULT_PROVIDER_NAME);
     let model = parsed
         .value("model")
         .or_else(|| config.provider_profile(name).map(ProviderProfile::model))
         .unwrap_or("default");
-    let api_key_env = parsed
-        .value("api-key-env")
-        .or_else(|| {
-            config
-                .provider_profile(name)
-                .map(ProviderProfile::api_key_env)
-        })
-        .unwrap_or(DEFAULT_PROVIDER_API_KEY_ENV);
+
+    let default_custom_env = if name != DEFAULT_PROVIDER_NAME
+        && (parsed.value("api-key").is_some() || parsed.has_flag("api-key-stdin"))
+    {
+        let sanitized = name
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() {
+                    c.to_ascii_uppercase()
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        format!("{sanitized}_API_KEY")
+    } else {
+        DEFAULT_PROVIDER_API_KEY_ENV.to_owned()
+    };
+
+    let api_key_env: String = if parsed.has_flag("no-api-key") {
+        super::setup::LOCAL_NO_API_KEY_ENV.to_owned()
+    } else if let Some(explicit_env) = parsed.value("api-key-env") {
+        explicit_env.to_owned()
+    } else if let Some(existing_env) = config
+        .provider_profile(name)
+        .map(ProviderProfile::api_key_env)
+    {
+        existing_env.to_owned()
+    } else {
+        default_custom_env
+    };
+
+    if parsed.has_flag("api-key-stdin") {
+        use std::io::Read as _;
+        let mut stdin_buf = String::new();
+        std::io::stdin()
+            .read_to_string(&mut stdin_buf)
+            .map_err(|_| CliError::configuration("could not read API key from stdin", json!({})))?;
+        let key_trimmed = stdin_buf.trim();
+        if key_trimmed.is_empty() {
+            return Err(CliError::usage("--api-key-stdin received an empty API key"));
+        }
+        let _ = super::setup::record_account_credential(
+            &config,
+            name,
+            "default",
+            "api_key",
+            &api_key_env,
+            key_trimmed,
+        )?;
+    } else if let Some(inline_key) = parsed.value("api-key") {
+        let _ = super::setup::record_account_credential(
+            &config,
+            name,
+            "default",
+            "api_key",
+            &api_key_env,
+            inline_key.trim(),
+        )?;
+    }
+
     let protocol = parsed
         .value("protocol")
         .map(str::parse::<ProviderProtocol>)
@@ -296,16 +371,9 @@ fn set(args: &[String]) -> Result<CommandResult, CliError> {
             ));
         }
     };
-    let mut profile = ProviderProfile::new_with_protocol(
-        name,
-        protocol,
-        parsed
-            .value("provider-url")
-            .expect("provider URL was checked"),
-        model,
-        api_key_env,
-    )
-    .map_err(|error| CliError::configuration(error.to_string(), json!({})))?;
+    let mut profile =
+        ProviderProfile::new_with_protocol(name, protocol, resolved_url, model, &api_key_env)
+            .map_err(|error| CliError::configuration(error.to_string(), json!({})))?;
     if let Some(fallback_provider) = fallback_provider {
         profile = profile
             .with_fallback_provider(fallback_provider)
@@ -342,6 +410,203 @@ fn set(args: &[String]) -> Result<CommandResult, CliError> {
             "active": config.active_provider() == Some(name),
         }),
         format!("Provider {name} configured"),
+    ))
+}
+
+fn remove_provider(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "name"])?;
+    let name = parsed
+        .value("name")
+        .or_else(|| parsed.positionals.first().map(String::as_str))
+        .ok_or_else(|| CliError::usage("provider remove requires '<name>'"))?;
+    let mut config = load_config(&parsed)?;
+    if !config.quarantine_provider_profile(name) {
+        return Err(CliError::configuration(
+            "provider is not configured",
+            json!({"provider": name}),
+        ));
+    }
+    write_config(&config)?;
+    Ok(success(
+        "provider remove",
+        json!({
+            "removed": name,
+            "active_provider": config.active_provider(),
+            "providers": config.provider_names(),
+        }),
+        format!("Provider {name} removed"),
+    ))
+}
+
+fn login_provider(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "provider",
+            "account",
+            "no-browser",
+            "print-auth-url",
+            "callback-url",
+            "auth-code",
+            "token",
+        ],
+    )?;
+    let mut config = load_config(&parsed)?;
+    let provider_arg = parsed
+        .value("provider")
+        .or_else(|| parsed.positionals.first().map(String::as_str));
+
+    if let Some(callback_or_code) = parsed
+        .value("callback-url")
+        .or_else(|| parsed.value("auth-code"))
+        .or_else(|| parsed.value("token"))
+    {
+        let entry = super::setup::complete_oauth_login(
+            &mut config,
+            provider_arg,
+            parsed.value("account"),
+            callback_or_code,
+        )?;
+        return Ok(success(
+            "provider login",
+            json!({
+                "status": "authenticated",
+                "provider": entry.provider,
+                "account": entry.account,
+                "auth_kind": entry.auth_kind,
+                "api_key_env": entry.api_key_env,
+                "credential_preview": entry.masked_preview,
+                "active": entry.active,
+            }),
+            format!(
+                "OAuth login completed for provider '{}' (account '{}', {})",
+                entry.provider, entry.account, entry.masked_preview
+            ),
+        ));
+    }
+
+    let Some(provider_name) = provider_arg else {
+        let flows = super::setup::OAUTH_PROVIDERS
+            .iter()
+            .map(|p| {
+                json!({
+                    "provider": p.name,
+                    "label": p.label,
+                    "preset": p.preset_name,
+                    "local_no_auth": p.is_local_no_auth,
+                })
+            })
+            .collect::<Vec<_>>();
+        let lines = [
+            "Available Pandora OAuth & Provider Login Flows:",
+            "  pandora provider login --provider claude       # Anthropic Claude subscription OAuth",
+            "  pandora provider login --provider openai       # OpenAI / ChatGPT / Codex OAuth",
+            "  pandora provider login --provider copilot      # GitHub Copilot subscription OAuth",
+            "  pandora provider login --provider openrouter   # OpenRouter PKCE key exchange",
+            "  pandora provider login --provider nous         # Nous Research Portal OAuth",
+            "  pandora provider login --provider huggingface  # Hugging Face Hub OAuth",
+            "  pandora provider login --provider azure        # Azure OpenAI Entra OAuth",
+            "  pandora provider login --provider ollama       # Local Ollama server (no-auth)",
+            "  pandora provider login --provider lmstudio     # Local LM Studio server (no-auth)",
+            "Headless / Remote flags: --no-browser, --print-auth-url, --callback-url <url>, --auth-code <code>",
+        ];
+        return Ok(success(
+            "provider login",
+            json!({"available_flows": flows}),
+            lines.join("\n"),
+        ));
+    };
+
+    let flow =
+        super::setup::start_oauth_login(&mut config, provider_name, parsed.value("account"))?;
+    let headless = parsed.has_flag("no-browser") || parsed.has_flag("print-auth-url");
+    let message = if flow.state == "local-ready" {
+        format!(
+            "Local provider '{}' configured at {} (account '{}', no API key required)",
+            flow.provider, flow.auth_url, flow.account
+        )
+    } else {
+        format!(
+            "OAuth PKCE flow started for '{}' (account '{}'):\n  Authorize URL: {}\n  Complete with: pandora provider login --provider {} --callback-url \"<redirect-url>\" (or --auth-code <code>)",
+            flow.provider, flow.account, flow.auth_url, flow.provider
+        )
+    };
+    Ok(success(
+        "provider login",
+        json!({
+            "provider": flow.provider,
+            "preset": flow.preset_name,
+            "account": flow.account,
+            "auth_url": flow.auth_url,
+            "redirect_uri": flow.redirect_uri,
+            "code_challenge_method": if flow.code_challenge.is_empty() { "none" } else { "S256" },
+            "state": flow.state,
+            "headless": headless,
+        }),
+        message,
+    ))
+}
+
+fn accounts_command(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "provider", "account"],
+    )?;
+    let mut config = load_config(&parsed)?;
+    if parsed.positionals.first().map(String::as_str) == Some("use")
+        || parsed.value("account").is_some()
+    {
+        let account_name = parsed
+            .value("account")
+            .or_else(|| parsed.positionals.get(1).map(String::as_str))
+            .ok_or_else(|| {
+                CliError::usage("provider account use requires '<account>' or '--account <name>'")
+            })?;
+        let chosen = super::setup::switch_oauth_account(
+            &mut config,
+            parsed.value("provider"),
+            account_name,
+        )?;
+        return Ok(success(
+            "provider accounts",
+            json!({
+                "switched": true,
+                "provider": chosen.provider,
+                "account": chosen.account,
+                "auth_kind": chosen.auth_kind,
+                "api_key_env": chosen.api_key_env,
+                "credential_preview": chosen.masked_preview,
+            }),
+            format!(
+                "Active account for '{}' switched to '{}' ({})",
+                chosen.provider, chosen.account, chosen.masked_preview
+            ),
+        ));
+    }
+
+    let filter = parsed.value("provider");
+    let accounts = super::setup::load_oauth_accounts(&config)
+        .into_iter()
+        .filter(|a| filter.is_none_or(|f| a.provider.eq_ignore_ascii_case(f)))
+        .map(|a| {
+            json!({
+                "provider": a.provider,
+                "account": a.account,
+                "auth_kind": a.auth_kind,
+                "api_key_env": a.api_key_env,
+                "credential_preview": a.masked_preview,
+                "active": a.active,
+                "updated_at": a.updated_at,
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(success(
+        "provider accounts",
+        json!({"accounts": accounts, "count": accounts.len()}),
+        format!("{} configured provider account(s)", accounts.len()),
     ))
 }
 
