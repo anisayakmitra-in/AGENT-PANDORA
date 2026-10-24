@@ -962,8 +962,8 @@ mod tests {
         }
 
         fn permit(&self, request: OperationRequest) -> ConsumedPermit {
-            let monitor = ReferenceMonitor::new(1, 60);
             let context = PolicyContext::new(1, [request.capability()], []);
+            let monitor = ReferenceMonitor::new_with_policy(context.clone(), 60);
             let decision = Parliament::new(1).decide(&request, &context);
             let permit = monitor
                 .authorize(request.clone(), decision, self.now())
