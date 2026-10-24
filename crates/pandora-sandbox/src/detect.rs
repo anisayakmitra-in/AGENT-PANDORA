@@ -114,17 +114,11 @@ impl Availability {
 
     /// Whether OS-level process confinement is available on this platform.
     pub const fn has_process_confinement(&self) -> bool {
-        #[cfg(windows)]
-        {
-            self.job_object_supported
-        }
-        #[cfg(not(windows))]
-        {
-            matches!(
+        self.job_object_supported
+            || matches!(
                 self.family,
-                PlatformFamily::Landlock | PlatformFamily::Seatbelt
+                PlatformFamily::Windows | PlatformFamily::Landlock | PlatformFamily::Seatbelt
             )
-        }
     }
 
     /// Controls this host could actually prove today. Empty in STEP 1.
