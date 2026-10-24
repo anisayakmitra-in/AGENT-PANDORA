@@ -187,6 +187,36 @@ const PALETTE_ENTRIES: &[PaletteEntry] = &[
         immediate: true,
     },
     PaletteEntry {
+        command: "/setup",
+        category: "Setup",
+        description: "Show available model provider presets (ollama, openrouter, deepseek, openai, anthropic, groq)",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/setup ollama",
+        category: "Setup",
+        description: "Configure local Ollama provider preset (http://localhost:11434/v1)",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/setup openrouter",
+        category: "Setup",
+        description: "Configure OpenRouter gateway provider preset",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/setup anthropic",
+        category: "Setup",
+        description: "Configure Anthropic Claude provider preset",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/setup openai",
+        category: "Setup",
+        description: "Configure OpenAI Direct provider preset",
+        immediate: true,
+    },
+    PaletteEntry {
         command: "/fleet-health",
         category: "Fleet",
         description: "Inspect local privacy-safe fleet & budget operations snapshot",
@@ -999,6 +1029,7 @@ impl App {
             "/help" => {
                 for message in [
                     "/help       show TUI commands",
+                    "/setup      list or configure model provider presets (/setup <preset>)",
                     "/session    show the active session ID",
                     "/clear      clear the transcript",
                     "/theme      show or select auto, dark, light, or mono",
@@ -1080,6 +1111,19 @@ impl App {
             }
             "/palette" => {
                 self.open_palette();
+            }
+            "/setup" => {
+                self.push_message("setup> Available provider presets (run /setup <preset>):");
+                for preset in super::setup::PRESETS {
+                    self.push_message(format!(
+                        "  /setup {:<11} - {} [model: {}, env: {}]",
+                        preset.name, preset.label, preset.default_model, preset.api_key_env
+                    ));
+                }
+            }
+            value if value.starts_with("/setup ") => {
+                let target = value.trim_start_matches("/setup ").trim();
+                self.run_setup_preset(target);
             }
             "/kanban" => self.show_kanban(),
             "/packages" => self.show_packages(),
@@ -1193,6 +1237,46 @@ impl App {
             self.remember_history(line.trim());
         }
         false
+    }
+
+    fn run_setup_preset(&mut self, target: &str) {
+        let mut args = Vec::new();
+        for option in ["config", "data-dir", "workspace"] {
+            if let Some(value) = self.args.value(option) {
+                args.push(format!("--{option}"));
+                args.push(value.to_owned());
+            }
+        }
+        let tokens = target.split_whitespace().collect::<Vec<_>>();
+        if tokens.is_empty() {
+            self.push_message(
+                "usage> /setup <ollama|openrouter|deepseek|openai|anthropic|groq> [--model <id>]",
+            );
+            return;
+        }
+        if !tokens[0].starts_with("--") {
+            args.push("--preset".to_owned());
+            args.push(tokens[0].to_owned());
+            for token in &tokens[1..] {
+                args.push((*token).to_owned());
+            }
+        } else {
+            for token in &tokens {
+                args.push((*token).to_owned());
+            }
+        }
+        match super::setup::execute(&args) {
+            Ok(result) => {
+                self.activity = TuiActivity::Success;
+                for line in result.human.lines() {
+                    self.push_message(format!("setup> {}", line.trim()));
+                }
+            }
+            Err(error) => {
+                self.activity = TuiActivity::Failure;
+                self.push_message(format!("error> {}", error.message));
+            }
+        }
     }
 
     fn show_kanban(&mut self) {

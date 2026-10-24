@@ -155,7 +155,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         .filter(|argument| argument != "--json")
         .collect::<Vec<_>>();
     if starts_interactive_tui(&args, json_requested, interactive_terminal()) {
-        return open_interactive_default();
+        return open_interactive_default(&args);
     }
     let command = args
         .first()
@@ -236,19 +236,24 @@ fn starts_interactive_tui(
     json_requested: bool,
     interactive_terminal: bool,
 ) -> bool {
-    args.is_empty() && !json_requested && interactive_terminal
+    !json_requested
+        && interactive_terminal
+        && (args.is_empty()
+            || args
+                .first()
+                .is_some_and(|first| first.starts_with("--") && first != "--help"))
 }
 
 fn interactive_terminal() -> bool {
     io::stdin().is_terminal() && io::stdout().is_terminal()
 }
 
-fn open_interactive_default() -> Result<CommandResult, CliError> {
+fn open_interactive_default(args: &[String]) -> Result<CommandResult, CliError> {
     let config = RuntimeConfig::load(ConfigOverrides::default()).map_err(config_error)?;
     if needs_interactive_setup(config.config_path().is_file()) {
-        setup::execute(&["--interactive".to_owned()])?;
+        setup::execute(&[])?;
     }
-    tui::execute(&[])
+    tui::execute(args)
 }
 
 fn needs_interactive_setup(config_exists: bool) -> bool {
@@ -777,6 +782,12 @@ mod tests {
     #[test]
     fn empty_argv_opens_tui_only_for_interactive_human_sessions() {
         assert!(starts_interactive_tui(&[], false, true));
+        assert!(starts_interactive_tui(
+            &["--theme".to_owned(), "dark".to_owned()],
+            false,
+            true
+        ));
+        assert!(!starts_interactive_tui(&["--help".to_owned()], false, true));
         assert!(!starts_interactive_tui(&[], true, true));
         assert!(!starts_interactive_tui(&[], false, false));
         assert!(!starts_interactive_tui(&["run".to_owned()], false, true));
