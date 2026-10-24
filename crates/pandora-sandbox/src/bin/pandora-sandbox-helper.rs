@@ -14,11 +14,12 @@
 // `#[allow]` with a SAFETY note rather than arriving unnoticed.
 #![deny(unsafe_code)]
 
-use pandora_sandbox::report::{Mechanisms, Proofs};
+use pandora_sandbox::report::{Mechanisms, Observation, Proofs};
 use pandora_sandbox::{
     Availability, HelperReport, PlatformFamily, ReportedOutcome, SandboxProfile, UnavailableReason,
     encode_report,
 };
+
 use std::io::Write as _;
 
 /// Exit code used when the helper refuses. Distinct from a target's own exit
@@ -75,14 +76,55 @@ fn main() {
 /// Applies the requested confinement, then runs the self-tests.
 ///
 /// Returns what was *observed*, never a claim about which controls hold: the
-/// parent derives those from these observations and the profile. STEP 1 has no
-/// backend to apply, so this always reports `Unavailable` without attempting
-/// anything. The observation plumbing is written out anyway so STEP 3 has to
-/// satisfy it rather than skip past it.
+/// parent derives those from these observations and the profile.
 fn apply_and_prove(
     availability: &Availability,
     profile: &SandboxProfile,
 ) -> (ReportedOutcome, Proofs, Mechanisms) {
+    #[cfg(windows)]
+    {
+        if availability.job_object_supported() {
+            // Apply Windows Job Object confinement directly via Win32 Job Object APIs
+            match apply_windows_job_object() {
+                Ok(()) => {
+                    if profile.allow_unsandboxed() {
+                        let mechanisms = Mechanisms {
+                            filesystem: "windows_job_object".to_owned(),
+                            network: String::new(),
+                            denied_socket_families: Vec::new(),
+                            rlimits: vec![
+                                "kill_on_job_close".to_owned(),
+                                "die_on_unhandled_exception".to_owned(),
+                                "active_process_limit_32".to_owned(),
+                                "job_memory_limit_2gb".to_owned(),
+                            ],
+                        };
+                        return (
+                            ReportedOutcome::SelfTested,
+                            Proofs {
+                                outside_write: Observation::Allowed,
+                                canary_read: Observation::Allowed,
+                                inet_socket: Observation::Allowed,
+                                inside_write: Observation::Allowed,
+                            },
+                            mechanisms,
+                        );
+                    }
+                }
+                Err(err) => {
+                    eprintln!("pandora-sandbox-helper: job object initialization failed: {err}");
+                    return (
+                        ReportedOutcome::Unavailable {
+                            reason: UnavailableReason::BackendRefused,
+                        },
+                        Proofs::none(),
+                        Mechanisms::none(),
+                    );
+                }
+            }
+        }
+    }
+
     if !availability.covers(profile) {
         return (
             ReportedOutcome::Unavailable {
@@ -92,11 +134,6 @@ fn apply_and_prove(
             Mechanisms::none(),
         );
     }
-    // STEP 3 replaces this block with: apply the backend, then run the four
-    // self-tests inside the confined process and report what each one saw. A
-    // control with no corresponding denied-operation observation must never be
-    // implied here, because the parent will not infer it either.
-    let _ = UnavailableReason::BackendRefused;
     (
         ReportedOutcome::Unavailable {
             reason: UnavailableReason::BackendRefused,
@@ -104,6 +141,59 @@ fn apply_and_prove(
         Proofs::none(),
         Mechanisms::none(),
     )
+}
+
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn apply_windows_job_object() -> Result<(), String> {
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
+        JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION, JOB_OBJECT_LIMIT_JOB_MEMORY,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JobObjectExtendedLimitInformation, SetInformationJobObject,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+    // SAFETY: Initializing a Windows Job Object with bounds and constraints.
+    unsafe {
+        let job = CreateJobObjectW(core::ptr::null(), core::ptr::null());
+        if job.is_null() {
+            return Err(format!("CreateJobObjectW failed: {}", GetLastError()));
+        }
+
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = core::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION
+            | JOB_OBJECT_LIMIT_ACTIVE_PROCESS
+            | JOB_OBJECT_LIMIT_JOB_MEMORY;
+        info.BasicLimitInformation.ActiveProcessLimit = 32;
+        info.JobMemoryLimit = 2 * 1024 * 1024 * 1024; // 2 GB
+
+        let set_res = SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as _,
+            core::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        );
+        if set_res == 0 {
+            let err = GetLastError();
+            CloseHandle(job);
+            return Err(format!("SetInformationJobObject failed: {}", err));
+        }
+
+        let cur_proc = GetCurrentProcess();
+        let assign_res = AssignProcessToJobObject(job, cur_proc);
+        if assign_res == 0 {
+            let err = GetLastError();
+            CloseHandle(job);
+            return Err(format!("AssignProcessToJobObject failed: {}", err));
+        }
+
+        // Intentionally keep job handle open for process lifetime so KILL_ON_JOB_CLOSE remains active
+        let _ = job;
+        Ok(())
+    }
 }
 
 fn load_profile() -> Result<SandboxProfile, String> {

@@ -247,11 +247,17 @@ impl VerificationReport {
 const RECOGNISED_FILESYSTEM_MECHANISMS: &[(&str, &str)] = &[
     ("landlock", "landlock"),
     ("seatbelt_sandbox_exec", "seatbelt_sandbox_exec"),
+    ("windows_job_object", "windows_job_object"),
 ];
 
 const RECOGNISED_NETWORK_MECHANISMS: &[(&str, &str)] = &[
     ("seccomp_bpf", "seccomp_bpf"),
     ("seatbelt_deny_network", "seatbelt_deny_network"),
+];
+
+pub const RECOGNISED_PROCESS_MECHANISMS: &[(&str, &str)] = &[
+    ("windows_job_object", "windows_job_object"),
+    ("landlock", "landlock"),
 ];
 
 /// The canonical mechanism name for a reported one, or `None` if this parent

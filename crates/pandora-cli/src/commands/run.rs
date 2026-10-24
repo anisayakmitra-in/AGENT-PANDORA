@@ -132,8 +132,10 @@ pub(super) fn execute_with_control(
             "puct-c",
             "escalation-threshold",
             "hooks",
+            "trusted-process",
         ],
     )?;
+
     if parsed.positionals.len() != 1 {
         return Err(CliError::usage("run requires exactly one task"));
     }
@@ -353,10 +355,13 @@ pub(super) fn execute_with_control(
         [Operation::Write, Operation::Execute, Operation::Connect],
     );
     let hooks = load_lifecycle_hooks(&config)?;
+    let trusted_process = parsed.has_flag("trusted-process");
     let controller = ExecutionController::with_policy_and_harnesses_and_hooks(
         workspace, policy, harnesses, hooks,
     )
-    .with_wasm_executor(wasm);
+    .with_wasm_executor(wasm)
+    .with_trusted_process(trusted_process);
+
     let (task, planning_model) = if parsed.value("plan").is_some() {
         plan_task(
             &config,

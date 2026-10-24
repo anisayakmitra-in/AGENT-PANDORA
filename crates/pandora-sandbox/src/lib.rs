@@ -38,14 +38,15 @@
 //! denied-operation test used elsewhere. Until a test proves it, the honest
 //! answer is that it is unavailable.
 
-// The library half of this crate needs no unsafe at all: it only decides and
-// describes. Forbidding it here makes the split above machine-checked rather
-// than a convention, so a future change that tries to apply confinement from
-// the library fails to compile instead of quietly widening the exception.
-#![forbid(unsafe_code)]
+// `deny` rather than `forbid`: bounded platform FFI for handle verification and
+// confinement primitives must be able to opt in with strict `// SAFETY:` notes,
+// and `deny` still forces any unsafe code to be explicitly allowed and documented.
+#![deny(unsafe_code)]
 
 pub mod detect;
 pub mod error;
+pub mod handle;
+pub mod job_object;
 pub mod outcome;
 pub mod profile;
 pub mod protocol;
@@ -53,6 +54,13 @@ pub mod report;
 
 pub use detect::{Availability, PlatformFamily};
 pub use error::{SandboxProfileError, SandboxProtocolError};
+pub use handle::{
+    verify_directory_in_root, verify_file_handle_in_root, verify_open_handle_contained,
+};
+
+pub use job_object::{
+    DEFAULT_ACTIVE_PROCESS_LIMIT, DEFAULT_JOB_MEMORY_LIMIT_BYTES, JobLimits, JobObject,
+};
 pub use outcome::{
     CONFINEMENT_OUTCOME_VERSION, ConfinementOutcome, ProofKind, RefusalReason, ReportedOutcome,
     UnavailableReason, VerifiedControl,

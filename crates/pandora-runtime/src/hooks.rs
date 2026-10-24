@@ -33,13 +33,25 @@ impl fmt::Display for HooksLoadError {
         match self {
             Self::NotFound(path) => write!(f, "lifecycle hooks file not found: {}", path.display()),
             Self::Io { path, source } => {
-                write!(f, "failed to read lifecycle hooks file {}: {source}", path.display())
+                write!(
+                    f,
+                    "failed to read lifecycle hooks file {}: {source}",
+                    path.display()
+                )
             }
             Self::Json { path, source } => {
-                write!(f, "failed to parse lifecycle hooks file {}: {source}", path.display())
+                write!(
+                    f,
+                    "failed to parse lifecycle hooks file {}: {source}",
+                    path.display()
+                )
             }
             Self::Validation { path, message } => {
-                write!(f, "invalid lifecycle hooks file {}: {message}", path.display())
+                write!(
+                    f,
+                    "invalid lifecycle hooks file {}: {message}",
+                    path.display()
+                )
             }
         }
     }

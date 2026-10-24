@@ -38,6 +38,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "token-file",
             "device-key-file",
             "hooks",
+            "trusted-process",
         ],
     )?;
     if parsed.positionals.as_slice() != ["start"] {
@@ -54,7 +55,9 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         .unwrap_or(0);
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
-    let runtime = build_runtime_service(&config)?;
+    let trusted_process = parsed.has_flag("trusted-process");
+    let runtime = build_runtime_service(&config, trusted_process)?;
+
     let identities = IdentityStore::open(config.data_dir().join("identities.sqlite3"))
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
     let (token_path, device_key_path, device_id) =
@@ -97,7 +100,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     Ok(already_printed("service start"))
 }
 
-fn build_runtime_service(config: &RuntimeConfig) -> Result<RuntimeService, CliError> {
+fn build_runtime_service(
+    config: &RuntimeConfig,
+    trusted_process: bool,
+) -> Result<RuntimeService, CliError> {
     let workspace = WorkspaceRoot::new(config.workspace_dir()).map_err(|_| {
         CliError::configuration(
             "workspace path is invalid",
@@ -121,7 +127,9 @@ fn build_runtime_service(config: &RuntimeConfig) -> Result<RuntimeService, CliEr
     let controller = ExecutionController::with_policy_and_harnesses_and_hooks(
         workspace, policy, harnesses, hooks,
     )
-    .with_wasm_executor(wasm);
+    .with_wasm_executor(wasm)
+    .with_trusted_process(trusted_process);
+
     let sessions = session_store(config)?;
     let approvals = ApprovalStore::open(config.data_dir().join("sessions.sqlite3"))
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
@@ -473,7 +481,7 @@ mod tests {
         }
         drop(store);
 
-        let service = build_runtime_service(&config).expect("desktop runtime should start");
+        let service = build_runtime_service(&config, false).expect("desktop runtime should start");
         let capabilities = service
             .handle(
                 &ServiceRequest::capabilities(),
@@ -608,7 +616,8 @@ mod tests {
         drop(store);
 
         for (step, expected) in ["1.0.0", "2.0.0", "1.0.0"].into_iter().enumerate() {
-            let service = build_runtime_service(&config).expect("desktop runtime should restart");
+            let service =
+                build_runtime_service(&config, false).expect("desktop runtime should restart");
             let capabilities = service
                 .handle(
                     &ServiceRequest::capabilities(),

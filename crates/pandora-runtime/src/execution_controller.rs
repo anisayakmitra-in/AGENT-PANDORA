@@ -218,6 +218,11 @@ impl ExecutionController {
         self
     }
 
+    pub fn with_trusted_process(mut self, trusted_process: bool) -> Self {
+        self.process = self.process.with_trusted_process(trusted_process);
+        self
+    }
+
     fn execution_profile(
         &self,
         executor_id: &str,

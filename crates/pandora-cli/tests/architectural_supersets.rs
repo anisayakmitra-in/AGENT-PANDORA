@@ -2772,12 +2772,8 @@ fn contract_policy_hooks_runtime_enforcement() {
     assert_eq!(resp_read.value["version"], "0.1");
 
     // 4. Nonexistent hooks file rejection: fails closed with configuration_error (code 10)
-    let resp_nonexistent = fixture.run(&[
-        "run",
-        "read:README.md",
-        "--hooks",
-        "nonexistent_hooks.json",
-    ]);
+    let resp_nonexistent =
+        fixture.run(&["run", "read:README.md", "--hooks", "nonexistent_hooks.json"]);
     assert_eq!(
         resp_nonexistent.status.code(),
         Some(10),

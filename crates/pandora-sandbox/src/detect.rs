@@ -72,26 +72,25 @@ pub struct Availability {
     family: PlatformFamily,
     provable: BTreeSet<RequestedControl>,
     reason: UnavailableReason,
+    job_object_supported: bool,
 }
 
 impl Availability {
     /// Availability for the given platform family.
     ///
-    /// STEP 1 ships no backend, so the provable set is empty on every platform.
-    /// Windows is explicitly empty rather than "unknown": the approved plan
-    /// requires filesystem and network be reported Unavailable there unless a
-    /// denied-operation test proves them, and no such test exists yet.
+    /// On Windows, reports Job Object process confinement capabilities while
+    /// keeping filesystem and network provable set empty until a denied-operation
+    /// test proves them.
     pub const fn probe(family: PlatformFamily) -> Self {
+        let job_object_supported = matches!(family, PlatformFamily::Windows);
         Self {
             family,
             provable: BTreeSet::new(),
             reason: match family {
                 PlatformFamily::Unsupported => UnavailableReason::NoBackendOnPlatform,
-                // Every known family reports the same reason in STEP 1: the
-                // backend exists on this platform but has not been implemented
-                // here. STEP 2 replaces this with a real probe.
                 _ => UnavailableReason::BackendRefused,
             },
+            job_object_supported,
         }
     }
 
@@ -101,6 +100,21 @@ impl Availability {
 
     pub const fn reason(&self) -> UnavailableReason {
         self.reason
+    }
+
+    /// Whether Windows Job Object process confinement is supported.
+    pub const fn job_object_supported(&self) -> bool {
+        self.job_object_supported
+    }
+
+    /// Alias for `job_object_supported`.
+    pub const fn supports_job_object(&self) -> bool {
+        self.job_object_supported
+    }
+
+    /// Whether OS-level process confinement is available on this platform.
+    pub const fn has_process_confinement(&self) -> bool {
+        self.job_object_supported
     }
 
     /// Controls this host could actually prove today. Empty in STEP 1.

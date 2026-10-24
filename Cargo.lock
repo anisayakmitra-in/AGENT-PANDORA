@@ -1311,6 +1311,7 @@ version = "2.0.0-beta.9"
 dependencies = [
  "serde",
  "serde_json",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

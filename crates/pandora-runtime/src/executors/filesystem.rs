@@ -199,6 +199,14 @@ impl FilesystemExecutor {
                 let mut file = File::open(target.absolute()).map_err(|_| FilesystemError::Io {
                     operation: "open file",
                 })?;
+                pandora_sandbox::verify_file_handle_in_root(&file, target.root.as_path())
+                    .map_err(|_| FilesystemError::PathOutsideWorkspace)?;
+                let post_open_meta = file.metadata().map_err(|_| FilesystemError::Io {
+                    operation: "read metadata",
+                })?;
+                if !post_open_meta.is_file() {
+                    return Err(FilesystemError::NotFile);
+                }
                 read_bounded(&mut file)
             },
         )
@@ -287,9 +295,15 @@ impl FilesystemExecutor {
                             return Err(FilesystemError::SymlinkNotAllowed);
                         }
                         if file_type.is_dir() {
+                            pandora_sandbox::verify_directory_in_root(
+                                &entry.path(),
+                                target.root.as_path(),
+                            )
+                            .map_err(|_| FilesystemError::PathOutsideWorkspace)?;
                             pending.push(entry.path());
                             continue;
                         }
+
                         if !file_type.is_file() {
                             continue;
                         }
@@ -297,7 +311,10 @@ impl FilesystemExecutor {
                             File::open(entry.path()).map_err(|_| FilesystemError::Io {
                                 operation: "search file",
                             })?;
+                        pandora_sandbox::verify_file_handle_in_root(&file, target.root.as_path())
+                            .map_err(|_| FilesystemError::PathOutsideWorkspace)?;
                         let contents = read_bounded(&mut file)?;
+
                         if String::from_utf8_lossy(&contents).contains(query) {
                             let entry_path = entry.path();
                             let relative = entry_path
@@ -380,6 +397,9 @@ impl FilesystemExecutor {
                     .absolute()
                     .parent()
                     .ok_or(FilesystemError::PathOutsideWorkspace)?;
+                pandora_sandbox::verify_directory_in_root(parent, target.root.as_path())
+                    .map_err(|_| FilesystemError::PathOutsideWorkspace)?;
+
                 let temp = parent.join(format!(
                     ".pandora-write-{}",
                     NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed)
@@ -387,20 +407,37 @@ impl FilesystemExecutor {
                 let mut file = OpenOptions::new()
                     .create_new(true)
                     .write(true)
+                    .read(true)
                     .open(&temp)
                     .map_err(|_| FilesystemError::Io {
                         operation: "create temporary file",
                     })?;
+                if pandora_sandbox::verify_file_handle_in_root(&file, target.root.as_path())
+                    .is_err()
+                {
+                    drop(file);
+                    let _ = fs::remove_file(&temp);
+                    return Err(FilesystemError::PathOutsideWorkspace);
+                }
                 let write_result = file
                     .write_all(content)
                     .and_then(|_| file.sync_all())
                     .map_err(|_| FilesystemError::Io {
                         operation: "write temporary file",
                     });
+                drop(file);
                 if write_result.is_err() {
                     let _ = fs::remove_file(&temp);
                     return write_result;
                 }
+
+                if let Ok(dest_meta) = fs::symlink_metadata(target.absolute())
+                    && dest_meta.file_type().is_symlink()
+                {
+                    let _ = fs::remove_file(&temp);
+                    return Err(FilesystemError::SymlinkNotAllowed);
+                }
+
                 fs::rename(&temp, target.absolute()).map_err(|_| {
                     let _ = fs::remove_file(&temp);
                     if target.absolute().exists() {
@@ -410,7 +447,13 @@ impl FilesystemExecutor {
                             operation: "commit temporary file",
                         }
                     }
-                })
+                })?;
+                let committed = File::open(target.absolute()).map_err(|_| FilesystemError::Io {
+                    operation: "open committed file",
+                })?;
+                pandora_sandbox::verify_file_handle_in_root(&committed, target.root.as_path())
+                    .map_err(|_| FilesystemError::PathOutsideWorkspace)?;
+                Ok(())
             },
         )
     }
@@ -537,9 +580,12 @@ fn collect_workspace_files(
                 return Err(FilesystemError::SymlinkNotAllowed);
             }
             if file_type.is_dir() {
+                pandora_sandbox::verify_directory_in_root(&entry.path(), target.root.as_path())
+                    .map_err(|_| FilesystemError::PathOutsideWorkspace)?;
                 pending.push(entry.path());
                 continue;
             }
+
             if !file_type.is_file() {
                 continue;
             }
@@ -777,6 +823,97 @@ mod tests {
             response.receipt().outcome(),
             EffectOutcome::Failed { .. }
         ));
+    }
+
+    #[test]
+    fn read_hardened_against_symlink_substitution() {
+        let fixture = Fixture::new();
+        let outside = fixture.temp.path().join("secret.txt");
+        fs::write(&outside, b"secret-data\n").unwrap();
+        let inside_file = fixture.root.root().join("file.txt");
+        fs::write(&inside_file, b"initial\n").unwrap();
+        let target = fixture.root.path("file.txt").unwrap();
+
+        let request = fixture.request(Capability::FilesystemRead, Operation::Read, "file.txt");
+        let permit = fixture.permit(request);
+
+        let _ = fs::remove_file(&inside_file);
+        if create_file_symlink(&outside, &inside_file).is_ok() {
+            let res = fixture.executor.read(&permit, &target, fixture.now());
+            assert!(
+                res.result().is_err(),
+                "read must fail closed when file was replaced with symlink to outside"
+            );
+        }
+    }
+
+    #[test]
+    fn write_patch_rejects_symlink_destination() {
+        let fixture = Fixture::new();
+        let outside = fixture.temp.path().join("outside_target.txt");
+        fs::write(&outside, b"before\n").unwrap();
+        let link_target = fixture.root.root().join("link_target.txt");
+        if create_file_symlink(&outside, &link_target).is_ok() {
+            let payload = b"malicious write\n";
+            let request = fixture
+                .request(
+                    Capability::FilesystemWrite,
+                    Operation::Write,
+                    "link_target.txt",
+                )
+                .with_payload_digest(payload)
+                .unwrap();
+            let permit = fixture.permit(request);
+            let target = WorkspacePath {
+                root: fixture.root.root().to_path_buf(),
+                relative: PathBuf::from("link_target.txt"),
+                source: "link_target.txt".to_owned(),
+                absolute: link_target.clone(),
+            };
+            let res = fixture
+                .executor
+                .write_patch(&permit, &target, payload, fixture.now());
+            assert!(
+                res.result().is_err(),
+                "write_patch must reject writing to a symlink destination"
+            );
+            assert_eq!(fs::read(&outside).unwrap(), b"before\n");
+        }
+    }
+
+    #[test]
+    fn search_rejects_symlink_traversal() {
+        let fixture = Fixture::new();
+        let outside_dir = fixture.temp.path().join("outside_dir");
+        fs::create_dir(&outside_dir).unwrap();
+        fs::write(
+            outside_dir.join("leaked.txt"),
+            b"sensitive query_target content",
+        )
+        .unwrap();
+
+        let link_dir = fixture.root.root().join("symlinked_dir");
+        #[cfg(windows)]
+        let link_res = std::os::windows::fs::symlink_dir(&outside_dir, &link_dir);
+        #[cfg(unix)]
+        let link_res = std::os::unix::fs::symlink(&outside_dir, &link_dir);
+        #[cfg(not(any(windows, unix)))]
+        let link_res = Err(std::io::Error::other("unsupported"));
+
+        if link_res.is_ok() {
+            let target = fixture.root.path(".").unwrap();
+            let request =
+                fixture.request(Capability::FilesystemRead, Operation::Read, "query_target");
+            let permit = fixture.permit(request);
+
+            let res = fixture
+                .executor
+                .search(&permit, &target, "query_target", fixture.now());
+            assert!(
+                res.result().is_err(),
+                "search must reject traversing through symlinks"
+            );
+        }
     }
 
     struct Fixture {

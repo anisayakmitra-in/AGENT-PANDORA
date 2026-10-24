@@ -1,7 +1,9 @@
 use crate::output::{CliError, CommandResult};
 use pandora_runtime::config::{ConfigError, ConfigOverrides, RuntimeConfig};
 use pandora_runtime::sessions::{SessionError, SessionStore};
-use pandora_runtime::{LifecycleHooks, PopulationStrategy, PopulationStrategyError, StrategyProfile};
+use pandora_runtime::{
+    LifecycleHooks, PopulationStrategy, PopulationStrategyError, StrategyProfile,
+};
 use pandora_types::{
     LineageLimits, MutationLimits, PopulationId, PopulationPolicy, PrincipalId, Session, SessionId,
     TenantId, Timestamp, Usage, WorkspaceId,
@@ -321,6 +323,7 @@ fn is_flag(name: &str) -> bool {
             | "unread"
             | "force"
             | "analyze"
+            | "trusted-process"
     )
 }
 
@@ -441,10 +444,7 @@ pub(crate) fn load_lifecycle_hooks(config: &RuntimeConfig) -> Result<LifecycleHo
         return Ok(LifecycleHooks::new());
     };
     LifecycleHooks::from_file(hooks_path).map_err(|err| {
-        CliError::configuration(
-            err.to_string(),
-            json!({ "hooks_file": hooks_path }),
-        )
+        CliError::configuration(err.to_string(), json!({ "hooks_file": hooks_path }))
     })
 }
 

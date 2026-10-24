@@ -321,6 +321,7 @@ pub struct VerificationOptions {
     timeout: Duration,
     max_output_bytes: usize,
     cancellation: CancellationToken,
+    trusted_process: bool,
 }
 
 impl VerificationOptions {
@@ -336,7 +337,17 @@ impl VerificationOptions {
             timeout,
             max_output_bytes,
             cancellation,
+            trusted_process: false,
         })
+    }
+
+    pub fn with_trusted_process(mut self, trusted_process: bool) -> Self {
+        self.trusted_process = trusted_process;
+        self
+    }
+
+    pub fn trusted_process(&self) -> bool {
+        self.trusted_process
     }
 }
 
@@ -346,6 +357,7 @@ impl Default for VerificationOptions {
             timeout: DEFAULT_TIMEOUT,
             max_output_bytes: DEFAULT_OUTPUT_BYTES,
             cancellation: CancellationToken::new(),
+            trusted_process: false,
         }
     }
 }
@@ -392,11 +404,33 @@ impl ProcessResult {
 
 pub struct ProcessExecutor {
     workspace: WorkspaceRoot,
+    trusted_process: bool,
+    availability: pandora_sandbox::Availability,
 }
 
 impl ProcessExecutor {
     pub fn new(workspace: WorkspaceRoot) -> Self {
-        Self { workspace }
+        Self {
+            workspace,
+            trusted_process: false,
+            availability: pandora_sandbox::Availability::probe(
+                pandora_sandbox::PlatformFamily::current(),
+            ),
+        }
+    }
+
+    pub fn with_trusted_process(mut self, trusted_process: bool) -> Self {
+        self.trusted_process = trusted_process;
+        self
+    }
+
+    pub fn with_availability(mut self, availability: pandora_sandbox::Availability) -> Self {
+        self.availability = availability;
+        self
+    }
+
+    pub fn trusted_process(&self) -> bool {
+        self.trusted_process
     }
 
     pub fn run_verification(
@@ -406,6 +440,9 @@ impl ProcessExecutor {
         options: &VerificationOptions,
         now: Timestamp,
     ) -> ProcessResult {
+        let is_trusted = self.trusted_process || options.trusted_process;
+        let has_confinement = self.availability.has_process_confinement();
+
         let result = if !request_matches(permit, command) {
             Err(ProcessError::PermissionDenied)
         } else if self.workspace.root() != command.workspace().root() {
@@ -414,8 +451,12 @@ impl ProcessExecutor {
             Err(ProcessError::Cancelled)
         } else if options.timeout.is_zero() || options.max_output_bytes == 0 {
             Err(ProcessError::InvalidOptions)
+        } else if !is_trusted && !has_confinement {
+            // Fail-closed semantics: native execution without confinement is refused
+            // returning ProcessError::PermissionDenied unless explicit trusted_process mode is passed.
+            Err(ProcessError::PermissionDenied)
         } else {
-            run_child(command, options)
+            run_child(command, options, is_trusted)
         };
         let outcome = match &result {
             Ok(output) if output.exit_code() == Some(0) => EffectOutcome::Succeeded,
@@ -447,7 +488,23 @@ fn request_matches(permit: &ConsumedPermit, command: &VerificationCommand) -> bo
 fn run_child(
     command: &VerificationCommand,
     options: &VerificationOptions,
+    is_trusted: bool,
 ) -> Result<ProcessOutput, ProcessError> {
+    #[cfg(windows)]
+    let confined_job = if !is_trusted {
+        Some(
+            pandora_sandbox::job_object::JobObject::create_confined()
+                .map_err(|_| ProcessError::PermissionDenied)?,
+        )
+    } else {
+        None
+    };
+
+    #[cfg(not(windows))]
+    if !is_trusted {
+        return Err(ProcessError::PermissionDenied);
+    }
+
     let mut process = Command::new(command.program());
     configure_process_group(&mut process);
     configure_runtime_environment(&mut process);
@@ -458,6 +515,15 @@ fn run_child(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|_| ProcessError::SpawnFailed)?;
+
+    #[cfg(windows)]
+    if let Some(ref job) = confined_job {
+        use std::os::windows::io::AsRawHandle;
+        if job.assign_process_handle(child.as_raw_handle()).is_err() {
+            stop_child(&mut child);
+            return Err(ProcessError::PermissionDenied);
+        }
+    }
     let stdout = child.stdout.take().ok_or(ProcessError::Io)?;
     let stderr = child.stderr.take().ok_or(ProcessError::Io)?;
     let stdout_rx = spawn_reader(stdout, options.max_output_bytes);
@@ -943,6 +1009,43 @@ mod tests {
         poll_reader(&receiver, &mut output).unwrap();
         assert_eq!(output.as_deref(), Some(b"complete".as_slice()));
         poll_reader(&receiver, &mut output).unwrap();
+    }
+
+    #[test]
+    fn fails_closed_without_trusted_process() {
+        let workspace = Workspace::new();
+        let command = VerificationCommand::cargo_check_locked(workspace.root.clone());
+        let unsupported =
+            pandora_sandbox::Availability::probe(pandora_sandbox::PlatformFamily::Unsupported);
+        let executor = ProcessExecutor::new(workspace.root.clone()).with_availability(unsupported);
+        assert!(!executor.trusted_process());
+        let permit = permit_for("cargo check --locked", Capability::ProcessExecute);
+
+        let result = executor.run_verification(
+            &permit,
+            &command,
+            &VerificationOptions::default(),
+            Timestamp::from_unix_seconds(10),
+        );
+
+        assert_eq!(result.result(), Err(&ProcessError::PermissionDenied));
+        assert_eq!(
+            result.receipt().outcome(),
+            &EffectOutcome::Failed {
+                code: "permission_denied".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn allows_trusted_process_via_executor_or_options() {
+        let workspace = Workspace::new();
+        let _command = VerificationCommand::cargo_check_locked(workspace.root.clone());
+        let executor = ProcessExecutor::new(workspace.root.clone()).with_trusted_process(true);
+        assert!(executor.trusted_process());
+
+        let options = VerificationOptions::default().with_trusted_process(true);
+        assert!(options.trusted_process());
     }
 
     struct Workspace {

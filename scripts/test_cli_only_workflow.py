@@ -35,7 +35,7 @@ GUARD_FILES = (
 
 # Directories whose contents are not ours to police: build output, vendored
 # trees, and VCS metadata.
-SKIP_DIRS = {"node_modules", "target", "dist", "build", "test-results", ".git"}
+SKIP_DIRS = {"node_modules", "target", "dist", "build", "test-results", ".git", ".agents"}
 TEXT_SUFFIXES = {
     ".md",
     ".yml",

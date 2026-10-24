@@ -1108,7 +1108,10 @@ mod tests {
 
         // 2. Persist hooks_file to config.json
         let config = config.with_hooks_file(PathBuf::from("file_hooks.json"));
-        assert_eq!(config.hooks_file(), Some(std::path::Path::new("file_hooks.json")));
+        assert_eq!(
+            config.hooks_file(),
+            Some(std::path::Path::new("file_hooks.json"))
+        );
         config.write().unwrap();
 
         // 3. Re-open: loaded from file
@@ -1120,7 +1123,10 @@ mod tests {
             directory.join("workspace"),
         )
         .unwrap();
-        assert_eq!(reopened.hooks_file(), Some(std::path::Path::new("file_hooks.json")));
+        assert_eq!(
+            reopened.hooks_file(),
+            Some(std::path::Path::new("file_hooks.json"))
+        );
 
         // 4. PANDORA_HOOKS env var overrides file
         let mut env = BTreeMap::new();
@@ -1133,7 +1139,10 @@ mod tests {
             directory.join("workspace"),
         )
         .unwrap();
-        assert_eq!(env_config.hooks_file(), Some(std::path::Path::new("env_hooks.json")));
+        assert_eq!(
+            env_config.hooks_file(),
+            Some(std::path::Path::new("env_hooks.json"))
+        );
 
         // 5. ConfigOverrides overrides both env var and file
         let override_config = RuntimeConfig::from_sources(
