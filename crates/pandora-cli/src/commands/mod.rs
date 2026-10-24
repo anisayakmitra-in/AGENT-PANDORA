@@ -39,6 +39,7 @@ mod operations;
 mod orchestration;
 mod package;
 pub(crate) mod peer;
+pub(crate) mod policy;
 mod provider;
 pub(crate) mod reasoning;
 mod registry;
@@ -110,6 +111,7 @@ pub(crate) const ROOT_COMMANDS: &[&str] = &[
     "update",
     "uninstall",
     "doctor",
+    "policy",
 ];
 
 /// [`ROOT_COMMANDS`] joined by single spaces, the way the POSIX, zsh, and fish
@@ -210,6 +212,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "peer" => peer::execute(&args[1..]),
         "connector" => connector::execute(&args[1..]),
         "reasoning" => reasoning::execute(&args[1..]),
+        "policy" => policy::execute(&args[1..]),
         "--help" | "help" => {
             if args.len() != 1 {
                 return Err(CliError::usage("help does not accept additional arguments"));
@@ -440,7 +443,7 @@ pub(crate) fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|curriculum|decision|tui|harness|slash|session|job|subagent|skill|package|registry|runtime|memory|approval|provider|mcp|tool|orchestration|operations|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor> [options]
+    r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|curriculum|decision|tui|harness|slash|session|job|subagent|skill|package|registry|runtime|memory|approval|provider|mcp|tool|orchestration|operations|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor|policy> [options]
 
 commands:
   help (or --help)
@@ -453,6 +456,7 @@ commands:
   chat [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>]
   curriculum generate [--suite-id <id>] [--input <path>] [--out <path>] [--difficulty easy|medium|hard|all] [--min-margin <float>] [--limit <n>] | inspect --input <path> | list
   decision harvest [--min-margin <float>] [--export-golden <path>] [--limit <n>] | list
+  policy hooks list | validate --file <path>
   tui [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>] [--theme <auto|dark|light|mono>]
   harness list|inspect|run [--harness-version <version>]
   slash list|resolve <command>

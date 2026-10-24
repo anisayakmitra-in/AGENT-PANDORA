@@ -1670,3 +1670,18 @@ pandora reasoning set --effort <none|low|medium|high> [--cache <auto|interactive
 - `pandora reasoning profile`: Inspects current workspace reasoning and cache policy defaults.
 - `pandora reasoning set`: Applies reasoning effort and prompt cache TTL policies for subsequent agent turns.
 
+
+## Policy Hooks
+
+Pandora supports declarative, fail-closed lifecycle veto rules evaluated
+before authorization. Hooks remain strictly deny-only: they can veto matching
+operations before authorization checks, but cannot mutate requests, execute
+arbitrary code, grant permissions, or issue effect permits.
+
+```text
+pandora policy hooks list [--json]
+pandora policy hooks validate --file <path> [--json]
+```
+
+- `pandora policy hooks list`: Lists available hook points (such as `before_authorization`) and selectors (`any`, `capability`, `gene`).
+- `pandora policy hooks validate --file <path>`: Validates a JSON policy file containing a list of declarative lifecycle rules, checking selector schemas and hook definitions.

@@ -1290,6 +1290,7 @@ dependencies = [
  "getrandom 0.4.3",
  "pandora-harnesses",
  "pandora-provider",
+ "pandora-sandbox",
  "pandora-types",
  "reqwest",
  "rusqlite",

@@ -2634,3 +2634,69 @@ fn contract_run_cli_lats_strategy_validation() {
         resp_esc.text
     );
 }
+
+#[test]
+fn contract_policy_hooks_cli() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // 1. policy hooks list
+    let resp_list = fixture.run(&["policy", "hooks", "list"]);
+    assert!(
+        resp_list.status.success(),
+        "policy hooks list failed: {}",
+        resp_list.text
+    );
+    assert_eq!(resp_list.value["command"], "policy hooks list");
+    assert_eq!(resp_list.value["posture"], "deny_only");
+    assert_eq!(resp_list.value["arbitrary_code_execution"], false);
+    assert_eq!(resp_list.value["hook_points"][0], "before_authorization");
+
+    // 2. policy hooks validate with valid hooks JSON file
+    let hooks_file = fixture.workspace.join("policy_hooks.json");
+    let hooks_content = json!({
+        "hooks": [
+            {
+                "id": "veto-write",
+                "point": "before_authorization",
+                "selector": {
+                    "type": "capability",
+                    "value": "filesystem.write"
+                },
+                "reason": "writes forbidden by operator policy"
+            }
+        ]
+    });
+    fs::write(
+        &hooks_file,
+        serde_json::to_string_pretty(&hooks_content).unwrap(),
+    )
+    .unwrap();
+
+    let resp_validate = fixture.run(&[
+        "policy",
+        "hooks",
+        "validate",
+        "--file",
+        hooks_file.to_str().unwrap(),
+    ]);
+    assert!(
+        resp_validate.status.success(),
+        "policy hooks validate failed: {}",
+        resp_validate.text
+    );
+    assert_eq!(resp_validate.value["command"], "policy hooks validate");
+    assert_eq!(resp_validate.value["valid"], true);
+    assert_eq!(resp_validate.value["rule_count"], 1);
+
+    // 3. policy hooks validate with nonexistent file fails
+    let resp_missing = fixture.run(&[
+        "policy",
+        "hooks",
+        "validate",
+        "--file",
+        "nonexistent_policy_file.json",
+    ]);
+    assert!(!resp_missing.status.success());
+    assert!(resp_missing.text.contains("policy hooks file not found"));
+}
