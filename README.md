@@ -37,7 +37,7 @@ flowchart TB
 
     subgraph Governance["Constitutional Authority Boundary (pandora-runtime)"]
         EC["ExecutionController<br/>Assembles Immutable ExecutionProfile<br/>Binds Policy + Workspace Digest"]
-        PAR["Parliament & HumanReviewEngine<br/>Constitutional Policy · Declarative Veto Hooks<br/>Human-in-the-Loop Approval Gate"]
+        PLM["Parliament & HumanReviewEngine<br/>Constitutional Policy · Declarative Veto Hooks<br/>Human-in-the-Loop Approval Gate"]
         RM["ReferenceMonitor<br/>Sole Issuer of Scoped, Expiring,<br/>One-Shot Effect Permits"]
     end
 
@@ -58,9 +58,9 @@ flowchart TB
     S1 --> SC
     S2 --> SC
     SC --> DOM
-    DOM --> PAR
-    EC --> PAR
-    PAR -->|"Approved Request"| RM
+    DOM --> PLM
+    EC --> PLM
+    PLM -->|"Approved Request"| RM
     RM -->|"One-Shot Permit"| EX
     EX --> RCPT
     EX --> MEM
@@ -73,7 +73,7 @@ flowchart TB
 
     class TUI,CLI,SVC surface
     class S1,S2,SC,DOM brain
-    class EC,PAR,RM gov
+    class EC,PLM,RM gov
     class EX,MEM,FLEET,RCPT exec
 ```
 
@@ -90,7 +90,7 @@ sequenceDiagram
     participant EC as ExecutionController
     participant S1 as System 1 / LATS (System 2)
     participant SC as Shadow Council
-    participant PAR as Parliament & Veto Hooks
+    participant PLM as Parliament & Veto Hooks
     participant RM as ReferenceMonitor
     participant EX as Confined Executor
     participant MEM as MemoryEngine & Journal
@@ -103,12 +103,12 @@ sequenceDiagram
     S1-->>EC: Route Decision + Confidence Margin
     EC->>SC: Request Approved Harness + Gene + Provider Composition
     SC-->>EC: Bound ExecutionProfile (Digest-Locked)
-    EC->>PAR: Evaluate OperationRequest + Declarative Veto Rules
+    EC->>PLM: Evaluate OperationRequest + Declarative Veto Rules
     alt Mutating / Process Effect Requires Approval
-        PAR-->>User: Pause at Approval Boundary (⚠ WAITING APPROVAL)
-        User->>PAR: Approve (Ctrl+Y / /approve) or Deny (Ctrl+N / /deny)
+        PLM-->>User: Pause at Approval Boundary (WAITING APPROVAL)
+        User->>PLM: Approve (Ctrl+Y / /approve) or Deny (Ctrl+N / /deny)
     end
-    PAR->>RM: Authorize Approved OperationRequest
+    PLM->>RM: Authorize Approved OperationRequest
     RM-->>EX: Issue Scoped, Expiring, One-Shot EffectPermit
     EX->>EX: Consume Permit & Execute in Sandbox / Wasm / Worktree
     EX-->>MEM: Record Cryptographic Receipt + SHA-256 Journal Step + L1-L4 Evidence
