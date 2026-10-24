@@ -1,6 +1,6 @@
 use super::{ParsedArgs, parse_options, slash};
 use crate::output::{CliError, CommandResult, success};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::CrosstermBackend;
@@ -732,6 +732,9 @@ impl App {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> bool {
+        if key.kind != KeyEventKind::Press {
+            return false;
+        }
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             return true;
         }
@@ -3311,5 +3314,21 @@ mod tests {
         // Ctrl+K truncates from cursor
         app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert!(app.input.is_empty());
+    }
+
+    #[test]
+    fn key_release_events_are_ignored_to_prevent_double_input() {
+        let mut app = app();
+        app.handle_key(KeyEvent::new_with_kind(
+            KeyCode::Char('/'),
+            KeyModifiers::NONE,
+            super::KeyEventKind::Press,
+        ));
+        app.handle_key(KeyEvent::new_with_kind(
+            KeyCode::Char('/'),
+            KeyModifiers::NONE,
+            super::KeyEventKind::Release,
+        ));
+        assert_eq!(app.input.iter().collect::<String>(), "/");
     }
 }
