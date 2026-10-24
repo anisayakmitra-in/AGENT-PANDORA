@@ -51,14 +51,14 @@ Harness. The following abbreviated JSON shows the persisted input shape:
       "exact_commit": "0123456789abcdef"
     },
     {
-      "repository_id": "desktop",
-      "workspace_id": "workspace-desktop",
+      "repository_id": "web",
+      "workspace_id": "workspace-web",
       "exact_commit": "fedcba9876543210"
     }
   ],
   "role_repositories": [
     {"role_id": "planner", "repository_id": "api"},
-    {"role_id": "maker", "repository_id": "desktop"}
+    {"role_id": "maker", "repository_id": "web"}
   ],
   "aggregate_budget": {
     "ceiling": {
@@ -212,10 +212,9 @@ remains. Queued runs may be cancelled with `pandora orchestration cancel
 
 The authenticated local service exposes scoped `orchestration.list`,
 `orchestration.inspect`, `orchestration.cancel`, and `orchestration.resume` RPC
-methods. The CLI calls them directly, and so did the retained desktop adapter's
-Background Runs surface, which never read the orchestration database and could
-not claim a run, steal a worker lease, complete a role, issue a permit, or
-fabricate a receipt.
+methods. The CLI calls them directly, and does not claim a run without a valid
+worker lease, nor issue permits or fabricate receipts outside of verified
+effect handlers.
 
 Cancellation is available only for queued work. Resume is available only for an
 interrupted snapshot that the orchestration store considers safe to requeue.

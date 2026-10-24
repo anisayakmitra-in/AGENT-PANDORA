@@ -2040,9 +2040,9 @@ mod tests {
                 )
                 .unwrap(),
                 RepositoryBinding::new(
-                    RepositoryId::new("desktop").unwrap(),
-                    WorkspaceId::new("workspace-desktop").unwrap(),
-                    "commit-desktop",
+                    RepositoryId::new("web").unwrap(),
+                    WorkspaceId::new("workspace-web").unwrap(),
+                    "commit-web",
                 )
                 .unwrap(),
             ],
@@ -2053,7 +2053,7 @@ mod tests {
                 ),
                 RoleRepositoryBinding::new(
                     RoleId::new("maker").unwrap(),
-                    RepositoryId::new("desktop").unwrap(),
+                    RepositoryId::new("web").unwrap(),
                 ),
             ],
         )
@@ -2110,13 +2110,7 @@ mod tests {
         assert_eq!(budget.reserved().tokens(), 100);
         assert_eq!(budget.enforced_consumed().tokens(), 0);
 
-        let wrong = fixture.receipt(
-            &run_id,
-            "planner",
-            "desktop",
-            "workspace-desktop",
-            "commit-desktop",
-        );
+        let wrong = fixture.receipt(&run_id, "planner", "web", "workspace-web", "commit-web");
         assert!(matches!(
             fixture.store.complete_role(
                 &run_id,
@@ -2161,13 +2155,7 @@ mod tests {
             .unwrap();
         assert_eq!(ready[0].id().as_str(), "maker");
 
-        let maker_receipt = fixture.receipt(
-            &run_id,
-            "maker",
-            "desktop",
-            "workspace-desktop",
-            "commit-desktop",
-        );
+        let maker_receipt = fixture.receipt(&run_id, "maker", "web", "workspace-web", "commit-web");
         let completed = fixture
             .store
             .complete_role(

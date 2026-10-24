@@ -751,9 +751,9 @@ mod tests {
                 )
                 .unwrap(),
                 RepositoryBinding::new(
-                    RepositoryId::new("desktop").unwrap(),
-                    WorkspaceId::new("workspace-desktop").unwrap(),
-                    "commit-desktop",
+                    RepositoryId::new("web").unwrap(),
+                    WorkspaceId::new("workspace-web").unwrap(),
+                    "commit-web",
                 )
                 .unwrap(),
             ],
@@ -764,7 +764,7 @@ mod tests {
                 ),
                 RoleRepositoryBinding::new(
                     RoleId::new("maker").unwrap(),
-                    RepositoryId::new("desktop").unwrap(),
+                    RepositoryId::new("web").unwrap(),
                 ),
             ],
         )
@@ -780,7 +780,7 @@ mod tests {
                 .unwrap()
                 .workspace_id()
                 .as_str(),
-            "workspace-desktop"
+            "workspace-web"
         );
 
         let result = GovernedOrchestrationPlan::new(
@@ -805,9 +805,9 @@ mod tests {
             ReceiptId::new("role-receipt-1").unwrap(),
             run_id.clone(),
             RoleId::new("planner").unwrap(),
-            RepositoryId::new("desktop").unwrap(),
-            WorkspaceId::new("workspace-desktop").unwrap(),
-            "commit-desktop",
+            RepositoryId::new("web").unwrap(),
+            WorkspaceId::new("workspace-web").unwrap(),
+            "commit-web",
             Vec::new(),
             Some(RequestDigest::new("evidence-1").unwrap()),
         )

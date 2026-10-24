@@ -188,7 +188,7 @@ fn build_runtime_service(
         agent_providers.push(Arc::from(configured_provider_for(
             config,
             profile.model(),
-            "desktop agent mode",
+            "local service agent mode",
             Some(&name),
         )?));
     }
@@ -393,7 +393,7 @@ mod tests {
     }
 
     #[test]
-    fn desktop_service_loads_enabled_package_compositions_and_executes_wasm() {
+    fn service_loads_enabled_package_compositions_and_executes_wasm() {
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time should be available")
@@ -481,7 +481,7 @@ mod tests {
         }
         drop(store);
 
-        let service = build_runtime_service(&config, false).expect("desktop runtime should start");
+        let service = build_runtime_service(&config, false).expect("runtime service should start");
         let capabilities = service
             .handle(
                 &ServiceRequest::capabilities(),
@@ -574,7 +574,7 @@ mod tests {
     }
 
     #[test]
-    fn desktop_service_catalog_applies_exact_update_and_rollback_after_restart() {
+    fn service_catalog_applies_exact_update_and_rollback_after_restart() {
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time should be available")
@@ -617,7 +617,7 @@ mod tests {
 
         for (step, expected) in ["1.0.0", "2.0.0", "1.0.0"].into_iter().enumerate() {
             let service =
-                build_runtime_service(&config, false).expect("desktop runtime should restart");
+                build_runtime_service(&config, false).expect("runtime service should restart");
             let capabilities = service
                 .handle(
                     &ServiceRequest::capabilities(),

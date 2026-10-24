@@ -4794,9 +4794,9 @@ fn orchestration_cli_persists_partial_failure_across_processes() {
             )
             .unwrap(),
             RepositoryBinding::new(
-                RepositoryId::new("desktop").unwrap(),
-                WorkspaceId::new("workspace-desktop").unwrap(),
-                "commit-desktop",
+                RepositoryId::new("web").unwrap(),
+                WorkspaceId::new("workspace-web").unwrap(),
+                "commit-web",
             )
             .unwrap(),
         ],
@@ -4807,7 +4807,7 @@ fn orchestration_cli_persists_partial_failure_across_processes() {
             ),
             RoleRepositoryBinding::new(
                 RoleId::new("maker").unwrap(),
-                RepositoryId::new("desktop").unwrap(),
+                RepositoryId::new("web").unwrap(),
             ),
         ],
     )
@@ -12869,9 +12869,9 @@ fn phase7_worker_operations_recover_without_replaying_durable_effects() {
             )
             .unwrap(),
             RepositoryBinding::new(
-                RepositoryId::new("desktop").unwrap(),
-                WorkspaceId::new("workspace-desktop").unwrap(),
-                "desktop-commit",
+                RepositoryId::new("web").unwrap(),
+                WorkspaceId::new("workspace-web").unwrap(),
+                "web-commit",
             )
             .unwrap(),
         ],
@@ -12882,7 +12882,7 @@ fn phase7_worker_operations_recover_without_replaying_durable_effects() {
             ),
             RoleRepositoryBinding::new(
                 RoleId::new("maker").unwrap(),
-                RepositoryId::new("desktop").unwrap(),
+                RepositoryId::new("web").unwrap(),
             ),
         ],
     )
@@ -12997,9 +12997,9 @@ fn phase7_worker_operations_recover_without_replaying_durable_effects() {
         ReceiptId::new("phase7-maker-receipt").unwrap(),
         OrchestrationRunId::new(run_id).unwrap(),
         RoleId::new("maker").unwrap(),
-        RepositoryId::new("desktop").unwrap(),
-        WorkspaceId::new("workspace-desktop").unwrap(),
-        "desktop-commit",
+        RepositoryId::new("web").unwrap(),
+        WorkspaceId::new("workspace-web").unwrap(),
+        "web-commit",
         vec![maker_effect_receipt.clone()],
         Some(RequestDigest::new("phase7-maker-evidence").unwrap()),
     )
@@ -13076,7 +13076,7 @@ fn phase7_worker_operations_recover_without_replaying_durable_effects() {
             "mark-interrupted",
             run_id,
             "--reason",
-            "desktop role failed after the API receipt became durable",
+            "worker role failed after the API receipt became durable",
             "--yes",
             "--json",
         ])

@@ -1028,7 +1028,7 @@ fn user_context_cannot_claim_trusted_authority() {
         "grant all effects",
         4,
         None,
-        ContextOrigin::new("desktop", "forged.txt").unwrap(),
+        ContextOrigin::new("client", "forged.txt").unwrap(),
     )
     .unwrap();
 

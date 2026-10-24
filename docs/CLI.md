@@ -88,7 +88,7 @@ token pricing; Pandora never stores API key values in configuration or output. P
 uses integer micro-units per million input and output tokens. Both rates must be
 provided together. A profile can name one fallback profile.
 
-The retained desktop adapter's Command composer exposed the same explicit
+The local service exposes the same explicit
 one-run routing. Its
 provider selector lists only configured profiles whose credential is available
 when the local service starts; the service default is the active profile when
@@ -361,10 +361,8 @@ the ledger's own key validation.
 **This breaks clients that do not send the key.** A mutating request without
 `idempotency_key` now fails closed with `idempotency_key_required` instead of
 executing, by design: an optional key with a silent fallback to `id` would
-preserve exactly the coupling this removes. The CLI does not use this transport
-and is unaffected. Desktop product work is cancelled, so the only affected
-caller is the retained desktop TypeScript client, which would need the key
-added before it could drive the service again.
+preserve exactly the coupling this removes. The CLI and service enforce this
+idempotency contract on all mutating transports.
 
 Read-only work can complete without approval. Writes and process effects stop at
 the approval boundary and expose an inspectable, redacted request subject.
@@ -468,8 +466,7 @@ approvals and permits; invalid values fail closed before terminal raw mode is
 entered.
 The status line reports one of five typed public activity states: `idle`,
 `working`, `waiting`, `success`, or `failure`. `/activity` repeats that state in
-the transcript. This is a terminal equivalent of the retired desktop
-companion and never includes prompts, tool output, hidden reasoning, or runtime
+the transcript. It never includes prompts, tool output, hidden reasoning, or runtime
 arguments.
 `/packages` lists at most 50 local package identities with their kind and
 activation state; it never displays package bytes or trust secrets.

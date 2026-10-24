@@ -33,7 +33,7 @@ body:
         - Harness, Gene, package, provider, Skill, or MCP contract
         - Parliament, Shadow Council, ReferenceMonitor, approval, or permit
         - Evolution, memory, orchestration, or recovery lifecycle
-        - Public CLI, JSON, service, or desktop contract
+        - Public CLI, JSON, or service contract
     validations:
       required: true
   - type: textarea

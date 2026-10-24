@@ -137,12 +137,11 @@ Undeclared capabilities, duplicate identities, traversal IDs, unsafe symlink
 inputs, incompatible runtimes, imports, and invalid ABIs fail before code loading
 or durable activation.
 
-The retained desktop adapter's Package Manager included a Manifest Workbench for
-Domain, Meta, and Gene envelopes. It produced a copyable, deterministic JSON preview
+Package scaffolding produces a copyable, deterministic JSON preview
 with the package kind, exact version, content hash, dependencies, runtime
 compatibility, route hints or Meta composition, and `unverified` trust
-evidence. The workbench is intentionally preview-only: it does not sign,
-write files, admit records, enable bindings, publish packages, or handle
+evidence. Scaffolding is intentionally preview-only: it does not sign,
+write files without explicit flags, admit records, enable bindings, or publish packages.
 private keys. Users may pass the copied manifest through the existing local
 `package admit` command, where the normal runtime validation and artifact hash
 checks remain authoritative. The separate package keygen and package sign
@@ -205,11 +204,10 @@ mutations require `--yes` and refuse to break an enabled dependent. These
 bindings do not grant effect authority and cannot alter Parliament, Shadow
 Council, ReferenceMonitor, permits, or the constitutional service.
 
-The retained desktop package inspector exposed the replacement lineage beside the
-selected record: whether it targets a built-in Harness, its lifecycle
-generation, active version, and one-step rollback target. This is read-only
-evidence; changing the binding still requires the existing dry-run, exact
-confirmation, dependency checks, and restart behavior.
+The package inspection command (`pandora package inspect`) exposes the replacement lineage:
+whether it targets a built-in Harness, its lifecycle generation, active version,
+and one-step rollback target. This is read-only evidence; changing the binding
+still requires the existing dry-run, exact confirmation, dependency checks, and restart behavior.
 
 Multiple exact versions may coexist so an update can be staged before its
 binding changes. An active version cannot be removed. A retained rollback
