@@ -780,6 +780,15 @@ impl ContextAssembly {
     pub fn cache_key(&self) -> &ContextCacheKey {
         &self.cache_key
     }
+
+    pub fn with_receipt(mut self, receipt: ContextReceipt) -> Self {
+        self.receipt = receipt;
+        self
+    }
+
+    pub fn into_parts(self) -> (Vec<ContextEntry>, String, ContextReceipt, ContextCacheKey) {
+        (self.entries, self.text, self.receipt, self.cache_key)
+    }
 }
 
 fn validate_text(field: &'static str, value: String) -> Result<String, ContextContractError> {

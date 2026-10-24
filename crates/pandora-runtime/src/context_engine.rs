@@ -129,12 +129,7 @@ impl PersistentContextCache {
             .receipt()
             .clone()
             .with_cache_disposition(ContextCacheDisposition::Hit);
-        Some(ContextAssembly::new(
-            entry.assembly.entries().to_vec(),
-            entry.assembly.text().to_owned(),
-            receipt,
-            key.clone(),
-        ))
+        Some(entry.assembly.with_receipt(receipt))
     }
 
     fn put(&self, entry: ContextCacheEntry) {
@@ -287,17 +282,12 @@ impl ContextEngine {
                         .valid_until
                         .is_none_or(|expires_at| request_time < expires_at.as_unix_seconds());
                 if valid {
-                    let cached = entry.assembly.clone();
-                    let receipt = cached
+                    let receipt = entry
+                        .assembly
                         .receipt()
                         .clone()
                         .with_cache_disposition(ContextCacheDisposition::Hit);
-                    let assembly = ContextAssembly::new(
-                        cached.entries().to_vec(),
-                        cached.text().to_owned(),
-                        receipt,
-                        cache_key.clone(),
-                    );
+                    let assembly = entry.assembly.clone().with_receipt(receipt);
                     cache.hits = cache.hits.saturating_add(1);
                     return Ok(assembly);
                 }

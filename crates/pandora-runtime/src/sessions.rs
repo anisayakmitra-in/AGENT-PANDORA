@@ -314,6 +314,8 @@ impl SessionStore {
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.execute_batch(
             "PRAGMA journal_mode = WAL;
+             PRAGMA synchronous = NORMAL;
+             PRAGMA temp_store = MEMORY;
              PRAGMA foreign_keys = ON;",
         )?;
         migrate(&mut connection)?;

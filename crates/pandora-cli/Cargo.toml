@@ -21,7 +21,7 @@ pandora-runtime = { path = "../pandora-runtime" }
 pandora-service = { path = "../pandora-service" }
 pandora-types = { path = "../pandora-types" }
 reqwest.workspace = true
-rusqlite = { version = "0.32", features = ["bundled", "backup"] }
+rusqlite = { workspace = true, features = ["backup"] }
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -29,7 +29,7 @@ tokio.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
-wat = "1"
+wat.workspace = true
 
 # cargo-binstall metadata. binstall prefers a prebuilt binary over compiling from
 # source, so it is pointed at the raw GitHub release assets rather than a .crate

@@ -56,7 +56,6 @@ mod setup;
 mod skill;
 mod slash;
 mod subagent;
-#[allow(dead_code)]
 pub(crate) mod subagent_run;
 mod tool;
 mod tui;

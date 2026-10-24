@@ -286,6 +286,8 @@ impl MemorySynthesisScheduleStore {
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.execute_batch(
             "PRAGMA journal_mode = WAL;
+             PRAGMA synchronous = NORMAL;
+             PRAGMA temp_store = MEMORY;
              CREATE TABLE IF NOT EXISTS memory_synthesis_schedules (
                  id TEXT NOT NULL, principal_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
                  workspace_id TEXT NOT NULL, session_id TEXT NOT NULL, name TEXT NOT NULL, provider TEXT NOT NULL,

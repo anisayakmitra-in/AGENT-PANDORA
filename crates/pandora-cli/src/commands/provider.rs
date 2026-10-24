@@ -13,15 +13,6 @@ use pandora_runtime::{ExecutionController, SecretVault};
 use pandora_types::{Capability, PolicyContext, Session, SessionId};
 use serde_json::json;
 
-#[allow(dead_code)]
-pub(crate) fn configured_provider(
-    config: &RuntimeConfig,
-    model: &str,
-    operation: &str,
-) -> Result<Box<dyn Provider>, CliError> {
-    configured_provider_for(config, model, operation, None)
-}
-
 pub(crate) fn configured_provider_for(
     config: &RuntimeConfig,
     model: &str,

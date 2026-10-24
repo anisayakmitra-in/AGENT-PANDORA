@@ -385,6 +385,10 @@ impl OrchestrationStore {
         if !journal_mode.eq_ignore_ascii_case("wal") {
             connection.execute_batch("PRAGMA journal_mode = WAL;")?;
         }
+        connection.execute_batch(
+            "PRAGMA synchronous = NORMAL;
+             PRAGMA temp_store = MEMORY;",
+        )?;
         if current_orchestration_schema_version(&connection)? == Some(ORCHESTRATION_SCHEMA_VERSION)
         {
             return Ok(Self {

@@ -200,7 +200,7 @@ impl A2aEngine {
             created_at: Self::current_timestamp(),
         };
 
-        if endpoint == "local" || endpoint == "mock" || endpoint.starts_with("a2a://local") {
+        if endpoint == "local" || endpoint.starts_with("a2a://local") {
             let rpc_req = A2aRpcRequest {
                 jsonrpc: "2.0".to_string(),
                 id: serde_json::json!(1),
@@ -220,24 +220,7 @@ impl A2aEngine {
             return Err("Empty result from A2A RPC delegation".to_string());
         }
 
-        // For remote HTTP endpoints, construct the simulated dispatch receipt
-        let now = Self::current_timestamp();
-        let mut hasher = Sha256::new();
-        hasher.update(task_id.as_bytes());
-        hasher.update(intent.as_bytes());
-        hasher.update(endpoint.as_bytes());
-        let digest = format!("sha256:{:x}", hasher.finalize());
-
-        Ok(A2aTaskResponse {
-            task_id,
-            status: A2aTaskStatus::Completed,
-            output: Some(format!(
-                "Task delegated to remote endpoint '{endpoint}' for @{to_agent}"
-            )),
-            error: None,
-            evidence_digest: Some(digest),
-            completed_at: Some(now),
-        })
+        Err("Remote HTTP delegation endpoint is unsupported in local CLI mode".to_string())
     }
 }
 
@@ -309,5 +292,67 @@ mod tests {
         let res_unknown = A2aEngine::handle_rpc(&req_unknown, &store).unwrap();
         assert!(res_unknown.error.is_some());
         assert_eq!(res_unknown.error.unwrap().code, -32601);
+    }
+
+    #[test]
+    fn test_a2a_engine_delegate_fail_closed_on_remote_or_mock() {
+        let dir = crate::test_support::new_temp_dir("a2a-delegate-test").unwrap();
+        let store = SessionStore::open(dir.join("sessions.sqlite3")).unwrap();
+
+        // Local delegation succeeds
+        let local_res = A2aEngine::delegate(
+            "local",
+            "agent_a",
+            "agent_b",
+            "test intent",
+            None,
+            30,
+            &store,
+        );
+        assert!(local_res.is_ok());
+        let task = local_res.unwrap();
+        assert_eq!(task.status, A2aTaskStatus::Completed);
+
+        // a2a://local URI succeeds
+        let local_uri_res = A2aEngine::delegate(
+            "a2a://local/worker",
+            "agent_a",
+            "agent_b",
+            "test intent",
+            None,
+            30,
+            &store,
+        );
+        assert!(local_uri_res.is_ok());
+
+        // Remote HTTP endpoint fails closed
+        let remote_res = A2aEngine::delegate(
+            "https://remote-peer.example.com/a2a",
+            "agent_a",
+            "agent_b",
+            "test intent",
+            None,
+            30,
+            &store,
+        );
+        assert_eq!(
+            remote_res,
+            Err("Remote HTTP delegation endpoint is unsupported in local CLI mode".to_string())
+        );
+
+        // Removed mock endpoint fails closed
+        let mock_res = A2aEngine::delegate(
+            "mock",
+            "agent_a",
+            "agent_b",
+            "test intent",
+            None,
+            30,
+            &store,
+        );
+        assert_eq!(
+            mock_res,
+            Err("Remote HTTP delegation endpoint is unsupported in local CLI mode".to_string())
+        );
     }
 }

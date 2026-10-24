@@ -10,6 +10,24 @@ mod commands;
 mod output;
 
 fn main() {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let json_output = args.iter().any(|argument| argument == "--json");
+    let non_json_args = args
+        .iter()
+        .filter(|argument| argument.as_str() != "--json")
+        .collect::<Vec<_>>();
+    if non_json_args.len() == 1 && (non_json_args[0] == "--version" || non_json_args[0] == "-V") {
+        output::print_success(
+            output::success(
+                "version",
+                serde_json::json!({"pandora_version": env!("CARGO_PKG_VERSION")}),
+                format!("pandora {}", env!("CARGO_PKG_VERSION")),
+            ),
+            json_output,
+        );
+        return;
+    }
+
     let recorder = pandora_runtime::config::RuntimeConfig::load(
         pandora_runtime::config::ConfigOverrides::default(),
     )
@@ -24,30 +42,7 @@ fn main() {
     if let Some(recorder) = &recorder {
         recorder.install_crash_reporter();
     }
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
     let uninstalling = args.first().is_some_and(|command| command == "uninstall");
-    let json_output = args.iter().any(|argument| argument == "--json");
-    let non_json_args = args
-        .iter()
-        .filter(|argument| argument.as_str() != "--json")
-        .collect::<Vec<_>>();
-    if non_json_args.len() == 1 && non_json_args[0] == "--version" {
-        output::print_success(
-            output::success(
-                "version",
-                serde_json::json!({"pandora_version": env!("CARGO_PKG_VERSION")}),
-                format!("pandora {}", env!("CARGO_PKG_VERSION")),
-            ),
-            json_output,
-        );
-        if let Some(recorder) = &recorder {
-            recorder.record(
-                pandora_runtime::OperationalEvent::CliInvocation,
-                pandora_runtime::OperationalStatus::Succeeded,
-            );
-        }
-        return;
-    }
     match commands::execute(args) {
         Ok(result) => {
             output::print_success(result, json_output);
