@@ -87,7 +87,7 @@ fn powershell() -> &'static str {
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'approval') {
         'list','inspect','resolve'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'provider') {
-        'list','set','use','test'
+        'list','set','add','remove','use','login','accounts','test'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'mcp') {
         'list','inspect','set','remove','catalog','call'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'tool') {
@@ -200,7 +200,7 @@ fn bash() -> &'static str {
     elif [[ "$previous" == "approval" ]]; then
         COMPREPLY=( $(compgen -W 'list inspect resolve' -- "$current") )
     elif [[ "$previous" == "provider" ]]; then
-        COMPREPLY=( $(compgen -W 'list set use test' -- "$current") )
+        COMPREPLY=( $(compgen -W 'list set add remove use login accounts test' -- "$current") )
     elif [[ "$previous" == "mcp" ]]; then
         COMPREPLY=( $(compgen -W 'list inspect set remove catalog call' -- "$current") )
     elif [[ "$previous" == "tool" ]]; then
@@ -313,7 +313,7 @@ elif [[ ${words[2]} == memory ]]; then
 elif [[ ${words[2]} == approval ]]; then
     _arguments '1:command:(help setup backup service auth secret rollout run chat curriculum decision tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration operations strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor policy)' '2:approval command:(list inspect resolve)'
 elif [[ ${words[2]} == provider ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat curriculum decision tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration operations strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor policy)' '2:provider command:(list set use test)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat curriculum decision tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration operations strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor policy)' '2:provider command:(list set add remove use login accounts test)'
 elif [[ ${words[2]} == mcp ]]; then
     _arguments '1:command:(help setup backup service auth secret rollout run chat curriculum decision tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration operations strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor policy)' '2:mcp command:(list inspect set remove catalog call)'
 elif [[ ${words[2]} == tool ]]; then
@@ -391,7 +391,7 @@ complete -c pandora -f -n '__fish_seen_subcommand_from memory; and __fish_seen_s
 complete -c pandora -f -n '__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from capsule' -a 'export import'
 complete -c pandora -f -n '__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from vfs' -a 'ls cat'
 complete -c pandora -f -n '__fish_seen_subcommand_from approval' -a 'list inspect resolve'
-complete -c pandora -f -n '__fish_seen_subcommand_from provider' -a 'list set use test'
+complete -c pandora -f -n '__fish_seen_subcommand_from provider' -a 'list set add remove use login accounts test'
 complete -c pandora -f -n '__fish_seen_subcommand_from mcp' -a 'list inspect set remove catalog call'
 complete -c pandora -f -n '__fish_seen_subcommand_from tool' -a 'list inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from operations' -a 'telemetry crashes'
@@ -473,7 +473,7 @@ mod tests {
             "'list','set','use','remove'",
             "'recall','audit','forget','compact','promote','synthesize','consolidate','provenance','schedule','sop','archive','capsule','vfs'",
             "'list','inspect','resolve'",
-            "'list','set','use','test'",
+            "'list','set','add','remove','use','login','accounts','test'",
             "'list','inspect','set','remove','catalog','call'",
             "'golden','inspect','scorecard','suite','regression','schedule'",
             "'create','list','disable','claim','run','runs'",
@@ -498,7 +498,7 @@ mod tests {
                 "list set use remove",
                 "recall audit forget compact promote synthesize consolidate provenance schedule sop archive capsule vfs",
                 "list inspect resolve",
-                "list set use test",
+                "list set add remove use login accounts test",
                 "list inspect set remove",
                 "golden inspect",
                 "propose generate list inspect review",

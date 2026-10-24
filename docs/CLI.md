@@ -80,6 +80,19 @@ pandora provider set --name coding --provider-url https://coding.example/v1 --mo
 pandora provider use design
 pandora provider list --json
 pandora provider test --provider design --json
+
+# Custom endpoints & offline servers
+pandora provider add my-api --base-url https://llm.example.com/v1 --model my-model --api-key-stdin --set-default
+pandora provider add local-vllm --base-url http://localhost:8000/v1 --model Qwen/Qwen2.5-Coder-32B-Instruct --no-api-key --set-default
+pandora provider remove old-api
+
+# OAuth 2.0 PKCE login & multi-account switching
+pandora provider login --provider claude --account work
+pandora provider login --provider openai --account personal --no-browser
+pandora provider login --provider openrouter --print-auth-url
+pandora provider login --callback-url "http://127.0.0.1:1455/auth/callback?code=...&state=..."
+pandora provider accounts
+pandora provider accounts use work --provider claude
 ```
 
 Use `pandora run --provider coding ...` for a one-run selection. Profiles store

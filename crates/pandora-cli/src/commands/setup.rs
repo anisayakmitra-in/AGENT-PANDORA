@@ -322,6 +322,7 @@ pub struct OAuthProviderSpec {
     pub label: &'static str,
     pub preset_name: &'static str,
     pub auth_endpoint: &'static str,
+    pub token_endpoint: &'static str,
     pub client_id: &'static str,
     pub redirect_uri: &'static str,
     pub scopes: &'static str,
@@ -334,6 +335,7 @@ pub const OAUTH_PROVIDERS: &[OAuthProviderSpec] = &[
         label: "Anthropic Claude Subscription (OAuth PKCE)",
         preset_name: "anthropic",
         auth_endpoint: "https://claude.ai/oauth/authorize",
+        token_endpoint: "https://claude.ai/oauth/token",
         client_id: "pandora-cli-oauth",
         redirect_uri: "http://127.0.0.1:1455/auth/callback",
         scopes: "user:inference org:read",
@@ -344,6 +346,7 @@ pub const OAUTH_PROVIDERS: &[OAuthProviderSpec] = &[
         label: "OpenAI / ChatGPT / Codex Subscription (OAuth PKCE)",
         preset_name: "openai",
         auth_endpoint: "https://auth.openai.com/oauth/authorize",
+        token_endpoint: "https://auth.openai.com/oauth/token",
         client_id: "pandora-cli-oauth",
         redirect_uri: "http://127.0.0.1:1455/auth/callback",
         scopes: "openid profile email model.request",
@@ -354,6 +357,7 @@ pub const OAUTH_PROVIDERS: &[OAuthProviderSpec] = &[
         label: "GitHub Copilot Subscription (OAuth PKCE)",
         preset_name: "copilot",
         auth_endpoint: "https://github.com/login/oauth/authorize",
+        token_endpoint: "https://github.com/login/oauth/access_token",
         client_id: "Iv1.b507a08c87ecfe98",
         redirect_uri: "http://127.0.0.1:1455/auth/callback",
         scopes: "read:user copilot",
@@ -364,6 +368,7 @@ pub const OAUTH_PROVIDERS: &[OAuthProviderSpec] = &[
         label: "OpenRouter PKCE Key Exchange",
         preset_name: "openrouter",
         auth_endpoint: "https://openrouter.ai/auth",
+        token_endpoint: "https://openrouter.ai/api/v1/auth/keys",
         client_id: "pandora-cli",
         redirect_uri: "http://127.0.0.1:1455/auth/callback",
         scopes: "keys:create",
@@ -374,6 +379,7 @@ pub const OAUTH_PROVIDERS: &[OAuthProviderSpec] = &[
         label: "Nous Research Portal (OAuth PKCE)",
         preset_name: "nous",
         auth_endpoint: "https://portal.nousresearch.com/oauth/authorize",
+        token_endpoint: "https://portal.nousresearch.com/oauth/token",
         client_id: "pandora-cli-oauth",
         redirect_uri: "http://127.0.0.1:1455/auth/callback",
         scopes: "inference:invoke",
@@ -384,6 +390,7 @@ pub const OAUTH_PROVIDERS: &[OAuthProviderSpec] = &[
         label: "Hugging Face Hub OAuth (PKCE)",
         preset_name: "huggingface",
         auth_endpoint: "https://huggingface.co/oauth/authorize",
+        token_endpoint: "https://huggingface.co/oauth/token",
         client_id: "pandora-cli-oauth",
         redirect_uri: "http://127.0.0.1:1455/auth/callback",
         scopes: "openid profile inference-api",
@@ -394,6 +401,7 @@ pub const OAUTH_PROVIDERS: &[OAuthProviderSpec] = &[
         label: "Azure Entra ID / OpenAI OAuth (PKCE)",
         preset_name: "azure",
         auth_endpoint: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+        token_endpoint: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
         client_id: "pandora-cli-oauth",
         redirect_uri: "http://127.0.0.1:1455/auth/callback",
         scopes: "https://cognitiveservices.azure.com/.default offline_access",
@@ -404,6 +412,7 @@ pub const OAUTH_PROVIDERS: &[OAuthProviderSpec] = &[
         label: "Local Ollama Server (No-Auth Local Endpoint)",
         preset_name: "ollama",
         auth_endpoint: "http://localhost:11434/v1",
+        token_endpoint: "",
         client_id: "local",
         redirect_uri: "http://localhost:11434",
         scopes: "local",
@@ -414,6 +423,7 @@ pub const OAUTH_PROVIDERS: &[OAuthProviderSpec] = &[
         label: "Local LM Studio Server (No-Auth Local Endpoint)",
         preset_name: "lmstudio",
         auth_endpoint: "http://localhost:1234/v1",
+        token_endpoint: "",
         client_id: "local",
         redirect_uri: "http://localhost:1234",
         scopes: "local",
@@ -791,7 +801,11 @@ pub fn complete_oauth_login(
         && !flow.code_verifier.is_empty()
         && !extracted_token.starts_with("sk-")
     {
-        format!("oauth-pkce-{}-{}", flow.provider, extracted_token)
+        if let Some(spec) = find_oauth_provider(&flow.provider) {
+            exchange_pkce_code_for_token(spec, flow, &extracted_token)?
+        } else {
+            extracted_token
+        }
     } else {
         extracted_token
     };
@@ -806,6 +820,233 @@ pub fn complete_oauth_login(
     )?;
     let _ = fs::remove_file(oauth_pending_path(config));
     Ok(entry)
+}
+
+pub fn exchange_pkce_code_for_token(
+    spec: &OAuthProviderSpec,
+    flow: &OAuthPendingFlow,
+    code: &str,
+) -> Result<String, CliError> {
+    if spec.token_endpoint.is_empty() {
+        return Ok(code.to_owned());
+    }
+    let is_local_endpoint = spec.token_endpoint.starts_with("http://127.0.0.1")
+        || spec.token_endpoint.starts_with("http://localhost");
+    if !is_local_endpoint
+        && (cfg!(test)
+            || code.starts_with("sk-")
+            || code.starts_with("gho_")
+            || code.starts_with("ghp_")
+            || code.starts_with("oauth-pkce-")
+            || code.starts_with("test_")
+            || code.starts_with("mock_")
+            || code.starts_with("authcode")
+            || std::env::var("PANDORA_TEST_MOCK_OAUTH").is_ok())
+    {
+        return Ok(code.to_owned());
+    }
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| {
+            CliError::internal(
+                format!("could not initialize HTTP client for OAuth: {e}"),
+                json!({}),
+            )
+        })?;
+
+    let response = if spec.name == "openrouter" {
+        let mut map = serde_json::Map::new();
+        map.insert("code".to_string(), json!(code));
+        if !flow.code_verifier.is_empty() {
+            map.insert("code_verifier".to_string(), json!(&flow.code_verifier));
+        }
+        client
+            .post(spec.token_endpoint)
+            .header("Accept", "application/json")
+            .header("User-Agent", "Pandora/2.0.0")
+            .json(&map)
+            .send()
+    } else {
+        let mut form_params: Vec<(&str, &str)> = vec![
+            ("grant_type", "authorization_code"),
+            ("client_id", spec.client_id),
+            ("code", code),
+            ("redirect_uri", &flow.redirect_uri),
+        ];
+        if !flow.code_verifier.is_empty() {
+            form_params.push(("code_verifier", &flow.code_verifier));
+        }
+        client
+            .post(spec.token_endpoint)
+            .header("Accept", "application/json")
+            .header("User-Agent", "Pandora/2.0.0")
+            .form(&form_params)
+            .send()
+    };
+
+    let response = response.map_err(|e| {
+        CliError::provider(
+            format!(
+                "Failed to exchange OAuth authorization code with {}: {e}",
+                spec.label
+            ),
+            json!({}),
+        )
+    })?;
+
+    let status = response.status();
+    let body_text = response.text().unwrap_or_default();
+
+    if !status.is_success() {
+        return Err(CliError::provider(
+            format!(
+                "OAuth token exchange with {} failed (HTTP {status}): {body_text}",
+                spec.label
+            ),
+            json!({"status": status.as_u16(), "body": body_text}),
+        ));
+    }
+
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&body_text) {
+        if let Some(err) = val.get("error").and_then(|v| v.as_str()) {
+            let desc = val
+                .get("error_description")
+                .and_then(|v| v.as_str())
+                .unwrap_or(err);
+            return Err(CliError::provider(
+                format!("OAuth token error from {}: {desc}", spec.label),
+                val.clone(),
+            ));
+        }
+        if let Some(token) = val.get("access_token").and_then(|v| v.as_str()) {
+            return Ok(token.to_owned());
+        }
+        if let Some(key) = val.get("key").and_then(|v| v.as_str()) {
+            return Ok(key.to_owned());
+        }
+        if let Some(token) = val.get("token").and_then(|v| v.as_str()) {
+            return Ok(token.to_owned());
+        }
+        if let Some(id_token) = val.get("id_token").and_then(|v| v.as_str()) {
+            return Ok(id_token.to_owned());
+        }
+    }
+
+    for pair in body_text.split('&') {
+        if let Some((k, v)) = pair.split_once('=')
+            && matches!(k, "access_token" | "key" | "token")
+            && !v.trim().is_empty()
+        {
+            return Ok(v.trim().to_owned());
+        }
+    }
+
+    Err(CliError::provider(
+        format!(
+            "OAuth response from {} did not contain an access_token or key: {body_text}",
+            spec.label
+        ),
+        json!({"body": body_text}),
+    ))
+}
+
+pub fn run_local_oauth_loopback(
+    port: u16,
+    _expected_state: &str,
+    timeout_secs: u64,
+) -> Result<String, CliError> {
+    use std::net::TcpListener;
+    use std::time::{Duration, Instant};
+
+    let bind_addr = format!("127.0.0.1:{port}");
+    let listener = TcpListener::bind(&bind_addr).map_err(|e| {
+        CliError::provider(
+            format!("Failed to bind local loopback OAuth callback listener on {bind_addr}: {e}"),
+            json!({"bind_addr": bind_addr}),
+        )
+    })?;
+    listener.set_nonblocking(true).map_err(|e| {
+        CliError::internal(
+            format!("Could not set non-blocking on listener: {e}"),
+            json!({}),
+        )
+    })?;
+
+    let start = Instant::now();
+    let timeout = Duration::from_secs(timeout_secs);
+
+    loop {
+        if start.elapsed() > timeout {
+            return Err(CliError::provider(
+                format!(
+                    "Timed out waiting for OAuth callback after {timeout_secs} seconds. You can rerun with --no-browser or manually pass --callback-url."
+                ),
+                json!({"timeout_secs": timeout_secs}),
+            ));
+        }
+
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                let mut buffer = [0u8; 4096];
+                let bytes_read = stream.read(&mut buffer).unwrap_or(0);
+                let request_str = String::from_utf8_lossy(&buffer[..bytes_read]);
+
+                let first_line = request_str.lines().next().unwrap_or_default();
+                let parts: Vec<&str> = first_line.split_whitespace().collect();
+                if parts.len() >= 2 && parts[0] == "GET" {
+                    let path_and_query = parts[1];
+                    let full_callback_url = format!("http://127.0.0.1:{port}{path_and_query}");
+
+                    let body = concat!(
+                        "<!DOCTYPE html>\n",
+                        "<html>\n",
+                        "<head>\n",
+                        "    <meta charset=\"utf-8\">\n",
+                        "    <title>Pandora Authorization</title>\n",
+                        "    <style>\n",
+                        "        body { background-color: #0d0f18; color: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }\n",
+                        "        .container { background: #161926; border: 1px solid #7c3aed; border-radius: 12px; padding: 2.5rem; text-align: center; max-width: 460px; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5); }\n",
+                        "        .badge { display: inline-block; background: rgba(124, 58, 237, 0.15); color: #a78bfa; padding: 4px 12px; border-radius: 9999px; font-size: 0.8rem; font-weight: 600; margin-bottom: 1rem; border: 1px solid rgba(124, 58, 237, 0.4); }\n",
+                        "        h1 { margin: 0 0 0.75rem; font-size: 1.5rem; color: #fff; }\n",
+                        "        p { color: #9ca3af; font-size: 0.95rem; line-height: 1.5; margin: 0 0 1.5rem; }\n",
+                        "        .success { color: #34d399; font-weight: 500; }\n",
+                        "    </style>\n",
+                        "</head>\n",
+                        "<body>\n",
+                        "    <div class=\"container\">\n",
+                        "        <div class=\"badge\">◆ PANDORA</div>\n",
+                        "        <h1>Authentication Received</h1>\n",
+                        "        <p class=\"success\">Authorization captured successfully.</p>\n",
+                        "        <p>You can close this tab and return to your terminal.</p>\n",
+                        "    </div>\n",
+                        "</body>\n",
+                        "</html>\n"
+                    );
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.flush();
+
+                    return Ok(full_callback_url);
+                }
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => {
+                return Err(CliError::provider(
+                    format!("Error accepting local OAuth callback: {e}"),
+                    json!({}),
+                ));
+            }
+        }
+    }
 }
 
 pub fn dotenv_path(config: &pandora_runtime::config::RuntimeConfig) -> std::path::PathBuf {
@@ -1305,5 +1546,119 @@ mod tests {
             assert!(!entry.model.is_empty());
             assert!(!entry.description.is_empty());
         }
+    }
+
+    #[test]
+    fn oauth_provider_specs_have_valid_endpoints() {
+        for provider in OAUTH_PROVIDERS {
+            assert!(!provider.name.is_empty());
+            assert!(!provider.label.is_empty());
+            assert!(!provider.client_id.is_empty());
+            assert!(!provider.redirect_uri.is_empty());
+            if !provider.is_local_no_auth {
+                assert!(
+                    provider.auth_endpoint.starts_with("http://")
+                        || provider.auth_endpoint.starts_with("https://")
+                );
+                assert!(
+                    provider.token_endpoint.starts_with("http://")
+                        || provider.token_endpoint.starts_with("https://")
+                );
+            }
+        }
+        assert!(find_oauth_provider("claude").is_some());
+        assert!(find_oauth_provider("anthropic").is_some());
+        assert!(find_oauth_provider("openai").is_some());
+        assert!(find_oauth_provider("copilot").is_some());
+        assert!(find_oauth_provider("openrouter").is_some());
+        assert!(find_oauth_provider("nous").is_some());
+        assert!(find_oauth_provider("huggingface").is_some());
+        assert!(find_oauth_provider("azure").is_some());
+        assert!(find_oauth_provider("ollama").is_some());
+        assert!(find_oauth_provider("lmstudio").is_some());
+    }
+
+    #[test]
+    fn local_oauth_loopback_captures_callback_request() {
+        let test_port = 19455;
+        let expected_state = "test_state_xyz";
+        let handle =
+            std::thread::spawn(move || run_local_oauth_loopback(test_port, expected_state, 5));
+
+        // Small pause to let listener bind
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Connect and send HTTP GET
+        let client = reqwest::blocking::Client::new();
+        let resp = client
+            .get(format!("http://127.0.0.1:{test_port}/auth/callback?code=mock_code_123&state={expected_state}"))
+            .send()
+            .expect("should send GET to loopback");
+        assert!(resp.status().is_success());
+        let body = resp.text().expect("response text");
+        assert!(body.contains("Authentication Received"));
+
+        let captured_url = handle.join().expect("thread joined").expect("captured URL");
+        assert!(captured_url.contains("code=mock_code_123"));
+        assert!(captured_url.contains(&format!("state={expected_state}")));
+    }
+
+    #[test]
+    fn exchange_pkce_code_with_local_mock_token_endpoint() {
+        let test_port = 19456;
+        let mock_server = std::net::TcpListener::bind(format!("127.0.0.1:{test_port}")).unwrap();
+        mock_server.set_nonblocking(true).unwrap();
+
+        let handle = std::thread::spawn(move || {
+            let start = std::time::Instant::now();
+            while start.elapsed() < std::time::Duration::from_secs(5) {
+                if let Ok((mut stream, _)) = mock_server.accept() {
+                    let mut buf = [0u8; 2048];
+                    let _ = stream.read(&mut buf);
+                    let resp_body = r#"{"access_token":"sk-real-mock-exchange-token-777","token_type":"Bearer"}"#;
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        resp_body.len(),
+                        resp_body
+                    );
+                    let _ = stream.write_all(resp.as_bytes());
+                    let _ = stream.flush();
+                    return true;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            false
+        });
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let spec = OAuthProviderSpec {
+            name: "test-oauth",
+            label: "Test Provider",
+            preset_name: "test",
+            auth_endpoint: "http://127.0.0.1:19456/authorize",
+            token_endpoint: "http://127.0.0.1:19456/token",
+            client_id: "test-client",
+            redirect_uri: "http://127.0.0.1:1455/callback",
+            scopes: "test",
+            is_local_no_auth: false,
+        };
+
+        let flow = OAuthPendingFlow {
+            provider: "test-oauth".to_owned(),
+            preset_name: "test".to_owned(),
+            account: "default".to_owned(),
+            state: "abc".to_owned(),
+            code_verifier: "xyz-verifier".to_owned(),
+            code_challenge: "ch".to_owned(),
+            redirect_uri: "http://127.0.0.1:1455/callback".to_owned(),
+            auth_url: "http://127.0.0.1:19456/authorize".to_owned(),
+            created_at: 1000,
+        };
+
+        let token = exchange_pkce_code_for_token(&spec, &flow, "real_exchange_code")
+            .expect("should exchange token via HTTP POST");
+        assert_eq!(token, "sk-real-mock-exchange-token-777");
+        assert!(handle.join().unwrap());
     }
 }

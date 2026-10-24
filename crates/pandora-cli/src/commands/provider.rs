@@ -1,4 +1,6 @@
-use super::{load_config, parse_options, session_scope, timestamp, write_config};
+use super::{
+    load_config, load_config_storage, parse_options, session_scope, timestamp, write_config,
+};
 use crate::output::{CliError, CommandResult, success};
 use pandora_provider::{
     ChatMessage, FailoverProvider, HttpProvider, ModelRequest, Provider, ProviderManifest,
@@ -454,7 +456,7 @@ fn login_provider(args: &[String]) -> Result<CommandResult, CliError> {
             "token",
         ],
     )?;
-    let mut config = load_config(&parsed)?;
+    let mut config = load_config_storage(&parsed)?;
     let provider_arg = parsed
         .value("provider")
         .or_else(|| parsed.positionals.first().map(String::as_str));
@@ -522,31 +524,96 @@ fn login_provider(args: &[String]) -> Result<CommandResult, CliError> {
 
     let flow =
         super::setup::start_oauth_login(&mut config, provider_name, parsed.value("account"))?;
-    let headless = parsed.has_flag("no-browser") || parsed.has_flag("print-auth-url");
-    let message = if flow.state == "local-ready" {
-        format!(
-            "Local provider '{}' configured at {} (account '{}', no API key required)",
-            flow.provider, flow.auth_url, flow.account
-        )
-    } else {
-        format!(
+    let headless = parsed.has_flag("no-browser")
+        || parsed.has_flag("print-auth-url")
+        || std::env::var("PANDORA_HEADLESS").is_ok()
+        || std::env::var("CI").is_ok();
+    if flow.state == "local-ready" {
+        return Ok(success(
+            "provider login",
+            json!({
+                "provider": flow.provider,
+                "preset": flow.preset_name,
+                "account": flow.account,
+                "auth_url": flow.auth_url,
+                "redirect_uri": flow.redirect_uri,
+                "state": flow.state,
+                "headless": headless,
+            }),
+            format!(
+                "Local provider '{}' configured at {} (account '{}', no API key required)",
+                flow.provider, flow.auth_url, flow.account
+            ),
+        ));
+    }
+
+    if headless {
+        let message = format!(
             "OAuth PKCE flow started for '{}' (account '{}'):\n  Authorize URL: {}\n  Complete with: pandora provider login --provider {} --callback-url \"<redirect-url>\" (or --auth-code <code>)",
             flow.provider, flow.account, flow.auth_url, flow.provider
-        )
-    };
+        );
+        return Ok(success(
+            "provider login",
+            json!({
+                "provider": flow.provider,
+                "preset": flow.preset_name,
+                "account": flow.account,
+                "auth_url": flow.auth_url,
+                "redirect_uri": flow.redirect_uri,
+                "code_challenge_method": if flow.code_challenge.is_empty() { "none" } else { "S256" },
+                "state": flow.state,
+                "headless": true,
+            }),
+            message,
+        ));
+    }
+
+    eprintln!("Opening authorization URL in default browser...");
+    eprintln!("  {}", flow.auth_url);
+    eprintln!("Waiting for OAuth loopback callback on http://127.0.0.1:1455/auth/callback...");
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("cmd")
+            .args(["/c", "start", "", &flow.auth_url])
+            .spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open")
+            .arg(&flow.auth_url)
+            .spawn();
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = std::process::Command::new("xdg-open")
+            .arg(&flow.auth_url)
+            .spawn();
+    }
+
+    let callback_url = super::setup::run_local_oauth_loopback(1455, &flow.state, 90)?;
+    let entry = super::setup::complete_oauth_login(
+        &mut config,
+        Some(&flow.provider),
+        Some(&flow.account),
+        &callback_url,
+    )?;
+
     Ok(success(
         "provider login",
         json!({
-            "provider": flow.provider,
-            "preset": flow.preset_name,
-            "account": flow.account,
-            "auth_url": flow.auth_url,
-            "redirect_uri": flow.redirect_uri,
-            "code_challenge_method": if flow.code_challenge.is_empty() { "none" } else { "S256" },
-            "state": flow.state,
-            "headless": headless,
+            "status": "authenticated",
+            "provider": entry.provider,
+            "account": entry.account,
+            "auth_kind": entry.auth_kind,
+            "api_key_env": entry.api_key_env,
+            "credential_preview": entry.masked_preview,
+            "active": entry.active,
         }),
-        message,
+        format!(
+            "OAuth login completed for provider '{}' (account '{}', {})",
+            entry.provider, entry.account, entry.masked_preview
+        ),
     ))
 }
 
@@ -555,7 +622,7 @@ fn accounts_command(args: &[String]) -> Result<CommandResult, CliError> {
         args,
         &["config", "data-dir", "workspace", "provider", "account"],
     )?;
-    let mut config = load_config(&parsed)?;
+    let mut config = load_config_storage(&parsed)?;
     if parsed.positionals.first().map(String::as_str) == Some("use")
         || parsed.value("account").is_some()
     {
