@@ -261,6 +261,7 @@ pub struct ConfigOverrides {
     provider_model: Option<String>,
     data_dir: Option<PathBuf>,
     workspace_dir: Option<PathBuf>,
+    hooks_file: Option<PathBuf>,
 }
 
 impl ConfigOverrides {
@@ -293,6 +294,15 @@ impl ConfigOverrides {
         self.workspace_dir = Some(path.into());
         self
     }
+
+    pub fn with_hooks_file(mut self, path: impl Into<PathBuf>) -> Self {
+        self.hooks_file = Some(path.into());
+        self
+    }
+
+    pub fn hooks_file(&self) -> Option<&Path> {
+        self.hooks_file.as_deref()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -308,6 +318,7 @@ pub struct RuntimeConfig {
     mcp_servers: BTreeMap<String, McpStdioConfig>,
     data_dir: PathBuf,
     workspace_dir: PathBuf,
+    hooks_file: Option<PathBuf>,
 }
 
 impl RuntimeConfig {
@@ -472,6 +483,11 @@ impl RuntimeConfig {
             config_path,
             "workspace",
         )?;
+        let hooks_file = overrides
+            .hooks_file
+            .clone()
+            .or_else(|| environment.get("PANDORA_HOOKS").map(PathBuf::from))
+            .or_else(|| file.hooks_file.as_ref().map(PathBuf::from));
 
         Ok(Self {
             config_path: overrides
@@ -488,6 +504,7 @@ impl RuntimeConfig {
             mcp_servers,
             data_dir,
             workspace_dir,
+            hooks_file,
         })
     }
 
@@ -548,6 +565,7 @@ impl RuntimeConfig {
                 .collect(),
             data_dir: Some(self.data_dir.display().to_string()),
             workspace_dir: Some(self.workspace_dir.display().to_string()),
+            hooks_file: self.hooks_file.as_ref().map(|p| p.display().to_string()),
         })
         .map_err(ConfigError::Serialization)?;
         validate_fallbacks(&self.provider_profiles)?;
@@ -724,6 +742,15 @@ impl RuntimeConfig {
         &self.workspace_dir
     }
 
+    pub fn hooks_file(&self) -> Option<&Path> {
+        self.hooks_file.as_deref()
+    }
+
+    pub fn with_hooks_file(mut self, path: impl Into<PathBuf>) -> Self {
+        self.hooks_file = Some(path.into());
+        self
+    }
+
     fn selected_provider(&self) -> Option<&ProviderProfile> {
         self.active_provider
             .as_deref()
@@ -748,6 +775,8 @@ struct FileConfig {
     mcp_servers: BTreeMap<String, FileMcpServer>,
     data_dir: Option<String>,
     workspace_dir: Option<String>,
+    #[serde(default)]
+    hooks_file: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1058,6 +1087,68 @@ mod tests {
                 Some("lowercase-token".to_owned()),
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn hooks_file_precedence_and_persistence() {
+        let directory = fixture("hooks-config");
+        let path = directory.join("config.json");
+
+        // 1. Initially None
+        let config = RuntimeConfig::from_sources(
+            &ConfigOverrides::default().with_config_path(&path),
+            &BTreeMap::new(),
+            &path,
+            directory.join("data"),
+            directory.join("workspace"),
+        )
+        .unwrap();
+        assert_eq!(config.hooks_file(), None);
+
+        // 2. Persist hooks_file to config.json
+        let config = config.with_hooks_file(PathBuf::from("file_hooks.json"));
+        assert_eq!(config.hooks_file(), Some(std::path::Path::new("file_hooks.json")));
+        config.write().unwrap();
+
+        // 3. Re-open: loaded from file
+        let reopened = RuntimeConfig::from_sources(
+            &ConfigOverrides::default().with_config_path(&path),
+            &BTreeMap::new(),
+            &path,
+            directory.join("data"),
+            directory.join("workspace"),
+        )
+        .unwrap();
+        assert_eq!(reopened.hooks_file(), Some(std::path::Path::new("file_hooks.json")));
+
+        // 4. PANDORA_HOOKS env var overrides file
+        let mut env = BTreeMap::new();
+        env.insert("PANDORA_HOOKS".to_owned(), "env_hooks.json".to_owned());
+        let env_config = RuntimeConfig::from_sources(
+            &ConfigOverrides::default().with_config_path(&path),
+            &env,
+            &path,
+            directory.join("data"),
+            directory.join("workspace"),
+        )
+        .unwrap();
+        assert_eq!(env_config.hooks_file(), Some(std::path::Path::new("env_hooks.json")));
+
+        // 5. ConfigOverrides overrides both env var and file
+        let override_config = RuntimeConfig::from_sources(
+            &ConfigOverrides::default()
+                .with_config_path(&path)
+                .with_hooks_file(PathBuf::from("override_hooks.json")),
+            &env,
+            &path,
+            directory.join("data"),
+            directory.join("workspace"),
+        )
+        .unwrap();
+        assert_eq!(
+            override_config.hooks_file(),
+            Some(std::path::Path::new("override_hooks.json"))
         );
     }
 

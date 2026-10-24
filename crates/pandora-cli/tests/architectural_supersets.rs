@@ -2700,3 +2700,151 @@ fn contract_policy_hooks_cli() {
     assert!(!resp_missing.status.success());
     assert!(resp_missing.text.contains("policy hooks file not found"));
 }
+
+#[test]
+fn contract_policy_hooks_runtime_enforcement() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // Prepare fixture workspace file
+    fs::write(fixture.workspace.join("README.md"), "fixture content\n").unwrap();
+
+    // 1. Write active veto hooks JSON denying filesystem.write
+    let veto_file = fixture.workspace.join("veto_write_hooks.json");
+    let veto_content = json!({
+        "hooks": [
+            {
+                "id": "veto-write",
+                "point": "before_authorization",
+                "selector": {
+                    "type": "capability",
+                    "value": "filesystem.write"
+                },
+                "reason": "writes forbidden by operator policy"
+            }
+        ]
+    });
+    fs::write(
+        &veto_file,
+        serde_json::to_string_pretty(&veto_content).unwrap(),
+    )
+    .unwrap();
+
+    // 2. Active veto hook enforcement: run patch:README.md:changed with --hooks
+    // Must fail closed with exit code 30 and code "policy_denied" before effect authorization
+    let resp_veto = fixture.run(&[
+        "run",
+        "patch:README.md:changed",
+        "--hooks",
+        veto_file.to_str().unwrap(),
+    ]);
+    assert_eq!(
+        resp_veto.status.code(),
+        Some(30),
+        "expected exit code 30 for policy_denied, got: {:?}",
+        resp_veto.text
+    );
+    assert_eq!(resp_veto.value["code"], "policy_denied");
+    assert!(
+        resp_veto.value["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("writes forbidden by operator policy")
+    );
+    // Verify file remains unmodified
+    assert_eq!(
+        fs::read_to_string(fixture.workspace.join("README.md")).unwrap(),
+        "fixture content\n"
+    );
+
+    // 3. Selectivity verification: read:README.md with same veto hook succeeds
+    let resp_read = fixture.run(&[
+        "run",
+        "read:README.md",
+        "--hooks",
+        veto_file.to_str().unwrap(),
+    ]);
+    assert!(
+        resp_read.status.success(),
+        "read operation should succeed under write-only veto: {}",
+        resp_read.text
+    );
+    assert_eq!(resp_read.value["version"], "0.1");
+
+    // 4. Nonexistent hooks file rejection: fails closed with configuration_error (code 10)
+    let resp_nonexistent = fixture.run(&[
+        "run",
+        "read:README.md",
+        "--hooks",
+        "nonexistent_hooks.json",
+    ]);
+    assert_eq!(
+        resp_nonexistent.status.code(),
+        Some(10),
+        "expected exit code 10 for configuration_error, got: {:?}",
+        resp_nonexistent.text
+    );
+    assert_eq!(resp_nonexistent.value["code"], "configuration_error");
+    assert!(
+        resp_nonexistent.value["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("lifecycle hooks file not found")
+    );
+
+    // 5. Malformed JSON hooks file rejection: fails closed with configuration_error (code 10)
+    let malformed_file = fixture.workspace.join("malformed_hooks.json");
+    fs::write(&malformed_file, "{ not valid json").unwrap();
+    let resp_malformed = fixture.run(&[
+        "run",
+        "read:README.md",
+        "--hooks",
+        malformed_file.to_str().unwrap(),
+    ]);
+    assert_eq!(
+        resp_malformed.status.code(),
+        Some(10),
+        "expected exit code 10 for malformed json, got: {:?}",
+        resp_malformed.text
+    );
+    assert_eq!(resp_malformed.value["code"], "configuration_error");
+
+    // 6. Validation error (empty hook reason) rejection: fails closed with configuration_error (code 10)
+    let empty_reason_file = fixture.workspace.join("empty_reason_hooks.json");
+    let empty_reason_content = json!({
+        "hooks": [
+            {
+                "id": "veto-1",
+                "point": "before_authorization",
+                "selector": {
+                    "type": "any"
+                },
+                "reason": "   "
+            }
+        ]
+    });
+    fs::write(
+        &empty_reason_file,
+        serde_json::to_string_pretty(&empty_reason_content).unwrap(),
+    )
+    .unwrap();
+    let resp_invalid_hook = fixture.run(&[
+        "run",
+        "read:README.md",
+        "--hooks",
+        empty_reason_file.to_str().unwrap(),
+    ]);
+    assert_eq!(
+        resp_invalid_hook.status.code(),
+        Some(10),
+        "expected exit code 10 for validation error, got: {:?}",
+        resp_invalid_hook.text
+    );
+    assert_eq!(resp_invalid_hook.value["code"], "configuration_error");
+    assert!(
+        resp_invalid_hook.value["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("lifecycle hook reason must not be empty")
+    );
+}

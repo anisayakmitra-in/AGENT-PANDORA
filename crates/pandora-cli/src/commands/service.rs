@@ -1,6 +1,9 @@
 use super::provider::{configured_provider_for, provider_credential_available};
 use super::run::{active_skill_context, configured_service_runtime};
-use super::{load_config, parse_options, require_config_file, session_scope, session_store};
+use super::{
+    load_config, load_lifecycle_hooks, parse_options, require_config_file, session_scope,
+    session_store,
+};
 use crate::output::{CliError, CommandResult, already_printed};
 use pandora_provider::Provider;
 use pandora_runtime::config::RuntimeConfig;
@@ -34,6 +37,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "port",
             "token-file",
             "device-key-file",
+            "hooks",
         ],
     )?;
     if parsed.positionals.as_slice() != ["start"] {
@@ -113,8 +117,11 @@ fn build_runtime_service(config: &RuntimeConfig) -> Result<RuntimeService, CliEr
         [Operation::Write, Operation::Execute, Operation::Connect],
     );
     let (harnesses, wasm) = configured_service_runtime(config)?;
-    let controller = ExecutionController::with_policy_and_harnesses(workspace, policy, harnesses)
-        .with_wasm_executor(wasm);
+    let hooks = load_lifecycle_hooks(config)?;
+    let controller = ExecutionController::with_policy_and_harnesses_and_hooks(
+        workspace, policy, harnesses, hooks,
+    )
+    .with_wasm_executor(wasm);
     let sessions = session_store(config)?;
     let approvals = ApprovalStore::open(config.data_dir().join("sessions.sqlite3"))
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;

@@ -54,7 +54,10 @@ pub(crate) fn execute_trusted_subagent(input: TrustedSubagentRun<'_>) -> Result<
         ],
         [Operation::Write, Operation::Execute],
     );
-    let controller = ExecutionController::with_policy_and_harnesses(workspace, policy, harnesses);
+    let hooks = crate::commands::load_lifecycle_hooks(input.config)?;
+    let controller = ExecutionController::with_policy_and_harnesses_and_hooks(
+        workspace, policy, harnesses, hooks,
+    );
     let result = execute_agent_core(
         input.config,
         &controller,

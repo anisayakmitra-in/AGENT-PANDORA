@@ -172,7 +172,7 @@ pub use harness_registry::{
     HarnessRegistry, HarnessRegistryError, PackageRecord, PackageState, PublisherTrustRoot,
     PublisherTrustRoots,
 };
-pub use hooks::{HookPoint, HookSelector, LifecycleHook, LifecycleHooks};
+pub use hooks::{HookPoint, HookSelector, HooksLoadError, LifecycleHook, LifecycleHooks};
 pub use human_review::{
     HumanMode, HumanReviewEngine, ReviewDecision, ReviewError, ReviewReceipt, ReviewRecord,
     ReviewState, ReviewSubject,

@@ -1,7 +1,7 @@
 use crate::output::{CliError, CommandResult};
 use pandora_runtime::config::{ConfigError, ConfigOverrides, RuntimeConfig};
 use pandora_runtime::sessions::{SessionError, SessionStore};
-use pandora_runtime::{PopulationStrategy, PopulationStrategyError, StrategyProfile};
+use pandora_runtime::{LifecycleHooks, PopulationStrategy, PopulationStrategyError, StrategyProfile};
 use pandora_types::{
     LineageLimits, MutationLimits, PopulationId, PopulationPolicy, PrincipalId, Session, SessionId,
     TenantId, Timestamp, Usage, WorkspaceId,
@@ -430,7 +430,22 @@ fn overrides(parsed: &ParsedArgs) -> ConfigOverrides {
     if let Some(model) = parsed.value("model") {
         overrides = overrides.with_provider_model(model);
     }
+    if let Some(hooks) = path_option(parsed, "hooks") {
+        overrides = overrides.with_hooks_file(hooks);
+    }
     overrides
+}
+
+pub(crate) fn load_lifecycle_hooks(config: &RuntimeConfig) -> Result<LifecycleHooks, CliError> {
+    let Some(hooks_path) = config.hooks_file() else {
+        return Ok(LifecycleHooks::new());
+    };
+    LifecycleHooks::from_file(hooks_path).map_err(|err| {
+        CliError::configuration(
+            err.to_string(),
+            json!({ "hooks_file": hooks_path }),
+        )
+    })
 }
 
 fn config_error(error: ConfigError) -> CliError {
@@ -448,8 +463,8 @@ fn usage() -> &'static str {
 commands:
   help (or --help)
   setup [--interactive] [--provider-url <url>] [--model <model>] [--api-key-env <name>]
-  run [--provider <name>] [--session <id>] [--agent] [--max-turns <n>] [--max-tools <n>] [--harness <id>] [--harness-version <version>] [--gene <id>] [--plan] [--model <model>] [--task-class <name>] [--approval <id>] [--optimize <cost|latency|tokens|certainty>] [--strategy react|reflexion|lats] [--lats-rollouts <1-100>] [--lats-depth <1-16>] [--puct-c <float>] [--escalation-threshold <float>] <task>
-  service start [--port <port>]
+  run [--provider <name>] [--session <id>] [--agent] [--max-turns <n>] [--max-tools <n>] [--harness <id>] [--harness-version <version>] [--gene <id>] [--plan] [--model <model>] [--task-class <name>] [--approval <id>] [--optimize <cost|latency|tokens|certainty>] [--strategy react|reflexion|lats] [--lats-rollouts <1-100>] [--lats-depth <1-16>] [--puct-c <float>] [--escalation-threshold <float>] [--hooks <path>] <task>
+  service start [--port <port>] [--hooks <path>]
   auth enroll --principal <id> --tenant <id> --workspace-id <id> --role <viewer|operator|administrator> [--device-key-file <path>] [--token-file <path>] | list | revoke <identity-id> --yes
   secret set <ENV_NAME> --value-stdin | list | status <ENV_NAME> | remove <ENV_NAME> --yes
   backup create --output <path> [--passphrase-env <name>] | inspect --input <path> [--passphrase-env <name>] | restore --input <path> [--passphrase-env <name>] --yes | lifecycle preview --input <path> | record --input <path> --yes | list [--storage-provider <provider>] [--action <action>] [--limit <1-256>] | inspect --id <evidence-id> | recovery list | recovery inspect --transaction <id>

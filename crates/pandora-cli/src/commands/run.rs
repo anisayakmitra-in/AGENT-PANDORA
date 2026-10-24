@@ -2,8 +2,8 @@ use super::efficiency::parse_objective;
 use super::feedback::{MAX_FEEDBACK_TEXT_BYTES, bounded_text, feedback_value, new_feedback_loop};
 use super::provider::configured_provider_for;
 use super::{
-    LOCAL_WORKSPACE, create_session, load_config, parse_options, require_config_file,
-    session_store, timestamp,
+    LOCAL_WORKSPACE, create_session, load_config, load_lifecycle_hooks, parse_options,
+    require_config_file, session_store, timestamp,
 };
 use crate::output::{CliError, CommandResult, success};
 use pandora_harnesses::{
@@ -131,6 +131,7 @@ pub(super) fn execute_with_control(
             "lats-depth",
             "puct-c",
             "escalation-threshold",
+            "hooks",
         ],
     )?;
     if parsed.positionals.len() != 1 {
@@ -351,8 +352,11 @@ pub(super) fn execute_with_control(
         ],
         [Operation::Write, Operation::Execute, Operation::Connect],
     );
-    let controller = ExecutionController::with_policy_and_harnesses(workspace, policy, harnesses)
-        .with_wasm_executor(wasm);
+    let hooks = load_lifecycle_hooks(&config)?;
+    let controller = ExecutionController::with_policy_and_harnesses_and_hooks(
+        workspace, policy, harnesses, hooks,
+    )
+    .with_wasm_executor(wasm);
     let (task, planning_model) = if parsed.value("plan").is_some() {
         plan_task(
             &config,

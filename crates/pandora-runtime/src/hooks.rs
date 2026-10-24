@@ -6,6 +6,54 @@
 
 use pandora_types::{Capability, GeneId, OperationRequest};
 use serde::{Deserialize, Serialize};
+use std::error::Error;
+use std::fmt;
+use std::path::{Path, PathBuf};
+
+/// Errors encountered while loading or validating lifecycle hooks from disk.
+#[derive(Debug)]
+pub enum HooksLoadError {
+    NotFound(PathBuf),
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    Json {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
+    Validation {
+        path: PathBuf,
+        message: &'static str,
+    },
+}
+
+impl fmt::Display for HooksLoadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound(path) => write!(f, "lifecycle hooks file not found: {}", path.display()),
+            Self::Io { path, source } => {
+                write!(f, "failed to read lifecycle hooks file {}: {source}", path.display())
+            }
+            Self::Json { path, source } => {
+                write!(f, "failed to parse lifecycle hooks file {}: {source}", path.display())
+            }
+            Self::Validation { path, message } => {
+                write!(f, "invalid lifecycle hooks file {}: {message}", path.display())
+            }
+        }
+    }
+}
+
+impl Error for HooksLoadError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Io { source, .. } => Some(source),
+            Self::Json { source, .. } => Some(source),
+            Self::NotFound(_) | Self::Validation { .. } => None,
+        }
+    }
+}
 
 /// A closed point where a declarative hook may reduce authority.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -119,6 +167,42 @@ impl LifecycleHooks {
         serde_json::to_string_pretty(self)
     }
 
+    /// Validates that each configured hook has a non-empty identifier and reason.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        for hook in &self.hooks {
+            if hook.id.trim().is_empty() {
+                return Err("lifecycle hook id must not be empty");
+            }
+            if hook.reason.trim().is_empty() {
+                return Err("lifecycle hook reason must not be empty");
+            }
+        }
+        Ok(())
+    }
+
+    /// Loads, deserializes, and validates lifecycle hooks from a JSON file on disk.
+    pub fn from_file(path: impl AsRef<Path>) -> Result<Self, HooksLoadError> {
+        let path = path.as_ref();
+        if !path.exists() {
+            return Err(HooksLoadError::NotFound(path.to_path_buf()));
+        }
+        let content = std::fs::read_to_string(path).map_err(|source| HooksLoadError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let hooks = Self::from_json_str(&content).map_err(|source| HooksLoadError::Json {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        hooks
+            .validate()
+            .map_err(|message| HooksLoadError::Validation {
+                path: path.to_path_buf(),
+                message,
+            })?;
+        Ok(hooks)
+    }
+
     pub(crate) fn evaluate(&self, point: HookPoint, request: &OperationRequest) -> HookDecision {
         self.hooks
             .iter()
@@ -199,5 +283,86 @@ mod tests {
             hooks.evaluate(HookPoint::BeforeAuthorization, &read_req),
             HookDecision::Continue
         );
+    }
+
+    #[test]
+    fn lifecycle_hooks_validation() {
+        let valid = LifecycleHooks::new().with_hook(LifecycleHook::deny(
+            "veto-net",
+            HookPoint::BeforeAuthorization,
+            HookSelector::Capability(Capability::NetworkConnect),
+            "no networking allowed",
+        ));
+        assert!(valid.validate().is_ok());
+
+        let empty_id = LifecycleHooks::new().with_hook(LifecycleHook::deny(
+            "   ",
+            HookPoint::BeforeAuthorization,
+            HookSelector::Capability(Capability::NetworkConnect),
+            "reason",
+        ));
+        assert_eq!(
+            empty_id.validate().unwrap_err(),
+            "lifecycle hook id must not be empty"
+        );
+
+        let empty_reason = LifecycleHooks::new().with_hook(LifecycleHook::deny(
+            "valid-id",
+            HookPoint::BeforeAuthorization,
+            HookSelector::Capability(Capability::NetworkConnect),
+            " \t ",
+        ));
+        assert_eq!(
+            empty_reason.validate().unwrap_err(),
+            "lifecycle hook reason must not be empty"
+        );
+    }
+
+    #[test]
+    fn lifecycle_hooks_from_file() {
+        let temp_dir = crate::test_support::new_temp_dir("lifecycle-hooks-test").unwrap();
+        let valid_file = temp_dir.join("valid_hooks.json");
+        let valid_hooks = LifecycleHooks::new().with_hook(LifecycleHook::deny(
+            "block-write",
+            HookPoint::BeforeAuthorization,
+            HookSelector::Capability(Capability::FilesystemWrite),
+            "no writes",
+        ));
+        std::fs::write(&valid_file, valid_hooks.to_json_string().unwrap()).unwrap();
+
+        let loaded = LifecycleHooks::from_file(&valid_file).unwrap();
+        assert_eq!(loaded, valid_hooks);
+
+        // NotFound error
+        let missing = temp_dir.join("does_not_exist.json");
+        match LifecycleHooks::from_file(&missing) {
+            Err(HooksLoadError::NotFound(p)) => assert_eq!(p, missing),
+            other => panic!("expected NotFound, got {other:?}"),
+        }
+
+        // Json parse error
+        let invalid_json_file = temp_dir.join("invalid.json");
+        std::fs::write(&invalid_json_file, "{ not valid json").unwrap();
+        match LifecycleHooks::from_file(&invalid_json_file) {
+            Err(HooksLoadError::Json { path, .. }) => assert_eq!(path, invalid_json_file),
+            other => panic!("expected Json error, got {other:?}"),
+        }
+
+        // Validation error
+        let invalid_hook_file = temp_dir.join("invalid_hook.json");
+        let invalid_hooks = LifecycleHooks::new().with_hook(LifecycleHook::deny(
+            "",
+            HookPoint::BeforeAuthorization,
+            HookSelector::Any,
+            "no id",
+        ));
+        std::fs::write(&invalid_hook_file, invalid_hooks.to_json_string().unwrap()).unwrap();
+        match LifecycleHooks::from_file(&invalid_hook_file) {
+            Err(HooksLoadError::Validation { path, message }) => {
+                assert_eq!(path, invalid_hook_file);
+                assert_eq!(message, "lifecycle hook id must not be empty");
+            }
+            other => panic!("expected Validation error, got {other:?}"),
+        }
     }
 }
