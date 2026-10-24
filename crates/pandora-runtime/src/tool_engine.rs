@@ -1,7 +1,7 @@
 use pandora_types::{
     ArtifactId, Capability, EffectTarget, ExecutionId, ExecutionProfile, GeneId, GeneManifest,
     HarnessId, Operation, OperationRequest, PrincipalId, RequestError, ResourceScope, SessionId,
-    TaskIntent, hash_artifact,
+    TaskIntent, ToolSearchResult, hash_artifact,
 };
 use serde_json::Value;
 use serde_json::json;
@@ -610,6 +610,27 @@ impl ToolEngine {
                 .expect("built-in design tool ID is unique");
         }
         engine
+            .register(
+                ToolDefinition::new(
+                    "tool.search",
+                    "1.0.0",
+                    "Search available tools by natural language query or capability",
+                    json!({
+                        "type": "object",
+                        "required": ["query"],
+                        "properties": {
+                            "query": {"type": "string"},
+                            "limit": {"type": "integer"}
+                        },
+                        "additionalProperties": false
+                    }),
+                    Capability::FilesystemRead,
+                    Operation::Read,
+                )
+                .expect("built-in tool.search schema is valid"),
+            )
+            .expect("built-in tool.search ID is unique");
+        engine
     }
 
     pub fn register(&self, definition: ToolDefinition) -> Result<(), ToolError> {
@@ -708,6 +729,81 @@ impl ToolEngine {
         values
     }
 
+    pub fn search(&self, query: &str, limit: usize) -> Vec<ToolSearchResult> {
+        let trimmed = query.trim().to_lowercase();
+        let query_tokens: Vec<&str> = trimmed
+            .split(|c: char| !c.is_alphanumeric() && c != '.' && c != '_')
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let definitions = self
+            .definitions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        let mut results: Vec<ToolSearchResult> = definitions
+            .values()
+            .filter_map(|def| {
+                let id_str = def.id().as_str().to_lowercase();
+                let name_str = def.name().to_lowercase();
+                let cap_str = def.capability().as_str().to_lowercase();
+                let op_str = def.operation().as_str().to_lowercase();
+
+                let mut score = 0.0;
+
+                if id_str == trimmed {
+                    score += 10.0;
+                } else if id_str.contains(&trimmed) {
+                    score += 5.0;
+                }
+
+                if name_str.contains(&trimmed) {
+                    score += 3.0;
+                }
+
+                if cap_str.contains(&trimmed) || op_str.contains(&trimmed) {
+                    score += 2.0;
+                }
+
+                for token in &query_tokens {
+                    if id_str.contains(token) {
+                        score += 2.0;
+                    }
+                    if name_str.contains(token) {
+                        score += 1.5;
+                    }
+                    if cap_str.contains(token) || op_str.contains(token) {
+                        score += 1.0;
+                    }
+                }
+
+                if score > 0.0 || query_tokens.is_empty() {
+                    Some(ToolSearchResult {
+                        tool_id: def.id().as_str().to_string(),
+                        name: def.name().to_string(),
+                        version: def.version().to_string(),
+                        capability: def.capability().as_str().to_string(),
+                        operation: def.operation().as_str().to_string(),
+                        score,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.tool_id.cmp(&b.tool_id))
+        });
+        if limit > 0 {
+            results.truncate(limit);
+        }
+        results
+    }
+
     pub(crate) fn list_for_genes(&self, gene_ids: &[GeneId]) -> Vec<ToolDefinition> {
         let gene_ids = gene_ids.iter().cloned().collect::<HashSet<_>>();
         self.list()
@@ -763,6 +859,7 @@ impl ToolEngine {
         let task = match definition.id().as_str() {
             "workspace.read" => task_from_argument(arguments, "read", "path")?,
             "workspace.search" => task_from_argument(arguments, "search", "query")?,
+            "tool.search" => task_from_argument(arguments, "tool-search", "query")?,
             "workspace.patch" => {
                 let path = required_text_argument(arguments, "path")?;
                 let content = required_text_argument(arguments, "content")?;
@@ -1665,5 +1762,30 @@ mod tests {
             engine.prepare_invocation("custom.tool", &json!({})),
             Err(ToolError::UnsupportedTool("custom.tool".to_owned()))
         );
+    }
+
+    #[test]
+    fn test_tool_search_discovery() {
+        let engine = ToolEngine::with_builtins();
+
+        // 1. Search for workspace files
+        let results = engine.search("read workspace", 5);
+        assert!(!results.is_empty());
+        assert_eq!(results[0].tool_id, "workspace.read");
+        assert!(results[0].score > 5.0);
+
+        // 2. Search for git diff
+        let results = engine.search("git diff", 5);
+        assert!(!results.is_empty());
+        assert!(results.iter().any(|r| r.tool_id == "workspace.diff"));
+
+        // 3. Search for search tool
+        let results = engine.search("tool search", 5);
+        assert!(!results.is_empty());
+        assert_eq!(results[0].tool_id, "tool.search");
+
+        // 4. Bounded limit truncation
+        let results = engine.search("workspace", 2);
+        assert_eq!(results.len(), 2);
     }
 }

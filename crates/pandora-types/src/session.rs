@@ -90,3 +90,34 @@ impl TaskIntent {
         self.requested_gene.as_ref()
     }
 }
+
+#[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq, serde::Serialize)]
+pub struct SessionPruneReport {
+    pub older_than_seconds: u64,
+    pub sessions_examined: usize,
+    pub sessions_pruned: usize,
+    pub events_reclaimed: usize,
+    pub dry_run: bool,
+    pub pruned_session_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, PartialEq, serde::Serialize)]
+pub struct StorageStats {
+    pub total_pages: u64,
+    pub free_pages: u64,
+    pub page_size_bytes: u64,
+    pub total_size_bytes: u64,
+    pub reclaimable_bytes: u64,
+    pub reclaimable_percent: f64,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, PartialEq, serde::Serialize)]
+pub struct VacuumReport {
+    pub pre_size_bytes: u64,
+    pub post_size_bytes: u64,
+    pub reclaimed_bytes: u64,
+    pub pre_reclaimable_pct: f64,
+    pub post_reclaimable_pct: f64,
+    pub vacuum_executed: bool,
+    pub reason: String,
+}

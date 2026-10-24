@@ -1,8 +1,8 @@
 use super::{load_config, parse_options, require_config_file, session_scope, timestamp};
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{
-    OrchestrationBudgetSnapshot, OrchestrationRunRecord, OrchestrationRunStatus,
-    OrchestrationStore, OrchestrationStoreError,
+    OrchestrationBudgetSnapshot, OrchestrationEngine, OrchestrationRunRecord,
+    OrchestrationRunStatus, OrchestrationStore, OrchestrationStoreError,
 };
 use pandora_types::{
     GovernedOrchestrationPlan, JobWorkerId, OrchestrationRole, OrchestrationRoleReceipt,
@@ -30,6 +30,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "mark-interrupted" => mark_interrupted(&args[1..]),
         "reconcile-failed" => reconcile_failed(&args[1..]),
         "resume" => resume(&args[1..]),
+        "synthesize" => synthesize(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown orchestration command '{unknown}'"
         ))),
@@ -623,4 +624,69 @@ fn store_error(error: OrchestrationStoreError) -> CliError {
         | OrchestrationStoreError::RunAlreadyExists
         | OrchestrationStoreError::LockPoisoned => CliError::internal(message, json!({})),
     }
+}
+
+fn synthesize(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["intent", "roles", "out"])?;
+    let intent = parsed
+        .value("intent")
+        .ok_or_else(|| CliError::usage("orchestration synthesize requires '--intent <text>'"))?;
+    let out_path = parsed.value("out").map(str::to_string);
+    let roles_opt: Option<Vec<String>> = parsed.value("roles").map(|r| {
+        r.split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    });
+
+    let plan_json = OrchestrationEngine::synthesize_diamond_plan(intent, roles_opt.as_deref())
+        .map_err(|e| CliError::execution(e.to_string(), json!({})))?;
+
+    if let Some(ref path_str) = out_path {
+        let path = Path::new(path_str);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let json_str = serde_json::to_string_pretty(&plan_json).map_err(|e| {
+            CliError::execution(
+                format!("failed to serialize synthesized plan: {e}"),
+                json!({}),
+            )
+        })?;
+        std::fs::write(path, json_str).map_err(|e| {
+            CliError::execution(format!("failed to write synthesized plan: {e}"), json!({}))
+        })?;
+    }
+
+    let payload = json!({
+        "command": "orchestration synthesize",
+        "plan_id": plan_json.id,
+        "intent": plan_json.intent,
+        "topology": plan_json.topology.as_str(),
+        "max_parallelism": plan_json.max_parallelism,
+        "max_handoffs": plan_json.max_handoffs,
+        "roles_count": plan_json.roles.len(),
+        "handoffs_count": plan_json.handoffs.len(),
+        "out_path": out_path,
+        "plan": plan_json,
+    });
+
+    let rendered = format!(
+        "Synthesized Diamond Swarm Plan: {}\nIntent: {}\nTopology: {}\nParallelism: {}, Handoffs: {}\nRoles ({}): {}\nOutput: {}",
+        plan_json.id,
+        plan_json.intent,
+        plan_json.topology.as_str(),
+        plan_json.max_parallelism,
+        plan_json.max_handoffs,
+        plan_json.roles.len(),
+        plan_json
+            .roles
+            .iter()
+            .map(|r| r.id().as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+        out_path.as_deref().unwrap_or("stdout"),
+    );
+
+    Ok(success("orchestration synthesize", payload, rendered))
 }

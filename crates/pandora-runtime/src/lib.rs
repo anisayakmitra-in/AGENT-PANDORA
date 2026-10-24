@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod a2a_engine;
 pub mod adaptive_engine;
 pub mod agent_loop;
 pub mod approvals;
@@ -7,10 +8,14 @@ pub mod artifact_catalog;
 pub mod coding_feedback;
 pub mod composition_ledger;
 pub mod config;
+pub mod connector_engine;
 pub mod containment;
 pub mod content_guard;
 pub mod context_engine;
 pub mod context_recovery;
+pub mod context_vfs;
+pub mod curator;
+pub mod decision_engine;
 pub mod device_trust;
 pub mod efficiency_engine;
 pub mod efficiency_store;
@@ -24,15 +29,19 @@ pub mod executors;
 pub mod fleet;
 pub mod github_client;
 pub mod graph_intelligence;
+pub mod hardware_autopilot;
 pub mod harness_registry;
 pub mod hooks;
 pub mod human_review;
 pub mod identity;
 pub mod job_store;
+pub mod kanban_engine;
+pub mod lats_engine;
 pub mod mcp;
 pub mod mcp_catalog;
 pub mod memory_engine;
 pub mod memory_schedule;
+pub mod mesh_sync;
 pub mod mutation;
 pub mod observability;
 pub mod operations;
@@ -46,6 +55,7 @@ pub mod permit_store;
 mod receipt_id;
 pub mod recovery_archive;
 pub mod reference_monitor;
+pub mod reflexion;
 pub mod registry_client;
 pub mod replacement;
 pub mod research_artifact;
@@ -55,19 +65,24 @@ pub mod secret_vault;
 pub mod self_healing;
 pub mod service;
 pub mod service_token;
+pub mod session_journal;
 pub mod sessions;
 pub mod shadow_council;
 pub mod skill_engine;
+pub mod society_engine;
 pub mod storage_lifecycle;
 pub mod strategies;
 pub mod subagent;
 pub mod subagent_store;
 pub mod tool_engine;
+pub mod tripartite_governance;
+pub mod voyager_curriculum;
 pub mod wasm;
 
 #[cfg(test)]
 mod test_support;
 
+pub use a2a_engine::A2aEngine;
 pub use adaptive_engine::{AdaptationResult, AdaptiveEngine, AdaptiveError};
 pub use agent_loop::{
     AgentApprovalContext, AgentCheckpoint, AgentCheckpointKind, AgentControlStop, AgentLoop,
@@ -85,6 +100,7 @@ pub use composition_ledger::{
     COMPOSITION_LEDGER_VERSION, CompositionBinding, CompositionLedger, CompositionLedgerError,
     CompositionSource, MAX_COMPOSITION_BINDINGS,
 };
+pub use connector_engine::{ConnectorEngine, ConnectorError};
 pub use containment::shipped_executor_containment;
 pub use content_guard::{
     CONTENT_GUARD_POLICY_VERSION, CONTEXT_QUARANTINE_REASON, ContentGuardError,
@@ -94,6 +110,13 @@ pub use content_guard::{
 };
 pub use context_engine::{ContextCacheStats, ContextEngine, ContextError};
 pub use context_recovery::{ContextRecovery, RecoveryDecision, RecoveryInput, RecoveryStep};
+pub use context_vfs::{ContextVfs, VfsError};
+pub use curator::{CuratorEngine, CuratorError};
+pub use decision_engine::{
+    CustomApiDecisionDriver, DecisionDriver, DecisionEngine, DecisionError, DpoPair,
+    FineTuningSample, GoldenEvaluationCase, GoldenSuiteDefinition, GoldenTargetRef,
+    HeuristicDecisionDriver, MockDecisionDriver, OllamaDecisionDriver, SinglePassLogitEngine,
+};
 pub use device_trust::{
     DeviceKeyError, DeviceKeyStore, DeviceProofRequest, device_proof_message, verify_device_proof,
 };
@@ -118,7 +141,12 @@ pub use evaluation_suite::{
     MAX_EVALUATION_SUITE_ID_BYTES, MAX_EVALUATION_SUITES, MAX_REGRESSION_CANDIDATE_ID_BYTES,
     MAX_REGRESSION_CANDIDATES, RegressionCandidate, RegressionCandidateStatus,
 };
-pub use evolution::{EvolutionEngine, EvolutionError, EvolutionRecord};
+pub use evolution::{
+    BayesianCanaryGate, BayesianCanaryVerdict, EvolutionEngine, EvolutionError, EvolutionRecord,
+    EvolutionStepReport, Island, IslandCandidate, IslandModelEvolver, IslandNiche, IslandRunReport,
+    IslandSummary, MigrationExchange, MigrationReport, MutationKind, ParetoCandidate,
+    ParetoFrontier, default_evolution_sop,
+};
 pub use execution_controller::{
     ExecutionController, RunStatus, RunSummary, RuntimeError, WorktreeExecutionContext,
 };
@@ -139,6 +167,7 @@ pub use graph_intelligence::{
     GraphNodeKind, GraphScope, GraphSnapshot, GraphStore, GraphStoreError, MAX_GRAPH_EDGES,
     MAX_GRAPH_INPUT_BYTES, MAX_GRAPH_INPUTS, MAX_GRAPH_NODES, MAX_GRAPH_SNAPSHOT_BYTES,
 };
+pub use hardware_autopilot::HardwareAutopilot;
 pub use harness_registry::{
     HarnessRegistry, HarnessRegistryError, PackageRecord, PackageState, PublisherTrustRoot,
     PublisherTrustRoots,
@@ -153,6 +182,11 @@ pub use identity::{
     ServiceIdentity,
 };
 pub use job_store::{JobRecord, JobStore, JobStoreError, MAX_JOB_RESULT_BYTES};
+pub use kanban_engine::{KanbanEngine, KanbanError};
+pub use lats_engine::{
+    LatsEngine, LatsError, LatsNode, LatsSearchMetrics, LatsSearchResult, convergence_choice,
+    cosine_similarity, should_escalate,
+};
 pub use mcp::{
     MCP_LEGACY_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION, McpError, McpFailure, McpInvocation,
     McpProtocolMode, McpServer, McpStart, McpStdioConfig, McpToolResult, McpWireEra,
@@ -169,13 +203,18 @@ pub use memory_schedule::{
     MemorySynthesisSchedule, MemorySynthesisScheduleError, MemorySynthesisScheduleRun,
     MemorySynthesisScheduleRunStatus, MemorySynthesisScheduleStore,
 };
+pub use mesh_sync::{
+    CapsuleValidationVerdict, MeshError, MeshHandshake, MeshPeerEntry, MeshSyncEngine,
+    MeshSyncResult, PeerIdentity, SignedCapsulePackage,
+};
 pub use mutation::{MutationEngine, MutationError};
 pub use observability::{
     DEFAULT_MAX_OBSERVABILITY_SAMPLES, ObservabilityEngine, ObservabilityError,
 };
 pub use operations::{OperationalEvent, OperationalRecorder, OperationalStatus};
 pub use orchestration_engine::{
-    DomainProfileRun, OrchestrationEngine, OrchestrationError, OrchestrationRun,
+    DiamondReceipt, DomainProfileRun, EdgeVerificationError, EdgeVerifierPolicy,
+    OrchestrationEngine, OrchestrationError, OrchestrationPlanJson, OrchestrationRun,
     OrchestrationRunSnapshot,
 };
 pub use orchestration_store::{
@@ -200,6 +239,10 @@ pub use parliament::Parliament;
 pub use permit_store::{ConsumedPermit, PermitError, PermitStore};
 pub use recovery_archive::{RecoveryArchive, RecoveryArchiveError, RecoveryBundle, RecoveryEntry};
 pub use reference_monitor::{AuthorizationError, ReferenceMonitor};
+pub use reflexion::{
+    ParameterizedLiteral, ReflexionCrystallizeResult, ReflexionCrystallizer, ReflexionDiagnostic,
+    ReflexionDiagnosticEngine, ReflexionError, ReflexionFailureKind,
+};
 pub use registry_client::{PackageRegistryClient, PackageRegistryError, RegistryPackageDownload};
 pub use replacement::{CANARY_POLICY_VERSION, CanaryPolicy, ReplacementEngine, ReplacementError};
 pub use research_artifact::{
@@ -212,11 +255,16 @@ pub use secret_vault::{SecretVault, SecretVaultEntry, SecretVaultError, VaultSec
 pub use self_healing::{SelfHealingEngine, SelfHealingError};
 pub use service::{RuntimeService, RuntimeServiceError, RuntimeServiceScope};
 pub use service_token::{ServiceToken, ServiceTokenError, ServiceTokenStore};
+pub use session_journal::{
+    ForkResult, JournalStep, RewindResult, SessionJournalEngine, SessionStepDiff,
+    compute_step_digest,
+};
 pub use sessions::{RolloutSummary, SessionEventPage, SessionSnapshot, SessionStore};
 pub use skill_engine::{
     RemovalReceipt, SkillEngine, SkillError, SkillInspection, SkillProvenance, SkillRecord,
     SkillState,
 };
+pub use society_engine::SocietyEngine;
 pub use storage_lifecycle::{
     MAX_STORAGE_LIFECYCLE_LIST, MAX_STORAGE_LIFECYCLE_RECEIPTS, StorageLifecycleReceipt,
     StorageLifecycleRecordResult, StorageLifecycleStore, StorageLifecycleStoreError,
@@ -235,6 +283,11 @@ pub use subagent_store::{
 pub use tool_engine::{
     ToolContext, ToolDefinition, ToolEngine, ToolError, ToolInvocation, ToolPlan,
 };
+pub use tripartite_governance::{
+    TripartiteApproval, TripartiteError, TripartiteEvaluation, TripartiteGovernance,
+    TripartiteProposal, TripartiteRole, branch_name_for_proposal,
+};
+pub use voyager_curriculum::{CurriculumDifficulty, CurriculumSummary, VoyagerCurriculum};
 pub use wasm::{
     DEFAULT_WASM_FUEL, MAX_WASM_INPUT_BYTES, MAX_WASM_MEMORY_BYTES, MAX_WASM_OUTPUT_BYTES,
     WasmError, WasmExecutor, WasmGene, WasmGeneRequest, WasmResult,

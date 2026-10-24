@@ -23,7 +23,7 @@ observation surface.
 
 ## Status
 
-The next prerelease identity is `2.0.0-beta.8`. The repository ships one local
+The next prerelease identity is `2.0.0-beta.9`. The repository ships one local
 product surface, the Rust CLI. The desktop product was deleted on 2026-10-05:
 no desktop source, build, package, signature, or publication remains, and there
 is no variable that can bring it back. Any client reaches the
@@ -90,20 +90,15 @@ overwrites an active record or reuses a tombstoned identity.
 The npm package also exports a typed TypeScript client for the stable JSON CLI
 contract. It forwards an argv array to the verified native binary and does not
 create a second runtime or permission path. See [TypeScript client](docs/TYPESCRIPT.md).
-Contributors can start a declarative Domain Harness with the local-only
-[`sdk/domain-harness-starter`](sdk/domain-harness-starter/README.md) reference
-package or `pandora package scaffold domain-harness --output <new-directory>`.
-Composition authors can use the metadata-only
-[`sdk/meta-harness-starter`](sdk/meta-harness-starter/README.md) reference or
-`pandora package scaffold meta-harness --output <new-directory>`.
-Gene authors can evaluate explicit no-effect, bounded-read, and approval-bound
-effect proposals with the validated [`sdk/gene-pack`](sdk/gene-pack/README.md)
-examples. The CLI, TUI, and desktop inspector expose their signed capability
-contracts, provenance, owning Domain, lifecycle generation, and rollback state.
+## Architecture and custom extensions
 
-For project context, contribution rules, and security reporting, see
-[Why Pandora?](docs/WHY_PANDORA.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
-[SECURITY.md](SECURITY.md).
+Pandora is designed to be cleanly extensible through governed packages:
+
+- **Architecture and 26 Runtime Engines**: Detailed overview of the crate structure, the 26 discrete engines in `crates/pandora-runtime`, and the Parliament/ReferenceMonitor authority chain in [Architecture](docs/ARCHITECTURE.md).
+- **Authoring Custom Domain Harnesses, Meta Harnesses & Genes**: Step-by-step developer guide to scaffold, package, admit, and enable custom extensions in [Authoring Custom Harnesses and Genes](docs/CUSTOM_HARNESSES_AND_GENES.md).
+- **Starter Templates**: Copyable starter packages are available at [`sdk/domain-harness-starter`](sdk/domain-harness-starter/README.md), [`sdk/meta-harness-starter`](sdk/meta-harness-starter/README.md), and [`sdk/gene-pack`](sdk/gene-pack/README.md).
+
+For contribution rules, architecture boundaries, and security reporting, see [CONTRIBUTING.md](CONTRIBUTING.md), [Why Pandora?](docs/WHY_PANDORA.md), and [SECURITY.md](SECURITY.md).
 
 ## Install and start
 
@@ -130,13 +125,13 @@ environment. For scripted setup, use `pandora setup` instead.
 To pin the current release explicitly:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/AGENT-PANDORA/main/scripts/install.sh | PANDORA_VERSION=v2.0.0-beta.8 sh
+curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/AGENT-PANDORA/main/scripts/install.sh | PANDORA_VERSION=v2.0.0-beta.9 sh
 ```
 
 To fetch and verify a specific published tag:
 
 ```text
-pandora update --release v2.0.0-beta.8
+pandora update --release v2.0.0-beta.9
 pandora fleet dashboard --json
 ```
 
@@ -146,7 +141,7 @@ pandora fleet dashboard --json
 `.<name>.previous` and `update --rollback` restores it:
 
 ```text
-pandora update --release v2.0.0-beta.8 --target ~/.pandora/bin/pandora
+pandora update --release v2.0.0-beta.9 --target ~/.pandora/bin/pandora
 pandora update --rollback --target ~/.pandora/bin/pandora
 ```
 
@@ -166,10 +161,43 @@ cargo test --workspace --lib --tests
 cargo run -p pandora-cli -- --version
 ```
 
-For scripted setup, use `pandora setup --interactive` or pass provider options
-to `pandora setup`. In an interactive terminal, `pandora` starts the wizard
-when configuration is missing, then opens the Ratatui client. Use `pandora chat`
-for the line-oriented client and explicit subcommands for automation.
+For scripted setup, use `pandora setup --interactive`, configure provider flags, or select a built-in provider preset:
+
+```text
+pandora setup --preset ollama
+pandora setup --preset deepseek
+pandora setup --preset openrouter
+```
+
+In an interactive terminal, `pandora` starts the wizard when configuration is missing, then opens the Ratatui client. Use `pandora chat` for the line-oriented client and explicit subcommands for automation.
+
+Inspect crystallized 5-layer memory (L0-L4), the virtual context filesystem (`pandora://`), signed capsules, and codebase feature maps:
+
+```text
+pandora memory recall --tier l3 --intent coding
+pandora memory sop list
+pandora memory vfs ls pandora://
+pandora memory vfs cat pandora://meta/rules
+pandora memory capsule export --sop sop-1 --output ./sop-1.capsule.json
+pandora memory capsule import --file ./sop-1.capsule.json
+pandora memory crystallize --all
+pandora memory mesh peers
+pandora memory mesh sync --auto-promote
+pandora session rewind sess-1 --step 0 --yes
+pandora session fork sess-1 --step 0 --prompt "alternative path"
+pandora session diff sess-1 --step-a 0 --step-b 1
+pandora evolution loop --once
+pandora map validate
+pandora map show
+```
+
+Evaluate non-generative System 1 decisions, tool safety gating, and intent routing:
+
+```text
+pandora decision evaluate --question "is this safe to run?" --binary
+pandora decision tool-gate --tool run_command --args '{"command":"rm -rf /"}'
+pandora decision intent-route --prompt "architect and redesign the memory supersets"
+```
 
 Headless workers can queue the same governed `run` command without a second
 execution path:
@@ -205,6 +233,47 @@ Assignments remain coordination evidence; workers execute them through the
 existing governed run or subagent path. Aggregate reservations and measured
 receipt usage are enforced transactionally across every dependent role and
 repository. See [durable orchestration workers](docs/ORCHESTRATION.md).
+
+### Dynamic Swarm Topology Synthesis
+
+Dynamic swarm synthesis compiles high-level architectural intent into verified, acyclic Diamond DAG orchestration plans on demand:
+
+```text
+pandora orchestration synthesize --intent "Security audit, cache tuning, and load validation" --roles "security_auditor,cache_specialist,load_tester" --out diamond_plan.json
+```
+
+- Dynamically derives role allocations: Root Planner -> Parallel Specialists -> Aggregating Synthesizer -> Canary Verification Gate.
+- Wires cross-domain handoffs governed by Meta Harness coordination.
+- Enforces topological acyclicity, role deduplication, and execution parallelism invariants.
+
+### Active-Learning Uncertainty Harvester & Golden Sets
+
+Pandora's non-generative System 1 Decision Engine harvests uncertain decisions near classification boundaries to synthesize verified golden test cases and fine-tuning datasets:
+
+```text
+pandora decision evaluate --question "Verify system readiness" --binary
+pandora decision harvest --min-margin 0.35 --export-golden harvested_golden.json --dpo-export dpo_pairs.json
+pandora evaluation golden --input harvested_golden.json
+```
+
+- Harvests decisions with confidence margin below the calibrated threshold (`--min-margin <float>`).
+- Directly synthesizes `GoldenSuiteDefinition` test suites executable via `pandora evaluation golden`.
+- Generates Direct Preference Optimization (DPO) and fine-tuning prompt-completion datasets.
+
+### Darwinian Island-Model Multi-Population Evolution
+
+Isolated subpopulations evolve across competing fitness niches (`QualityFirst`, `CostMinimal`, `LatencyOptimized`) to prevent premature convergence:
+
+```text
+pandora evolution island init --population 4 --out island_state.json
+pandora evolution island step --state island_state.json --generations 2
+pandora evolution island migrate --state island_state.json --count 1
+pandora evolution island run --state island_state.json --generations 5
+```
+
+- Manages discrete subpopulations with niche-specific objective weighting.
+- Implements tournament selection, dynamic step crossover, and structured SOP mutations.
+- Periodic elite ring migration maintains diversity and produces non-dominated Pareto frontiers across pass rate, token cost, and latency.
 
 Local isolated subagents use the same governed runtime path with durable,
 scoped records and exact-commit Git worktrees:

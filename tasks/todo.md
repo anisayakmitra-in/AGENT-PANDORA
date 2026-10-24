@@ -45,3 +45,23 @@
   desktop TypeScript client, which was deleted on 2026-10-05; the CLI does not
   use this transport. See `docs/CLI.md` for the contract, the bounds, and the
   breaking-change note.
+- [x] F2: Phase 1-4 architectural items and CLI parity. SQLite migration 9
+  intent-partitioned memory (`repo`, `procedure`, `coding`, `user`) with
+  backfill and composite index; anti-thrash convergence loop with success reset;
+  diamond orchestration with role fan-out/join validation and edge verifier
+  safety policies; feature map validation and inspection (`graph map
+  validate|show`) with runtime agent context injection; and CLI setup polish
+  (`--preset`).
+- [x] F3: Hardened intent memory consolidation, diamond verifiers, and path resolution.
+  Aligned SQLite migration 9 intent backfill with `MemoryKind::default_intent()`
+  (`policy_decision` -> `user`, `decision` -> `coding`, `replacement` -> `coding`,
+  `benchmark` -> `procedure`); enabled L1 admission for `PolicyDecision` and
+  `Replacement`; wired intent preservation and `--intent` flag into `pandora
+  memory consolidate`; hardened `EdgeVerifierPolicy` against rooted, drive-relative,
+  alternate data stream, and whitespace artifact paths; added duplicate artifact
+  path rejection (`OrchestrationError::DuplicateArtifactPath`) to diamond orchestration
+  join; and added session workspace candidate path resolution for `.pandora/feature_map.json`.
+- [x] F4: Deliverable 1 Layered Memory System. Expanded memory architecture into 5 crystallized tiers: L0 (Meta Rules), L1 (Insight Index), L2 (Global Facts), L3 (Task Skills / SOPs), and L4 (Session Archive). Implemented DAG validation for SOP steps with cycle detection and dependency ordering in `pandora-types`; SQLite Migration 10 in `pandora-runtime` creating `memory_sops` and `memory_archives` with compound indexes; `SessionStore` and `MemoryEngine` APIs; and CLI commands `memory recall --tier <l1|l2|l3|l4>`, `memory sop list|inspect`, and `memory archive list|inspect` with shell completion parity across PowerShell, bash, zsh, and fish.
+
+
+

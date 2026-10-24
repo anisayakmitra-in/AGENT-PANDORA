@@ -1,19 +1,28 @@
 use super::run::evaluation_receipt_json;
-use super::{load_config, parse_options, require_config_file, session_scope, session_store};
+use super::{
+    load_config, parse_options, require_config_file, session_scope, session_store, timestamp,
+};
 use crate::output::{CliError, CommandResult, success};
-use pandora_runtime::{ObservabilityEngine, sessions::SessionSnapshot};
+use pandora_runtime::{ObservabilityEngine, SessionJournalEngine, sessions::SessionSnapshot};
 use pandora_types::{EventType, ObservabilitySample, SessionId};
 use serde_json::json;
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
-        CliError::usage("session requires 'list', 'resume', 'inspect', or 'events'")
+        CliError::usage(
+            "session requires 'list', 'resume', 'inspect', 'events', 'rewind', 'fork', 'diff', 'prune', or 'vacuum'",
+        )
     })?;
     match subcommand.as_str() {
         "list" => list(&args[1..]),
         "resume" => resume(&args[1..]),
         "inspect" => inspect(&args[1..]),
         "events" => events(&args[1..]),
+        "rewind" => rewind(&args[1..]),
+        "fork" => fork(&args[1..]),
+        "diff" => diff(&args[1..]),
+        "prune" => prune(&args[1..]),
+        "vacuum" => vacuum(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown session command '{unknown}'"
         ))),
@@ -284,4 +293,304 @@ fn observability_error_code(event_type: EventType) -> Option<&'static str> {
         EventType::PolicyDenied => Some("policy_denied"),
         _ => None,
     }
+}
+
+fn rewind(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "step", "yes"])?;
+    if parsed.positionals.len() != 1 {
+        return Err(CliError::usage(
+            "session rewind requires exactly one session ID positional argument",
+        ));
+    }
+    let session_id = SessionId::new(parsed.positionals[0].clone())
+        .map_err(|_| CliError::usage("session ID is invalid"))?;
+
+    let step = parsed
+        .value("step")
+        .ok_or_else(|| CliError::usage("session rewind requires '--step <n>'"))?
+        .parse::<usize>()
+        .map_err(|_| CliError::usage("step must be a non-negative integer"))?;
+
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+
+    let result =
+        SessionJournalEngine::rewind(&store, &session_id, step, Some(config.workspace_dir()))
+            .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+
+    let mut val = serde_json::to_value(&result)
+        .map_err(|_| CliError::internal("could not serialize rewind result", json!({})))?;
+    if let serde_json::Value::Object(ref mut map) = val {
+        map.insert(
+            "confirmed".to_string(),
+            serde_json::json!(parsed.values.contains_key("yes")),
+        );
+    }
+
+    Ok(success(
+        "session rewind",
+        val,
+        format!(
+            "Session {} rewound from step {} to step {} (target digest: {})",
+            result.session_id,
+            result.rolled_back_from_step,
+            result.rolled_back_to_step,
+            result.target_digest
+        ),
+    ))
+}
+
+fn fork(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "step", "prompt"])?;
+    if parsed.positionals.len() != 1 {
+        return Err(CliError::usage(
+            "session fork requires exactly one session ID positional argument",
+        ));
+    }
+    let session_id = SessionId::new(parsed.positionals[0].clone())
+        .map_err(|_| CliError::usage("session ID is invalid"))?;
+
+    let step = parsed
+        .value("step")
+        .ok_or_else(|| CliError::usage("session fork requires '--step <n>'"))?
+        .parse::<usize>()
+        .map_err(|_| CliError::usage("step must be a non-negative integer"))?;
+
+    let prompt = parsed
+        .value("prompt")
+        .ok_or_else(|| CliError::usage("session fork requires '--prompt \"<text>\"'"))?;
+
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+    let (principal, tenant, workspace) = session_scope();
+    let now = timestamp();
+
+    let result = SessionJournalEngine::fork(
+        &store,
+        &session_id,
+        step,
+        prompt,
+        config.workspace_dir(),
+        &principal,
+        &tenant,
+        &workspace,
+        now,
+    )
+    .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+
+    let val = serde_json::to_value(&result)
+        .map_err(|_| CliError::internal("could not serialize fork result", json!({})))?;
+
+    Ok(success(
+        "session fork",
+        val,
+        format!(
+            "Forked session {} from parent {} at step {} (branch: {})",
+            result.forked_session_id, result.parent_session_id, result.at_step, result.git_branch
+        ),
+    ))
+}
+
+fn diff(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "step-a", "step-b"],
+    )?;
+    if parsed.positionals.len() != 1 {
+        return Err(CliError::usage(
+            "session diff requires exactly one session ID positional argument",
+        ));
+    }
+    let session_id = SessionId::new(parsed.positionals[0].clone())
+        .map_err(|_| CliError::usage("session ID is invalid"))?;
+
+    let step_a = parsed
+        .value("step-a")
+        .ok_or_else(|| CliError::usage("session diff requires '--step-a <m>'"))?
+        .parse::<usize>()
+        .map_err(|_| CliError::usage("step-a must be a non-negative integer"))?;
+
+    let step_b = parsed
+        .value("step-b")
+        .ok_or_else(|| CliError::usage("session diff requires '--step-b <n>'"))?
+        .parse::<usize>()
+        .map_err(|_| CliError::usage("step-b must be a non-negative integer"))?;
+
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+
+    let result = SessionJournalEngine::diff(&store, &session_id, step_a, step_b)
+        .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+
+    let val = serde_json::to_value(&result)
+        .map_err(|_| CliError::internal("could not serialize diff result", json!({})))?;
+
+    Ok(success(
+        "session diff",
+        val,
+        format!(
+            "Diff for session {} between step {} ({}) and step {} ({})",
+            result.session_id, result.step_a, result.digest_a, result.step_b, result.digest_b
+        ),
+    ))
+}
+
+fn parse_duration_seconds(raw: &str) -> Result<u64, CliError> {
+    if let Some(days) = raw.strip_suffix('d') {
+        let d = days
+            .parse::<u64>()
+            .map_err(|_| CliError::usage("invalid days format; expected e.g. '90d'"))?;
+        Ok(d * 86400)
+    } else if let Some(hours) = raw.strip_suffix('h') {
+        let h = hours
+            .parse::<u64>()
+            .map_err(|_| CliError::usage("invalid hours format; expected e.g. '24h'"))?;
+        Ok(h * 3600)
+    } else if let Some(secs) = raw.strip_suffix('s') {
+        let s = secs
+            .parse::<u64>()
+            .map_err(|_| CliError::usage("invalid seconds format; expected e.g. '300s'"))?;
+        Ok(s)
+    } else {
+        raw.parse::<u64>().map_err(|_| {
+            CliError::usage("invalid duration; expected e.g. '90d', '24h', or seconds")
+        })
+    }
+}
+
+fn prune(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "older-than",
+            "dry-run",
+            "yes",
+        ],
+    )?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+
+    let older_than_secs = match parsed.value("older-than") {
+        Some(val) => parse_duration_seconds(val)?,
+        None => 90 * 86400,
+    };
+
+    let dry_run = parsed.has_flag("dry-run");
+    let confirmed = parsed.has_flag("yes");
+
+    if !dry_run && !confirmed {
+        return Err(CliError::usage(
+            "session prune requires '--yes' to execute, or '--dry-run' to preview candidates",
+        ));
+    }
+
+    let (principal_id, tenant_id, workspace_id) = session_scope();
+    let report = store
+        .prune_sessions(
+            &principal_id,
+            &tenant_id,
+            &workspace_id,
+            older_than_secs,
+            dry_run,
+        )
+        .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+
+    let val = serde_json::to_value(&report)
+        .map_err(|_| CliError::internal("could not serialize prune report", json!({})))?;
+
+    let message = if dry_run {
+        format!(
+            "Dry-run prune: {} candidate session(s) older than {}s (out of {} examined)",
+            report.pruned_session_ids.len(),
+            report.older_than_seconds,
+            report.sessions_examined
+        )
+    } else {
+        format!(
+            "Pruned {} session(s) and reclaimed {} event(s) older than {}s",
+            report.sessions_pruned, report.events_reclaimed, report.older_than_seconds
+        )
+    };
+
+    Ok(success("session prune", val, message))
+}
+
+fn vacuum(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "threshold",
+            "force",
+            "analyze",
+        ],
+    )?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+
+    if parsed.has_flag("analyze") {
+        let stats = store
+            .storage_stats()
+            .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+        let val = serde_json::to_value(&stats)
+            .map_err(|_| CliError::internal("could not serialize storage stats", json!({})))?;
+        let text = format!(
+            "Total Size:     {} bytes ({} pages x {} bytes)\nReclaimable:    {} bytes ({} free pages, {:.2}%)\nVacuum Advice:  {}",
+            stats.total_size_bytes,
+            stats.total_pages,
+            stats.page_size_bytes,
+            stats.reclaimable_bytes,
+            stats.free_pages,
+            stats.reclaimable_percent,
+            if stats.reclaimable_percent >= 25.0 {
+                "Recommended (reclaimable space >= 25%)"
+            } else {
+                "Optimal (fragmentation is low)"
+            }
+        );
+        return Ok(success("session vacuum analyze", val, text));
+    }
+
+    let threshold = if parsed.has_flag("force") {
+        Some(0.0)
+    } else if let Some(raw) = parsed.value("threshold") {
+        let t = raw
+            .parse::<f64>()
+            .map_err(|_| CliError::usage("threshold must be a valid float percentage e.g. 25.0"))?;
+        Some(t)
+    } else {
+        Some(25.0)
+    };
+
+    let report = store
+        .vacuum_database(threshold)
+        .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+
+    let val = serde_json::to_value(&report)
+        .map_err(|_| CliError::internal("could not serialize vacuum report", json!({})))?;
+
+    let text = if report.vacuum_executed {
+        format!(
+            "Vacuum executed: reclaimed {} bytes (Size: {} -> {} bytes, Reclaimable: {:.1}% -> {:.1}%)",
+            report.reclaimed_bytes,
+            report.pre_size_bytes,
+            report.post_size_bytes,
+            report.pre_reclaimable_pct,
+            report.post_reclaimable_pct
+        )
+    } else {
+        format!("Vacuum skipped: {}", report.reason)
+    };
+
+    Ok(success("session vacuum", val, text))
 }

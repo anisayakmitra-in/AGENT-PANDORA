@@ -293,7 +293,11 @@ fn built_in_harness_alias(id: &str) -> Option<&'static str> {
         "security-domain" => Some("/security"),
         "debugging-domain" => Some("/debugging"),
         "data-domain" => Some("/data"),
+        "architecture-domain" => Some("/architecture"),
+        "verification-domain" => Some("/verification"),
         "coordination-meta" => Some("/coordination"),
+        "evolution-meta" => Some("/evolution"),
+        "swarm-meta" => Some("/swarm"),
         _ => None,
     }
 }
@@ -367,6 +371,14 @@ fn built_in_gene_alias(id: &str) -> Option<&'static str> {
         "data.lineage" => Some("/data-lineage"),
         "data.analysis" => Some("/data-analysis"),
         "data.guide" => Some("/data-guide"),
+        "architecture.inventory" => Some("/architecture-inventory"),
+        "architecture.boundaries" => Some("/architecture-boundaries"),
+        "architecture.invariants" => Some("/architecture-invariants"),
+        "architecture.guide" => Some("/architecture-guide"),
+        "verification.contract" => Some("/verification-contract"),
+        "verification.golden" => Some("/verification-golden"),
+        "verification.property" => Some("/verification-property"),
+        "verification.guide" => Some("/verification-guide"),
         _ => None,
     }
 }

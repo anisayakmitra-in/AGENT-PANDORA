@@ -13,6 +13,7 @@ ed25519-dalek.workspace = true
 getrandom.workspace = true
 pandora-harnesses = { path = "../pandora-harnesses" }
 pandora-provider = { path = "../pandora-provider" }
+pandora-sandbox = { path = "../pandora-sandbox" }
 pandora-types = { path = "../pandora-types" }
 reqwest.workspace = true
 rusqlite = { version = "0.32", features = ["bundled"] }

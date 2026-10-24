@@ -1,18 +1,19 @@
 use pandora_provider::ChatMessage;
 use pandora_types::{
     ContextClassification, EvaluationKind, EvaluationReceipt, EvaluationResult, EvaluationStatus,
-    ExecutionId, MemoryApproval, MemoryAuditAction, MemoryAuditEntry, MemoryId, MemoryKind,
-    MemoryOrigin, MemoryRecord, MemoryScope, MemoryTier, PrincipalId, Rollout, RuntimeEvent,
-    Session, SessionId, TenantId, Timestamp, WorkspaceId,
+    ExecutionId, MemoryApproval, MemoryAuditAction, MemoryAuditEntry, MemoryId, MemoryIntent,
+    MemoryKind, MemoryOrigin, MemoryRecord, MemoryScope, MemoryTier, PrincipalId, Rollout,
+    RuntimeEvent, Session, SessionArchiveRecord, SessionId, SopDefinition, StoredSop, TenantId,
+    Timestamp, WorkspaceId,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
 use std::fmt;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const CURRENT_SCHEMA_VERSION: i64 = 8;
+const CURRENT_SCHEMA_VERSION: i64 = 13;
 const MAX_EVENT_BYTES: usize = 1_048_576;
 const MAX_AGENT_MESSAGE_BYTES: usize = 1_048_576;
 const MAX_AGENT_TRANSCRIPT_BYTES: usize = 8 * 1_048_576;
@@ -50,6 +51,7 @@ pub enum SessionError {
     InvalidMemoryLimit,
     InvalidEvaluation,
     InvalidEventPage,
+    InvalidStep(String),
     UnsupportedSchemaVersion(i64),
 }
 
@@ -89,6 +91,7 @@ impl fmt::Display for SessionError {
             Self::InvalidMemoryLimit => formatter.write_str("memory recall limit is invalid"),
             Self::InvalidEvaluation => formatter.write_str("execution evaluation is invalid"),
             Self::InvalidEventPage => formatter.write_str("session event page is invalid"),
+            Self::InvalidStep(msg) => write!(formatter, "invalid session step: {msg}"),
             Self::UnsupportedSchemaVersion(version) => {
                 write!(
                     formatter,
@@ -754,8 +757,10 @@ impl SessionStore {
         principal_id: &PrincipalId,
         record: &MemoryRecord,
     ) -> Result<(), SessionError> {
-        if record.tier() != MemoryTier::L1
-            || record.classification() == ContextClassification::Secret
+        if !matches!(
+            record.tier(),
+            MemoryTier::L1 | MemoryTier::L3 | MemoryTier::L4
+        ) || record.classification() == ContextClassification::Secret
         {
             return Err(SessionError::InvalidMemory);
         }
@@ -882,6 +887,38 @@ impl SessionStore {
             load_session(&connection, session_id)?.ok_or(SessionError::SessionNotFound)?;
         ensure_scope(&session, principal_id, tenant_id, workspace_id)?;
         load_memory_records(&connection, &scope, tier, limit)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn recall_memory_by_intent(
+        &self,
+        session_id: &SessionId,
+        principal_id: &PrincipalId,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        provider: impl Into<String>,
+        tier: MemoryTier,
+        intent: MemoryIntent,
+        limit: u16,
+    ) -> Result<Vec<MemoryRecord>, SessionError> {
+        if limit == 0 || limit > MAX_MEMORY_RECALL_RECORDS {
+            return Err(SessionError::InvalidMemoryLimit);
+        }
+        if tier == MemoryTier::L0 {
+            return Err(SessionError::InvalidMemory);
+        }
+        let scope = MemoryScope::new(
+            tenant_id.clone(),
+            workspace_id.clone(),
+            session_id.clone(),
+            provider,
+        )
+        .map_err(|_| SessionError::InvalidMemory)?;
+        let connection = self.lock()?;
+        let session =
+            load_session(&connection, session_id)?.ok_or(SessionError::SessionNotFound)?;
+        ensure_scope(&session, principal_id, tenant_id, workspace_id)?;
+        load_memory_records_by_intent(&connection, &scope, tier, intent, limit)
     }
 
     pub fn revoke_memory(
@@ -1073,8 +1110,12 @@ impl SessionStore {
         }
         let total_count = transaction.query_row(
             "SELECT COUNT(*) FROM memory_records
-             WHERE session_id = ?1 AND provider = ?2 AND tier = 'l1'",
-            params![scope.session_id().as_str(), scope.provider()],
+             WHERE session_id = ?1 AND provider = ?2 AND tier = ?3",
+            params![
+                scope.session_id().as_str(),
+                scope.provider(),
+                record.tier().as_str(),
+            ],
             |row| row.get::<_, i64>(0),
         )?;
         let total_count = usize::try_from(total_count).map_err(|_| SessionError::CorruptRecord)?;
@@ -1131,7 +1172,7 @@ impl SessionStore {
             load_session(&connection, session_id)?.ok_or(SessionError::SessionNotFound)?;
         ensure_scope(&session, principal_id, tenant_id, workspace_id)?;
         let mut statement = connection.prepare(
-            "SELECT memory_id, kind, summary, created_at, provenance, origin, evidence_ids
+            "SELECT memory_id, kind, summary, created_at, provenance, origin, evidence_ids, intent
              FROM memory_records
              WHERE session_id = ?1 AND provider = ?2
                AND tier = 'l1' AND kind IN ('execution_evidence', 'lesson')
@@ -1161,20 +1202,22 @@ impl SessionStore {
                     row.get::<_, String>(4)?,
                     row.get::<_, String>(5)?,
                     row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
                 ))
             },
         )?;
         let mut records = Vec::new();
         for row in rows {
-            let (id, kind, summary, created_at, provenance, origin, evidence_ids) = row?;
+            let (id, kind, summary, created_at, provenance, origin, evidence_ids, intent) = row?;
             let kind = parse_memory_kind(&kind)?;
             let origin = parse_memory_origin(&origin)?;
+            let intent = parse_memory_intent(&intent)?;
             let evidence_ids =
                 serde_json::from_str(&evidence_ids).map_err(|_| SessionError::CorruptRecord)?;
             let created_at = u64::try_from(created_at)
                 .map(Timestamp::from_unix_seconds)
                 .map_err(|_| SessionError::CorruptRecord)?;
-            let record = MemoryRecord::new_l1_with_origin(
+            let mut record = MemoryRecord::new_l1_with_origin(
                 id,
                 kind,
                 scope.clone(),
@@ -1186,6 +1229,7 @@ impl SessionStore {
                 evidence_ids,
             )
             .map_err(|_| SessionError::CorruptRecord)?;
+            record = record.with_intent(intent);
             if kind == MemoryKind::ExecutionEvidence && !is_canonical_l1_execution_evidence(&record)
                 || kind == MemoryKind::Lesson && !is_canonical_l1_evaluation_feedback(&record)
             {
@@ -1267,6 +1311,1193 @@ impl SessionStore {
             sessions.push(row.map_err(SessionError::Database)??);
         }
         Ok(sessions)
+    }
+
+    pub fn store_sop(
+        &self,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        sop: &SopDefinition,
+        timestamp: Timestamp,
+    ) -> Result<StoredSop, SessionError> {
+        let definition_json = serde_json::to_string(sop).map_err(SessionError::Serialization)?;
+        let connection = self.lock()?;
+        let time_sec = timestamp_i64(timestamp)?;
+        connection.execute(
+            "INSERT INTO memory_sops (
+                 sop_id, tenant_id, workspace_id, name, intent, definition_json,
+                 success_count, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?7)
+             ON CONFLICT (tenant_id, workspace_id, sop_id) DO UPDATE SET
+                 name = excluded.name,
+                 intent = excluded.intent,
+                 definition_json = excluded.definition_json,
+                 success_count = memory_sops.success_count + 1,
+                 updated_at = excluded.updated_at",
+            params![
+                sop.id.as_str(),
+                tenant_id.as_str(),
+                workspace_id.as_str(),
+                sop.name.as_str(),
+                sop.trigger_intent.as_str(),
+                definition_json,
+                time_sec,
+            ],
+        )?;
+
+        let (success_count, created_at, updated_at) = connection.query_row(
+            "SELECT success_count, created_at, updated_at FROM memory_sops WHERE tenant_id = ?1 AND workspace_id = ?2 AND sop_id = ?3",
+            params![tenant_id.as_str(), workspace_id.as_str(), sop.id.as_str()],
+            |row| {
+                Ok((
+                    row.get::<_, u32>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )?;
+
+        let created_at = u64::try_from(created_at)
+            .map(Timestamp::from_unix_seconds)
+            .map_err(|_| SessionError::CorruptRecord)?;
+        let updated_at = u64::try_from(updated_at)
+            .map(Timestamp::from_unix_seconds)
+            .map_err(|_| SessionError::CorruptRecord)?;
+
+        Ok(StoredSop::new(
+            sop.clone(),
+            tenant_id.clone(),
+            workspace_id.clone(),
+            success_count,
+            created_at,
+            updated_at,
+        ))
+    }
+
+    pub fn load_sop(
+        &self,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        sop_id: &str,
+    ) -> Result<Option<StoredSop>, SessionError> {
+        let connection = self.lock()?;
+        let raw = connection
+            .query_row(
+                "SELECT definition_json, success_count, created_at, updated_at
+                 FROM memory_sops
+                 WHERE tenant_id = ?1 AND workspace_id = ?2 AND sop_id = ?3",
+                params![tenant_id.as_str(), workspace_id.as_str(), sop_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, u32>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .optional()?;
+
+        let Some((definition_json, success_count, created_at, updated_at)) = raw else {
+            return Ok(None);
+        };
+
+        let sop: SopDefinition =
+            serde_json::from_str(&definition_json).map_err(|_| SessionError::CorruptRecord)?;
+        sop.validate().map_err(|_| SessionError::CorruptRecord)?;
+        let created_at = u64::try_from(created_at)
+            .map(Timestamp::from_unix_seconds)
+            .map_err(|_| SessionError::CorruptRecord)?;
+        let updated_at = u64::try_from(updated_at)
+            .map(Timestamp::from_unix_seconds)
+            .map_err(|_| SessionError::CorruptRecord)?;
+
+        Ok(Some(StoredSop::new(
+            sop,
+            tenant_id.clone(),
+            workspace_id.clone(),
+            success_count,
+            created_at,
+            updated_at,
+        )))
+    }
+
+    pub fn list_sops_by_intent(
+        &self,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        intent: Option<MemoryIntent>,
+    ) -> Result<Vec<StoredSop>, SessionError> {
+        let connection = self.lock()?;
+        let mut statement = if intent.is_some() {
+            connection.prepare(
+                "SELECT definition_json, success_count, created_at, updated_at
+                 FROM memory_sops
+                 WHERE tenant_id = ?1 AND workspace_id = ?2 AND intent = ?3
+                 ORDER BY updated_at DESC, sop_id ASC",
+            )?
+        } else {
+            connection.prepare(
+                "SELECT definition_json, success_count, created_at, updated_at
+                 FROM memory_sops
+                 WHERE tenant_id = ?1 AND workspace_id = ?2
+                 ORDER BY updated_at DESC, sop_id ASC",
+            )?
+        };
+
+        let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<(String, u32, i64, i64)> {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        };
+
+        let rows: Vec<(String, u32, i64, i64)> = if let Some(intent) = intent {
+            statement
+                .query_map(
+                    params![tenant_id.as_str(), workspace_id.as_str(), intent.as_str()],
+                    map_row,
+                )?
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            statement
+                .query_map(params![tenant_id.as_str(), workspace_id.as_str()], map_row)?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+
+        let mut sops = Vec::new();
+        for (definition_json, success_count, created_at, updated_at) in rows {
+            let sop: SopDefinition =
+                serde_json::from_str(&definition_json).map_err(|_| SessionError::CorruptRecord)?;
+            sop.validate().map_err(|_| SessionError::CorruptRecord)?;
+            let created_at = u64::try_from(created_at)
+                .map(Timestamp::from_unix_seconds)
+                .map_err(|_| SessionError::CorruptRecord)?;
+            let updated_at = u64::try_from(updated_at)
+                .map(Timestamp::from_unix_seconds)
+                .map_err(|_| SessionError::CorruptRecord)?;
+            sops.push(StoredSop::new(
+                sop,
+                tenant_id.clone(),
+                workspace_id.clone(),
+                success_count,
+                created_at,
+                updated_at,
+            ));
+        }
+        Ok(sops)
+    }
+
+    pub fn store_archive(&self, archive: &SessionArchiveRecord) -> Result<(), SessionError> {
+        archive
+            .validate()
+            .map_err(|_| SessionError::CorruptRecord)?;
+        let connection = self.lock()?;
+        let time_sec = timestamp_i64(archive.created_at)?;
+        connection.execute(
+            "INSERT INTO memory_archives (
+                 archive_id, tenant_id, workspace_id, session_id,
+                 summary, diff_stats, receipt_digest, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT (tenant_id, workspace_id, archive_id) DO UPDATE SET
+                 session_id = excluded.session_id,
+                 summary = excluded.summary,
+                 diff_stats = excluded.diff_stats,
+                 receipt_digest = excluded.receipt_digest,
+                 created_at = excluded.created_at",
+            params![
+                archive.archive_id.as_str(),
+                archive.tenant_id.as_str(),
+                archive.workspace_id.as_str(),
+                archive.session_id.as_str(),
+                archive.summary.as_str(),
+                archive.diff_stats.as_str(),
+                archive.receipt_digest.as_str(),
+                time_sec,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn load_archive(
+        &self,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        archive_id: &str,
+    ) -> Result<Option<SessionArchiveRecord>, SessionError> {
+        let connection = self.lock()?;
+        let raw = connection
+            .query_row(
+                "SELECT session_id, summary, diff_stats, receipt_digest, created_at
+                 FROM memory_archives
+                 WHERE tenant_id = ?1 AND workspace_id = ?2 AND archive_id = ?3",
+                params![tenant_id.as_str(), workspace_id.as_str(), archive_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, i64>(4)?,
+                    ))
+                },
+            )
+            .optional()?;
+
+        let Some((session_id, summary, diff_stats, receipt_digest, created_at)) = raw else {
+            return Ok(None);
+        };
+
+        let session_id = SessionId::new(session_id).map_err(|_| SessionError::CorruptRecord)?;
+        let created_at = u64::try_from(created_at)
+            .map(Timestamp::from_unix_seconds)
+            .map_err(|_| SessionError::CorruptRecord)?;
+
+        let record = SessionArchiveRecord::new(
+            archive_id,
+            tenant_id.clone(),
+            workspace_id.clone(),
+            session_id,
+            summary,
+            diff_stats,
+            receipt_digest,
+            created_at,
+        )
+        .map_err(|_| SessionError::CorruptRecord)?;
+        record.validate().map_err(|_| SessionError::CorruptRecord)?;
+        Ok(Some(record))
+    }
+
+    pub fn list_recent_archives(
+        &self,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        limit: usize,
+    ) -> Result<Vec<SessionArchiveRecord>, SessionError> {
+        let connection = self.lock()?;
+        let mut statement = connection.prepare(
+            "SELECT archive_id, session_id, summary, diff_stats, receipt_digest, created_at
+             FROM memory_archives
+             WHERE tenant_id = ?1 AND workspace_id = ?2
+             ORDER BY created_at DESC, archive_id ASC
+             LIMIT ?3",
+        )?;
+
+        let limit_i64 = i64::try_from(limit).unwrap_or(i64::MAX);
+        let rows = statement.query_map(
+            params![tenant_id.as_str(), workspace_id.as_str(), limit_i64],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, i64>(5)?,
+                ))
+            },
+        )?;
+
+        let mut archives = Vec::new();
+        for row in rows {
+            let (archive_id, session_id, summary, diff_stats, receipt_digest, created_at) = row?;
+            let session_id = SessionId::new(session_id).map_err(|_| SessionError::CorruptRecord)?;
+            let created_at = u64::try_from(created_at)
+                .map(Timestamp::from_unix_seconds)
+                .map_err(|_| SessionError::CorruptRecord)?;
+            let record = SessionArchiveRecord::new(
+                archive_id,
+                tenant_id.clone(),
+                workspace_id.clone(),
+                session_id,
+                summary,
+                diff_stats,
+                receipt_digest,
+                created_at,
+            )
+            .map_err(|_| SessionError::CorruptRecord)?;
+            record.validate().map_err(|_| SessionError::CorruptRecord)?;
+            archives.push(record);
+        }
+        Ok(archives)
+    }
+
+    pub fn store_journal_step(
+        &self,
+        step: &crate::session_journal::JournalStep,
+    ) -> Result<(), SessionError> {
+        let step_json = serde_json::to_string(step).map_err(SessionError::Serialization)?;
+        let time_sec = timestamp_i64(step.timestamp)?;
+        let connection = self.lock()?;
+        connection.execute(
+            "INSERT INTO session_journal_steps (
+                 session_id, step_index, step_json, digest, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT (session_id, step_index) DO UPDATE SET
+                 step_json = excluded.step_json,
+                 digest = excluded.digest,
+                 created_at = excluded.created_at",
+            params![
+                step.session_id.as_str(),
+                step.step_index as i64,
+                step_json,
+                step.sha256_digest.as_str(),
+                time_sec,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn load_journal_steps(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<crate::session_journal::JournalStep>, SessionError> {
+        let connection = self.lock()?;
+        let mut statement = connection.prepare(
+            "SELECT step_json FROM session_journal_steps
+             WHERE session_id = ?1
+             ORDER BY step_index ASC",
+        )?;
+        let rows =
+            statement.query_map(params![session_id.as_str()], |row| row.get::<_, String>(0))?;
+        let mut steps = Vec::new();
+        for row in rows {
+            let json_str = row?;
+            let step = serde_json::from_str(&json_str).map_err(SessionError::Serialization)?;
+            steps.push(step);
+        }
+        Ok(steps)
+    }
+
+    pub fn truncate_journal_after(
+        &self,
+        session_id: &SessionId,
+        step_index: usize,
+    ) -> Result<usize, SessionError> {
+        let connection = self.lock()?;
+        let count = connection.execute(
+            "DELETE FROM session_journal_steps
+             WHERE session_id = ?1 AND step_index > ?2",
+            params![session_id.as_str(), step_index as i64],
+        )?;
+        Ok(count)
+    }
+
+    pub fn store_mesh_peer(
+        &self,
+        peer: &crate::mesh_sync::MeshPeerEntry,
+    ) -> Result<(), SessionError> {
+        let connection = self.lock()?;
+        connection.execute(
+            "INSERT INTO mesh_peers (
+                 peer_id, address, public_key, status, last_seen, trust_score
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT (peer_id) DO UPDATE SET
+                 address = excluded.address,
+                 public_key = excluded.public_key,
+                 status = excluded.status,
+                 last_seen = excluded.last_seen,
+                 trust_score = excluded.trust_score",
+            params![
+                peer.peer_id.as_str(),
+                peer.address.as_str(),
+                peer.public_key.as_str(),
+                peer.status.as_str(),
+                peer.last_seen as i64,
+                peer.trust_score,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_mesh_peers(&self) -> Result<Vec<crate::mesh_sync::MeshPeerEntry>, SessionError> {
+        let connection = self.lock()?;
+        let mut statement = connection.prepare(
+            "SELECT peer_id, address, public_key, status, last_seen, trust_score
+             FROM mesh_peers
+             ORDER BY last_seen DESC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(crate::mesh_sync::MeshPeerEntry {
+                peer_id: row.get(0)?,
+                address: row.get(1)?,
+                public_key: row.get(2)?,
+                status: row.get(3)?,
+                last_seen: row.get::<_, i64>(4)? as u64,
+                trust_score: row.get(5)?,
+            })
+        })?;
+        let mut peers = Vec::new();
+        for row in rows {
+            peers.push(row?);
+        }
+        Ok(peers)
+    }
+
+    pub fn store_mesh_capsule(
+        &self,
+        package: &crate::mesh_sync::SignedCapsulePackage,
+    ) -> Result<(), SessionError> {
+        let package_json = serde_json::to_string(package).map_err(SessionError::Serialization)?;
+        let connection = self.lock()?;
+        let time_sec = timestamp_i64(package.capsule.created_at)?;
+        connection.execute(
+            "INSERT INTO mesh_capsules (
+                 capsule_id, package_json, sha256_digest, author_public_key, author_signature, admitted_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT (capsule_id) DO UPDATE SET
+                 package_json = excluded.package_json,
+                 sha256_digest = excluded.sha256_digest,
+                 author_public_key = excluded.author_public_key,
+                 author_signature = excluded.author_signature,
+                 admitted_at = excluded.admitted_at",
+            params![
+                package.capsule.capsule_id.as_str(),
+                package_json,
+                package.capsule.sha256_digest.as_str(),
+                package.author_public_key.as_str(),
+                package.author_signature.as_str(),
+                time_sec,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_mesh_capsules(
+        &self,
+    ) -> Result<Vec<crate::mesh_sync::SignedCapsulePackage>, SessionError> {
+        let connection = self.lock()?;
+        let mut statement = connection
+            .prepare("SELECT package_json FROM mesh_capsules ORDER BY admitted_at DESC")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        let mut list = Vec::new();
+        for row in rows {
+            let json_str = row?;
+            let package = serde_json::from_str(&json_str).map_err(SessionError::Serialization)?;
+            list.push(package);
+        }
+        Ok(list)
+    }
+
+    pub fn store_bot_persona(
+        &self,
+        persona: &pandora_types::AgentPersona,
+    ) -> Result<(), SessionError> {
+        let connection = self.lock()?;
+        let caps_json =
+            serde_json::to_string(&persona.capabilities).map_err(SessionError::Serialization)?;
+        connection.execute(
+            "INSERT INTO bot_personas (
+                 handle, display_name, role, system_prompt, model, avatar_seed, capabilities_json, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT (handle) DO UPDATE SET
+                 display_name = excluded.display_name,
+                 role = excluded.role,
+                 system_prompt = excluded.system_prompt,
+                 model = excluded.model,
+                 avatar_seed = excluded.avatar_seed,
+                 capabilities_json = excluded.capabilities_json,
+                 updated_at = excluded.updated_at",
+            params![
+                persona.handle.as_str(),
+                persona.display_name.as_str(),
+                persona.role.as_str(),
+                persona.system_prompt.as_str(),
+                persona.model.as_deref(),
+                persona.avatar_seed.as_str(),
+                caps_json,
+                persona.created_at as i64,
+                persona.updated_at as i64,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_bot_persona(
+        &self,
+        handle: &str,
+    ) -> Result<Option<pandora_types::AgentPersona>, SessionError> {
+        let clean_handle = handle.trim().trim_start_matches('@').to_lowercase();
+        let connection = self.lock()?;
+        let mut statement = connection.prepare(
+            "SELECT handle, display_name, role, system_prompt, model, avatar_seed, capabilities_json, created_at, updated_at
+             FROM bot_personas
+             WHERE handle = ?1",
+        )?;
+        let mut rows = statement.query([clean_handle.as_str()])?;
+        if let Some(row) = rows.next()? {
+            let caps_raw: String = row.get(6)?;
+            let capabilities = serde_json::from_str(&caps_raw).unwrap_or_default();
+            Ok(Some(pandora_types::AgentPersona {
+                handle: row.get(0)?,
+                display_name: row.get(1)?,
+                role: row.get(2)?,
+                system_prompt: row.get(3)?,
+                model: row.get(4)?,
+                avatar_seed: row.get(5)?,
+                capabilities,
+                created_at: row.get::<_, i64>(7)? as u64,
+                updated_at: row.get::<_, i64>(8)? as u64,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn list_bot_personas(&self) -> Result<Vec<pandora_types::AgentPersona>, SessionError> {
+        let connection = self.lock()?;
+        let mut statement = connection.prepare(
+            "SELECT handle, display_name, role, system_prompt, model, avatar_seed, capabilities_json, created_at, updated_at
+             FROM bot_personas
+             ORDER BY handle ASC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            let caps_raw: String = row.get(6)?;
+            let capabilities = serde_json::from_str(&caps_raw).unwrap_or_default();
+            Ok(pandora_types::AgentPersona {
+                handle: row.get(0)?,
+                display_name: row.get(1)?,
+                role: row.get(2)?,
+                system_prompt: row.get(3)?,
+                model: row.get(4)?,
+                avatar_seed: row.get(5)?,
+                capabilities,
+                created_at: row.get::<_, i64>(7)? as u64,
+                updated_at: row.get::<_, i64>(8)? as u64,
+            })
+        })?;
+        let mut list = Vec::new();
+        for row in rows {
+            list.push(row?);
+        }
+        Ok(list)
+    }
+
+    pub fn delete_bot_persona(&self, handle: &str) -> Result<bool, SessionError> {
+        let clean_handle = handle.trim().trim_start_matches('@').to_lowercase();
+        let connection = self.lock()?;
+        let rows = connection.execute(
+            "DELETE FROM bot_personas WHERE handle = ?1",
+            params![clean_handle.as_str()],
+        )?;
+        Ok(rows > 0)
+    }
+
+    pub fn store_peer_message(
+        &self,
+        message: &pandora_types::PeerMessage,
+    ) -> Result<(), SessionError> {
+        let connection = self.lock()?;
+        let payload_str = message.payload_json.as_ref().map(|v| v.to_string());
+        connection.execute(
+            "INSERT INTO peer_messages (
+                 message_id, thread_id, from_handle, to_handle, subject, body, payload_json, status, created_at, delivered_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ON CONFLICT (message_id) DO UPDATE SET
+                 status = excluded.status,
+                 delivered_at = excluded.delivered_at",
+            params![
+                message.message_id.as_str(),
+                message.thread_id.as_str(),
+                message.from_handle.as_str(),
+                message.to_handle.as_str(),
+                message.subject.as_str(),
+                message.body.as_str(),
+                payload_str.as_deref(),
+                message.status.as_str(),
+                message.created_at as i64,
+                message.delivered_at.map(|t| t as i64),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_peer_message(
+        &self,
+        message_id: &str,
+    ) -> Result<Option<pandora_types::PeerMessage>, SessionError> {
+        let connection = self.lock()?;
+        let mut statement = connection.prepare(
+            "SELECT message_id, thread_id, from_handle, to_handle, subject, body, payload_json, status, created_at, delivered_at
+             FROM peer_messages
+             WHERE message_id = ?1",
+        )?;
+        let mut rows = statement.query([message_id])?;
+        if let Some(row) = rows.next()? {
+            let status_str: String = row.get(7)?;
+            let status = status_str
+                .parse()
+                .unwrap_or(pandora_types::PeerMessageStatus::Queued);
+            let payload_raw: Option<String> = row.get(6)?;
+            let payload_json = payload_raw.and_then(|raw| serde_json::from_str(&raw).ok());
+            Ok(Some(pandora_types::PeerMessage {
+                message_id: row.get(0)?,
+                thread_id: row.get(1)?,
+                from_handle: row.get(2)?,
+                to_handle: row.get(3)?,
+                subject: row.get(4)?,
+                body: row.get(5)?,
+                payload_json,
+                status,
+                created_at: row.get::<_, i64>(8)? as u64,
+                delivered_at: row.get::<_, Option<i64>>(9)?.map(|t| t as u64),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn update_peer_message_status(
+        &self,
+        message_id: &str,
+        status: pandora_types::PeerMessageStatus,
+        delivered_at: Option<u64>,
+    ) -> Result<bool, SessionError> {
+        let connection = self.lock()?;
+        let rows = connection.execute(
+            "UPDATE peer_messages SET status = ?1, delivered_at = ?2 WHERE message_id = ?3",
+            params![status.as_str(), delivered_at.map(|t| t as i64), message_id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    pub fn list_peer_messages(
+        &self,
+        recipient: Option<&str>,
+        unread_only: bool,
+    ) -> Result<Vec<pandora_types::PeerMessage>, SessionError> {
+        let connection = self.lock()?;
+        let clean_recipient = recipient.map(|r| r.trim().trim_start_matches('@').to_lowercase());
+        let mut query = String::from(
+            "SELECT message_id, thread_id, from_handle, to_handle, subject, body, payload_json, status, created_at, delivered_at
+             FROM peer_messages WHERE 1=1",
+        );
+        if clean_recipient.is_some() {
+            query.push_str(" AND to_handle = ?1");
+        }
+        if unread_only {
+            query.push_str(" AND status IN ('queued', 'delivered')");
+        }
+        query.push_str(" ORDER BY created_at DESC");
+
+        let mut statement = connection.prepare(&query)?;
+        let rows = if let Some(ref r) = clean_recipient {
+            statement.query_map(params![r.as_str()], Self::map_peer_message_row)?
+        } else {
+            statement.query_map([], Self::map_peer_message_row)?
+        };
+
+        let mut list = Vec::new();
+        for row in rows {
+            list.push(row?);
+        }
+        Ok(list)
+    }
+
+    pub fn list_thread_messages(
+        &self,
+        thread_id: &str,
+    ) -> Result<Vec<pandora_types::PeerMessage>, SessionError> {
+        let connection = self.lock()?;
+        let mut statement = connection.prepare(
+            "SELECT message_id, thread_id, from_handle, to_handle, subject, body, payload_json, status, created_at, delivered_at
+             FROM peer_messages
+             WHERE thread_id = ?1
+             ORDER BY created_at ASC",
+        )?;
+        let rows = statement.query_map([thread_id], Self::map_peer_message_row)?;
+        let mut list = Vec::new();
+        for row in rows {
+            list.push(row?);
+        }
+        Ok(list)
+    }
+
+    fn map_peer_message_row(
+        row: &rusqlite::Row<'_>,
+    ) -> rusqlite::Result<pandora_types::PeerMessage> {
+        let status_str: String = row.get(7)?;
+        let status = status_str
+            .parse()
+            .unwrap_or(pandora_types::PeerMessageStatus::Queued);
+        let payload_raw: Option<String> = row.get(6)?;
+        let payload_json = payload_raw.and_then(|raw| serde_json::from_str(&raw).ok());
+        Ok(pandora_types::PeerMessage {
+            message_id: row.get(0)?,
+            thread_id: row.get(1)?,
+            from_handle: row.get(2)?,
+            to_handle: row.get(3)?,
+            subject: row.get(4)?,
+            body: row.get(5)?,
+            payload_json,
+            status,
+            created_at: row.get::<_, i64>(8)? as u64,
+            delivered_at: row.get::<_, Option<i64>>(9)?.map(|t| t as u64),
+        })
+    }
+
+    pub fn list_memory_records_by_workspace(
+        &self,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        tier: Option<MemoryTier>,
+        limit: u16,
+    ) -> Result<Vec<MemoryRecord>, SessionError> {
+        let connection = self.lock()?;
+        let mut statement = if tier.is_some() {
+            connection.prepare(
+                "SELECT s.id, mr.provider, mr.tier, mr.kind, mr.classification, mr.summary,
+                        mr.provenance, mr.created_at, mr.memory_id, mr.approval_id, mr.approver,
+                        mr.origin, mr.evidence_ids, mr.intent
+                 FROM memory_records mr
+                 JOIN sessions s ON s.id = mr.session_id
+                 WHERE s.tenant_id = ?1 AND s.workspace_id = ?2 AND mr.tier = ?3
+                   AND NOT EXISTS (
+                       SELECT 1 FROM memory_revocations rev
+                       WHERE rev.session_id = mr.session_id
+                         AND rev.provider = mr.provider
+                         AND rev.memory_id = mr.memory_id
+                   )
+                 ORDER BY mr.created_at DESC, mr.memory_id DESC
+                 LIMIT ?4",
+            )?
+        } else {
+            connection.prepare(
+                "SELECT s.id, mr.provider, mr.tier, mr.kind, mr.classification, mr.summary,
+                        mr.provenance, mr.created_at, mr.memory_id, mr.approval_id, mr.approver,
+                        mr.origin, mr.evidence_ids, mr.intent
+                 FROM memory_records mr
+                 JOIN sessions s ON s.id = mr.session_id
+                 WHERE s.tenant_id = ?1 AND s.workspace_id = ?2
+                   AND NOT EXISTS (
+                       SELECT 1 FROM memory_revocations rev
+                       WHERE rev.session_id = mr.session_id
+                         AND rev.provider = mr.provider
+                         AND rev.memory_id = mr.memory_id
+                   )
+                 ORDER BY mr.created_at DESC, mr.memory_id DESC
+                 LIMIT ?3",
+            )?
+        };
+
+        let map_row =
+            |row: &rusqlite::Row<'_>| -> rusqlite::Result<(String, String, RawMemoryRecord)> {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    (
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                        row.get(8)?,
+                        row.get(9)?,
+                        row.get(10)?,
+                        row.get(11)?,
+                        row.get(12)?,
+                        row.get(13)?,
+                    ),
+                ))
+            };
+
+        let rows = if let Some(t) = tier {
+            statement.query_map(
+                params![
+                    tenant_id.as_str(),
+                    workspace_id.as_str(),
+                    t.as_str(),
+                    i64::from(limit)
+                ],
+                map_row,
+            )?
+        } else {
+            statement.query_map(
+                params![tenant_id.as_str(), workspace_id.as_str(), i64::from(limit)],
+                map_row,
+            )?
+        };
+
+        let mut records = Vec::new();
+        for row in rows {
+            let (session_id_str, provider, raw_record) = row?;
+            let session_id =
+                SessionId::new(session_id_str).map_err(|_| SessionError::CorruptRecord)?;
+            let scope = MemoryScope::new(
+                tenant_id.clone(),
+                workspace_id.clone(),
+                session_id,
+                provider,
+            )
+            .map_err(|_| SessionError::CorruptRecord)?;
+            let record = decode_memory_record(scope, raw_record)?;
+            records.push(record);
+        }
+        Ok(records)
+    }
+
+    /// Prunes inactive sessions older than `older_than_seconds`.
+    /// If `dry_run` is true, returns candidate sessions without executing deletion.
+    pub fn prune_sessions(
+        &self,
+        principal_id: &PrincipalId,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        older_than_seconds: u64,
+        dry_run: bool,
+    ) -> Result<pandora_types::SessionPruneReport, SessionError> {
+        let connection = self.lock()?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let cutoff = now.saturating_sub(older_than_seconds);
+
+        let mut statement = connection.prepare(
+            "SELECT id FROM sessions
+              WHERE principal_id = ?1
+                AND tenant_id = ?2
+                AND workspace_id = ?3
+                AND created_at < ?4
+              ORDER BY created_at ASC",
+        )?;
+        let rows = statement.query_map(
+            params![
+                principal_id.as_str(),
+                tenant_id.as_str(),
+                workspace_id.as_str(),
+                cutoff as i64,
+            ],
+            |row| row.get::<_, String>(0),
+        )?;
+
+        let mut candidate_ids = Vec::new();
+        for r in rows {
+            candidate_ids.push(r?);
+        }
+
+        let sessions_examined: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM sessions
+              WHERE principal_id = ?1 AND tenant_id = ?2 AND workspace_id = ?3",
+            params![
+                principal_id.as_str(),
+                tenant_id.as_str(),
+                workspace_id.as_str(),
+            ],
+            |row| row.get(0),
+        )?;
+
+        let mut events_reclaimed = 0usize;
+        for session_id in &candidate_ids {
+            let mut ev_stmt =
+                connection.prepare("SELECT COUNT(*) FROM session_events WHERE session_id = ?1")?;
+            let ev_count: i64 = ev_stmt.query_row([session_id], |row| row.get(0))?;
+            events_reclaimed += ev_count as usize;
+        }
+
+        let pruned_count = candidate_ids.len();
+
+        if !dry_run && !candidate_ids.is_empty() {
+            let tx = connection.unchecked_transaction()?;
+            for session_id in &candidate_ids {
+                tx.execute("DELETE FROM sessions WHERE id = ?1", [session_id])?;
+            }
+            tx.commit()?;
+        }
+
+        Ok(pandora_types::SessionPruneReport {
+            older_than_seconds,
+            sessions_examined: sessions_examined as usize,
+            sessions_pruned: if dry_run { 0 } else { pruned_count },
+            events_reclaimed: if dry_run { 0 } else { events_reclaimed },
+            dry_run,
+            pruned_session_ids: candidate_ids,
+        })
+    }
+
+    /// Queries SQLite storage metrics: total pages, free pages, page size, total size, reclaimable bytes/pct.
+    pub fn storage_stats(&self) -> Result<pandora_types::StorageStats, SessionError> {
+        let connection = self.lock()?;
+        let page_count: i64 = connection.query_row("PRAGMA page_count;", [], |row| row.get(0))?;
+        let freelist_count: i64 =
+            connection.query_row("PRAGMA freelist_count;", [], |row| row.get(0))?;
+        let page_size: i64 = connection.query_row("PRAGMA page_size;", [], |row| row.get(0))?;
+
+        let total_pages = page_count.max(0) as u64;
+        let free_pages = freelist_count.max(0) as u64;
+        let page_size_bytes = page_size.max(0) as u64;
+        let total_size_bytes = total_pages * page_size_bytes;
+        let reclaimable_bytes = free_pages * page_size_bytes;
+        let reclaimable_percent = if total_pages > 0 {
+            (free_pages as f64 / total_pages as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        Ok(pandora_types::StorageStats {
+            total_pages,
+            free_pages,
+            page_size_bytes,
+            total_size_bytes,
+            reclaimable_bytes,
+            reclaimable_percent,
+        })
+    }
+
+    /// Runs VACUUM on the session SQLite database if reclaimable percentage meets or exceeds threshold.
+    pub fn vacuum_database(
+        &self,
+        threshold_percent: Option<f64>,
+    ) -> Result<pandora_types::VacuumReport, SessionError> {
+        let pre_stats = self.storage_stats()?;
+        let threshold = threshold_percent.unwrap_or(25.0);
+
+        if pre_stats.reclaimable_percent >= threshold || threshold == 0.0 {
+            {
+                let connection = self.lock()?;
+                connection.execute_batch("VACUUM;")?;
+            }
+            let post_stats = self.storage_stats()?;
+            let reclaimed_bytes = pre_stats
+                .total_size_bytes
+                .saturating_sub(post_stats.total_size_bytes);
+
+            Ok(pandora_types::VacuumReport {
+                pre_size_bytes: pre_stats.total_size_bytes,
+                post_size_bytes: post_stats.total_size_bytes,
+                reclaimed_bytes,
+                pre_reclaimable_pct: pre_stats.reclaimable_percent,
+                post_reclaimable_pct: post_stats.reclaimable_percent,
+                vacuum_executed: true,
+                reason: format!(
+                    "Reclaimable space ({:.1}%) exceeded threshold ({:.1}%)",
+                    pre_stats.reclaimable_percent, threshold
+                ),
+            })
+        } else {
+            Ok(pandora_types::VacuumReport {
+                pre_size_bytes: pre_stats.total_size_bytes,
+                post_size_bytes: pre_stats.total_size_bytes,
+                reclaimed_bytes: 0,
+                pre_reclaimable_pct: pre_stats.reclaimable_percent,
+                post_reclaimable_pct: pre_stats.reclaimable_percent,
+                vacuum_executed: false,
+                reason: format!(
+                    "Reclaimable space ({:.1}%) did not meet threshold ({:.1}%)",
+                    pre_stats.reclaimable_percent, threshold
+                ),
+            })
+        }
+    }
+
+    /// Persists an active PKCE authorization session awaiting user code exchange.
+    pub fn save_connector_session(
+        &self,
+        session: &pandora_types::ConnectorSession,
+    ) -> Result<(), SessionError> {
+        let connection = self.lock()?;
+        let pkce_json = serde_json::to_string(&session.pkce)?;
+        let scopes_json = serde_json::to_string(&session.scopes)?;
+        connection.execute(
+            "INSERT OR REPLACE INTO connector_sessions (
+                session_id, provider, client_id, authorization_url, pkce_json, redirect_uri, scopes_json, created_at, expires_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                session.session_id.as_str(),
+                session.provider.as_str(),
+                session.client_id.as_str(),
+                session.authorization_url.as_str(),
+                pkce_json.as_str(),
+                session.redirect_uri.as_str(),
+                scopes_json.as_str(),
+                session.created_at as i64,
+                session.expires_at as i64,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieves an active PKCE authorization session by ID.
+    pub fn get_connector_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<pandora_types::ConnectorSession>, SessionError> {
+        let connection = self.lock()?;
+        let mut stmt = connection.prepare(
+            "SELECT session_id, provider, client_id, authorization_url, pkce_json, redirect_uri, scopes_json, created_at, expires_at
+             FROM connector_sessions WHERE session_id = ?1",
+        )?;
+        let mut rows = stmt.query_map([session_id], |row| {
+            let s_id: String = row.get(0)?;
+            let prov_str: String = row.get(1)?;
+            let client_id: String = row.get(2)?;
+            let auth_url: String = row.get(3)?;
+            let pkce_raw: String = row.get(4)?;
+            let redirect_uri: String = row.get(5)?;
+            let scopes_raw: String = row.get(6)?;
+            let created_at: i64 = row.get(7)?;
+            let expires_at: i64 = row.get(8)?;
+
+            let provider: pandora_types::ConnectorProvider = prov_str
+                .parse()
+                .unwrap_or(pandora_types::ConnectorProvider::Custom);
+            let pkce: pandora_types::PkceChallenge =
+                serde_json::from_str(&pkce_raw).unwrap_or(pandora_types::PkceChallenge {
+                    code_verifier: String::new(),
+                    code_challenge: String::new(),
+                    code_challenge_method: "S256".to_string(),
+                    state: String::new(),
+                });
+            let scopes: Vec<String> = serde_json::from_str(&scopes_raw).unwrap_or_default();
+
+            Ok(pandora_types::ConnectorSession {
+                session_id: s_id,
+                provider,
+                client_id,
+                authorization_url: auth_url,
+                pkce,
+                redirect_uri,
+                scopes,
+                created_at: created_at as u64,
+                expires_at: expires_at as u64,
+            })
+        })?;
+
+        if let Some(first) = rows.next() {
+            Ok(Some(first?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Deletes an active PKCE authorization session.
+    pub fn delete_connector_session(&self, session_id: &str) -> Result<bool, SessionError> {
+        let connection = self.lock()?;
+        let rows = connection.execute(
+            "DELETE FROM connector_sessions WHERE session_id = ?1",
+            params![session_id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    /// Persists an authorized connector token record.
+    pub fn save_connector_token(
+        &self,
+        token: &pandora_types::ConnectorTokenRecord,
+    ) -> Result<(), SessionError> {
+        let connection = self.lock()?;
+        let scopes_json = serde_json::to_string(&token.scopes)?;
+        connection.execute(
+            "INSERT OR REPLACE INTO connector_tokens (
+                connector_id, provider, token_masked, token_type, scopes_json, secret_key_id, created_at, expires_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                token.connector_id.as_str(),
+                token.provider.as_str(),
+                token.token_masked.as_str(),
+                token.token_type.as_str(),
+                scopes_json.as_str(),
+                token.secret_key_id.as_str(),
+                token.created_at as i64,
+                token.expires_at.map(|e| e as i64),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Lists all authorized connector token records.
+    pub fn list_connector_tokens(
+        &self,
+    ) -> Result<Vec<pandora_types::ConnectorTokenRecord>, SessionError> {
+        let connection = self.lock()?;
+        let mut stmt = connection.prepare(
+            "SELECT connector_id, provider, token_masked, token_type, scopes_json, secret_key_id, created_at, expires_at
+             FROM connector_tokens ORDER BY created_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let conn_id: String = row.get(0)?;
+            let prov_str: String = row.get(1)?;
+            let token_masked: String = row.get(2)?;
+            let token_type: String = row.get(3)?;
+            let scopes_raw: String = row.get(4)?;
+            let secret_key_id: String = row.get(5)?;
+            let created_at: i64 = row.get(6)?;
+            let expires_at: Option<i64> = row.get(7)?;
+
+            let provider: pandora_types::ConnectorProvider = prov_str
+                .parse()
+                .unwrap_or(pandora_types::ConnectorProvider::Custom);
+            let scopes: Vec<String> = serde_json::from_str(&scopes_raw).unwrap_or_default();
+
+            Ok(pandora_types::ConnectorTokenRecord {
+                connector_id: conn_id,
+                provider,
+                token_masked,
+                token_type,
+                scopes,
+                secret_key_id,
+                created_at: created_at as u64,
+                expires_at: expires_at.map(|e| e as u64),
+            })
+        })?;
+
+        let mut list = Vec::new();
+        for row in rows {
+            list.push(row?);
+        }
+        Ok(list)
+    }
+
+    /// Gets a single authorized connector token record by ID.
+    pub fn get_connector_token(
+        &self,
+        connector_id: &str,
+    ) -> Result<Option<pandora_types::ConnectorTokenRecord>, SessionError> {
+        let connection = self.lock()?;
+        let mut stmt = connection.prepare(
+            "SELECT connector_id, provider, token_masked, token_type, scopes_json, secret_key_id, created_at, expires_at
+             FROM connector_tokens WHERE connector_id = ?1",
+        )?;
+        let mut rows = stmt.query_map([connector_id], |row| {
+            let conn_id: String = row.get(0)?;
+            let prov_str: String = row.get(1)?;
+            let token_masked: String = row.get(2)?;
+            let token_type: String = row.get(3)?;
+            let scopes_raw: String = row.get(4)?;
+            let secret_key_id: String = row.get(5)?;
+            let created_at: i64 = row.get(6)?;
+            let expires_at: Option<i64> = row.get(7)?;
+
+            let provider: pandora_types::ConnectorProvider = prov_str
+                .parse()
+                .unwrap_or(pandora_types::ConnectorProvider::Custom);
+            let scopes: Vec<String> = serde_json::from_str(&scopes_raw).unwrap_or_default();
+
+            Ok(pandora_types::ConnectorTokenRecord {
+                connector_id: conn_id,
+                provider,
+                token_masked,
+                token_type,
+                scopes,
+                secret_key_id,
+                created_at: created_at as u64,
+                expires_at: expires_at.map(|e| e as u64),
+            })
+        })?;
+
+        if let Some(first) = rows.next() {
+            Ok(Some(first?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Deletes an authorized connector token record.
+    pub fn delete_connector_token(&self, connector_id: &str) -> Result<bool, SessionError> {
+        let connection = self.lock()?;
+        let rows = connection.execute(
+            "DELETE FROM connector_tokens WHERE connector_id = ?1",
+            params![connector_id],
+        )?;
+        Ok(rows > 0)
     }
 
     fn lock(&self) -> Result<MutexGuard<'_, Connection>, SessionError> {
@@ -1460,7 +2691,231 @@ fn migrate(connection: &mut Connection) -> Result<(), SessionError> {
              ALTER TABLE memory_records ADD COLUMN evidence_ids TEXT NOT NULL DEFAULT '[]';
              INSERT INTO schema_migrations (version, applied_at) VALUES (8, strftime('%s', 'now'));",
         )?;
+        version = 8;
     }
+    if version == 8 {
+        transaction.execute_batch(
+            "ALTER TABLE memory_records ADD COLUMN intent TEXT NOT NULL DEFAULT 'coding';
+             UPDATE memory_records SET intent = CASE
+                 WHEN kind IN ('lesson', 'benchmark') THEN 'procedure'
+                 WHEN kind = 'lineage' THEN 'repo'
+                 WHEN kind = 'policy_decision' THEN 'user'
+                 ELSE 'coding'
+             END;
+             CREATE INDEX memory_records_intent_idx
+                 ON memory_records(session_id, provider, tier, intent, created_at);
+             INSERT INTO schema_migrations (version, applied_at) VALUES (9, strftime('%s', 'now'));",
+        )?;
+        version = 9;
+    }
+    if version == 9 {
+        transaction.execute_batch(
+            "CREATE TABLE memory_records_v10 (
+                 session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                 provider TEXT NOT NULL,
+                 memory_id TEXT NOT NULL,
+                 tier TEXT NOT NULL CHECK (tier IN ('l0', 'l1', 'l2', 'l3', 'l4')),
+                 kind TEXT NOT NULL CHECK (kind IN (
+                     'trace', 'execution_evidence', 'decision', 'failure', 'benchmark',
+                     'lesson', 'lineage', 'policy_decision', 'replacement', 'sop', 'session_archive'
+                 )),
+                 classification TEXT NOT NULL CHECK (
+                     classification IN ('public', 'internal', 'sensitive')
+                 ),
+                 summary TEXT NOT NULL,
+                 created_at INTEGER NOT NULL CHECK (created_at >= 0),
+                 provenance TEXT NOT NULL,
+                 approval_id TEXT,
+                 approver TEXT,
+                 origin TEXT NOT NULL DEFAULT 'explicit',
+                 evidence_ids TEXT NOT NULL DEFAULT '[]',
+                 intent TEXT NOT NULL DEFAULT 'coding',
+                 PRIMARY KEY (session_id, provider, memory_id, tier),
+                 CHECK (
+                     (tier != 'l2' AND approval_id IS NULL AND approver IS NULL)
+                     OR (tier = 'l2' AND approval_id IS NOT NULL AND approver IS NOT NULL)
+                 )
+             );
+             INSERT INTO memory_records_v10 (
+                 session_id, provider, memory_id, tier, kind, classification,
+                 summary, created_at, provenance, approval_id, approver,
+                 origin, evidence_ids, intent
+             )
+             SELECT session_id, provider, memory_id, tier, kind, classification,
+                    summary, created_at, provenance, approval_id, approver,
+                    origin, evidence_ids, intent
+             FROM memory_records;
+             DROP TABLE memory_records;
+             ALTER TABLE memory_records_v10 RENAME TO memory_records;
+             CREATE INDEX memory_records_scope_idx
+                 ON memory_records(session_id, provider, tier, created_at, memory_id);
+             CREATE INDEX memory_records_intent_idx
+                 ON memory_records(session_id, provider, tier, intent, created_at);
+
+             CREATE TABLE IF NOT EXISTS memory_audit (
+                 sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                 session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                 provider TEXT NOT NULL,
+                 memory_id TEXT NOT NULL,
+                 tier TEXT NOT NULL CHECK (tier IN ('l1', 'l2')),
+                 action TEXT NOT NULL CHECK (action IN ('added', 'promoted', 'revoked')),
+                 recorded_at INTEGER NOT NULL CHECK (recorded_at >= 0),
+                 approval_id TEXT
+             );
+
+             CREATE TABLE memory_audit_v10 (
+                 sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                 session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                 provider TEXT NOT NULL,
+                 memory_id TEXT NOT NULL,
+                 tier TEXT NOT NULL CHECK (tier IN ('l0', 'l1', 'l2', 'l3', 'l4')),
+                 action TEXT NOT NULL CHECK (action IN ('added', 'promoted', 'revoked')),
+                 recorded_at INTEGER NOT NULL CHECK (recorded_at >= 0),
+                 approval_id TEXT
+             );
+             INSERT INTO memory_audit_v10 (
+                 sequence, session_id, provider, memory_id, tier, action, recorded_at, approval_id
+             )
+             SELECT sequence, session_id, provider, memory_id, tier, action, recorded_at, approval_id
+             FROM memory_audit;
+             DROP TABLE memory_audit;
+             ALTER TABLE memory_audit_v10 RENAME TO memory_audit;
+             CREATE INDEX memory_audit_scope_idx
+                 ON memory_audit(session_id, provider, sequence);
+
+             CREATE TABLE IF NOT EXISTS memory_sops (
+                 sop_id TEXT NOT NULL,
+                 tenant_id TEXT NOT NULL,
+                 workspace_id TEXT NOT NULL,
+                 name TEXT NOT NULL,
+                 intent TEXT NOT NULL,
+                 definition_json TEXT NOT NULL,
+                 success_count INTEGER NOT NULL DEFAULT 1,
+                 created_at INTEGER NOT NULL,
+                 updated_at INTEGER NOT NULL,
+                 PRIMARY KEY (tenant_id, workspace_id, sop_id)
+             );
+             CREATE INDEX IF NOT EXISTS idx_memory_sops_intent ON memory_sops (tenant_id, workspace_id, intent);
+
+             CREATE TABLE IF NOT EXISTS memory_archives (
+                 archive_id TEXT NOT NULL,
+                 tenant_id TEXT NOT NULL,
+                 workspace_id TEXT NOT NULL,
+                 session_id TEXT NOT NULL,
+                 summary TEXT NOT NULL,
+                 diff_stats TEXT NOT NULL,
+                 receipt_digest TEXT NOT NULL,
+                 created_at INTEGER NOT NULL,
+                 PRIMARY KEY (tenant_id, workspace_id, archive_id)
+             );
+             CREATE INDEX IF NOT EXISTS idx_memory_archives_created ON memory_archives (tenant_id, workspace_id, created_at);
+
+             INSERT INTO schema_migrations (version, applied_at) VALUES (10, strftime('%s', 'now'));",
+        )?;
+        version = 10;
+    }
+    if version < 11 {
+        transaction.execute_batch(
+            "CREATE TABLE IF NOT EXISTS session_journal_steps (
+                 session_id TEXT NOT NULL,
+                 step_index INTEGER NOT NULL,
+                 step_json TEXT NOT NULL,
+                 digest TEXT NOT NULL,
+                 created_at INTEGER NOT NULL,
+                 PRIMARY KEY (session_id, step_index)
+             );
+             CREATE INDEX IF NOT EXISTS idx_journal_steps_session
+                 ON session_journal_steps (session_id, step_index);
+
+             CREATE TABLE IF NOT EXISTS mesh_peers (
+                 peer_id TEXT PRIMARY KEY NOT NULL,
+                 address TEXT NOT NULL,
+                 public_key TEXT NOT NULL,
+                 status TEXT NOT NULL,
+                 last_seen INTEGER NOT NULL,
+                 trust_score REAL NOT NULL
+             );
+
+             CREATE TABLE IF NOT EXISTS mesh_capsules (
+                 capsule_id TEXT PRIMARY KEY NOT NULL,
+                 package_json TEXT NOT NULL,
+                 sha256_digest TEXT NOT NULL,
+                 author_public_key TEXT NOT NULL,
+                 author_signature TEXT NOT NULL,
+                 admitted_at INTEGER NOT NULL
+             );
+
+             INSERT INTO schema_migrations (version, applied_at) VALUES (11, strftime('%s', 'now'));",
+        )?;
+        version = 11;
+    }
+    if version < 12 {
+        transaction.execute_batch(
+            "CREATE TABLE IF NOT EXISTS bot_personas (
+                 handle TEXT PRIMARY KEY NOT NULL,
+                 display_name TEXT NOT NULL,
+                 role TEXT NOT NULL,
+                 system_prompt TEXT NOT NULL,
+                 model TEXT,
+                 avatar_seed TEXT NOT NULL,
+                 capabilities_json TEXT NOT NULL,
+                 created_at INTEGER NOT NULL,
+                 updated_at INTEGER NOT NULL
+             );
+
+             CREATE TABLE IF NOT EXISTS peer_messages (
+                 message_id TEXT PRIMARY KEY NOT NULL,
+                 thread_id TEXT NOT NULL,
+                 from_handle TEXT NOT NULL,
+                 to_handle TEXT NOT NULL,
+                 subject TEXT NOT NULL,
+                 body TEXT NOT NULL,
+                 payload_json TEXT,
+                 status TEXT NOT NULL,
+                 created_at INTEGER NOT NULL,
+                 delivered_at INTEGER
+             );
+             CREATE INDEX IF NOT EXISTS idx_peer_messages_thread
+                 ON peer_messages (thread_id);
+             CREATE INDEX IF NOT EXISTS idx_peer_messages_recipient
+                 ON peer_messages (to_handle, status);
+
+             INSERT INTO schema_migrations (version, applied_at) VALUES (12, strftime('%s', 'now'));",
+        )?;
+        version = 12;
+    }
+    if version < 13 {
+        transaction.execute_batch(
+            "CREATE TABLE IF NOT EXISTS connector_sessions (
+                 session_id TEXT PRIMARY KEY NOT NULL,
+                 provider TEXT NOT NULL,
+                 client_id TEXT NOT NULL,
+                 authorization_url TEXT NOT NULL,
+                 pkce_json TEXT NOT NULL,
+                 redirect_uri TEXT NOT NULL,
+                 scopes_json TEXT NOT NULL,
+                 created_at INTEGER NOT NULL,
+                 expires_at INTEGER NOT NULL
+             );
+
+             CREATE TABLE IF NOT EXISTS connector_tokens (
+                 connector_id TEXT PRIMARY KEY NOT NULL,
+                 provider TEXT NOT NULL,
+                 token_masked TEXT NOT NULL,
+                 token_type TEXT NOT NULL,
+                 scopes_json TEXT NOT NULL,
+                 secret_key_id TEXT NOT NULL,
+                 created_at INTEGER NOT NULL,
+                 expires_at INTEGER
+             );
+             CREATE INDEX IF NOT EXISTS idx_connector_tokens_provider
+                 ON connector_tokens (provider);
+
+             INSERT INTO schema_migrations (version, applied_at) VALUES (13, strftime('%s', 'now'));",
+        )?;
+        version = 13;
+    }
+    let _ = version;
     transaction.commit()?;
     Ok(())
 }
@@ -1477,6 +2932,7 @@ type RawMemoryRecord = (
     Option<String>,
     String,
     String,
+    Option<String>,
 );
 
 fn insert_memory_record(
@@ -1488,8 +2944,8 @@ fn insert_memory_record(
     let result = connection.execute(
         "INSERT INTO memory_records (
              session_id, provider, memory_id, tier, kind, classification,
-             summary, created_at, provenance, approval_id, approver, origin, evidence_ids
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             summary, created_at, provenance, approval_id, approver, origin, evidence_ids, intent
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             record.scope().session_id().as_str(),
             record.scope().provider(),
@@ -1504,6 +2960,7 @@ fn insert_memory_record(
             approver,
             record.origin().as_str(),
             serde_json::to_string(record.evidence_ids()).map_err(SessionError::Serialization)?,
+            record.intent().as_str(),
         ],
     );
     match result {
@@ -1571,7 +3028,7 @@ fn load_memory_record(
     let raw = connection
         .query_row(
             "SELECT tier, kind, classification, summary, provenance, created_at,
-                    memory_id, approval_id, approver, origin, evidence_ids
+                    memory_id, approval_id, approver, origin, evidence_ids, intent
              FROM memory_records
              WHERE session_id = ?1 AND provider = ?2 AND memory_id = ?3 AND tier = ?4",
             params![
@@ -1595,7 +3052,7 @@ fn load_memory_records(
 ) -> Result<Vec<MemoryRecord>, SessionError> {
     let mut statement = connection.prepare(
         "SELECT tier, kind, classification, summary, provenance, created_at,
-                memory_id, approval_id, approver, origin, evidence_ids
+                memory_id, approval_id, approver, origin, evidence_ids, intent
          FROM memory_records
          WHERE session_id = ?1 AND provider = ?2 AND tier = ?3
            AND NOT EXISTS (
@@ -1623,6 +3080,44 @@ fn load_memory_records(
     .collect()
 }
 
+fn load_memory_records_by_intent(
+    connection: &Connection,
+    scope: &MemoryScope,
+    tier: MemoryTier,
+    intent: MemoryIntent,
+    limit: u16,
+) -> Result<Vec<MemoryRecord>, SessionError> {
+    let mut statement = connection.prepare(
+        "SELECT tier, kind, classification, summary, provenance, created_at,
+                memory_id, approval_id, approver, origin, evidence_ids, intent
+         FROM memory_records
+         WHERE session_id = ?1 AND provider = ?2 AND tier = ?3 AND intent = ?4
+           AND NOT EXISTS (
+               SELECT 1 FROM memory_revocations
+               WHERE memory_revocations.session_id = memory_records.session_id
+                 AND memory_revocations.provider = memory_records.provider
+                 AND memory_revocations.memory_id = memory_records.memory_id
+           )
+         ORDER BY created_at DESC, memory_id DESC
+         LIMIT ?5",
+    )?;
+    let rows = statement.query_map(
+        params![
+            scope.session_id().as_str(),
+            scope.provider(),
+            tier.as_str(),
+            intent.as_str(),
+            i64::from(limit),
+        ],
+        decode_memory_row,
+    )?;
+    rows.map(|row| {
+        row.map_err(SessionError::Database)
+            .and_then(|raw| decode_memory_record(scope.clone(), raw))
+    })
+    .collect()
+}
+
 fn load_memory_records_by_id(
     connection: &Connection,
     scope: &MemoryScope,
@@ -1630,7 +3125,7 @@ fn load_memory_records_by_id(
 ) -> Result<Vec<MemoryRecord>, SessionError> {
     let mut statement = connection.prepare(
         "SELECT tier, kind, classification, summary, provenance, created_at,
-                memory_id, approval_id, approver, origin, evidence_ids
+                memory_id, approval_id, approver, origin, evidence_ids, intent
          FROM memory_records
          WHERE session_id = ?1 AND provider = ?2 AND memory_id = ?3
          ORDER BY tier ASC",
@@ -1663,6 +3158,7 @@ fn decode_memory_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawMemoryRecor
         row.get(8)?,
         row.get(9)?,
         row.get(10)?,
+        row.get(11)?,
     ))
 }
 
@@ -1682,6 +3178,7 @@ fn decode_memory_record(
         approver,
         origin,
         evidence_ids,
+        intent,
     ) = raw;
     let tier = parse_memory_tier(&tier)?;
     let kind = parse_memory_kind(&kind)?;
@@ -1692,24 +3189,24 @@ fn decode_memory_record(
     let origin = parse_memory_origin(&origin)?;
     let evidence_ids =
         serde_json::from_str(&evidence_ids).map_err(|_| SessionError::CorruptRecord)?;
-    let candidate = MemoryRecord::new_l1_with_origin(
-        memory_id,
-        kind,
-        scope,
-        summary,
-        classification,
-        created_at,
-        provenance,
-        origin,
-        evidence_ids,
-    )
-    .map_err(|_| SessionError::CorruptRecord)?;
-    match tier {
+    let mut record = match tier {
+        MemoryTier::L0 => return Err(SessionError::CorruptRecord),
         MemoryTier::L1 => {
             if approval_id.is_some() || approver.is_some() {
                 return Err(SessionError::CorruptRecord);
             }
-            Ok(candidate)
+            MemoryRecord::new_l1_with_origin(
+                memory_id,
+                kind,
+                scope,
+                summary,
+                classification,
+                created_at,
+                provenance,
+                origin,
+                evidence_ids,
+            )
+            .map_err(|_| SessionError::CorruptRecord)?
         }
         MemoryTier::L2 => {
             let approval = MemoryApproval::new(
@@ -1717,11 +3214,55 @@ fn decode_memory_record(
                 approver.ok_or(SessionError::CorruptRecord)?,
             )
             .map_err(|_| SessionError::CorruptRecord)?;
+            let candidate = MemoryRecord::new_l1_with_origin(
+                memory_id,
+                kind,
+                scope,
+                summary,
+                classification,
+                created_at,
+                provenance,
+                origin,
+                evidence_ids,
+            )
+            .map_err(|_| SessionError::CorruptRecord)?;
             MemoryRecord::promote_l2(candidate, approval, created_at)
-                .map_err(|_| SessionError::CorruptRecord)
+                .map_err(|_| SessionError::CorruptRecord)?
         }
-        MemoryTier::L0 => Err(SessionError::CorruptRecord),
+        MemoryTier::L3 => {
+            if approval_id.is_some() || approver.is_some() {
+                return Err(SessionError::CorruptRecord);
+            }
+            MemoryRecord::new_l3_sop(
+                memory_id,
+                scope,
+                summary,
+                classification,
+                created_at,
+                provenance,
+            )
+            .map_err(|_| SessionError::CorruptRecord)?
+        }
+        MemoryTier::L4 => {
+            if approval_id.is_some() || approver.is_some() {
+                return Err(SessionError::CorruptRecord);
+            }
+            MemoryRecord::new_l4_archive(
+                memory_id,
+                scope,
+                summary,
+                classification,
+                created_at,
+                provenance,
+            )
+            .map_err(|_| SessionError::CorruptRecord)?
+        }
+    };
+    if let Some(intent_str) = intent {
+        let parsed_intent = parse_memory_intent(&intent_str)?;
+        record = record.with_intent(parsed_intent);
     }
+    Ok(record)
 }
 
 fn load_memory_audit(
@@ -1768,8 +3309,11 @@ fn load_memory_audit(
 
 fn parse_memory_tier(value: &str) -> Result<MemoryTier, SessionError> {
     match value {
+        "l0" => Ok(MemoryTier::L0),
         "l1" => Ok(MemoryTier::L1),
         "l2" => Ok(MemoryTier::L2),
+        "l3" => Ok(MemoryTier::L3),
+        "l4" => Ok(MemoryTier::L4),
         _ => Err(SessionError::CorruptRecord),
     }
 }
@@ -1784,6 +3328,7 @@ fn parse_memory_origin(value: &str) -> Result<MemoryOrigin, SessionError> {
 
 fn parse_memory_kind(value: &str) -> Result<MemoryKind, SessionError> {
     match value {
+        "trace" => Ok(MemoryKind::Trace),
         "execution_evidence" => Ok(MemoryKind::ExecutionEvidence),
         "decision" => Ok(MemoryKind::Decision),
         "failure" => Ok(MemoryKind::Failure),
@@ -1792,6 +3337,18 @@ fn parse_memory_kind(value: &str) -> Result<MemoryKind, SessionError> {
         "lineage" => Ok(MemoryKind::Lineage),
         "policy_decision" => Ok(MemoryKind::PolicyDecision),
         "replacement" => Ok(MemoryKind::Replacement),
+        "sop" => Ok(MemoryKind::Sop),
+        "session_archive" => Ok(MemoryKind::SessionArchive),
+        _ => Err(SessionError::CorruptRecord),
+    }
+}
+
+fn parse_memory_intent(value: &str) -> Result<MemoryIntent, SessionError> {
+    match value {
+        "repo" => Ok(MemoryIntent::Repo),
+        "procedure" => Ok(MemoryIntent::Procedure),
+        "coding" => Ok(MemoryIntent::Coding),
+        "user" => Ok(MemoryIntent::User),
         _ => Err(SessionError::CorruptRecord),
     }
 }
@@ -2818,6 +4375,544 @@ mod tests {
             ),
             Err(SessionError::AgentTranscriptTooLarge)
         ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn memory_recall_by_intent_filters_and_persists_intent() {
+        let (root, store, session, scope) = memory_fixture("pandora-memory-intent-test");
+        let coding_record = MemoryRecord::new_l1(
+            "coding-mem-1",
+            MemoryKind::ExecutionEvidence,
+            scope.clone(),
+            "fixed buffer bug",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(10),
+            "trace:1",
+        )
+        .unwrap()
+        .with_intent(MemoryIntent::Coding);
+
+        let procedure_record = MemoryRecord::new_l1(
+            "procedure-mem-1",
+            MemoryKind::Lesson,
+            scope.clone(),
+            "always verify with tests",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(11),
+            "trace:2",
+        )
+        .unwrap()
+        .with_intent(MemoryIntent::Procedure);
+
+        let repo_record = MemoryRecord::new_l1(
+            "repo-mem-1",
+            MemoryKind::Lineage,
+            scope.clone(),
+            "repository architecture invariant",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(12),
+            "trace:3",
+        )
+        .unwrap()
+        .with_intent(MemoryIntent::Repo);
+
+        store
+            .record_memory(session.principal_id(), &coding_record)
+            .unwrap();
+        store
+            .record_memory(session.principal_id(), &procedure_record)
+            .unwrap();
+        store
+            .record_memory(session.principal_id(), &repo_record)
+            .unwrap();
+
+        let coding_memories = store
+            .recall_memory_by_intent(
+                session.id(),
+                session.principal_id(),
+                session.tenant_id(),
+                session.workspace_id(),
+                scope.provider(),
+                MemoryTier::L1,
+                MemoryIntent::Coding,
+                10,
+            )
+            .unwrap();
+        assert_eq!(coding_memories.len(), 1);
+        assert_eq!(coding_memories[0].id().as_str(), "coding-mem-1");
+        assert_eq!(coding_memories[0].intent(), MemoryIntent::Coding);
+
+        let procedure_memories = store
+            .recall_memory_by_intent(
+                session.id(),
+                session.principal_id(),
+                session.tenant_id(),
+                session.workspace_id(),
+                scope.provider(),
+                MemoryTier::L1,
+                MemoryIntent::Procedure,
+                10,
+            )
+            .unwrap();
+        assert_eq!(procedure_memories.len(), 1);
+        assert_eq!(procedure_memories[0].id().as_str(), "procedure-mem-1");
+        assert_eq!(procedure_memories[0].intent(), MemoryIntent::Procedure);
+
+        let repo_memories = store
+            .recall_memory_by_intent(
+                session.id(),
+                session.principal_id(),
+                session.tenant_id(),
+                session.workspace_id(),
+                scope.provider(),
+                MemoryTier::L1,
+                MemoryIntent::Repo,
+                10,
+            )
+            .unwrap();
+        assert_eq!(repo_memories.len(), 1);
+        assert_eq!(repo_memories[0].id().as_str(), "repo-mem-1");
+        assert_eq!(repo_memories[0].intent(), MemoryIntent::Repo);
+
+        let user_memories = store
+            .recall_memory_by_intent(
+                session.id(),
+                session.principal_id(),
+                session.tenant_id(),
+                session.workspace_id(),
+                scope.provider(),
+                MemoryTier::L1,
+                MemoryIntent::User,
+                10,
+            )
+            .unwrap();
+        assert!(user_memories.is_empty());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn schema_eight_migrates_to_nine_with_intent_backfill_and_index() {
+        let root = crate::test_support::new_temp_dir("pandora-schema-9-migration-test").unwrap();
+        let path = root.join("sessions.sqlite3");
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute_batch(
+                    "PRAGMA foreign_keys = ON;
+                     CREATE TABLE schema_migrations (
+                         version INTEGER PRIMARY KEY,
+                         applied_at INTEGER NOT NULL
+                     );
+                     INSERT INTO schema_migrations (version, applied_at) VALUES (8, 1);
+                     CREATE TABLE sessions (
+                         id TEXT PRIMARY KEY NOT NULL,
+                         principal_id TEXT NOT NULL,
+                         tenant_id TEXT NOT NULL,
+                         workspace_id TEXT NOT NULL,
+                         created_at INTEGER NOT NULL CHECK (created_at >= 0)
+                     );
+                     CREATE TABLE memory_records (
+                         session_id TEXT NOT NULL,
+                         provider TEXT NOT NULL,
+                         memory_id TEXT NOT NULL,
+                         tier TEXT NOT NULL CHECK (tier IN ('l1', 'l2')),
+                         kind TEXT NOT NULL,
+                         classification TEXT NOT NULL,
+                         summary TEXT NOT NULL,
+                         created_at INTEGER NOT NULL,
+                         provenance TEXT NOT NULL,
+                         approval_id TEXT,
+                         approver TEXT,
+                         origin TEXT NOT NULL,
+                         evidence_ids TEXT NOT NULL DEFAULT '[]',
+                         PRIMARY KEY (session_id, provider, memory_id, tier)
+                     );
+                      CREATE TABLE memory_revocations (
+                          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                          provider TEXT NOT NULL,
+                          memory_id TEXT NOT NULL,
+                          revoked_at INTEGER NOT NULL CHECK (revoked_at >= 0),
+                          PRIMARY KEY (session_id, provider, memory_id)
+                      );
+                     INSERT INTO sessions VALUES ('s1', 'p1', 't1', 'w1', 1);
+                     INSERT INTO memory_records VALUES
+                         ('s1', 'prov1', 'm1', 'l1', 'lesson', 'internal', 'lesson sum', 10, 'prov', null, null, 'explicit', '[]'),
+                         ('s1', 'prov1', 'm2', 'l1', 'lineage', 'internal', 'lineage sum', 11, 'prov', null, null, 'explicit', '[]'),
+                         ('s1', 'prov1', 'm3', 'l1', 'execution_evidence', 'internal', 'exec sum', 12, 'prov', null, null, 'explicit', '[]'),
+                         ('s1', 'prov1', 'm4', 'l1', 'policy_decision', 'internal', 'policy sum', 13, 'prov', null, null, 'explicit', '[]'),
+                         ('s1', 'prov1', 'm5', 'l1', 'decision', 'internal', 'decision sum', 14, 'prov', null, null, 'explicit', '[]'),
+                         ('s1', 'prov1', 'm6', 'l1', 'replacement', 'internal', 'replacement sum', 15, 'prov', null, null, 'explicit', '[]'),
+                         ('s1', 'prov1', 'm7', 'l1', 'benchmark', 'internal', 'benchmark sum', 16, 'prov', null, null, 'explicit', '[]');",
+                )
+                .unwrap();
+        }
+
+        let store = SessionStore::open(&path).unwrap();
+        let session_id = SessionId::new("s1").unwrap();
+        let principal_id = PrincipalId::new("p1").unwrap();
+        let tenant_id = TenantId::new("t1").unwrap();
+        let workspace_id = WorkspaceId::new("w1").unwrap();
+
+        let procedure_mem = store
+            .recall_memory_by_intent(
+                &session_id,
+                &principal_id,
+                &tenant_id,
+                &workspace_id,
+                "prov1",
+                MemoryTier::L1,
+                MemoryIntent::Procedure,
+                10,
+            )
+            .unwrap();
+        assert_eq!(procedure_mem.len(), 2);
+        let proc_ids = procedure_mem
+            .iter()
+            .map(|m| m.id().as_str())
+            .collect::<Vec<_>>();
+        assert!(proc_ids.contains(&"m1"));
+        assert!(proc_ids.contains(&"m7"));
+        assert!(
+            procedure_mem
+                .iter()
+                .all(|m| m.intent() == MemoryIntent::Procedure)
+        );
+
+        let repo_mem = store
+            .recall_memory_by_intent(
+                &session_id,
+                &principal_id,
+                &tenant_id,
+                &workspace_id,
+                "prov1",
+                MemoryTier::L1,
+                MemoryIntent::Repo,
+                10,
+            )
+            .unwrap();
+        assert_eq!(repo_mem.len(), 1);
+        assert_eq!(repo_mem[0].id().as_str(), "m2");
+        assert_eq!(repo_mem[0].intent(), MemoryIntent::Repo);
+
+        let user_mem = store
+            .recall_memory_by_intent(
+                &session_id,
+                &principal_id,
+                &tenant_id,
+                &workspace_id,
+                "prov1",
+                MemoryTier::L1,
+                MemoryIntent::User,
+                10,
+            )
+            .unwrap();
+        assert_eq!(user_mem.len(), 1);
+        assert_eq!(user_mem[0].id().as_str(), "m4");
+        assert_eq!(user_mem[0].intent(), MemoryIntent::User);
+
+        let coding_mem = store
+            .recall_memory_by_intent(
+                &session_id,
+                &principal_id,
+                &tenant_id,
+                &workspace_id,
+                "prov1",
+                MemoryTier::L1,
+                MemoryIntent::Coding,
+                10,
+            )
+            .unwrap();
+        assert_eq!(coding_mem.len(), 3);
+        let coding_ids = coding_mem
+            .iter()
+            .map(|m| m.id().as_str())
+            .collect::<Vec<_>>();
+        assert!(coding_ids.contains(&"m3"));
+        assert!(coding_ids.contains(&"m5"));
+        assert!(coding_ids.contains(&"m6"));
+        assert!(
+            coding_mem
+                .iter()
+                .all(|m| m.intent() == MemoryIntent::Coding)
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn schema_nine_migrates_to_ten_with_layered_memory_sops_and_archives() {
+        let root = crate::test_support::new_temp_dir("pandora-schema-10-migration-test").unwrap();
+        let path = root.join("sessions.sqlite3");
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute_batch(
+                    "PRAGMA foreign_keys = ON;
+                     CREATE TABLE schema_migrations (
+                         version INTEGER PRIMARY KEY,
+                         applied_at INTEGER NOT NULL
+                     );
+                     INSERT INTO schema_migrations (version, applied_at) VALUES (9, 1);
+                     CREATE TABLE sessions (
+                         id TEXT PRIMARY KEY NOT NULL,
+                         principal_id TEXT NOT NULL,
+                         tenant_id TEXT NOT NULL,
+                         workspace_id TEXT NOT NULL,
+                         created_at INTEGER NOT NULL CHECK (created_at >= 0)
+                     );
+                     CREATE TABLE memory_records (
+                         session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                         provider TEXT NOT NULL,
+                         memory_id TEXT NOT NULL,
+                         tier TEXT NOT NULL CHECK (tier IN ('l1', 'l2')),
+                         kind TEXT NOT NULL,
+                         classification TEXT NOT NULL,
+                         summary TEXT NOT NULL,
+                         created_at INTEGER NOT NULL,
+                         provenance TEXT NOT NULL,
+                         approval_id TEXT,
+                         approver TEXT,
+                         origin TEXT NOT NULL,
+                         evidence_ids TEXT NOT NULL DEFAULT '[]',
+                         intent TEXT NOT NULL DEFAULT 'coding',
+                         PRIMARY KEY (session_id, provider, memory_id, tier)
+                     );
+                     CREATE TABLE memory_audit (
+                         sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                         session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                         provider TEXT NOT NULL,
+                         memory_id TEXT NOT NULL,
+                         tier TEXT NOT NULL CHECK (tier IN ('l1', 'l2')),
+                         action TEXT NOT NULL,
+                         recorded_at INTEGER NOT NULL,
+                         approval_id TEXT
+                     );
+                     CREATE TABLE memory_revocations (
+                         session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                         provider TEXT NOT NULL,
+                         memory_id TEXT NOT NULL,
+                         revoked_at INTEGER NOT NULL CHECK (revoked_at >= 0),
+                         PRIMARY KEY (session_id, provider, memory_id)
+                     );
+                     INSERT INTO sessions VALUES ('s1', 'p1', 't1', 'w1', 1);
+                     INSERT INTO memory_records VALUES
+                         ('s1', 'prov1', 'm1', 'l1', 'lesson', 'internal', 'lesson sum', 10, 'prov', null, null, 'explicit', '[]', 'procedure');
+                     INSERT INTO memory_audit VALUES
+                         (1, 's1', 'prov1', 'm1', 'l1', 'added', 10, null);",
+                )
+                .unwrap();
+        }
+
+        let store = SessionStore::open(&path).unwrap();
+        let session_id = SessionId::new("s1").unwrap();
+        let principal_id = PrincipalId::new("p1").unwrap();
+        let tenant_id = TenantId::new("t1").unwrap();
+        let workspace_id = WorkspaceId::new("w1").unwrap();
+
+        // 1. Verify existing records survived migration
+        let existing = store
+            .recall_memory(
+                &session_id,
+                &principal_id,
+                &tenant_id,
+                &workspace_id,
+                "prov1",
+                MemoryTier::L1,
+                10,
+            )
+            .unwrap();
+        assert_eq!(existing.len(), 1);
+        assert_eq!(existing[0].id().as_str(), "m1");
+
+        // 2. Record new L3 SOP memory record
+        let scope = MemoryScope::new(
+            tenant_id.clone(),
+            workspace_id.clone(),
+            session_id.clone(),
+            "prov1",
+        )
+        .unwrap();
+        let l3_rec = MemoryRecord::new_l3_sop(
+            "sop-mem-1",
+            scope.clone(),
+            "L3 sop memory summary",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(20),
+            "test-prov",
+        )
+        .unwrap();
+        store.record_memory(&principal_id, &l3_rec).unwrap();
+
+        // 3. Record new L4 session archive record
+        let l4_rec = MemoryRecord::new_l4_archive(
+            "archive-mem-1",
+            scope.clone(),
+            "L4 archive memory summary",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(21),
+            "test-prov",
+        )
+        .unwrap();
+        store.record_memory(&principal_id, &l4_rec).unwrap();
+
+        // Verify L3 and L4 recall
+        let l3_recalled = store
+            .recall_memory(
+                &session_id,
+                &principal_id,
+                &tenant_id,
+                &workspace_id,
+                "prov1",
+                MemoryTier::L3,
+                10,
+            )
+            .unwrap();
+        assert_eq!(l3_recalled.len(), 1);
+        assert_eq!(l3_recalled[0].id().as_str(), "sop-mem-1");
+
+        let l4_recalled = store
+            .recall_memory(
+                &session_id,
+                &principal_id,
+                &tenant_id,
+                &workspace_id,
+                "prov1",
+                MemoryTier::L4,
+                10,
+            )
+            .unwrap();
+        assert_eq!(l4_recalled.len(), 1);
+        assert_eq!(l4_recalled[0].id().as_str(), "archive-mem-1");
+
+        // 4. Test memory_sops table operations
+        let step1 = pandora_types::SopStep::new("step-1", "lint", "cargo check", vec![]).unwrap();
+        let step2 =
+            pandora_types::SopStep::new("step-2", "test", "cargo test", vec!["step-1".to_string()])
+                .unwrap();
+        let sop_def = SopDefinition::new(
+            "sop-1",
+            "release procedure",
+            MemoryIntent::Procedure,
+            vec![step1, step2],
+            Some("cargo status".to_string()),
+        )
+        .unwrap();
+        let stored_sop = store
+            .store_sop(
+                &tenant_id,
+                &workspace_id,
+                &sop_def,
+                Timestamp::from_unix_seconds(30),
+            )
+            .unwrap();
+        assert_eq!(stored_sop.sop.id, "sop-1");
+        assert_eq!(stored_sop.success_count, 1);
+
+        let loaded_sop = store
+            .load_sop(&tenant_id, &workspace_id, "sop-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded_sop.sop.id, "sop-1");
+        assert_eq!(loaded_sop.sop.steps.len(), 2);
+        assert_eq!(loaded_sop.success_count, 1);
+
+        let list_sops = store
+            .list_sops_by_intent(&tenant_id, &workspace_id, Some(MemoryIntent::Procedure))
+            .unwrap();
+        assert_eq!(list_sops.len(), 1);
+        assert_eq!(list_sops[0].sop.id, "sop-1");
+
+        // 5. Test memory_archives table operations
+        let archive = SessionArchiveRecord::new(
+            "arch-1",
+            tenant_id.clone(),
+            workspace_id.clone(),
+            session_id.clone(),
+            "Summary of session 1",
+            "+10 -2 lines",
+            "sha256:abc123receipt",
+            Timestamp::from_unix_seconds(40),
+        )
+        .unwrap();
+        store.store_archive(&archive).unwrap();
+
+        let loaded_archive = store
+            .load_archive(&tenant_id, &workspace_id, "arch-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded_archive.archive_id, "arch-1");
+        assert_eq!(loaded_archive.summary, "Summary of session 1");
+
+        let recent_archives = store
+            .list_recent_archives(&tenant_id, &workspace_id, 10)
+            .unwrap();
+        assert_eq!(recent_archives.len(), 1);
+        assert_eq!(recent_archives[0].archive_id, "arch-1");
+
+        // 6. Verify multi-tenant / multi-workspace isolation for SOPs and archives
+        let tenant_b = TenantId::new("t2").unwrap();
+        let workspace_b = WorkspaceId::new("w2").unwrap();
+        let session_b = SessionId::new("s2").unwrap();
+        let step_b =
+            pandora_types::SopStep::new("step-b1", "compile", "cargo check", vec![]).unwrap();
+        let sop_b = SopDefinition::new(
+            "sop-1",
+            "different procedure for tenant b",
+            MemoryIntent::Coding,
+            vec![step_b],
+            None,
+        )
+        .unwrap();
+        store
+            .store_sop(
+                &tenant_b,
+                &workspace_b,
+                &sop_b,
+                Timestamp::from_unix_seconds(45),
+            )
+            .unwrap();
+
+        let archive_b = SessionArchiveRecord::new(
+            "arch-1",
+            tenant_b.clone(),
+            workspace_b.clone(),
+            session_b,
+            "Summary of tenant b session",
+            "+50 -1 lines",
+            "sha256:digest-b",
+            Timestamp::from_unix_seconds(46),
+        )
+        .unwrap();
+        store.store_archive(&archive_b).unwrap();
+
+        // Tenant A still has original records
+        let loaded_sop_a = store
+            .load_sop(&tenant_id, &workspace_id, "sop-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded_sop_a.sop.name, "release procedure");
+        assert_eq!(loaded_sop_a.tenant_id.as_str(), "t1");
+        let loaded_arch_a = store
+            .load_archive(&tenant_id, &workspace_id, "arch-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded_arch_a.summary, "Summary of session 1");
+
+        // Tenant B has its own records under the same IDs
+        let loaded_sop_b = store
+            .load_sop(&tenant_b, &workspace_b, "sop-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded_sop_b.sop.name, "different procedure for tenant b");
+        assert_eq!(loaded_sop_b.tenant_id.as_str(), "t2");
+        let loaded_arch_b = store
+            .load_archive(&tenant_b, &workspace_b, "arch-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded_arch_b.summary, "Summary of tenant b session");
+
         let _ = std::fs::remove_dir_all(root);
     }
 }

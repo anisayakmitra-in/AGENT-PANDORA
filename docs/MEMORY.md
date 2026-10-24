@@ -2,14 +2,18 @@
 
 ## Shipped
 
-`pandora-runtime::MemoryEngine` provides three bounded memory tiers:
+`pandora-runtime::MemoryEngine` provides five crystallized memory tiers:
 
-- `L0` is an expiring in-memory trace ring buffer with a fixed capacity.
-- `L1` durably stores bounded execution summaries, decisions, failures,
+- `L0` (Meta Rules): An expiring in-memory trace ring buffer with a fixed capacity.
+- `L1` (Insight Index): Durably stores bounded execution summaries, decisions, failures,
   benchmarks, and provenance in the scoped session database.
-- `L2` durably stores only an `L1` lesson or lineage candidate promoted with
+- `L2` (Global Facts): Durably stores only an `L1` lesson or lineage candidate promoted with
   an explicit approval record. Promoted records retain provenance and approval
   identity.
+- `L3` (Task Skills / SOPs): Standard Operating Procedures representing validated, multi-step
+  DAG workflows with declared trigger intents and verification checks.
+- `L4` (Session Archive): Immutable records of completed session executions, summarising diff
+  statistics, receipt digests, and lifecycle metadata.
 
 Every record is scoped to a tenant, workspace, session, and provider. Recall and revocation require the exact same scope, preventing cross-workspace, cross-session, and cross-provider reuse.
 
@@ -31,7 +35,13 @@ files, backups, or storage snapshots.
 The session schema migrates existing canonical L1 execution evidence into the
 durable memory tables. Migration preserves IDs, provider scope, timestamps,
 summaries, and provenance. Invalid rows, invalid limits, and scope mismatches
-fail closed.
+fail closed. SQLite migration 9 partitions records by intent (`repo`, `procedure`,
+`coding`, `user`), backfills existing entries from their record kind, and indexes
+them via `memory_records_intent_idx` for bounded, domain-isolated recall.
+SQLite migration 10 expands the memory tier constraint to `('l0', 'l1', 'l2', 'l3', 'l4')`,
+introduces `sop` and `session_archive` memory kinds, updates memory audit logging, and adds
+dedicated tables `memory_sops` and `memory_archives` with compound indexes (`idx_memory_sops_intent`,
+`idx_memory_archives_created`) for fast scoped queries.
 
 ## Verified synthesis
 
@@ -72,12 +82,43 @@ the exact same tenant, workspace, session, and provider scope. Arbitrary
 `Lesson` records do not enter agent context. Retrieved records are
 non-cacheable descriptive history, never instructions or authority.
 
-The public CLI exposes scoped L1/L2 summaries through `memory recall` and
-`memory audit`. `memory forget` requires explicit confirmation before durable
+The public CLI exposes scoped L1-L4 summaries through `memory recall` (`--tier <l1|l2|l3|l4>`) and
+`memory audit`. `memory recall` and `memory synthesize` accept `--intent <repo|procedure|coding|user>`
+for partitioned queries and candidate tagging. `memory sop list|inspect` and `memory archive list|inspect`
+provide direct inspection of crystallized SOP workflows and session archive records.
+`memory vfs ls [uri]` and `memory vfs cat <uri>` provide hierarchical directory and leaf inspection
+over the virtual context filesystem (`pandora://`). `memory capsule export` and `memory capsule import`
+enable exporting and importing verified L3 SOP workflows into standalone `.capsule.json` packages
+with cryptographic SHA-256 digest validation and author provenance.
+`memory forget` requires explicit confirmation before durable
 revocation, and `memory promote` requires an exact approval resolved through the
 existing approval store. L0 remains process-local and is not exposed as a
 durable record. These commands do not create a second memory store or bypass
 Pandora's approval, permit, receipt, and event authority.
+
+## Virtual context filesystem (`pandora://`)
+
+`ContextVfs` resolves hierarchical virtual URIs over the crystallized memory tiers, codebase feature maps, and active skills:
+
+- `pandora://meta/rules`: Resolves L0 constitutional boundaries and behavioral rules.
+- `pandora://index/{intent}/{id}`: Resolves L1 insight index records partitioned by intent (`repo`, `procedure`, `coding`, `user`).
+- `pandora://facts/{topic}/{id}`: Resolves L2 durable global facts and repository truths.
+- `pandora://sops/{sop_id}`: Resolves L3 validated Standard Operating Procedure DAGs.
+- `pandora://archives/{archive_id}`: Resolves L4 session archives with diff statistics and receipt digests.
+- `pandora://features/{module}`: Resolves codebase feature map invariants for targeted subsystems.
+
+Querying a directory node returns its child directory entries; querying a leaf node returns the resolved `ContextFragment`. Path traversal segments (`.` and `..`) and backslashes are rejected fail-closed to prevent escape vulnerabilities.
+
+## Evolutionary capsule protocol
+
+`MemoryCapsule` packages verified L3 SOP workflows into portable, cryptographically signed JSON artifacts. Each capsule binds:
+
+1. An immutable `SopDefinition` with topologically sorted execution steps and trigger intent.
+2. A cryptographic SHA-256 digest calculated over the canonical SOP payload.
+3. The author identity and creation timestamp.
+
+`memory capsule export --sop <id> --output <path>` validates the SOP before writing. `memory capsule import --file <path>` re-verifies the SHA-256 digest and validates DAG acyclicity before admitting the SOP into the workspace database. Tampered, cyclic, or self-dependent capsules fail closed.
+
 
 `memory compact --before <unix-seconds>` is the explicit retention boundary for
 already-revoked logical records. Its default mode reports how many exact-scope

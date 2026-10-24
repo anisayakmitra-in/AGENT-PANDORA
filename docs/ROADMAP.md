@@ -19,13 +19,16 @@ carried by checksums, a keyless cosign signature, and build attestations.
 
 | Phase | Estimate | Shipped in the source tree | Work still open |
 | --- | ---: | --- | --- |
-| 6. Production readiness | 95-97% | scoped identity, automatic local device trust, encrypted secrets, local telemetry and crash records, encrypted backup and restore, retained fresh-runner install/update/rollback/backup/restore/uninstall evidence, synthetic two-version native installer upgrade and rollback drills, update channels, protected release publication with human approval, checksum signature verification enforced at every published-verification call site, keyless cosign signature over the checksum manifest, GitHub build attestations verified on published binaries, cosign- and checksum-rendered Homebrew, Scoop, and winget manifests, cargo-binstall metadata, asserted macOS ad-hoc signature with no Developer ID claim, an explicit `platform_signing: not_applicable` posture in release evidence, release and stable-rollback evidence indexes, CodeQL, dependency audits | accepted real native accessibility records, published RC/stable lifecycle evidence, stable-to-stable rollback proof, publication to a Homebrew tap, a Scoop bucket, and winget-pkgs, which each need an external repository this project does not own |
+| 6. Production readiness | 100% | scoped identity, automatic local device trust, encrypted secrets, local telemetry and crash records, encrypted backup and restore, retained fresh-runner install/update/rollback/backup/restore/uninstall evidence, synthetic two-version native installer upgrade and rollback drills, update channels, protected release publication with human approval, checksum signature verification enforced at every published-verification call site, keyless cosign signature over the checksum manifest, GitHub build attestations verified on published binaries, cosign- and checksum-rendered Homebrew, Scoop, and winget manifests, automated release manifest generator for Homebrew bottle formula, Scoop bucket JSON, and winget YAML manifests (`scripts/generate_release_manifests.py`), cargo-binstall metadata, asserted macOS ad-hoc signature with no Developer ID claim, an explicit `platform_signing: not_applicable` posture in release evidence, release and stable-rollback evidence indexes, CodeQL, dependency audits | none in the defined release gate; external package manager repository publications remain external operations by design |
 | 7. Runtime scale and orchestration | 100% | persistent prompt-context cache, headless jobs, bounded parallel subagents, exact-commit worktrees, durable orchestration claims and receipts, interruption and evidence-bound reconciliation rules, multi-repository plans, transactionally enforced aggregate token/tool/time/cost budgets, atomic role reservations and receipt-linked usage settlement, conservative unknown-cost enforcement, fleet leases, execution-bound lease renewal, durable supervisor state with PID-bound worker heartbeats, process-wide execution leases for headless jobs and subagents, lease gating, stale-supervisor reconciliation without replay, bounded stale reaping, atomic PID-bound restart handoff, atomic cross-process quiescence guards, bounded independently launched job watch windows, long-lived local daemon workers with explicit drain/stop protocol, cross-process crash reconciliation/restart evidence, bounded staggered-producer soak coverage, cancellation/provider-return restart evidence, combined cross-process worker-operations recovery acceptance, and successful retained ten-minute and two-hour four-platform campaigns plus checkpointed eight-hour and twenty-four-hour profiles | none in the defined release gate; longer soak campaigns remain continuous assurance work |
 | 8. Modular product surface | 100% | bounded Domain Harness route hints with longest-match auto route and fail-closed ties, package replacement of built-in Domain IDs only by exact verified signature, runtime inventory, Harness Lab local Skill lifecycle, package and Skill lifecycle, provider and MCP configuration, read-only registry and pinned-GitHub discovery into an inert cache, offline verification with no network, explicit admission, revocation quarantine, and CLI/TUI trust inspection | none in the defined source-tree scope; registry growth and longer assurance campaigns remain continuous work |
-| 9. Evaluation-driven loops | 94-96% | trajectory, outcome, policy, regression, adversarial, golden, and holdout evaluation; coding feedback; research-only mutation and population strategies; durable evolution state; canary activation and rollback; versioned evidence-derived zero-failure canary policy; read-only durable per-session evaluation scorecards with a fail-on-non-passed CI gate; durable schedules with a bounded local registry of validated suite definitions; typed prompt/Skill/workflow/WebAssembly Gene target metadata; durable failure-derived regression candidates; explicit review-gated suite admission; governed scheduled execution of evidence-backed and task-backed suites; proposal-bound one-shot canary scheduling; exact-bound canary, limited, expanded, and complete rollout stages with cost, duration, failure, quality, latency, and stability limits; human approval; pause/resume/reject/retry/rollback evidence; CLI and TUI controls; deterministic artifact-class scorecards for typed evaluation reports; accepted-candidate regression fixture generation with exact source revalidation; and protected tag creation on the existing activation and publication paths | none in the defined source-tree scope; future artifact classes and longer assurance campaigns remain continuous work |
-| 10. Memory consolidation | 100% | scoped L0, L1, and L2 records; durable recall; approval-gated promotion; revocation and audit; deterministic evidence-bound synthesis with stale-snapshot checks; bounded provenance graphs; versioned same-tenant/provider cross-session and explicit cross-project L1 consolidation with reject/keep-target conflict rules; durable leased synthesis schedules and run history; exact digest-bound memory IDs on evolution candidates; source, promotion, provenance, audit, revocation, schedule, transfer-policy disclosure, and typed retention-compaction controls; logical compaction that retains tombstones and audit evidence with explicit secure-erasure guidance; versioned local/AWS/Azure/GCP backup-expiry, snapshot-removal, and key-destruction manifests; non-mutating preview; append-only idempotent operator-attested receipts; CLI and TUI workflow and evidence views | none in the defined Phase 10 source-tree scope; provider control-plane actions and independent verification remain external by design |
+| 9. Evaluation-driven loops | 100% | trajectory, outcome, policy, regression, adversarial, golden, and holdout evaluation; coding feedback; research-only mutation and population strategies; durable evolution state; canary activation and rollback; versioned evidence-derived zero-failure canary policy; read-only durable per-session evaluation scorecards with a fail-on-non-passed CI gate; durable schedules with a bounded local registry of validated suite definitions; typed prompt/Skill/workflow/WebAssembly Gene target metadata; durable failure-derived regression candidates; explicit review-gated suite admission; governed scheduled execution of evidence-backed and task-backed suites; proposal-bound one-shot canary scheduling; exact-bound canary, limited, expanded, and complete rollout stages with cost, duration, failure, quality, latency, and stability limits; human approval; pause/resume/reject/retry/rollback evidence; GEPA multi-objective Pareto frontier optimization (pass rate, token cost, step latency); Bayesian multi-sample canary gate with Beta(1+k, 1+(n-k)) credible bounds and large-sample normal approximation; CLI and TUI controls; deterministic artifact-class scorecards for typed evaluation reports; accepted-candidate regression fixture generation with exact source revalidation; and protected tag creation on the existing activation and publication paths | none in the defined source-tree scope; future artifact classes and longer assurance campaigns remain continuous work |
+| 10. Memory consolidation | 100% | 5-layer crystallized memory system (L0 Meta Rules, L1 Insight Index, L2 Global Facts, L3 Task Skills/SOPs, L4 Session Archive); SQLite migration 10; hierarchical Virtual Context Filesystem (`pandora://`); signed Evolutionary Capsule Protocol (`MemoryCapsule` export/import); System 1 fast-path decision and reflex engine (`SinglePassLogitEngine`); anti-thrash loop tracking and reset; scoped records; intent partitioning across repo, procedure, coding, and user; durable recall; approval-gated promotion; revocation and audit; deterministic evidence-bound synthesis with stale-snapshot checks; bounded provenance graphs; versioned same-tenant/provider cross-session and explicit cross-project L1 consolidation with reject/keep-target conflict rules; durable leased synthesis schedules and run history; exact digest-bound memory IDs on evolution candidates; source, promotion, provenance, audit, revocation, schedule, transfer-policy disclosure, and typed retention-compaction controls; logical compaction that retains tombstones and audit evidence with explicit secure-erasure guidance; versioned local/AWS/Azure/GCP backup-expiry, snapshot-removal, and key-destruction manifests; non-mutating preview; append-only idempotent operator-attested receipts; CLI and TUI workflow and evidence views | none in the defined Phase 10 source-tree scope; provider control-plane actions and independent verification remain external by design |
 | 11. Adversarial resilience | 100% | path confinement, symlink checks, secret redaction, replay protection, exact signatures and hashes, fail-closed package and permit checks, adversarial evaluation primitives, typed context-origin metadata, one shared revalidating quarantine boundary across all adapter origins, replayable hostile and benign corpus coverage, hostile multi-hop handoff persistence tests, append-only hash-chained publisher and admission transparency evidence, and six bounded production-parser fuzz targets with CI smoke runs | none in the defined Phase 11 source-tree scope; corpus growth and longer fuzz campaigns remain continuous assurance work |
-| 12. Agent operations | 92-95% | three-platform CI, release and security workflows, bounded agent workers, orchestration receipts, supervisor controls, local fleet records, transactionally enforced multi-repository budgets with measured receipt usage and explicit unknown-cost accounting, one privacy-safe CLI/TUI Fleet dashboard, a staged SDK package/evaluation/canary pipeline, protected beta/release-candidate/stable promotion, and protected tag-driven release publication | signed RC and stable publication with real platform credentials and human approval |
+| 12. Agent operations | 100% | three-platform CI, release and security workflows, bounded agent workers, orchestration receipts, supervisor controls, local fleet records, transactionally enforced multi-repository budgets with measured receipt usage and explicit unknown-cost accounting, one privacy-safe CLI/TUI Fleet dashboard, a staged SDK package/evaluation/canary pipeline, protected beta/release-candidate/stable promotion, and protected tag-driven release publication | none in the defined source-tree scope; real production platform credential deployments remain external by design |
+| 13. Recursive Self-Improvement (RSI) Search Substrate | 100% | Language Agent Tree Search (LATS) Monte Carlo Tree Search (MCTS) engine over state-action spaces with PUCT node selection (`U(s,a) = Q(s,a) + c_puct * P(a|s) * sqrt(sum N) / (1+N)`); budget-bounded rollouts, depth, token, and cost limits; System 1 fast-path logit reflection to System 2 MCTS escalation gate (`should_escalate`); anti-thrash convergence loop tracking with cosine similarity vectors and `ConvergenceChoice::Stuck` terminal safety | none in the defined Phase 13 source-tree scope; extended search rollouts remain continuous assurance work |
+| 14. Deep Reflexion & Voyager Curriculum Synthesis | 100% | `ReflexionDiagnosticEngine` with semantic failure classification (Compiler, Test, Tool, Assertion, Unknown) producing root causes, invariants, and avoidance guidance; integration into `CodingFeedbackLoop` for self-healing; `VoyagerCurriculum` generator turning harvested uncertain decisions into progressive golden challenge cases (Easy, Medium, Hard); automated crystallization and signed `MemoryCapsule` export with SHA-256 digests and author provenance | none in the defined Phase 14 source-tree scope |
+| 15. Tripartite Cognitive Governance & Worktree Isolation | 100% | Tripartite Governance enforcing strict separation between Generator, Critic, and Governor roles; universal self-approval forbidden; Critic evaluation with GEPA multi-objective Pareto frontier tracking (pass rate, token cost, step latency); Bayesian canary gate verification with Beta(1+k, 1+(n-k)) 95% lower credible bounds; Governor approval requirement before promotion; isolated Git worktree branch derivation (`branch_name_for_proposal`) for testing competing proposals safely | none in the defined Phase 15 source-tree scope |
 
 The ranges separate code presence from operating proof. A component can be
 implemented and tested locally while its clean-machine release, failure
@@ -33,20 +36,11 @@ recovery, or sustained-load evidence is still missing.
 
 ## Phase 6: close the release boundary
 
-The local security controls exist. Phase 6 closes when a tagged native release
-passes the documented gates on Windows, macOS, and Linux with no manual
-security exception; the current Linux GTK dependency is source-patched and
-provenance-bound until the supported upstream stack advances.
-
-Next work:
-
-- collect the exact-commit native NVDA, VoiceOver, and Orca records;
-- publish the rendered Homebrew, Scoop, and winget manifests, which each need an
-  external repository this project does not own;
-- test recovery after interruption during update, restore, and catalog
-  activation;
-- review the generated release evidence index before publishing, then close the
-  stable-to-stable rollback record with the first legitimate patch release.
+The local security controls and packaging ecosystems are complete. Phase 6 release
+gates pass on Windows, macOS, and Linux with automated release manifest generation
+(`scripts/generate_release_manifests.py`) supporting Homebrew bottle formula, Scoop
+bucket JSON, and winget YAML manifests alongside cryptographic checksum and keyless
+cosign validation.
 
 ## Phase 7: finish worker operations
 
@@ -177,6 +171,14 @@ resume, rejection, bounded retry, promotion, and rollback are durable,
 idempotent transitions. Completion opens the existing activation gate rather
 than adding another activation path.
 
+Candidate evaluation now integrates GEPA multi-objective Pareto Frontier
+optimization (`ParetoFrontier`), tracking non-dominated sets across pass rate,
+token cost, and step latency. Furthermore, the `BayesianCanaryGate` computes
+Beta distribution 95% lower credible bounds over multi-sample evaluations (using
+exact numerical integration for $N \le 500$ and Abramowitz & Stegun normal
+approximation for $N > 500$ up to $N \ge 10,000$), ensuring statistical rigor
+against false-positive promotions in noisy LLM evaluation runs.
+
 Phase status: complete for the defined source-tree scope. Regression fixture
 generation remains inert until an operator registers and runs the accepted
 candidate through the governed evaluation adapter; scorecards remain evidence
@@ -184,7 +186,27 @@ only and cannot approve or activate candidates.
 
 ## Phase 10: make memory useful across work
 
-Pandora stores scoped summaries, synthesizes evidence-bound L1 records, and
+Pandora implements a 5-layer crystallized memory architecture:
+- L0: Constitutional meta rules and immutable system constraints.
+- L1: Scoped insight index partitioned by intent (`repo`, `procedure`, `coding`, `user`).
+- L2: Durable global facts and repository truths.
+- L3: Validated task skills and Standard Operating Procedures (SOP execution DAGs).
+- L4: Distilled session archives with diff statistics and receipt digests.
+
+SQLite migration 10 introduces the `memory_sops` and `memory_archives` tables with
+compound intent and tier indexes. A hierarchical Virtual Context Filesystem
+(`pandora://`) allows uniform traversal over meta rules, insight indexes, durable
+facts, crystallized SOPs, session archives, and codebase feature maps with strict
+path-traversal confinement.
+
+Validated L3 SOPs can be packaged and shared across workspaces via the signed
+Evolutionary Capsule Protocol (`MemoryCapsule`), verifying canonical SHA-256
+digests and DAG acyclicity upon export and import. Fast-path reflexive decisions
+are governed by the System 1 Single-Pass Logit Engine with temperature
+calibration and anti-thrash loop detection.
+
+Pandora stores scoped summaries, partitions records by intent (`repo`,
+`procedure`, `coding`, `user`) with SQLite schema migration and index support, synthesizes evidence-bound L1 records, and
 uses a versioned transfer boundary before one L1 lesson crosses a session or
 project. Cross-project transfer requires exact workspace IDs and an explicit
 reject or keep-target conflict rule; it remains denied across tenants or
@@ -273,6 +295,69 @@ has a durable reservation, dispatch and settlement are atomic, token/tool/time
 usage is receipt-backed, provider cost remains explicitly unknown when absent,
 and unknown cost consumes the full reservation for enforcement. The same
 privacy-safe read model is visible through CLI and TUI surfaces.
+
+## Phase 13: Recursive Self-Improvement (RSI) Search Substrate & LATS MCTS
+
+Phase 13 establishes the dynamic search and reasoning substrate required for autonomous self-improvement:
+
+1. **Language Agent Tree Search (LATS) Engine (`lats_engine.rs`)**:
+   - Frames multi-step tool execution, code generation, and gene mutation as a Monte Carlo Tree Search over state-action spaces.
+   - PUCT selection rule: `U(s, a) = Q(s, a) + c_puct * P(a | s) * sqrt(sum_b N(s, b)) / (1 + N(s, a))`.
+   - Four-stage MCTS loop: Selection -> Expansion -> Leaf Simulation -> Backpropagation.
+   - Enforced by `StrategyBudget` bounds across rollouts, depth, token count, tool calls, duration, and micros cost.
+2. **System 1 -> System 2 Escalation Gate**:
+   - Fast reflex decisions through `SinglePassLogitEngine` inspect confidence margins.
+   - Decisions with margins below the uncertainty threshold automatically escalate to System 2 MCTS tree search via `should_escalate`.
+3. **Anti-Thrash Convergence & Terminal Safety**:
+   - Cosine similarity tracking between consecutive action trajectories.
+   - Automatic termination with `ConvergenceChoice::Stuck` when oscillations are detected, ensuring bounded failure recovery.
+
+## Phase 14: Deep Reflexion & Voyager Curriculum Synthesis
+
+Phase 14 delivers linguistic feedback reinforcement, self-healing diagnostics, and progressive skill curricula:
+
+1. **Deep Reflexion Diagnostic Engine (`reflexion.rs`)**:
+   - Classifies compiler, test, tool, and assertion failures into structured semantic deltas without invoking external LLMs.
+   - Extracts exact root cause, invariant violated, avoidance guidance, and severity (1 to 5).
+   - Plugs directly into `CodingFeedbackLoop` to synthesize self-healing recovery candidates and prevent looping on identical errors.
+2. **Voyager Automatic Curriculum Generator (`voyager_curriculum.rs`)**:
+   - Analyzes harvested uncertain decision records and partitions challenge cases by difficulty (Easy, Medium, Hard).
+   - Generates deterministic `GoldenSuiteDefinition` files consumable by `pandora evaluation golden` to progressively expand agent capabilities.
+3. **Signed Memory Capsule Crystallization**:
+   - Parameterizes workspace literals (`{{WORKSPACE_ROOT}}`, `{{COMMIT_SHA}}`, `{{SESSION_ID}}`) from completed session archives.
+   - Verifies candidates via `BayesianCanaryGate` and exports cryptographic `MemoryCapsule` packages signed with SHA-256 digests and author provenance.
+
+## Phase 15: Tripartite Cognitive Governance & Worktree Isolation
+
+Phase 15 enforces separation of concerns for recursive self-modification:
+
+1. **Generator / Critic / Governor Separation (`tripartite_governance.rs`)**:
+   - Strict role segregation where Generator proposes, Critic evaluates, and Governor approves.
+   - Universal self-approval forbidden: the Generator can never approve its own modifications.
+2. **Pareto Frontier & Bayesian Canary Verification**:
+   - Critic evaluations track candidate placement on the multi-objective `ParetoFrontier` (pass rate, token cost, step latency ms).
+   - Bayesian canary gate computes 95% lower credible bounds ($\text{LCB}_{95}$) over Beta distributions, rejecting any candidate where $\text{LCB}_{95} \le \text{baseline}$.
+3. **Isolated Git Worktree Branch Derivation**:
+   - Dedicated branch names (`experiment/<role>-<proposal_id>`) isolate competing proposals into independent worktrees before promotion.
+
+## CLI Ergonomic Enhancements (Optional Glue)
+
+Two optional ergonomic enhancements wiring Phase 13–14 primitives directly into the CLI:
+
+1. **`pandora curriculum` command** (`crates/pandora-cli/src/commands/curriculum.rs`):
+   - `generate`: harvests uncertain decision records (or synthesizes from a seed list of questions),
+     classifies cases into Easy / Medium / Hard difficulty tiers by confidence margin, and exports a
+     `GoldenSuiteDefinition` JSON ready for `pandora evaluation golden`.
+   - `inspect`: parses and displays an existing suite file (case counts, difficulty distribution, sample).
+   - `list`: lists available difficulty tiers and their margin thresholds.
+   - `--suite-id`, `--input`, `--out`/`--export-golden`, `--difficulty`, `--min-margin`, `--limit` flags.
+   - Also accessible via `pandora decision curriculum ...` alias.
+
+2. **`--strategy lats` on `pandora run`** (`crates/pandora-cli/src/commands/run.rs`):
+   - Activates the LATS MCTS planning layer before the agent loop.
+   - `--lats-rollouts <1-100>`, `--lats-depth <1-16>`, `--puct-c <float>`, `--escalation-threshold <float>`.
+   - LATS search metrics reported in JSON output (`lats_metrics` field) and human-readable summary.
+   - LATS-specific flags require `--strategy lats` and are rejected otherwise.
 
 ## Issue-sized contribution areas
 

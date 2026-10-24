@@ -205,6 +205,49 @@ impl ContextEngine {
         Ok(engine)
     }
 
+    pub fn fragments_from_feature_map(
+        feature_map: &pandora_types::FeatureMap,
+        prompt: &str,
+    ) -> Vec<ContextFragment> {
+        let prompt_lower = prompt.to_lowercase();
+        let mut fragments = Vec::new();
+        for (i, feature) in feature_map.features().iter().enumerate() {
+            let name_match = prompt_lower.contains(&feature.name.to_lowercase());
+            let dep_match = feature
+                .dependencies
+                .iter()
+                .any(|dep| prompt_lower.contains(&dep.to_lowercase()));
+            if name_match || dep_match {
+                let content = format!(
+                    "Subsystem '{}' [{}]: {}\nInvariants:\n{}",
+                    feature.name,
+                    feature.entry_point,
+                    feature.description,
+                    feature
+                        .invariants
+                        .iter()
+                        .map(|inv| format!("- {inv}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                );
+                let id = format!("feature-{}", feature.name.to_lowercase());
+                if let Ok(fragment) = ContextFragment::new(
+                    id,
+                    ContextSource::ActivePlan,
+                    ContextTrust::Verified,
+                    ContextClassification::Internal,
+                    80u8.saturating_sub(i as u8),
+                    content,
+                    50,
+                    None,
+                ) {
+                    fragments.push(fragment);
+                }
+            }
+        }
+        fragments
+    }
+
     pub fn assemble(
         &self,
         request: &ContextRequest,
@@ -1435,5 +1478,37 @@ mod tests {
             ]
         );
         assert!(decision.is_paused());
+    }
+
+    #[test]
+    fn fragments_from_feature_map_matches_keywords() {
+        let json = r#"{
+            "features": [
+                {
+                    "name": "Parliament",
+                    "entry_point": "crates/pandora-runtime/src/parliament.rs",
+                    "description": "Multi-agent constitutional debate system",
+                    "invariants": ["Quorum required", "Debate terminates"],
+                    "dependencies": ["ReferenceMonitor"]
+                },
+                {
+                    "name": "Sandbox",
+                    "entry_point": "crates/pandora-sandbox/src/lib.rs",
+                    "description": "Kernel-level execution isolation",
+                    "invariants": ["No network egress"],
+                    "dependencies": []
+                }
+            ]
+        }"#;
+        let map = pandora_types::FeatureMap::from_json(json).unwrap();
+        let prompt = "Please evaluate this change using the Parliament consensus";
+        let frags = ContextEngine::fragments_from_feature_map(&map, prompt);
+        assert_eq!(frags.len(), 1);
+        assert_eq!(frags[0].id(), "feature-parliament");
+        assert!(
+            frags[0]
+                .content()
+                .contains("Multi-agent constitutional debate system")
+        );
     }
 }

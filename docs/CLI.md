@@ -1,6 +1,6 @@
 # Pandora CLI
 
-Status: Beta in the current `2.0.0-beta.8` CLI release line.
+Status: Beta in the current `2.0.0-beta.9` CLI release line.
 
 The CLI is the primary Pandora surface. Commands return versioned JSON with
 `--json` and stable non-zero exit codes for usage, configuration, policy,
@@ -28,6 +28,7 @@ than being replaced. Noninteractive invocations return the normal usage error.
 
 ```text
 pandora setup --provider-url https://provider.example/v1 --model gpt-5 --api-key-env PANDORA_PROVIDER_API_KEY
+pandora setup --preset ollama
 pandora setup --interactive
 pandora doctor --json
 pandora provider list --json
@@ -116,6 +117,14 @@ payloads are excluded from that audit summary.
     pandora auth list
     pandora auth revoke <identity-id> --yes
     pandora secret set OPENAI_API_KEY --value-stdin
+    pandora secret list
+    pandora secret status OPENAI_API_KEY
+    pandora secret pool add <pool-id> --key <secret-name> [--priority <n>] [--strategy <round-robin|least-used|priority>]
+    pandora secret pool list [--pool <pool-id>]
+    pandora secret pool status <pool-id>
+    pandora secret pool rotate <pool-id>
+    pandora secret pool report-429 <pool-id> --key <key-id> [--cooldown <secs>]
+    pandora secret pool remove <pool-id> [--key <key-id>] --yes
     pandora backup create --output pandora-recovery.json
     pandora backup inspect --input pandora-recovery.json
     pandora backup restore --input pandora-recovery.json --yes
@@ -210,6 +219,9 @@ pandora run --harness coding --gene workspace.refs "refs"
 pandora run "read:README.md" --expected-output "fixture" --retryable --json
 pandora run --plan "inspect the README and report what it contains"
 pandora run --approval <approval-id> "patch:README.md:approved content"
+pandora run --strategy lats "refactor the error handling module"
+pandora run --strategy lats --lats-rollouts 32 --lats-depth 8 --puct-c 1.0 "design a new caching layer"
+pandora run --strategy lats --escalation-threshold 0.4 "review the authentication flow"
 pandora chat
 pandora chat --session <session-id>
 pandora tui
@@ -217,6 +229,11 @@ pandora tui --session <session-id>
 pandora session list
 pandora session inspect <session-id>
 pandora session resume <session-id>
+pandora session rewind <session-id> --step <step-index> [--yes]
+pandora session fork <session-id> --step <step-index> --prompt "<text>"
+pandora session diff <session-id> --step-a <step-a> --step-b <step-b>
+pandora session prune [--older-than <days|seconds>] [--dry-run] [--yes]
+pandora session vacuum [--analyze] [--threshold <percent>] [--force]
 pandora job submit -- --agent "Review this workspace"
 pandora job work
 pandora job work --max-jobs 8
@@ -420,6 +437,8 @@ an explicit expected result. New CLI events include their recorded time; older
 events remain explicitly untimestamped. `session resume` returns the evaluation
 and evidence counts with the full bounded transcript.
 
+`session prune` identifies and removes inactive sessions older than a duration boundary (e.g. `--older-than 90d`, default 90 days), cascading deletions across session events and evidence while reporting reclaimed metrics. Pass `--dry-run` to preview candidates or `--yes` to execute. `session vacuum` analyzes fragmentation (`--analyze`) or runs an online SQLite database compaction when reclaimable space meets or exceeds a target threshold (default 25%, or `--force`).
+
 Agent runs retrieve at most eight canonical L1 execution-evidence records from
 the exact same session and provider. The context receipt lists generated record
 identifiers only; evidence stays descriptive and non-cacheable.
@@ -527,6 +546,23 @@ when no suitable evidence exists. Cost selection ignores runs without explicit
 pricing. The option cannot be combined with `--provider`, `--model`, or
 `--approval`; it does not change configuration, policy, permissions, or
 credentials.
+
+### LATS MCTS Strategy (`--strategy lats`)
+
+`pandora run --strategy lats <task>` activates the Monte Carlo Tree Search
+planning layer before the agent loop. The LATS engine runs PUCT-guided rollouts
+and reports search metrics in the JSON output (`lats_metrics` field).
+
+| Flag | Default | Range | Description |
+|------|---------|-------|-------------|
+| `--strategy lats` | — | `react\|reflexion\|lats` | Select planning strategy |
+| `--lats-rollouts <n>` | 16 | 1–100 | Number of MCTS rollouts |
+| `--lats-depth <n>` | 6 | 1–16 | Maximum tree depth per rollout |
+| `--puct-c <f>` | 1.41 | > 0 | PUCT exploration constant |
+| `--escalation-threshold <f>` | 0.5 | 0–1 | System 1 → System 2 escalation gate |
+
+`--lats-rollouts`, `--lats-depth`, `--puct-c`, and `--escalation-threshold`
+require `--strategy lats` and are rejected otherwise.
 
 ## Golden-set evaluation
 
@@ -865,7 +901,7 @@ The CLI exposes the local durable Fleet control plane. It stores state under
 allocate workers; they do not connect to remote nodes or execute work.
 
 ```text
-pandora fleet register node-a --version 2.0.0-beta.8 --worker-class local --capabilities-json '["coding","review"]'
+pandora fleet register node-a --version 2.0.0-beta.9 --worker-class local --capabilities-json '["coding","review"]'
 pandora fleet dashboard --json
 pandora fleet dashboard --stale-after 30 --json
 pandora fleet list --json
@@ -959,6 +995,7 @@ pandora /deployment-evidence
 pandora /operations-guide
 pandora tool list
 pandora tool inspect <id>
+pandora tool search <query> [--catalog <builtin|active>] [--limit <n>]
 pandora skill list
 pandora skill inspect <id>
 pandora skill install <local-skill-directory>
@@ -1000,16 +1037,25 @@ pandora package lock
 pandora package verify-lock
 pandora package remove <id> <version> --dry-run
 pandora package remove <id> <version> --yes
-pandora memory recall --session <id> --provider <name> --tier <l1|l2> [--id <memory-id>] [--limit <1-256>]
+pandora memory recall --session <id> --provider <name> --tier <l1|l2|l3|l4> [--id <memory-id>] [--limit <1-256>] [--intent <repo|procedure|coding|user>]
 pandora memory audit --session <id> --provider <name>
 pandora memory forget --session <id> --provider <name> <memory-id> [--yes]
 pandora memory compact --session <id> --provider <name> --before <unix-seconds> [--yes]
 pandora memory promote --session <id> --provider <name> <memory-id> [--approval <id>]
-pandora memory synthesize --session <id> --provider <name> --id <memory-id> --summary <text> [--kind <kind>] [--classification <public|internal>] [--yes]
+pandora memory synthesize --session <id> --provider <name> --id <memory-id> --summary <text> [--kind <kind>] [--classification <public|internal>] [--intent <repo|procedure|coding|user>] [--yes]
 pandora memory provenance --session <id> --provider <name> <memory-id>
-pandora memory consolidate --source-session <id> --target-session <id> --provider <name> --source-id <memory-id> --target-id <memory-id> [--source-workspace <id> --target-workspace <id> --conflict reject|keep-target] [--yes]
+pandora memory consolidate --source-session <id> --target-session <id> --provider <name> --source-id <memory-id> --target-id <memory-id> [--source-workspace <id> --target-workspace <id> --conflict reject|keep-target] [--intent <repo|procedure|coding|user>] [--yes]
 pandora memory schedule create --id <id> --name <name> --session <id> --provider <name> --memory-id <memory-id> --summary <text> --interval-seconds <seconds> [--kind <kind>] [--classification <public|internal>]
 pandora memory schedule list | disable --id <id> | claim --worker <id> [--limit <n>] | run --id <id> --worker <id> | runs [--id <id>]
+pandora memory sop list [--intent <repo|procedure|coding|user>] [--workspace <id>] | inspect --id <id> [--workspace <id>]
+pandora memory archive list [--limit <1-256>] [--workspace <id>] | inspect --id <id> [--workspace <id>]
+pandora memory vfs ls [<uri>] [--workspace <id>] | cat <uri> [--workspace <id>]
+pandora memory capsule export --sop <sop-id> --output <path> [--workspace <id>] | import --file <path> [--workspace <id>]
+pandora memory crystallize [--session <id> | --all] [--baseline <rate>]
+pandora memory mesh peers | broadcast --sop <id> | sync [--auto-promote]
+pandora curator run [--once] [--interval <seconds>] [--max-passes <n>]
+pandora curator status
+pandora memory curator run [--once] [--interval <seconds>] [--max-passes <n>] | status
 pandora mcp set <id> --program <absolute-path> --arguments-json <json-array> --mode <auto|modern-only|legacy-only>
 pandora mcp list
 pandora mcp inspect <id>
@@ -1024,6 +1070,7 @@ pandora orchestration cancel <run-id>
 pandora orchestration mark-interrupted <run-id> --reason <text> --yes
 pandora orchestration reconcile-failed <run-id> --role <role-id> --usage <usage.json> --evidence-digest <digest> --yes
 pandora orchestration resume <run-id>
+pandora orchestration synthesize --intent <text> [--roles <role1,role2,...>] [--out <path>]
 
 Orchestration commands use the durable, tenant-scoped coordination store
 described in [ORCHESTRATION.md](ORCHESTRATION.md). `claim` returns only ready
@@ -1033,6 +1080,8 @@ receipt-linked measured usage. New plans require an aggregate token, tool,
 elapsed-time, and cost ceiling plus one reservation per role. An interrupted
 active role keeps its reservation until `reconcile-failed` records reviewed
 partial usage and evidence; only then can `resume` make the role retryable.
+`synthesize` dynamically generates a Diamond-topology swarm orchestration plan
+(Planner -> Specialist Roles -> Synthesizer -> Canary Verification Gate) from intent.
 
 pandora strategies list
 pandora evaluation golden --input <path> [--fail-on-failure]
@@ -1054,8 +1103,14 @@ pandora evolution rollout approve --input <path>
 pandora evolution rollout promote|pause|resume|reject|retry|rollback --id <proposal-id> --transition-id <sha256:digest> --actor <principal-id> [--reason <text>]
 pandora evolution activate --id <proposal-id>
 pandora evolution rollback --id <proposal-id> --reason <text>
+pandora evolution island init [--population <n>] [--out <path>]
+pandora evolution island step [--state <path>] [--out <path>] [--generations <n>]
+pandora evolution island migrate [--state <path>] [--out <path>] [--count <n>]
+pandora evolution island run [--state <path>] [--out <path>] [--generations <n>] [--population <n>]
+pandora evolution loop [--watch | --once] [--baseline <rate>] [--iterations <n>]
 pandora rollout inspect --session <id> [--execution <id>]
 pandora graph code|knowledge|review|architecture --input <path> [--store <path>] [--tenant <id>] [--workspace <id>]
+pandora graph map [validate|show] [--path <path>]
 pandora completions powershell
 pandora completions bash
 pandora completions zsh
@@ -1258,8 +1313,9 @@ reports `runtime_authority: false`; it cannot admit, enable, or execute a
 package. The TUI `/trust-transparency` command is guidance only, and the CLI
 renders the same read-only ledger.
 
-`memory recall` exposes only the selected, redacted L1 or L2 records from the exact
-tenant, workspace, session, and provider scope. L0 remains process-local and is not
+`memory recall` exposes only the selected, redacted L1, L2, L3, or L4 records from the exact
+tenant, workspace, session, and provider scope, with optional `--intent <repo|procedure|coding|user>`
+partition filtering. L0 remains process-local and is not
 available after the process exits. `memory audit` lists durable additions, promotions,
 and revocations without exposing credentials or hidden reasoning. `memory forget`
 creates a durable revocation tombstone and requires `--yes` to apply it. `memory
@@ -1272,7 +1328,8 @@ an exact Unix timestamp. `--yes` applies that scoped boundary while retaining
 revocation tombstones and audit evidence. It does not claim secure erasure of SQLite
 pages or WAL files, and it does not alter backup or storage-snapshot retention.
 `memory synthesize` takes a fresh, scoped L1 snapshot and previews an evidence-bound
-L1 candidate by default. `--yes` commits it only after the snapshot is checked again;
+L1 candidate by default, optionally partitioned by `--intent <repo|procedure|coding|user>`.
+`--yes` commits it only after the snapshot is checked again;
 it never calls a provider, promotes the candidate, or grants runtime authority.
 `memory provenance` builds a bounded, read-only source graph for one L1 or L2 record.
 It follows only evidence IDs present in the same exact scope, caps traversal at 64
@@ -1294,6 +1351,207 @@ history. A worker claim has a lease, and `schedule run` re-reads the exact sourc
 scope before committing an L1 candidate. Changed, missing, revoked, expired, or
 empty evidence fails without promotion or effect authority. Disablement prevents
 future claims but preserves prior run evidence.
+
+`memory sop list` and `memory sop inspect --id <id>` query crystallized L3 Standard Operating
+Procedures. An SOP represents a validated execution DAG with topological execution order
+(`execution_order()`), bounded step definitions, and trigger intent categorization.
+
+`memory archive list` and `memory archive inspect --id <id>` inspect crystallized L4 session
+archives, exposing diff statistics, receipt digests, and lifecycle summaries without loading
+raw event logs.
+
+`memory vfs ls [<uri>]` and `memory vfs cat <uri>` expose the hierarchical virtual context
+filesystem (`pandora://`). `ls` lists directory nodes (`meta`, `index`, `facts`, `sops`,
+`archives`, `features`), while `cat` retrieves and renders the leaf fragment content. Path
+traversal (`.` and `..`) and backslashes fail closed.
+
+`memory capsule export --sop <sop-id> --output <path>` validates an L3 SOP, computes its
+cryptographic SHA-256 digest, and exports a standalone `.capsule.json` package.
+`memory capsule import --file <path>` re-validates the SHA-256 digest and DAG acyclicity
+before admitting the SOP into the target workspace database.
+
+## System 1 Decision Engine
+
+Pandora integrates an open-source, non-generative System 1 Decision Engine for
+sub-millisecond discrete classification, tool gating, and intent routing. Instead of
+multi-token conversational completion, decisions operate directly over single-token
+probabilities and calibrated logit distributions:
+
+```text
+pandora decision evaluate --question "Is it safe to run git status?" --binary
+pandora decision evaluate --question "Select operational mode" --choices "fast,balanced,deep"
+pandora decision evaluate --question "Rate severity" --driver ollama --model llama3 --endpoint http://localhost:11434
+pandora decision tool-gate --tool run_command --args '{"command": "rm -rf /"}'
+pandora decision intent-route --prompt "architect and redesign the memory supersets"
+```
+
+The command surface supports:
+- `evaluate`: Evaluates a typed `DecisionQuestion` across a `QuestionSchema` (`binary`, `choices`, or `score`). Pluggable backend drivers include `heuristic` (zero-network semantic rules), `ollama` (`/api/generate` single-token evaluation), `custom` / `openai` (`/v1/chat/completions` token logprobs), and `mock` (deterministic unit testing). Output reports the selected candidate, confidence percentage, confidence margin, uncertainty status, and measured latency.
+- `tool-gate`: Pre-screens tool invocations through the System 1 reflex engine, outputting safety choices (`allow`, `require_confirm`, `reject`) along with full softmax candidate distributions.
+- `intent-route`: Maps incoming user prompts to operational intent tiers (`l0_local`, `l1_surgical`, `l2_architect`, `l3_clarify`, `l4_governance`).
+- `harvest`: Active-learning uncertainty harvester. Identifies decisions with low confidence margin (`--min-margin <float>`) and synthesizes `GoldenSuiteDefinition` datasets ready for immediate verification with `pandora evaluation golden`, Direct Preference Optimization (DPO) pairs (`--dpo-export <path>`), and fine-tuning prompt/completion pairs.
+
+Commands are also accessible under the `pandora runtime decision ...` namespace.
+
+## Voyager Curriculum CLI
+
+`curriculum` builds progressive challenge suites (Voyager-style) from recorded decision
+history or from a seed list of questions, then exports them as `GoldenSuiteDefinition`
+JSON files ready for `pandora evaluation golden`.
+
+```text
+pandora curriculum list
+pandora curriculum generate
+pandora curriculum generate --input decisions.json --out suite.json --difficulty hard
+pandora curriculum generate --suite-id my-suite --difficulty medium --limit 20
+pandora curriculum generate --input questions.json --out suite.json --min-margin 0.1
+pandora curriculum inspect --input suite.json
+```
+
+Subcommands:
+
+- `generate`: Harvests uncertain decision records (or synthesizes from a seed list), classifies
+  cases into `Easy` / `Medium` / `Hard` difficulty tiers (derived from the decision confidence
+  margin), and emits a `GoldenSuiteDefinition` JSON.
+  Options: `--suite-id <id>`, `--input <path>`, `--out <path>` / `--export-golden <path>`,
+  `--difficulty easy|medium|hard|all`, `--min-margin <float>`, `--limit <n>`, `--json`.
+- `inspect`: Parses a previously generated `GoldenSuiteDefinition` file and displays
+  case counts, difficulty distribution, and a sample of cases.
+- `list`: Lists available difficulty tiers and their margin thresholds.
+
+The `decision curriculum` alias is also supported:
+
+```text
+pandora decision curriculum generate --difficulty hard --out hard_suite.json
+```
+
+## Darwinian Island-Model Evolution
+
+`evolution island` commands manage multi-population genetic evolution across isolated
+niches (`QualityFirst`, `CostMinimal`, `LatencyOptimized`):
+
+```text
+pandora evolution island init --population 4 --out island_state.json
+pandora evolution island step --state island_state.json --generations 2
+pandora evolution island migrate --state island_state.json --count 1
+pandora evolution island run --state island_state.json --generations 5
+```
+
+- `init`: Seeds isolated subpopulation islands with initial Standard Operating Procedure candidates.
+- `step`: Executes tournament selection, SOP step crossover, and mutation operators (prompt mutation, step reordering, verification checkpoint insertion).
+- `migrate`: Transmits top elite candidates across a unidirectional ring topology between niches.
+- `run`: Orchestrates end-to-end multi-generation evolution, tracking candidate fitness divergence and generating non-dominated Pareto frontiers across pass rate, token cost, and latency.
+
+## Dynamic Swarm Topology Synthesis
+
+`orchestration synthesize` compiles architectural task intent into an emergent Diamond DAG plan:
+
+```text
+pandora orchestration synthesize --intent "Security audit, cache tuning, and load validation" --roles "security_auditor,cache_specialist,load_tester" --out diamond_plan.json
+```
+
+The synthesized plan automatically wires:
+1. `Planner` (coordination-meta harness) with root dependencies.
+2. Parallel Specialist Roles (`domain-specialist` harness) depending on Planner.
+3. `Synthesizer` (synthesis-domain harness) aggregating results from all parallel specialists.
+4. `Canary Verification Gate` (verification-meta harness) gating execution prior to commit.
+5. Cross-domain handoff declarations bound to Meta Harness coordination.
+
+## Local Model Hardware Autopilot & VRAM Sizing
+
+`pandora hardware` inspects host system accelerator and memory capabilities and calculates local model fit across GGUF quantization formats:
+
+```text
+pandora hardware probe
+pandora hardware fit --model deepseek-r1:8b --params 8.0 --quant q4_k_m --context 8192
+pandora hardware presets
+```
+
+- `probe`: Detects CPU cores, system RAM, detected GPU accelerators (CUDA, Metal Unified Memory, ROCm, Vulkan), and total usable VRAM.
+- `fit`: Calculates memory footprint (weights memory, KV cache, runtime headroom) for a specified parameter size (`--params <billions>`), quantization format (`--quant <q4_k_m|q5_k_m|q8_0|fp16|fp32>`), and context window (`--context <tokens>`). Returns fit score, VRAM/RAM fit booleans, recommended backend, and sizing verdict.
+- `presets`: Evaluates and tabulates sizing recommendations for standard local models (Qwen 2.5 3B/7B/14B/32B, DeepSeek-R1 8B/14B, Llama 3.1 8B/70B, Phi-4 14B).
+
+## Durable Multi-Agent Kanban State Machine
+
+`pandora kanban` manages durable, crash-resilient multi-agent task boards with heartbeat monitoring, dependency gating, and automatic zombie worker reclaim:
+
+```text
+pandora kanban task create --title "Analyze memory footprint" --priority 1 --board dev
+pandora kanban task create --title "Implement patch" --deps <task-id> --priority 2 --board dev
+pandora kanban task list --board dev
+pandora kanban task update <task-id> --status in_progress --worker worker-alpha
+pandora kanban task heartbeat <task-id> --worker worker-alpha
+pandora kanban task reclaim --board dev --timeout 300
+pandora kanban task inspect <task-id>
+pandora kanban board --board dev
+```
+
+- `task create`: Enqueues a durable task with priority (`1-5`), optional dependencies (`--deps <id1,id2>`), assignee, and board identity.
+- `task list`: Lists active tasks on a board ordered by priority and creation time, with optional `--status` filtering (`backlog`, `to_do`, `in_progress`, `blocked`, `review`, `done`).
+- `task update`: Advances task state. Moving to `in_progress` verifies that all declared dependencies are in `done` status.
+- `task heartbeat`: Records live progress from active workers, updating `last_heartbeat_epoch_secs`.
+- `task reclaim`: Scans for zombie workers exceeding `--timeout <secs>` (default 300s). Reclaims tasks back to `to_do` with incremented retry count, or marks them `blocked` if retry budget (`max_retries`) is exhausted.
+- `board`: Inspects entire board overview and aggregate task distribution.
+
+## Bot Mode & Inter-Agent Society
+
+`pandora peer` enables multi-agent social collaboration, specialized personas, and direct peer-to-peer messaging:
+
+```text
+pandora peer list
+pandora peer register --handle oracle --role "Synthesis and Predictions" --display Oracle --model hermes-custom --capabilities "planning,synthesis"
+pandora peer inspect <handle>
+pandora peer send --from oracle --to architect --subject "Micro-kernel Review" --body "Please review system boundaries."
+pandora peer inbox --handle architect [--unread]
+pandora peer read <message-id>
+pandora peer reply <message-id> --from architect --body "Review approved."
+pandora peer thread <thread-id>
+pandora peer delete <handle>
+```
+
+- `list` (or `roster`): Lists registered agent personas, including default personas (`@architect`, `@coder`, `@reviewer`, `@curator`, `@auditor`) and custom personas.
+- `register`: Registers a new agent persona with `--handle <name>`, `--role <role>`, optional `--display <name>`, `--model <model>`, `--prompt <text>`, `--avatar <seed>`, and comma-separated `--capabilities <c1,c2>`.
+- `inspect`: Displays detailed metadata, role, avatar seed, capabilities, and system prompt for a persona.
+- `send`: Dispatches a peer message from `--from <handle>` to `--to <handle>` with `--subject <subj>`, `--body <body>`, optional `--thread <id>`, and optional `--payload <json>`.
+- `inbox`: Lists incoming peer messages for a persona (or all personas), with optional `--unread` filtering.
+- `read`: Reads the full message body and transitions status to `read`.
+- `reply`: Dispatches a reply within the message's thread back to the sender.
+- `thread`: Displays complete threaded conversation history between agent personas in chronological order.
+- `delete`: Removes a custom persona from the registry.
+
+### Agent-to-Agent (A2A) RPC Protocol v1.0
+
+`pandora peer a2a` provides standard JSON-RPC 2.0 cross-machine agent discovery, capability handshakes, and remote task delegation:
+
+```text
+pandora peer a2a card [--node-id <id>]
+pandora peer a2a rpc --request '{"jsonrpc":"2.0","id":1,"method":"a2a.discover","params":{"node_id":"cluster-1"}}'
+pandora peer a2a delegate --endpoint <local|url> --to coder --intent "Implement integration tests" [--from <agent>] [--payload <json>]
+pandora peer a2a status --task-id <id>
+```
+
+- `card`: Generates and exports the local node Agent Card declaring protocol endpoints, supported models, auth requirements, and capabilities (`vram_autopilot`, `kanban_coordination`, `peer_messaging`, `memory_vfs`, `capsule_sync`).
+- `rpc`: Dispatches a JSON-RPC 2.0 request envelope to the local A2A engine (`a2a.discover`, `a2a.delegate`, `a2a.query`, `a2a.cancel`).
+- `delegate`: Dispatches a bounded task intent to a target A2A node, computing cryptographic SHA-256 evidence digests and returning structured task completion receipts.
+- `status`: Queries the real-time execution status of a delegated task.
+
+## Browser PKCE OAuth 2.1 Connectors Platform
+
+`pandora connector` provides secure Proof Key for Code Exchange (PKCE) OAuth 2.1 authentication with external SaaS platforms and services (GitHub, Linear, Notion, Asana, Custom):
+
+```text
+pandora connector list
+pandora connector authorize --provider <github|linear|notion|asana|custom> [--client-id <id>] [--redirect-uri <uri>] [--scopes <s1,s2>]
+pandora connector exchange --session <session_id> --state <state> --code <code>
+pandora connector inspect <connector_id>
+pandora connector revoke <connector_id>
+```
+
+- `list`: Lists all authorized connectors, showing connector ID, SaaS provider, masked token digest, and authorized scopes.
+- `authorize`: Generates a high-entropy RFC 7636 PKCE code verifier and SHA-256 challenge, creates a temporary 10-minute authorization session, synthesizes the complete browser authorization URL, and outputs instructions for user authorization.
+- `exchange`: Validates the returned CSRF state token against the active PKCE session, exchanges the authorization code for a connector credential record, stores the masked reference and encrypted token in the vault, and marks the connector active.
+- `inspect`: Displays complete token record metadata including provider, token type, scopes, vault secret reference, and expiration timestamps.
+- `revoke`: Revokes and deletes an authorized connector credential record.
 
 Remote admission currently accepts Gene records with no unresolved capability
 requirements and one valid Pandora runtime requirement. Other package kinds fail
@@ -1391,3 +1649,39 @@ Uninstall requires `--yes` for deletion and preserves the configured workspace.
 It refuses a data directory that contains that workspace, and removes a
 configuration stored inside the data directory as part of that one data-root
 deletion. Use `--dry-run` to inspect the exact paths first.
+
+## Multi-model reasoning effort and prompt cache control
+
+Pandora provides unified multi-model reasoning effort controls across OpenAI,
+Anthropic, and local model inference providers, mapped directly to
+protocol-specific parameters (`reasoning_effort` for OpenAI o1/o3/o4, and
+extended `thinking` token budgets for Anthropic Claude 3.7+). Prompt caching
+policies preserve frozen static prefixes to optimize KV-cache reuse.
+
+```text
+pandora reasoning list
+pandora reasoning inspect --effort <none|low|medium|high>
+pandora reasoning profile
+pandora reasoning set --effort <none|low|medium|high> [--cache <auto|interactive|subagent|disabled>]
+```
+
+- `pandora reasoning list`: Lists supported effort levels (`none`, `low`, `medium`, `high`) and prompt cache retention strategies.
+- `pandora reasoning inspect`: Inspects token budget mappings (e.g. 1024 for low, 4096 for medium, 16384 for high) and prefix freezing guarantees.
+- `pandora reasoning profile`: Inspects current workspace reasoning and cache policy defaults.
+- `pandora reasoning set`: Applies reasoning effort and prompt cache TTL policies for subsequent agent turns.
+
+
+## Policy Hooks
+
+Pandora supports declarative, fail-closed lifecycle veto rules evaluated
+before authorization. Hooks remain strictly deny-only: they can veto matching
+operations before authorization checks, but cannot mutate requests, execute
+arbitrary code, grant permissions, or issue effect permits.
+
+```text
+pandora policy hooks list [--json]
+pandora policy hooks validate --file <path> [--json]
+```
+
+- `pandora policy hooks list`: Lists available hook points (such as `before_authorization`) and selectors (`any`, `capability`, `gene`).
+- `pandora policy hooks validate --file <path>`: Validates a JSON policy file containing a list of declarative lifecycle rules, checking selector schemas and hook definitions.

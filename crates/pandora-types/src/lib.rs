@@ -1,38 +1,55 @@
 #![forbid(unsafe_code)]
 
+pub mod a2a;
 pub mod adaptation;
+pub mod artifact;
 pub mod capability;
+pub mod connector;
 pub mod containment;
 pub mod context;
+pub mod curator;
+pub mod decision;
 pub mod effect;
 pub mod efficiency;
 pub mod evaluation;
 pub mod events;
 pub mod evolution;
 pub mod execution_profile;
+pub mod feature_map;
 pub mod gene;
 pub mod governance;
+pub mod hardware;
 pub mod harness;
 pub mod ids;
 pub mod jobs;
+pub mod kanban;
 pub mod memory;
 pub mod observability;
 pub mod orchestration;
 pub mod package;
 pub mod population;
+pub mod reasoning;
 pub mod rollout;
+pub mod secret;
 pub mod service;
 pub mod session;
 pub mod skill;
+pub mod society;
 pub mod storage_lifecycle;
 pub mod subagent;
 pub mod workspace_orchestration;
 
+pub use a2a::{
+    A2aAgentCard, A2aRpcError, A2aRpcRequest, A2aRpcResponse, A2aTaskRequest, A2aTaskResponse,
+    A2aTaskStatus,
+};
 pub use adaptation::{
     AdaptationCandidate, AdaptationContractError, AdaptationDecision, AdaptationPolicy,
     AdaptationReceipt, AdaptationRequest, AdaptationTarget,
 };
-pub use capability::{Capability, Operation};
+pub use artifact::ArtifactRef;
+pub use capability::{Capability, Operation, ToolSearchResult};
+pub use connector::{ConnectorProvider, ConnectorSession, ConnectorTokenRecord, PkceChallenge};
 pub use containment::{
     CONTAINMENT_EVIDENCE_VERSION, ContainmentBoundary, ContainmentBoundaryKind,
     ContainmentContractError, ContainmentControl, ContainmentEvidence, ContainmentLevel,
@@ -42,7 +59,14 @@ pub use context::{
     CONTEXT_PROJECTION_VERSION, ContextAssembly, ContextCacheDisposition, ContextCacheKey,
     ContextClassification, ContextContractError, ContextEntry, ContextFragment,
     ContextFragmentManifest, ContextManifest, ContextOrigin, ContextOriginKind, ContextReceipt,
-    ContextRequest, ContextSource, ContextTrust,
+    ContextRequest, ContextSource, ContextTrust, ContextUri, VfsDirectoryEntry, VfsNodeKind,
+};
+pub use curator::{CuratorPassResult, CuratorStatus};
+pub use decision::{
+    ConvergenceChoice, DecisionCandidate, DecisionChoice, DecisionDistribution,
+    DecisionDriverConfig, DecisionDriverKind, DecisionEvolutionRecord, DecisionQuestion,
+    DecisionVerdict, DpoPair, DynamicVerdict, FineTuningSample, GoldenEvaluationCase,
+    GoldenSuiteDefinition, GoldenTargetRef, IntentTierChoice, QuestionSchema, ToolSafetyChoice,
 };
 pub use effect::{
     EffectOutcome, EffectPermit, EffectReceipt, EffectTarget, OperationRequest, RequestError,
@@ -70,8 +94,12 @@ pub use execution_profile::{
     EXECUTION_PROFILE_VERSION, ExecutionProfile, ExecutionProfileBinding,
     ExecutionProfileBindingKind, ExecutionProfileContractError, ExecutionProfileDigest,
 };
+pub use feature_map::{FeatureEntry, FeatureMap};
 pub use gene::{Gene, GeneError, GeneInput, GeneKind, GeneManifest};
 pub use governance::{ParliamentDecision, PolicyContext};
+pub use hardware::{
+    GpuBackend, GpuDevice, HostHardwareProfile, ModelFootprintEstimation, Quantization,
+};
 pub use harness::{
     Harness, HarnessKind, HarnessManifest, MAX_META_DOMAINS, MAX_META_HANDOFFS, MetaComposition,
 };
@@ -82,20 +110,22 @@ pub use ids::{
     TenantId, WorkspaceId,
 };
 pub use jobs::{JobCommand, JobContractError, JobRequest, JobStatus, MAX_JOB_ARGUMENT_BYTES};
+pub use kanban::{KanbanBoard, KanbanReclaimReport, KanbanStatus, KanbanTask};
 pub use memory::{
     MAX_MEMORY_SYNTHESIS_EVIDENCE, MEMORY_CONSOLIDATION_POLICY_VERSION, MemoryApproval,
-    MemoryAuditAction, MemoryAuditEntry, MemoryConflictRule, MemoryConsolidationBoundary,
-    MemoryConsolidationPolicy, MemoryContractError, MemoryKind, MemoryOrigin, MemoryRecord,
-    MemoryScope, MemoryTier,
+    MemoryAuditAction, MemoryAuditEntry, MemoryCapsule, MemoryConflictRule,
+    MemoryConsolidationBoundary, MemoryConsolidationPolicy, MemoryContractError, MemoryIntent,
+    MemoryKind, MemoryOrigin, MemoryRecord, MemoryScope, MemoryTier, SessionArchiveRecord,
+    SopDefinition, SopStep, StoredSop,
 };
 pub use observability::{
     ObservabilityContractError, ObservabilitySample, ObservabilitySnapshot, SpanView, TraceView,
 };
 pub use orchestration::{
-    DomainAgentProfile, DomainProfileMode, Handoff, IterationOutcome, LoopDecision,
-    LoopTermination, MAX_ORCHESTRATION_HANDOFFS, MAX_ORCHESTRATION_ROLES,
-    OrchestrationContractError, OrchestrationPlan, OrchestrationRole, RoleAssignment,
-    RunLoopConfig, RunLoopSnapshot, RunLoopState, Usage,
+    DomainAgentProfile, DomainProfileMode, ExecutionTopology, Handoff, IterationOutcome,
+    LoopDecision, LoopTermination, MAX_ORCHESTRATION_HANDOFFS, MAX_ORCHESTRATION_ROLES,
+    OrchestrationContractError, OrchestrationPlan, OrchestrationPlanJson, OrchestrationRole,
+    RoleAssignment, RunLoopConfig, RunLoopSnapshot, RunLoopState, Usage,
 };
 pub use package::{
     DomainRoutingProfile, GeneExecutionMode, GenePackageContract, MAX_DOMAIN_ROUTE_HINT_BYTES,
@@ -111,11 +141,13 @@ pub use population::{
     PopulationCandidate, PopulationContractError, PopulationEvaluation, PopulationMutationRequest,
     PopulationPolicy, PopulationScope, PrecheckDisposition, PrecheckFailure,
 };
+pub use reasoning::{PromptCachePolicy, PromptCacheStrategy, ReasoningEffort};
 pub use rollout::{
     MAX_ROLLOUT_RECORDS, ROLLOUT_PROJECTION_VERSION, Rollout, RolloutContractError, RolloutDigest,
     RolloutEffectOutcome, RolloutEventEvidence, RolloutEvidence, RolloutRecord, RolloutRecordKind,
     RolloutScope,
 };
+pub use secret::{CredentialPool, CredentialPoolStatus, PoolKeyEntry, PoolStrategy};
 pub use service::{
     LOCAL_SERVICE_PROTOCOL_VERSION, MAX_SERVICE_EVENT_PAGE, MAX_SERVICE_SESSION_PAGE,
     ServiceAgentResumeRequest, ServiceAgentRunRequest, ServiceAgentRunResult,
@@ -128,8 +160,9 @@ pub use service::{
     ServiceRequest, ServiceResponse, ServiceRunRequest, ServiceRunResult, ServiceRunResumeRequest,
     ServiceSessionDetail, ServiceSessionSummary, ServiceToolSummary,
 };
-pub use session::{Session, TaskIntent};
+pub use session::{Session, SessionPruneReport, StorageStats, TaskIntent, VacuumReport};
 pub use skill::{SkillId, SkillManifest, SkillManifestError};
+pub use society::{AgentPersona, PeerDispatchReceipt, PeerMessage, PeerMessageStatus, PeerThread};
 pub use storage_lifecycle::{
     MAX_STORAGE_LIFECYCLE_PROVIDER_FIELDS, STORAGE_LIFECYCLE_POLICY_VERSION,
     StorageLifecycleAction, StorageLifecycleContractError, StorageLifecycleManifest,

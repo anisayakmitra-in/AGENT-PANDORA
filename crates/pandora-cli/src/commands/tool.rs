@@ -39,10 +39,11 @@ impl Catalog {
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args
         .first()
-        .ok_or_else(|| CliError::usage("tool requires 'list' or 'inspect'"))?;
+        .ok_or_else(|| CliError::usage("tool requires 'list', 'inspect', or 'search'"))?;
     match subcommand.as_str() {
         "list" => list(&args[1..]),
         "inspect" => inspect(&args[1..]),
+        "search" => search(&args[1..]),
         unknown => Err(CliError::usage(format!("unknown tool command '{unknown}'"))),
     }
 }
@@ -94,6 +95,51 @@ fn inspect(args: &[String]) -> Result<CommandResult, CliError> {
         "tool inspect",
         payload,
         format!("Inspected tool {tool_id}"),
+    ))
+}
+
+fn search(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "catalog",
+            "query",
+            "limit",
+        ],
+    )?;
+    let query = if let Some(q) = parsed.value("query") {
+        q.to_string()
+    } else if let Some(q) = parsed.positionals.first() {
+        q.to_string()
+    } else {
+        return Err(CliError::usage(
+            "tool search requires <query> or --query <text>",
+        ));
+    };
+    let limit = parsed
+        .value("limit")
+        .map(|v| {
+            v.parse::<usize>()
+                .map_err(|_| CliError::usage("tool search --limit must be an integer"))
+        })
+        .transpose()?
+        .unwrap_or(10);
+    let catalog = Catalog::parse(parsed.value("catalog"))?;
+    let engine = tool_engine(&parsed, catalog)?;
+    let results = engine.search(&query, limit);
+    let count = results.len();
+    Ok(success(
+        "tool search",
+        json!({
+            "query": query,
+            "catalog": catalog.as_str(),
+            "count": count,
+            "results": results,
+        }),
+        format!("Found {count} matching tool(s) for '{query}'"),
     ))
 }
 

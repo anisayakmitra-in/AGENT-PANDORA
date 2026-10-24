@@ -2,52 +2,92 @@
 
 ## Unreleased
 
-- Removed the desktop product on 2026-10-05. The Tauri adapter tree, its four
-  release jobs, the `security.yml` dependency audit for its lockfile, the
-  accessibility evidence script and workflow, the vendored `glib 0.18.5` backport
-  and its repository validation, the desktop documentation, and the
-  `desktop_required` release-scope field are all gone. The release scope has one
-  value, `cli-only`, and the release gate asserts it explicitly. The CLI is the
-  only shipped surface; there is no flag or variable that restores a desktop.
+## v2.0.0-beta.9
 
-- Added three read-only CLI read surfaces that previously existed only in the
-  service or not at all. `pandora runtime engines list|inspect <id>` exposes the
-  engine inventory through a new `RuntimeService::engine_inventory`, so the CLI
-  and the service `runtime.engines` read model share one list rather than two.
-  The 22 inventory entries are unchanged; a fixture captured before the edit
-  compares them field by field. `pandora session events <id>
-  [--after-sequence <n>] [--limit <1-256>]` pages the existing
-  `SessionStore::event_page` cursor and reports `count`, `has_more`, and
-  `next_sequence`; page bounds are validated before the store is opened, so a bad
-  limit fails as a usage error instead of reading as an empty session. `pandora
-  tool list|inspect [--catalog builtin|active]` can also show the active Harness
-  catalog, reusing the same `register_wasm_genes` path the service uses. The
-  default stays `builtin` and byte-identical. Each surface has a human layout and
-  a `--json` contract, and each was proven to fail closed on invalid input.
-- Corrected two documentation claims that overstated what the shipped path does.
-  `pandora update` stages a verified artifact and, without `--target`, leaves the
-  installed binary untouched; the README described it as updating. Lifecycle
-  hooks are library support: the CLI and service construct controllers with an
-  empty hook set, so no hook is evaluated and no command configures one. Both
-  are now stated as such. No behavior changed.
-- Cancelled desktop product work. The `pandora` CLI is the only active product
-  surface. `apps/pandora-desktop` stays in the tree as an inactive downstream
-  adapter, the `full` release scope is retired, and desktop references in active
-  documentation are now marked historical. Core, service, and CLI behavior are
-  unchanged.
-- Added an explicit `PANDORA_BIN` local-native override to the npm launcher so
-  an already-built Rust binary can be used on targets outside the release
-  download matrix. Moved the launcher file helper into TypeScript source with a
-  generated-output drift gate, and proved `cargo install --path crates/pandora-cli
-  --locked` in CI. The npm package still has no install hooks and the
-  checksum-verified release path is unchanged.
-- Added a provider-neutral, hash-bound contract for requesting isolated desktop
-  signing without placing credentials beside tag-controlled build hooks. The
-  contract does not enable RC/stable publication or claim provider authenticity;
-  an independently administered signer, trust root, and clean verification
-  runner remain required.
+- **Durable Multi-Agent Kanban Board (`pandora kanban`)**: SQLite-backed coordination
+  state machine managing task lifecycles (`to_do`, `in_progress`, `review`, `done`, `blocked`),
+  worker heartbeats, and automated zombie task reclamation (`pandora kanban task create|update|claim|heartbeat|reclaim|board`).
+- **Bot Mode & Inter-Agent Society (`pandora peer`)**: Multi-agent social collaboration
+  featuring built-in personas (`@architect`, `@coder`, `@reviewer`, `@curator`, `@auditor`),
+  custom persona registration, and threaded peer direct messaging (`pandora peer list|register|inspect|send|inbox|read|reply|thread|delete`).
+- **Session Auto-Pruning & SQLite Vacuum Optimizer (`pandora session`)**: Lifecycle storage
+  maintenance engine with age-based session/event/turn pruning and conditional or forced
+  SQLite VACUUM disk space reclamation (`pandora session prune`, `pandora session vacuum`).
+- **Agent-to-Agent (A2A) JSON-RPC 2.0 Protocol v1.0 (`pandora peer a2a`)**: Standards-compliant
+  cross-machine JSON-RPC 2.0 protocol for agent discovery, capability handshakes (Agent Cards),
+  and cryptographic SHA-256 verified remote task delegation (`pandora peer a2a card|rpc|delegate|status`).
+- **Browser PKCE OAuth 2.1 Connectors Platform (`pandora connector`)**: Secure RFC 7636
+  Proof Key for Code Exchange (PKCE) OAuth 2.1 platform for external SaaS integrations
+  (GitHub, Linear, Notion, Asana, Custom) with loopback code exchange and encrypted vault token storage (`pandora connector list|authorize|exchange|inspect|revoke`).
 
 ## v2.0.0-beta.8
+
+- **5-Tier Layered Crystallized Memory Architecture (L0-L4)**: Crystallizes memory
+  across task execution stages: L0 (Constitutional Meta Rules), L1 (Insight Index
+  partitioned across `repo`, `procedure`, `coding`, and `user` intents), L2 (Durable
+  Global Facts), L3 (Task Skills / Standard Operating Procedure DAGs), and L4
+  (Session Archives with execution trajectories, diff statistics, and receipt
+  digests). Backed by SQLite Migration 10 introducing `memory_sops` and
+  `memory_archives` tables with compound intent/tier indexes and multi-tenant
+  isolation (`pandora memory sop list|inspect`, `pandora memory archive list|inspect`).
+- **Hierarchical Virtual Context Filesystem (`pandora://`)**: Added an in-memory
+  VFS engine for uniform navigation and inspection across constitutional rules,
+  insight indexes, durable facts, crystallized SOPs, session archives, and codebase
+  feature maps with strict path-traversal confinement (`pandora memory vfs ls`,
+  `pandora memory vfs cat`).
+- **System 1 Fast-Path Decision & Reflex Engine (`pandora-decision`)**: Single-pass
+  logit engine executing fast-path reflexive decisions (`ToolSafetyChoice`,
+  `IntentTierChoice`, `ConvergenceChoice`) with calibrated softmax, temperature tuning,
+  and anti-thrash loop detection tracking consecutive decision cycles to prevent
+  infinite oscillatory failure states.
+- **GEPA Multi-Objective Pareto Skill Evolution & Bayesian Canary Gating**:
+  Integrated Pareto frontier tracking (`ParetoFrontier`) across non-dominated trade-offs
+  in PassRate, TokenCost, and StepLatency. Multi-sample canary validation is governed
+  by `BayesianCanaryGate`, computing exact Beta(1+k, 1+(n-k)) numerical integrals and
+  large-sample normal approximations to enforce 95% lower credible bounds before
+  promoting evolved candidates.
+- **Signed Evolutionary Memory Capsules**: Cryptographic SHA-256 digest export
+  and import protocol (`MemoryCapsule`) for packaging and safely sharing validated
+  L3 SOPs across workspaces with author provenance verification and DAG acyclicity
+  validation (`pandora memory capsule export|import`).
+- **Active-Learning Uncertainty Harvester & Golden Dataset Synthesis**: Automated
+  harvesting of low-margin uncertain decisions from the System 1 decision engine
+  and exporting them into validated golden evaluation test suites ready for
+  evaluation loops (`pandora decision harvest`).
+- **Darwinian Island-Model Multi-Population Genetic Evolver**: Manages isolated
+  subpopulations ("islands") targeting distinct optimization objectives (`QualityFirst`,
+  `CostMinimal`, `LatencyOptimized`) with tournament selection, crossover recombination,
+  mutation operators, and periodic elite migration (`pandora evolution island run`).
+- **Dynamic Emergent Swarm Topology Synthesis**: Autonomous intent-driven synthesis
+  transforming architectural task intents into validated diamond execution topologies
+  (Planner $\to$ Parallel Specialist Roles $\to$ Synthesizer $\to$ Canary Gate) with
+  duplicate and reserved role validation (`pandora orchestration synthesize`).
+- **Autonomous Reflexion & Memory Self-Crystallization**: Differential trajectory
+  analysis inspecting completed L4 session archives, abstracting concrete workspace
+  literals (absolute paths, 40-character commit hashes, session UUIDs, SHA-256 digests)
+  into parameterized `SopStep` templates, verifying candidates through the Bayesian
+  canary gate, and automatically promoting them to active L3 storage in SQLite
+  (`pandora memory crystallize`, `pandora evolution loop`).
+- **Deterministic Time-Travel Replay & Checkpoint Forking**: Differential turn
+  snapshots with SHA-256 step digests, an execution rollback engine to restore
+  workspace and session state to prior step indices, and an isolated Git worktree
+  forking engine to evaluate competing models or speculative branches (`pandora
+  session rewind`, `pandora session fork`, `pandora session diff`).
+- **Decentralized P2P Capsule Mesh Synchronization**: Peer discovery and Ed25519
+  identity handshake supporting gossip broadcast and synchronization of signed
+  memory capsules with 3-point validation (SHA-256 digest, signature verification,
+  DAG acyclicity check) before admitting into local SQLite (`pandora memory mesh
+  peers`, `pandora memory mesh broadcast`, `pandora memory mesh sync`).
+- **Production Release Ecosystem & Multi-Platform Manifests (Phase 6)**: Automated
+  generator for Homebrew bottle formula, Scoop bucket JSON, and winget YAML manifests
+  (`scripts/generate_release_manifests.py`) verified in CI against release checksums
+  and keyless cosign signatures.
+- **Provider Setup Presets & Model Validation**: Streamlined CLI interactive setup
+  (`pandora setup`) with presets for Ollama, DeepSeek, OpenRouter, Groq, Anthropic,
+  and OpenAI, validating model tags and credentials before persistence.
+- **CLI-Only Focus & Desktop Product Retirement**: Retired legacy Tauri desktop
+  product and desktop release paths on 2026-10-05, locking release scope to `cli-only`
+  and focusing all runtime performance on the high-throughput CLI boundary.
 
 - Added an honest stable rollback closure record. RC and stable tags now validate
   the four native accessibility manifests against their exact commit. Stable

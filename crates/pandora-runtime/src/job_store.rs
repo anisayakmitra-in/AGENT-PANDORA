@@ -148,6 +148,16 @@ impl From<JobContractError> for JobStoreError {
     }
 }
 
+fn is_busy_error(error: &rusqlite::Error) -> bool {
+    match error {
+        rusqlite::Error::SqliteFailure(e, _) => {
+            e.code == rusqlite::ErrorCode::DatabaseBusy
+                || e.code == rusqlite::ErrorCode::DatabaseLocked
+        }
+        _ => false,
+    }
+}
+
 pub struct JobStore {
     connection: Mutex<Connection>,
 }
@@ -171,54 +181,78 @@ impl JobStore {
         created_at: Timestamp,
     ) -> Result<JobRecord, JobStoreError> {
         let request_json = serde_json::to_string(request)?;
-        let mut connection = self.lock()?;
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let latest_sequence =
-            transaction.query_row("SELECT MAX(submission_sequence) FROM jobs", [], |row| {
-                row.get::<_, Option<i64>>(0)
-            })?;
-        let submission_sequence = latest_sequence
-            .unwrap_or(0)
-            .checked_add(1)
-            .ok_or(JobStoreError::CorruptRecord)?;
-        let result = transaction.execute(
-            "INSERT INTO jobs (
-                 id, submission_sequence, principal_id, tenant_id, workspace_id,
-                 request_json, status, created_at, job_kind
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'queued', ?7, 'run')",
-            params![
-                id.as_str(),
-                submission_sequence,
-                principal_id.as_str(),
-                tenant_id.as_str(),
-                workspace_id.as_str(),
-                request_json,
-                to_i64(created_at.as_unix_seconds())?,
-            ],
-        );
-        match result {
-            Ok(_) => {
-                transaction.commit()?;
-                Ok(JobRecord {
-                    id: id.clone(),
-                    principal_id: principal_id.clone(),
-                    tenant_id: tenant_id.clone(),
-                    workspace_id: workspace_id.clone(),
-                    request: request.clone(),
-                    status: JobStatus::Queued,
-                    created_at,
-                    started_at: None,
-                    finished_at: None,
-                    worker_id: None,
-                    result: None,
-                })
+        let mut attempts = 0;
+        loop {
+            attempts += 1;
+            let mut connection = self.lock()?;
+            let attempt_result: Result<JobRecord, (JobStoreError, bool)> = (|| {
+                let transaction = connection
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .map_err(|e| (JobStoreError::Database(e), true))?;
+                let latest_sequence = transaction
+                    .query_row("SELECT MAX(submission_sequence) FROM jobs", [], |row| {
+                        row.get::<_, Option<i64>>(0)
+                    })
+                    .map_err(|e| (JobStoreError::Database(e), true))?;
+                let submission_sequence = latest_sequence
+                    .unwrap_or(0)
+                    .checked_add(1)
+                    .ok_or((JobStoreError::CorruptRecord, false))?;
+                let result = transaction.execute(
+                    "INSERT INTO jobs (
+                         id, submission_sequence, principal_id, tenant_id, workspace_id,
+                         request_json, status, created_at, job_kind
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'queued', ?7, 'run')",
+                    params![
+                        id.as_str(),
+                        submission_sequence,
+                        principal_id.as_str(),
+                        tenant_id.as_str(),
+                        workspace_id.as_str(),
+                        request_json,
+                        to_i64(created_at.as_unix_seconds()).map_err(|e| (e, false))?,
+                    ],
+                );
+                match result {
+                    Ok(_) => {
+                        transaction
+                            .commit()
+                            .map_err(|e| (JobStoreError::Database(e), true))?;
+                        Ok(JobRecord {
+                            id: id.clone(),
+                            principal_id: principal_id.clone(),
+                            tenant_id: tenant_id.clone(),
+                            workspace_id: workspace_id.clone(),
+                            request: request.clone(),
+                            status: JobStatus::Queued,
+                            created_at,
+                            started_at: None,
+                            finished_at: None,
+                            worker_id: None,
+                            result: None,
+                        })
+                    }
+                    Err(rusqlite::Error::SqliteFailure(error, _))
+                        if error.code == rusqlite::ErrorCode::ConstraintViolation =>
+                    {
+                        Err((JobStoreError::JobAlreadyExists, false))
+                    }
+                    Err(error) => Err((JobStoreError::Database(error), true)),
+                }
+            })();
+
+            drop(connection);
+
+            match attempt_result {
+                Ok(record) => return Ok(record),
+                Err((JobStoreError::Database(ref err), true))
+                    if is_busy_error(err) && attempts < 25 =>
+                {
+                    std::thread::sleep(Duration::from_millis(attempts * 20));
+                    continue;
+                }
+                Err((err, _)) => return Err(err),
             }
-            Err(rusqlite::Error::SqliteFailure(error, _))
-                if error.code == rusqlite::ErrorCode::ConstraintViolation =>
-            {
-                Err(JobStoreError::JobAlreadyExists)
-            }
-            Err(error) => Err(JobStoreError::Database(error)),
         }
     }
 

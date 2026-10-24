@@ -26,7 +26,40 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora setup --json` | `setup` | `config_path`, `data_dir`, `workspace`, `provider_configured`, `provider_profiles`, `active_provider`, `provider_model`, `api_key_env`, `interactive` |
 | `pandora provider test --json` | `provider test` | `provider`, `model`, `status`, `output`, `usage`, `metrics` |
 | `pandora auth enroll ... --json` | `auth enroll` | `identity`, `token_path`, `device_key_path`, `token_exposed`, `private_key_exposed` |
+| `pandora secret set <NAME> --value-stdin --json` | `secret set` | `name`, `stored`, `vault_path`, `created_at`, `updated_at` |
 | `pandora secret list --json` | `secret list` | `secrets`, `count`, `values_exposed` |
+| `pandora secret status <NAME> --json` | `secret status` | `name`, `configured`, `value_exposed` |
+| `pandora secret remove <NAME> --yes --json` | `secret remove` | `name`, `removed` |
+| `pandora secret pool add <pool-id> --key <name> ... --json` | `secret pool add` | `pool_id`, `key_id`, `secret_name`, `priority`, `strategy`, `cooldown`, `total_keys` |
+| `pandora secret pool list [--pool <pool-id>] --json` | `secret pool list` | `pools`, `count` or `pool` |
+| `pandora secret pool status <pool-id> --json` | `secret pool status` | `status` |
+| `pandora secret pool rotate <pool-id> --json` | `secret pool rotate` | `pool_id`, `selected_key` |
+| `pandora secret pool report-429 <pool-id> --key <key-id> ... --json` | `secret pool report-429` | `pool_id`, `key_id`, `next_reset_seconds` |
+| `pandora secret pool remove <pool-id> [--key <key-id>] --yes --json` | `secret pool remove` | `pool_id`, optional `key_id`, `removed` |
+| `pandora hardware probe --json` | `hardware probe` | `cpu_cores`, `total_ram_bytes`, `free_ram_bytes`, `gpus`, `primary_backend`, `total_usable_vram_bytes` |
+| `pandora hardware fit ... --json` | `hardware fit` | `model_id`, `parameters_billion`, `quantization`, `context_window`, `weights_memory_bytes`, `kv_cache_memory_bytes`, `headroom_bytes`, `total_required_bytes`, `fits_in_vram`, `fits_in_ram`, `recommended_backend`, `fit_score`, `fit_verdict` |
+| `pandora hardware presets --json` | `hardware presets` | `recommendations` |
+| `pandora kanban task create ... --json` | `kanban task create` | `id`, `board_id`, `title`, `description`, `status`, `priority`, `assignee`, `dependencies`, `retry_count`, `max_retries` |
+| `pandora kanban task list ... --json` | `kanban task list` | `board_id`, `tasks`, `count` |
+| `pandora kanban task update <id> ... --json` | `kanban task update` | `id`, `board_id`, `status`, `assignee`, `updated_at` |
+| `pandora kanban task heartbeat <id> --worker <w> --json` | `kanban task heartbeat` | `id`, `assignee`, `last_heartbeat_epoch_secs` |
+| `pandora kanban task reclaim ... --json` | `kanban task reclaim` | `reclaimed_task_ids`, `blocked_exhausted_ids` |
+| `pandora kanban task inspect <id> --json` | `kanban task inspect` | `id`, `board_id`, `title`, `status`, `priority`, `assignee`, `dependencies` |
+| `pandora kanban task delete <id> --yes --json` | `kanban task delete` | `id`, `deleted` |
+| `pandora kanban board ... --json` | `kanban board` | `id`, `name`, `tasks` |
+| `pandora peer list --json` | `peer list` | `count`, `personas` |
+| `pandora peer register --handle <h> --role <r> ... --json` | `peer register` | `handle`, `display_name`, `role`, `system_prompt`, `model`, `avatar_seed`, `capabilities`, `created_at` |
+| `pandora peer inspect <handle> --json` | `peer inspect` | `handle`, `display_name`, `role`, `system_prompt`, `model`, `avatar_seed`, `capabilities`, `created_at` |
+| `pandora peer delete <handle> --json` | `peer delete` | `handle`, `deleted` |
+| `pandora peer send --from <f> --to <t> --subject <s> --body <b> ... --json` | `peer send` | `message_id`, `thread_id`, `from_handle`, `to_handle`, `subject`, `status`, `created_at` |
+| `pandora peer inbox [--handle <h>] [--unread] --json` | `peer inbox` | `count`, `messages` |
+| `pandora peer read <id> --json` | `peer read` | `message_id`, `thread_id`, `from_handle`, `to_handle`, `subject`, `body`, `payload`, `status`, `created_at`, `updated_at` |
+| `pandora peer reply <id> --from <f> --body <b> ... --json` | `peer reply` | `message_id`, `thread_id`, `from_handle`, `to_handle`, `subject`, `status`, `created_at` |
+| `pandora peer thread <thread-id> --json` | `peer thread` | `thread_id`, `subject`, `participants`, `message_count`, `messages`, `last_activity_at` |
+| `pandora peer a2a card [--node-id <id>] --json` | `peer a2a card` | `id`, `name`, `version`, `description`, `capabilities`, `supported_models`, `endpoints`, `auth_mode` |
+| `pandora peer a2a rpc --request '<json>' --json` | `peer a2a rpc` | `jsonrpc`, `id`, `result`, `error` |
+| `pandora peer a2a delegate --endpoint <e> --to <t> --intent <i> ... --json` | `peer a2a delegate` | `task_id`, `status`, `output`, `error`, `evidence_digest`, `completed_at` |
+| `pandora peer a2a status --task-id <id> --json` | `peer a2a status` | `jsonrpc`, `id`, `result` |
 | `pandora backup create ... --json` | `backup create` | `output`, `entries`, `encrypted`, `format_version` |
 | `pandora backup inspect ... --json` | `backup inspect` | `input`, `created_at`, `entries`, `authenticated`, `paths_exposed` |
 | `pandora backup restore ... --json` | `backup restore` | `input`, `restored_entries`, `pre_restore_backup`, `authenticated` |
@@ -70,7 +103,7 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora package disable <id> <version> --dry-run --json` | `package disable` | `dry_run`, `changed`, `ready`, `package`, `enabled_dependents` |
 | `pandora package disable <id> <version> --yes --json` | `package disable` | `dry_run`, `changed`, `package`, `binding` |
 | `pandora package rollback <id> [--dry-run|--yes] --json` | `package rollback` | `dry_run`, `changed`, target or active version, `binding`, dependency and dependent preview fields for dry runs |
-| `pandora memory recall ... --json` | `memory recall` | `scope`, `tier`, `records`, `count`, `limit`, `durability` |
+| `pandora memory recall ... --json` | `memory recall` | `scope`, `tier`, `intent`, `records`, `count`, `limit`, `durability` |
 | `pandora memory audit ... --json` | `memory audit` | `scope`, `entries`, `count`, `durability` |
 | `pandora memory forget ... --json` | `memory forget` | `dry_run`, `memory_id`, `scope`, `revoked` or `would_revoke` |
 | `pandora memory compact ... --json` | `memory compact` | `dry_run`, `scope`, `revoked_before_or_at`, `compactable_records` and `would_compact` for previews or `compacted_records` for apply, plus the tombstone, audit, and secure-erasure `boundary` |
@@ -79,6 +112,36 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora memory provenance ... --json` | `memory provenance` | `root_id`, `scope`, `nodes`, `edges`, `bounded`, `max_nodes`, `durability` |
 | `pandora memory consolidate ... --json` | `memory consolidate` | `dry_run`, `applied`, `source`, `candidate` or `consolidated`, compatibility `policy`, versioned `transfer_policy`, `conflict`, `durability` |
 | `pandora memory schedule ... --json` | `memory schedule` | create/list/disable: schedule identity, exact scope, interval, enabled state, and claim count; claim/run history: worker lease, status, snapshot digest, result memory ID or bounded failure, plus `durability`; successful run also returns the committed L1 candidate and `promotion_required` |
+| `pandora memory sop list ... --json` | `memory sop list` | `sops`, `count`, `intent`, `durability` |
+| `pandora memory sop inspect --id <id> --json` | `memory sop inspect` | `sop`, `durability` |
+| `pandora memory archive list ... --json` | `memory archive list` | `archives`, `count`, `limit`, `durability` |
+| `pandora memory archive inspect --id <id> --json` | `memory archive inspect` | `archive`, `durability` |
+| `pandora memory vfs ls [<uri>] --json` | `memory vfs ls` | `uri`, `entries`, `count`, `durability` |
+| `pandora memory vfs cat <uri> --json` | `memory vfs cat` | `uri`, `fragment`, `durability` |
+| `pandora memory capsule export --sop <id> --output <path> --json` | `memory capsule export` | `output`, `capsule_id`, `sop_id`, `sha256_digest`, `author`, `durability` |
+| `pandora memory capsule import --file <path> --json` | `memory capsule import` | `file`, `capsule_id`, `sop_id`, `sha256_digest`, `author`, `admitted`, `durability` |
+| `pandora memory crystallize [--session <id> | --all] --json` | `memory crystallize` | `count`, `promoted_count`, `results` |
+| `pandora memory mesh peers --json` | `memory mesh peers` | `peers` |
+| `pandora memory mesh broadcast --sop <id> --json` | `memory mesh broadcast` | `capsule`, `author_public_key`, `author_signature`, `parent_capsule_ids`, `gossip_hops` |
+| `pandora memory mesh sync [--auto-promote] --json` | `memory mesh sync` | `admitted`, `rejected`, `promoted`, `peer_count` |
+| `pandora curator run [--once] ... --json` | `curator run` | `started_at`, `completed_at`, `sessions_evaluated`, `sops_crystallized`, `sops_promoted`, `stale_supervisors_reaped`, `wal_checkpointed`, `database_size_before`, `database_size_after`, `reclaimed_bytes`, `duration_ms` |
+| `pandora curator status --json` | `curator status` | `total_sessions`, `crystallized_sops`, `total_supervisors`, `database_size_bytes`, `wal_size_bytes`, `last_curation_timestamp` |
+| `pandora session rewind <id> --step <n> --yes --json` | `session rewind` | `session_id`, `rolled_back_from_step`, `rolled_back_to_step`, `target_digest`, `restored_environment`, `workspace_restored` |
+| `pandora session fork <id> --step <n> --prompt <text> --json` | `session fork` | `parent_session_id`, `forked_session_id`, `at_step`, `worktree_path`, `git_branch`, `prompt`, `created_at` |
+| `pandora session diff <id> --step-a <m> --step-b <n> --json` | `session diff` | `session_id`, `step_a`, `step_b`, `digest_a`, `digest_b`, `tool_diff`, `workspace_diff`, `environment_diff` |
+| `pandora session prune [--older-than <dur>] [--dry-run] [--yes] --json` | `session prune` | `older_than_seconds`, `sessions_examined`, `sessions_pruned`, `events_reclaimed`, `dry_run`, `pruned_session_ids` |
+| `pandora session vacuum [--analyze] [--threshold <pct>] [--force] --json` | `session vacuum` | `total_pages`, `page_size_bytes`, `reclaimable_percent` or `pre_size_bytes`, `post_size_bytes`, `reclaimed_bytes`, `vacuum_executed`, `reason` |
+| `pandora evolution loop [--watch | --once] --json` | `evolution loop` | `mode`, `cycles_completed`, `crystallized_count`, `promoted_count`, `status` |
+| `pandora decision evaluate ... --json` | `decision evaluate` | `question_id`, `selected`, `confidence`, `margin`, `is_uncertain`, `probabilities`, `latency_ms`, `driver` |
+| `pandora decision tool-gate --tool <name> ... --json` | `decision tool-gate` | `tool`, `selected`, `confidence`, `latency_ms`, `distribution` |
+| `pandora decision intent-route --prompt <text> --json` | `decision intent-route` | `prompt`, `selected`, `confidence`, `latency_ms`, `distribution` |
+| `pandora decision harvest --min-margin <float> ... --json` | `decision harvest` | `harvested_count`, `min_margin`, `limit`, `suite_id`, `exported_golden`, `exported_dpo`, `cases` |
+| `pandora tool list [--catalog <builtin|active>] --json` | `tool list` | `tools`, optional `catalog` |
+| `pandora tool inspect <id> [--catalog <builtin|active>] --json` | `tool inspect` | `tool`, optional `catalog` |
+| `pandora policy hooks list --json` | `policy hooks list` | `hook_points`, `hook_selectors`, `posture`, `arbitrary_code_execution`, `can_issue_permits` |
+| `pandora policy hooks validate --file <path> --json` | `policy hooks validate` | `file`, `valid`, `rule_count`, `rules` |
+| `pandora tool search <query> [--catalog <builtin|active>] [--limit <n>] --json` | `tool search` | `query`, `catalog`, `count`, `results` |
+| `pandora orchestration synthesize --intent <text> ... --json` | `orchestration synthesize` | `plan_id`, `intent`, `topology`, `max_parallelism`, `max_handoffs`, `roles_count`, `handoffs_count`, `out_path`, `plan` |
 | `pandora backup lifecycle preview --input <path> --json` | `backup lifecycle preview` | `dry_run`, `would_record`, validated `manifest`, and the non-execution/non-erasure `boundary` |
 | `pandora backup lifecycle record --input <path> --yes --json` | `backup lifecycle record` | `created`, `idempotent_replay`, append-only `receipt`, and the non-execution/non-erasure `boundary` |
 | `pandora backup lifecycle list|inspect ... --json` | `backup lifecycle list` or `backup lifecycle inspect` | append-only operator-attested receipt manifests, manifest digests, recorded times, evidence status, and external-action boundary |
@@ -93,12 +156,18 @@ so compatible releases can add evidence without renaming existing fields.
 | `pandora evolution rollout promote|pause|resume|reject|retry|rollback ... --json` | matching `evolution rollout` command | the same durable rollout projection; exact idempotent retry returns `changed: false` and a conflicting transition identity fails closed |
 | `pandora evolution activate --id <proposal-id> --json` | `evolution activate` | `proposal_id`, `state`, `base_artifact`, `candidate_artifact`, `activated_at`, `activation_scope`, `runtime_authority_changed`, `durability` |
 | `pandora evolution rollback --id <proposal-id> --reason <text> --json` | `evolution rollback` | `proposal_id`, `state`, `restored_artifact`, `rolled_back_at`, `reason`, `durability` |
+| `pandora evolution island init ... --json` | `evolution island init` | `islands_count`, `population_per_island`, `state_path`, `islands` |
+| `pandora evolution island step ... --json` | `evolution island step` | `current_generation`, `generations_run`, `reports`, `islands` |
+| `pandora evolution island migrate ... --json` | `evolution island migrate` | `generation`, `migrated_count`, `exchanges` |
+| `pandora evolution island run ... --json` | `evolution island run` | `total_generations`, `pareto_frontier_size`, `islands`, `pareto_candidates` |
 | `pandora evaluation suite ... --json` | `evaluation suite` | register/inspect: `id`, `digest`, `definition_bytes`, `created_at`, `durability`; register with `--candidate` also returns `candidate_id` and `review_gate`; run: `total`, `passed`, `failed`, `digest`, typed `artifact_scorecards`, `cases` with typed `target` and `task`; list: `suites`, `count`, `durability`
 | `pandora evaluation inspect --session <id> --json` | `evaluation inspect` | `session_id`, `execution_id`, `count`, `result_counts`, `receipts`, `durability` |
 | `pandora evaluation scorecard --session <id> [--fail-on-non-passed] --json` | `evaluation scorecard` | `session_id`, `receipt_count`, `result_count`, `result_counts`, `score_sum`, `average_score`, `pass_rate_percent`, `by_kind`, `digest`, `durability`; with the gate, non-passed results return the same data under an execution error |
 | `pandora evaluation regression ... --json` | `evaluation regression` | propose/inspect/review: `id`, `case_id`, `source_execution_id`, `target`, `task`, `failure_digest`, `status`, `review_required_before_suite`, `durability`; generate: accepted-candidate `generated_suite`, `review_gate`, `runtime_authority_changed`; list: `candidates`, `count`, `durability`
 | `pandora evaluation schedule ... --json` | `evaluation schedule` | schedule list/create: `proposal_id`, `one_shot`, `activation_performed` plus schedule fields; claim/run history: proposal binding and optional `evidence` (`report_digest`, `total_cases`, `passed_cases`, `failed_cases`); schedule run: `run`, `report`, `completed`, `passed`, optional `canary`, `activation_performed`, `durability` |
 | `pandora graph <kind> --input <path> [--store <path>] --json` | `graph build` | `kind`, `scope`, `source_count`, `nodes`, `edges`, `digest`, optional `persisted` |
+| `pandora graph map validate [--path <path>] --json` | `graph map validate` | `path`, `map_version`, `feature_count`, `features` |
+| `pandora graph map show [--path <path>] --json` | `graph map show` | `path`, `map_version`, `features` |
 | `pandora update --artifact ... --json` | `update` | `verified`, `artifact`, `target`, `signature_verified`, `dry_run` |
 | `pandora update --release ... --json` | `update` | `verified`, `release`, `channel`, `artifact`, `signature_verified`, `dry_run`; non-dry-run responses also contain `target` |
 | `pandora update --rollback --json` | `update rollback` | `target`, `dry_run`; a dry run contains `previous`, while a completed rollback contains `restored` |
@@ -119,7 +188,8 @@ report that admission and enablement were not performed. Cached admission always
 reports `enablement_performed: false` and `effect_authority_granted: false`.
 
 Memory records returned by `memory recall` include `origin` (`explicit` or
-`synthesized`) and `evidence_ids`. Synthesized records are L1 candidates only;
+`synthesized`), `evidence_ids`, and partitioned `intent` (`repo`, `procedure`, `coding`, `user`).
+Synthesized records are L1 candidates only;
 their evidence is descriptive provenance and does not authorize tools, policy,
 package activation, or promotion.
 

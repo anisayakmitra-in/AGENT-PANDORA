@@ -1,13 +1,38 @@
 use crate::context::ContextClassification;
 use crate::effect::Timestamp;
 use crate::ids::{IdError, MemoryId, SessionId, TenantId, WorkspaceId};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fmt;
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Ord, Hash, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryIntent {
+    Repo,
+    Procedure,
+    Coding,
+    User,
+}
+
+impl MemoryIntent {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Repo => "repo",
+            Self::Procedure => "procedure",
+            Self::Coding => "coding",
+            Self::User => "user",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, Hash, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MemoryTier {
     L0,
     L1,
     L2,
+    L3,
+    L4,
 }
 
 pub const MAX_MEMORY_SYNTHESIS_EVIDENCE: usize = 16;
@@ -64,11 +89,14 @@ impl MemoryTier {
             Self::L0 => "l0",
             Self::L1 => "l1",
             Self::L2 => "l2",
+            Self::L3 => "l3",
+            Self::L4 => "l4",
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Ord, Hash, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MemoryKind {
     Trace,
     ExecutionEvidence,
@@ -79,6 +107,8 @@ pub enum MemoryKind {
     Lineage,
     PolicyDecision,
     Replacement,
+    Sop,
+    SessionArchive,
 }
 
 impl MemoryKind {
@@ -93,18 +123,40 @@ impl MemoryKind {
             Self::Lineage => "lineage",
             Self::PolicyDecision => "policy_decision",
             Self::Replacement => "replacement",
+            Self::Sop => "sop",
+            Self::SessionArchive => "session_archive",
         }
     }
 
-    const fn can_be_l1(self) -> bool {
-        !matches!(self, Self::Trace | Self::PolicyDecision | Self::Replacement)
+    pub const fn can_be_l1(self) -> bool {
+        !matches!(self, Self::Trace | Self::Sop | Self::SessionArchive)
     }
 
-    const fn can_be_l2(self) -> bool {
+    pub const fn can_be_l2(self) -> bool {
         matches!(
             self,
             Self::Lesson | Self::Lineage | Self::PolicyDecision | Self::Replacement
         )
+    }
+
+    pub const fn can_be_l3(self) -> bool {
+        matches!(self, Self::Sop)
+    }
+
+    pub const fn can_be_l4(self) -> bool {
+        matches!(self, Self::SessionArchive)
+    }
+
+    pub const fn default_intent(self) -> MemoryIntent {
+        match self {
+            Self::Trace => MemoryIntent::Procedure,
+            Self::ExecutionEvidence | Self::Decision | Self::Failure | Self::Replacement => {
+                MemoryIntent::Coding
+            }
+            Self::Benchmark | Self::Lesson | Self::Sop => MemoryIntent::Procedure,
+            Self::Lineage | Self::SessionArchive => MemoryIntent::Repo,
+            Self::PolicyDecision => MemoryIntent::User,
+        }
     }
 }
 
@@ -123,6 +175,11 @@ pub enum MemoryContractError {
     CrossProviderConsolidation,
     ConsolidationBoundaryMismatch,
     InvalidTier { kind: MemoryKind, tier: MemoryTier },
+    DuplicateStep(String),
+    UnknownDependency(String),
+    SelfDependency(String),
+    DependencyCycle,
+    InvalidDigest,
 }
 
 impl fmt::Display for MemoryContractError {
@@ -163,6 +220,17 @@ impl fmt::Display for MemoryContractError {
                     kind.as_str(),
                     tier.as_str()
                 )
+            }
+            Self::DuplicateStep(step) => write!(formatter, "duplicate SOP step '{step}'"),
+            Self::UnknownDependency(dep) => {
+                write!(formatter, "unknown SOP step dependency '{dep}'")
+            }
+            Self::SelfDependency(step) => {
+                write!(formatter, "SOP step '{step}' cannot depend on itself")
+            }
+            Self::DependencyCycle => formatter.write_str("SOP steps contain a dependency cycle"),
+            Self::InvalidDigest => {
+                formatter.write_str("cryptographic SHA-256 digest mismatch (tampered or corrupted)")
             }
         }
     }
@@ -332,6 +400,7 @@ pub struct MemoryRecord {
     id: MemoryId,
     tier: MemoryTier,
     kind: MemoryKind,
+    intent: Option<MemoryIntent>,
     scope: MemoryScope,
     summary: String,
     classification: ContextClassification,
@@ -462,6 +531,7 @@ impl MemoryRecord {
             id: candidate.id,
             tier: MemoryTier::L2,
             kind: candidate.kind,
+            intent: candidate.intent,
             scope: candidate.scope,
             summary: candidate.summary,
             classification: candidate.classification,
@@ -472,6 +542,52 @@ impl MemoryRecord {
             origin: candidate.origin,
             evidence_ids: candidate.evidence_ids,
         })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_l3_sop(
+        id: impl Into<String>,
+        scope: MemoryScope,
+        summary: impl Into<String>,
+        classification: ContextClassification,
+        created_at: Timestamp,
+        provenance: impl Into<String>,
+    ) -> Result<Self, MemoryContractError> {
+        Self::new(
+            id,
+            MemoryTier::L3,
+            MemoryKind::Sop,
+            scope,
+            summary,
+            classification,
+            created_at,
+            None,
+            provenance,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_l4_archive(
+        id: impl Into<String>,
+        scope: MemoryScope,
+        summary: impl Into<String>,
+        classification: ContextClassification,
+        created_at: Timestamp,
+        provenance: impl Into<String>,
+    ) -> Result<Self, MemoryContractError> {
+        Self::new(
+            id,
+            MemoryTier::L4,
+            MemoryKind::SessionArchive,
+            scope,
+            summary,
+            classification,
+            created_at,
+            None,
+            provenance,
+            None,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -524,6 +640,8 @@ impl MemoryRecord {
         if tier == MemoryTier::L0 && kind != MemoryKind::Trace
             || tier == MemoryTier::L1 && !kind.can_be_l1()
             || tier == MemoryTier::L2 && !kind.can_be_l2()
+            || tier == MemoryTier::L3 && !kind.can_be_l3()
+            || tier == MemoryTier::L4 && !kind.can_be_l4()
         {
             return Err(MemoryContractError::InvalidTier { kind, tier });
         }
@@ -546,6 +664,7 @@ impl MemoryRecord {
             id,
             tier,
             kind,
+            intent: None,
             scope,
             summary,
             classification,
@@ -568,6 +687,19 @@ impl MemoryRecord {
 
     pub const fn kind(&self) -> MemoryKind {
         self.kind
+    }
+
+    pub fn intent(&self) -> MemoryIntent {
+        self.intent.unwrap_or_else(|| self.kind.default_intent())
+    }
+
+    pub const fn explicit_intent(&self) -> Option<MemoryIntent> {
+        self.intent
+    }
+
+    pub fn with_intent(mut self, intent: MemoryIntent) -> Self {
+        self.intent = Some(intent);
+        self
     }
 
     pub fn scope(&self) -> &MemoryScope {
@@ -699,6 +831,374 @@ fn validate_text(field: &'static str, value: String) -> Result<String, MemoryCon
     Ok(trimmed.to_owned())
 }
 
+fn validate_multiline_text(
+    field: &'static str,
+    value: String,
+) -> Result<String, MemoryContractError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(MemoryContractError::EmptyField(field));
+    }
+    if value.len() > 65_536 {
+        return Err(MemoryContractError::FieldTooLong(field));
+    }
+    if value
+        .chars()
+        .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+    {
+        return Err(MemoryContractError::ControlCharacter(field));
+    }
+    Ok(trimmed.to_owned())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SopStep {
+    pub id: String,
+    pub name: String,
+    pub command: String,
+    pub depends_on: Vec<String>,
+}
+
+impl SopStep {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        command: impl Into<String>,
+        depends_on: Vec<String>,
+    ) -> Result<Self, MemoryContractError> {
+        let id = validate_text("step id", id.into())?;
+        let name = validate_text("step name", name.into())?;
+        let command = validate_multiline_text("step command", command.into())?;
+        let mut seen = std::collections::BTreeSet::new();
+        for dep in &depends_on {
+            validate_text("step dependency", dep.clone())?;
+            if !seen.insert(dep) {
+                return Err(MemoryContractError::DuplicateStep(dep.clone()));
+            }
+        }
+        Ok(Self {
+            id,
+            name,
+            command,
+            depends_on,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SopDefinition {
+    pub id: String,
+    pub name: String,
+    pub trigger_intent: MemoryIntent,
+    pub steps: Vec<SopStep>,
+    pub verification_command: Option<String>,
+}
+
+impl SopDefinition {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        trigger_intent: MemoryIntent,
+        steps: Vec<SopStep>,
+        verification_command: Option<String>,
+    ) -> Result<Self, MemoryContractError> {
+        let sop = Self {
+            id: validate_text("SOP id", id.into())?,
+            name: validate_text("SOP name", name.into())?,
+            trigger_intent,
+            steps,
+            verification_command: verification_command
+                .map(|cmd| validate_multiline_text("verification command", cmd))
+                .transpose()?,
+        };
+        sop.validate()?;
+        Ok(sop)
+    }
+
+    pub fn validate(&self) -> Result<(), MemoryContractError> {
+        validate_text("SOP id", self.id.clone())?;
+        validate_text("SOP name", self.name.clone())?;
+        if let Some(ref cmd) = self.verification_command {
+            validate_multiline_text("verification command", cmd.clone())?;
+        }
+
+        if self.steps.is_empty() {
+            return Err(MemoryContractError::EmptyField("steps"));
+        }
+
+        let mut step_ids = std::collections::HashSet::new();
+        for step in &self.steps {
+            validate_text("step id", step.id.clone())?;
+            validate_text("step name", step.name.clone())?;
+            validate_multiline_text("step command", step.command.clone())?;
+            if !step_ids.insert(step.id.as_str()) {
+                return Err(MemoryContractError::DuplicateStep(step.id.clone()));
+            }
+        }
+
+        for step in &self.steps {
+            let mut seen_deps = std::collections::HashSet::new();
+            for dep in &step.depends_on {
+                validate_text("step dependency", dep.clone())?;
+                if !seen_deps.insert(dep.as_str()) {
+                    return Err(MemoryContractError::DuplicateStep(dep.clone()));
+                }
+                if dep == &step.id {
+                    return Err(MemoryContractError::SelfDependency(step.id.clone()));
+                }
+                if !step_ids.contains(dep.as_str()) {
+                    return Err(MemoryContractError::UnknownDependency(dep.clone()));
+                }
+            }
+        }
+
+        if self.execution_order().len() != self.steps.len() {
+            return Err(MemoryContractError::DependencyCycle);
+        }
+
+        Ok(())
+    }
+
+    pub fn execution_order(&self) -> Vec<SopStep> {
+        let mut in_degrees: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
+        let mut dependents: std::collections::HashMap<&str, Vec<&str>> =
+            std::collections::HashMap::new();
+        let step_map: std::collections::HashMap<&str, &SopStep> =
+            self.steps.iter().map(|s| (s.id.as_str(), s)).collect();
+
+        for step in &self.steps {
+            in_degrees.entry(step.id.as_str()).or_insert(0);
+            for dep in &step.depends_on {
+                dependents
+                    .entry(dep.as_str())
+                    .or_default()
+                    .push(step.id.as_str());
+                *in_degrees.entry(step.id.as_str()).or_insert(0) += 1;
+            }
+        }
+
+        let mut queue: std::collections::VecDeque<&str> = self
+            .steps
+            .iter()
+            .filter(|s| in_degrees.get(s.id.as_str()) == Some(&0))
+            .map(|s| s.id.as_str())
+            .collect();
+
+        let mut order = Vec::with_capacity(self.steps.len());
+        while let Some(node) = queue.pop_front() {
+            if let Some(step) = step_map.get(node) {
+                order.push((*step).clone());
+            }
+            if let Some(children) = dependents.get(node) {
+                for &child in children {
+                    if let Some(deg) = in_degrees.get_mut(child) {
+                        *deg -= 1;
+                        if *deg == 0 {
+                            queue.push_back(child);
+                        }
+                    }
+                }
+            }
+        }
+        order
+    }
+
+    pub fn ready_steps(&self, completed: &[String]) -> Vec<SopStep> {
+        let completed_set: std::collections::HashSet<&str> =
+            completed.iter().map(String::as_str).collect();
+        self.steps
+            .iter()
+            .filter(|step| {
+                !completed_set.contains(step.id.as_str())
+                    && step
+                        .depends_on
+                        .iter()
+                        .all(|dep| completed_set.contains(dep.as_str()))
+            })
+            .cloned()
+            .collect()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct StoredSop {
+    pub sop: SopDefinition,
+    pub tenant_id: TenantId,
+    pub workspace_id: WorkspaceId,
+    pub success_count: u32,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+impl StoredSop {
+    pub fn new(
+        sop: SopDefinition,
+        tenant_id: TenantId,
+        workspace_id: WorkspaceId,
+        success_count: u32,
+        created_at: Timestamp,
+        updated_at: Timestamp,
+    ) -> Self {
+        Self {
+            sop,
+            tenant_id,
+            workspace_id,
+            success_count,
+            created_at,
+            updated_at,
+        }
+    }
+
+    pub fn sop_id(&self) -> &str {
+        &self.sop.id
+    }
+
+    pub fn name(&self) -> &str {
+        &self.sop.name
+    }
+
+    pub const fn intent(&self) -> MemoryIntent {
+        self.sop.trigger_intent
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MemoryCapsule {
+    pub capsule_id: String,
+    pub sop: SopDefinition,
+    pub sha256_digest: String,
+    pub author: String,
+    pub created_at: Timestamp,
+}
+
+impl MemoryCapsule {
+    pub fn compute_digest(
+        capsule_id: &str,
+        sop: &SopDefinition,
+        author: &str,
+        created_at: Timestamp,
+    ) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(b"pandora-memory-capsule:v1\n");
+        hasher.update(capsule_id.as_bytes());
+        hasher.update(b"\n");
+        let sop_json = serde_json::to_string(sop).unwrap_or_default();
+        hasher.update(sop_json.as_bytes());
+        hasher.update(b"\n");
+        hasher.update(author.as_bytes());
+        hasher.update(b"\n");
+        hasher.update(created_at.as_unix_seconds().to_string().as_bytes());
+        format!("sha256:{:x}", hasher.finalize())
+    }
+
+    pub fn new(
+        capsule_id: impl Into<String>,
+        sop: SopDefinition,
+        author: impl Into<String>,
+        created_at: Timestamp,
+    ) -> Result<Self, MemoryContractError> {
+        let capsule_id = validate_text("capsule id", capsule_id.into())?;
+        let author = validate_text("capsule author", author.into())?;
+        sop.validate()?;
+        let sha256_digest = Self::compute_digest(&capsule_id, &sop, &author, created_at);
+        Ok(Self {
+            capsule_id,
+            sop,
+            sha256_digest,
+            author,
+            created_at,
+        })
+    }
+
+    pub fn new_with_digest(
+        capsule_id: impl Into<String>,
+        sop: SopDefinition,
+        sha256_digest: impl Into<String>,
+        author: impl Into<String>,
+        created_at: Timestamp,
+    ) -> Result<Self, MemoryContractError> {
+        let capsule_id = validate_text("capsule id", capsule_id.into())?;
+        let author = validate_text("capsule author", author.into())?;
+        let sha256_digest = validate_text("capsule digest", sha256_digest.into())?;
+        sop.validate()?;
+        Ok(Self {
+            capsule_id,
+            sop,
+            sha256_digest,
+            author,
+            created_at,
+        })
+    }
+
+    pub fn verify_digest(&self) -> bool {
+        let expected =
+            Self::compute_digest(&self.capsule_id, &self.sop, &self.author, self.created_at);
+        self.sha256_digest == expected
+    }
+
+    pub fn validate(&self) -> Result<(), MemoryContractError> {
+        validate_text("capsule id", self.capsule_id.clone())?;
+        validate_text("capsule author", self.author.clone())?;
+        self.sop.validate()?;
+        if !self.verify_digest() {
+            return Err(MemoryContractError::InvalidDigest);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SessionArchiveRecord {
+    pub archive_id: String,
+    pub tenant_id: TenantId,
+    pub workspace_id: WorkspaceId,
+    pub session_id: SessionId,
+    pub summary: String,
+    pub diff_stats: String,
+    pub receipt_digest: String,
+    pub created_at: Timestamp,
+}
+
+impl SessionArchiveRecord {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        archive_id: impl Into<String>,
+        tenant_id: TenantId,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+        summary: impl Into<String>,
+        diff_stats: impl Into<String>,
+        receipt_digest: impl Into<String>,
+        created_at: Timestamp,
+    ) -> Result<Self, MemoryContractError> {
+        let archive_id = validate_text("archive ID", archive_id.into())?;
+        let summary = validate_text("summary", summary.into())?;
+        let diff_stats = validate_multiline_text("diff stats", diff_stats.into())?;
+        let receipt_digest = validate_text("receipt digest", receipt_digest.into())?;
+        let record = Self {
+            archive_id,
+            tenant_id,
+            workspace_id,
+            session_id,
+            summary,
+            diff_stats,
+            receipt_digest,
+            created_at,
+        };
+        record.validate()?;
+        Ok(record)
+    }
+
+    pub fn validate(&self) -> Result<(), MemoryContractError> {
+        validate_text("archive ID", self.archive_id.clone())?;
+        validate_text("summary", self.summary.clone())?;
+        validate_multiline_text("diff stats", self.diff_stats.clone())?;
+        validate_text("receipt digest", self.receipt_digest.clone())?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -776,6 +1276,331 @@ mod tests {
                 MemoryConflictRule::Reject,
             ),
             Err(MemoryContractError::SameConsolidationSession)
+        );
+    }
+
+    #[test]
+    fn memory_intent_defaults_and_explicit_override_work() {
+        let sc = scope("project-a", "session-a", "provider-a");
+        let record = MemoryRecord::new_l1(
+            "mem-1",
+            MemoryKind::ExecutionEvidence,
+            sc.clone(),
+            "completed patch verification",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(100),
+            "test",
+        )
+        .unwrap();
+
+        // ExecutionEvidence defaults to Coding intent
+        assert_eq!(record.intent(), MemoryIntent::Coding);
+        assert_eq!(record.explicit_intent(), None);
+
+        // Explicit override works
+        let repo_record = record.with_intent(MemoryIntent::Repo);
+        assert_eq!(repo_record.intent(), MemoryIntent::Repo);
+        assert_eq!(repo_record.explicit_intent(), Some(MemoryIntent::Repo));
+
+        // Test Promotion carries intent on L2-eligible kind (Lesson)
+        let lesson = MemoryRecord::new_l1(
+            "lesson-1",
+            MemoryKind::Lesson,
+            sc,
+            "learned to check edge verifier",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(150),
+            "test",
+        )
+        .unwrap()
+        .with_intent(MemoryIntent::Procedure);
+
+        let approval = MemoryApproval::new("app-1", "alice").unwrap();
+        let promoted =
+            MemoryRecord::promote_l2(lesson, approval, Timestamp::from_unix_seconds(200)).unwrap();
+        assert_eq!(promoted.intent(), MemoryIntent::Procedure);
+        assert_eq!(promoted.explicit_intent(), Some(MemoryIntent::Procedure));
+    }
+
+    #[test]
+    fn memory_tier_and_kind_serde_and_rules() {
+        for (tier, expected_str) in [
+            (MemoryTier::L0, "l0"),
+            (MemoryTier::L1, "l1"),
+            (MemoryTier::L2, "l2"),
+            (MemoryTier::L3, "l3"),
+            (MemoryTier::L4, "l4"),
+        ] {
+            assert_eq!(tier.as_str(), expected_str);
+            let json = serde_json::to_string(&tier).unwrap();
+            assert_eq!(json, format!("\"{expected_str}\""));
+            let deserialized: MemoryTier = serde_json::from_str(&json).unwrap();
+            assert_eq!(deserialized, tier);
+        }
+
+        assert_eq!(MemoryKind::Sop.as_str(), "sop");
+        assert_eq!(MemoryKind::SessionArchive.as_str(), "session_archive");
+        assert!(MemoryKind::Sop.can_be_l3());
+        assert!(!MemoryKind::Sop.can_be_l1());
+        assert!(!MemoryKind::Sop.can_be_l2());
+        assert!(!MemoryKind::Sop.can_be_l4());
+
+        assert!(MemoryKind::SessionArchive.can_be_l4());
+        assert!(!MemoryKind::SessionArchive.can_be_l1());
+        assert!(!MemoryKind::SessionArchive.can_be_l2());
+        assert!(!MemoryKind::SessionArchive.can_be_l3());
+
+        assert_eq!(MemoryKind::Sop.default_intent(), MemoryIntent::Procedure);
+        assert_eq!(
+            MemoryKind::SessionArchive.default_intent(),
+            MemoryIntent::Repo
+        );
+    }
+
+    #[test]
+    fn memory_record_l3_and_l4_constructors_and_tier_invariants() {
+        let sc = scope("project-a", "session-a", "provider-a");
+        let sop_record = MemoryRecord::new_l3_sop(
+            "sop-rec-1",
+            sc.clone(),
+            "workflow for release build",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(300),
+            "test-provenance",
+        )
+        .unwrap();
+
+        assert_eq!(sop_record.tier(), MemoryTier::L3);
+        assert_eq!(sop_record.kind(), MemoryKind::Sop);
+        assert_eq!(sop_record.intent(), MemoryIntent::Procedure);
+
+        let archive_record = MemoryRecord::new_l4_archive(
+            "archive-rec-1",
+            sc,
+            "session archive summary",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(400),
+            "test-provenance",
+        )
+        .unwrap();
+
+        assert_eq!(archive_record.tier(), MemoryTier::L4);
+        assert_eq!(archive_record.kind(), MemoryKind::SessionArchive);
+        assert_eq!(archive_record.intent(), MemoryIntent::Repo);
+    }
+
+    #[test]
+    fn sop_dag_validation_and_execution_order() {
+        let step1 = SopStep::new(
+            "step-build",
+            "Build binary",
+            "cargo build --release",
+            vec![],
+        )
+        .unwrap();
+        let step2 = SopStep::new(
+            "step-test",
+            "Run tests",
+            "cargo test",
+            vec!["step-build".into()],
+        )
+        .unwrap();
+        let step3 = SopStep::new(
+            "step-package",
+            "Package artifact",
+            "tar -czf bin.tar.gz bin",
+            vec!["step-test".into()],
+        )
+        .unwrap();
+
+        let sop = SopDefinition::new(
+            "sop-release",
+            "Release Build SOP",
+            MemoryIntent::Procedure,
+            vec![step1.clone(), step2.clone(), step3.clone()],
+            Some("cargo check".into()),
+        )
+        .unwrap();
+
+        // Check DAG execution order via ready_steps
+        let initial_ready = sop.ready_steps(&[]);
+        assert_eq!(initial_ready.len(), 1);
+        assert_eq!(initial_ready[0].id, "step-build");
+
+        let after_build = sop.ready_steps(&["step-build".into()]);
+        assert_eq!(after_build.len(), 1);
+        assert_eq!(after_build[0].id, "step-test");
+
+        let after_test = sop.ready_steps(&["step-build".into(), "step-test".into()]);
+        assert_eq!(after_test.len(), 1);
+        assert_eq!(after_test[0].id, "step-package");
+
+        let all_done = sop.ready_steps(&[
+            "step-build".into(),
+            "step-test".into(),
+            "step-package".into(),
+        ]);
+        assert!(all_done.is_empty());
+
+        // Test serde round-trip
+        let json = serde_json::to_string(&sop).unwrap();
+        let deserialized: SopDefinition = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, sop);
+
+        // Negative: duplicate step IDs
+        let dup_step = SopStep::new("step-build", "Build again", "cargo build", vec![]).unwrap();
+        assert_eq!(
+            SopDefinition::new(
+                "sop-dup",
+                "Dup",
+                MemoryIntent::Procedure,
+                vec![step1.clone(), dup_step],
+                None
+            ),
+            Err(MemoryContractError::DuplicateStep("step-build".into()))
+        );
+
+        // Negative: unknown dependency
+        let bad_dep_step =
+            SopStep::new("step-orphan", "Orphan", "run", vec!["non-existent".into()]).unwrap();
+        assert_eq!(
+            SopDefinition::new(
+                "sop-bad-dep",
+                "BadDep",
+                MemoryIntent::Procedure,
+                vec![bad_dep_step],
+                None
+            ),
+            Err(MemoryContractError::UnknownDependency(
+                "non-existent".into()
+            ))
+        );
+
+        // Negative: self dependency
+        let self_dep_step =
+            SopStep::new("step-loop", "Self", "run", vec!["step-loop".into()]).unwrap();
+        assert_eq!(
+            SopDefinition::new(
+                "sop-self",
+                "SelfDep",
+                MemoryIntent::Procedure,
+                vec![self_dep_step],
+                None
+            ),
+            Err(MemoryContractError::SelfDependency("step-loop".into()))
+        );
+
+        // Verify linear execution order
+        let order = sop.execution_order();
+        assert_eq!(order.len(), 3);
+        assert_eq!(order[0].id, "step-build");
+        assert_eq!(order[1].id, "step-test");
+        assert_eq!(order[2].id, "step-package");
+
+        // Verify deserialized invalid DAG validation
+        let bad_json_cycle = r#"{"id":"sop-bad","name":"Bad","trigger_intent":"procedure","steps":[{"id":"s1","name":"1","command":"c1","depends_on":["s2"]},{"id":"s2","name":"2","command":"c2","depends_on":["s1"]}],"verification_command":null}"#;
+        let deserialized_bad: SopDefinition = serde_json::from_str(bad_json_cycle).unwrap();
+        assert_eq!(
+            deserialized_bad.validate(),
+            Err(MemoryContractError::DependencyCycle)
+        );
+
+        let bad_json_dup = r#"{"id":"sop-bad","name":"Bad","trigger_intent":"procedure","steps":[{"id":"s1","name":"1","command":"c1","depends_on":[]},{"id":"s1","name":"dup","command":"c2","depends_on":[]}],"verification_command":null}"#;
+        let deserialized_dup: SopDefinition = serde_json::from_str(bad_json_dup).unwrap();
+        assert_eq!(
+            deserialized_dup.validate(),
+            Err(MemoryContractError::DuplicateStep("s1".into()))
+        );
+
+        let bad_json_empty = r#"{"id":"sop-bad","name":"Bad","trigger_intent":"procedure","steps":[],"verification_command":null}"#;
+        let deserialized_empty: SopDefinition = serde_json::from_str(bad_json_empty).unwrap();
+        assert_eq!(
+            deserialized_empty.validate(),
+            Err(MemoryContractError::EmptyField("steps"))
+        );
+
+        // Negative: cycle detection via constructor
+        let cycle_a = SopStep::new("step-a", "A", "run", vec!["step-b".into()]).unwrap();
+        let cycle_b = SopStep::new("step-b", "B", "run", vec!["step-a".into()]).unwrap();
+        assert_eq!(
+            SopDefinition::new(
+                "sop-cycle",
+                "Cycle",
+                MemoryIntent::Procedure,
+                vec![cycle_a, cycle_b],
+                None
+            ),
+            Err(MemoryContractError::DependencyCycle)
+        );
+    }
+
+    #[test]
+    fn session_archive_record_contract_and_serde() {
+        let archive = SessionArchiveRecord::new(
+            "arch-123",
+            TenantId::new("tenant-a").unwrap(),
+            WorkspaceId::new("workspace-a").unwrap(),
+            SessionId::new("session-1").unwrap(),
+            "Refactored memory subsystem to 5 layers",
+            "+150 -20 in 3 files",
+            "sha256:abcdef123456",
+            Timestamp::from_unix_seconds(500),
+        )
+        .unwrap();
+
+        assert_eq!(archive.archive_id, "arch-123");
+        assert_eq!(archive.summary, "Refactored memory subsystem to 5 layers");
+        assert_eq!(archive.diff_stats, "+150 -20 in 3 files");
+
+        let json = serde_json::to_string(&archive).unwrap();
+        let deserialized: SessionArchiveRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, archive);
+    }
+
+    #[test]
+    fn memory_capsule_digest_and_tampering() {
+        let step = SopStep::new("step-1", "compile", "cargo check", vec![]).unwrap();
+        let sop = SopDefinition::new(
+            "sop-test-1",
+            "Verification SOP",
+            MemoryIntent::Procedure,
+            vec![step],
+            Some("cargo test".into()),
+        )
+        .unwrap();
+
+        let capsule = MemoryCapsule::new(
+            "capsule-test-1",
+            sop.clone(),
+            "author-1",
+            Timestamp::from_unix_seconds(1000),
+        )
+        .unwrap();
+
+        assert!(capsule.verify_digest());
+        assert!(capsule.validate().is_ok());
+        assert!(capsule.sha256_digest.starts_with("sha256:"));
+
+        // Roundtrip JSON
+        let json = serde_json::to_string(&capsule).unwrap();
+        let deserialized: MemoryCapsule = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, capsule);
+        assert!(deserialized.verify_digest());
+        assert!(deserialized.validate().is_ok());
+
+        // Tampering with author breaks verification
+        let mut tampered = capsule.clone();
+        tampered.author = "impostor".into();
+        assert!(!tampered.verify_digest());
+        assert_eq!(tampered.validate(), Err(MemoryContractError::InvalidDigest));
+
+        // Tampering with sop breaks verification
+        let mut tampered_sop = capsule;
+        tampered_sop.sop.name = "Tampered name".into();
+        assert!(!tampered_sop.verify_digest());
+        assert_eq!(
+            tampered_sop.validate(),
+            Err(MemoryContractError::InvalidDigest)
         );
     }
 }

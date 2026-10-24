@@ -1,14 +1,20 @@
-use super::{load_config, parse_options, require_config_file, session_scope, timestamp};
+use super::{
+    load_config, parse_options, require_config_file, session_error, session_scope, session_store,
+    timestamp,
+};
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::sessions::{MAX_MEMORY_RECALL_RECORDS, SessionStore};
 use pandora_runtime::{
-    ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, MemoryEngine, MemoryError,
-    MemorySynthesisScheduleError, MemorySynthesisScheduleStore,
+    ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, ContextVfs, MemoryEngine,
+    MemoryError, MemorySynthesisScheduleError, MemorySynthesisScheduleStore, MeshSyncEngine,
+    PeerIdentity, ReflexionCrystallizer, VfsError,
 };
 use pandora_types::{
-    ContextClassification, ExecutionId, GeneId, JobWorkerId, MemoryApproval, MemoryConflictRule,
-    MemoryConsolidationBoundary, MemoryConsolidationPolicy, MemoryId, MemoryKind, MemoryRecord,
-    MemoryScope, MemoryTier, RequestDigest, RunLoopId, Timestamp, WorkspaceId, hash_artifact,
+    ContextClassification, ContextUri, ExecutionId, FeatureMap, GeneId, JobWorkerId,
+    MemoryApproval, MemoryCapsule, MemoryConflictRule, MemoryConsolidationBoundary,
+    MemoryConsolidationPolicy, MemoryContractError, MemoryId, MemoryIntent, MemoryKind,
+    MemoryRecord, MemoryScope, MemoryTier, RequestDigest, RunLoopId, SessionArchiveRecord,
+    SessionId, StoredSop, Timestamp, WorkspaceId, hash_artifact,
 };
 use serde_json::json;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -21,7 +27,7 @@ const MEMORY_PROMOTION_GENE: &str = "memory.promote";
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "memory requires 'recall', 'audit', 'forget', 'compact', 'promote', 'synthesize', 'consolidate', 'provenance', or 'schedule'",
+            "memory requires 'recall', 'audit', 'forget', 'compact', 'promote', 'synthesize', 'consolidate', 'provenance', 'schedule', 'sop', 'archive', 'capsule', 'vfs', 'crystallize', 'mesh', or 'curator'",
         )
     })?;
     match subcommand.as_str() {
@@ -34,6 +40,13 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "consolidate" => consolidate(&args[1..]),
         "provenance" => provenance(&args[1..]),
         "schedule" => schedule(&args[1..]),
+        "sop" => sop(&args[1..]),
+        "archive" => archive(&args[1..]),
+        "capsule" => capsule(&args[1..]),
+        "vfs" => vfs(&args[1..]),
+        "crystallize" => crystallize(&args[1..]),
+        "mesh" => mesh(&args[1..]),
+        "curator" => super::curator::execute(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown memory command '{unknown}'"
         ))),
@@ -391,6 +404,532 @@ fn schedule_runs(args: &[String]) -> Result<CommandResult, CliError> {
     ))
 }
 
+fn sop(args: &[String]) -> Result<CommandResult, CliError> {
+    let subcommand = args
+        .first()
+        .ok_or_else(|| CliError::usage("memory sop requires 'list' or 'inspect'"))?;
+    match subcommand.as_str() {
+        "list" => sop_list(&args[1..]),
+        "inspect" => sop_inspect(&args[1..]),
+        unknown => Err(CliError::usage(format!(
+            "unknown memory sop command '{unknown}'"
+        ))),
+    }
+}
+
+fn sop_list(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "intent"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory sop list does not accept positional arguments",
+        ));
+    }
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let (_, tenant, default_workspace) = session_scope();
+    let workspace = parsed
+        .value("workspace")
+        .map(|v| WorkspaceId::new(v.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("workspace ID is invalid"))?
+        .unwrap_or(default_workspace);
+    let intent = parse_intent(parsed.value("intent"))?;
+    let store = session_store(&config)?;
+    let sops = store
+        .list_sops_by_intent(&tenant, &workspace, intent)
+        .map_err(session_error)?;
+    let count = sops.len();
+    Ok(success(
+        "memory sop list",
+        json!({
+            "sops": sops.iter().map(sop_value).collect::<Vec<_>>(),
+            "count": count,
+            "intent": intent.map(|value| value.as_str()),
+            "durability": "session-store",
+        }),
+        format!("Listed {count} standard operating procedure(s)"),
+    ))
+}
+
+fn sop_inspect(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "id"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory sop inspect does not accept positional arguments",
+        ));
+    }
+    let id = required_option(&parsed, "id", "memory sop inspect requires '--id <id>'")?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let (_, tenant, default_workspace) = session_scope();
+    let workspace = parsed
+        .value("workspace")
+        .map(|v| WorkspaceId::new(v.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("workspace ID is invalid"))?
+        .unwrap_or(default_workspace);
+    let store = session_store(&config)?;
+    let sop = store
+        .load_sop(&tenant, &workspace, id)
+        .map_err(session_error)?
+        .ok_or_else(|| {
+            CliError::execution(
+                "standard operating procedure was not found",
+                json!({"sop_id": id}),
+            )
+        })?;
+    Ok(success(
+        "memory sop inspect",
+        json!({
+            "sop": sop_value(&sop),
+            "durability": "session-store",
+        }),
+        format!("Inspected standard operating procedure {}", sop.sop.id),
+    ))
+}
+
+fn archive(args: &[String]) -> Result<CommandResult, CliError> {
+    let subcommand = args
+        .first()
+        .ok_or_else(|| CliError::usage("memory archive requires 'list' or 'inspect'"))?;
+    match subcommand.as_str() {
+        "list" => archive_list(&args[1..]),
+        "inspect" => archive_inspect(&args[1..]),
+        unknown => Err(CliError::usage(format!(
+            "unknown memory archive command '{unknown}'"
+        ))),
+    }
+}
+
+fn archive_list(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "limit"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory archive list does not accept positional arguments",
+        ));
+    }
+    let limit = parse_limit(parsed.value("limit"))?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let (_, tenant, default_workspace) = session_scope();
+    let workspace = parsed
+        .value("workspace")
+        .map(|v| WorkspaceId::new(v.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("workspace ID is invalid"))?
+        .unwrap_or(default_workspace);
+    let store = session_store(&config)?;
+    let archives = store
+        .list_recent_archives(&tenant, &workspace, usize::from(limit))
+        .map_err(session_error)?;
+    let count = archives.len();
+    Ok(success(
+        "memory archive list",
+        json!({
+            "archives": archives.iter().map(archive_value).collect::<Vec<_>>(),
+            "count": count,
+            "limit": limit,
+            "durability": "session-store",
+        }),
+        format!("Listed {count} session archive(s)"),
+    ))
+}
+
+fn archive_inspect(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "id"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory archive inspect does not accept positional arguments",
+        ));
+    }
+    let id = required_option(&parsed, "id", "memory archive inspect requires '--id <id>'")?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let (_, tenant, default_workspace) = session_scope();
+    let workspace = parsed
+        .value("workspace")
+        .map(|v| WorkspaceId::new(v.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("workspace ID is invalid"))?
+        .unwrap_or(default_workspace);
+    let store = session_store(&config)?;
+    let archive = store
+        .load_archive(&tenant, &workspace, id)
+        .map_err(session_error)?
+        .ok_or_else(|| {
+            CliError::execution("session archive was not found", json!({"archive_id": id}))
+        })?;
+    Ok(success(
+        "memory archive inspect",
+        json!({
+            "archive": archive_value(&archive),
+            "durability": "session-store",
+        }),
+        format!("Inspected session archive {}", archive.archive_id),
+    ))
+}
+
+fn capsule(args: &[String]) -> Result<CommandResult, CliError> {
+    let subcommand = args
+        .first()
+        .ok_or_else(|| CliError::usage("memory capsule requires 'export' or 'import'"))?;
+    match subcommand.as_str() {
+        "export" => capsule_export(&args[1..]),
+        "import" => capsule_import(&args[1..]),
+        unknown => Err(CliError::usage(format!(
+            "unknown memory capsule command '{unknown}'"
+        ))),
+    }
+}
+
+fn capsule_export(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "sop",
+            "sop-id",
+            "output",
+            "out",
+            "author",
+        ],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory capsule export does not accept positional arguments",
+        ));
+    }
+    let sop_id = parsed
+        .value("sop")
+        .or_else(|| parsed.value("sop-id"))
+        .ok_or_else(|| {
+            CliError::usage(
+                "memory capsule export requires '--sop <sop_id>' or '--sop-id <sop_id>'",
+            )
+        })?;
+    let output_path = parsed
+        .value("output")
+        .or_else(|| parsed.value("out"))
+        .ok_or_else(|| {
+            CliError::usage("memory capsule export requires '--output <path>' or '--out <path>'")
+        })?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let (principal, tenant, default_workspace) = session_scope();
+    let workspace = parsed
+        .value("workspace")
+        .map(|v| WorkspaceId::new(v.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("workspace ID is invalid"))?
+        .unwrap_or(default_workspace);
+    let author = parsed.value("author").unwrap_or(principal.as_str());
+
+    let store = session_store(&config)?;
+    let stored_sop = store
+        .load_sop(&tenant, &workspace, sop_id)
+        .map_err(session_error)?
+        .ok_or_else(|| {
+            CliError::execution(
+                "standard operating procedure was not found",
+                json!({"sop_id": sop_id}),
+            )
+        })?;
+
+    let capsule_id = format!("capsule-{}", stored_sop.sop.id);
+    let capsule = MemoryCapsule::new(capsule_id, stored_sop.sop, author, timestamp())
+        .map_err(|e| CliError::execution(e.to_string(), json!({})))?;
+
+    let json_bytes = serde_json::to_vec_pretty(&capsule)
+        .map_err(|e| CliError::execution(format!("failed to serialize capsule: {e}"), json!({})))?;
+
+    if let Some(parent) = std::path::Path::new(output_path)
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            CliError::execution(
+                format!(
+                    "failed to create output directory {}: {e}",
+                    parent.display()
+                ),
+                json!({}),
+            )
+        })?;
+    }
+
+    std::fs::write(output_path, json_bytes).map_err(|e| {
+        CliError::execution(
+            format!("failed to write capsule to {output_path}: {e}"),
+            json!({}),
+        )
+    })?;
+
+    Ok(success(
+        "memory capsule export",
+        json!({
+            "capsule_id": capsule.capsule_id,
+            "sop_id": sop_id,
+            "sha256_digest": capsule.sha256_digest,
+            "author": capsule.author,
+            "output": output_path,
+        }),
+        format!(
+            "Exported SOP {} to signed capsule at {}",
+            sop_id, output_path
+        ),
+    ))
+}
+
+fn capsule_import(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "file", "in"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory capsule import does not accept positional arguments",
+        ));
+    }
+    let file_path = parsed
+        .value("file")
+        .or_else(|| parsed.value("in"))
+        .ok_or_else(|| CliError::usage("memory capsule import requires '--file <path>'"))?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let (_, tenant, default_workspace) = session_scope();
+    let workspace = parsed
+        .value("workspace")
+        .map(|v| WorkspaceId::new(v.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("workspace ID is invalid"))?
+        .unwrap_or(default_workspace);
+
+    let content = std::fs::read(file_path).map_err(|e| {
+        CliError::execution(
+            format!("failed to read capsule file {file_path}: {e}"),
+            json!({}),
+        )
+    })?;
+    let capsule: MemoryCapsule = serde_json::from_slice(&content).map_err(|e| {
+        CliError::execution(format!("failed to parse memory capsule: {e}"), json!({}))
+    })?;
+
+    capsule.validate().map_err(|e| {
+        let message = match e {
+            MemoryContractError::InvalidDigest => {
+                "memory capsule SHA-256 digest mismatch (tampered or corrupted)".to_string()
+            }
+            other => format!("memory capsule verification failed: {other}"),
+        };
+        CliError::execution(
+            message,
+            json!({
+                "capsule_id": capsule.capsule_id,
+                "recorded_digest": capsule.sha256_digest,
+            }),
+        )
+    })?;
+
+    let store = session_store(&config)?;
+    let stored = store
+        .store_sop(&tenant, &workspace, &capsule.sop, capsule.created_at)
+        .map_err(session_error)?;
+
+    Ok(success(
+        "memory capsule import",
+        json!({
+            "capsule_id": capsule.capsule_id,
+            "sop_id": stored.sop.id,
+            "sha256_digest": capsule.sha256_digest,
+            "author": capsule.author,
+            "source_file": file_path,
+        }),
+        format!(
+            "Imported signed capsule {} (SOP {})",
+            capsule.capsule_id, stored.sop.id
+        ),
+    ))
+}
+
+fn vfs(args: &[String]) -> Result<CommandResult, CliError> {
+    let subcommand = args
+        .first()
+        .ok_or_else(|| CliError::usage("memory vfs requires 'ls' or 'cat'"))?;
+    match subcommand.as_str() {
+        "ls" => vfs_ls(&args[1..]),
+        "cat" => vfs_cat(&args[1..]),
+        unknown => Err(CliError::usage(format!(
+            "unknown memory vfs command '{unknown}'"
+        ))),
+    }
+}
+
+fn vfs_ls(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "uri"])?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let (_, tenant, default_workspace) = session_scope();
+    let workspace = parsed
+        .value("workspace")
+        .map(|v| WorkspaceId::new(v.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("workspace ID is invalid"))?
+        .unwrap_or(default_workspace);
+
+    let raw_uri = parsed
+        .positionals
+        .first()
+        .cloned()
+        .or_else(|| parsed.value("uri").map(str::to_owned))
+        .unwrap_or_else(|| "pandora://".to_owned());
+
+    let canonical_uri = if raw_uri.starts_with("pandora://") {
+        raw_uri
+    } else if let Some(stripped) = raw_uri.strip_prefix('/') {
+        format!("pandora://{stripped}")
+    } else {
+        format!("pandora://{raw_uri}")
+    };
+
+    let uri = ContextUri::new(canonical_uri)
+        .map_err(|e| CliError::usage(format!("invalid context VFS URI: {e}")))?;
+
+    let store = session_store(&config)?;
+    let vfs = ContextVfs::from_session_store(&store, &tenant, &workspace)
+        .map_err(|e| CliError::execution(e.to_string(), json!({})))?;
+
+    load_workspace_feature_map(config.workspace_dir(), &vfs);
+
+    let entries = vfs
+        .list(&uri)
+        .map_err(|e| CliError::execution(e.to_string(), json!({"uri": uri.as_str()})))?;
+
+    let count = entries.len();
+    Ok(success(
+        "memory vfs ls",
+        json!({
+            "uri": uri.as_str(),
+            "entries": entries.iter().map(|e| json!({
+                "uri": e.uri.as_str(),
+                "name": e.name,
+                "kind": e.kind.as_str(),
+                "size_bytes": e.size_bytes,
+            })).collect::<Vec<_>>(),
+            "count": count,
+        }),
+        format!("Listed {count} node(s) under {}", uri.as_str()),
+    ))
+}
+
+fn vfs_cat(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "uri"])?;
+    let raw_uri = parsed
+        .positionals
+        .first()
+        .cloned()
+        .or_else(|| parsed.value("uri").map(str::to_owned))
+        .ok_or_else(|| CliError::usage("memory vfs cat requires '<uri>'"))?;
+
+    let canonical_uri = if raw_uri.starts_with("pandora://") {
+        raw_uri
+    } else if let Some(stripped) = raw_uri.strip_prefix('/') {
+        format!("pandora://{stripped}")
+    } else {
+        format!("pandora://{raw_uri}")
+    };
+
+    let uri = ContextUri::new(canonical_uri)
+        .map_err(|e| CliError::usage(format!("invalid context VFS URI: {e}")))?;
+
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let (_, tenant, default_workspace) = session_scope();
+    let workspace = parsed
+        .value("workspace")
+        .map(|v| WorkspaceId::new(v.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("workspace ID is invalid"))?
+        .unwrap_or(default_workspace);
+
+    let store = session_store(&config)?;
+    let vfs = ContextVfs::from_session_store(&store, &tenant, &workspace)
+        .map_err(|e| CliError::execution(e.to_string(), json!({})))?;
+
+    load_workspace_feature_map(config.workspace_dir(), &vfs);
+
+    let fragment = vfs.resolve(&uri).map_err(|e| match e {
+        VfsError::NotFound(_) => {
+            CliError::execution("context node was not found", json!({"uri": uri.as_str()}))
+        }
+        VfsError::IsADirectory(_) => CliError::execution(
+            "cannot cat directory; use 'pandora memory vfs ls' instead",
+            json!({"uri": uri.as_str()}),
+        ),
+        other => CliError::execution(other.to_string(), json!({"uri": uri.as_str()})),
+    })?;
+
+    let text = fragment.content().to_owned();
+    Ok(success(
+        "memory vfs cat",
+        json!({
+            "uri": uri.as_str(),
+            "fragment_id": fragment.id(),
+            "source": fragment.source().as_str(),
+            "trust": fragment.trust().as_str(),
+            "classification": fragment.classification().as_str(),
+            "token_cost": fragment.token_cost(),
+            "content_digest": fragment.content_digest(),
+            "content": text,
+        }),
+        text,
+    ))
+}
+
+fn load_workspace_feature_map(workspace_dir: &std::path::Path, vfs: &ContextVfs) {
+    let feature_map_path = workspace_dir.join(".pandora/feature_map.json");
+    let Ok(bytes) = std::fs::read(&feature_map_path) else {
+        return;
+    };
+    let Ok(map) = serde_json::from_slice::<FeatureMap>(&bytes) else {
+        return;
+    };
+    if map.validate().is_ok() {
+        vfs.add_feature_map("workspace", map);
+    }
+}
+
+fn sop_value(stored: &StoredSop) -> serde_json::Value {
+    json!({
+        "id": stored.sop.id,
+        "name": stored.sop.name,
+        "trigger_intent": stored.sop.trigger_intent.as_str(),
+        "steps": stored.sop.steps.iter().map(|s| json!({
+            "id": s.id,
+            "name": s.name,
+            "command": s.command,
+            "depends_on": s.depends_on,
+        })).collect::<Vec<_>>(),
+        "verification_command": stored.sop.verification_command,
+        "tenant_id": stored.tenant_id,
+        "workspace_id": stored.workspace_id,
+        "success_count": stored.success_count,
+        "created_at": stored.created_at.as_unix_seconds(),
+        "updated_at": stored.updated_at.as_unix_seconds(),
+    })
+}
+
+fn archive_value(archive: &SessionArchiveRecord) -> serde_json::Value {
+    json!({
+        "id": archive.archive_id,
+        "tenant_id": archive.tenant_id,
+        "workspace_id": archive.workspace_id,
+        "session_id": archive.session_id,
+        "summary": archive.summary,
+        "diff_stats": archive.diff_stats,
+        "receipt_digest": archive.receipt_digest,
+        "created_at": archive.created_at.as_unix_seconds(),
+    })
+}
+
 fn consolidate(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
         args,
@@ -406,9 +945,11 @@ fn consolidate(args: &[String]) -> Result<CommandResult, CliError> {
             "source-id",
             "target-id",
             "conflict",
+            "intent",
             "yes",
         ],
     )?;
+    let intent = parse_intent(parsed.value("intent"))?;
     if !parsed.positionals.is_empty() {
         return Err(CliError::usage(
             "memory consolidate does not accept positional arguments",
@@ -568,6 +1109,7 @@ fn consolidate(args: &[String]) -> Result<CommandResult, CliError> {
         hash_artifact(source.provenance().as_bytes()),
     );
     let now = timestamp();
+    let selected_intent = intent.unwrap_or_else(|| source.intent());
     let candidate = MemoryRecord::new_l1(
         target_id.as_str(),
         source.kind(),
@@ -577,7 +1119,8 @@ fn consolidate(args: &[String]) -> Result<CommandResult, CliError> {
         now,
         provenance,
     )
-    .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+    .map_err(|error| CliError::execution(error.to_string(), json!({})))?
+    .with_intent(selected_intent);
     if !parsed.values.contains_key("yes") {
         return Ok(success(
             "memory consolidate",
@@ -619,10 +1162,11 @@ fn consolidate(args: &[String]) -> Result<CommandResult, CliError> {
         ));
     }
     let consolidated = engine
-        .distill_l1(
+        .distill_l1_with_intent(
             candidate.scope().clone(),
             candidate.id().as_str(),
             candidate.kind(),
+            candidate.intent(),
             candidate.summary().to_owned(),
             candidate.classification(),
             candidate.created_at(),
@@ -731,7 +1275,12 @@ fn provenance(args: &[String]) -> Result<CommandResult, CliError> {
     let principal = session_scope().0;
     let engine = open_engine(&config, &principal)?;
     let mut records = HashMap::new();
-    for tier in [MemoryTier::L1, MemoryTier::L2] {
+    for tier in [
+        MemoryTier::L1,
+        MemoryTier::L2,
+        MemoryTier::L3,
+        MemoryTier::L4,
+    ] {
         for record in engine
             .try_recall(&scope, tier, timestamp())
             .map_err(memory_error)?
@@ -792,11 +1341,13 @@ fn recall(args: &[String]) -> Result<CommandResult, CliError> {
             "tier",
             "limit",
             "id",
+            "intent",
         ],
     )?;
     let (session_id, scope) = scope(&parsed)?;
     let tier = parse_tier(parsed.value("tier"))?;
     let limit = parse_limit(parsed.value("limit"))?;
+    let intent = parse_intent(parsed.value("intent"))?;
     let requested_id = parsed
         .value("id")
         .map(|value| MemoryId::new(value.to_owned()))
@@ -806,9 +1357,15 @@ fn recall(args: &[String]) -> Result<CommandResult, CliError> {
     require_config_file(&config)?;
     let principal = session_scope().0;
     let engine = open_engine(&config, &principal)?;
-    let mut records = engine
-        .try_recall(&scope, tier, timestamp())
-        .map_err(memory_error)?;
+    let mut records = if let Some(intent) = intent {
+        engine
+            .try_recall_by_intent(&scope, tier, intent, timestamp())
+            .map_err(memory_error)?
+    } else {
+        engine
+            .try_recall(&scope, tier, timestamp())
+            .map_err(memory_error)?
+    };
     if let Some(requested_id) = &requested_id {
         records.retain(|record| record.id() == requested_id);
         if records.is_empty() {
@@ -823,6 +1380,7 @@ fn recall(args: &[String]) -> Result<CommandResult, CliError> {
         json!({
             "scope": scope_value(&scope),
             "tier": tier.as_str(),
+            "intent": intent.map(|value| value.as_str()),
             "records": values,
             "count": count,
             "limit": limit,
@@ -873,6 +1431,7 @@ fn synthesize(args: &[String]) -> Result<CommandResult, CliError> {
             "kind",
             "summary",
             "classification",
+            "intent",
             "yes",
         ],
     )?;
@@ -902,6 +1461,7 @@ fn synthesize(args: &[String]) -> Result<CommandResult, CliError> {
             "memory synthesis classification must be 'public' or 'internal'",
         ));
     }
+    let intent = parse_intent(parsed.value("intent"))?;
     let (_, scope) = scope(&parsed)?;
     let config = load_config(&parsed)?;
     require_config_file(&config)?;
@@ -911,7 +1471,7 @@ fn synthesize(args: &[String]) -> Result<CommandResult, CliError> {
     let snapshot = engine
         .synthesis_snapshot(&scope, now)
         .map_err(memory_error)?;
-    let proposal = engine
+    let mut proposal = engine
         .propose_synthesis(
             &snapshot,
             memory_id.as_str().to_owned(),
@@ -921,6 +1481,9 @@ fn synthesize(args: &[String]) -> Result<CommandResult, CliError> {
             now,
         )
         .map_err(memory_error)?;
+    if let Some(intent) = intent {
+        proposal = proposal.with_candidate_intent(intent);
+    }
     engine
         .verify_synthesis(&proposal, timestamp())
         .map_err(memory_error)?;
@@ -1291,7 +1854,12 @@ fn ensure_memory_exists(
     scope: &MemoryScope,
     memory_id: &MemoryId,
 ) -> Result<(), CliError> {
-    for tier in [MemoryTier::L1, MemoryTier::L2] {
+    for tier in [
+        MemoryTier::L1,
+        MemoryTier::L2,
+        MemoryTier::L3,
+        MemoryTier::L4,
+    ] {
         if engine
             .try_recall(scope, tier, timestamp())
             .map_err(memory_error)?
@@ -1343,11 +1911,17 @@ fn parse_tier(value: Option<&str>) -> Result<MemoryTier, CliError> {
     match value {
         Some("l1") => Ok(MemoryTier::L1),
         Some("l2") => Ok(MemoryTier::L2),
+        Some("l3") => Ok(MemoryTier::L3),
+        Some("l4") => Ok(MemoryTier::L4),
         Some("l0") => Err(CliError::usage(
             "L0 memory is process-local and cannot be recalled from the CLI",
         )),
-        Some(_) => Err(CliError::usage("memory tier must be 'l1' or 'l2'")),
-        None => Err(CliError::usage("memory recall requires '--tier <l1|l2>'")),
+        Some(_) => Err(CliError::usage(
+            "memory tier must be 'l1', 'l2', 'l3', or 'l4'",
+        )),
+        None => Err(CliError::usage(
+            "memory recall requires '--tier <l1|l2|l3|l4>'",
+        )),
     }
 }
 
@@ -1379,6 +1953,19 @@ fn parse_memory_classification(value: Option<&str>) -> Result<ContextClassificat
         Some(_) => Err(CliError::usage(
             "memory classification must be public or internal",
         )),
+    }
+}
+
+fn parse_intent(value: Option<&str>) -> Result<Option<MemoryIntent>, CliError> {
+    match value {
+        Some("repo") => Ok(Some(MemoryIntent::Repo)),
+        Some("procedure") => Ok(Some(MemoryIntent::Procedure)),
+        Some("coding") => Ok(Some(MemoryIntent::Coding)),
+        Some("user") => Ok(Some(MemoryIntent::User)),
+        Some(_) => Err(CliError::usage(
+            "memory intent must be repo, procedure, coding, or user",
+        )),
+        None => Ok(None),
     }
 }
 
@@ -1493,6 +2080,7 @@ fn record_value(record: &MemoryRecord) -> serde_json::Value {
         "id": record.id(),
         "tier": record.tier().as_str(),
         "kind": record.kind().as_str(),
+        "intent": record.intent().as_str(),
         "scope": scope_value(record.scope()),
         "summary": record.summary(),
         "classification": record.classification().as_str(),
@@ -1569,4 +2157,231 @@ fn approval_error(error: ApprovalError) -> CliError {
         }
         other => CliError::internal(other.to_string(), json!({})),
     }
+}
+
+fn crystallize(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "session",
+            "all",
+            "baseline",
+        ],
+    )?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory crystallize does not accept positional arguments",
+        ));
+    }
+    let is_all = parsed.has_flag("all");
+    let session_opt = parsed.value("session");
+    if is_all == session_opt.is_some() {
+        return Err(CliError::usage(
+            "memory crystallize requires either '--session <id>' or '--all'",
+        ));
+    }
+
+    let baseline = parsed
+        .value("baseline")
+        .map(|v| v.parse::<f64>())
+        .transpose()
+        .map_err(|_| CliError::usage("baseline rate must be a valid float between 0.0 and 1.0"))?
+        .unwrap_or(0.50);
+
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+    let (principal, tenant, workspace) = session_scope();
+    let now = timestamp();
+    let ws_root = config.workspace_dir().to_string_lossy().to_string();
+
+    let crystallizer = ReflexionCrystallizer::default();
+
+    if let Some(session_id_str) = session_opt {
+        let session_id =
+            SessionId::new(session_id_str).map_err(|_| CliError::usage("session ID is invalid"))?;
+        let result = crystallizer
+            .crystallize_session(
+                &store,
+                &principal,
+                &tenant,
+                &workspace,
+                &session_id,
+                baseline,
+                Some(&ws_root),
+                now,
+            )
+            .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+
+        let val = serde_json::to_value(&result)
+            .map_err(|_| CliError::internal("could not serialize crystallize result", json!({})))?;
+
+        Ok(success(
+            "memory crystallize",
+            val,
+            format!(
+                "Crystallized SOP '{}' for session {}: promoted = {}",
+                result.sop.id, result.session_id, result.promoted
+            ),
+        ))
+    } else {
+        let results = crystallizer
+            .crystallize_all(
+                &store,
+                &principal,
+                &tenant,
+                &workspace,
+                baseline,
+                Some(&ws_root),
+                now,
+            )
+            .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+
+        let promoted_count = results.iter().filter(|r| r.promoted).count();
+        let val = serde_json::to_value(&results).map_err(|_| {
+            CliError::internal("could not serialize crystallize results", json!({}))
+        })?;
+
+        Ok(success(
+            "memory crystallize",
+            json!({
+                "count": results.len(),
+                "promoted_count": promoted_count,
+                "results": val
+            }),
+            format!(
+                "Crystallized {} SOP(s) (promoted {promoted_count}) across all session archives",
+                results.len()
+            ),
+        ))
+    }
+}
+
+fn mesh(args: &[String]) -> Result<CommandResult, CliError> {
+    let subcommand = args
+        .first()
+        .ok_or_else(|| CliError::usage("memory mesh requires 'peers', 'broadcast', or 'sync'"))?;
+    match subcommand.as_str() {
+        "peers" => mesh_peers(&args[1..]),
+        "broadcast" => mesh_broadcast(&args[1..]),
+        "sync" => mesh_sync(&args[1..]),
+        unknown => Err(CliError::usage(format!(
+            "unknown memory mesh command '{unknown}'"
+        ))),
+    }
+}
+
+fn mesh_peers(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory mesh peers does not accept positional arguments",
+        ));
+    }
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+
+    let peers = MeshSyncEngine::list_peers(&store, config.data_dir())
+        .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+
+    let val = serde_json::to_value(&peers)
+        .map_err(|_| CliError::internal("could not serialize mesh peers", json!({})))?;
+
+    Ok(success(
+        "memory mesh peers",
+        json!({
+            "count": peers.len(),
+            "peers": val
+        }),
+        format!("Discovered {} mesh peer(s)", peers.len()),
+    ))
+}
+
+fn mesh_broadcast(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "sop"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory mesh broadcast does not accept positional arguments",
+        ));
+    }
+    let sop_id = required_option(
+        &parsed,
+        "sop",
+        "memory mesh broadcast requires '--sop <id>'",
+    )?;
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+    let (_principal, tenant, workspace) = session_scope();
+    let now = timestamp();
+
+    let identity_path = config.data_dir().join("mesh").join("peer_identity.key");
+    let identity = PeerIdentity::load_or_generate(&identity_path)
+        .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+
+    let package = MeshSyncEngine::broadcast_sop(
+        &store,
+        &identity,
+        sop_id,
+        &tenant,
+        &workspace,
+        config.data_dir(),
+        now,
+    )
+    .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+
+    let val = serde_json::to_value(&package)
+        .map_err(|_| CliError::internal("could not serialize broadcast package", json!({})))?;
+
+    Ok(success(
+        "memory mesh broadcast",
+        val,
+        format!(
+            "Broadcasted SOP '{sop_id}' in capsule '{}' (digest: {})",
+            package.capsule.capsule_id, package.capsule.sha256_digest
+        ),
+    ))
+}
+
+fn mesh_sync(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "auto-promote"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory mesh sync does not accept positional arguments",
+        ));
+    }
+    let auto_promote = parsed.has_flag("auto-promote");
+    let config = load_config(&parsed)?;
+    require_config_file(&config)?;
+    let store = session_store(&config)?;
+    let (_principal, tenant, workspace) = session_scope();
+    let now = timestamp();
+
+    let sync_result = MeshSyncEngine::sync_capsules(
+        &store,
+        &tenant,
+        &workspace,
+        config.data_dir(),
+        auto_promote,
+        now,
+    )
+    .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+
+    let val = serde_json::to_value(&sync_result)
+        .map_err(|_| CliError::internal("could not serialize mesh sync result", json!({})))?;
+
+    Ok(success(
+        "memory mesh sync",
+        val,
+        format!(
+            "Mesh sync completed: admitted {}, rejected {}, auto-promoted {}",
+            sync_result.admitted.len(),
+            sync_result.rejected.len(),
+            sync_result.promoted.len()
+        ),
+    ))
 }

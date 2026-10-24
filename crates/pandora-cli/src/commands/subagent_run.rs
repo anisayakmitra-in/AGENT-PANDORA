@@ -73,6 +73,11 @@ pub(crate) fn execute_trusted_subagent(input: TrustedSubagentRun<'_>) -> Result<
             max_tool_calls: request.budgets().max_tool_calls(),
             control: Some(input.control),
             trusted_harness: Some(harness.harness_id()),
+            strategy: None,
+            lats_rollouts: None,
+            lats_depth: None,
+            puct_c: None,
+            escalation_threshold: None,
         },
     )?;
     Ok(result.data)

@@ -17,6 +17,10 @@ mod auth;
 mod backup;
 mod chat;
 mod completions;
+pub(crate) mod connector;
+pub(crate) mod curator;
+pub(crate) mod curriculum;
+pub(crate) mod decision;
 mod doctor;
 mod efficiency;
 mod evaluation;
@@ -24,15 +28,20 @@ mod evolution;
 mod feedback;
 mod fleet;
 mod graph;
+pub(crate) mod hardware;
 mod harness;
 mod job;
+pub(crate) mod kanban;
 mod mcp;
 mod memory;
 mod migration;
 mod operations;
 mod orchestration;
 mod package;
+pub(crate) mod peer;
+pub(crate) mod policy;
 mod provider;
+pub(crate) mod reasoning;
 mod registry;
 mod restore_journal;
 mod rollout;
@@ -71,6 +80,8 @@ pub(crate) const ROOT_COMMANDS: &[&str] = &[
     "rollout",
     "run",
     "chat",
+    "curriculum",
+    "decision",
     "tui",
     "harness",
     "slash",
@@ -100,6 +111,7 @@ pub(crate) const ROOT_COMMANDS: &[&str] = &[
     "update",
     "uninstall",
     "doctor",
+    "policy",
 ];
 
 /// [`ROOT_COMMANDS`] joined by single spaces, the way the POSIX, zsh, and fish
@@ -128,6 +140,10 @@ pub(crate) struct ParsedArgs {
 impl ParsedArgs {
     pub fn value(&self, name: &str) -> Option<&str> {
         self.values.get(name).map(String::as_str)
+    }
+
+    pub fn has_flag(&self, name: &str) -> bool {
+        self.values.contains_key(name)
     }
 }
 
@@ -187,6 +203,16 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "efficiency" => efficiency::execute(&args[1..]),
         "fleet" => fleet::execute(&args[1..]),
         "graph" => graph::execute(&args[1..]),
+        "map" => graph::map_command(&args[1..]),
+        "decision" => decision::execute(&args[1..]),
+        "curriculum" => curriculum::execute(&args[1..]),
+        "curator" => curator::execute(&args[1..]),
+        "hardware" => hardware::execute(&args[1..]),
+        "kanban" => kanban::execute(&args[1..]),
+        "peer" => peer::execute(&args[1..]),
+        "connector" => connector::execute(&args[1..]),
+        "reasoning" => reasoning::execute(&args[1..]),
+        "policy" => policy::execute(&args[1..]),
         "--help" | "help" => {
             if args.len() != 1 {
                 return Err(CliError::usage("help does not accept additional arguments"));
@@ -275,12 +301,15 @@ fn is_flag(name: &str) -> bool {
     matches!(
         name,
         "agent"
+            | "all"
             | "allow"
+            | "auto-promote"
             | "deny"
             | "dry-run"
             | "fail-on-failure"
             | "fail-on-non-passed"
             | "interactive"
+            | "once"
             | "plan"
             | "rollback"
             | "yes"
@@ -288,11 +317,29 @@ fn is_flag(name: &str) -> bool {
             | "value-stdin"
             | "watch"
             | "daemon"
+            | "binary"
+            | "unread"
+            | "force"
+            | "analyze"
     )
 }
 
 pub(crate) fn load_config(parsed: &ParsedArgs) -> Result<RuntimeConfig, CliError> {
     RuntimeConfig::load(overrides(parsed)).map_err(config_error)
+}
+
+pub(crate) fn load_config_storage(parsed: &ParsedArgs) -> Result<RuntimeConfig, CliError> {
+    let mut overrides = ConfigOverrides::default();
+    if let Some(path) = path_option(parsed, "config") {
+        overrides = overrides.with_config_path(path);
+    }
+    if let Some(path) = path_option(parsed, "data-dir") {
+        overrides = overrides.with_data_dir(path);
+    }
+    if let Some(path) = path_option(parsed, "workspace") {
+        overrides = overrides.with_workspace_dir(path);
+    }
+    RuntimeConfig::load(overrides).map_err(config_error)
 }
 
 pub(crate) fn write_config(config: &RuntimeConfig) -> Result<(), CliError> {
@@ -390,23 +437,26 @@ fn config_error(error: ConfigError) -> CliError {
     CliError::configuration(error.to_string(), json!({}))
 }
 
-fn session_error(error: SessionError) -> CliError {
+pub(crate) fn session_error(error: SessionError) -> CliError {
     let message = error.to_string();
     CliError::internal(message, json!({}))
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|tui|harness|slash|session|job|subagent|skill|package|registry|runtime|memory|approval|provider|mcp|tool|orchestration|operations|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor> [options]
+    r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|curriculum|decision|tui|harness|slash|session|job|subagent|skill|package|registry|runtime|memory|approval|provider|mcp|tool|orchestration|operations|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor|policy> [options]
 
 commands:
   help (or --help)
   setup [--interactive] [--provider-url <url>] [--model <model>] [--api-key-env <name>]
-  run [--provider <name>] [--session <id>] [--agent] [--max-turns <n>] [--max-tools <n>] [--harness <id>] [--harness-version <version>] [--gene <id>] [--plan] [--model <model>] [--task-class <name>] [--approval <id>] [--optimize <cost|latency|tokens|certainty>] <task>
+  run [--provider <name>] [--session <id>] [--agent] [--max-turns <n>] [--max-tools <n>] [--harness <id>] [--harness-version <version>] [--gene <id>] [--plan] [--model <model>] [--task-class <name>] [--approval <id>] [--optimize <cost|latency|tokens|certainty>] [--strategy react|reflexion|lats] [--lats-rollouts <1-100>] [--lats-depth <1-16>] [--puct-c <float>] [--escalation-threshold <float>] <task>
   service start [--port <port>]
   auth enroll --principal <id> --tenant <id> --workspace-id <id> --role <viewer|operator|administrator> [--device-key-file <path>] [--token-file <path>] | list | revoke <identity-id> --yes
   secret set <ENV_NAME> --value-stdin | list | status <ENV_NAME> | remove <ENV_NAME> --yes
   backup create --output <path> [--passphrase-env <name>] | inspect --input <path> [--passphrase-env <name>] | restore --input <path> [--passphrase-env <name>] --yes | lifecycle preview --input <path> | record --input <path> --yes | list [--storage-provider <provider>] [--action <action>] [--limit <1-256>] | inspect --id <evidence-id> | recovery list | recovery inspect --transaction <id>
   chat [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>]
+  curriculum generate [--suite-id <id>] [--input <path>] [--out <path>] [--difficulty easy|medium|hard|all] [--min-margin <float>] [--limit <n>] | inspect --input <path> | list
+  decision harvest [--min-margin <float>] [--export-golden <path>] [--limit <n>] | list
+  policy hooks list | validate --file <path>
   tui [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>] [--theme <auto|dark|light|mono>]
   harness list|inspect|run [--harness-version <version>]
   slash list|resolve <command>
@@ -418,7 +468,7 @@ commands:
   package scaffold domain-harness --output <new-directory> [--id <id>] [--version <semver>] [--publisher <name>] [--gene <id>@<semver>] [--route-hint <hint>] | scaffold meta-harness --output <new-directory> [--id <id>] [--version <semver>] [--publisher <name>] [--domains <id>@<semver>,...] [--max-handoffs <1-64>] | admit --manifest <path> --artifact <path> | admit-cached <id> <version> [--dry-run|--yes] | validate --manifest <path> --artifact <path> | sign --manifest <path> --artifact <path> --secret-name <vault-name> --output <path> [--yes] | keygen --publisher <name> --key-id <id> --secret-name <vault-name> | discover <id> [version] [--registry <url>|--registry-profile <name>] | download|install <id> [version] [--registry <url>|--registry-profile <name>] [--token-env <name>] | download-github|install-github --repository <url> --commit <sha> --manifest <repo-path> --artifact <repo-path> [--token-env <name>] | cache list|inspect|verify|events | list | inspect <id> <version> | enable|disable <id> <version> [--dry-run|--yes] | rollback <id> [--dry-run|--yes] | lock [--output <path>] | verify-lock [--lock <path>] | trust-root add|list|revoke | transparency list [--event-kind <kind>] [--outcome <allowed|denied>] [--limit <1-256>] | transparency inspect --sequence <id> | remove <id> <version> [--dry-run|--yes]
   registry list | set --name <name> --registry-url <url> [--token-env <name>] | use <name> | remove <name> --yes
   runtime engines list|inspect <id>
-  memory recall --session <id> --provider <name> --tier <l1|l2> [--id <memory-id>] [--limit <1-256>] | audit --session <id> --provider <name> | forget --session <id> --provider <name> <memory-id> [--yes] | compact --session <id> --provider <name> --before <unix-seconds> [--yes] | promote --session <id> --provider <name> <memory-id> [--approval <id>] | synthesize --session <id> --provider <name> --id <memory-id> --summary <text> [--kind <kind>] [--classification <public|internal>] [--yes] | consolidate --source-session <id> --target-session <id> --provider <name> --source-id <memory-id> --target-id <memory-id> [--yes] | provenance --session <id> --provider <name> <memory-id> | schedule create|list|disable|claim|run|runs
+  memory recall --session <id> --provider <name> --tier <l1|l2|l3|l4> [--intent <repo|procedure|coding|user>] [--id <memory-id>] [--limit <1-256>] | audit --session <id> --provider <name> | forget --session <id> --provider <name> <memory-id> [--yes] | compact --session <id> --provider <name> --before <unix-seconds> [--yes] | promote --session <id> --provider <name> <memory-id> [--approval <id>] | synthesize --session <id> --provider <name> --id <memory-id> --summary <text> [--kind <kind>] [--classification <public|internal>] [--intent <repo|procedure|coding|user>] [--yes] | consolidate --source-session <id> --target-session <id> --provider <name> --source-id <memory-id> --target-id <memory-id> [--intent <repo|procedure|coding|user>] [--yes] | provenance --session <id> --provider <name> <memory-id> | schedule create|list|disable|claim|run|runs | sop list|inspect | archive list|inspect | capsule export|import | vfs ls|cat
   tool list|inspect <id> [--catalog <builtin|active>]
   approval list|inspect|resolve
   provider list|set|use|test
@@ -439,7 +489,7 @@ commands:
   rollout inspect --session <id> [--execution <id>]
   efficiency rank [--task-class <name>] [--objective <cost|latency|tokens|certainty>]
   fleet dashboard [--now <unix-seconds>] [--stale-after <1-86400>] | list|register|dispatch|lease|renew|release|expire|supervisor [list|start|drain|stop|recover|heartbeat|reconcile|reap|restart]|quarantine|revoke|kill
-  graph code|knowledge|review|architecture --input <path> [--store <path>] [--tenant <id>] [--workspace <id>] | graph code|knowledge|review|architecture show --store <path> [--tenant <id>] [--workspace <id>] | graph code|knowledge|review|architecture remove --store <path> [--tenant <id>] [--workspace <id>]
+  graph code|knowledge|review|architecture --input <path> [--store <path>] [--tenant <id>] [--workspace <id>] | graph code|knowledge|review|architecture show --store <path> [--tenant <id>] [--workspace <id>] | graph code|knowledge|review|architecture remove --store <path> [--tenant <id>] [--workspace <id>] | graph map [validate|show] [--path <path>]
   completions <powershell|bash|zsh|fish>
   migrate config
   update [--release <tag> [--channel <stable|beta|release-candidate>] | --artifact <path> --sha256 <digest> | --rollback]

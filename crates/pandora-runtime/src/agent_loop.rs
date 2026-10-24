@@ -184,6 +184,7 @@ pub enum AgentLoopError {
         reason: AgentControlStop,
         summary: Box<AgentRunSummary>,
     },
+    ConvergenceThrashed,
     Execution(RuntimeError),
 }
 
@@ -211,6 +212,9 @@ impl fmt::Display for AgentLoopError {
                 write!(formatter, "agent action requires approval: {reason}")
             }
             Self::ControlledStop { reason, .. } => reason.fmt(formatter),
+            Self::ConvergenceThrashed => formatter.write_str(
+                "agent thrashed on repeated identical failing actions without convergence",
+            ),
             Self::Execution(error) => write!(formatter, "agent tool execution failed: {error:?}"),
         }
     }
@@ -227,6 +231,65 @@ impl From<ProviderError> for AgentLoopError {
 impl From<ToolError> for AgentLoopError {
     fn from(error: ToolError) -> Self {
         Self::Tool(error)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ActionSignature([u8; 32]);
+
+impl ActionSignature {
+    pub fn of(tool_name: &str, arguments: &serde_json::Value) -> Self {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(tool_name.as_bytes());
+        hasher.update(b":");
+        if let Ok(bytes) = serde_json::to_vec(arguments) {
+            hasher.update(&bytes);
+        }
+        Self(hasher.finalize().into())
+    }
+}
+
+#[derive(Default)]
+pub struct ConvergenceTracker {
+    failed_signatures: std::collections::HashSet<ActionSignature>,
+    duplicate_failure_count: u32,
+}
+
+impl ConvergenceTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn check_pre_execution(
+        &mut self,
+        sig: ActionSignature,
+    ) -> Result<Option<String>, AgentLoopError> {
+        if self.failed_signatures.contains(&sig) {
+            self.duplicate_failure_count = self.duplicate_failure_count.saturating_add(1);
+            if self.duplicate_failure_count >= 3 {
+                return Err(AgentLoopError::ConvergenceThrashed);
+            }
+            Ok(Some(
+                "Convergence guard: exact identical tool call was previously executed and failed. Mutate your parameters, explore an alternative tool, or adjust your strategy; do not repeat identical failing actions."
+                    .to_owned(),
+            ))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn record_failure(&mut self, sig: ActionSignature) {
+        self.failed_signatures.insert(sig);
+    }
+
+    pub fn record_success(&mut self, sig: ActionSignature) {
+        self.failed_signatures.remove(&sig);
+        self.duplicate_failure_count = 0;
+    }
+
+    pub fn duplicate_failure_count(&self) -> u32 {
+        self.duplicate_failure_count
     }
 }
 
@@ -614,6 +677,7 @@ impl AgentLoop {
             l1_evidence,
             &untrusted_context,
             history_has_untrusted_context,
+            &task,
             now,
         )?;
         let persistent_context = persistent_context_message(&untrusted_context)?;
@@ -644,6 +708,7 @@ impl AgentLoop {
         let mut provider_metrics = Vec::new();
         let mut turns = 0;
         let mut tool_calls: u32 = 0;
+        let mut convergence = ConvergenceTracker::new();
 
         if let Some(approval) = approval.as_ref() {
             for call in pending_tool_calls {
@@ -670,6 +735,7 @@ impl AgentLoop {
                     &mut runs,
                     Some(approval),
                     trusted_harness.as_ref(),
+                    &mut convergence,
                 )? {
                     ToolExecution::Output(result) => {
                         messages.push(untrusted_tool_result(
@@ -853,6 +919,7 @@ impl AgentLoop {
                     &mut runs,
                     approval.as_ref(),
                     trusted_harness.as_ref(),
+                    &mut convergence,
                 )? {
                     ToolExecution::Output(result) => {
                         messages.push(untrusted_tool_result(
@@ -915,7 +982,32 @@ impl AgentLoop {
         runs: &mut Vec<RunSummary>,
         approval: Option<&AgentApproval<'_>>,
         trusted_harness: Option<&HarnessId>,
+        convergence: &mut ConvergenceTracker,
     ) -> Result<ToolExecution, AgentLoopError> {
+        let sig = ActionSignature::of(call.name(), call.arguments());
+        if let Some(guard_msg) = convergence.check_pre_execution(sig)? {
+            return Ok(ToolExecution::Output(guard_msg));
+        }
+
+        if call.name() == "tool.search" {
+            let query = call
+                .arguments()
+                .get("query")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let limit = call
+                .arguments()
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize)
+                .unwrap_or(10);
+            let results = self.tools.search(query, limit);
+            let output =
+                serde_json::to_string_pretty(&results).unwrap_or_else(|_| "[]".to_string());
+            convergence.record_success(sig);
+            return Ok(ToolExecution::Output(output));
+        }
+
         let invocation = match trusted_harness {
             Some(harness) => {
                 self.tools
@@ -925,7 +1017,10 @@ impl AgentLoop {
         };
         let intent = match invocation {
             Ok(invocation) => invocation.task().clone(),
-            Err(error) => return Ok(ToolExecution::Output(error.agent_message())),
+            Err(error) => {
+                convergence.record_failure(sig);
+                return Ok(ToolExecution::Output(error.agent_message()));
+            }
         };
         let summary = match approval {
             Some(approval) => controller.run_agent_with_approval(
@@ -939,8 +1034,14 @@ impl AgentLoop {
         }
         .map_err(AgentLoopError::Execution)?;
         let output = match summary.status() {
-            RunStatus::Completed => bounded_text(summary.output().unwrap_or_default()),
-            RunStatus::Denied { .. } => "tool denied by policy".to_owned(),
+            RunStatus::Completed => {
+                convergence.record_success(sig);
+                bounded_text(summary.output().unwrap_or_default())
+            }
+            RunStatus::Denied { .. } => {
+                convergence.record_failure(sig);
+                "tool denied by policy".to_owned()
+            }
             RunStatus::ApprovalRequired { reason } => {
                 return Ok(ToolExecution::Approval {
                     reason: reason.clone(),
@@ -948,6 +1049,7 @@ impl AgentLoop {
                 });
             }
             RunStatus::Failed { code } => {
+                convergence.record_failure(sig);
                 let diagnostic = summary
                     .output()
                     .map(bounded_text)
@@ -975,6 +1077,7 @@ impl AgentLoop {
         l1_evidence: Option<&L1EvidenceContext>,
         untrusted_context: &[ContextFragment],
         history_has_untrusted_context: bool,
+        task: &str,
         now: Timestamp,
     ) -> Result<ContextAssembly, AgentLoopError> {
         let request = ContextRequest::new(
@@ -999,6 +1102,22 @@ impl AgentLoop {
             "pandora-runtime",
             CONTEXT_CONSTITUTION_ID,
         )?];
+        let candidate_paths = [
+            std::path::PathBuf::from(".pandora/feature_map.json"),
+            std::path::PathBuf::from(session.workspace_id().as_str())
+                .join(".pandora/feature_map.json"),
+        ];
+        for map_path in &candidate_paths {
+            if map_path.is_file()
+                && let Ok(bytes) = std::fs::read(map_path)
+                && let Ok(map) = serde_json::from_slice::<pandora_types::FeatureMap>(&bytes)
+                && map.validate().is_ok()
+            {
+                let feature_fragments = ContextEngine::fragments_from_feature_map(&map, task);
+                fragments.extend(feature_fragments);
+                break;
+            }
+        }
         if let Some(l1_evidence) = l1_evidence {
             if !l1_evidence.matches(session, provider.manifest().id().as_str()) {
                 return Err(AgentLoopError::InvalidL1Evidence);
@@ -2949,6 +3068,55 @@ mod tests {
             std::fs::read(fixture.path.join("README.md")).unwrap(),
             b"fixture\n"
         );
+    }
+
+    #[test]
+    fn convergence_tracker_intercepts_duplicate_failures_and_throttles() {
+        let mut tracker = ConvergenceTracker::new();
+        let args = serde_json::json!({"path": "missing.txt"});
+        let sig = ActionSignature::of("workspace.read", &args);
+
+        // First attempt: clean
+        assert_eq!(tracker.check_pre_execution(sig).unwrap(), None);
+
+        // Tool executes and fails
+        tracker.record_failure(sig);
+
+        // Second attempt with exact identical tool + args: intercepted by convergence guard
+        let guard_msg = tracker.check_pre_execution(sig).unwrap();
+        assert!(guard_msg.is_some());
+        assert!(guard_msg.unwrap().contains("Convergence guard"));
+
+        // Third attempt: still intercepted
+        let guard_msg2 = tracker.check_pre_execution(sig).unwrap();
+        assert!(guard_msg2.is_some());
+
+        // Fourth attempt (3 duplicate failures reached): fails closed with ConvergenceThrashed
+        assert_eq!(
+            tracker.check_pre_execution(sig),
+            Err(AgentLoopError::ConvergenceThrashed)
+        );
+
+        // Different arguments are not blocked
+        let args2 = serde_json::json!({"path": "existing.txt"});
+        let sig2 = ActionSignature::of("workspace.read", &args2);
+        assert_eq!(tracker.check_pre_execution(sig2).unwrap(), None);
+    }
+
+    #[test]
+    fn convergence_tracker_record_success_resets_duplicate_failure_count() {
+        let mut tracker = ConvergenceTracker::new();
+        let args = serde_json::json!({"path": "file.txt"});
+        let sig = ActionSignature::of("workspace.read", &args);
+
+        tracker.record_failure(sig);
+        assert!(tracker.check_pre_execution(sig).unwrap().is_some());
+        assert_eq!(tracker.duplicate_failure_count(), 1);
+
+        tracker.record_success(sig);
+        assert_eq!(tracker.duplicate_failure_count(), 0);
+        // Signature is no longer failing
+        assert_eq!(tracker.check_pre_execution(sig).unwrap(), None);
     }
 
     struct Fixture {

@@ -7,15 +7,18 @@ failure path.
 ## Before writing code
 
 1. Read [Why Pandora?](docs/WHY_PANDORA.md), the
+   [architecture guide](docs/ARCHITECTURE.md), the
    [roadmap](docs/ROADMAP.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and
    [SECURITY.md](SECURITY.md).
-2. Search open and closed issues and pull requests for the same behavior.
-3. Open or claim an issue before starting a change that will take more than a
+2. For creating and testing custom Domain Harnesses, Meta Harnesses, or Genes, read
+   [Authoring Custom Harnesses and Genes](docs/CUSTOM_HARNESSES_AND_GENES.md).
+3. Search open and closed issues and pull requests for the same behavior.
+4. Open or claim an issue before starting a change that will take more than a
    small patch. Say what you plan to change and what you will leave alone.
-4. Wait for maintainer agreement before changing Parliament, Shadow Council,
+5. Wait for maintainer agreement before changing Parliament, Shadow Council,
    ReferenceMonitor, permit issuance, constitutional Source bindings, package
    trust, self-activation rules, or a public JSON contract.
-5. Keep credentials, private prompts, local paths, databases, and generated
+6. Keep credentials, private prompts, local paths, databases, and generated
    build output out of commits and issue attachments.
 
 An issue is ready for implementation when it has:
@@ -30,11 +33,27 @@ Use the contribution-proposal issue form when you want to implement the change
 yourself. Security reports belong in the private process described in
 [SECURITY.md](SECURITY.md), not a public issue.
 
+## Repository architecture and layout
+
+The codebase is split into strict Cargo workspace crates:
+
+- `crates/pandora-types`: Canonical domain models, error contracts, identifiers.
+- `crates/pandora-runtime`: Core engine, 21 engines, Parliament, Shadow Council, ReferenceMonitor.
+- `crates/pandora-harnesses`: Built-in harnesses (Coding, Research, Security, etc.) and catalog.
+- `crates/pandora-provider`: Multi-LLM provider client abstraction, endpoint normalization, auth.
+- `crates/pandora-sandbox`: OS kernel isolation (Linux Landlock/seccomp, Windows Job Objects).
+- `crates/pandora-service`: Authenticated loopback IPC/RPC daemon.
+- `crates/pandora-cli`: 37 user-facing commands.
+- `sdk/`: Reference starters for custom Domain Harnesses, Meta Harnesses, and Wasm Genes.
+
+For the complete component layout and 21-engine map, see [Architecture](docs/ARCHITECTURE.md).
+
 ## Good first contributions
 
 Tests, docs, inspection views, failure messages, bounded adapters, release
-drills, and parser fixtures are good places to start. The roadmap lists current
-issue-sized areas.
+drills, parser fixtures, and authoring custom Domain Harnesses or Genes (see
+[Authoring Custom Harnesses and Genes](docs/CUSTOM_HARNESSES_AND_GENES.md)) are
+good places to start. The roadmap lists current issue-sized areas.
 
 Avoid using a first contribution to redesign the authority chain, merge engines,
 replace exact permits with model judgment, add hidden execution paths, or make

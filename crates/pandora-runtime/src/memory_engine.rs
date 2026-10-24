@@ -3,8 +3,9 @@ use crate::sessions::{
 };
 use pandora_types::{
     ContextClassification, MAX_MEMORY_SYNTHESIS_EVIDENCE, MemoryApproval, MemoryAuditAction,
-    MemoryAuditEntry, MemoryContractError, MemoryId, MemoryKind, MemoryOrigin, MemoryRecord,
-    MemoryScope, MemoryTier, PrincipalId, Timestamp, hash_artifact,
+    MemoryAuditEntry, MemoryContractError, MemoryId, MemoryIntent, MemoryKind, MemoryOrigin,
+    MemoryRecord, MemoryScope, MemoryTier, PrincipalId, SessionArchiveRecord, SopDefinition,
+    StoredSop, TenantId, Timestamp, WorkspaceId, hash_artifact,
 };
 use std::collections::{HashSet, VecDeque};
 use std::path::Path;
@@ -50,6 +51,10 @@ struct MemoryStore {
     l0: VecDeque<MemoryRecord>,
     l1: Vec<MemoryRecord>,
     l2: Vec<MemoryRecord>,
+    l3: Vec<MemoryRecord>,
+    l4: Vec<MemoryRecord>,
+    sops: Vec<StoredSop>,
+    archives: Vec<SessionArchiveRecord>,
     revoked: HashSet<MemoryKey>,
     audit: Vec<MemoryAuditEntry>,
 }
@@ -99,6 +104,11 @@ impl MemorySynthesisProposal {
     pub fn evidence_ids(&self) -> &[MemoryId] {
         &self.evidence_ids
     }
+
+    pub fn with_candidate_intent(mut self, intent: MemoryIntent) -> Self {
+        self.candidate = self.candidate.with_intent(intent);
+        self
+    }
 }
 
 pub struct MemoryEngine {
@@ -121,6 +131,10 @@ impl MemoryEngine {
                 l0: VecDeque::new(),
                 l1: Vec::new(),
                 l2: Vec::new(),
+                l3: Vec::new(),
+                l4: Vec::new(),
+                sops: Vec::new(),
+                archives: Vec::new(),
                 revoked: HashSet::new(),
                 audit: Vec::new(),
             }),
@@ -234,6 +248,54 @@ impl MemoryEngine {
         Ok(record)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn distill_l1_with_intent(
+        &self,
+        scope: MemoryScope,
+        id: impl Into<String>,
+        kind: MemoryKind,
+        intent: MemoryIntent,
+        summary: impl Into<String>,
+        classification: ContextClassification,
+        created_at: Timestamp,
+        provenance: impl Into<String>,
+    ) -> Result<MemoryRecord, MemoryError> {
+        let _synthesis_guard = self
+            .synthesis_gate
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        let record = MemoryRecord::new_l1(
+            id,
+            kind,
+            scope,
+            summary,
+            classification,
+            created_at,
+            provenance,
+        )?
+        .with_intent(intent);
+        if let Some(durable) = &self.durable {
+            durable
+                .store
+                .record_memory(&durable.principal_id, &record)
+                .map_err(memory_store_error)?;
+            return Ok(record);
+        }
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        store.l1.push(record.clone());
+        record_added(
+            &mut store,
+            &record,
+            MemoryAuditAction::Added,
+            created_at,
+            None,
+        );
+        Ok(record)
+    }
+
     pub fn promote_l2(
         &self,
         scope: &MemoryScope,
@@ -286,6 +348,277 @@ impl MemoryEngine {
         Ok(record)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn remember_l3_sop(
+        &self,
+        scope: MemoryScope,
+        id: impl Into<String>,
+        summary: impl Into<String>,
+        classification: ContextClassification,
+        created_at: Timestamp,
+        provenance: impl Into<String>,
+    ) -> Result<MemoryRecord, MemoryError> {
+        let _synthesis_guard = self
+            .synthesis_gate
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        let record =
+            MemoryRecord::new_l3_sop(id, scope, summary, classification, created_at, provenance)?;
+        if let Some(durable) = &self.durable {
+            durable
+                .store
+                .record_memory(&durable.principal_id, &record)
+                .map_err(memory_store_error)?;
+            return Ok(record);
+        }
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        store.l3.push(record.clone());
+        record_added(
+            &mut store,
+            &record,
+            MemoryAuditAction::Added,
+            created_at,
+            None,
+        );
+        Ok(record)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn remember_l4_archive(
+        &self,
+        scope: MemoryScope,
+        id: impl Into<String>,
+        summary: impl Into<String>,
+        classification: ContextClassification,
+        created_at: Timestamp,
+        provenance: impl Into<String>,
+    ) -> Result<MemoryRecord, MemoryError> {
+        let _synthesis_guard = self
+            .synthesis_gate
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        let record = MemoryRecord::new_l4_archive(
+            id,
+            scope,
+            summary,
+            classification,
+            created_at,
+            provenance,
+        )?;
+        if let Some(durable) = &self.durable {
+            durable
+                .store
+                .record_memory(&durable.principal_id, &record)
+                .map_err(memory_store_error)?;
+            return Ok(record);
+        }
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        store.l4.push(record.clone());
+        record_added(
+            &mut store,
+            &record,
+            MemoryAuditAction::Added,
+            created_at,
+            None,
+        );
+        Ok(record)
+    }
+
+    pub fn store_sop(
+        &self,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        sop: &SopDefinition,
+        timestamp: Timestamp,
+    ) -> Result<StoredSop, MemoryError> {
+        if let Some(durable) = &self.durable {
+            return durable
+                .store
+                .store_sop(tenant_id, workspace_id, sop, timestamp)
+                .map_err(memory_store_error);
+        }
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        if let Some(existing) = store.sops.iter_mut().find(|s| {
+            s.sop.id == sop.id && &s.tenant_id == tenant_id && &s.workspace_id == workspace_id
+        }) {
+            existing.sop = sop.clone();
+            existing.success_count += 1;
+            existing.updated_at = timestamp;
+            Ok(existing.clone())
+        } else {
+            let stored = StoredSop::new(
+                sop.clone(),
+                tenant_id.clone(),
+                workspace_id.clone(),
+                1,
+                timestamp,
+                timestamp,
+            );
+            store.sops.push(stored.clone());
+            Ok(stored)
+        }
+    }
+
+    pub fn load_sop(
+        &self,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        sop_id: &str,
+    ) -> Result<Option<StoredSop>, MemoryError> {
+        if let Some(durable) = &self.durable {
+            return durable
+                .store
+                .load_sop(tenant_id, workspace_id, sop_id)
+                .map_err(memory_store_error);
+        }
+        let store = self
+            .store
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        Ok(store
+            .sops
+            .iter()
+            .find(|s| {
+                s.sop.id == sop_id && &s.tenant_id == tenant_id && &s.workspace_id == workspace_id
+            })
+            .cloned())
+    }
+
+    pub fn query_sops(
+        &self,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        intent: Option<MemoryIntent>,
+    ) -> Result<Vec<StoredSop>, MemoryError> {
+        if let Some(durable) = &self.durable {
+            return durable
+                .store
+                .list_sops_by_intent(tenant_id, workspace_id, intent)
+                .map_err(memory_store_error);
+        }
+        let store = self
+            .store
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        let mut results: Vec<StoredSop> = store
+            .sops
+            .iter()
+            .filter(|s| {
+                &s.tenant_id == tenant_id
+                    && &s.workspace_id == workspace_id
+                    && intent.is_none_or(|i| s.intent() == i)
+            })
+            .cloned()
+            .collect();
+        results.sort_by(|a, b| {
+            b.updated_at
+                .cmp(&a.updated_at)
+                .then_with(|| a.sop.id.cmp(&b.sop.id))
+        });
+        Ok(results)
+    }
+
+    pub fn crystallize_sop(
+        &self,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        sop: &SopDefinition,
+        timestamp: Timestamp,
+    ) -> Result<StoredSop, MemoryError> {
+        self.store_sop(tenant_id, workspace_id, sop, timestamp)
+    }
+
+    pub fn store_archive(&self, archive: &SessionArchiveRecord) -> Result<(), MemoryError> {
+        if let Some(durable) = &self.durable {
+            return durable
+                .store
+                .store_archive(archive)
+                .map_err(memory_store_error);
+        }
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        store.archives.retain(|a| {
+            !(a.archive_id == archive.archive_id
+                && a.tenant_id == archive.tenant_id
+                && a.workspace_id == archive.workspace_id)
+        });
+        store.archives.push(archive.clone());
+        Ok(())
+    }
+
+    pub fn load_archive(
+        &self,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        archive_id: &str,
+    ) -> Result<Option<SessionArchiveRecord>, MemoryError> {
+        if let Some(durable) = &self.durable {
+            return durable
+                .store
+                .load_archive(tenant_id, workspace_id, archive_id)
+                .map_err(memory_store_error);
+        }
+        let store = self
+            .store
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        Ok(store
+            .archives
+            .iter()
+            .find(|a| {
+                a.archive_id == archive_id
+                    && &a.tenant_id == tenant_id
+                    && &a.workspace_id == workspace_id
+            })
+            .cloned())
+    }
+
+    pub fn query_archives(
+        &self,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        limit: usize,
+    ) -> Result<Vec<SessionArchiveRecord>, MemoryError> {
+        if let Some(durable) = &self.durable {
+            return durable
+                .store
+                .list_recent_archives(tenant_id, workspace_id, limit)
+                .map_err(memory_store_error);
+        }
+        let store = self
+            .store
+            .lock()
+            .map_err(|_| MemoryError::StoreUnavailable)?;
+        let mut results: Vec<SessionArchiveRecord> = store
+            .archives
+            .iter()
+            .filter(|a| &a.tenant_id == tenant_id && &a.workspace_id == workspace_id)
+            .cloned()
+            .collect();
+        results.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| a.archive_id.cmp(&b.archive_id))
+        });
+        results.truncate(limit);
+        Ok(results)
+    }
+
+    pub fn crystallize_archive(&self, archive: &SessionArchiveRecord) -> Result<(), MemoryError> {
+        self.store_archive(archive)
+    }
+
     pub fn recall(
         &self,
         scope: &MemoryScope,
@@ -327,6 +660,8 @@ impl MemoryEngine {
             MemoryTier::L0 => store.l0.iter().collect::<Vec<_>>(),
             MemoryTier::L1 => store.l1.iter().collect::<Vec<_>>(),
             MemoryTier::L2 => store.l2.iter().collect::<Vec<_>>(),
+            MemoryTier::L3 => store.l3.iter().collect::<Vec<_>>(),
+            MemoryTier::L4 => store.l4.iter().collect::<Vec<_>>(),
         };
         Ok(records
             .into_iter()
@@ -336,6 +671,52 @@ impl MemoryEngine {
                     && !record.is_expired(now)
             })
             .cloned()
+            .collect())
+    }
+
+    pub fn recall_by_intent(
+        &self,
+        scope: &MemoryScope,
+        tier: MemoryTier,
+        intent: MemoryIntent,
+        now: Timestamp,
+    ) -> Vec<MemoryRecord> {
+        self.try_recall_by_intent(scope, tier, intent, now)
+            .unwrap_or_default()
+    }
+
+    pub fn try_recall_by_intent(
+        &self,
+        scope: &MemoryScope,
+        tier: MemoryTier,
+        intent: MemoryIntent,
+        now: Timestamp,
+    ) -> Result<Vec<MemoryRecord>, MemoryError> {
+        if tier != MemoryTier::L0
+            && let Some(durable) = &self.durable
+        {
+            let records = durable
+                .store
+                .recall_memory_by_intent(
+                    scope.session_id(),
+                    &durable.principal_id,
+                    scope.tenant_id(),
+                    scope.workspace_id(),
+                    scope.provider(),
+                    tier,
+                    intent,
+                    MAX_MEMORY_RECALL_RECORDS,
+                )
+                .map_err(memory_store_error)?;
+            return Ok(records
+                .into_iter()
+                .filter(|record| !record.is_expired(now))
+                .collect());
+        }
+        let records = self.try_recall(scope, tier, now)?;
+        Ok(records
+            .into_iter()
+            .filter(|record| record.intent() == intent)
             .collect())
     }
 
@@ -724,6 +1105,20 @@ fn find_tier(store: &MemoryStore, scope: &MemoryScope, id: &MemoryId) -> Option<
         .any(|record| record.scope() == scope && record.id() == id)
     {
         return Some(MemoryTier::L2);
+    }
+    if store
+        .l3
+        .iter()
+        .any(|record| record.scope() == scope && record.id() == id)
+    {
+        return Some(MemoryTier::L3);
+    }
+    if store
+        .l4
+        .iter()
+        .any(|record| record.scope() == scope && record.id() == id)
+    {
+        return Some(MemoryTier::L4);
     }
     None
 }
@@ -1420,5 +1815,266 @@ mod tests {
             synthesized.evidence_ids(),
             &[MemoryId::new("failure-1").unwrap()]
         );
+    }
+
+    #[test]
+    fn memory_engine_recalls_by_intent_and_filters_cross_domain_noise() {
+        let engine = MemoryEngine::new(8);
+        let sc = scope("prov-a");
+
+        // Coding intent: execution evidence
+        engine
+            .distill_l1(
+                sc.clone(),
+                "code-fix-1",
+                MemoryKind::ExecutionEvidence,
+                "fixed syntax error in parser",
+                ContextClassification::Internal,
+                Timestamp::from_unix_seconds(10),
+                "compiler",
+            )
+            .unwrap();
+
+        // Procedure intent: lesson
+        engine
+            .distill_l1(
+                sc.clone(),
+                "proc-lesson-1",
+                MemoryKind::Lesson,
+                "run prepush before git push",
+                ContextClassification::Internal,
+                Timestamp::from_unix_seconds(12),
+                "ci",
+            )
+            .unwrap();
+
+        // User intent / L0 trace
+        engine
+            .remember_l0(
+                sc.clone(),
+                "trace-1",
+                "user approved migration plan",
+                ContextClassification::Internal,
+                Timestamp::from_unix_seconds(14),
+                None,
+                "operator",
+            )
+            .unwrap();
+
+        let coding_memories = engine.recall_by_intent(
+            &sc,
+            MemoryTier::L1,
+            MemoryIntent::Coding,
+            Timestamp::from_unix_seconds(20),
+        );
+        assert_eq!(coding_memories.len(), 1);
+        assert_eq!(coding_memories[0].id().as_str(), "code-fix-1");
+
+        let procedure_memories = engine.recall_by_intent(
+            &sc,
+            MemoryTier::L1,
+            MemoryIntent::Procedure,
+            Timestamp::from_unix_seconds(20),
+        );
+        assert_eq!(procedure_memories.len(), 1);
+        assert_eq!(procedure_memories[0].id().as_str(), "proc-lesson-1");
+
+        let repo_memories = engine.recall_by_intent(
+            &sc,
+            MemoryTier::L1,
+            MemoryIntent::Repo,
+            Timestamp::from_unix_seconds(20),
+        );
+        assert!(repo_memories.is_empty());
+    }
+
+    #[test]
+    fn durable_memory_engine_distills_and_recalls_by_intent() {
+        let root = crate::test_support::new_temp_dir("pandora-durable-intent-test").unwrap();
+        let path = root.join("sessions.sqlite3");
+        let principal = PrincipalId::new("principal-1").unwrap();
+        let session = pandora_types::Session::new(
+            SessionId::new("session-1").unwrap(),
+            principal.clone(),
+            TenantId::new("tenant-1").unwrap(),
+            WorkspaceId::new("workspace-1").unwrap(),
+            Timestamp::from_unix_seconds(1),
+        );
+        let store = SessionStore::open(&path).unwrap();
+        store.create(&session).unwrap();
+        drop(store);
+
+        let engine = MemoryEngine::open(&path, 32, principal).unwrap();
+        let scope = MemoryScope::new(
+            session.tenant_id().clone(),
+            session.workspace_id().clone(),
+            session.id().clone(),
+            "provider-1",
+        )
+        .unwrap();
+
+        engine
+            .distill_l1_with_intent(
+                scope.clone(),
+                "durable-code-1",
+                MemoryKind::ExecutionEvidence,
+                MemoryIntent::Coding,
+                "fixed cargo check",
+                ContextClassification::Internal,
+                Timestamp::from_unix_seconds(5),
+                "compiler",
+            )
+            .unwrap();
+
+        engine
+            .distill_l1_with_intent(
+                scope.clone(),
+                "durable-proc-1",
+                MemoryKind::Lesson,
+                MemoryIntent::Procedure,
+                "run all quality gates",
+                ContextClassification::Internal,
+                Timestamp::from_unix_seconds(6),
+                "review",
+            )
+            .unwrap();
+
+        let coding_memories = engine
+            .try_recall_by_intent(
+                &scope,
+                MemoryTier::L1,
+                MemoryIntent::Coding,
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap();
+        assert_eq!(coding_memories.len(), 1);
+        assert_eq!(coding_memories[0].id().as_str(), "durable-code-1");
+        assert_eq!(coding_memories[0].intent(), MemoryIntent::Coding);
+
+        let proc_memories = engine
+            .try_recall_by_intent(
+                &scope,
+                MemoryTier::L1,
+                MemoryIntent::Procedure,
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap();
+        assert_eq!(proc_memories.len(), 1);
+        assert_eq!(proc_memories[0].id().as_str(), "durable-proc-1");
+        assert_eq!(proc_memories[0].intent(), MemoryIntent::Procedure);
+
+        let repo_memories = engine
+            .try_recall_by_intent(
+                &scope,
+                MemoryTier::L1,
+                MemoryIntent::Repo,
+                Timestamp::from_unix_seconds(10),
+            )
+            .unwrap();
+        assert!(repo_memories.is_empty());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn memory_synthesis_proposal_with_candidate_intent_updates_intent() {
+        let engine = MemoryEngine::new(64);
+        let scope = scope("provider-a");
+        let now = Timestamp::from_unix_seconds(1);
+        engine
+            .distill_l1(
+                scope.clone(),
+                "ev-1",
+                MemoryKind::ExecutionEvidence,
+                "evidence 1",
+                ContextClassification::Internal,
+                now,
+                "trace:1",
+            )
+            .unwrap();
+        let snapshot = engine.synthesis_snapshot(&scope, now).unwrap();
+        let proposal = engine
+            .propose_synthesis(
+                &snapshot,
+                "synth-1",
+                MemoryKind::Lesson,
+                "synthesized lesson",
+                ContextClassification::Internal,
+                now,
+            )
+            .unwrap()
+            .with_candidate_intent(MemoryIntent::Procedure);
+
+        assert_eq!(proposal.candidate().intent(), MemoryIntent::Procedure);
+        assert_eq!(
+            proposal.candidate().explicit_intent(),
+            Some(MemoryIntent::Procedure)
+        );
+    }
+
+    #[test]
+    fn in_memory_l3_l4_recall_revocation_and_sorting() {
+        let engine = MemoryEngine::new(64);
+        let scope = scope("provider-a");
+        let now = Timestamp::from_unix_seconds(10);
+
+        // Remember L3 SOP and L4 Archive
+        let l3 = engine
+            .remember_l3_sop(
+                scope.clone(),
+                "l3-rec-1",
+                "Workflow step",
+                ContextClassification::Internal,
+                now,
+                "prov-l3",
+            )
+            .unwrap();
+        assert_eq!(l3.tier(), MemoryTier::L3);
+
+        let l4 = engine
+            .remember_l4_archive(
+                scope.clone(),
+                "l4-rec-1",
+                "Archive receipt",
+                ContextClassification::Internal,
+                now,
+                "prov-l4",
+            )
+            .unwrap();
+        assert_eq!(l4.tier(), MemoryTier::L4);
+
+        // Verify recall
+        let recalled_l3 = engine.recall(&scope, MemoryTier::L3, now);
+        assert_eq!(recalled_l3.len(), 1);
+        assert_eq!(recalled_l3[0].id().as_str(), "l3-rec-1");
+
+        let recalled_l4 = engine.recall(&scope, MemoryTier::L4, now);
+        assert_eq!(recalled_l4.len(), 1);
+        assert_eq!(recalled_l4[0].id().as_str(), "l4-rec-1");
+
+        // Revoke L3 record via forget
+        engine
+            .forget(&scope, l3.id(), Timestamp::from_unix_seconds(12))
+            .unwrap();
+        let recalled_after_forget =
+            engine.recall(&scope, MemoryTier::L3, Timestamp::from_unix_seconds(15));
+        assert!(recalled_after_forget.is_empty());
+
+        // Revoke L4 record via forget
+        engine
+            .forget(&scope, l4.id(), Timestamp::from_unix_seconds(13))
+            .unwrap();
+        let recalled_after_forget_l4 =
+            engine.recall(&scope, MemoryTier::L4, Timestamp::from_unix_seconds(15));
+        assert!(recalled_after_forget_l4.is_empty());
+
+        // Audit entries verify revocations
+        let audit = engine.audit(&scope);
+        assert!(audit.iter().any(|e| e.memory_id().as_str() == "l3-rec-1"
+            && e.action() == MemoryAuditAction::Revoked
+            && e.tier() == MemoryTier::L3));
+        assert!(audit.iter().any(|e| e.memory_id().as_str() == "l4-rec-1"
+            && e.action() == MemoryAuditAction::Revoked
+            && e.tier() == MemoryTier::L4));
     }
 }

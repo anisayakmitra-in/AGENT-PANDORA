@@ -1266,7 +1266,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-cli"
-version = "2.0.0-beta.8"
+version = "2.0.0-beta.9"
 dependencies = [
  "atomic-write-file",
  "base64",
@@ -1291,7 +1291,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-harnesses"
-version = "2.0.0-beta.8"
+version = "2.0.0-beta.9"
 dependencies = [
  "pandora-types",
  "serde",
@@ -1301,7 +1301,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-provider"
-version = "2.0.0-beta.8"
+version = "2.0.0-beta.9"
 dependencies = [
  "pandora-types",
  "reqwest",
@@ -1311,7 +1311,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-runtime"
-version = "2.0.0-beta.8"
+version = "2.0.0-beta.9"
 dependencies = [
  "argon2",
  "atomic-write-file",
@@ -1321,6 +1321,7 @@ dependencies = [
  "getrandom 0.4.3",
  "pandora-harnesses",
  "pandora-provider",
+ "pandora-sandbox",
  "pandora-types",
  "reqwest",
  "rusqlite",
@@ -1337,7 +1338,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-sandbox"
-version = "2.0.0-beta.8"
+version = "2.0.0-beta.9"
 dependencies = [
  "landlock",
  "rustix 1.1.5",
@@ -1348,7 +1349,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-service"
-version = "2.0.0-beta.8"
+version = "2.0.0-beta.9"
 dependencies = [
  "axum",
  "pandora-runtime",
@@ -1363,7 +1364,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-types"
-version = "2.0.0-beta.8"
+version = "2.0.0-beta.9"
 dependencies = [
  "semver",
  "serde",
@@ -1834,9 +1835,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.15"
+version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
+checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -2584,9 +2585,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.9"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
+checksum = "1c1c8e20c8a38fc7d65abfe74eb7280e4aa667e8eec8bc84996d2874810748d9"
 dependencies = [
  "rustls-pki-types",
 ]

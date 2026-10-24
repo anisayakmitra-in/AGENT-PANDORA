@@ -168,6 +168,23 @@ reservations, measured use, enforceable remaining capacity, unknown-cost count,
 and the invariant result without including prompts, outputs, credentials, or
 hidden reasoning.
 
+## Execution topologies and edge verifiers
+
+Pandora supports structured multi-agent coordination graphs beyond simple linear chains:
+
+- **Sequential (`ExecutionTopology::Sequential`)**: Linear pipeline where each stage depends strictly on the prior stage.
+- **Parallel (`ExecutionTopology::Parallel`)**: Independent concurrently scheduled roles bound by aggregate budget limits.
+- **Diamond (`ExecutionTopology::Diamond`)**: Fan-out from an initial root role to multiple parallel workers, followed by a join/fan-in role that aggregates results.
+- **Router (`ExecutionTopology::Router`)**: Dynamic branching that routes execution paths conditionally based on verified intermediate outputs.
+
+When roles pass artifacts across topology boundaries, `EdgeVerifierPolicy` enforces strict edge confinement before admitting downstream data:
+
+1. **Path Confinement**: Artifact paths must be relative to the workspace root. Directory traversal (`..`), absolute prefixes (`/` or drive roots), and stream delimiters (`:`) fail closed with `EdgeVerificationError::PolicyViolation`.
+2. **Size Bounds**: `max_size_bytes` limits the maximum acceptable byte payload per transmitted artifact. Exceeding artifacts are rejected with `EdgeVerificationError::SizeExceeded`.
+3. **MIME Whitelisting**: `allowed_mime_types` restricts intermediate payload encodings. Disallowed MIME types fail closed with `EdgeVerificationError::MimeTypeNotAllowed`.
+
+Upon successful join completion in a Diamond topology, a `DiamondReceipt` binds the execution topology, input summary, verified artifact references, and the aggregate SHA-256 digest of all edge artifacts into an immutable evidence record.
+
 ## Crash and resume semantics
 
 A worker crash never causes automatic replay of active roles because their

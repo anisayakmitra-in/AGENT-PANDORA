@@ -13,6 +13,7 @@ use pandora_runtime::{ExecutionController, SecretVault};
 use pandora_types::{Capability, PolicyContext, Session, SessionId};
 use serde_json::json;
 
+#[allow(dead_code)]
 pub(crate) fn configured_provider(
     config: &RuntimeConfig,
     model: &str,
@@ -390,7 +391,8 @@ fn test(args: &[String]) -> Result<CommandResult, CliError> {
         .value("model")
         .or(config.provider_model())
         .unwrap_or("default");
-    let provider = configured_provider(&config, model, "provider test")?;
+    let provider_name = parsed.value("provider");
+    let provider = configured_provider_for(&config, model, "provider test", provider_name)?;
     let manifest = provider.manifest().clone();
     let request = ModelRequest::new(
         manifest.id().clone(),

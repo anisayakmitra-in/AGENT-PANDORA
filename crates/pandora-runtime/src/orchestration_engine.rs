@@ -1,7 +1,143 @@
-use pandora_types::{DomainAgentProfile, OrchestrationPlan, PlanId, RoleAssignment, RoleId};
+pub use pandora_types::OrchestrationPlanJson;
+use pandora_types::{
+    ArtifactRef, DomainAgentProfile, ExecutionTopology, Handoff, HarnessId, OrchestrationPlan,
+    OrchestrationRole, PlanId, RoleAssignment, RoleId,
+};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Mutex;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum EdgeVerificationError {
+    SizeExceeded {
+        actual: u64,
+        max: u64,
+    },
+    MimeTypeNotAllowed {
+        actual: String,
+        allowed: Vec<String>,
+    },
+    InvalidChecksum {
+        message: String,
+    },
+    PolicyViolation(String),
+}
+
+impl fmt::Display for EdgeVerificationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SizeExceeded { actual, max } => {
+                write!(
+                    formatter,
+                    "artifact size {actual} bytes exceeds limit {max}"
+                )
+            }
+            Self::MimeTypeNotAllowed { actual, allowed } => {
+                write!(
+                    formatter,
+                    "mime type '{actual}' not in allowed list: {allowed:?}"
+                )
+            }
+            Self::InvalidChecksum { message } => {
+                write!(
+                    formatter,
+                    "artifact checksum verification failed: {message}"
+                )
+            }
+            Self::PolicyViolation(msg) => {
+                write!(formatter, "edge verifier rejected artifact: {msg}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for EdgeVerificationError {}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct EdgeVerifierPolicy {
+    pub max_size_bytes: Option<u64>,
+    pub allowed_mime_types: Vec<String>,
+}
+
+impl EdgeVerifierPolicy {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_max_size(mut self, max: u64) -> Self {
+        self.max_size_bytes = Some(max);
+        self
+    }
+
+    pub fn with_allowed_mime(mut self, mime: impl Into<String>) -> Self {
+        self.allowed_mime_types.push(mime.into());
+        self
+    }
+
+    pub fn verify(&self, artifact: &ArtifactRef) -> Result<(), EdgeVerificationError> {
+        let path_str = artifact.path.to_string_lossy();
+        if path_str.trim().is_empty() {
+            return Err(EdgeVerificationError::PolicyViolation(
+                "artifact path cannot be empty".to_string(),
+            ));
+        }
+        if artifact.path.is_absolute() || path_str.starts_with('/') || path_str.starts_with('\\') {
+            return Err(EdgeVerificationError::PolicyViolation(
+                "artifact path must be relative to workspace".to_string(),
+            ));
+        }
+        if path_str.contains(':') {
+            return Err(EdgeVerificationError::PolicyViolation(
+                "artifact path cannot contain ':' or stream specifiers".to_string(),
+            ));
+        }
+        for component in artifact.path.components() {
+            match component {
+                std::path::Component::ParentDir => {
+                    return Err(EdgeVerificationError::PolicyViolation(
+                        "artifact path traversal ('..') is prohibited".to_string(),
+                    ));
+                }
+                std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                    return Err(EdgeVerificationError::PolicyViolation(
+                        "artifact path must be relative to workspace".to_string(),
+                    ));
+                }
+                std::path::Component::CurDir | std::path::Component::Normal(_) => {}
+            }
+        }
+        if let Some(max) = self.max_size_bytes
+            && artifact.size_bytes > max
+        {
+            return Err(EdgeVerificationError::SizeExceeded {
+                actual: artifact.size_bytes,
+                max,
+            });
+        }
+        if !self.allowed_mime_types.is_empty()
+            && !self
+                .allowed_mime_types
+                .iter()
+                .any(|m| m == &artifact.mime_type)
+        {
+            return Err(EdgeVerificationError::MimeTypeNotAllowed {
+                actual: artifact.mime_type.clone(),
+                allowed: self.allowed_mime_types.clone(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DiamondReceipt {
+    pub topology: ExecutionTopology,
+    pub input_summary: String,
+    pub verified_artifacts: Vec<ArtifactRef>,
+    pub aggregate_digest: String,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OrchestrationError {
@@ -11,10 +147,25 @@ pub enum OrchestrationError {
     RoleNotFound(RoleId),
     RoleNotActive(RoleId),
     RoleAlreadyCompleted(RoleId),
-    HandoffNotDeclared { from: RoleId, to: RoleId },
+    HandoffNotDeclared {
+        from: RoleId,
+        to: RoleId,
+    },
     HandoffSourceIncomplete,
     HandoffLimit,
     InvalidSnapshot,
+    WorkerFailed {
+        worker: String,
+        error: String,
+    },
+    WorkerPanic(String),
+    EdgeVerificationFailed {
+        worker: String,
+        error: EdgeVerificationError,
+    },
+    EmptyWorkers,
+    DuplicateArtifact(pandora_types::ArtifactId),
+    DuplicateArtifactPath(std::path::PathBuf),
 }
 
 impl fmt::Display for OrchestrationError {
@@ -32,6 +183,34 @@ impl fmt::Display for OrchestrationError {
             Self::HandoffSourceIncomplete => formatter.write_str("handoff source is not complete"),
             Self::HandoffLimit => formatter.write_str("plan handoff budget is exhausted"),
             Self::InvalidSnapshot => formatter.write_str("orchestration snapshot is invalid"),
+            Self::WorkerFailed { worker, error } => {
+                write!(formatter, "worker '{worker}' failed: {error}")
+            }
+            Self::WorkerPanic(worker) => {
+                write!(formatter, "worker '{worker}' panicked during execution")
+            }
+            Self::EdgeVerificationFailed { worker, error } => {
+                write!(
+                    formatter,
+                    "edge verification failed for worker '{worker}': {error}"
+                )
+            }
+            Self::EmptyWorkers => {
+                formatter.write_str("diamond execution requires at least one worker")
+            }
+            Self::DuplicateArtifact(id) => {
+                write!(
+                    formatter,
+                    "duplicate artifact '{id}' produced across workers"
+                )
+            }
+            Self::DuplicateArtifactPath(path) => {
+                write!(
+                    formatter,
+                    "duplicate artifact path '{}' produced across workers",
+                    path.display()
+                )
+            }
         }
     }
 }
@@ -149,6 +328,265 @@ impl OrchestrationEngine {
             profile,
         })
     }
+
+    pub fn execute_diamond<F>(
+        &self,
+        input_summary: impl Into<String>,
+        workers: Vec<(String, F)>,
+        verifier: &EdgeVerifierPolicy,
+    ) -> Result<DiamondReceipt, OrchestrationError>
+    where
+        F: FnOnce() -> Result<ArtifactRef, String> + Send + 'static,
+    {
+        if workers.is_empty() {
+            return Err(OrchestrationError::EmptyWorkers);
+        }
+        let input_summary = input_summary.into();
+        let results = std::thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(workers.len());
+            for (name, task) in workers {
+                let handle = scope.spawn(task);
+                handles.push((name, handle));
+            }
+            let mut gathered = Vec::with_capacity(handles.len());
+            for (name, handle) in handles {
+                let res = handle
+                    .join()
+                    .map_err(|_| OrchestrationError::WorkerPanic(name.clone()))?;
+                gathered.push((name, res));
+            }
+            Ok::<_, OrchestrationError>(gathered)
+        })?;
+
+        let mut verified_artifacts = Vec::with_capacity(results.len());
+        let mut seen_ids = std::collections::BTreeSet::new();
+        let mut seen_paths = std::collections::BTreeSet::new();
+        for (name, result) in results {
+            let artifact = result.map_err(|err| OrchestrationError::WorkerFailed {
+                worker: name.clone(),
+                error: err,
+            })?;
+            if !seen_ids.insert(artifact.artifact_id.clone()) {
+                return Err(OrchestrationError::DuplicateArtifact(artifact.artifact_id));
+            }
+            if !seen_paths.insert(artifact.path.clone()) {
+                return Err(OrchestrationError::DuplicateArtifactPath(artifact.path));
+            }
+            verifier.verify(&artifact).map_err(|err| {
+                OrchestrationError::EdgeVerificationFailed {
+                    worker: name,
+                    error: err,
+                }
+            })?;
+            verified_artifacts.push(artifact);
+        }
+
+        // Deterministic sort by artifact ID
+        verified_artifacts.sort_by(|a, b| a.artifact_id.as_str().cmp(b.artifact_id.as_str()));
+
+        // Compute aggregate join digest
+        let mut hasher = Sha256::new();
+        hasher.update(input_summary.as_bytes());
+        for art in &verified_artifacts {
+            hasher.update(art.artifact_id.as_str().as_bytes());
+            hasher.update(art.sha256);
+        }
+        let digest_bytes = hasher.finalize();
+        let aggregate_digest = digest_bytes
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+
+        Ok(DiamondReceipt {
+            topology: ExecutionTopology::Diamond,
+            input_summary,
+            verified_artifacts,
+            aggregate_digest,
+        })
+    }
+
+    pub fn synthesize_diamond_plan(
+        intent: &str,
+        custom_roles: Option<&[String]>,
+    ) -> Result<OrchestrationPlanJson, OrchestrationError> {
+        let trimmed_intent = intent.trim();
+        if trimmed_intent.is_empty() {
+            return Err(OrchestrationError::Plan(
+                pandora_types::OrchestrationContractError::EmptyField("intent"),
+            ));
+        }
+
+        let specialist_names: Vec<String> = if let Some(roles) = custom_roles {
+            let filtered: Vec<String> = roles
+                .iter()
+                .map(|r| r.trim().to_lowercase())
+                .filter(|r| !r.is_empty())
+                .collect();
+            if filtered.is_empty() {
+                infer_specialists(trimmed_intent)
+            } else {
+                filtered
+            }
+        } else {
+            infer_specialists(trimmed_intent)
+        };
+
+        let mut seen = std::collections::HashSet::new();
+        let mut final_specialists = Vec::new();
+        for raw_name in specialist_names {
+            let clean = raw_name.trim().to_lowercase().replace([' ', '-'], "_");
+            let safe_name = if clean == "planner"
+                || clean == "synthesizer"
+                || clean == "canary_verifier"
+                || clean == "canary"
+                || clean == "maker"
+                || clean == "verifier"
+            {
+                format!("specialist_{clean}")
+            } else {
+                clean
+            };
+            if !safe_name.is_empty() && seen.insert(safe_name.clone()) {
+                final_specialists.push(safe_name);
+            }
+        }
+
+        let fallbacks = [
+            "support_analyst",
+            "coordination_analyst",
+            "core_engineer",
+            "systems_architect",
+        ];
+        for fb in fallbacks {
+            if final_specialists.len() >= 2 {
+                break;
+            }
+            if seen.insert(fb.to_string()) {
+                final_specialists.push(fb.to_string());
+            }
+        }
+
+        let plan_id_str = format!("diamond-plan-{}", deterministic_slug(trimmed_intent));
+
+        let planner_id = RoleId::new("role-planner")
+            .map_err(pandora_types::OrchestrationContractError::InvalidId)?;
+        let synthesizer_id = RoleId::new("role-synthesizer")
+            .map_err(pandora_types::OrchestrationContractError::InvalidId)?;
+        let canary_id = RoleId::new("role-canary-verifier")
+            .map_err(pandora_types::OrchestrationContractError::InvalidId)?;
+
+        let mut roles = Vec::with_capacity(final_specialists.len() + 3);
+
+        roles.push(RoleAssignment::new(
+            planner_id.clone(),
+            OrchestrationRole::Planner,
+            HarnessId::new("coordination-meta")
+                .map_err(pandora_types::OrchestrationContractError::InvalidId)?,
+            Vec::new(),
+        )?);
+
+        let mut specialist_role_ids = Vec::with_capacity(final_specialists.len());
+        for spec_name in &final_specialists {
+            let spec_id = RoleId::new(format!("role-{spec_name}"))
+                .map_err(pandora_types::OrchestrationContractError::InvalidId)?;
+            specialist_role_ids.push(spec_id.clone());
+            roles.push(RoleAssignment::new(
+                spec_id,
+                OrchestrationRole::Custom(spec_name.clone()),
+                HarnessId::new("domain-specialist")
+                    .map_err(pandora_types::OrchestrationContractError::InvalidId)?,
+                vec![planner_id.clone()],
+            )?);
+        }
+
+        roles.push(RoleAssignment::new(
+            synthesizer_id.clone(),
+            OrchestrationRole::Maker,
+            HarnessId::new("synthesis-domain")
+                .map_err(pandora_types::OrchestrationContractError::InvalidId)?,
+            specialist_role_ids.clone(),
+        )?);
+
+        roles.push(RoleAssignment::new(
+            canary_id.clone(),
+            OrchestrationRole::Verifier,
+            HarnessId::new("verification-meta")
+                .map_err(pandora_types::OrchestrationContractError::InvalidId)?,
+            vec![synthesizer_id.clone()],
+        )?);
+
+        let meta_harness = HarnessId::new("coordination-meta")
+            .map_err(pandora_types::OrchestrationContractError::InvalidId)?;
+
+        let mut handoffs = Vec::with_capacity(final_specialists.len() * 2 + 1);
+        for spec_id in &specialist_role_ids {
+            handoffs.push(Handoff::new(
+                planner_id.clone(),
+                spec_id.clone(),
+                Some(meta_harness.clone()),
+            ));
+            handoffs.push(Handoff::new(
+                spec_id.clone(),
+                synthesizer_id.clone(),
+                Some(meta_harness.clone()),
+            ));
+        }
+        handoffs.push(Handoff::new(synthesizer_id, canary_id, Some(meta_harness)));
+
+        let max_parallelism = final_specialists.len();
+        let max_handoffs = handoffs.len() as u32;
+
+        let plan_json = OrchestrationPlanJson::new(
+            plan_id_str,
+            trimmed_intent,
+            ExecutionTopology::Diamond,
+            roles,
+            max_parallelism,
+            max_handoffs,
+            handoffs,
+        )?;
+
+        Ok(plan_json)
+    }
+}
+
+fn infer_specialists(intent: &str) -> Vec<String> {
+    let lower = intent.to_lowercase();
+    let mut specs = Vec::new();
+    if lower.contains("security") || lower.contains("auth") || lower.contains("guard") {
+        specs.push("security_auditor".to_string());
+    }
+    if lower.contains("perf")
+        || lower.contains("latency")
+        || lower.contains("speed")
+        || lower.contains("cache")
+    {
+        specs.push("perf_optimizer".to_string());
+    }
+    if lower.contains("data")
+        || lower.contains("store")
+        || lower.contains("database")
+        || lower.contains("sql")
+    {
+        specs.push("data_architect".to_string());
+    }
+    if lower.contains("test") || lower.contains("qa") || lower.contains("coverage") {
+        specs.push("test_engineer".to_string());
+    }
+    if specs.is_empty() {
+        specs.push("research_specialist".to_string());
+        specs.push("implementation_specialist".to_string());
+    } else if specs.len() == 1 {
+        specs.push("core_engineer".to_string());
+    }
+    specs
+}
+
+fn deterministic_slug(intent: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(intent.as_bytes());
+    let hex = format!("{:x}", hasher.finalize());
+    hex[..8].to_string()
 }
 
 pub struct OrchestrationRun {
@@ -558,5 +996,279 @@ mod tests {
         let run = engine.start_domain_profile(profile.plan().id()).unwrap();
         assert_eq!(run.profile(), &profile);
         assert_eq!(run.run().plan(), profile.plan());
+    }
+
+    type WorkerTask = Box<dyn FnOnce() -> Result<ArtifactRef, String> + Send + 'static>;
+
+    #[test]
+    fn orchestration_diamond_fanout_with_edge_verifier() {
+        let engine = OrchestrationEngine::new();
+        let verifier = EdgeVerifierPolicy::new()
+            .with_max_size(1024)
+            .with_allowed_mime("application/json");
+
+        let workers: Vec<(String, WorkerTask)> = vec![
+            (
+                "worker_alpha".to_string(),
+                Box::new(|| {
+                    Ok(ArtifactRef::compute(
+                        pandora_types::ArtifactId::new("art-alpha").unwrap(),
+                        "out/alpha.json",
+                        b"{\"module\":\"auth\",\"status\":\"pass\"}",
+                        "application/json",
+                    ))
+                }),
+            ),
+            (
+                "worker_beta".to_string(),
+                Box::new(|| {
+                    Ok(ArtifactRef::compute(
+                        pandora_types::ArtifactId::new("art-beta").unwrap(),
+                        "out/beta.json",
+                        b"{\"module\":\"storage\",\"status\":\"pass\"}",
+                        "application/json",
+                    ))
+                }),
+            ),
+        ];
+
+        let receipt = engine
+            .execute_diamond(
+                "Verify auth and storage subsystems in parallel",
+                workers,
+                &verifier,
+            )
+            .unwrap();
+
+        assert_eq!(receipt.topology, ExecutionTopology::Diamond);
+        assert_eq!(receipt.verified_artifacts.len(), 2);
+        assert_eq!(
+            receipt.verified_artifacts[0].artifact_id.as_str(),
+            "art-alpha"
+        );
+        assert_eq!(
+            receipt.verified_artifacts[1].artifact_id.as_str(),
+            "art-beta"
+        );
+        assert!(!receipt.aggregate_digest.is_empty());
+    }
+
+    #[test]
+    fn orchestration_diamond_rejects_artifact_exceeding_edge_limit() {
+        let engine = OrchestrationEngine::new();
+        let verifier = EdgeVerifierPolicy::new().with_max_size(10);
+
+        let workers: Vec<(String, WorkerTask)> = vec![(
+            "oversized_worker".to_string(),
+            Box::new(|| {
+                Ok(ArtifactRef::compute(
+                    pandora_types::ArtifactId::new("art-big").unwrap(),
+                    "out/big.bin",
+                    b"this content exceeds the 10 byte limit significantly",
+                    "application/octet-stream",
+                ))
+            }),
+        )];
+
+        let result = engine.execute_diamond("Run oversized task", workers, &verifier);
+        assert!(matches!(
+            result,
+            Err(OrchestrationError::EdgeVerificationFailed {
+                worker,
+                error: EdgeVerificationError::SizeExceeded { actual, max }
+            }) if worker == "oversized_worker" && actual > max && max == 10
+        ));
+    }
+
+    #[test]
+    fn orchestration_diamond_rejects_empty_workers() {
+        let engine = OrchestrationEngine::new();
+        let verifier = EdgeVerifierPolicy::new();
+        let workers: Vec<(String, WorkerTask)> = vec![];
+        let result = engine.execute_diamond("Empty task", workers, &verifier);
+        assert_eq!(result, Err(OrchestrationError::EmptyWorkers));
+    }
+
+    #[test]
+    fn orchestration_diamond_rejects_duplicate_artifact_ids() {
+        let engine = OrchestrationEngine::new();
+        let verifier = EdgeVerifierPolicy::new();
+
+        let workers: Vec<(String, WorkerTask)> = vec![
+            (
+                "worker_1".to_string(),
+                Box::new(|| {
+                    Ok(ArtifactRef::compute(
+                        pandora_types::ArtifactId::new("art-duplicate").unwrap(),
+                        "out/dup1.txt",
+                        b"data 1",
+                        "text/plain",
+                    ))
+                }),
+            ),
+            (
+                "worker_2".to_string(),
+                Box::new(|| {
+                    Ok(ArtifactRef::compute(
+                        pandora_types::ArtifactId::new("art-duplicate").unwrap(),
+                        "out/dup2.txt",
+                        b"data 2",
+                        "text/plain",
+                    ))
+                }),
+            ),
+        ];
+
+        let result = engine.execute_diamond("Duplicate task", workers, &verifier);
+        assert!(matches!(
+            result,
+            Err(OrchestrationError::DuplicateArtifact(id)) if id.as_str() == "art-duplicate"
+        ));
+    }
+
+    #[test]
+    fn orchestration_diamond_rejects_duplicate_artifact_paths() {
+        let engine = OrchestrationEngine::new();
+        let verifier = EdgeVerifierPolicy::new();
+
+        let workers: Vec<(String, WorkerTask)> = vec![
+            (
+                "worker_1".to_string(),
+                Box::new(|| {
+                    Ok(ArtifactRef::compute(
+                        pandora_types::ArtifactId::new("art-path-1").unwrap(),
+                        "out/collision.txt",
+                        b"data 1",
+                        "text/plain",
+                    ))
+                }),
+            ),
+            (
+                "worker_2".to_string(),
+                Box::new(|| {
+                    Ok(ArtifactRef::compute(
+                        pandora_types::ArtifactId::new("art-path-2").unwrap(),
+                        "out/collision.txt",
+                        b"data 2",
+                        "text/plain",
+                    ))
+                }),
+            ),
+        ];
+
+        let result = engine.execute_diamond("Duplicate path task", workers, &verifier);
+        assert!(matches!(
+            result,
+            Err(OrchestrationError::DuplicateArtifactPath(path)) if path == std::path::Path::new("out/collision.txt")
+        ));
+    }
+
+    #[test]
+    fn edge_verifier_policy_rejects_empty_path_absolute_path_and_path_traversal() {
+        let verifier = EdgeVerifierPolicy::new();
+
+        let empty_path_art = ArtifactRef::compute(
+            pandora_types::ArtifactId::new("art-empty").unwrap(),
+            "",
+            b"data",
+            "text/plain",
+        );
+        assert!(matches!(
+            verifier.verify(&empty_path_art),
+            Err(EdgeVerificationError::PolicyViolation(msg)) if msg.contains("cannot be empty")
+        ));
+
+        let whitespace_path_art = ArtifactRef::compute(
+            pandora_types::ArtifactId::new("art-ws").unwrap(),
+            "   ",
+            b"data",
+            "text/plain",
+        );
+        assert!(matches!(
+            verifier.verify(&whitespace_path_art),
+            Err(EdgeVerificationError::PolicyViolation(msg)) if msg.contains("cannot be empty")
+        ));
+
+        let abs_path = if cfg!(windows) {
+            "C:\\workspace\\out.txt"
+        } else {
+            "/workspace/out.txt"
+        };
+        let abs_path_art = ArtifactRef::compute(
+            pandora_types::ArtifactId::new("art-abs").unwrap(),
+            abs_path,
+            b"data",
+            "text/plain",
+        );
+        assert!(matches!(
+            verifier.verify(&abs_path_art),
+            Err(EdgeVerificationError::PolicyViolation(msg)) if msg.contains("must be relative")
+        ));
+
+        let rooted_art = ArtifactRef::compute(
+            pandora_types::ArtifactId::new("art-rooted").unwrap(),
+            "/workspace/out.txt",
+            b"data",
+            "text/plain",
+        );
+        assert!(matches!(
+            verifier.verify(&rooted_art),
+            Err(EdgeVerificationError::PolicyViolation(msg)) if msg.contains("must be relative")
+        ));
+
+        let backslash_rooted_art = ArtifactRef::compute(
+            pandora_types::ArtifactId::new("art-bs-rooted").unwrap(),
+            "\\workspace\\out.txt",
+            b"data",
+            "text/plain",
+        );
+        assert!(matches!(
+            verifier.verify(&backslash_rooted_art),
+            Err(EdgeVerificationError::PolicyViolation(msg)) if msg.contains("must be relative")
+        ));
+
+        let drive_rel_art = ArtifactRef::compute(
+            pandora_types::ArtifactId::new("art-drive-rel").unwrap(),
+            "C:relative/out.txt",
+            b"data",
+            "text/plain",
+        );
+        assert!(matches!(
+            verifier.verify(&drive_rel_art),
+            Err(EdgeVerificationError::PolicyViolation(msg)) if msg.contains("stream") || msg.contains("must be relative")
+        ));
+
+        let stream_art = ArtifactRef::compute(
+            pandora_types::ArtifactId::new("art-stream").unwrap(),
+            "out.txt:stream",
+            b"data",
+            "text/plain",
+        );
+        assert!(matches!(
+            verifier.verify(&stream_art),
+            Err(EdgeVerificationError::PolicyViolation(msg)) if msg.contains("stream")
+        ));
+
+        let ads_data_art = ArtifactRef::compute(
+            pandora_types::ArtifactId::new("art-ads").unwrap(),
+            "out.txt::$DATA",
+            b"data",
+            "text/plain",
+        );
+        assert!(matches!(
+            verifier.verify(&ads_data_art),
+            Err(EdgeVerificationError::PolicyViolation(msg)) if msg.contains("stream")
+        ));
+
+        let traversal_art = ArtifactRef::compute(
+            pandora_types::ArtifactId::new("art-traversal").unwrap(),
+            "out/../../etc/passwd",
+            b"data",
+            "text/plain",
+        );
+        assert!(matches!(
+            verifier.verify(&traversal_art),
+            Err(EdgeVerificationError::PolicyViolation(msg)) if msg.contains("traversal")
+        ));
     }
 }

@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::fs;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const MAX_GRAPH_INPUT_DOCUMENT_BYTES: u64 = 4 * 1024 * 1024;
 
@@ -25,12 +25,13 @@ struct GraphInputRecord {
 }
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
-    let kind = args
-        .first()
-        .ok_or_else(|| {
-            CliError::usage("graph requires 'code', 'knowledge', 'review', or 'architecture'")
-        })
-        .and_then(|value| parse_kind(value))?;
+    let first = args.first().ok_or_else(|| {
+        CliError::usage("graph requires 'code', 'knowledge', 'review', 'architecture', or 'map'")
+    })?;
+    if first == "map" {
+        return map_command(&args[1..]);
+    }
+    let kind = parse_kind(first)?;
     let rest = &args[1..];
     // `show` is a read of an already-stored snapshot. Everything else keeps the
     // original build shape, so `graph code --input <path>` is untouched.
@@ -39,6 +40,122 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         Some("remove") => remove(kind, &rest[1..]),
         _ => build(kind, rest),
     }
+}
+
+pub fn map_command(args: &[String]) -> Result<CommandResult, CliError> {
+    let action = args.first().map(String::as_str).unwrap_or("validate");
+    let rest = if args.is_empty() { args } else { &args[1..] };
+    match action {
+        "validate" => validate_map(rest),
+        "show" => show_map(rest),
+        unknown => Err(CliError::usage(format!(
+            "unknown graph map action '{unknown}', expected 'validate' or 'show'"
+        ))),
+    }
+}
+
+fn validate_map(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["path"])?;
+    let path = parsed
+        .value("path")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(".pandora/feature_map.json"));
+
+    if !path.is_file() {
+        return Err(CliError::execution(
+            format!("feature map file not found at '{}'", path.display()),
+            json!({"path": path}),
+        ));
+    }
+
+    let bytes = fs::read(&path).map_err(|e| {
+        CliError::execution(
+            format!("failed to read '{}': {e}", path.display()),
+            json!({"path": path}),
+        )
+    })?;
+    let map: pandora_types::FeatureMap = serde_json::from_slice(&bytes).map_err(|e| {
+        CliError::execution(
+            format!("invalid feature map JSON in '{}': {e}", path.display()),
+            json!({"path": path}),
+        )
+    })?;
+
+    map.validate().map_err(|e| {
+        CliError::execution(
+            format!("feature map validation failed: {e}"),
+            json!({"path": path}),
+        )
+    })?;
+
+    let mut resolved_features = Vec::new();
+    for feature in &map.features {
+        let entry_path = Path::new(&feature.entry_point);
+        let exists = entry_path.exists();
+        resolved_features.push(json!({
+            "name": feature.name,
+            "entry_point": feature.entry_point,
+            "exists": exists,
+            "invariants_count": feature.invariants.len(),
+            "dependencies_count": feature.dependencies.len(),
+        }));
+    }
+
+    let count = map.features.len();
+    Ok(success(
+        "graph map validate",
+        json!({
+            "path": path,
+            "version": map.version,
+            "map_version": map.version,
+            "feature_count": count,
+            "features": resolved_features,
+        }),
+        format!(
+            "Validated feature map at '{}' ({count} feature(s) verified)",
+            path.display()
+        ),
+    ))
+}
+
+fn show_map(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["path"])?;
+    let path = parsed
+        .value("path")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(".pandora/feature_map.json"));
+
+    if !path.is_file() {
+        return Err(CliError::execution(
+            format!("feature map file not found at '{}'", path.display()),
+            json!({"path": path}),
+        ));
+    }
+
+    let bytes = fs::read(&path).map_err(|e| {
+        CliError::execution(
+            format!("failed to read '{}': {e}", path.display()),
+            json!({"path": path}),
+        )
+    })?;
+    let map: pandora_types::FeatureMap = serde_json::from_slice(&bytes).map_err(|e| {
+        CliError::execution(
+            format!("invalid feature map JSON in '{}': {e}", path.display()),
+            json!({"path": path}),
+        )
+    })?;
+
+    let count = map.features.len();
+    Ok(success(
+        "graph map show",
+        json!({
+            "path": path,
+            "version": map.version,
+            "map_version": map.version,
+            "features": map.features,
+        }),
+        format!("Loaded feature map ({count} feature(s))"),
+    ))
 }
 
 fn remove(kind: GraphKind, args: &[String]) -> Result<CommandResult, CliError> {
@@ -333,6 +450,56 @@ mod tests {
         let store = GraphStore::open(&store_path).unwrap();
         let scope = GraphScope::new("local-tenant", "local-workspace").unwrap();
         assert!(store.load(GraphKind::Code, &scope).unwrap().is_some());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn feature_map_command_validates_and_shows() {
+        let root = std::env::temp_dir().join(format!(
+            "pandora-cli-map-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        let map_path = root.join("feature_map.json");
+        fs::write(
+            &map_path,
+            br#"{
+  "version": 1,
+  "features": [
+    {
+      "name": "TestFeature",
+      "entry_point": "src/main.rs",
+      "description": "Test entry",
+      "invariants": ["Invar 1"],
+      "dependencies": []
+    }
+  ]
+}"#,
+        )
+        .unwrap();
+
+        let val_result = super::map_command(&[
+            "validate".to_owned(),
+            "--path".to_owned(),
+            map_path.display().to_string(),
+        ])
+        .unwrap();
+        assert_eq!(val_result.data["version"], 1);
+        assert_eq!(val_result.data["feature_count"], 1);
+
+        let show_result = super::map_command(&[
+            "show".to_owned(),
+            "--path".to_owned(),
+            map_path.display().to_string(),
+        ])
+        .unwrap();
+        assert_eq!(show_result.data["version"], 1);
+        assert_eq!(show_result.data["features"][0]["name"], "TestFeature");
+
         let _ = fs::remove_dir_all(root);
     }
 }

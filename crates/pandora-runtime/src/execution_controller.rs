@@ -16,11 +16,13 @@ use crate::shadow_council::{RoutingError, ShadowCouncil};
 use crate::wasm::{WasmError, WasmExecutor, WasmGeneRequest};
 use crate::{ApprovalError, ApprovalStore, ConsumedPermit, PermitError, ToolContext, ToolEngine};
 use pandora_harnesses::{
-    CodingRequest, DataRequest, DebuggingRequest, DesignRequest, HarnessCatalog, OperationsRequest,
-    PlanningContext, ResearchRequest, SecurityRequest, canonical_harness_binding_digest,
+    ArchitectureRequest, CodingRequest, DataRequest, DebuggingRequest, DesignRequest,
+    HarnessCatalog, OperationsRequest, PlanningContext, ResearchRequest, SecurityRequest,
+    VerificationRequest, architecture_static_output, canonical_harness_binding_digest,
     coding_static_output, data_static_output, debugging_static_output, design_static_output,
-    is_data_gene, is_debugging_gene, is_design_gene, is_operations_gene, is_research_gene,
-    is_security_gene, operations_static_output, research_static_output, security_static_output,
+    is_architecture_gene, is_data_gene, is_debugging_gene, is_design_gene, is_operations_gene,
+    is_research_gene, is_security_gene, is_verification_gene, operations_static_output,
+    research_static_output, security_static_output, verification_static_output,
 };
 use pandora_provider::{ModelRequest, Provider, ProviderError, ProviderManifest};
 use pandora_types::{
@@ -983,6 +985,22 @@ impl ExecutionController {
                 &execution_id,
                 execution_profile,
             )?
+        } else if is_architecture_gene(&gene_id) {
+            architecture_input(
+                &intent,
+                &gene_id,
+                &session,
+                &execution_id,
+                execution_profile,
+            )?
+        } else if is_verification_gene(&gene_id) {
+            verification_input(
+                &intent,
+                &gene_id,
+                &session,
+                &execution_id,
+                execution_profile,
+            )?
         } else {
             coding_input(
                 &intent,
@@ -1000,6 +1018,8 @@ impl ExecutionController {
             .or_else(|| security_static_output(&gene_id))
             .or_else(|| debugging_static_output(&gene_id))
             .or_else(|| data_static_output(&gene_id))
+            .or_else(|| architecture_static_output(&gene_id))
+            .or_else(|| verification_static_output(&gene_id))
             .map(|value| value.as_bytes().to_vec());
         let mut summary = RunSummary {
             execution_id: execution_id.clone(),
@@ -2209,6 +2229,92 @@ fn data_input(
     Ok((input, None))
 }
 
+fn architecture_input(
+    intent: &TaskIntent,
+    gene_id: &GeneId,
+    session: &Session,
+    execution_id: &ExecutionId,
+    execution_profile: ExecutionProfile,
+) -> Result<(GeneInput, Option<Vec<u8>>), RuntimeError> {
+    let context = PlanningContext::new(
+        execution_id.clone(),
+        session.id().clone(),
+        session.principal_id().clone(),
+        session.workspace_id().clone(),
+        execution_profile,
+    );
+    let action = intent
+        .summary()
+        .split_once(':')
+        .map(|(action, _)| action)
+        .unwrap_or(intent.summary())
+        .to_ascii_lowercase();
+    let request = match gene_id.as_str() {
+        "architecture.inventory" if action == "architecture-inventory" => {
+            ArchitectureRequest::inventory(context)
+        }
+        "architecture.boundaries" if action == "architecture-boundaries" => {
+            ArchitectureRequest::boundaries(context)
+        }
+        "architecture.invariants" if action == "architecture-invariants" => {
+            ArchitectureRequest::invariants(context)
+        }
+        "architecture.guide" if action == "architecture-guide" => {
+            ArchitectureRequest::guide(context)
+        }
+        _ => {
+            return Err(RuntimeError::InvalidIntent(
+                "intent does not match the selected Gene",
+            ));
+        }
+    };
+    let input = request.into_gene_input().map_err(RuntimeError::Planning)?;
+    Ok((input, None))
+}
+
+fn verification_input(
+    intent: &TaskIntent,
+    gene_id: &GeneId,
+    session: &Session,
+    execution_id: &ExecutionId,
+    execution_profile: ExecutionProfile,
+) -> Result<(GeneInput, Option<Vec<u8>>), RuntimeError> {
+    let context = PlanningContext::new(
+        execution_id.clone(),
+        session.id().clone(),
+        session.principal_id().clone(),
+        session.workspace_id().clone(),
+        execution_profile,
+    );
+    let action = intent
+        .summary()
+        .split_once(':')
+        .map(|(action, _)| action)
+        .unwrap_or(intent.summary())
+        .to_ascii_lowercase();
+    let request = match gene_id.as_str() {
+        "verification.contract" if action == "verification-contract" => {
+            VerificationRequest::contract(context)
+        }
+        "verification.golden" if action == "verification-golden" => {
+            VerificationRequest::golden(context)
+        }
+        "verification.property" if action == "verification-property" => {
+            VerificationRequest::property(context)
+        }
+        "verification.guide" if action == "verification-guide" => {
+            VerificationRequest::guide(context)
+        }
+        _ => {
+            return Err(RuntimeError::InvalidIntent(
+                "intent does not match the selected Gene",
+            ));
+        }
+    };
+    let input = request.into_gene_input().map_err(RuntimeError::Planning)?;
+    Ok((input, None))
+}
+
 fn debugging_input(
     intent: &TaskIntent,
     gene_id: &GeneId,
@@ -2977,7 +3083,12 @@ mod tests {
         let fixture = Fixture::new();
         let controller = ExecutionController::new(fixture.root.clone());
 
-        for harness_id in ["core-source", "coordination-meta"] {
+        for harness_id in [
+            "core-source",
+            "coordination-meta",
+            "evolution-meta",
+            "swarm-meta",
+        ] {
             let harness_id = HarnessId::new(harness_id).unwrap();
             let intent = TaskIntent::new("read:README.md")
                 .unwrap()
@@ -3066,6 +3177,47 @@ mod tests {
         assert_eq!(summary.status(), &RunStatus::Completed);
         assert!(summary.receipts().is_empty());
         assert!(String::from_utf8_lossy(summary.output().unwrap()).contains("Security Audit"));
+    }
+
+    #[test]
+    fn architecture_guide_is_static_and_requests_no_effect() {
+        let fixture = Fixture::new();
+        let controller = ExecutionController::new(fixture.root.clone());
+        let intent = TaskIntent::new("architecture-guide")
+            .unwrap()
+            .with_harness(HarnessId::new("architecture-domain").unwrap())
+            .with_gene(GeneId::new("architecture.guide").unwrap());
+
+        let summary = controller
+            .run_at(intent, fixture.session(), Timestamp::from_unix_seconds(10))
+            .unwrap();
+
+        assert_eq!(summary.status(), &RunStatus::Completed);
+        assert!(summary.receipts().is_empty());
+        assert!(
+            String::from_utf8_lossy(summary.output().unwrap()).contains("Architecture inventory")
+        );
+    }
+
+    #[test]
+    fn verification_guide_is_static_and_requests_no_effect() {
+        let fixture = Fixture::new();
+        let controller = ExecutionController::new(fixture.root.clone());
+        let intent = TaskIntent::new("verification-guide")
+            .unwrap()
+            .with_harness(HarnessId::new("verification-domain").unwrap())
+            .with_gene(GeneId::new("verification.guide").unwrap());
+
+        let summary = controller
+            .run_at(intent, fixture.session(), Timestamp::from_unix_seconds(10))
+            .unwrap();
+
+        assert_eq!(summary.status(), &RunStatus::Completed);
+        assert!(summary.receipts().is_empty());
+        assert!(
+            String::from_utf8_lossy(summary.output().unwrap())
+                .contains("Verification contract audits")
+        );
     }
 
     #[test]

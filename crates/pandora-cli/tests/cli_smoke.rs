@@ -1741,6 +1741,816 @@ fn evolution_cli_activates_only_admitted_artifacts_and_rolls_back() {
 }
 
 #[test]
+fn evolution_loop_e2e_full_lifecycle_with_four_stage_rollout_activation_and_rollback() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    let base_artifact = wat::parse_str(
+        r#"(module
+            (memory (export "memory") 1)
+            (func (export "pandora_alloc") (param i32) (result i32) i32.const 0)
+            (func (export "pandora_run") (param i32 i32) (result i64)
+                local.get 0
+                i64.extend_i32_u
+                i64.const 32
+                i64.shl
+                local.get 1
+                i64.extend_i32_u
+                i64.or))"#,
+    )
+    .unwrap();
+    let candidate_artifact = wat::parse_str(
+        r#"(module
+            (memory (export "memory") 1)
+            (data (i32.const 1024) "{\"generation\":\"candidate-e2e\"}")
+            (func (export "pandora_alloc") (param i32) (result i32) i32.const 0)
+            (func (export "pandora_run") (param i32 i32) (result i64)
+                i64.const 1024
+                i64.const 32
+                i64.shl
+                i64.const 30
+                i64.or))"#,
+    )
+    .unwrap();
+    let base_manifest = PackageManifest::new(
+        "evolution/base-gene-e2e",
+        "1.0.0",
+        PackageKind::Gene,
+        "local-publisher",
+        hash_artifact(&base_artifact),
+        Vec::new(),
+        PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+        "MIT",
+        TrustEvidence::unsigned(),
+    )
+    .unwrap();
+    let candidate_manifest = PackageManifest::new(
+        "evolution/candidate-gene-e2e",
+        "1.0.0",
+        PackageKind::Gene,
+        "local-publisher",
+        hash_artifact(&candidate_artifact),
+        Vec::new(),
+        PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+        "MIT",
+        TrustEvidence::unsigned(),
+    )
+    .unwrap();
+    let domain_artifact = b"evolution domain profile e2e\n";
+    let domain_manifest = PackageManifest::new(
+        "evolution/domain-e2e",
+        "1.0.0",
+        PackageKind::DomainHarness,
+        "local-publisher",
+        hash_artifact(domain_artifact),
+        vec![PackageDependency::new("evolution/base-gene-e2e", "1.0.0", false).unwrap()],
+        PackageCompatibility::new(concat!("pandora>=", env!("CARGO_PKG_VERSION"))).unwrap(),
+        "MIT",
+        TrustEvidence::unsigned(),
+    )
+    .unwrap();
+
+    for (name, manifest, artifact) in [
+        ("base", &base_manifest, base_artifact.as_slice()),
+        (
+            "candidate",
+            &candidate_manifest,
+            candidate_artifact.as_slice(),
+        ),
+        ("domain", &domain_manifest, domain_artifact.as_slice()),
+    ] {
+        let manifest_path = fixture.root.join(format!("{name}-evolution-e2e.json"));
+        let artifact_path = fixture.root.join(format!("{name}-evolution-e2e.artifact"));
+        fs::write(&manifest_path, serde_json::to_vec_pretty(manifest).unwrap()).unwrap();
+        fs::write(&artifact_path, artifact).unwrap();
+        let admitted = fixture
+            .command(&[
+                "package",
+                "admit",
+                "--manifest",
+                manifest_path.to_str().unwrap(),
+                "--artifact",
+                artifact_path.to_str().unwrap(),
+                "--json",
+            ])
+            .output()
+            .expect("evolution package admission should start");
+        assert_success_with_context(&admitted, "evolution package admission");
+    }
+
+    for (id, version) in [
+        ("evolution/base-gene-e2e", "1.0.0"),
+        ("evolution/candidate-gene-e2e", "1.0.0"),
+        ("evolution/domain-e2e", "1.0.0"),
+    ] {
+        let enabled = fixture
+            .command(&["package", "enable", id, version, "--yes", "--json"])
+            .output()
+            .expect("evolution package enable should start");
+        assert_success_with_context(&enabled, "evolution package enable");
+    }
+
+    // Step 1: Submit proposal
+    let proposal_id = "proposal-e2e-lifecycle";
+    let proposal_path = fixture.root.join("e2e-proposal.json");
+    let evidence_digest = format!("sha256:{}", "1".repeat(64));
+    fs::write(
+        &proposal_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "proposal_id": proposal_id,
+            "source": "gepa",
+            "base_artifact": base_manifest.content_hash(),
+            "candidate_artifact": candidate_manifest.content_hash(),
+            "evidence_digest": evidence_digest,
+            "expected_outcome": "improve complete self evolution loop reliability",
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let submitted = fixture
+        .command(&[
+            "evolution",
+            "submit",
+            "--input",
+            proposal_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("evolution submit should start");
+    assert_success_with_context(&submitted, "evolution submit");
+    let submitted_json = parse_json(&submitted);
+    assert_eq!(submitted_json["state"], "proposed");
+    assert_eq!(submitted_json["proposal_id"], proposal_id);
+
+    // Step 2: Evaluate with HoldoutEvaluation & RegressionCheck
+    let holdout_path = fixture.root.join("e2e-holdout.json");
+    fs::write(
+        &holdout_path,
+        br#"{"cases":[{"id":"case-e2e","execution_id":"exec-e2e","output":"candidate-verified","expected_output":"candidate-verified","baseline_output":"candidate-verified"}]}"#,
+    )
+    .unwrap();
+    let evaluated = fixture
+        .command(&[
+            "evolution",
+            "evaluate",
+            "--id",
+            proposal_id,
+            "--input",
+            holdout_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("evolution evaluate should start");
+    assert_success_with_context(&evaluated, "evolution evaluate");
+    let evaluated_json = parse_json(&evaluated);
+    assert_eq!(evaluated_json["passed"], 1);
+    assert_eq!(evaluated_json["total"], 1);
+    assert_eq!(evaluated_json["cases"][0]["regression"]["status"], "passed");
+    assert_eq!(evaluated_json["cases"][0]["regression"]["score"], 100);
+
+    // Step 3: Parliament approval
+    let approval_path = fixture.root.join("e2e-approval.json");
+    fs::write(
+        &approval_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "proposal_id": proposal_id,
+            "approver": "parliament-governance-board",
+            "policy_version": 1,
+            "artifact_id": candidate_manifest.content_hash(),
+            "signer": "governance-signer",
+            "signature": "sig-governance-candidate"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let approved = fixture
+        .command(&[
+            "evolution",
+            "approve",
+            "--input",
+            approval_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("evolution approve should start");
+    assert_success_with_context(&approved, "evolution approve");
+    let approved_json = parse_json(&approved);
+    assert_eq!(approved_json["state"], "approved");
+    assert_eq!(approved_json["approver"], "parliament-governance-board");
+    assert_eq!(approved_json["signer"], "governance-signer");
+
+    // Step 4: Staging
+    let staged = fixture
+        .command(&["evolution", "stage", "--id", proposal_id, "--json"])
+        .output()
+        .expect("evolution stage should start");
+    assert_success_with_context(&staged, "evolution stage");
+    assert_eq!(parse_json(&staged)["state"], "staged");
+
+    // Step 5: Canary
+    let canary_path = fixture.root.join("e2e-canary.json");
+    fs::write(
+        &canary_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "proposal_id": proposal_id,
+            "passed": true,
+            "failure_count": 0,
+            "note": "e2e shadow canary passed",
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let canary = fixture
+        .command(&[
+            "evolution",
+            "canary",
+            "--input",
+            canary_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("evolution canary should start");
+    assert_success_with_context(&canary, "evolution canary");
+    assert_eq!(parse_json(&canary)["state"], "canary_passed");
+
+    // Step 6: Rollout configure
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be available")
+        .as_secs();
+    let exact_commit = "c".repeat(40);
+    let artifact_digest = format!("sha256:{}", "3".repeat(64));
+    let rollout_config_path = fixture.root.join("e2e-rollout-config.json");
+    let mut digest_counter: u64 = 1000;
+    let mut next_digest = || -> String {
+        digest_counter += 1;
+        format!("sha256:{:064x}", digest_counter)
+    };
+    let config_transition_id = next_digest();
+    fs::write(
+        &rollout_config_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "proposal_id": proposal_id,
+            "exact_commit": exact_commit,
+            "artifact_digest": artifact_digest,
+            "channel": "beta",
+            "evidence_digest": evidence_digest,
+            "transition_id": config_transition_id,
+            "actor": "release-operator-e2e",
+            "configured_at": now.saturating_sub(60),
+            "limits": [
+                {"stage":"canary","max_cost_micros":10000,"max_duration_seconds":600,"max_failure_count":0,"min_quality_score":90,"max_p95_latency_millis":500,"min_stability_score":95},
+                {"stage":"limited","max_cost_micros":20000,"max_duration_seconds":1200,"max_failure_count":0,"min_quality_score":92,"max_p95_latency_millis":450,"min_stability_score":96},
+                {"stage":"expanded","max_cost_micros":40000,"max_duration_seconds":1800,"max_failure_count":0,"min_quality_score":94,"max_p95_latency_millis":400,"min_stability_score":97},
+                {"stage":"complete","max_cost_micros":80000,"max_duration_seconds":3600,"max_failure_count":0,"min_quality_score":96,"max_p95_latency_millis":350,"min_stability_score":98}
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let configured = fixture
+        .command(&[
+            "evolution",
+            "rollout",
+            "configure",
+            "--input",
+            rollout_config_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("rollout configure should start");
+    assert_success_with_context(&configured, "rollout configure");
+    let configured_json = parse_json(&configured);
+    assert_eq!(configured_json["changed"], true);
+    assert_eq!(configured_json["rollout"]["current_stage"], "canary");
+    assert_eq!(configured_json["rollout"]["status"], "running");
+    assert_eq!(configured_json["rollout"]["activation_ready"], false);
+
+    // Negative check: early activation must fail while rollout is incomplete
+    let early_activation = fixture
+        .command(&["evolution", "activate", "--id", proposal_id, "--json"])
+        .output()
+        .expect("early activation should execute");
+    assert!(
+        !early_activation.status.success(),
+        "evolution activate must fail when rollout is not complete"
+    );
+
+    // Step 7: All 4 stages of rollout (canary -> limited -> expanded -> complete)
+    let rollout_stages = [
+        ("canary", Some("limited")),
+        ("limited", Some("expanded")),
+        ("expanded", Some("complete")),
+        ("complete", None),
+    ];
+
+    for (index, (stage, next_stage)) in rollout_stages.into_iter().enumerate() {
+        thread::sleep(Duration::from_millis(20));
+        let stage_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be available")
+            .as_secs();
+        let evaluator = format!("evaluator-{stage}");
+        let approver = format!("human-approver-{stage}");
+        let scorecard_digest = next_digest();
+        let scorecard_transition = next_digest();
+        let scorecard_evidence = next_digest();
+
+        // 1. Scorecard recording by evaluator
+        let scorecard_path = fixture.root.join(format!("scorecard-{stage}.json"));
+        fs::write(
+            &scorecard_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "proposal_id": proposal_id,
+                "stage": stage,
+                "quality_score": 99,
+                "p95_latency_millis": 100,
+                "stability_score": 99,
+                "cost_micros": 1000,
+                "duration_seconds": 60,
+                "failure_count": 0,
+                "evidence_digest": scorecard_evidence,
+                "scorecard_digest": scorecard_digest,
+                "evaluator": evaluator,
+                "transition_id": scorecard_transition,
+                "actor": evaluator,
+                "recorded_at": stage_time,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let scored = fixture
+            .command(&[
+                "evolution",
+                "rollout",
+                "score",
+                "--input",
+                scorecard_path.to_str().unwrap(),
+                "--json",
+            ])
+            .output()
+            .expect("rollout score should start");
+        assert_success_with_context(&scored, &format!("rollout score for {stage}"));
+        let scored_json = parse_json(&scored);
+        assert_eq!(scored_json["rollout"]["status"], "awaiting_approval");
+
+        // In the canary stage, explicitly test self-approval rejection and automated evaluator rejection
+        if index == 0 {
+            // Negative control: self-approval rejection
+            let self_approval_path = fixture.root.join("approval-self-rejection.json");
+            fs::write(
+                &self_approval_path,
+                serde_json::to_vec_pretty(&serde_json::json!({
+                    "approval_id": next_digest(),
+                    "proposal_id": proposal_id,
+                    "from_stage": stage,
+                    "to_stage": next_stage,
+                    "exact_commit": exact_commit,
+                    "artifact_digest": artifact_digest,
+                    "channel": "beta",
+                    "evidence_digest": evidence_digest,
+                    "scorecard_digest": scorecard_digest,
+                    "approver": evaluator, // Same as evaluator! Violation of no self-approval rule!
+                    "authority": "human",
+                    "approved_at": stage_time,
+                    "expires_at": stage_time + 300,
+                    "transition_id": next_digest()
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+
+            let self_approval_out = fixture
+                .command(&[
+                    "evolution",
+                    "rollout",
+                    "approve",
+                    "--input",
+                    self_approval_path.to_str().unwrap(),
+                    "--json",
+                ])
+                .output()
+                .expect("self approval attempt should execute");
+            assert!(
+                !self_approval_out.status.success(),
+                "evaluator self-approval must fail closed"
+            );
+            let err_text = format!(
+                "{}{}",
+                String::from_utf8_lossy(&self_approval_out.stderr),
+                String::from_utf8_lossy(&self_approval_out.stdout)
+            );
+            assert!(
+                err_text.contains("the scorecard evaluator cannot approve its own promotion")
+                    || err_text.contains("cannot approve its own promotion"),
+                "error must enforce no self-approval rule: {err_text}"
+            );
+
+            // Negative control: automated evaluator authority rejection
+            let automated_approval_path = fixture.root.join("approval-automated-rejection.json");
+            fs::write(
+                &automated_approval_path,
+                serde_json::to_vec_pretty(&serde_json::json!({
+                    "approval_id": next_digest(),
+                    "proposal_id": proposal_id,
+                    "from_stage": stage,
+                    "to_stage": next_stage,
+                    "exact_commit": exact_commit,
+                    "artifact_digest": artifact_digest,
+                    "channel": "beta",
+                    "evidence_digest": evidence_digest,
+                    "scorecard_digest": scorecard_digest,
+                    "approver": approver,
+                    "authority": "automated_evaluator", // Not human! Violation!
+                    "approved_at": stage_time,
+                    "expires_at": stage_time + 300,
+                    "transition_id": next_digest()
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+
+            let automated_out = fixture
+                .command(&[
+                    "evolution",
+                    "rollout",
+                    "approve",
+                    "--input",
+                    automated_approval_path.to_str().unwrap(),
+                    "--json",
+                ])
+                .output()
+                .expect("automated approval attempt should execute");
+            assert!(
+                !automated_out.status.success(),
+                "automated authority must fail closed"
+            );
+        }
+
+        // 2. Valid human promotion approval by distinct approver
+        let approval_path = fixture.root.join(format!("approval-{stage}.json"));
+        let mut approval_obj = serde_json::json!({
+            "approval_id": next_digest(),
+            "proposal_id": proposal_id,
+            "from_stage": stage,
+            "exact_commit": exact_commit,
+            "artifact_digest": artifact_digest,
+            "channel": "beta",
+            "evidence_digest": evidence_digest,
+            "scorecard_digest": scorecard_digest,
+            "approver": approver,
+            "authority": "human",
+            "approved_at": stage_time,
+            "expires_at": stage_time + 600,
+            "transition_id": next_digest()
+        });
+        if let Some(target) = next_stage {
+            approval_obj["to_stage"] = serde_json::json!(target);
+        } else {
+            approval_obj["to_stage"] = serde_json::Value::Null;
+        }
+        fs::write(
+            &approval_path,
+            serde_json::to_vec_pretty(&approval_obj).unwrap(),
+        )
+        .unwrap();
+
+        let approved = fixture
+            .command(&[
+                "evolution",
+                "rollout",
+                "approve",
+                "--input",
+                approval_path.to_str().unwrap(),
+                "--json",
+            ])
+            .output()
+            .expect("rollout approve should start");
+        assert_success_with_context(&approved, &format!("rollout approve for {stage}"));
+        let approved_json = parse_json(&approved);
+        assert_eq!(
+            approved_json["rollout"]["pending_approval"]["approver"],
+            approver
+        );
+
+        // 3. Promote rollout stage
+        let promote_transition = next_digest();
+        let promoted = fixture
+            .command(&[
+                "evolution",
+                "rollout",
+                "promote",
+                "--id",
+                proposal_id,
+                "--transition-id",
+                &promote_transition,
+                "--actor",
+                &approver,
+                "--reason",
+                &format!("approved promotion for {stage}"),
+                "--json",
+            ])
+            .output()
+            .expect("rollout promote should start");
+        assert_success_with_context(&promoted, &format!("rollout promote for {stage}"));
+        let promoted_json = parse_json(&promoted);
+
+        if let Some(target) = next_stage {
+            assert_eq!(promoted_json["rollout"]["current_stage"], target);
+            assert_eq!(promoted_json["rollout"]["status"], "running");
+            assert_eq!(promoted_json["rollout"]["activation_ready"], false);
+        } else {
+            assert_eq!(promoted_json["rollout"]["current_stage"], "complete");
+            assert_eq!(promoted_json["rollout"]["status"], "complete");
+            assert_eq!(promoted_json["rollout"]["activation_ready"], true);
+        }
+    }
+
+    // Step 8: Activation and ReplacementReceipt verification
+    let activated = fixture
+        .command(&["evolution", "activate", "--id", proposal_id, "--json"])
+        .output()
+        .expect("evolution activate should start");
+    assert_success_with_context(&activated, "evolution activate");
+    let activated_json = parse_json(&activated);
+    assert_eq!(activated_json["command"], "evolution activate");
+    assert_eq!(activated_json["state"], "active");
+    assert_eq!(activated_json["proposal_id"], proposal_id);
+    assert_eq!(
+        activated_json["base_artifact"],
+        base_manifest.content_hash()
+    );
+    assert_eq!(
+        activated_json["candidate_artifact"],
+        candidate_manifest.content_hash()
+    );
+    assert!(activated_json["activated_at"].as_u64().unwrap() > 0);
+    assert_eq!(activated_json["runtime_authority_changed"], false);
+    assert_eq!(activated_json["activation_scope"]["kind"], "package");
+
+    // Verify live gene execution uses the candidate artifact via ReplacementEngine
+    let run_gene = |task: &str, existing_session: Option<&str>| -> (Value, String) {
+        let mut pending_args = vec![
+            "run",
+            "--harness",
+            "evolution/domain-e2e",
+            "--harness-version",
+            "1.0.0",
+            "--gene",
+            "evolution/base-gene-e2e",
+            task,
+        ];
+        if let Some(session_id) = existing_session {
+            pending_args.extend(["--session", session_id]);
+        }
+        pending_args.push("--json");
+        let pending = fixture
+            .command(&pending_args)
+            .output()
+            .expect("evolved Wasm Gene should request approval");
+        assert_eq!(
+            pending.status.code(),
+            Some(40),
+            "unexpected evolved Wasm response: stdout={} stderr={}",
+            String::from_utf8_lossy(&pending.stdout),
+            String::from_utf8_lossy(&pending.stderr)
+        );
+        let pending = parse_json(&pending);
+        let approval_id = pending["details"]["approval_id"].as_str().unwrap();
+        let session_id = pending["details"]["session_id"].as_str().unwrap();
+        let inspected = fixture
+            .command(&["approval", "inspect", approval_id, "--json"])
+            .output()
+            .expect("evolved Wasm approval should be inspectable");
+        assert_success_with_context(&inspected, "inspect evolved Wasm approval");
+        let summary = parse_json(&inspected)["approval"]["request_summary"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let resolved = fixture
+            .command(&["approval", "resolve", approval_id, "--allow", "--json"])
+            .output()
+            .expect("evolved Wasm approval should resolve");
+        assert_success_with_context(&resolved, "resolve evolved Wasm approval");
+        let completed = fixture
+            .command(&[
+                "run",
+                "--approval",
+                approval_id,
+                "--session",
+                session_id,
+                "--harness",
+                "evolution/domain-e2e",
+                "--harness-version",
+                "1.0.0",
+                "--gene",
+                "evolution/base-gene-e2e",
+                task,
+                "--json",
+            ])
+            .output()
+            .expect("approved evolved Wasm Gene should run");
+        assert_success_with_context(&completed, "approved evolved Wasm Gene");
+        (parse_json(&completed), summary)
+    };
+
+    let (candidate_run, candidate_approval) = run_gene(r#"{"generation":"input"}"#, None);
+    assert_eq!(candidate_run["output"], r#"{"generation":"candidate-e2e"}"#);
+    assert_eq!(
+        candidate_run["artifact_resolution"]["replacement_active"],
+        true
+    );
+    assert_eq!(
+        candidate_run["artifact_resolution"]["base_artifact"],
+        base_manifest.content_hash()
+    );
+    assert_eq!(
+        candidate_run["artifact_resolution"]["resolved_artifact"],
+        candidate_manifest.content_hash()
+    );
+    assert_eq!(
+        candidate_run["artifact_resolution"]["runtime_authority_changed"],
+        false
+    );
+    assert!(candidate_approval.contains(base_manifest.content_hash()));
+    assert!(candidate_approval.contains(candidate_manifest.content_hash()));
+
+    // Step 9: Rollback and RollbackReceipt verification
+    let rollback_reason = "post-activation rollback verification in e2e test";
+    let rolled_back = fixture
+        .command(&[
+            "evolution",
+            "rollback",
+            "--id",
+            proposal_id,
+            "--reason",
+            rollback_reason,
+            "--json",
+        ])
+        .output()
+        .expect("evolution rollback should start");
+    assert_success_with_context(&rolled_back, "evolution rollback");
+    let rolled_back_json = parse_json(&rolled_back);
+    assert_eq!(rolled_back_json["command"], "evolution rollback");
+    assert_eq!(rolled_back_json["state"], "rolled_back");
+    assert_eq!(rolled_back_json["proposal_id"], proposal_id);
+    assert_eq!(
+        rolled_back_json["restored_artifact"],
+        base_manifest.content_hash()
+    );
+    assert!(rolled_back_json["rolled_back_at"].as_u64().unwrap() > 0);
+    assert_eq!(rolled_back_json["reason"], rollback_reason);
+
+    // Verify that after rollback, gene execution resolves to the base artifact
+    let base_task = r#"{"generation":"base-input"}"#;
+    let candidate_session = candidate_run["session_id"].as_str().unwrap();
+    let (base_run, base_approval) = run_gene(base_task, Some(candidate_session));
+    assert_eq!(base_run["output"], base_task);
+    assert_eq!(base_run["artifact_resolution"]["replacement_active"], false);
+    assert_eq!(
+        base_run["artifact_resolution"]["resolved_artifact"],
+        base_manifest.content_hash()
+    );
+    assert!(base_approval.contains(base_manifest.content_hash()));
+    assert!(!base_approval.contains(candidate_manifest.content_hash()));
+
+    // Verify inspect confirms rolled_back state
+    let inspected = fixture
+        .command(&["evolution", "inspect", "--id", proposal_id, "--json"])
+        .output()
+        .expect("rolled-back evolution inspection should start");
+    assert_success_with_context(&inspected, "rolled-back evolution inspection");
+    assert_eq!(parse_json(&inspected)["state"], "rolled_back");
+}
+
+#[test]
+fn evolution_approve_fails_closed_when_regression_check_fails() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    let proposal_id = "proposal-regression-failure";
+    let proposal_path = fixture.root.join("proposal-regression.json");
+    fs::write(
+        &proposal_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "proposal_id": proposal_id,
+            "source": "gepa",
+            "base_artifact": "base-regression-artifact",
+            "candidate_artifact": "candidate-regression-artifact",
+            "evidence_digest": format!("sha256:{}", "9".repeat(64)),
+            "expected_outcome": "verify regression check enforcement",
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let submitted = fixture
+        .command(&[
+            "evolution",
+            "submit",
+            "--input",
+            proposal_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("evolution submit should start");
+    assert_success_with_context(&submitted, "evolution submit");
+
+    // Holdout case where output differs from baseline_output -> regression check fails!
+    let holdout_path = fixture.root.join("holdout-regression-fail.json");
+    fs::write(
+        &holdout_path,
+        br#"{"cases":[{"id":"case-regress-1","execution_id":"exec-regress-1","output":"candidate-broken-output","expected_output":"candidate-broken-output","baseline_output":"original-golden-baseline"}]}"#,
+    )
+    .unwrap();
+
+    let evaluated = fixture
+        .command(&[
+            "evolution",
+            "evaluate",
+            "--id",
+            proposal_id,
+            "--input",
+            holdout_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("evolution evaluate should start");
+    assert_success_with_context(&evaluated, "evolution evaluate");
+    let evaluated_json = parse_json(&evaluated);
+    // Verify that the evaluation recorded regression failure
+    assert_eq!(evaluated_json["cases"][0]["regression"]["status"], "failed");
+    assert_eq!(evaluated_json["cases"][0]["regression"]["score"], 0);
+
+    // Attempt Parliament approval
+    let approval_path = fixture.root.join("approval-regression.json");
+    fs::write(
+        &approval_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "proposal_id": proposal_id,
+            "approver": "parliament-auditor",
+            "policy_version": 1,
+            "artifact_id": "candidate-regression-artifact",
+            "signer": "regression-signer",
+            "signature": "sig-candidate-regression"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let approved = fixture
+        .command(&[
+            "evolution",
+            "approve",
+            "--input",
+            approval_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("evolution approve should execute");
+    // Parliament approval MUST fail closed when regression check failed
+    assert!(
+        !approved.status.success(),
+        "evolution approve must fail closed when regression check fails"
+    );
+    let output_json = parse_json(&approved);
+    assert_eq!(output_json["code"], "internal_error");
+    assert!(
+        output_json["message"]
+            .as_str()
+            .unwrap()
+            .contains("evaluation failed")
+            || output_json["message"]
+                .as_str()
+                .unwrap()
+                .contains("regression")
+    );
+
+    // Verify inspect confirms proposal remains in evaluated state, NOT approved
+    let inspected = fixture
+        .command(&["evolution", "inspect", "--id", proposal_id, "--json"])
+        .output()
+        .expect("evolution inspect should start");
+    assert_success_with_context(&inspected, "evolution inspect");
+    let inspected_json = parse_json(&inspected);
+    assert_eq!(
+        inspected_json["state"], "evaluated",
+        "proposal state must remain 'evaluated' and not transition to 'approved'"
+    );
+
+    // Also verify staging cannot proceed
+    let staged = fixture
+        .command(&["evolution", "stage", "--id", proposal_id, "--json"])
+        .output()
+        .expect("evolution stage should execute");
+    assert!(
+        !staged.status.success(),
+        "staging an unapproved proposal must fail"
+    );
+}
+
+#[test]
 fn service_start_reports_a_loopback_endpoint_and_token_path() {
     let fixture = Fixture::new();
     fixture.setup();
@@ -2011,7 +2821,7 @@ fn fleet_supervisor_restart_requires_a_stale_heartbeat() {
     let fleet = FleetEngine::open(fixture.data.join("fleet.sqlite3")).unwrap();
     let node = FleetNode::new(
         "node-restart".to_owned(),
-        "2.0.0-beta.8",
+        "2.0.0-beta.9",
         "local",
         vec!["subagent.work".to_owned()],
         1,
@@ -2053,7 +2863,7 @@ fn fleet_supervisor_reap_is_exposed_as_a_bounded_cli_operation() {
     let fleet = FleetEngine::open(fixture.data.join("fleet.sqlite3")).unwrap();
     let node = FleetNode::new(
         "node-reap".to_owned(),
-        "2.0.0-beta.8",
+        "2.0.0-beta.9",
         "local",
         vec!["subagent.work".to_owned()],
         1,
@@ -2089,7 +2899,7 @@ fn fleet_dashboard_aggregates_operations_without_sensitive_payloads() {
     let fleet = FleetEngine::open(fixture.data.join("fleet.sqlite3")).unwrap();
     let node = FleetNode::new(
         "node-dashboard".to_owned(),
-        "2.0.0-beta.8",
+        "2.0.0-beta.9",
         "local",
         vec!["job.work".to_owned()],
         1,
@@ -6020,6 +6830,98 @@ fn provider_test_completes_a_configured_request_without_echoing_credentials() {
     assert_eq!(response["metrics"]["succeeded"], true);
 
     server.join().expect("provider fixture should finish");
+}
+
+#[test]
+fn provider_set_and_test_support_gemini_protocol_and_named_provider_flag() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("gemini fixture should bind");
+    let address = listener
+        .local_addr()
+        .expect("gemini fixture should expose its address");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("gemini should connect");
+        let mut request = Vec::new();
+        let header_end = loop {
+            let mut chunk = [0_u8; 1_024];
+            let bytes_read = stream.read(&mut chunk).expect("gemini request should read");
+            if bytes_read == 0 {
+                panic!("stream closed before headers finished");
+            }
+            request.extend_from_slice(&chunk[..bytes_read]);
+            if let Some(pos) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                break pos + 4;
+            }
+        };
+        let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+        let content_length = headers
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .expect("content-length header should exist");
+        while request.len() < header_end + content_length {
+            let mut chunk = [0_u8; 1_024];
+            let bytes_read = stream
+                .read(&mut chunk)
+                .expect("gemini request body should read");
+            request.extend_from_slice(&chunk[..bytes_read]);
+        }
+        let request_line = headers.lines().next().unwrap();
+        assert!(
+            request_line.contains("post /v1beta/models/gemini-3.8-flash:generatecontent http/1.1")
+        );
+        assert!(headers.contains("x-goog-api-key: test-gemini-key"));
+        let response = br#"{
+            "candidates":[{"content":{"parts":[{"text":"ready"}]}}],
+            "usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":1}
+        }"#;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            response.len()
+        )
+        .expect("gemini response headers should be written");
+        stream
+            .write_all(response)
+            .expect("gemini response body should be written");
+    });
+
+    let fixture = Fixture::new();
+    let provider_url = format!("http://{address}/v1beta");
+    let configured = fixture
+        .command(&[
+            "provider",
+            "set",
+            "--name",
+            "gemini",
+            "--protocol",
+            "gemini",
+            "--provider-url",
+            &provider_url,
+            "--model",
+            "gemini-3.8-flash",
+            "--api-key-env",
+            "PANDORA_GEMINI_KEY",
+            "--json",
+        ])
+        .output()
+        .expect("gemini provider set should start");
+    assert_success(&configured);
+
+    let output = fixture
+        .command(&["provider", "test", "--provider", "gemini", "--json"])
+        .env("PANDORA_GEMINI_KEY", "test-gemini-key")
+        .output()
+        .expect("gemini provider test should start");
+    assert_success(&output);
+    let response = parse_json(&output);
+    assert_eq!(response["command"], "provider test");
+    assert_eq!(response["status"], "ready");
+    assert_eq!(response["provider"], "gemini");
+    assert_eq!(response["model"], "gemini-3.8-flash");
+    assert_eq!(response["output"], "ready");
+    assert_eq!(response["usage"]["total_tokens"], 4);
+
+    server.join().expect("gemini fixture should finish");
 }
 
 #[test]
@@ -11455,10 +12357,18 @@ fn submit_phase7_jobs(
                     if ordinal > 0 {
                         thread::sleep(interval);
                     }
-                    let submitted = fixture
-                        .command(&["job", "submit", "--", "read:README.md", "--json"])
-                        .output()
-                        .expect("independent Phase 7 producer should start");
+                    let mut attempts = 0;
+                    let submitted = loop {
+                        attempts += 1;
+                        let output = fixture
+                            .command(&["job", "submit", "--", "read:README.md", "--json"])
+                            .output()
+                            .expect("independent Phase 7 producer should start");
+                        if output.status.success() || attempts >= 10 {
+                            break output;
+                        }
+                        thread::sleep(Duration::from_millis(50 * attempts));
+                    };
                     assert_success_with_context(&submitted, "Phase 7 producer submission");
                     if (ordinal == 0 || ordinal.is_multiple_of(32))
                         && let Some(monitor) = soak_monitor

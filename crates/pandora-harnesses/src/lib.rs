@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod architecture;
 pub mod catalog;
 pub mod data;
 pub mod debugging;
@@ -12,6 +13,7 @@ pub mod profile;
 pub mod research;
 pub mod security;
 pub mod slash;
+pub mod verification;
 
 pub use catalog::{HarnessCatalog, HarnessCatalogError, replaceable_builtin_harness_kind};
 
@@ -378,6 +380,10 @@ mod catalog_tests {
     }
 }
 
+pub use architecture::{
+    ArchitectureAction, ArchitectureGene, ArchitectureGeneRole, ArchitectureRequest,
+    architecture_static_output, is_architecture_gene,
+};
 pub use design::{
     DesignAction, DesignGene, DesignGeneRole, DesignRequest, design_static_output, is_design_gene,
 };
@@ -385,15 +391,19 @@ pub use genes::{
     CodingAction, CodingGene, CodingGeneRole, CodingRequest, PlanningContext, coding_static_output,
 };
 pub use harness::{
-    CodingHarness, CoordinationMetaHarness, CoreSourceHarness, DebuggingHarness, DesignHarness,
-    OperationsHarness, ResearchHarness, SecurityHarness,
+    ArchitectureHarness, CodingHarness, CoordinationMetaHarness, CoreSourceHarness, DataHarness,
+    DebuggingHarness, DesignHarness, EvolutionMetaHarness, OperationsHarness, ResearchHarness,
+    SecurityHarness, SwarmMetaHarness, VerificationHarness,
 };
 pub use manifest::{
-    CODING_HARNESS_ID, CODING_HARNESS_VERSION, COORDINATION_META_HARNESS_ID,
-    COORDINATION_META_HARNESS_VERSION, CORE_SOURCE_HARNESS_ID, CORE_SOURCE_HARNESS_VERSION,
-    DATA_HARNESS_ID, DATA_HARNESS_VERSION, DEBUGGING_HARNESS_ID, DEBUGGING_HARNESS_VERSION,
-    DESIGN_HARNESS_ID, DESIGN_HARNESS_VERSION, OPERATIONS_HARNESS_ID, OPERATIONS_HARNESS_VERSION,
-    RESEARCH_HARNESS_ID, RESEARCH_HARNESS_VERSION, SECURITY_HARNESS_ID, SECURITY_HARNESS_VERSION,
+    ARCHITECTURE_HARNESS_ID, ARCHITECTURE_HARNESS_VERSION, CODING_HARNESS_ID,
+    CODING_HARNESS_VERSION, COORDINATION_META_HARNESS_ID, COORDINATION_META_HARNESS_VERSION,
+    CORE_SOURCE_HARNESS_ID, CORE_SOURCE_HARNESS_VERSION, DATA_HARNESS_ID, DATA_HARNESS_VERSION,
+    DEBUGGING_HARNESS_ID, DEBUGGING_HARNESS_VERSION, DESIGN_HARNESS_ID, DESIGN_HARNESS_VERSION,
+    EVOLUTION_META_HARNESS_ID, EVOLUTION_META_HARNESS_VERSION, OPERATIONS_HARNESS_ID,
+    OPERATIONS_HARNESS_VERSION, RESEARCH_HARNESS_ID, RESEARCH_HARNESS_VERSION, SECURITY_HARNESS_ID,
+    SECURITY_HARNESS_VERSION, SWARM_META_HARNESS_ID, SWARM_META_HARNESS_VERSION,
+    VERIFICATION_HARNESS_ID, VERIFICATION_HARNESS_VERSION,
 };
 pub use operations::{
     OperationsAction, OperationsGene, OperationsGeneRole, OperationsRequest, is_operations_gene,
@@ -420,6 +430,10 @@ pub use security::{
     SecurityAction, SecurityGene, SecurityGeneRole, SecurityRequest, is_security_gene,
     security_static_output,
 };
+pub use verification::{
+    VerificationAction, VerificationGene, VerificationGeneRole, VerificationRequest,
+    is_verification_gene, verification_static_output,
+};
 
 pub fn builtin_genes() -> Vec<Box<dyn pandora_types::Gene>> {
     let mut genes = CodingGene::all();
@@ -429,6 +443,8 @@ pub fn builtin_genes() -> Vec<Box<dyn pandora_types::Gene>> {
     genes.extend(SecurityGene::all());
     genes.extend(DebuggingGene::all());
     genes.extend(DataGene::all());
+    genes.extend(ArchitectureGene::all());
+    genes.extend(VerificationGene::all());
     genes
 }
 
@@ -993,5 +1009,105 @@ mod tests {
             commands.resolve("/coding").unwrap().harness_id().as_str(),
             "coding-domain"
         );
+    }
+
+    #[test]
+    fn architecture_domain_exposes_the_governed_workflows() {
+        let arch = builtin_harnesses()
+            .into_iter()
+            .find(|harness| harness.manifest().id().as_str() == "architecture-domain")
+            .expect("the built-in catalog should include the Architecture Domain Harness");
+        let genes = arch
+            .genes()
+            .iter()
+            .map(|gene| gene.manifest())
+            .collect::<Vec<_>>();
+
+        assert_eq!(arch.manifest().kind(), HarnessKind::Domain);
+        assert_eq!(genes.len(), 4);
+        for id in [
+            "architecture.inventory",
+            "architecture.boundaries",
+            "architecture.invariants",
+            "architecture.guide",
+        ] {
+            assert!(genes.iter().any(|gene| gene.id().as_str() == id));
+        }
+    }
+
+    #[test]
+    fn verification_domain_exposes_the_governed_workflows() {
+        let verif = builtin_harnesses()
+            .into_iter()
+            .find(|harness| harness.manifest().id().as_str() == "verification-domain")
+            .expect("the built-in catalog should include the Verification Domain Harness");
+        let genes = verif
+            .genes()
+            .iter()
+            .map(|gene| gene.manifest())
+            .collect::<Vec<_>>();
+
+        assert_eq!(verif.manifest().kind(), HarnessKind::Domain);
+        assert_eq!(genes.len(), 4);
+        for id in [
+            "verification.contract",
+            "verification.golden",
+            "verification.property",
+            "verification.guide",
+        ] {
+            assert!(genes.iter().any(|gene| gene.id().as_str() == id));
+        }
+    }
+
+    #[test]
+    fn builtin_catalog_includes_evolution_and_swarm_meta_harnesses() {
+        let evo = builtin_harnesses()
+            .into_iter()
+            .find(|harness| harness.manifest().id().as_str() == "evolution-meta")
+            .expect("built-in catalog includes evolution-meta");
+        assert_eq!(evo.manifest().kind(), HarnessKind::Meta);
+        let evo_comp = evo.manifest().meta_composition().unwrap();
+        assert_eq!(evo_comp.max_handoffs(), 12);
+        assert!(
+            evo_comp
+                .allowed_domains()
+                .iter()
+                .any(|id| id.as_str() == "architecture-domain")
+        );
+        assert!(
+            evo_comp
+                .allowed_domains()
+                .iter()
+                .any(|id| id.as_str() == "verification-domain")
+        );
+
+        let swarm = builtin_harnesses()
+            .into_iter()
+            .find(|harness| harness.manifest().id().as_str() == "swarm-meta")
+            .expect("built-in catalog includes swarm-meta");
+        assert_eq!(swarm.manifest().kind(), HarnessKind::Meta);
+        let swarm_comp = swarm.manifest().meta_composition().unwrap();
+        assert_eq!(swarm_comp.max_handoffs(), 16);
+    }
+
+    #[test]
+    fn slash_catalog_covers_architecture_verification_and_new_meta_harnesses() {
+        let harnesses = HarnessCatalog::builtins();
+        let commands = SlashCommandCatalog::from_harnesses(harnesses.iter()).unwrap();
+
+        assert!(commands.resolve("/architecture").is_some());
+        assert!(commands.resolve("/architecture-inventory").is_some());
+        assert!(commands.resolve("/architecture-boundaries").is_some());
+        assert!(commands.resolve("/architecture-invariants").is_some());
+        assert!(commands.resolve("/architecture-guide").is_some());
+
+        assert!(commands.resolve("/verification").is_some());
+        assert!(commands.resolve("/verification-contract").is_some());
+        assert!(commands.resolve("/verification-golden").is_some());
+        assert!(commands.resolve("/verification-property").is_some());
+        assert!(commands.resolve("/verification-guide").is_some());
+
+        assert!(commands.resolve("/evolution").is_some());
+        assert!(commands.resolve("/swarm").is_some());
     }
 }

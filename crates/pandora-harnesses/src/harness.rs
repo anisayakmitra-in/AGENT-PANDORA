@@ -1,13 +1,17 @@
+use crate::architecture::ArchitectureGene;
 use crate::data::DataGene;
 use crate::design::DesignGene;
 use crate::genes::CodingGene;
 use crate::manifest::{
-    coding_manifest, coordination_meta_manifest, core_source_manifest, data_manifest,
-    debugging_manifest, design_manifest, operations_manifest, research_manifest, security_manifest,
+    architecture_manifest, coding_manifest, coordination_meta_manifest, core_source_manifest,
+    data_manifest, debugging_manifest, design_manifest, evolution_meta_manifest,
+    operations_manifest, research_manifest, security_manifest, swarm_meta_manifest,
+    verification_manifest,
 };
 use crate::operations::OperationsGene;
 use crate::research::ResearchGene;
 use crate::security::SecurityGene;
+use crate::verification::VerificationGene;
 use pandora_types::{Gene, Harness, HarnessManifest};
 
 pub struct CoreSourceHarness {
@@ -273,6 +277,129 @@ impl Default for CoordinationMetaHarness {
 }
 
 impl Harness for CoordinationMetaHarness {
+    fn manifest(&self) -> &HarnessManifest {
+        &self.manifest
+    }
+
+    fn genes(&self) -> &[Box<dyn Gene>] {
+        &self.genes
+    }
+}
+
+pub struct ArchitectureHarness {
+    manifest: HarnessManifest,
+    genes: Vec<Box<dyn Gene>>,
+}
+
+impl ArchitectureHarness {
+    pub fn new() -> Self {
+        Self {
+            manifest: architecture_manifest()
+                .expect("built-in Architecture Harness manifest is valid"),
+            genes: ArchitectureGene::all(),
+        }
+    }
+}
+
+impl Default for ArchitectureHarness {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Harness for ArchitectureHarness {
+    fn manifest(&self) -> &HarnessManifest {
+        &self.manifest
+    }
+
+    fn genes(&self) -> &[Box<dyn Gene>] {
+        &self.genes
+    }
+}
+
+pub struct VerificationHarness {
+    manifest: HarnessManifest,
+    genes: Vec<Box<dyn Gene>>,
+}
+
+impl VerificationHarness {
+    pub fn new() -> Self {
+        Self {
+            manifest: verification_manifest()
+                .expect("built-in Verification Harness manifest is valid"),
+            genes: VerificationGene::all(),
+        }
+    }
+}
+
+impl Default for VerificationHarness {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Harness for VerificationHarness {
+    fn manifest(&self) -> &HarnessManifest {
+        &self.manifest
+    }
+
+    fn genes(&self) -> &[Box<dyn Gene>] {
+        &self.genes
+    }
+}
+
+pub struct EvolutionMetaHarness {
+    manifest: HarnessManifest,
+    genes: Vec<Box<dyn Gene>>,
+}
+
+impl EvolutionMetaHarness {
+    pub fn new() -> Self {
+        Self {
+            manifest: evolution_meta_manifest()
+                .expect("built-in Evolution Meta Harness manifest is valid"),
+            genes: Vec::new(),
+        }
+    }
+}
+
+impl Default for EvolutionMetaHarness {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Harness for EvolutionMetaHarness {
+    fn manifest(&self) -> &HarnessManifest {
+        &self.manifest
+    }
+
+    fn genes(&self) -> &[Box<dyn Gene>] {
+        &self.genes
+    }
+}
+
+pub struct SwarmMetaHarness {
+    manifest: HarnessManifest,
+    genes: Vec<Box<dyn Gene>>,
+}
+
+impl SwarmMetaHarness {
+    pub fn new() -> Self {
+        Self {
+            manifest: swarm_meta_manifest().expect("built-in Swarm Meta Harness manifest is valid"),
+            genes: Vec::new(),
+        }
+    }
+}
+
+impl Default for SwarmMetaHarness {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Harness for SwarmMetaHarness {
     fn manifest(&self) -> &HarnessManifest {
         &self.manifest
     }
