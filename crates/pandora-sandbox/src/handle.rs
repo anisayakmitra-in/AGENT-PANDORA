@@ -115,7 +115,7 @@ pub fn verify_file_handle_in_root(file: &File, root: &Path) -> Result<PathBuf, i
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)]
 fn resolve_unix_fd_path(fd: std::os::unix::io::RawFd) -> io::Result<PathBuf> {
-    extern "C" {
+    unsafe extern "C" {
         fn fcntl(fd: i32, cmd: i32, ...) -> i32;
     }
     const F_GETPATH: i32 = 50;
