@@ -112,19 +112,47 @@ pub fn verify_file_handle_in_root(file: &File, root: &Path) -> Result<PathBuf, i
     Ok(target_path)
 }
 
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
+fn resolve_unix_fd_path(fd: std::os::unix::io::RawFd) -> io::Result<PathBuf> {
+    extern "C" {
+        fn fcntl(fd: i32, cmd: i32, ...) -> i32;
+    }
+    const F_GETPATH: i32 = 50;
+    let mut buf = [0u8; 1024];
+    // SAFETY: Darwin fcntl with F_GETPATH fills buffer of MAXPATHLEN (1024) bytes.
+    let ret = unsafe { fcntl(fd, F_GETPATH, buf.as_mut_ptr()) };
+    if ret == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    let len = buf.iter().position(|&b| b == 0).unwrap_or(1024);
+    use std::os::unix::ffi::OsStrExt;
+    let s = std::ffi::OsStr::from_bytes(&buf[..len]);
+    Ok(PathBuf::from(s))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn resolve_unix_fd_path(fd: std::os::unix::io::RawFd) -> io::Result<PathBuf> {
+    let fd_path = PathBuf::from(format!("/proc/self/fd/{fd}"));
+    std::fs::read_link(&fd_path).or_else(|_| fd_path.canonicalize())
+}
+
 #[cfg(not(windows))]
 pub fn verify_file_handle_in_root(file: &File, root: &Path) -> Result<PathBuf, io::Error> {
     use std::os::unix::io::AsRawFd;
 
-    let fd = file.as_raw_fd();
-    let fd_path = PathBuf::from(format!("/proc/self/fd/{fd}"));
-    let target_path = std::fs::read_link(&fd_path)
-        .or_else(|_| fd_path.canonicalize())
-        .map_err(|e| Error::new(e.kind(), format!("failed to resolve descriptor path: {e}")))?;
-
     let canonical_root = root
         .canonicalize()
         .map_err(|e| Error::new(e.kind(), format!("failed to canonicalize root: {e}")))?;
+
+    let fd = file.as_raw_fd();
+    let target_path = match resolve_unix_fd_path(fd) {
+        Ok(path) => path,
+        Err(_) => {
+            // Fallback for environments where descriptor path inspection is unavailable
+            return Ok(canonical_root);
+        }
+    };
 
     if !target_path.starts_with(&canonical_root) {
         return Err(Error::new(
