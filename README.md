@@ -14,6 +14,8 @@ Every tool invocation, filesystem edit, process execution, WebAssembly Gene call
 User / TUI / CLI  ──►  ExecutionController  ──►  Shadow Council  ──►  Parliament  ──►  ReferenceMonitor  ──►  EffectExecutor  ──►  Cryptographic Receipt
 ```
 
+> **Status**: The next prerelease identity is `2.0.0-beta.10`. Releases follow strict semantic versioning, Ed25519 device trust, and verifiable execution receipts.
+
 ---
 
 ## System Architecture
@@ -221,7 +223,11 @@ flowchart TD
 
 **Linux / macOS / WSL:**
 ```sh
+# Latest release
 curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/AGENT-PANDORA/main/scripts/install.sh | sh && "$HOME/.local/bin/pandora"
+
+# Or pin to an exact version
+curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/AGENT-PANDORA/main/scripts/install.sh | PANDORA_VERSION=v2.0.0-beta.10 sh
 ```
 
 **Windows PowerShell:**
