@@ -69,7 +69,311 @@ pub const PRESETS: &[ProviderPreset] = &[
         api_key_env: "GROQ_API_KEY",
         protocol: ProviderProtocol::OpenAiCompatible,
     },
+    ProviderPreset {
+        name: "nous",
+        label: "Nous Portal / Inference API",
+        base_url: "https://inference-api.nousresearch.com/v1",
+        default_model: "Hermes-3-Llama-3.1-70B",
+        api_key_env: "NOUS_API_KEY",
+        protocol: ProviderProtocol::OpenAiCompatible,
+    },
 ];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ModelCatalogEntry {
+    pub provider: &'static str,
+    pub model: &'static str,
+    pub description: &'static str,
+}
+
+pub const MODEL_CATALOG: &[ModelCatalogEntry] = &[
+    ModelCatalogEntry {
+        provider: "openrouter",
+        model: "anthropic/claude-3.7-sonnet",
+        description: "OpenRouter · Claude 3.7 Sonnet (hybrid reasoning & coding)",
+    },
+    ModelCatalogEntry {
+        provider: "openrouter",
+        model: "anthropic/claude-3.5-sonnet",
+        description: "OpenRouter · Claude 3.5 Sonnet (flagship agentic coding)",
+    },
+    ModelCatalogEntry {
+        provider: "openrouter",
+        model: "nousresearch/hermes-3-llama-3.1-405b",
+        description: "OpenRouter · Nous Hermes 3 405B (frontier open-weights agent)",
+    },
+    ModelCatalogEntry {
+        provider: "openrouter",
+        model: "nousresearch/hermes-3-llama-3.1-70b",
+        description: "OpenRouter · Nous Hermes 3 70B (fast steerable tool-calling)",
+    },
+    ModelCatalogEntry {
+        provider: "openrouter",
+        model: "deepseek/deepseek-r1",
+        description: "OpenRouter · DeepSeek R1 (deep reasoning & verification)",
+    },
+    ModelCatalogEntry {
+        provider: "openrouter",
+        model: "deepseek/deepseek-chat",
+        description: "OpenRouter · DeepSeek V3 (high-speed general & coding)",
+    },
+    ModelCatalogEntry {
+        provider: "openrouter",
+        model: "openai/gpt-4o",
+        description: "OpenRouter · OpenAI GPT-4o (multimodal omni model)",
+    },
+    ModelCatalogEntry {
+        provider: "openrouter",
+        model: "qwen/qwen-2.5-coder-32b-instruct",
+        description: "OpenRouter · Qwen 2.5 Coder 32B Instruct",
+    },
+    ModelCatalogEntry {
+        provider: "nous",
+        model: "Hermes-3-Llama-3.1-70B",
+        description: "Nous Portal · Hermes 3 Llama 3.1 70B",
+    },
+    ModelCatalogEntry {
+        provider: "nous",
+        model: "Hermes-3-Llama-3.1-405B",
+        description: "Nous Portal · Hermes 3 Llama 3.1 405B",
+    },
+    ModelCatalogEntry {
+        provider: "nous",
+        model: "DeepHermes-3-Llama-3-8B-Preview",
+        description: "Nous Portal · DeepHermes 3 8B Preview (unified reasoning)",
+    },
+    ModelCatalogEntry {
+        provider: "ollama",
+        model: "qwen2.5-coder:32b",
+        description: "Ollama Local · Qwen 2.5 Coder 32B (offline coding powerhouse)",
+    },
+    ModelCatalogEntry {
+        provider: "ollama",
+        model: "qwen2.5-coder:14b",
+        description: "Ollama Local · Qwen 2.5 Coder 14B (balanced local coding)",
+    },
+    ModelCatalogEntry {
+        provider: "ollama",
+        model: "hermes3:8b",
+        description: "Ollama Local · Nous Hermes 3 8B (fast local agent)",
+    },
+    ModelCatalogEntry {
+        provider: "ollama",
+        model: "deepseek-r1:14b",
+        description: "Ollama Local · DeepSeek R1 14B (local chain-of-thought)",
+    },
+    ModelCatalogEntry {
+        provider: "ollama",
+        model: "llama3.3:70b",
+        description: "Ollama Local · Meta Llama 3.3 70B Instruct",
+    },
+    ModelCatalogEntry {
+        provider: "anthropic",
+        model: "claude-3-7-sonnet-20250219",
+        description: "Anthropic Direct · Claude 3.7 Sonnet",
+    },
+    ModelCatalogEntry {
+        provider: "anthropic",
+        model: "claude-3-5-sonnet-20241022",
+        description: "Anthropic Direct · Claude 3.5 Sonnet",
+    },
+    ModelCatalogEntry {
+        provider: "anthropic",
+        model: "claude-3-5-haiku-20241022",
+        description: "Anthropic Direct · Claude 3.5 Haiku (low latency)",
+    },
+    ModelCatalogEntry {
+        provider: "openai",
+        model: "gpt-4o",
+        description: "OpenAI Direct · GPT-4o",
+    },
+    ModelCatalogEntry {
+        provider: "openai",
+        model: "o3-mini",
+        description: "OpenAI Direct · o3-mini (fast STEM & code reasoning)",
+    },
+    ModelCatalogEntry {
+        provider: "deepseek",
+        model: "deepseek-chat",
+        description: "DeepSeek Direct · DeepSeek-V3 Chat",
+    },
+    ModelCatalogEntry {
+        provider: "deepseek",
+        model: "deepseek-reasoner",
+        description: "DeepSeek Direct · DeepSeek-R1 Reasoner",
+    },
+    ModelCatalogEntry {
+        provider: "groq",
+        model: "llama-3.3-70b-versatile",
+        description: "Groq LPU · Llama 3.3 70B Versatile (ultra-fast)",
+    },
+    ModelCatalogEntry {
+        provider: "groq",
+        model: "deepseek-r1-distill-llama-70b",
+        description: "Groq LPU · DeepSeek R1 Distill Llama 70B",
+    },
+];
+
+pub fn dotenv_path(config: &pandora_runtime::config::RuntimeConfig) -> std::path::PathBuf {
+    config
+        .config_path()
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join(".env")
+}
+
+pub fn read_dotenv_var(
+    config: &pandora_runtime::config::RuntimeConfig,
+    key: &str,
+) -> Option<String> {
+    let path = dotenv_path(config);
+    let content = fs::read_to_string(path).ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let stripped = trimmed.strip_prefix("export ").unwrap_or(trimmed);
+        if let Some((k, v)) = stripped.split_once('=')
+            && k.trim() == key
+        {
+            let val = v.trim().trim_matches('"').trim_matches('\'').trim();
+            if !val.is_empty() {
+                return Some(val.to_owned());
+            }
+        }
+    }
+    None
+}
+
+pub fn write_dotenv_var(
+    config: &pandora_runtime::config::RuntimeConfig,
+    key: &str,
+    value: &str,
+) -> Result<std::path::PathBuf, CliError> {
+    if key.trim().is_empty()
+        || !key
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        return Err(CliError::usage(
+            "API key environment variable name must contain only ASCII letters, digits, or '_'",
+        ));
+    }
+    if value.trim().is_empty() || value.chars().any(char::is_control) {
+        return Err(CliError::usage("API key value must be non-empty text"));
+    }
+    let path = dotenv_path(config);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|_| {
+            CliError::configuration(
+                "could not create configuration directory for .env",
+                json!({"path": parent}),
+            )
+        })?;
+    }
+    let mut lines = Vec::new();
+    let mut updated = false;
+    if let Ok(existing) = fs::read_to_string(&path) {
+        for line in existing.lines() {
+            let trimmed = line.trim();
+            let stripped = trimmed.strip_prefix("export ").unwrap_or(trimmed);
+            if !trimmed.starts_with('#')
+                && let Some((k, _)) = stripped.split_once('=')
+                && k.trim() == key
+            {
+                lines.push(format!("{key}={}", value.trim()));
+                updated = true;
+            } else {
+                lines.push(line.to_owned());
+            }
+        }
+    }
+    if !updated {
+        lines.push(format!("{key}={}", value.trim()));
+    }
+    let mut serialized = lines.join("\n");
+    serialized.push('\n');
+    fs::write(&path, serialized)
+        .map_err(|_| CliError::configuration("could not write .env file", json!({"path": path})))?;
+    Ok(path)
+}
+
+pub fn apply_model_selection(
+    config: &mut pandora_runtime::config::RuntimeConfig,
+    spec: &str,
+) -> Result<(String, String, String, ProviderProtocol), CliError> {
+    let trimmed = spec.trim();
+    if trimmed.is_empty() {
+        return Err(CliError::usage(
+            "model specification cannot be empty; use <provider>:<model> or <model>",
+        ));
+    }
+
+    let (preset_opt, model_name) = if let Some((prefix, rest)) = trimmed.split_once(':') {
+        if let Some(preset) = find_preset(prefix) {
+            let model = if rest.trim().is_empty() {
+                preset.default_model
+            } else {
+                rest.trim()
+            };
+            (Some(preset), model)
+        } else {
+            // e.g. ollama model tag like "qwen2.5-coder:32b"
+            let inferred_preset = MODEL_CATALOG
+                .iter()
+                .find(|entry| entry.model.eq_ignore_ascii_case(trimmed))
+                .and_then(|entry| find_preset(entry.provider));
+            (inferred_preset, trimmed)
+        }
+    } else if let Some(preset) = find_preset(trimmed) {
+        (Some(preset), preset.default_model)
+    } else {
+        let inferred_preset = MODEL_CATALOG
+            .iter()
+            .find(|entry| entry.model.eq_ignore_ascii_case(trimmed))
+            .and_then(|entry| find_preset(entry.provider));
+        (inferred_preset, trimmed)
+    };
+
+    let existing = config.provider_profile(DEFAULT_PROVIDER_NAME);
+    let existing_url = existing.map(ProviderProfile::base_url).map(str::to_owned);
+    let existing_api_key_env = existing
+        .map(ProviderProfile::api_key_env)
+        .map(str::to_owned);
+    let existing_protocol = existing.map(ProviderProfile::protocol);
+
+    let fallback_preset = find_preset("openrouter").expect("openrouter preset exists");
+
+    let (provider_label, base_url, api_key_env, protocol) = if let Some(p) = preset_opt {
+        (
+            p.name.to_owned(),
+            p.base_url.to_owned(),
+            p.api_key_env.to_owned(),
+            p.protocol,
+        )
+    } else if let Some(url) = existing_url {
+        let env_name =
+            existing_api_key_env.unwrap_or_else(|| DEFAULT_PROVIDER_API_KEY_ENV.to_owned());
+        let proto = existing_protocol.unwrap_or_default();
+        let label = PRESETS
+            .iter()
+            .find(|p| p.base_url.eq_ignore_ascii_case(&url))
+            .map(|p| p.name.to_owned())
+            .unwrap_or_else(|| DEFAULT_PROVIDER_NAME.to_owned());
+        (label, url, env_name, proto)
+    } else {
+        (
+            fallback_preset.name.to_owned(),
+            fallback_preset.base_url.to_owned(),
+            fallback_preset.api_key_env.to_owned(),
+            fallback_preset.protocol,
+        )
+    };
+
+    configure_default_provider(config, &base_url, model_name, &api_key_env, protocol)?;
+    Ok((provider_label, model_name.to_owned(), api_key_env, protocol))
+}
 
 pub fn find_preset(name: &str) -> Option<&'static ProviderPreset> {
     PRESETS.iter().find(|p| p.name.eq_ignore_ascii_case(name))
@@ -115,14 +419,16 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     if provider_configured && let Some(env_name) = config.provider_api_key_env() {
         let is_set = std::env::var(env_name)
             .map(|val| !val.trim().is_empty())
-            .unwrap_or(false);
+            .unwrap_or(false)
+            || read_dotenv_var(&config, env_name).is_some();
         if is_set {
-            message.push_str(&format!("\n  ✓ Provider credential '{env_name}' is set."));
+            message.push_str(&format!("\n  ✓ Provider credential '{env_name}' is ready."));
         } else if env_name == "OLLAMA_API_KEY" {
             message.push_str("\n  ℹ Local Ollama configured. Ensure 'ollama serve' is running.");
         } else {
             message.push_str(&format!(
-                "\n  ℹ Tip: Set '{env_name}' in your environment before running tasks."
+                "\n  ℹ Tip: Set '{env_name}' via '/key' in the TUI or in {}.",
+                dotenv_path(&config).display()
             ));
         }
     }
@@ -220,7 +526,7 @@ fn configure_interactively(
     eprintln!("  Or enter a custom URL directly.");
 
     let entered = prompt(
-        "Select preset [1-6/name] or enter Provider URL (leave blank for local-only setup)",
+        "Select preset [1-7/name] or enter Provider URL (leave blank for local-only setup)",
         parsed
             .value("provider-url")
             .or_else(|| parsed.value("preset"))
@@ -237,6 +543,7 @@ fn configure_interactively(
         "4" | "openai" => find_preset("openai"),
         "5" | "anthropic" => find_preset("anthropic"),
         "6" | "groq" => find_preset("groq"),
+        "7" | "nous" => find_preset("nous"),
         other => find_preset(other),
     };
 
@@ -347,8 +654,15 @@ mod tests {
         }
         assert!(find_preset("ollama").is_some());
         assert!(find_preset("openrouter").is_some());
+        assert!(find_preset("nous").is_some());
         assert!(find_preset("deepseek").is_some());
         assert!(find_preset("anthropic").is_some());
         assert!(find_preset("nonexistent").is_none());
+        assert!(!MODEL_CATALOG.is_empty());
+        for entry in MODEL_CATALOG {
+            assert!(find_preset(entry.provider).is_some());
+            assert!(!entry.model.is_empty());
+            assert!(!entry.description.is_empty());
+        }
     }
 }

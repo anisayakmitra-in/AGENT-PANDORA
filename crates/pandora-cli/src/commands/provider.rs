@@ -133,6 +133,12 @@ pub(crate) fn configured_credential(
     {
         return Ok(Some(value));
     }
+    if let Some(value) = super::setup::read_dotenv_var(config, name) {
+        return Ok(Some(value));
+    }
+    if name == "OLLAMA_API_KEY" {
+        return Ok(Some("ollama".to_owned()));
+    }
     let Some(passphrase) = std::env::var_os("PANDORA_MASTER_KEY") else {
         return Ok(None);
     };

@@ -187,9 +187,45 @@ const PALETTE_ENTRIES: &[PaletteEntry] = &[
         immediate: true,
     },
     PaletteEntry {
+        command: "/model",
+        category: "Model",
+        description: "Open interactive Hermes model & provider selector modal (Ctrl+M)",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/key",
+        category: "Setup",
+        description: "Configure provider API key in local .env (masked input modal)",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/config",
+        category: "Setup",
+        description: "Inspect or update active runtime configuration (/config set model.default <m>)",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/tools",
+        category: "Harness",
+        description: "Inspect active Domain Harnesses, Coding Genes, Workflow Genes, and Skills",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/focus",
+        category: "View",
+        description: "Toggle distraction-free Hermes Focus Mode",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/dock",
+        category: "View",
+        description: "Toggle bottom Live Work Dock for active jobs & fleet subagents (Ctrl+T)",
+        immediate: true,
+    },
+    PaletteEntry {
         command: "/setup",
         category: "Setup",
-        description: "Show available model provider presets (ollama, openrouter, deepseek, openai, anthropic, groq)",
+        description: "Show available model provider presets (ollama, openrouter, nous, deepseek, openai, anthropic, groq)",
         immediate: true,
     },
     PaletteEntry {
@@ -205,6 +241,12 @@ const PALETTE_ENTRIES: &[PaletteEntry] = &[
         immediate: true,
     },
     PaletteEntry {
+        command: "/setup nous",
+        category: "Setup",
+        description: "Configure Nous Portal / Inference API preset (Hermes-3-Llama-3.1-70B)",
+        immediate: true,
+    },
+    PaletteEntry {
         command: "/setup anthropic",
         category: "Setup",
         description: "Configure Anthropic Claude provider preset",
@@ -214,6 +256,18 @@ const PALETTE_ENTRIES: &[PaletteEntry] = &[
         command: "/setup openai",
         category: "Setup",
         description: "Configure OpenAI Direct provider preset",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/setup deepseek",
+        category: "Setup",
+        description: "Configure DeepSeek API provider preset",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/setup groq",
+        category: "Setup",
+        description: "Configure Groq Fast Inference LPU preset",
         immediate: true,
     },
     PaletteEntry {
@@ -486,10 +540,23 @@ struct App {
     activity: TuiActivity,
     active_tab: TuiTab,
     sidebar_visible: bool,
+    focus_mode: bool,
+    work_dock_open: bool,
     scroll_offset: usize,
     palette_open: bool,
     palette_query: Vec<char>,
     palette_index: usize,
+    model_picker_open: bool,
+    model_picker_query: Vec<char>,
+    model_picker_index: usize,
+    key_modal_open: bool,
+    key_modal_env: String,
+    key_modal_input: Vec<char>,
+    active_provider_label: String,
+    active_model_label: String,
+    active_base_url: String,
+    active_api_key_env: String,
+    credential_ready: bool,
     sparkline_history: Vec<u64>,
     kanban_snapshot: KanbanSnapshot,
     fleet_snapshot: FleetSnapshot,
@@ -664,7 +731,7 @@ impl PendingInvocation {
 
 impl App {
     fn new(args: ParsedArgs, theme: TuiTheme) -> Self {
-        Self {
+        let mut app = Self {
             session_id: args.value("session").map(str::to_owned),
             args,
             input: Vec::new(),
@@ -681,10 +748,23 @@ impl App {
             activity: TuiActivity::Idle,
             active_tab: TuiTab::Console,
             sidebar_visible: true,
+            focus_mode: false,
+            work_dock_open: false,
             scroll_offset: 0,
             palette_open: false,
             palette_query: Vec::new(),
             palette_index: 0,
+            model_picker_open: false,
+            model_picker_query: Vec::new(),
+            model_picker_index: 0,
+            key_modal_open: false,
+            key_modal_env: "OPENROUTER_API_KEY".to_owned(),
+            key_modal_input: Vec::new(),
+            active_provider_label: "unconfigured".to_owned(),
+            active_model_label: "unconfigured".to_owned(),
+            active_base_url: "none".to_owned(),
+            active_api_key_env: "OPENROUTER_API_KEY".to_owned(),
+            credential_ready: false,
             sparkline_history: vec![1, 2, 1, 3, 2, 4, 2, 1],
             kanban_snapshot: KanbanSnapshot {
                 board_id: "default".to_owned(),
@@ -710,6 +790,46 @@ impl App {
             },
             packages_cache: Vec::new(),
             distribution_cache: Vec::new(),
+        };
+        app.refresh_provider_telemetry();
+        app
+    }
+
+    fn refresh_provider_telemetry(&mut self) {
+        if let Ok(config) = super::load_config(&self.args) {
+            let base_url = config.provider_url().unwrap_or("none").to_owned();
+            let preset_label = super::setup::PRESETS
+                .iter()
+                .find(|p| p.base_url.eq_ignore_ascii_case(&base_url))
+                .map(|p| p.name);
+            let provider_name = self
+                .args
+                .value("provider")
+                .or(preset_label)
+                .or_else(|| config.active_provider())
+                .unwrap_or("unconfigured")
+                .to_owned();
+            let model_name = self
+                .args
+                .value("model")
+                .or_else(|| config.provider_model())
+                .unwrap_or("unconfigured")
+                .to_owned();
+            let api_key_env = config
+                .provider_api_key_env()
+                .unwrap_or("OPENROUTER_API_KEY")
+                .to_owned();
+            let ready = if base_url == "none" {
+                false
+            } else {
+                super::provider::provider_credential_available(&config, &api_key_env)
+                    .unwrap_or(false)
+            };
+            self.active_provider_label = provider_name;
+            self.active_model_label = model_name;
+            self.active_base_url = base_url;
+            self.active_api_key_env = api_key_env;
+            self.credential_ready = ready;
         }
     }
 
@@ -742,11 +862,29 @@ impl App {
         if self.palette_open {
             return self.handle_palette_key(key);
         }
+        if self.model_picker_open {
+            return self.handle_model_picker_key(key);
+        }
+        if self.key_modal_open {
+            return self.handle_key_modal_key(key);
+        }
 
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
                 KeyCode::Char('p') => {
                     self.open_palette();
+                    return false;
+                }
+                KeyCode::Char('m') => {
+                    self.open_model_picker();
+                    return false;
+                }
+                KeyCode::Char('t') => {
+                    self.work_dock_open = !self.work_dock_open;
+                    if self.work_dock_open {
+                        self.refresh_kanban_silent();
+                        self.refresh_fleet_silent();
+                    }
                     return false;
                 }
                 KeyCode::Char('b') => {
@@ -834,6 +972,9 @@ impl App {
                 false
             }
             KeyCode::Tab => {
+                if !self.input.is_empty() && self.apply_autocomplete() {
+                    return false;
+                }
                 self.active_tab = self.active_tab.next();
                 if self.active_tab == TuiTab::Kanban {
                     self.refresh_kanban_silent();
@@ -910,8 +1051,260 @@ impl App {
 
     fn open_palette(&mut self) {
         self.palette_open = true;
+        self.model_picker_open = false;
+        self.key_modal_open = false;
         self.palette_query.clear();
         self.palette_index = 0;
+    }
+
+    fn open_model_picker(&mut self) {
+        self.refresh_provider_telemetry();
+        self.model_picker_open = true;
+        self.palette_open = false;
+        self.key_modal_open = false;
+        self.model_picker_query.clear();
+        self.model_picker_index = 0;
+    }
+
+    fn open_key_modal(&mut self, env_override: Option<&str>) {
+        self.refresh_provider_telemetry();
+        self.key_modal_open = true;
+        self.palette_open = false;
+        self.model_picker_open = false;
+        self.key_modal_env = env_override
+            .filter(|val| !val.trim().is_empty())
+            .map(|val| val.trim().to_owned())
+            .unwrap_or_else(|| self.active_api_key_env.clone());
+        self.key_modal_input.clear();
+    }
+
+    fn filtered_model_catalog(&self) -> Vec<&'static super::setup::ModelCatalogEntry> {
+        let query = self
+            .model_picker_query
+            .iter()
+            .collect::<String>()
+            .trim()
+            .to_ascii_lowercase();
+        if query.is_empty() {
+            return super::setup::MODEL_CATALOG.iter().collect();
+        }
+        super::setup::MODEL_CATALOG
+            .iter()
+            .filter(|entry| {
+                let prov = entry.provider.to_ascii_lowercase();
+                let model = entry.model.to_ascii_lowercase();
+                let desc = entry.description.to_ascii_lowercase();
+                let spec = format!("{prov}:{model}");
+                spec.contains(&query)
+                    || model.contains(&query)
+                    || prov.contains(&query)
+                    || desc.contains(&query)
+                    || fuzzy_subsequence(&query, &spec)
+            })
+            .collect()
+    }
+
+    fn handle_model_picker_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc => {
+                self.model_picker_open = false;
+                false
+            }
+            KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.model_picker_open = false;
+                false
+            }
+            KeyCode::Up => {
+                self.model_picker_index = self.model_picker_index.saturating_sub(1);
+                false
+            }
+            KeyCode::Down => {
+                let len = self.filtered_model_catalog().len();
+                if len > 0 {
+                    self.model_picker_index =
+                        min(self.model_picker_index.saturating_add(1), len - 1);
+                }
+                false
+            }
+            KeyCode::Backspace => {
+                self.model_picker_query.pop();
+                self.model_picker_index = 0;
+                false
+            }
+            KeyCode::Enter => {
+                let entries = self.filtered_model_catalog();
+                if let Some(selected) = entries.get(self.model_picker_index).copied() {
+                    let spec = format!("{}:{}", selected.provider, selected.model);
+                    self.model_picker_open = false;
+                    self.switch_model(&spec);
+                } else {
+                    let custom = self
+                        .model_picker_query
+                        .iter()
+                        .collect::<String>()
+                        .trim()
+                        .to_owned();
+                    self.model_picker_open = false;
+                    if !custom.is_empty() {
+                        self.switch_model(&custom);
+                    }
+                }
+                false
+            }
+            KeyCode::Char(ch)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                self.model_picker_query.push(ch);
+                self.model_picker_index = 0;
+                false
+            }
+            _ => false,
+        }
+    }
+
+    fn handle_key_modal_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc => {
+                self.key_modal_open = false;
+                self.key_modal_input.clear();
+                false
+            }
+            KeyCode::Backspace => {
+                self.key_modal_input.pop();
+                false
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.key_modal_input.clear();
+                false
+            }
+            KeyCode::Enter => {
+                let env_name = self.key_modal_env.clone();
+                let secret = self
+                    .key_modal_input
+                    .iter()
+                    .collect::<String>()
+                    .trim()
+                    .to_owned();
+                self.key_modal_open = false;
+                self.key_modal_input.clear();
+                if secret.is_empty() {
+                    self.push_message("key> cancelled (empty key input)");
+                } else {
+                    self.save_api_key(&env_name, &secret);
+                }
+                false
+            }
+            KeyCode::Char(ch)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                self.key_modal_input.push(ch);
+                false
+            }
+            _ => false,
+        }
+    }
+
+    fn active_autocomplete_suggestions(&self) -> Vec<(String, String)> {
+        if self.input.is_empty()
+            || self.palette_open
+            || self.model_picker_open
+            || self.key_modal_open
+        {
+            return Vec::new();
+        }
+        let before_cursor = self.input[..min(self.cursor, self.input.len())]
+            .iter()
+            .collect::<String>();
+        if before_cursor.starts_with('/') && !before_cursor.contains(char::is_whitespace) {
+            let query = before_cursor.to_ascii_lowercase();
+            let mut results = Vec::new();
+            for entry in PALETTE_ENTRIES {
+                let cmd_token = entry
+                    .command
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or(entry.command);
+                if cmd_token.to_ascii_lowercase().starts_with(&query)
+                    && !results.iter().any(|(c, _)| c == cmd_token)
+                {
+                    results.push((cmd_token.to_owned(), entry.description.to_owned()));
+                    if results.len() >= 6 {
+                        break;
+                    }
+                }
+            }
+            if results.len() == 1 && results[0].0 == before_cursor {
+                return Vec::new();
+            }
+            return results;
+        }
+
+        // Check for `@` file context autocomplete on the token immediately preceding cursor
+        let token_start = before_cursor
+            .rfind(char::is_whitespace)
+            .map_or(0, |idx| idx + 1);
+        let current_token = &before_cursor[token_start..];
+        if let Some(file_prefix) = current_token.strip_prefix('@') {
+            let prefix_lower = file_prefix.to_ascii_lowercase();
+            let workspace_root = super::load_config(&self.args)
+                .map(|cfg| cfg.workspace_dir().to_path_buf())
+                .unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let mut matches = Vec::new();
+            if let Ok(read_dir) = std::fs::read_dir(&workspace_root) {
+                for entry in read_dir.flatten().take(64) {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if name.starts_with('.') {
+                        continue;
+                    }
+                    let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+                    let display_name = if is_dir { format!("{name}/") } else { name };
+                    if display_name.to_ascii_lowercase().starts_with(&prefix_lower) {
+                        let kind_desc = if is_dir {
+                            "workspace directory"
+                        } else {
+                            "workspace file"
+                        };
+                        matches.push((format!("@{display_name}"), kind_desc.to_owned()));
+                        if matches.len() >= 6 {
+                            break;
+                        }
+                    }
+                }
+            }
+            return matches;
+        }
+        Vec::new()
+    }
+
+    fn apply_autocomplete(&mut self) -> bool {
+        let suggestions = self.active_autocomplete_suggestions();
+        let Some((completion, _)) = suggestions.first() else {
+            return false;
+        };
+        let before_cursor = self.input[..min(self.cursor, self.input.len())]
+            .iter()
+            .collect::<String>();
+        let after_cursor = self.input[min(self.cursor, self.input.len())..]
+            .iter()
+            .collect::<String>();
+        let token_start = before_cursor
+            .rfind(char::is_whitespace)
+            .map_or(0, |idx| idx + 1);
+        let prefix = &before_cursor[..token_start];
+        let suffix_space = if after_cursor.starts_with(' ') || completion.ends_with('/') {
+            ""
+        } else {
+            " "
+        };
+        let updated_before = format!("{prefix}{completion}{suffix_space}");
+        let full = format!("{updated_before}{after_cursor}");
+        self.cursor = updated_before.chars().count();
+        self.input = full.chars().collect();
+        true
     }
 
     fn filtered_palette_entries(&self) -> Vec<&'static PaletteEntry> {
@@ -1032,7 +1425,13 @@ impl App {
             "/help" => {
                 for message in [
                     "/help       show TUI commands",
+                    "/model      open Hermes model & provider picker modal (Ctrl-M) or /model <provider:model>",
+                    "/key        open masked API key setup modal or /key [<ENV_VAR>] <api-key> (saved to .env)",
+                    "/config     inspect or update active configuration (/config set model.default <model>)",
                     "/setup      list or configure model provider presets (/setup <preset>)",
+                    "/tools      inspect active Domain Harnesses, Coding Genes, and Workflow Genes",
+                    "/focus      toggle distraction-free Hermes Focus Mode",
+                    "/dock       toggle bottom Live Work Dock for active jobs & fleet subagents (Ctrl-T)",
                     "/session    show the active session ID",
                     "/clear      clear the transcript",
                     "/theme      show or select auto, dark, light, or mono",
@@ -1062,6 +1461,57 @@ impl App {
                 ] {
                     self.push_message(message);
                 }
+            }
+            "/model" | "/models" => {
+                self.open_model_picker();
+            }
+            value if value.starts_with("/model ") => {
+                let spec = value.trim_start_matches("/model ").trim();
+                self.switch_model(spec);
+            }
+            "/key" => {
+                self.open_key_modal(None);
+            }
+            value if value.starts_with("/key ") => {
+                let rest = value.trim_start_matches("/key ").trim();
+                self.run_key_command(rest);
+            }
+            "/config" => {
+                self.show_or_update_config("");
+            }
+            value if value.starts_with("/config ") => {
+                let rest = value.trim_start_matches("/config ").trim();
+                self.show_or_update_config(rest);
+            }
+            "/tools" => {
+                self.show_tools_summary();
+            }
+            "/focus" => {
+                self.focus_mode = !self.focus_mode;
+                self.sidebar_visible = !self.focus_mode;
+                self.push_message(format!(
+                    "focus> {} (Hermes distraction-free mode)",
+                    if self.focus_mode {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
+                ));
+            }
+            "/dock" => {
+                self.work_dock_open = !self.work_dock_open;
+                if self.work_dock_open {
+                    self.refresh_kanban_silent();
+                    self.refresh_fleet_silent();
+                }
+                self.push_message(format!(
+                    "dock> {}",
+                    if self.work_dock_open {
+                        "visible"
+                    } else {
+                        "hidden"
+                    }
+                ));
             }
             "/session" => {
                 self.push_message(match self.session_id.as_deref() {
@@ -1116,7 +1566,9 @@ impl App {
                 self.open_palette();
             }
             "/setup" => {
-                self.push_message("setup> Available provider presets (run /setup <preset>):");
+                self.push_message(
+                    "setup> Available provider presets (run /setup <preset> or /model):",
+                );
                 for preset in super::setup::PRESETS {
                     self.push_message(format!(
                         "  /setup {:<11} - {} [model: {}, env: {}]",
@@ -1232,14 +1684,225 @@ impl App {
                     | "/approve"
                     | "/deny"
                     | "/palette"
+                    | "/model"
+                    | "/models"
+                    | "/key"
             )
             && !line.trim().starts_with("/approve ")
             && !line.trim().starts_with("/deny ")
+            && !line.trim().starts_with("/key ")
             && self.history.last().map(String::as_str) != Some(line.trim())
         {
             self.remember_history(line.trim());
         }
         false
+    }
+
+    fn switch_model(&mut self, spec: &str) {
+        let trimmed = spec.trim();
+        if trimmed.is_empty() {
+            self.open_model_picker();
+            return;
+        }
+        if trimmed == "list" {
+            self.push_message("model> Curated Hermes & Frontier Model Catalog (use /model <provider:model> or Ctrl+M):");
+            for entry in super::setup::MODEL_CATALOG {
+                self.push_message(format!(
+                    "  {:<10}:{:<36} - {}",
+                    entry.provider, entry.model, entry.description
+                ));
+            }
+            return;
+        }
+        let mut config = match super::load_config(&self.args) {
+            Ok(cfg) => cfg,
+            Err(error) => {
+                self.activity = TuiActivity::Failure;
+                self.push_message(format!("error> {}", error.message));
+                return;
+            }
+        };
+        match super::setup::apply_model_selection(&mut config, trimmed) {
+            Ok((provider_label, model_name, api_key_env, protocol)) => {
+                if let Err(error) = super::write_config(&config) {
+                    self.activity = TuiActivity::Failure;
+                    self.push_message(format!("error> {}", error.message));
+                    return;
+                }
+                self.args.values.remove("model");
+                self.args.values.remove("provider");
+                self.refresh_provider_telemetry();
+                self.activity = TuiActivity::Success;
+                let key_status = if self.credential_ready {
+                    format!("✓ credential '{api_key_env}' ready")
+                } else {
+                    format!("⚠ needs '{api_key_env}' — run /key to configure")
+                };
+                self.push_message(format!(
+                    "model> switched to {provider_label}:{model_name} (protocol: {protocol}) · {key_status}"
+                ));
+                self.record_sparkline(2);
+            }
+            Err(error) => {
+                self.activity = TuiActivity::Failure;
+                self.push_message(format!("error> {}", error.message));
+            }
+        }
+    }
+
+    fn run_key_command(&mut self, rest: &str) {
+        let tokens = rest.split_whitespace().collect::<Vec<_>>();
+        if tokens.is_empty() {
+            self.open_key_modal(None);
+            return;
+        }
+        if tokens.len() == 1 {
+            // Check if token is an ENV_VAR name without a secret value -> open modal for that ENV_VAR
+            let candidate = tokens[0];
+            if candidate.ends_with("_KEY") || candidate.ends_with("_TOKEN") {
+                self.open_key_modal(Some(candidate));
+                return;
+            }
+            let env_name = self.active_api_key_env.clone();
+            self.save_api_key(&env_name, candidate);
+        } else {
+            let env_name = tokens[0];
+            let secret = tokens[1..].join(" ");
+            self.save_api_key(env_name, &secret);
+        }
+    }
+
+    fn save_api_key(&mut self, env_name: &str, secret: &str) {
+        let config = match super::load_config(&self.args) {
+            Ok(cfg) => cfg,
+            Err(error) => {
+                self.activity = TuiActivity::Failure;
+                self.push_message(format!("error> {}", error.message));
+                return;
+            }
+        };
+        match super::setup::write_dotenv_var(&config, env_name, secret) {
+            Ok(path) => {
+                self.refresh_provider_telemetry();
+                self.activity = TuiActivity::Success;
+                let tail: String = secret
+                    .chars()
+                    .rev()
+                    .take(4)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+                let masked = format!("••••{tail}");
+                self.push_message(format!(
+                    "key> saved '{env_name}' ({masked}) to {}",
+                    path.display()
+                ));
+                self.record_sparkline(2);
+            }
+            Err(error) => {
+                self.activity = TuiActivity::Failure;
+                self.push_message(format!("error> {}", error.message));
+            }
+        }
+    }
+
+    fn show_or_update_config(&mut self, rest: &str) {
+        let tokens = rest.split_whitespace().collect::<Vec<_>>();
+        if tokens.is_empty() || tokens[0].eq_ignore_ascii_case("show") {
+            self.refresh_provider_telemetry();
+            if let Ok(config) = super::load_config(&self.args) {
+                let dotenv = super::setup::dotenv_path(&config);
+                self.push_message(format!(
+                    "config> file: {} · dotenv: {}",
+                    config.config_path().display(),
+                    dotenv.display()
+                ));
+                self.push_message(format!(
+                    "config> model.provider: {} · model.default: {} · base_url: {}",
+                    self.active_provider_label, self.active_model_label, self.active_base_url
+                ));
+                self.push_message(format!(
+                    "config> api_key_env: {} ({}) · theme: {} · focus: {}",
+                    self.active_api_key_env,
+                    if self.credential_ready {
+                        "ready"
+                    } else {
+                        "missing"
+                    },
+                    self.theme.name(),
+                    self.focus_mode
+                ));
+                self.push_message(
+                    "config> Tip: use '/config set model.provider <preset>' or '/config set model.default <provider:model>'",
+                );
+            }
+            return;
+        }
+        if tokens[0].eq_ignore_ascii_case("set") {
+            if tokens.len() < 3 {
+                self.push_message(
+                    "usage> /config set <model.provider|model.default|theme|focus|dock> <value>",
+                );
+                return;
+            }
+            let key = tokens[1].to_ascii_lowercase();
+            let value = tokens[2..].join(" ");
+            match key.as_str() {
+                "model.provider" | "provider" => {
+                    self.run_setup_preset(&value);
+                }
+                "model.default" | "model" => {
+                    self.switch_model(&value);
+                }
+                "theme" => match TuiTheme::parse(Some(value.trim())) {
+                    Ok(theme) => {
+                        self.theme = theme;
+                        self.push_message(format!("config> theme = {}", theme.name()));
+                    }
+                    Err(error) => {
+                        self.push_message(format!("error> {}", error.message));
+                    }
+                },
+                "focus" => {
+                    self.focus_mode = matches!(
+                        value.trim().to_ascii_lowercase().as_str(),
+                        "true" | "1" | "on" | "yes"
+                    );
+                    self.sidebar_visible = !self.focus_mode;
+                    self.push_message(format!("config> focus = {}", self.focus_mode));
+                }
+                "dock" => {
+                    self.work_dock_open = matches!(
+                        value.trim().to_ascii_lowercase().as_str(),
+                        "true" | "1" | "on" | "yes"
+                    );
+                    self.push_message(format!("config> dock = {}", self.work_dock_open));
+                }
+                _ => {
+                    self.push_message(
+                        "usage> /config set <model.provider|model.default|theme|focus|dock> <value>",
+                    );
+                }
+            }
+            return;
+        }
+        self.push_message("usage> /config [show | set <key> <value>]");
+    }
+
+    fn show_tools_summary(&mut self) {
+        self.push_message(
+            "tools> Active Domain Harnesses: Coding, Research, Operations, Security, Data",
+        );
+        self.push_message(
+            "tools> Core Coding Genes (13): /read /search /patch /verify /test /format /lint /build /status /diff /log /refs /review",
+        );
+        self.push_message(
+            "tools> Workflow Genes (5): /audit (Daedalus) · /argus-review (Argus) · /debt (Ariadne) · /measure (Hephaestus) · /guide (Athena)",
+        );
+        self.push_message(
+            "tools> Governance: Reference Monitor + Parliament + One-Shot Capability Permits",
+        );
     }
 
     fn run_setup_preset(&mut self, target: &str) {
@@ -1253,7 +1916,7 @@ impl App {
         let tokens = target.split_whitespace().collect::<Vec<_>>();
         if tokens.is_empty() {
             self.push_message(
-                "usage> /setup <ollama|openrouter|deepseek|openai|anthropic|groq> [--model <id>]",
+                "usage> /setup <ollama|openrouter|nous|deepseek|openai|anthropic|groq> [--model <id>]",
             );
             return;
         }
@@ -1270,6 +1933,9 @@ impl App {
         }
         match super::setup::execute(&args) {
             Ok(result) => {
+                self.args.values.remove("model");
+                self.args.values.remove("provider");
+                self.refresh_provider_telemetry();
                 self.activity = TuiActivity::Success;
                 for line in result.human.lines() {
                     self.push_message(format!("setup> {}", line.trim()));
@@ -1935,6 +2601,10 @@ impl App {
             self.render_compact(frame, area);
             if self.palette_open {
                 self.render_palette_modal(frame, area);
+            } else if self.model_picker_open {
+                self.render_model_picker_modal(frame, area);
+            } else if self.key_modal_open {
+                self.render_key_modal(frame, area);
             }
             return;
         }
@@ -1960,9 +2630,14 @@ impl App {
 
         self.render_status_bar(frame, sections[2]);
         self.render_input_box(frame, sections[3]);
+        self.render_autocomplete_popup(frame, sections[1], sections[3]);
 
         if self.palette_open {
             self.render_palette_modal(frame, area);
+        } else if self.model_picker_open {
+            self.render_model_picker_modal(frame, area);
+        } else if self.key_modal_open {
+            self.render_key_modal(frame, area);
         }
     }
 
@@ -2028,23 +2703,87 @@ impl App {
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
                     .border_style(self.theme.border())
-                    .title(" Workspace Views (Tab / Alt+1..4 · Ctrl+P Palette · Ctrl+B Sidebar) "),
+                    .title(
+                        " Views (Tab/Alt+1..4 · Ctrl+M Model · Ctrl+P Palette · Ctrl+T Dock · Ctrl+B Sidebar) ",
+                    ),
             );
         frame.render_widget(tabs, horizontal[1]);
     }
 
     fn render_console_workspace(&self, frame: &mut Frame, area: Rect) {
+        let main_area = if self.work_dock_open && area.height >= 12 {
+            let split = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(6), Constraint::Length(5)])
+                .split(area);
+            self.render_work_dock(frame, split[1]);
+            split[0]
+        } else {
+            area
+        };
+
         if !self.sidebar_visible {
-            self.render_transcript_pane(frame, area);
+            self.render_transcript_pane(frame, main_area);
             return;
         }
         let panes = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(68), Constraint::Percentage(32)])
-            .split(area);
+            .split(main_area);
 
         self.render_transcript_pane(frame, panes[0]);
         self.render_telemetry_sidebar(frame, panes[1]);
+    }
+
+    fn render_work_dock(&self, frame: &mut Frame, area: Rect) {
+        let f = &self.fleet_snapshot;
+        let cred_badge = if self.credential_ready {
+            "✓ key ready"
+        } else {
+            "⚠ key missing (/key)"
+        };
+        let dock_lines = vec![
+            Line::from(vec![
+                Span::styled(" ◆ Model & Key:  ", self.theme.title()),
+                Span::raw(format!(
+                    "{}:{} ({}) · {}",
+                    self.active_provider_label,
+                    self.active_model_label,
+                    self.active_api_key_env,
+                    cred_badge
+                )),
+            ]),
+            Line::from(vec![
+                Span::styled(" ◆ Fleet & Jobs: ", self.theme.prompt()),
+                Span::raw(format!(
+                    "status {} · jobs {} running / {} queued · orchestrations {} running · {} supervisors",
+                    f.status,
+                    f.jobs_running,
+                    f.jobs_queued,
+                    f.orchestrations_running,
+                    f.running_supervisors
+                )),
+            ]),
+            Line::from(vec![
+                Span::styled(" ◆ Active Board: ", self.theme.accent()),
+                Span::raw(format!(
+                    "'{}' — {} in_progress · {} todo · {} blocked · {} done",
+                    self.kanban_snapshot.board_id,
+                    self.kanban_snapshot.in_progress.len(),
+                    self.kanban_snapshot.todo.len(),
+                    self.kanban_snapshot.blocked.len(),
+                    self.kanban_snapshot.done.len()
+                )),
+            ]),
+        ];
+        let dock = Paragraph::new(dock_lines).block(
+            Block::default()
+                .title(" Hermes Live Work Dock (Ctrl+T or /dock to toggle) ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(self.theme.border()),
+        );
+        frame.render_widget(dock, area);
     }
 
     fn render_transcript_pane(&self, frame: &mut Frame, area: Rect) {
@@ -2135,8 +2874,18 @@ impl App {
         frame.render_widget(gauge, chunks[1]);
 
         let session = self.session_id.as_deref().unwrap_or("not started");
-        let provider = self.args.value("provider").unwrap_or("default");
-        let model = self.args.value("model").unwrap_or("configured-default");
+        let provider = &self.active_provider_label;
+        let model = &self.active_model_label;
+        let key_badge = if self.credential_ready {
+            format!("✓ {}", self.active_api_key_env)
+        } else {
+            format!("⚠ {} (/key)", self.active_api_key_env)
+        };
+        let key_style = if self.credential_ready {
+            self.theme.prompt()
+        } else {
+            self.theme.warning()
+        };
         let mut inspector_lines = vec![
             Line::from(vec![
                 Span::styled(" Status:   ", self.theme.muted()),
@@ -2154,10 +2903,10 @@ impl App {
             ]),
             Line::from(vec![
                 Span::styled(" Provider: ", self.theme.muted()),
-                Span::raw(truncate(
-                    provider,
-                    usize::from(chunks[2].width.saturating_sub(13)),
-                )),
+                Span::styled(
+                    truncate(provider, usize::from(chunks[2].width.saturating_sub(13))),
+                    self.theme.title(),
+                ),
             ]),
             Line::from(vec![
                 Span::styled(" Model:    ", self.theme.muted()),
@@ -2165,6 +2914,13 @@ impl App {
                     model,
                     usize::from(chunks[2].width.saturating_sub(13)),
                 )),
+            ]),
+            Line::from(vec![
+                Span::styled(" API Key:  ", self.theme.muted()),
+                Span::styled(
+                    truncate(&key_badge, usize::from(chunks[2].width.saturating_sub(13))),
+                    key_style,
+                ),
             ]),
             Line::from(vec![
                 Span::styled(" Theme:    ", self.theme.muted()),
@@ -2193,19 +2949,27 @@ impl App {
         } else {
             inspector_lines.push(Line::from(""));
             inspector_lines.push(Line::from(Span::styled(
-                " Quick Shortcuts:",
+                " Hermes & TUI Shortcuts:",
                 self.theme.title(),
             )));
             inspector_lines.push(Line::from(Span::styled(
-                " • Ctrl+P / F1  Command Palette",
+                " • Ctrl+M /model  Model Picker",
                 self.theme.muted(),
             )));
             inspector_lines.push(Line::from(Span::styled(
-                " • Tab / Alt+1-4 Switch Views",
+                " • /key · /config API Key & Setup",
                 self.theme.muted(),
             )));
             inspector_lines.push(Line::from(Span::styled(
-                " • PgUp / PgDn   Scroll History",
+                " • Ctrl+P / F1    Command Palette",
+                self.theme.muted(),
+            )));
+            inspector_lines.push(Line::from(Span::styled(
+                " • Ctrl+T /dock   Live Work Dock",
+                self.theme.muted(),
+            )));
+            inspector_lines.push(Line::from(Span::styled(
+                " • / · @ + Tab    Autocomplete",
                 self.theme.muted(),
             )));
         }
@@ -2547,8 +3311,11 @@ impl App {
 
     fn render_status_bar(&self, frame: &mut Frame, area: Rect) {
         let session = self.session_id.as_deref().unwrap_or("not started");
+        let focus_tag = if self.focus_mode { " · ◉ FOCUS" } else { "" };
         let status = format!(
-            "session: {session} · turns: {} · state: {} · view: {} · theme: {} · presentation only",
+            "session: {session} · model: {}:{} · turns: {} · state: {} · view: {} · theme: {}{focus_tag} · presentation only",
+            self.active_provider_label,
+            self.active_model_label,
             self.turns,
             self.activity.name(),
             self.active_tab.name(),
@@ -2570,12 +3337,211 @@ impl App {
             Paragraph::new(input_line).block(Block::default().borders(Borders::TOP)),
             area,
         );
-        if !self.palette_open {
+        if !self.palette_open && !self.model_picker_open && !self.key_modal_open {
             frame.set_cursor_position(Position::new(
                 area.x.saturating_add(cursor),
                 area.y.saturating_add(1),
             ));
         }
+    }
+
+    fn render_autocomplete_popup(&self, frame: &mut Frame, workspace_area: Rect, input_area: Rect) {
+        let suggestions = self.active_autocomplete_suggestions();
+        if suggestions.is_empty() || workspace_area.height < 5 || input_area.width < 24 {
+            return;
+        }
+        let popup_height = (suggestions.len() as u16).saturating_add(2).min(8);
+        let popup_width = input_area.width.min(76);
+        let popup_y = input_area.y.saturating_sub(popup_height.saturating_add(1));
+        let popup_area = Rect::new(input_area.x, popup_y, popup_width, popup_height);
+        frame.render_widget(Clear, popup_area);
+
+        let items = suggestions
+            .iter()
+            .enumerate()
+            .map(|(idx, (token, desc))| {
+                let prefix = if idx == 0 { " ▸ " } else { "   " };
+                let text = format!("{prefix}{:<22} {}", token, desc);
+                let style = if idx == 0 {
+                    self.theme.title()
+                } else {
+                    self.theme.muted()
+                };
+                ListItem::new(truncate(&text, usize::from(popup_width.saturating_sub(2))))
+                    .style(style)
+            })
+            .collect::<Vec<_>>();
+
+        let block = Block::default()
+            .title(" Autocomplete (Press Tab to complete) ")
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(self.theme.accent());
+        frame.render_widget(List::new(items).block(block), popup_area);
+    }
+
+    fn render_model_picker_modal(&self, frame: &mut Frame, area: Rect) {
+        let modal_area = centered_rect(80, 72, area);
+        frame.render_widget(Clear, modal_area);
+
+        let outer = Block::default()
+            .title(
+                " ◆ Hermes Model & Provider Selector (Type to filter or provider:model · Enter to select · Esc to close) ",
+            )
+            .borders(Borders::ALL)
+            .border_type(BorderType::Double)
+            .border_style(self.theme.accent());
+        let inner = outer.inner(modal_area);
+        frame.render_widget(outer, modal_area);
+
+        if inner.height < 4 || inner.width < 12 {
+            return;
+        }
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Length(2),
+                Constraint::Min(1),
+            ])
+            .split(inner);
+
+        let key_status = if self.credential_ready {
+            format!("✓ {} ready", self.active_api_key_env)
+        } else {
+            format!("⚠ {} missing (run /key)", self.active_api_key_env)
+        };
+        let active_banner = Line::from(vec![
+            Span::styled(" Active: ", self.theme.muted()),
+            Span::styled(
+                format!("{}:{}", self.active_provider_label, self.active_model_label),
+                self.theme.title(),
+            ),
+            Span::styled(format!(" · {key_status}"), self.theme.prompt()),
+        ]);
+        frame.render_widget(Paragraph::new(active_banner), chunks[0]);
+
+        let query_str = self.model_picker_query.iter().collect::<String>();
+        let search_line = Line::from(vec![
+            Span::styled(" Filter / Custom (provider:model): ", self.theme.title()),
+            Span::raw(&query_str),
+        ]);
+        frame.render_widget(
+            Paragraph::new(search_line).block(Block::default().borders(Borders::BOTTOM)),
+            chunks[1],
+        );
+
+        let config_opt = super::load_config(&self.args).ok();
+        let entries = self.filtered_model_catalog();
+        if entries.is_empty() {
+            let custom_msg =
+                format!(" ▸ Press Enter to configure custom model spec: '{query_str}'");
+            frame.render_widget(
+                Paragraph::new(truncate(&custom_msg, usize::from(chunks[2].width)))
+                    .style(self.theme.title()),
+                chunks[2],
+            );
+            return;
+        }
+
+        let max_items = usize::from(chunks[2].height.max(1));
+        let start = self
+            .model_picker_index
+            .saturating_sub(max_items.saturating_sub(1));
+        let items = entries
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(max_items)
+            .map(|(idx, entry)| {
+                let selected = idx == self.model_picker_index;
+                let prefix = if selected { " ▸ " } else { "   " };
+                let badge = if entry.provider == "ollama" {
+                    "[✓ LOCAL]".to_owned()
+                } else if let Some(preset) = super::setup::find_preset(entry.provider) {
+                    let has_key = config_opt
+                        .as_ref()
+                        .and_then(|cfg| {
+                            super::provider::provider_credential_available(cfg, preset.api_key_env)
+                                .ok()
+                        })
+                        .unwrap_or(false);
+                    if has_key {
+                        "[✓ KEY READY]".to_owned()
+                    } else {
+                        format!("[needs {}]", preset.api_key_env)
+                    }
+                } else {
+                    String::new()
+                };
+                let spec = format!("{}:{}", entry.provider, entry.model);
+                let line_text = format!("{prefix}{:<44} {:<24} {}", spec, badge, entry.description);
+                let style = if selected {
+                    self.theme.title()
+                } else {
+                    Style::default()
+                };
+                ListItem::new(truncate(&line_text, usize::from(chunks[2].width))).style(style)
+            })
+            .collect::<Vec<_>>();
+
+        frame.render_widget(List::new(items), chunks[2]);
+    }
+
+    fn render_key_modal(&self, frame: &mut Frame, area: Rect) {
+        let modal_area = centered_rect(68, 42, area);
+        frame.render_widget(Clear, modal_area);
+
+        let outer = Block::default()
+            .title(" ◆ Hermes Provider Credential Setup (.env Secret Store) ")
+            .borders(Borders::ALL)
+            .border_type(BorderType::Double)
+            .border_style(self.theme.accent());
+        let inner = outer.inner(modal_area);
+        frame.render_widget(outer, modal_area);
+
+        if inner.height < 4 || inner.width < 12 {
+            return;
+        }
+
+        let dotenv_display = super::load_config(&self.args)
+            .map(|cfg| super::setup::dotenv_path(&cfg).display().to_string())
+            .unwrap_or_else(|_| ".env".to_owned());
+        let masked: String = std::iter::repeat_n('•', self.key_modal_input.len()).collect();
+        let lines = vec![
+            Line::from(vec![
+                Span::styled(" Active Provider: ", self.theme.muted()),
+                Span::styled(&self.active_provider_label, self.theme.title()),
+                Span::styled(" · Model: ", self.theme.muted()),
+                Span::raw(&self.active_model_label),
+            ]),
+            Line::from(vec![
+                Span::styled(" Target Env Var:  ", self.theme.muted()),
+                Span::styled(&self.key_modal_env, self.theme.prompt()),
+            ]),
+            Line::from(vec![
+                Span::styled(" Secret File:     ", self.theme.muted()),
+                Span::raw(truncate(
+                    &dotenv_display,
+                    usize::from(inner.width.saturating_sub(19)),
+                )),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(" API Key (masked): ", self.theme.title()),
+                Span::styled(
+                    format!("{masked} ({} chars)", self.key_modal_input.len()),
+                    self.theme.prompt(),
+                ),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                " Press Enter to save to .env · Ctrl+U to clear · Esc to cancel",
+                self.theme.muted(),
+            )),
+        ];
+        frame.render_widget(Paragraph::new(lines), inner);
     }
 
     fn render_palette_modal(&self, frame: &mut Frame, area: Rect) {
@@ -2659,6 +3625,31 @@ fn style_transcript_line(line: &str, width: usize, theme: TuiTheme) -> Line<'sta
     } else if let Some(rest) = text.strip_prefix("approval> ") {
         Line::from(vec![
             Span::styled("approval> ", theme.warning()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("model> ") {
+        Line::from(vec![
+            Span::styled("model> ", theme.prompt()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("key> ") {
+        Line::from(vec![
+            Span::styled("key> ", theme.prompt()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("config> ") {
+        Line::from(vec![
+            Span::styled("config> ", theme.title()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("setup> ") {
+        Line::from(vec![
+            Span::styled("setup> ", theme.prompt()),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("tools> ") {
+        Line::from(vec![
+            Span::styled("tools> ", theme.accent()),
             Span::raw(rest.to_owned()),
         ])
     } else if text.starts_with('+') && !text.starts_with("+++") {
@@ -3330,5 +4321,86 @@ mod tests {
             super::KeyEventKind::Release,
         ));
         assert_eq!(app.input.iter().collect::<String>(), "/");
+    }
+
+    #[test]
+    fn hermes_model_picker_and_dotenv_key_workflow() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("test clock must follow the Unix epoch")
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!(
+            "pandora-tui-hermes-model-{}-{nonce}",
+            std::process::id()
+        ));
+        let config_path = temp_dir.join("config.json");
+        let data_dir = temp_dir.join("data");
+        let workspace_dir = temp_dir.join("workspace");
+        let mut values = BTreeMap::new();
+        values.insert(
+            "config".to_owned(),
+            config_path.to_string_lossy().into_owned(),
+        );
+        values.insert(
+            "data-dir".to_owned(),
+            data_dir.to_string_lossy().into_owned(),
+        );
+        values.insert(
+            "workspace".to_owned(),
+            workspace_dir.to_string_lossy().into_owned(),
+        );
+        let mut app = App::new(
+            ParsedArgs {
+                values,
+                positionals: Vec::new(),
+            },
+            TuiTheme::Auto,
+        );
+
+        // Open Hermes Model Picker with Ctrl+M
+        app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL));
+        assert!(app.model_picker_open);
+
+        // Filter to "nous:Hermes-3-Llama-3.1-70B"
+        for ch in "nous:Hermes-3-Llama-3.1-70B".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(!app.model_picker_open);
+        assert_eq!(app.active_provider_label, "nous");
+        assert_eq!(app.active_model_label, "Hermes-3-Llama-3.1-70B");
+        assert_eq!(app.active_api_key_env, "NOUS_API_KEY");
+
+        // Save API key via /key command into .env and verify it is ready & redacted from history
+        app.input = "/key sk-nous-test-secret-9876".chars().collect();
+        app.submit();
+        assert!(app.credential_ready);
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.contains("key> saved 'NOUS_API_KEY' (••••9876)"))
+        );
+        assert!(
+            !app.history
+                .iter()
+                .any(|h| h.contains("sk-nous-test-secret"))
+        );
+
+        // Verify /config set model.default switches to ollama local model
+        app.input = "/config set model.default ollama:qwen2.5-coder:32b"
+            .chars()
+            .collect();
+        app.submit();
+        assert_eq!(app.active_provider_label, "ollama");
+        assert_eq!(app.active_model_label, "qwen2.5-coder:32b");
+        assert!(app.credential_ready);
+
+        // Verify slash command autocomplete via Tab
+        app.input = "/foc".chars().collect();
+        app.cursor = app.input.len();
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.input.iter().collect::<String>(), "/focus ");
+
+        let _ = std::fs::remove_dir_all(temp_dir);
     }
 }
