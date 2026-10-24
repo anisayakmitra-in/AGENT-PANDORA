@@ -149,6 +149,8 @@ flowchart LR
 | :--- | :--- |
 | `pandora` | Immediately launch the full-screen Pandora TUI workbench |
 | `Ctrl+P` / `F1` / `/palette` | Open the floating **Fuzzy Command Palette** modal overlay |
+| `Ctrl+M` / `/model` | Open the interactive **Model & Provider Selector** picker modal |
+| `Alt+B` / `/backdrop` | Cycle or set the TrueColor terminal mural background (`subtle`, `vivid`, `off`) |
 | `Tab` / `Shift+Tab` / `Alt+1..4` | Switch between `1:Console`, `2:Kanban & Fleet`, `3:Memory & Graph`, and `4:Governance & Trust` |
 | `Ctrl+B` / `/sidebar` | Toggle the live Telemetry, Sparkline & Turn Budget sidebar |
 | `Ctrl+Y` / `/approve` | Immediately approve and resume a paused governed task |
@@ -156,6 +158,9 @@ flowchart LR
 | `PageUp` / `PageDown` / `Ctrl+Up/Down` | Scroll through the transcript with the visual scrollbar |
 | `Ctrl+A` / `Ctrl+E` / `Ctrl+W` / `Ctrl+U` / `Ctrl+K` | Readline composer navigation and word/line deletion |
 | `Ctrl+L` / `/clear` | Clear the console transcript buffer |
+| `/login <provider>` / `/account` | OAuth 2.0 PKCE login flow and multi-account switching |
+| `/provider add <name> <url>` | Add custom OpenAI-compatible endpoint with `--no-api-key` or `--api-key-stdin` |
+| `/key` | Open the masked API key setup modal or save key to `.env` |
 | `/setup <preset>` | Configure provider preset in-place (`ollama`, `openrouter`, `deepseek`, `openai`, `anthropic`, `groq`) |
 | `/theme <auto\|dark\|light\|mono>` | Switch the TUI presentation palette live |
 | `/kanban` / `/fleet-health` | Refresh the 4-column Kanban board and Fleet Supervisor telemetry snapshot |
