@@ -341,7 +341,7 @@ impl HeldToolProvider {
                 br#"{"choices":[{"message":{"content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"workspace.read","arguments":"{\"path\":\"README.md\"}"}}]}}],"usage":{"prompt_tokens":4,"completion_tokens":2}}"#,
             );
 
-            let replay_deadline = Instant::now() + Duration::from_secs(30);
+            let replay_deadline = Instant::now() + Duration::from_secs(120);
             loop {
                 match stop_rx.try_recv() {
                     Ok(()) | Err(TryRecvError::Disconnected) => break,

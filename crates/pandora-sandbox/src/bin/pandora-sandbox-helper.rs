@@ -14,7 +14,9 @@
 // `#[allow]` with a SAFETY note rather than arriving unnoticed.
 #![deny(unsafe_code)]
 
-use pandora_sandbox::report::{Mechanisms, Observation, Proofs};
+#[cfg(windows)]
+use pandora_sandbox::report::Observation;
+use pandora_sandbox::report::{Mechanisms, Proofs};
 use pandora_sandbox::{
     Availability, HelperReport, PlatformFamily, ReportedOutcome, SandboxProfile, UnavailableReason,
     encode_report,
