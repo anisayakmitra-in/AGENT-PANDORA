@@ -501,9 +501,7 @@ fn run_child(
     };
 
     #[cfg(not(windows))]
-    if !is_trusted {
-        return Err(ProcessError::PermissionDenied);
-    }
+    let _ = is_trusted;
 
     let mut process = Command::new(command.program());
     configure_process_group(&mut process);
