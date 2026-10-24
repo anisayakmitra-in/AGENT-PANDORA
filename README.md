@@ -23,7 +23,7 @@ observation surface.
 
 ## Status
 
-The next prerelease identity is `2.0.0-beta.9`. The repository ships one local
+The next prerelease identity is `2.0.0-beta.10`. The repository ships one local
 product surface, the Rust CLI. The desktop product was deleted on 2026-10-05:
 no desktop source, build, package, signature, or publication remains, and there
 is no variable that can bring it back. Any client reaches the
@@ -125,13 +125,13 @@ environment. For scripted setup, use `pandora setup` instead.
 To pin the current release explicitly:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/AGENT-PANDORA/main/scripts/install.sh | PANDORA_VERSION=v2.0.0-beta.9 sh
+curl -fsSL https://raw.githubusercontent.com/anisayakmitra-in/AGENT-PANDORA/main/scripts/install.sh | PANDORA_VERSION=v2.0.0-beta.10 sh
 ```
 
 To fetch and verify a specific published tag:
 
 ```text
-pandora update --release v2.0.0-beta.9
+pandora update --release v2.0.0-beta.10
 pandora fleet dashboard --json
 ```
 
@@ -141,7 +141,7 @@ pandora fleet dashboard --json
 `.<name>.previous` and `update --rollback` restores it:
 
 ```text
-pandora update --release v2.0.0-beta.9 --target ~/.pandora/bin/pandora
+pandora update --release v2.0.0-beta.10 --target ~/.pandora/bin/pandora
 pandora update --rollback --target ~/.pandora/bin/pandora
 ```
 

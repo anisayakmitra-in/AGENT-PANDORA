@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn execution_ledger_requires_runtime_executor_and_containment() {
         let ledger = CompositionLedger::for_execution(
-            "2.0.0-beta.9",
+            "2.0.0-beta.10",
             "filesystem",
             "2.0.0",
             &digest(2),

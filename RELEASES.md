@@ -18,7 +18,8 @@ recommended install targets.
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1`, `v2.0.0-beta.2`,
 `v2.0.0-beta.3`, `v2.0.0-beta.4`, `v2.0.0-beta.5`, `v2.0.0-beta.6`,
-`v2.0.0-beta.7`, and `v2.0.0-beta.8`. The next planned identity is `v2.0.0-beta.9`.
+`v2.0.0-beta.7`, `v2.0.0-beta.8`, and `v2.0.0-beta.9`. The next planned identity
+is `v2.0.0-beta.10`.
 
 ## Source-bound release scope
 
@@ -36,6 +37,15 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v2.0.0-beta.10
+
+This is the next coherent prerelease identity. It updates the coupled Rust,
+npm, installer, documentation, and SDK runtime surfaces to `2.0.0-beta.10` while
+retaining the source-bound `cli-only` release scope. It bundles OS-level process
+confinement, filesystem TOCTOU hardening, active policy hook enforcement, the
+recursive self-improvement search and governance substrate, and dependency
+security updates.
 
 ## v2.0.0-beta.9
 

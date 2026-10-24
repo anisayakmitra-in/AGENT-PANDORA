@@ -828,7 +828,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-harnesses"
-version = "2.0.0-beta.9"
+version = "2.0.0-beta.10"
 dependencies = [
  "pandora-types",
  "serde",
@@ -838,7 +838,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-provider"
-version = "2.0.0-beta.9"
+version = "2.0.0-beta.10"
 dependencies = [
  "pandora-types",
  "reqwest",
@@ -848,7 +848,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-runtime"
-version = "2.0.0-beta.9"
+version = "2.0.0-beta.10"
 dependencies = [
  "argon2",
  "atomic-write-file",
@@ -873,7 +873,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-types"
-version = "2.0.0-beta.9"
+version = "2.0.0-beta.10"
 dependencies = [
  "semver",
  "serde",

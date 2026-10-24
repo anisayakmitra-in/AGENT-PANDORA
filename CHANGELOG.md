@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## v2.0.0-beta.10
+
+- **OS-level process confinement**: Windows Job Object boundary (no breakaway,
+  kill-on-close, active-process and job-memory limits) and Landlock/Seatbelt
+  platform detection in `pandora-sandbox`; native process execution fails closed
+  without confinement evidence unless `--trusted-process` is explicit.
+- **Filesystem TOCTOU hardening**: handle-relative containment verification
+  (`/proc/self/fd` on Linux, `fcntl(F_GETPATH)` on macOS, canonical handle checks
+  on Windows) against concurrent path and symlink substitution.
+- **Active policy hooks (`pandora policy hooks list|validate`, `--hooks <path>`)**:
+  declarative lifecycle-hook vetoes loaded into the execution controller; vetoed
+  operations fail closed with `policy_denied` before effect authorization.
+- **Recursive self-improvement substrate**: LATS Monte Carlo tree search, System 1
+  to System 2 escalation gate, Deep Reflexion diagnostics, Voyager curriculum
+  (`pandora curriculum`, `--strategy lats`), tripartite cognitive governance,
+  Pareto and Bayesian verifiers, and signed memory capsule export.
+- **Reasoning effort control and prompt cache optimization**, plus expanded
+  architecture, verification, evolution, and swarm Harness domains.
+- **Module decomposition** of the execution controller, agent loop, and provider
+  client with public APIs unchanged.
+- **Security**: `tokio` 1.54.1 (RUSTSEC-2026-0386), `rustls-webpki` 0.103.16 and
+  `webpki-roots` 1.0.10 (RUSTSEC-2026-0381, RUSTSEC-2026-0382).
+- Root `install.sh` and `install.ps1` entry points; job store busy-retry fix.
+
 ## v2.0.0-beta.9
 
 - **Durable Multi-Agent Kanban Board (`pandora kanban`)**: SQLite-backed coordination

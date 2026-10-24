@@ -593,11 +593,11 @@ mod tests {
             "stable"
         );
         assert_eq!(
-            validate_release_channel("v2.0.0-beta.9", Some("beta")).unwrap(),
+            validate_release_channel("v2.0.0-beta.10", Some("beta")).unwrap(),
             "beta"
         );
         assert!(matches!(
-            validate_release_channel("v2.0.0-beta.9", Some("stable")),
+            validate_release_channel("v2.0.0-beta.10", Some("stable")),
             Err(UpdateError::InvalidChannel)
         ));
         assert_eq!(

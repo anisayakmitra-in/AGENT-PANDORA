@@ -177,7 +177,7 @@ records. No telemetry or crash record is uploaded automatically.
 
 Updates remain explicit and never resolve an ambiguous latest tag:
 
-    pandora update --release v2.0.0-beta.9 --channel beta --dry-run
+    pandora update --release v2.0.0-beta.10 --channel beta --dry-run
     pandora update --release v2.0.0-rc.1 --channel release-candidate --dry-run
     pandora update --release v2.0.0 --channel stable --dry-run
     pandora update --rollback
