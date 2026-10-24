@@ -72,9 +72,16 @@ impl ConnectorEngine {
         getrandom::fill(&mut verifier_bytes).map_err(|_| ConnectorError::EntropyUnavailable)?;
         let code_verifier = URL_SAFE_NO_PAD.encode(verifier_bytes);
 
-        let mut state_bytes = [0u8; 16];
-        getrandom::fill(&mut state_bytes).map_err(|_| ConnectorError::EntropyUnavailable)?;
-        let state = URL_SAFE_NO_PAD.encode(state_bytes);
+        // The state is passed back on the command line as `--state <value>`. A
+        // leading `-` would be read as another option, so such values are redrawn.
+        let state = loop {
+            let mut state_bytes = [0u8; 16];
+            getrandom::fill(&mut state_bytes).map_err(|_| ConnectorError::EntropyUnavailable)?;
+            let candidate = URL_SAFE_NO_PAD.encode(state_bytes);
+            if !candidate.starts_with('-') {
+                break candidate;
+            }
+        };
 
         let mut hasher = Sha256::new();
         hasher.update(code_verifier.as_bytes());
@@ -227,6 +234,16 @@ mod tests {
         hasher.update(pkce.code_verifier.as_bytes());
         let expected_challenge = URL_SAFE_NO_PAD.encode(hasher.finalize());
         assert_eq!(pkce.code_challenge, expected_challenge);
+    }
+
+    #[test]
+    fn generated_state_never_starts_with_a_dash() {
+        // A leading `-` is read as an option by the CLI. 1 in 64 draws would hit
+        // it, so 2048 draws make an unfiltered generator fail with near certainty.
+        for _ in 0..2048 {
+            let pkce = ConnectorEngine::generate_pkce_challenge().unwrap();
+            assert!(!pkce.state.starts_with('-'), "state {:?}", pkce.state);
+        }
     }
 
     #[test]
