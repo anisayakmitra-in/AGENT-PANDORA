@@ -51,19 +51,13 @@ pandora --version
 A source build is locally compiled code, not an OS-trust attestation. Gatekeeper,
 SmartScreen, antivirus, and enterprise policy may still apply.
 
-## Desktop
+## First Interactive Run
 
-The desktop product was deleted on 2026-10-05. There is no desktop install path,
-no desktop tree, and no flag that restores one. Use the CLI source build above or
-a published CLI installer.
-
-## First CLI run
-
-Start interactive setup and keep provider credentials outside the
-configuration file:
+Typing `pandora` in an interactive terminal auto-initializes your local workspace configuration and opens the 4-view **Pandora TUI** workbench immediately. You can configure a provider preset inside the TUI with `/setup <ollama|openrouter|deepseek|openai|anthropic|groq>` (or `Ctrl+P`), or via the CLI:
 
 ```text
-pandora setup --interactive
+pandora
+pandora setup --preset ollama
 pandora doctor --json
 ```
 
@@ -98,9 +92,8 @@ is not locally built and trusted.
 
 ## Support status
 
-The `2.0.0-beta.10` installers support the native CLI on Windows, macOS, and
-Linux. The CLI is the only shipped surface; the desktop product was deleted on
-2026-10-05. No package is
+The `2.0.0-beta.10` installers support the native CLI and TUI on Windows, macOS, and
+Linux. No package is
 OS-signed on any channel; see
 [platform support](PLATFORMS.md) for the integrity guarantees that replace
 code signing and for the supported install channels.

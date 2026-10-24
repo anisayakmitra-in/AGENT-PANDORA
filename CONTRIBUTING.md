@@ -69,7 +69,6 @@ Keep each pull request tied to one issue or one small defect. In the description
 - name the authority boundary touched or say that none changed;
 - list the exact commands you ran;
 - call out incomplete platform checks or release evidence;
-- include screenshots for visible UI changes to the retained adapter;
 - update docs when a public command, JSON field, package contract, or lifecycle
   changes.
 
@@ -90,12 +89,8 @@ python scripts/validate_repo.py
 python scripts/validate_docs.py
 ```
 
-The desktop product was deleted on 2026-10-05. There is no desktop tree and
-no desktop build, test, packaging, or release path; see the changelog.
-
 Native packaging is platform-specific. Say which operating systems you tested.
-Do not claim a Windows, macOS, or Linux release check from a frontend-only
-build.
+Do not claim a Windows, macOS, or Linux release check without running native verification.
 
 ## Architecture rules
 

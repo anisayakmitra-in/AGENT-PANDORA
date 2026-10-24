@@ -1,5 +1,23 @@
 # Memory
 
+## 5-Tier Crystallized Memory Architecture
+
+```mermaid
+flowchart LR
+    L0["L0: Meta Rules<br/>pandora://meta/rules<br/>In-RAM Expiring Ring Buffer"]
+    L1["L1: Insight Index<br/>pandora://index/{intent}/{id}<br/>Scoped Summaries & Provenance"]
+    L2["L2: Global Facts<br/>pandora://facts/{topic}/{id}<br/>Approval-Promoted Facts"]
+    L3["L3: Task Skills / SOPs<br/>pandora://sops/{sop_id}<br/>Validated Multi-Step DAGs"]
+    L4["L4: Session Archive<br/>pandora://archives/{archive_id}<br/>Immutable Diff & Receipt Digests"]
+    CAP["MemoryCapsule (.capsule.json)<br/>SHA-256 + Ed25519 P2P Mesh Sync"]
+
+    L0 --> L1
+    L1 -->|"Explicit Approval"| L2
+    L1 -->|"Reflexion + Bayesian Gate"| L3
+    L3 --> L4
+    L3 -->|"Export / Gossip Sync"| CAP
+```
+
 ## Shipped
 
 `pandora-runtime::MemoryEngine` provides five crystallized memory tiers:

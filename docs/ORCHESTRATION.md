@@ -6,6 +6,24 @@ evidence layer. It cannot execute a tool, issue a permit, select a Gene,
 activate an evolution candidate, or bypass Parliament and the Reference
 Monitor.
 
+```mermaid
+flowchart LR
+    PLAN["Root Planner<br/>(coordination-meta)"]
+    S1["Specialist Role A<br/>(security_auditor)"]
+    S2["Specialist Role B<br/>(cache_specialist)"]
+    S3["Specialist Role C<br/>(load_tester)"]
+    SYN["Synthesizer<br/>(synthesis-domain)"]
+    VER["Canary Verification Gate<br/>(verification-meta)"]
+
+    PLAN --> S1
+    PLAN --> S2
+    PLAN --> S3
+    S1 --> SYN
+    S2 --> SYN
+    S3 --> SYN
+    SYN --> VER
+```
+
 ## Multi-repository plan
 
 A submitted plan binds every role to exactly one repository identity, workspace

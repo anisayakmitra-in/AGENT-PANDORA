@@ -4,6 +4,20 @@ Status: partial in the current `v2.0.x` preview line.
 
 Pandora records improvement evidence without allowing the improvement system to authorize or activate itself.
 
+```mermaid
+flowchart LR
+    GEN["Generator / IslandModelEvolver<br/>Proposes Candidate in Git Worktree"]
+    CRIT["Critic<br/>3D ParetoFrontier + BayesianCanaryGate"]
+    GOV["Governor / Parliament<br/>Human Approval + Signature Evidence"]
+    ROLL["Staged Rollout<br/>canary ──► limited ──► expanded ──► complete"]
+    ACT["ReplacementEngine<br/>Quiescence Guard + ArtifactCatalog Activation"]
+
+    GEN --> CRIT
+    CRIT -->|"Non-Dominated & LCB95 > Baseline"| GOV
+    GOV -->|"Self-Approval Forbidden"| ROLL
+    ROLL --> ACT
+```
+
 ## Shipped
 
 - `ReflexionArtifact` stores a bounded, redacted summary, failure signals, and lesson tied to an execution.

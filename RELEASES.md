@@ -1,8 +1,6 @@
 # Release policy
 
-Pandora ships as a CLI. The desktop product was deleted on 2026-10-05, so it has
-no build, signing, publication, or support path, and this document treats every
-desktop reference as historical context.
+Pandora ships as a native Rust CLI and interactive TUI.
 
 Pandora uses plain SemVer tags and release titles. Stable and prerelease
 versions use the same tag format; prereleases use neutral suffixes such as
@@ -28,9 +26,7 @@ source commit. This is a release contract, not a mutable workflow input:
 
 `cli-only` is the only scope. It publishes the native CLI, launcher, installers,
 checksums, signature, SBOM, provenance, notes, and CLI lifecycle evidence.
-
-There is no second scope. The desktop product was deleted on 2026-10-05, so a
-scope that could select it had nothing to select. The release gate asserts
+The release gate asserts
 `cli-only` explicitly rather than assuming it, and the policy rejects any
 other value.
 
@@ -224,7 +220,7 @@ notarization evidence, because no release artifact claims one.
 
 The stable release index never claims rollback closure before published
 lifecycle jobs run. After every stable publication, the release workflow waits
-for all CLI and desktop install/update/backup/restore/rollback/uninstall jobs and
+for all CLI install/update/backup/restore/rollback/uninstall jobs and
 then emits `stable-rollback-evidence.json` bound to the tag, commit, predecessor,
 and workflow run.
 

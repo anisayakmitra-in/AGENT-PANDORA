@@ -71,13 +71,6 @@ those checks.
 
 ## Reviewed dependency backports
 
-None are currently in the tree. The only backport this project carried was a
-one-line mutable out-argument fix applied to a vendored `glib 0.18.5` source,
-which existed solely for the deleted desktop adapter's Linux build. That tree,
-its Cargo source override, the vendored source, and the repository validation
-that bound the reviewed digest were all removed on 2026-10-05.
-
-The workspace `Cargo.lock` has no `glib` entry, and no workspace crate pulls in
-a GUI toolkit or a webview stack. `cargo audit --deny warnings` in
-`security.yml` therefore audits the real dependency graph, with no advisory
+None are currently in the tree. The workspace `Cargo.lock` contains no GUI toolkit or webview stack. `cargo audit --deny warnings` in
+`security.yml` audits the full dependency graph directly, with no advisory
 exception and no source override.

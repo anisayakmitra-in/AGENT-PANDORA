@@ -16,24 +16,33 @@ those concerns in the runtime:
 - ReferenceMonitor issues scoped, one-shot effect permits.
 - EffectExecutor performs permitted effects and records receipts.
 
+```mermaid
+flowchart LR
+    TUI["Pandora TUI / CLI"] --> EC["ExecutionController"]
+    EC --> SC["Shadow Council<br/>(Selects Composition)"]
+    SC --> PAR["Parliament<br/>(Policy & Approvals)"]
+    PAR --> RM["ReferenceMonitor<br/>(One-Shot Permit)"]
+    RM --> EX["EffectExecutor<br/>(Confined Execution)"]
+    EX --> RCPT["Cryptographic Receipt"]
+```
+
 Learning and evolution components can propose or evaluate changes, but they
 cannot issue permits, change policy roots, or activate themselves.
 
 ## What is shipped
 
-The current `2.0.0-beta.10` line is a CLI-first prerelease with:
+The current `2.0.0-beta.10` line is a CLI and TUI release with:
 
-- a Rust runtime and Ratatui client;
+- an interactive 4-view Ratatui TUI workbench (launched immediately via `pandora`) and 42 CLI subcommands;
 - multi-provider configuration and bounded tool workflows;
 - durable sessions, jobs, local subagents, and runtime service access;
 - local governed MCP stdio support;
-- Harness, Gene, Skill, memory, graph, evaluation, and evolution contracts;
+- Harness, Gene, Skill, 5-tier memory (L0-L4), graph, evaluation, and evolution contracts;
 - a typed TypeScript launcher/client boundary.
 
 Pandora does not treat a type as proof that a product feature is complete.
-Release notes and tests define the supported scope. The desktop product was
-deleted on 2026-10-05 and nothing of it remains in the tree. Remote
-execution and marketplace distribution also sit outside the shipped boundary.
+Release notes and tests define the supported scope. Remote
+execution and marketplace distribution sit outside the shipped boundary.
 
 ## Who it is for
 

@@ -1,7 +1,6 @@
 # Pandora roadmap
 
-Pandora is a CLI project. The desktop product was deleted on 2026-10-05 and
-left no tree, build, packaging, or release path behind.
+Pandora is a local-first Rust CLI and interactive TUI agent platform.
 
 Completion is estimated from the CLI source tree, tests, workflows, and
 documented release gates. It is not a release claim.

@@ -10,8 +10,7 @@ orchestration, evaluation primitives, and memory synthesis now exist. Their
 remaining operating and release work is tracked in
 [the audited roadmap](ROADMAP.md).
 
-The desktop product was deleted on 2026-10-05 and left no build, signing, or
-publication gate behind. The CLI is the only shipped surface.
+The native CLI and interactive TUI are the shipped product surface.
 
 ## Identity and tenant isolation
 
@@ -207,8 +206,7 @@ job and exposes only the validated `scope` and `channel` values to later jobs.
 It never infers a scope from a release tag.
 
 `cli-only` is the only scope. It requires native CLI artifacts and the full
-evidence set. There is no second scope: the desktop product was deleted on
-2026-10-05, so a scope that could select it had nothing to select. The release
+evidence set. The release
 gate asserts `cli-only` explicitly rather than assuming it, and the policy
 rejects any other value.
 

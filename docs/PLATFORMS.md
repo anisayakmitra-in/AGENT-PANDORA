@@ -12,11 +12,7 @@ WSL uses the Linux CLI environment. It is not a separate packaged target.
 Source development requires Rust `1.97.1`. Release installation does not
 require Rust.
 
-## Desktop
-
-The desktop product was deleted on 2026-10-05. There is no desktop tree, no
-desktop build target, no signing path, and no CI job for one. The CLI below is
-the only shipped product surface.
+## Release Integrity & Verification Posture
 
 **Pandora release binaries are not OS-signed.** There is no Authenticode
 signature, no Developer ID signature, and no notarization on any release
@@ -160,7 +156,4 @@ identity.
 
 ## Product boundary
 
-The `2.0.0-beta.10` identity is the next CLI release line, and the CLI is the
-only active product surface. Desktop packaging, signing, and publication are
-cancelled, so the retained adapter source takes part in no release gate this
-repository runs.
+The `2.0.0-beta.10` identity is the active CLI and TUI release line, and the native CLI/TUI binary is the sole product surface.

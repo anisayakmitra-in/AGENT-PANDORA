@@ -5,23 +5,25 @@
 ```mermaid
 flowchart TB
     %% ===== Core components =====
-    CLI["CLI Command Surface<br/>pandora-cli<br/>37 commands"]
+    CLI["TUI & CLI Command Surface<br/>pandora-cli<br/>42 root commands + 4-view TUI"]
     SVC["LocalService<br/>pandora-service<br/>RPC + wiring"]
     EC["ExecutionController<br/>run lifecycle"]
+    SC["ShadowCouncil<br/>composition selection"]
     PAR["Parliament<br/>decision + approval"]
     RM["ReferenceMonitor<br/>policy enforcement"]
     EX["Executor / Harness<br/>runs the work"]
     RCPT["Receipt<br/>execution record"]
-    FLEET["Fleet<br/>fences + leases + nodes"]
+    FLEET["Fleet & Kanban<br/>fences + leases + nodes"]
     JS["JobStore<br/>job persistence"]
     PROV["Provider<br/>external LLM"]
     SV["SecretVault<br/>secrets"]
     DT["DeviceTrust<br/>device identity"]
 
     %% ===== Primary path =====
-    CLI -->|"RPC"| SVC
+    CLI -->|"Direct / Loopback RPC"| SVC
     SVC --> EC
-    EC --> PAR
+    EC --> SC
+    SC --> PAR
     PAR --> RM
     RM --> EX
     EX --> RCPT
@@ -62,15 +64,49 @@ flowchart TB
     classDef external fill:#3a1a1a,stroke:#d94a4a,color:#ddd
     classDef boundary fill:#1a3a2a,stroke:#4ad98a,color:#ddd
 
-    class CLI,SVC,EC,PAR,RM,EX,RCPT primary
+    class CLI,SVC,EC,SC,PAR,RM,EX,RCPT primary
     class FLEET,JS,SV,DT support
     class EXT_LLM,EXT_GH,EXT_NPM external
 ```
 
+## End-to-End Governed Execution Sequence
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Op as Operator (TUI / CLI)
+    participant EC as ExecutionController
+    participant S1 as DecisionEngine / LATS
+    participant SC as ShadowCouncil
+    participant PAR as Parliament & Veto Hooks
+    participant RM as ReferenceMonitor
+    participant EX as Confined Executor
+    participant DB as SQLite WAL (Receipts & L0-L4 Memory)
+
+    Op->>EC: Invoke `pandora` (TUI) or `pandora run ...`
+    EC->>S1: Evaluate System 1 Logprob Reflex & Tool Safety Gate
+    alt Margin < Uncertainty Threshold
+        S1->>S1: Escalate to System 2 LATS MCTS (PUCT Selection)
+    end
+    S1-->>EC: Validated Intent + Route Class
+    EC->>SC: Assemble Immutable ExecutionProfile (Harness + Gene + Provider)
+    SC-->>EC: Digest-Bound ExecutionProfile
+    EC->>PAR: Submit OperationRequest for Constitutional Review
+    alt Mutating / Process Effect Requires Human Approval
+        PAR-->>Op: Pause Execution (⚠ WAITING APPROVAL)
+        Op->>PAR: Approve (Ctrl+Y / /approve) or Deny (Ctrl+N / /deny)
+    end
+    PAR->>RM: Request Scoped Authorization
+    RM-->>EX: Mint One-Shot, Expiring EffectPermit
+    EX->>EX: Verify Permit Digest & Execute in Confined Boundary
+    EX->>DB: Commit Cryptographic Receipt + SessionJournal Step + L1 Summary
+    DB-->>Op: Return Verified Output & Diff
+```
+
 ## Component cards
 
-### CLI Command Surface
-- **Role**: Entry point; 37 commands (setup, run, tui, job, subagent, package, memory, doctor, backup, restore, update, service, graph, fleet, ...)
+### TUI & CLI Command Surface
+- **Role**: Primary interactive and headless entry point; bare `pandora` launches the 4-view Ratatui TUI workbench immediately, alongside 42 root CLI commands (`setup`, `run`, `tui`, `job`, `subagent`, `package`, `memory`, `doctor`, `backup`, `update`, `service`, `graph`, `fleet`, `kanban`, `decision`, `evolution`, `policy`, ...)
 - **Owns**: argument parsing, output formatting, human interaction
 - **Trusts**: LocalService over authenticated loopback RPC
 - **Does not**: execute work directly, hold secrets in plaintext
@@ -190,19 +226,19 @@ Pandora is organized as a Cargo workspace with strict crate boundaries:
 | Path | Crate / Directory | Primary Role |
 | :--- | :--- | :--- |
 | `crates/pandora-types` | `pandora-types` | Canonical domain types, identifiers (`HarnessId`, `GeneId`, `ExecutionId`, `PermitId`), error models, and immutable `ExecutionProfile`. |
-| `crates/pandora-runtime` | `pandora-runtime` | The central execution engine. Houses the 23 discrete engines, Parliament, Shadow Council, ReferenceMonitor, 5-layer crystallized memory (L0-L4), ContextVfs, System 1 DecisionEngine, and SQLite state stores. |
+| `crates/pandora-runtime` | `pandora-runtime` | The central execution engine. Houses the 30 discrete runtime engines, Parliament, Shadow Council, ReferenceMonitor, 5-layer crystallized memory (L0-L4), ContextVfs, System 1 DecisionEngine, LATS MCTS, and SQLite state stores. |
 | `crates/pandora-harnesses` | `pandora-harnesses` | Built-in domain harnesses (`coding`, `research`, `design`, `security`, `debugging`, `data`, `operations`), meta-coordination harness, and catalog routing. |
 | `crates/pandora-provider` | `pandora-provider` | Multi-LLM provider abstraction (OpenAI, Vertex AI, Anthropic, Ollama, DeepSeek), token usage tracking, and stable prefix caching. |
 | `crates/pandora-sandbox` | `pandora-sandbox` | OS-level kernel confinement contract and verification protocol (specifications for Linux Landlock ABI + seccomp-bpf, Windows Job Objects + Restricted Tokens, and macOS Seatbelt; currently in contract-stage verification). |
 | `crates/pandora-service` | `pandora-service` | Authenticated loopback IPC/RPC daemon service (`pandora-service`), session router, and token auth. |
-| `crates/pandora-cli` | `pandora-cli` | The 37 public user-facing commands (`run`, `package`, `harness`, `memory`, `evolution`, `fleet`, `job`, `tui`, etc.). |
+| `crates/pandora-cli` | `pandora-cli` | The 4-view interactive Ratatui TUI workbench and 42 public user-facing CLI commands (`run`, `package`, `harness`, `memory`, `evolution`, `fleet`, `kanban`, `job`, `tui`, etc.). |
 | `sdk/` | Extension Starters | Reference starter packages for [Domain Harnesses](../sdk/domain-harness-starter/README.md), [Meta Harnesses](../sdk/meta-harness-starter/README.md), and [Wasm Genes](../sdk/gene-pack/README.md). |
 | `npm/pandora-cli` | TypeScript Launcher | npm distribution boundary, TypeScript client types, and cross-platform launcher. |
 | `scripts/` | Verification & CI | Toolchain verification (`prepush.ps1`), repository validation (`validate_repo.py`), and documentation validation (`validate_docs.py`). |
 
-## The 23 Runtime Engines
+## The 30 Runtime Engines
 
-The core runtime (`crates/pandora-runtime/src/`) is composed of 23 discrete engines collaborating under strict governance:
+The core runtime (`crates/pandora-runtime/src/`) is composed of 30 discrete engines collaborating under strict governance:
 
 | Engine | Source File | Core Responsibility | Downstream Collaboration |
 | :--- | :--- | :--- | :--- |
