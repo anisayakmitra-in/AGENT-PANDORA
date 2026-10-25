@@ -490,6 +490,12 @@ jobs:
           curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
             --output "$checksums" \
             "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/${GITHUB_REF_NAME}/checksums.txt"
+          curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
+            --output "$checksums.sig" \
+            "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/${GITHUB_REF_NAME}/checksums.txt.sig"
+          curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
+            --output "$checksums.pem" \
+            "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/${GITHUB_REF_NAME}/checksums.txt.pem"
 
           # Verify the build attestation for the published binary, independently
           # of the checksum path. This is free provenance from GitHub and does not
@@ -521,15 +527,20 @@ jobs:
             test "$actual" = "$expected"
           }
 
+          identity_base="${PANDORA_COSIGN_IDENTITY%@*}"
+          export PANDORA_COSIGN_IDENTITY="$identity_base@refs/tags/$predecessor"
           PANDORA_VERSION="$predecessor" sh "$installer"
           assert_version "$cli" "$predecessor"
           mkdir -p "$(dirname "$update_target")"
           cp "$cli" "$update_target"
 
+          export PANDORA_COSIGN_IDENTITY="$identity_base@refs/tags/$GITHUB_REF_NAME"
           PANDORA_VERSION="$GITHUB_REF_NAME" sh "$installer"
           assert_version "$cli" "$GITHUB_REF_NAME"
+          export PANDORA_COSIGN_IDENTITY="$identity_base@refs/tags/$predecessor"
           PANDORA_VERSION="$predecessor" sh "$installer"
           assert_version "$cli" "$predecessor"
+          export PANDORA_COSIGN_IDENTITY="$identity_base@refs/tags/$GITHUB_REF_NAME"
           PANDORA_VERSION="$GITHUB_REF_NAME" sh "$installer"
           assert_version "$cli" "$GITHUB_REF_NAME"
 
@@ -591,6 +602,12 @@ jobs:
           Invoke-WebRequest `
             -Uri "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/$env:GITHUB_REF_NAME/checksums.txt" `
             -OutFile $checksums
+          Invoke-WebRequest `
+            -Uri "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/$env:GITHUB_REF_NAME/checksums.txt.sig" `
+            -OutFile "$checksums.sig"
+          Invoke-WebRequest `
+            -Uri "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/$env:GITHUB_REF_NAME/checksums.txt.pem" `
+            -OutFile "$checksums.pem"
           $published = Join-Path $env:RUNNER_TEMP "published-${{ matrix.artifact }}"
           Invoke-WebRequest `
             -Uri "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/$env:GITHUB_REF_NAME/${{ matrix.artifact }}" `
@@ -613,19 +630,27 @@ jobs:
             if ($actual -ne $expected) { throw "expected '$expected' but received '$actual'" }
           }
 
+          $identityBase = $env:PANDORA_COSIGN_IDENTITY.Substring(0, $env:PANDORA_COSIGN_IDENTITY.LastIndexOf('@'))
+          $predecessorIdentity = "$identityBase@refs/tags/$predecessor"
+          $currentIdentity = $env:PANDORA_COSIGN_IDENTITY
+
           $env:PANDORA_VERSION = $predecessor
+          $env:PANDORA_COSIGN_IDENTITY = $predecessorIdentity
           & $installer
           Assert-Version $cli $predecessor
           New-Item -ItemType Directory -Force -Path $updateDirectory | Out-Null
           Copy-Item -LiteralPath $cli -Destination $updateTarget
 
           $env:PANDORA_VERSION = $env:GITHUB_REF_NAME
+          $env:PANDORA_COSIGN_IDENTITY = $currentIdentity
           & $installer
           Assert-Version $cli $env:GITHUB_REF_NAME
           $env:PANDORA_VERSION = $predecessor
+          $env:PANDORA_COSIGN_IDENTITY = $predecessorIdentity
           & $installer
           Assert-Version $cli $predecessor
           $env:PANDORA_VERSION = $env:GITHUB_REF_NAME
+          $env:PANDORA_COSIGN_IDENTITY = $currentIdentity
           & $installer
           Assert-Version $cli $env:GITHUB_REF_NAME
 
