@@ -622,11 +622,6 @@ impl AgentLoop {
                 "agent session contains an ambiguous pending tool batch",
             )));
         }
-        if !pending_tool_calls.is_empty() && approval.is_none() {
-            return Err(AgentLoopError::Execution(RuntimeError::InvalidIntent(
-                "agent session has a pending approval",
-            )));
-        }
         if pending_tool_calls.is_empty() && approval.is_some() {
             return Err(AgentLoopError::Execution(RuntimeError::InvalidIntent(
                 "agent approval has no pending tool call",
@@ -700,6 +695,13 @@ impl AgentLoop {
         let mut messages = vec![ChatMessage::system(context_assembly.text())?];
         messages.extend(history);
         if approval.is_none() {
+            for call in &pending_tool_calls {
+                messages.push(untrusted_tool_result(
+                    call.id(),
+                    Some(call.name()),
+                    "tool execution cancelled: superseded by user message",
+                )?);
+            }
             messages.push(ChatMessage::user(task)?);
         }
         let mut usage = TokenUsage::default();
@@ -917,7 +919,7 @@ impl AgentLoop {
                     &session,
                     now,
                     &mut runs,
-                    approval.as_ref(),
+                    None,
                     trusted_harness.as_ref(),
                     &mut convergence,
                 )? {

@@ -1,6 +1,9 @@
 use super::{ParsedArgs, parse_options, slash};
 use crate::output::{CliError, CommandResult, success};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers, MouseEvent, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::CrosstermBackend;
@@ -79,7 +82,7 @@ impl TerminalSession {
     fn enter() -> Result<Self, CliError> {
         terminal::enable_raw_mode().map_err(terminal_error)?;
         let mut stdout = io::stdout();
-        if let Err(error) = execute!(stdout, EnterAlternateScreen) {
+        if let Err(error) = execute!(stdout, EnterAlternateScreen, EnableMouseCapture) {
             let _ = terminal::disable_raw_mode();
             return Err(terminal_error(error));
         }
@@ -87,7 +90,7 @@ impl TerminalSession {
             Ok(terminal) => terminal,
             Err(error) => {
                 let _ = terminal::disable_raw_mode();
-                let _ = execute!(io::stdout(), LeaveAlternateScreen);
+                let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
                 return Err(terminal_error(error));
             }
         };
@@ -102,7 +105,11 @@ impl TerminalSession {
             return;
         }
         let _ = self.terminal.show_cursor();
-        let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
+        let _ = execute!(
+            self.terminal.backend_mut(),
+            LeaveAlternateScreen,
+            DisableMouseCapture
+        );
         let _ = terminal::disable_raw_mode();
         self.active = false;
     }
@@ -1121,13 +1128,31 @@ impl App {
                 continue;
             }
             let event = event::read().map_err(terminal_error)?;
-            if let Event::Key(key) = event
-                && self.handle_key(key)
-            {
-                break;
+            match event {
+                Event::Key(key) => {
+                    if self.handle_key(key) {
+                        break;
+                    }
+                }
+                Event::Mouse(mouse) => {
+                    self.handle_mouse(mouse);
+                }
+                _ => {}
             }
         }
         Ok(())
+    }
+
+    fn handle_mouse(&mut self, mouse: MouseEvent) {
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                self.scroll_offset = self.scroll_offset.saturating_add(3);
+            }
+            MouseEventKind::ScrollDown => {
+                self.scroll_offset = self.scroll_offset.saturating_sub(3);
+            }
+            _ => {}
+        }
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> bool {
@@ -1231,6 +1256,20 @@ impl App {
                 }
                 KeyCode::Down => {
                     self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                    return false;
+                }
+                _ => {}
+            }
+        }
+
+        if key.modifiers.contains(KeyModifiers::SHIFT) {
+            match key.code {
+                KeyCode::Up => {
+                    self.scroll_offset = self.scroll_offset.saturating_add(2);
+                    return false;
+                }
+                KeyCode::Down => {
+                    self.scroll_offset = self.scroll_offset.saturating_sub(2);
                     return false;
                 }
                 _ => {}
@@ -1632,9 +1671,6 @@ impl App {
                     };
                     if !results.iter().any(|(c, _)| c == &display_token) {
                         results.push((display_token, entry.description.to_owned()));
-                        if results.len() >= 6 {
-                            break;
-                        }
                     }
                 }
             }
@@ -1826,7 +1862,7 @@ impl App {
                 self.push_message("Closing...");
                 return true;
             }
-            "/help" => {
+            "/" | "/commands" | "/help" | "/?" => {
                 for message in [
                     "/help       show TUI commands",
                     "/model      open Pandora model & provider picker modal (Ctrl-M) or /model <provider:model>",
@@ -2227,6 +2263,14 @@ impl App {
                     None => "session: not started".to_owned(),
                 });
             }
+            "/new" | "/reset" | "/session new" => {
+                self.session_id = None;
+                self.pending = None;
+                self.turns = 0;
+                self.messages.clear();
+                self.scroll_offset = 0;
+                self.push_message("session> Started new clean session. Ready for tasks.".to_owned());
+            }
             "/clear" => {
                 self.messages.clear();
                 self.scroll_offset = 0;
@@ -2377,6 +2421,24 @@ impl App {
             "/deny" => self.resolve_pending(false),
             value if value.starts_with("/approve ") || value.starts_with("/deny ") => {
                 self.push_message("usage> /approve and /deny do not accept arguments");
+            }
+            value
+                if self.pending.is_some()
+                    && matches!(
+                        value.trim().to_ascii_lowercase().as_str(),
+                        "y" | "yes" | "approve" | "allow"
+                    ) =>
+            {
+                self.resolve_pending(true);
+            }
+            value
+                if self.pending.is_some()
+                    && matches!(
+                        value.trim().to_ascii_lowercase().as_str(),
+                        "n" | "no" | "deny" | "reject"
+                    ) =>
+            {
+                self.resolve_pending(false);
             }
             value if value.starts_with('/') => self.run_slash(value.to_owned(), None),
             value if value.starts_with('!') => {
@@ -3499,9 +3561,14 @@ impl App {
     }
 
     fn run_task_with_approval(&mut self, task: String, approval_id: Option<&str>) {
-        if approval_id.is_none() && self.pending.is_some() {
-            self.push_message("approval> resolve the pending approval first");
-            return;
+        if approval_id.is_none()
+            && let Some(pending) = self.pending.take()
+        {
+            let _ = super::approval::execute(&self.approval_args(&pending.approval_id, false));
+            self.push_message(format!(
+                "approval> pending approval {} discarded (superseded by new instruction)",
+                pending.approval_id
+            ));
         }
         self.push_message(format!("you> {task}"));
         let message_index = self.push_message("pandora> working...");
@@ -3535,6 +3602,9 @@ impl App {
                         invocation: PendingInvocation::Agent(task),
                         approval_id: approval_id.to_owned(),
                     });
+                    self.push_message("approval> Action required: Type /approve (or press Ctrl+Y / type 'y') to allow, or /deny (Ctrl+N / 'n') to reject");
+                } else if error.message.contains("has a pending approval") || error.message.contains("already resolved or consumed") {
+                    self.push_message("hint> Type /new to start a fresh clean session");
                 }
                 self.record_sparkline(5);
             }
@@ -3543,9 +3613,14 @@ impl App {
     }
 
     fn run_slash(&mut self, line: String, approval_id: Option<&str>) {
-        if approval_id.is_none() && self.pending.is_some() {
-            self.push_message("approval> resolve the pending approval first");
-            return;
+        if approval_id.is_none()
+            && let Some(pending) = self.pending.take()
+        {
+            let _ = super::approval::execute(&self.approval_args(&pending.approval_id, false));
+            self.push_message(format!(
+                "approval> pending approval {} discarded (superseded by new instruction)",
+                pending.approval_id
+            ));
         }
         self.push_message(format!("you> {line}"));
         let message_index = self.push_message("pandora> working...");
@@ -3660,6 +3735,9 @@ impl App {
 
     fn run_args(&self, task: &str, approval_id: Option<&str>) -> Vec<String> {
         let mut args = vec!["--agent".to_owned()];
+        if self.args.has_flag("trusted-process") {
+            args.push("--trusted-process".to_owned());
+        }
         for name in [
             "config",
             "data-dir",
@@ -4036,9 +4114,9 @@ impl App {
             .collect::<Vec<_>>();
 
         let title = if effective_scroll > 0 {
-            format!("Transcript (scrolled +{effective_scroll} · PageDown to follow)")
+            format!(" Transcript (scrolled +{effective_scroll} · PageDown / Scroll down to follow) ")
         } else {
-            "Transcript".to_owned()
+            " Transcript (Scroll wheel / PageUp / Shift+Up to view history) ".to_owned()
         };
 
         let transcript = Paragraph::new(visible_lines).block(
@@ -4569,8 +4647,13 @@ impl App {
         } else {
             format!(" · 📌 {} stashed", self.draft_stash.len())
         };
+        let approval_tag = if self.pending.is_some() {
+            " · ⚠️ APPROVAL PENDING (Ctrl+Y / /approve)"
+        } else {
+            ""
+        };
         let status = format!(
-            "session: {session} · model: {}:{} · turns: {} · state: {} · view: {} · theme: {}{focus_tag}{stash_tag} · presentation only",
+            "session: {session} · model: {}:{} · turns: {} · state: {} · view: {} · theme: {}{focus_tag}{stash_tag}{approval_tag}",
             self.active_provider_label,
             self.active_model_label,
             self.turns,
@@ -4597,7 +4680,9 @@ impl App {
             Span::raw(input),
         ]);
         let mut block = Block::default().borders(Borders::TOP);
-        if area.width >= WIDE_LAYOUT_MIN_WIDTH {
+        if self.pending.is_some() {
+            block = block.title(Span::styled(" [⚠️ PENDING APPROVAL: /approve (Ctrl+Y) to allow · /deny (Ctrl+N) to reject] ", self.theme.warning()));
+        } else if area.width >= WIDE_LAYOUT_MIN_WIDTH {
             block = block.title(Span::styled(mode.badge(), self.theme.muted()));
         }
         frame.render_widget(Paragraph::new(input_line).block(block), area);
@@ -4614,18 +4699,30 @@ impl App {
         if suggestions.is_empty() || workspace_area.height < 5 || input_area.width < 24 {
             return;
         }
-        let popup_height = (suggestions.len() as u16).saturating_add(2).min(8);
-        let popup_width = input_area.width.min(76);
+        let total = suggestions.len();
+        let max_visible = usize::from(workspace_area.height.saturating_sub(4)).clamp(3, 10);
+        let visible_count = min(max_visible, total);
+        let selected_idx = min(self.autocomplete_index, total.saturating_sub(1));
+
+        let window_start = if selected_idx < visible_count {
+            0
+        } else {
+            selected_idx.saturating_add(1).saturating_sub(visible_count)
+        };
+        let window_end = min(window_start + visible_count, total);
+
+        let popup_height = (visible_count as u16).saturating_add(2);
+        let popup_width = input_area.width.clamp(36, 84);
         let popup_y = input_area.y.saturating_sub(popup_height.saturating_add(1));
         let popup_area = Rect::new(input_area.x, popup_y, popup_width, popup_height);
         frame.render_widget(Clear, popup_area);
 
-        let selected_idx = min(self.autocomplete_index, suggestions.len().saturating_sub(1));
-        let items = suggestions
+        let items = suggestions[window_start..window_end]
             .iter()
             .enumerate()
-            .map(|(idx, (token, desc))| {
-                let selected = idx == selected_idx;
+            .map(|(local_idx, (token, desc))| {
+                let actual_idx = window_start + local_idx;
+                let selected = actual_idx == selected_idx;
                 let prefix = if selected { " ▸ " } else { "   " };
                 let text = format!("{prefix}{:<22} {}", token, desc);
                 let style = if selected {
@@ -4638,8 +4735,17 @@ impl App {
             })
             .collect::<Vec<_>>();
 
+        let title = if total > visible_count {
+            format!(
+                " Commands ({}/{} · ↑/↓ navigate · Tab complete) ",
+                selected_idx + 1,
+                total
+            )
+        } else {
+            format!(" Commands ({total} · ↑/↓ navigate · Tab complete) ")
+        };
         let block = Block::default()
-            .title(" Autocomplete (↑/↓ select · Tab complete) ")
+            .title(title)
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(self.theme.accent());

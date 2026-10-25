@@ -88,29 +88,14 @@ pub fn apply_backdrop(buf: &mut Buffer, area: Rect, mode: BackdropMode, is_light
     for row in 0..area.height {
         let y = area.y + row;
         let py_top = (usize::from(row) * 2 * BACKDROP_HEIGHT) / (h * 2);
-        let py_bot = ((usize::from(row) * 2 + 1) * BACKDROP_HEIGHT) / (h * 2);
         for col in 0..area.width {
             let x = area.x + col;
             let px = (usize::from(col) * BACKDROP_WIDTH) / w;
-            let is_open_canvas = {
-                let cur_space = buf[(x, y)].symbol() == " ";
-                if !cur_space {
-                    false
-                } else {
-                    let left_space = col > 0 && {
-                        let sym = buf[(x - 1, y)].symbol();
-                        sym == " " || sym == "?"
-                    };
-                    let right_space = col + 1 < area.width && buf[(x + 1, y)].symbol() == " ";
-                    left_space || right_space
-                }
-            };
+            let is_open_canvas = buf[(x, y)].symbol() == " ";
             if is_open_canvas {
-                let (tr, tg, tb) = sample_pixel(px, py_top, canvas_scale, base_r, base_g, base_b);
-                let (br, bg, bb) = sample_pixel(px, py_bot, canvas_scale, base_r, base_g, base_b);
+                let (br, bg, bb) = sample_pixel(px, py_top, canvas_scale, base_r, base_g, base_b);
                 let cell = &mut buf[(x, y)];
-                cell.set_symbol("?");
-                cell.set_fg(Color::Rgb(tr, tg, tb));
+                cell.set_symbol(" ");
                 cell.set_bg(Color::Rgb(br, bg, bb));
             } else {
                 let (br, bg, bb) = sample_pixel(px, py_top, text_scale, base_r, base_g, base_b);
