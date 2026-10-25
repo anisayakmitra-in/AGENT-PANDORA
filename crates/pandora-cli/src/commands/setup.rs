@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, IsTerminal as _, Read, Write};
 use url::Url;
 
 const MAX_PROMPT_BYTES: usize = 1_024;
@@ -1277,7 +1277,11 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         ],
     )?;
     let mut config = load_config(&parsed)?;
-    if parsed.value("interactive").is_some() {
+    let is_interactive = parsed.value("interactive").is_some()
+        || (parsed.values.is_empty()
+            && std::io::stdin().is_terminal()
+            && std::io::stdout().is_terminal());
+    if is_interactive {
         configure_interactively(&mut config, &parsed)?;
     } else {
         configure_from_options(&mut config, &parsed)?;
@@ -1312,6 +1316,18 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                 "\n  ℹ Tip: Set '{env_name}' via '/key' in the TUI or in {}.",
                 dotenv_path(&config).display()
             ));
+        }
+    }
+
+    if is_interactive && std::io::stdin().is_terminal() && !parsed.has_flag("json") {
+        eprint!("Configuration saved! Launch Pandora workbench now? [Y/n]: ");
+        let _ = io::stderr().flush();
+        let mut resp = String::new();
+        if io::stdin().read_line(&mut resp).is_ok() {
+            let trimmed = resp.trim().to_lowercase();
+            if trimmed.is_empty() || trimmed == "y" || trimmed == "yes" {
+                return crate::commands::tui::execute(&[]);
+            }
         }
     }
 
@@ -1397,6 +1413,48 @@ fn configure_from_options(
     configure_default_provider(config, provider_url, model, api_key_env, protocol)
 }
 
+pub fn test_provider_connectivity(
+    base_url: &str,
+    protocol: ProviderProtocol,
+    api_key: Option<&str>,
+) -> Result<u64, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("client init error: {e}"))?;
+
+    let probe_url = if base_url.ends_with("/v1") || base_url.ends_with("/v1/") {
+        format!("{}/models", base_url.trim_end_matches('/'))
+    } else {
+        format!("{base_url}/v1/models")
+    };
+
+    let start = std::time::Instant::now();
+    let mut req = client.get(&probe_url).header("User-Agent", "Pandora/2.0.0");
+    if let Some(key) = api_key {
+        if protocol == ProviderProtocol::AnthropicMessages {
+            req = req
+                .header("x-api-key", key)
+                .header("anthropic-version", "2023-06-01");
+        } else {
+            req = req.header("Authorization", format!("Bearer {key}"));
+        }
+    }
+
+    match req.send() {
+        Ok(resp) => {
+            let latency_ms = start.elapsed().as_millis() as u64;
+            let status = resp.status().as_u16();
+            if status >= 500 {
+                Err(format!("server returned HTTP {status}"))
+            } else {
+                Ok(latency_ms)
+            }
+        }
+        Err(err) => Err(format!("probe error: {err}")),
+    }
+}
+
 fn configure_interactively(
     config: &mut pandora_runtime::config::RuntimeConfig,
     parsed: &super::ParsedArgs,
@@ -1407,8 +1465,12 @@ fn configure_interactively(
     }
     eprintln!("  Or enter a custom URL directly.");
 
+    let prompt_label = format!(
+        "Select preset [1-{}/name] or enter Provider URL (leave blank for local-only setup)",
+        PRESETS.len()
+    );
     let entered = prompt(
-        "Select preset [1-7/name] or enter Provider URL (leave blank for local-only setup)",
+        &prompt_label,
         parsed
             .value("provider-url")
             .or_else(|| parsed.value("preset"))
@@ -1418,15 +1480,14 @@ fn configure_interactively(
         return Ok(());
     }
 
-    let preset = match entered.trim().to_lowercase().as_str() {
-        "1" | "ollama" => find_preset("ollama"),
-        "2" | "openrouter" => find_preset("openrouter"),
-        "3" | "deepseek" => find_preset("deepseek"),
-        "4" | "openai" => find_preset("openai"),
-        "5" | "anthropic" => find_preset("anthropic"),
-        "6" | "groq" => find_preset("groq"),
-        "7" | "nous" => find_preset("nous"),
-        other => find_preset(other),
+    let preset = if let Ok(idx) = entered.trim().parse::<usize>() {
+        if idx >= 1 && idx <= PRESETS.len() {
+            Some(&PRESETS[idx - 1])
+        } else {
+            None
+        }
+    } else {
+        find_preset(entered.trim())
     };
 
     let (provider_url, default_model, default_key_env, protocol) = if let Some(p) = preset {
@@ -1459,6 +1520,47 @@ fn configure_interactively(
             .or_else(|| config.provider_api_key_env())
             .or(Some(default_key_env)),
     )?;
+
+    // Interactive credential prompt
+    let mut resolved_key = None;
+    if api_key_env != LOCAL_NO_API_KEY_ENV && api_key_env != "OLLAMA_API_KEY" {
+        let existing = std::env::var(&api_key_env)
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .or_else(|| read_dotenv_var(config, &api_key_env));
+
+        if let Some(ref val) = existing {
+            eprintln!("  ✓ Credential '{api_key_env}' is already configured in environment.");
+            let replace = prompt(
+                "Enter new key to replace, or press Enter to keep existing",
+                None,
+            )?;
+            if !replace.trim().is_empty() {
+                let _ = write_dotenv_var(config, &api_key_env, &replace);
+                resolved_key = Some(replace);
+            } else {
+                resolved_key = Some(val.clone());
+            }
+        } else {
+            let entered_key = prompt(&format!("API Key value for '{api_key_env}'"), None)?;
+            if !entered_key.trim().is_empty() {
+                let _ = write_dotenv_var(config, &api_key_env, &entered_key);
+                resolved_key = Some(entered_key);
+            }
+        }
+    }
+
+    // Live connectivity check
+    eprintln!("  Testing connectivity to {provider_url}...");
+    match test_provider_connectivity(&provider_url, protocol, resolved_key.as_deref()) {
+        Ok(latency_ms) => {
+            eprintln!("  ✓ Connected to provider ({}ms)", latency_ms);
+        }
+        Err(err) => {
+            eprintln!("  ⚠ Connectivity probe notice: {err}");
+        }
+    }
+
     configure_default_provider(config, &provider_url, &model, &api_key_env, protocol)
 }
 
@@ -1660,5 +1762,15 @@ mod tests {
             .expect("should exchange token via HTTP POST");
         assert_eq!(token, "sk-real-mock-exchange-token-777");
         assert!(handle.join().unwrap());
+    }
+
+    #[test]
+    fn test_connectivity_probe_against_unreachable_endpoint() {
+        let res = test_provider_connectivity(
+            "http://127.0.0.1:59999/v1",
+            ProviderProtocol::OpenAiCompatible,
+            None,
+        );
+        assert!(res.is_err());
     }
 }

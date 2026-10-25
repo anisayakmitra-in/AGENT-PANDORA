@@ -1665,3 +1665,28 @@ impl Drop for Fixture {
         let _ = std::fs::remove_dir_all(&self.path);
     }
 }
+
+#[test]
+fn test_bounded_text_smart_truncation_and_spillover() {
+    // 1. Small output should not be truncated
+    let small = b"Hello, this is a clean and bounded output.";
+    assert_eq!(
+        bounded_text(small),
+        "Hello, this is a clean and bounded output."
+    );
+
+    // 2. Output larger than MAX_TOOL_RESULT_BYTES (48KB) should preserve 40% head and 60% tail
+    let mut large = Vec::with_capacity(60 * 1024);
+    for i in 0..(60 * 1024) {
+        large.push(b'A' + (i % 26) as u8);
+    }
+    let result = bounded_text(&large);
+    assert!(result.contains("[... tool output truncated ("));
+    assert!(result.contains("bytes omitted) ...]"));
+    assert!(result.starts_with("ABCDEFGHIJKLMNOPQRSTUVWXYZ"));
+
+    // 3. Output larger than MAX_TOOL_SPILLOVER_THRESHOLD (96KB) should spill to disk
+    let massive = vec![b'Z'; 100 * 1024];
+    let massive_res = bounded_text(&massive);
+    assert!(massive_res.contains("[Full tool output (102400 bytes) preserved at:"));
+}

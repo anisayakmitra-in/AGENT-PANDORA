@@ -135,12 +135,29 @@ pub(super) fn execute_with_control(
             "trusted-process",
             "mode",
             "permission",
+            "tool-profile",
+            "tools",
         ],
     )?;
 
     if parsed.positionals.len() != 1 {
         return Err(CliError::usage("run requires exactly one task"));
     }
+    let tool_profile = if let Some(raw) = parsed.value("tool-profile") {
+        Some(
+            raw.parse::<pandora_runtime::ToolProfile>()
+                .map_err(CliError::usage)?,
+        )
+    } else {
+        None
+    };
+    let explicit_tools = parsed.value("tools").map(|raw| {
+        raw.split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    });
     let strategy = match parsed.value("strategy") {
         Some("react") => Some("react"),
         Some("reflexion") => Some("reflexion"),
@@ -397,6 +414,8 @@ pub(super) fn execute_with_control(
                 lats_depth,
                 puct_c,
                 escalation_threshold,
+                tool_profile,
+                explicit_tools,
             },
         );
     }
@@ -1046,6 +1065,12 @@ pub(super) fn execute_agent_core(
             if let Some(control) = options.control {
                 approval_context = approval_context.with_control(control);
             }
+            if let Some(profile) = options.tool_profile {
+                approval_context = approval_context.with_tool_profile(profile);
+            }
+            if let Some(ref tools) = options.explicit_tools {
+                approval_context = approval_context.with_explicit_tools(tools.clone());
+            }
             loop_engine.run_with_history_and_approval_and_skill_context(
                 provider.as_ref(),
                 controller,
@@ -1065,6 +1090,12 @@ pub(super) fn execute_agent_core(
             }
             if let Some(harness) = options.trusted_harness {
                 request = request.with_trusted_harness(harness.clone());
+            }
+            if let Some(profile) = options.tool_profile {
+                request = request.with_tool_profile(profile);
+            }
+            if let Some(tools) = options.explicit_tools {
+                request = request.with_explicit_tools(tools);
             }
             loop_engine.run_with_request(provider.as_ref(), controller, request)
         }
@@ -1508,6 +1539,8 @@ pub(super) struct AgentOptions<'a> {
     pub lats_depth: Option<u32>,
     pub puct_c: Option<f64>,
     pub escalation_threshold: Option<f64>,
+    pub tool_profile: Option<pandora_runtime::ToolProfile>,
+    pub explicit_tools: Option<Vec<String>>,
 }
 
 fn parse_agent_budget(

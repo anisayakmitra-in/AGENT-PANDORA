@@ -21,7 +21,8 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-const MAX_TOOL_RESULT_BYTES: usize = 32 * 1024;
+const MAX_TOOL_RESULT_BYTES: usize = 48 * 1024;
+const MAX_TOOL_SPILLOVER_THRESHOLD: usize = 96 * 1024;
 const MAX_SKILL_CONTEXT_BYTES: usize = 24 * 1024;
 const MAX_UNTRUSTED_CONTEXT_FRAGMENTS: usize = 8;
 const MAX_UNTRUSTED_CONTEXT_BYTES: usize = 64 * 1024;
@@ -827,12 +828,16 @@ impl AgentLoop {
         let persistent_context = persistent_context_message(&untrusted_context)?;
         let context_insert_index = history.len();
         let context_receipt = context_assembly.receipt().clone();
-        let tools = match trusted_gene_ids.as_deref() {
+        let mut tools = match trusted_gene_ids.as_deref() {
             Some(gene_ids) => self.tools.list_for_genes(gene_ids),
             None => self
                 .tools
                 .list_filtered(tool_profile, explicit_tools.as_deref()),
         };
+        // Anti-recursion safety guard: strip cronjob_manage from cron-initiated sessions
+        if session.id().as_str().starts_with("cron-") || task.starts_with("[cron:") {
+            tools.retain(|t| t.name() != "cronjob_manage");
+        }
         let schemas = tools
             .iter()
             .map(|definition| {
@@ -1514,12 +1519,43 @@ fn add_usage(total: &TokenUsage, next: &TokenUsage) -> TokenUsage {
     )
 }
 
-fn bounded_text(bytes: &[u8]) -> String {
+pub fn bounded_text(bytes: &[u8]) -> String {
     if bytes.len() <= MAX_TOOL_RESULT_BYTES {
         return String::from_utf8_lossy(bytes).into_owned();
     }
-    let mut text = String::from_utf8_lossy(&bytes[..MAX_TOOL_RESULT_BYTES]).into_owned();
-    text.push_str("\n[tool output truncated]");
+
+    let head_len = (MAX_TOOL_RESULT_BYTES * 40) / 100;
+    let tail_len = MAX_TOOL_RESULT_BYTES - head_len;
+    let truncated_bytes = bytes.len() - (head_len + tail_len);
+
+    let head_str = String::from_utf8_lossy(&bytes[..head_len]);
+    let tail_start = bytes.len() - tail_len;
+    let tail_str = String::from_utf8_lossy(&bytes[tail_start..]);
+
+    let mut text = format!(
+        "{head_str}\n\n[... tool output truncated ({truncated_bytes} bytes omitted) ...]\n\n{tail_str}"
+    );
+
+    if bytes.len() >= MAX_TOOL_SPILLOVER_THRESHOLD {
+        use sha2::{Digest, Sha256};
+        let hash = format!("{:x}", Sha256::digest(bytes));
+        let spillover_dir = std::env::var_os("PANDORA_DATA_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join("cache")
+            .join("spillover");
+        if std::fs::create_dir_all(&spillover_dir).is_ok() {
+            let file_path = spillover_dir.join(format!("{hash}.txt"));
+            if std::fs::write(&file_path, bytes).is_ok() {
+                text.push_str(&format!(
+                    "\n[Full tool output ({} bytes) preserved at: {}]",
+                    bytes.len(),
+                    file_path.display()
+                ));
+            }
+        }
+    }
+
     text
 }
 

@@ -46,6 +46,8 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "theme",
             "mode",
             "permission",
+            "tool-profile",
+            "tools",
         ],
     )?;
     if !parsed.positionals.is_empty() {
@@ -4070,6 +4072,8 @@ impl App {
             "model",
             "max-turns",
             "max-tools",
+            "tool-profile",
+            "tools",
         ] {
             if let Some(value) = self.args.value(name) {
                 args.push(format!("--{name}"));

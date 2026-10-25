@@ -58,6 +58,8 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "max-tools",
             "mode",
             "permission",
+            "tool-profile",
+            "tools",
         ],
     )?;
     if !parsed.positionals.is_empty() {
@@ -598,7 +600,15 @@ fn run_args(
     approval_id: Option<&str>,
 ) -> Vec<String> {
     let mut args = vec!["--agent".to_owned()];
-    for name in ["config", "data-dir", "workspace", "max-turns", "max-tools"] {
+    for name in [
+        "config",
+        "data-dir",
+        "workspace",
+        "max-turns",
+        "max-tools",
+        "tool-profile",
+        "tools",
+    ] {
         if let Some(value) = parsed.value(name) {
             args.push(format!("--{name}"));
             args.push(value.to_owned());
