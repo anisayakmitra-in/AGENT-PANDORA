@@ -169,9 +169,9 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let is_force = parsed.value("force").is_some();
     let current_version = format!("v{}", env!("CARGO_PKG_VERSION"));
 
-    let release_arg = parsed.value("release").or_else(|| {
-        positional_version.filter(|&v| v != "check" && v != "rollback")
-    });
+    let release_arg = parsed
+        .value("release")
+        .or_else(|| positional_version.filter(|&v| v != "check" && v != "rollback"));
 
     let target_release = if let Some(rel) = release_arg {
         if rel == "latest" {

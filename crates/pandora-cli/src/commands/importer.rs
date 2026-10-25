@@ -77,19 +77,16 @@ pub fn detect_available_agents() -> Vec<DetectedAgent> {
     }
 
     // 2. Claude Desktop
-    let desktop_config = claude_desktop_path();
-    if let Some(desktop_path) = desktop_config {
-        if desktop_path.is_file() {
-            detected.push(DetectedAgent {
-                kind: AgentKind::ClaudeDesktop,
-                name: "Claude Desktop".to_owned(),
-                path: desktop_path
-                    .parent()
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or_else(|| desktop_path.clone()),
-                config_file: Some(desktop_path),
-            });
-        }
+    if let Some(desktop_path) = claude_desktop_path().filter(|p| p.is_file()) {
+        detected.push(DetectedAgent {
+            kind: AgentKind::ClaudeDesktop,
+            name: "Claude Desktop".to_owned(),
+            path: desktop_path
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| desktop_path.clone()),
+            config_file: Some(desktop_path),
+        });
     }
 
     // 3. Cursor (~/.cursor or .cursor)
@@ -374,12 +371,9 @@ pub fn apply_imported_mcp_servers(
     let mut imported = Vec::new();
     for server in servers {
         if let Some(ref prog) = server.command {
-            if let Ok(stdio_cfg) = McpStdioConfig::new(
-                &server.id,
-                prog,
-                server.args.clone(),
-                McpProtocolMode::Auto,
-            ) {
+            if let Ok(stdio_cfg) =
+                McpStdioConfig::new(&server.id, prog, server.args.clone(), McpProtocolMode::Auto)
+            {
                 config.set_mcp_server(stdio_cfg);
                 imported.push(server.id.clone());
             }
@@ -415,7 +409,9 @@ pub fn execute_import(args: &[String]) -> Result<CommandResult, CliError> {
             let detected = detect_available_agents();
             let matched = detected.iter().find(|d| {
                 d.name.to_lowercase().contains(&target_lower)
-                    || format!("{:?}", d.kind).to_lowercase().contains(&target_lower)
+                    || format!("{:?}", d.kind)
+                        .to_lowercase()
+                        .contains(&target_lower)
             });
 
             if let Some(agent) = matched {
@@ -453,12 +449,14 @@ pub fn execute_import(args: &[String]) -> Result<CommandResult, CliError> {
         let mut servers = Vec::new();
         for agent in &detected {
             if let Some(ref cfg_file) = agent.config_file {
-                if let Ok(content) = fs::read_to_string(cfg_file) {
-                    let parsed = parse_mcp_servers_from_str(&content);
-                    if !parsed.is_empty() {
-                        sources.push(agent.name.clone());
-                        servers.extend(parsed);
-                    }
+                let content = match fs::read_to_string(cfg_file) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+                let parsed = parse_mcp_servers_from_str(&content);
+                if !parsed.is_empty() {
+                    sources.push(agent.name.clone());
+                    servers.extend(parsed);
                 }
             }
         }

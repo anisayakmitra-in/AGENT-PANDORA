@@ -1211,7 +1211,9 @@ impl App {
             return false;
         }
         if key.modifiers.contains(KeyModifiers::CONTROL)
-            && (key.code == KeyCode::Char('c') || key.code == KeyCode::Char('d') || key.code == KeyCode::Char('q'))
+            && (key.code == KeyCode::Char('c')
+                || key.code == KeyCode::Char('d')
+                || key.code == KeyCode::Char('q'))
         {
             return true;
         }
@@ -1431,7 +1433,7 @@ impl App {
                     self.cursor = 0;
                 }
                 false
-            },
+            }
             KeyCode::F(1) => {
                 self.open_palette();
                 false
@@ -2220,8 +2222,12 @@ impl App {
                     vec!["--release".to_owned(), target.to_owned()]
                 };
                 match super::update::execute(&args) {
-                    Ok(res) => { self.push_message(format!("update> {}", res.human)); }
-                    Err(err) => { self.push_message(format!("update> Error: {}", err.message)); }
+                    Ok(res) => {
+                        self.push_message(format!("update> {}", res.human));
+                    }
+                    Err(err) => {
+                        self.push_message(format!("update> Error: {}", err.message));
+                    }
                 }
             }
             "/uninstall" => {

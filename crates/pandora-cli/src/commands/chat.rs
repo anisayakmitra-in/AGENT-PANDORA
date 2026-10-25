@@ -75,10 +75,20 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let mut stdout = io::stdout();
     if io::stdout().is_terminal() {
         let config = super::load_config(&parsed).ok();
-        let provider = state.active_provider.as_deref().or_else(|| config.as_ref().and_then(|c| c.active_provider()));
-        let model = state.active_model.as_deref().or_else(|| config.as_ref().and_then(|c| c.provider_model()));
-        let default_workspace = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let workspace = config.as_ref().map(|c| c.workspace_dir()).unwrap_or(&default_workspace);
+        let provider = state
+            .active_provider
+            .as_deref()
+            .or_else(|| config.as_ref().and_then(|c| c.active_provider()));
+        let model = state
+            .active_model
+            .as_deref()
+            .or_else(|| config.as_ref().and_then(|c| c.provider_model()));
+        let default_workspace =
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let workspace = config
+            .as_ref()
+            .map(|c| c.workspace_dir())
+            .unwrap_or(&default_workspace);
         let banner = super::welcome::render_welcome_banner(
             provider,
             model,
@@ -91,7 +101,9 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     }
     println!("Pandora chat. Type /help for commands or /exit to close.");
     if io::stdout().is_terminal() {
-        println!("\x1b[38;2;245;158;11m✦ Tip:\x1b[0m Slash commands (/model, /mode, /key, /preset, /tools, /mcp, /update, /uninstall) give instant hot-swapping and zero-turn latency.\n");
+        println!(
+            "\x1b[38;2;245;158;11m✦ Tip:\x1b[0m Slash commands (/model, /mode, /key, /preset, /tools, /mcp, /update, /uninstall) give instant hot-swapping and zero-turn latency.\n"
+        );
     }
 
     loop {
@@ -214,7 +226,9 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                 handle_chat_update(&parsed, Some(spec));
             }
             "/uninstall" => {
-                println!("uninstall> Warning: This will remove Pandora configuration and data directories.");
+                println!(
+                    "uninstall> Warning: This will remove Pandora configuration and data directories."
+                );
                 println!("uninstall> Workspace files will be preserved.");
                 println!("uninstall> To confirm uninstallation, type: /uninstall --yes");
             }
@@ -231,7 +245,9 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                         }
                     }
                 } else {
-                    println!("uninstall> Unknown option '{arg}'. Type /uninstall --yes to confirm.");
+                    println!(
+                        "uninstall> Unknown option '{arg}'. Type /uninstall --yes to confirm."
+                    );
                 }
             }
             command if command.starts_with('/') => run_slash(
@@ -738,7 +754,9 @@ fn print_help() {
     println!("/preset     list, apply, or save prompt presets (/preset <name> [task])");
     println!("/approve    approve and resume the pending task");
     println!("/deny       deny the pending task");
-    println!("/update     check for updates or upgrade to a version (/update [ver|check|rollback])");
+    println!(
+        "/update     check for updates or upgrade to a version (/update [ver|check|rollback])"
+    );
     println!("/uninstall  uninstall Pandora configuration and data (/uninstall --yes)");
     println!("/exit       close the chat");
     println!("/quit       close the chat");

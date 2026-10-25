@@ -215,12 +215,7 @@ fn test_mcp_import_from_agent_config() {
 
     // Actual import
     let import_out = fixture
-        .command(&[
-            "mcp",
-            "import",
-            mcp_config_path.to_str().unwrap(),
-            "--json",
-        ])
+        .command(&["mcp", "import", mcp_config_path.to_str().unwrap(), "--json"])
         .output()
         .expect("mcp import should execute");
     assert!(import_out.status.success());
@@ -235,12 +230,15 @@ fn test_mcp_import_from_agent_config() {
     assert!(list_out.status.success());
     let list_val: Value = serde_json::from_slice(&list_out.stdout).expect("valid list json");
     let servers = list_val["servers"].as_array().expect("servers array");
-    let ids: Vec<&str> = servers
-        .iter()
-        .filter_map(|s| s["id"].as_str())
-        .collect();
-    assert!(ids.contains(&"imported-fs"), "expected imported-fs in {ids:?}");
-    assert!(ids.contains(&"imported-remote"), "expected imported-remote in {ids:?}");
+    let ids: Vec<&str> = servers.iter().filter_map(|s| s["id"].as_str()).collect();
+    assert!(
+        ids.contains(&"imported-fs"),
+        "expected imported-fs in {ids:?}"
+    );
+    assert!(
+        ids.contains(&"imported-remote"),
+        "expected imported-remote in {ids:?}"
+    );
 }
 
 #[test]
@@ -256,7 +254,10 @@ fn test_update_command_check_and_bare_execution() {
     assert!(check_out.status.success());
     let val: Value = serde_json::from_slice(&check_out.stdout).expect("valid update json");
     assert_eq!(val["command"], "update check");
-    assert_eq!(val["current_version"], format!("v{}", env!("CARGO_PKG_VERSION")));
+    assert_eq!(
+        val["current_version"],
+        format!("v{}", env!("CARGO_PKG_VERSION"))
+    );
     assert!(val["latest_release"].is_string());
 
     // Check with positional "check"
@@ -298,7 +299,10 @@ fn test_chat_slash_update_and_uninstall_commands() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("/update"), "chat help must include /update");
-    assert!(stdout.contains("/uninstall"), "chat help must include /uninstall");
+    assert!(
+        stdout.contains("/uninstall"),
+        "chat help must include /uninstall"
+    );
 
     // Test interactive /uninstall warning when not confirmed
     let mut cmd2 = fixture.command(&["chat"]);
@@ -309,7 +313,9 @@ fn test_chat_slash_update_and_uninstall_commands() {
     {
         use std::io::Write;
         let mut stdin = child2.stdin.take().expect("stdin 2");
-        stdin.write_all(b"/uninstall\n/exit\n").expect("write /uninstall");
+        stdin
+            .write_all(b"/uninstall\n/exit\n")
+            .expect("write /uninstall");
     }
     let output2 = child2.wait_with_output().expect("wait chat 2");
     assert!(output2.status.success());
@@ -328,7 +334,9 @@ fn test_chat_slash_update_and_uninstall_commands() {
     {
         use std::io::Write;
         let mut stdin = child3.stdin.take().expect("stdin 3");
-        stdin.write_all(b"/uninstall --yes\n").expect("write /uninstall --yes");
+        stdin
+            .write_all(b"/uninstall --yes\n")
+            .expect("write /uninstall --yes");
     }
     let output3 = child3.wait_with_output().expect("wait chat 3");
     assert!(output3.status.success());
@@ -338,7 +346,13 @@ fn test_chat_slash_update_and_uninstall_commands() {
         "expected uninstallation message in: {stdout3}"
     );
     // Config file was removed
-    assert!(!fixture.config.exists(), "config file must be removed by /uninstall");
+    assert!(
+        !fixture.config.exists(),
+        "config file must be removed by /uninstall"
+    );
     // Workspace was preserved
-    assert!(fixture.workspace.exists(), "workspace must be preserved by /uninstall");
+    assert!(
+        fixture.workspace.exists(),
+        "workspace must be preserved by /uninstall"
+    );
 }

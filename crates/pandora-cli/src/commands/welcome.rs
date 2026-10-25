@@ -7,12 +7,32 @@ pub fn render_welcome_banner(
     session_id: Option<&str>,
     is_color: bool,
 ) -> String {
-    let purple = if is_color { "\x1b[38;2;168;85;247m" } else { "" };
-    let violet = if is_color { "\x1b[38;2;147;51;234m" } else { "" };
-    let amber = if is_color { "\x1b[38;2;245;158;11m" } else { "" };
+    let purple = if is_color {
+        "\x1b[38;2;168;85;247m"
+    } else {
+        ""
+    };
+    let violet = if is_color {
+        "\x1b[38;2;147;51;234m"
+    } else {
+        ""
+    };
+    let amber = if is_color {
+        "\x1b[38;2;245;158;11m"
+    } else {
+        ""
+    };
     let cyan = if is_color { "\x1b[38;2;6;182;212m" } else { "" };
-    let green = if is_color { "\x1b[38;2;52;211;153m" } else { "" };
-    let muted = if is_color { "\x1b[38;2;113;113;122m" } else { "" };
+    let green = if is_color {
+        "\x1b[38;2;52;211;153m"
+    } else {
+        ""
+    };
+    let muted = if is_color {
+        "\x1b[38;2;113;113;122m"
+    } else {
+        ""
+    };
     let bold = if is_color { "\x1b[1m" } else { "" };
     let reset = if is_color { "\x1b[0m" } else { "" };
 

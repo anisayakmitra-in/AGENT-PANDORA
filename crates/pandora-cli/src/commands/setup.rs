@@ -1467,28 +1467,37 @@ fn configure_interactively(
         if !detected.is_empty() {
             eprintln!("\n◆ Coming from another agent?");
             for agent in &detected {
-                eprintln!("  Found on this computer: {} ({})", agent.name, agent.path.display());
+                eprintln!(
+                    "  Found on this computer: {} ({})",
+                    agent.name,
+                    agent.path.display()
+                );
             }
             eprintln!("  Pandora can import their MCP servers and tool configurations.");
-            if let Ok(choice) = prompt("Import setup from discovered agent? [y/N]", None) {
-                if choice.trim().eq_ignore_ascii_case("y")
-                    || choice.trim().eq_ignore_ascii_case("yes")
-                {
-                    for agent in &detected {
-                        if let Some(ref cfg_file) = agent.config_file {
-                            if let Ok(content) = fs::read_to_string(cfg_file) {
-                                let servers = super::importer::parse_mcp_servers_from_str(&content);
-                                if !servers.is_empty() {
-                                    let imported =
-                                        super::importer::apply_imported_mcp_servers(&servers, config);
-                                    eprintln!(
-                                        "  ✓ Imported {} MCP server(s) from {}: {}",
-                                        imported.len(),
-                                        agent.name,
-                                        imported.join(", ")
-                                    );
-                                }
-                            }
+            let should_import = prompt("Import setup from discovered agent? [y/N]", None)
+                .map(|choice| {
+                    let trimmed = choice.trim();
+                    trimmed.eq_ignore_ascii_case("y") || trimmed.eq_ignore_ascii_case("yes")
+                })
+                .unwrap_or(false);
+
+            if should_import {
+                for agent in &detected {
+                    if let Some(ref cfg_file) = agent.config_file {
+                        let content = match fs::read_to_string(cfg_file) {
+                            Ok(c) => c,
+                            Err(_) => continue,
+                        };
+                        let servers = super::importer::parse_mcp_servers_from_str(&content);
+                        if !servers.is_empty() {
+                            let imported =
+                                super::importer::apply_imported_mcp_servers(&servers, config);
+                            eprintln!(
+                                "  ✓ Imported {} MCP server(s) from {}: {}",
+                                imported.len(),
+                                agent.name,
+                                imported.join(", ")
+                            );
                         }
                     }
                 }
