@@ -96,7 +96,7 @@ pub use execution_profile::{
 };
 pub use feature_map::{FeatureEntry, FeatureMap};
 pub use gene::{Gene, GeneError, GeneInput, GeneKind, GeneManifest};
-pub use governance::{ParliamentDecision, PolicyContext};
+pub use governance::{GovernanceMode, ParliamentDecision, PolicyContext};
 pub use hardware::{
     GpuBackend, GpuDevice, HostHardwareProfile, ModelFootprintEstimation, Quantization,
 };

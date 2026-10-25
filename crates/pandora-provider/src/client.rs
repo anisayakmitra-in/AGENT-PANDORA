@@ -727,7 +727,7 @@ impl HttpProvider {
     ) -> Result<Self, ProviderError> {
         validate_endpoint(manifest.base_url())?;
         let api_key = SecretValue::new(api_key.into())?;
-        let client = Client::builder()
+        let client = crate::proxy::proxy_client_builder()
             .redirect(Policy::none())
             .timeout(DEFAULT_TIMEOUT)
             .build()

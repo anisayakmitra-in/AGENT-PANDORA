@@ -3,10 +3,54 @@ use pandora_types::{
     HarnessId, Operation, OperationRequest, PrincipalId, RequestError, ResourceScope, SessionId,
     TaskIntent, ToolSearchResult, hash_artifact,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolProfile {
+    #[default]
+    Full,
+    Coding,
+    Minimal,
+    None,
+}
+
+impl ToolProfile {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Coding => "coding",
+            Self::Minimal => "minimal",
+            Self::None => "none",
+        }
+    }
+}
+
+impl std::str::FromStr for ToolProfile {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_lowercase().as_str() {
+            "full" => Ok(Self::Full),
+            "coding" => Ok(Self::Coding),
+            "minimal" => Ok(Self::Minimal),
+            "none" => Ok(Self::None),
+            other => Err(format!(
+                "unknown tool profile '{other}'; expected full, coding, minimal, or none"
+            )),
+        }
+    }
+}
+
+impl std::fmt::Display for ToolProfile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolError {
@@ -631,6 +675,35 @@ impl ToolEngine {
             )
             .expect("built-in tool.search ID is unique");
         engine
+            .register(
+                ToolDefinition::new(
+                    "cronjob_manage",
+                    "1.0.0",
+                    "Manage scheduled cron jobs and reminders (actions: create, list, update, pause, resume, run, remove)",
+                    json!({
+                        "type": "object",
+                        "required": ["action"],
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "enum": ["create", "list", "update", "pause", "resume", "run", "remove"]
+                            },
+                            "job_id": {"type": "string"},
+                            "name": {"type": "string"},
+                            "schedule": {"type": "string"},
+                            "command": {"type": "string"},
+                            "workdir": {"type": "string"},
+                            "deliver": {"type": "string"}
+                        },
+                        "additionalProperties": false
+                    }),
+                    Capability::ProcessExecute,
+                    Operation::Execute,
+                )
+                .expect("built-in cronjob_manage tool schema is valid"),
+            )
+            .expect("built-in cronjob_manage tool ID is unique");
+        engine
     }
 
     pub fn register(&self, definition: ToolDefinition) -> Result<(), ToolError> {
@@ -727,6 +800,65 @@ impl ToolEngine {
         let mut values = definitions.values().cloned().collect::<Vec<_>>();
         values.sort_by(|left, right| left.id().cmp(right.id()));
         values
+    }
+
+    pub fn list_filtered(
+        &self,
+        profile: ToolProfile,
+        explicit_tools: Option<&[String]>,
+    ) -> Vec<ToolDefinition> {
+        let all_tools = self.list();
+        let profile_filtered: Vec<ToolDefinition> = match profile {
+            ToolProfile::Full => all_tools,
+            ToolProfile::Coding => all_tools
+                .into_iter()
+                .filter(|tool| {
+                    let id = tool.id().as_str();
+                    id.starts_with("workspace.")
+                        || id.starts_with("daedalus.")
+                        || id.starts_with("argus.")
+                        || id.starts_with("ariadne.")
+                        || id.starts_with("hephaestus.")
+                        || id == "tool.search"
+                        || id == "cronjob_manage"
+                })
+                .collect(),
+            ToolProfile::Minimal => all_tools
+                .into_iter()
+                .filter(|tool| {
+                    let id = tool.id().as_str();
+                    id == "workspace.read"
+                        || id == "workspace.search"
+                        || id == "workspace.status"
+                        || id == "tool.search"
+                })
+                .collect(),
+            ToolProfile::None => Vec::new(),
+        };
+
+        if let Some(explicit) = explicit_tools {
+            if explicit.is_empty() {
+                return profile_filtered;
+            }
+            let explicit_set: HashSet<String> = explicit
+                .iter()
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if explicit_set.is_empty() {
+                return profile_filtered;
+            }
+            profile_filtered
+                .into_iter()
+                .filter(|tool| {
+                    let id = tool.id().as_str().to_lowercase();
+                    let name = tool.name().to_lowercase();
+                    explicit_set.contains(&id) || explicit_set.contains(&name)
+                })
+                .collect()
+        } else {
+            profile_filtered
+        }
     }
 
     pub fn search(&self, query: &str, limit: usize) -> Vec<ToolSearchResult> {
@@ -917,6 +1049,11 @@ impl ToolEngine {
             }
             "accessibility.evidence" => TaskIntent::new("accessibility-evidence")
                 .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
+            "cronjob_manage" => {
+                let action = required_text_argument(arguments, "action")?;
+                TaskIntent::new(format!("cronjob_manage:{action}"))
+                    .map_err(|error| ToolError::InvalidArguments(error.to_string()))?
+            }
             _ => {
                 return Err(ToolError::UnsupportedTool(
                     definition.id().as_str().to_owned(),
@@ -1083,6 +1220,7 @@ fn gene_id_for_tool(tool_id: &str) -> Result<GeneId, ToolError> {
         "design.inspect" => "design.inspect",
         "design.compare" => "design.compare",
         "accessibility.evidence" => "accessibility.evidence",
+        "cronjob_manage" => "cronjob.manage",
         unknown => return Err(ToolError::UnsupportedTool(unknown.to_owned())),
     };
     Ok(GeneId::new(gene_id).expect("built-in Gene ID is valid"))

@@ -20,6 +20,7 @@ mod backup;
 mod chat;
 mod completions;
 pub(crate) mod connector;
+pub(crate) mod cron;
 pub(crate) mod curator;
 pub(crate) mod curriculum;
 pub(crate) mod decision;
@@ -42,6 +43,7 @@ mod orchestration;
 mod package;
 pub(crate) mod peer;
 pub(crate) mod policy;
+pub(crate) mod prompt;
 mod provider;
 pub(crate) mod reasoning;
 mod registry;
@@ -114,6 +116,8 @@ pub(crate) const ROOT_COMMANDS: &[&str] = &[
     "uninstall",
     "doctor",
     "policy",
+    "cron",
+    "prompt",
 ];
 
 /// [`ROOT_COMMANDS`] joined by single spaces, the way the POSIX, zsh, and fish
@@ -141,7 +145,16 @@ pub(crate) struct ParsedArgs {
 
 impl ParsedArgs {
     pub fn value(&self, name: &str) -> Option<&str> {
-        self.values.get(name).map(String::as_str)
+        self.values
+            .get(name)
+            .map(|val| val.split('\0').next().unwrap_or(val.as_str()))
+    }
+
+    pub fn values_for(&self, name: &str) -> Vec<&str> {
+        self.values
+            .get(name)
+            .map(|val| val.split('\0').collect())
+            .unwrap_or_default()
     }
 
     pub fn has_flag(&self, name: &str) -> bool {
@@ -215,6 +228,8 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "connector" => connector::execute(&args[1..]),
         "reasoning" => reasoning::execute(&args[1..]),
         "policy" => policy::execute(&args[1..]),
+        "cron" => cron::execute(&args[1..]),
+        "prompt" => prompt::execute(&args[1..]),
         "--help" | "help" => {
             if args.len() != 1 {
                 return Err(CliError::usage("help does not accept additional arguments"));
@@ -290,7 +305,14 @@ pub(crate) fn parse_options(args: &[String], allowed: &[&str]) -> Result<ParsedA
                     .cloned()
                     .ok_or_else(|| CliError::usage(format!("option '--{name}' needs a value")))?
             };
-            if values.insert(name.to_owned(), value).is_some() {
+            if is_repeatable(name) {
+                if let Some(existing) = values.get_mut(name) {
+                    existing.push('\0');
+                    existing.push_str(&value);
+                } else {
+                    values.insert(name.to_owned(), value);
+                }
+            } else if values.insert(name.to_owned(), value).is_some() {
                 return Err(CliError::usage(format!("option '--{name}' was repeated")));
             }
         } else {
@@ -302,6 +324,10 @@ pub(crate) fn parse_options(args: &[String], allowed: &[&str]) -> Result<ParsedA
         values,
         positionals,
     })
+}
+
+fn is_repeatable(name: &str) -> bool {
+    matches!(name, "param")
 }
 
 fn is_flag(name: &str) -> bool {
@@ -335,6 +361,7 @@ fn is_flag(name: &str) -> bool {
             | "no-browser"
             | "print-auth-url"
             | "all-configured"
+            | "global"
     )
 }
 
@@ -469,11 +496,13 @@ pub(crate) fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|curriculum|decision|tui|harness|slash|session|job|subagent|skill|package|registry|runtime|memory|approval|provider|mcp|tool|orchestration|operations|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor|policy> [options]
+    r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|curriculum|decision|tui|harness|slash|session|job|subagent|skill|package|registry|runtime|memory|approval|provider|mcp|tool|orchestration|operations|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor|policy|cron|prompt> [options]
 
 commands:
   help (or --help)
   setup [--interactive] [--provider-url <url>] [--model <model>] [--api-key-env <name>]
+  cron list | add <schedule> <command> [--name <name>] | remove <id|name> --yes | pause <id|name> | resume <id|name> | run <id|name> | run-due | inspect <id|name>
+  prompt list | save <name> [--content <text>] [--kind persona|template] [--description <desc>] [--model <model>] [--mode <mode>] [--global] | inspect <name> | apply <name> [task] [--lang <lang>] [--param <k=v>] [--dry-run] | delete <name> [--global] [--yes]
   run [--provider <name>] [--session <id>] [--agent] [--max-turns <n>] [--max-tools <n>] [--harness <id>] [--harness-version <version>] [--gene <id>] [--plan] [--model <model>] [--task-class <name>] [--approval <id>] [--optimize <cost|latency|tokens|certainty>] [--strategy react|reflexion|lats] [--lats-rollouts <1-100>] [--lats-depth <1-16>] [--puct-c <float>] [--escalation-threshold <float>] [--hooks <path>] <task>
   service start [--port <port>] [--hooks <path>]
   auth enroll --principal <id> --tenant <id> --workspace-id <id> --role <viewer|operator|administrator> [--device-key-file <path>] [--token-file <path>] | list | revoke <identity-id> --yes
@@ -498,7 +527,7 @@ commands:
   tool list|inspect <id> [--catalog <builtin|active>]
   approval list|inspect|resolve
   provider list|set|use|test
-  mcp list|inspect|set|remove|catalog <server> --allow|call <server> <tool> --arguments-json <object> --idempotency-key <key> --allow
+  mcp list|inspect|set|add|add-http|login|logout|remove|catalog <server> --allow|call <server> <tool> --arguments-json <object> --idempotency-key <key> --allow
   orchestration roles|submit|claim|complete|list|inspect|cancel|mark-interrupted|reconcile-failed|resume
   operations telemetry|crashes
   strategies list | population list --state <path> | population inspect --state <path> --id <id>
@@ -653,6 +682,7 @@ mod tests {
         "auth",
         "backup",
         "completions",
+        "cron",
         "efficiency",
         "evaluation",
         "evolution",
@@ -666,6 +696,7 @@ mod tests {
         "migrate",
         "orchestration",
         "package",
+        "prompt",
         "provider",
         "registry",
         "rollout",

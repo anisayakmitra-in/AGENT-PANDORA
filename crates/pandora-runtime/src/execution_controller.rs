@@ -1,3 +1,4 @@
+use crate::config::{McpHttpConfig, McpServerTarget};
 use crate::execution_profile::{ExecutionProfileAssemblyError, assemble_execution_profile};
 use crate::executors::{
     FilesystemError, FilesystemExecutor, GitWorktreeExecutor, NetworkError, NetworkExecutor,
@@ -209,6 +210,25 @@ impl ExecutionController {
         self.policy.policy_version()
     }
 
+    pub fn update_policy(&mut self, policy: PolicyContext) {
+        let policy_version = policy.policy_version();
+        self.parliament = Parliament::new(policy_version);
+        self.policy = policy.clone();
+        self.reference_monitor.update_policy(policy);
+    }
+
+    pub fn policy(&self) -> &PolicyContext {
+        &self.policy
+    }
+
+    pub fn reference_monitor(&self) -> &ReferenceMonitor {
+        &self.reference_monitor
+    }
+
+    pub fn reference_monitor_mut(&mut self) -> &mut ReferenceMonitor {
+        &mut self.reference_monitor
+    }
+
     pub fn harnesses(&self) -> impl Iterator<Item = &dyn Harness> {
         self.harnesses.iter()
     }
@@ -221,6 +241,10 @@ impl ExecutionController {
     pub fn with_trusted_process(mut self, trusted_process: bool) -> Self {
         self.process = self.process.with_trusted_process(trusted_process);
         self
+    }
+
+    pub fn workspace(&self) -> &WorkspaceRoot {
+        &self.workspace
     }
 
     fn execution_profile(
@@ -480,6 +504,194 @@ impl ExecutionController {
         ))
     }
 
+    pub fn start_mcp_http(
+        &self,
+        tool_engine: &ToolEngine,
+        config: McpHttpConfig,
+        token: Option<String>,
+        session: &Session,
+        now: Timestamp,
+    ) -> Result<McpStart, McpFailure> {
+        let mut receipts = Vec::new();
+        let mut events = Vec::new();
+        let config_digest = crate::mcp::config_http_catalog_digest(&config)
+            .map_err(|error| McpFailure::new(error, receipts.clone(), events.clone()))?;
+        let catalog_reservation = self
+            .mcp_catalogs
+            .reserve(config.server_id(), config_digest)
+            .map_err(map_catalog_error)
+            .map_err(|error| McpFailure::new(error, receipts.clone(), events.clone()))?;
+        let (server, selected_era, downgraded, selected_request) = match config.mode() {
+            McpProtocolMode::ModernOnly => {
+                let request = self
+                    .mcp_http_connect_request(&config, SpawnPurpose::Modern, session)
+                    .map_err(|error| McpFailure::new(error, receipts.clone(), events.clone()))?;
+                let consumed = self
+                    .authorize_mcp_request(&request, session, now, &mut events)
+                    .map_err(|error| McpFailure::new(error, receipts.clone(), events.clone()))?;
+                let execution = McpExecutor::start_http_modern(
+                    &consumed,
+                    tool_engine.clone(),
+                    config,
+                    token,
+                    &catalog_reservation,
+                    SpawnPurpose::Modern,
+                    false,
+                    now,
+                );
+                let (result, receipt) = execution.into_parts();
+                self.record_mcp_completion(
+                    &request,
+                    session,
+                    &receipt,
+                    result.as_ref().err(),
+                    &mut events,
+                );
+                receipts.push(receipt);
+                let server = match result {
+                    Ok(McpStartOutcome::Connected(server)) => *server,
+                    Ok(McpStartOutcome::LegacyIdentified) => {
+                        return Err(McpFailure::new(McpError::RequestRejected, receipts, events));
+                    }
+                    Err(error) => return Err(McpFailure::new(error, receipts, events)),
+                };
+                (server, McpWireEra::Modern, false, request)
+            }
+            McpProtocolMode::LegacyOnly => {
+                let request = self
+                    .mcp_http_connect_request(&config, SpawnPurpose::Legacy, session)
+                    .map_err(|error| McpFailure::new(error, receipts.clone(), events.clone()))?;
+                let consumed = self
+                    .authorize_mcp_request(&request, session, now, &mut events)
+                    .map_err(|error| McpFailure::new(error, receipts.clone(), events.clone()))?;
+                let execution = McpExecutor::start_http_legacy(
+                    &consumed,
+                    tool_engine.clone(),
+                    config,
+                    token,
+                    &catalog_reservation,
+                    now,
+                );
+                let (result, receipt) = execution.into_parts();
+                self.record_mcp_completion(
+                    &request,
+                    session,
+                    &receipt,
+                    result.as_ref().err(),
+                    &mut events,
+                );
+                receipts.push(receipt);
+                let server = result
+                    .map_err(|error| McpFailure::new(error, receipts.clone(), events.clone()))?;
+                (server, McpWireEra::Legacy, false, request)
+            }
+            McpProtocolMode::Auto => {
+                let probe_request = self
+                    .mcp_http_connect_request(&config, SpawnPurpose::ModernProbe, session)
+                    .map_err(|error| McpFailure::new(error, receipts.clone(), events.clone()))?;
+                let consumed = self
+                    .authorize_mcp_request(&probe_request, session, now, &mut events)
+                    .map_err(|error| McpFailure::new(error, receipts.clone(), events.clone()))?;
+                let execution = McpExecutor::start_http_modern(
+                    &consumed,
+                    tool_engine.clone(),
+                    config.clone(),
+                    token.clone(),
+                    &catalog_reservation,
+                    SpawnPurpose::ModernProbe,
+                    true,
+                    now,
+                );
+                let (result, receipt) = execution.into_parts();
+                self.record_mcp_completion(
+                    &probe_request,
+                    session,
+                    &receipt,
+                    result.as_ref().err(),
+                    &mut events,
+                );
+                receipts.push(receipt);
+                match result {
+                    Ok(McpStartOutcome::Connected(server)) => {
+                        (*server, McpWireEra::Modern, false, probe_request)
+                    }
+                    Ok(McpStartOutcome::LegacyIdentified) => {
+                        let legacy_request = self
+                            .mcp_http_connect_request(&config, SpawnPurpose::Legacy, session)
+                            .map_err(|error| {
+                                McpFailure::new(error, receipts.clone(), events.clone())
+                            })?;
+                        let consumed = self
+                            .authorize_mcp_request(&legacy_request, session, now, &mut events)
+                            .map_err(|error| {
+                                McpFailure::new(error, receipts.clone(), events.clone())
+                            })?;
+                        let execution = McpExecutor::start_http_legacy(
+                            &consumed,
+                            tool_engine.clone(),
+                            config,
+                            token,
+                            &catalog_reservation,
+                            now,
+                        );
+                        let (result, receipt) = execution.into_parts();
+                        self.record_mcp_completion(
+                            &legacy_request,
+                            session,
+                            &receipt,
+                            result.as_ref().err(),
+                            &mut events,
+                        );
+                        receipts.push(receipt);
+                        let server = result.map_err(|error| {
+                            McpFailure::new(error, receipts.clone(), events.clone())
+                        })?;
+                        (server, McpWireEra::Legacy, true, legacy_request)
+                    }
+                    Err(error) => return Err(McpFailure::new(error, receipts, events)),
+                }
+            }
+        };
+        events.push(self.event(
+            EventType::McpEraSelected,
+            self.context(
+                session,
+                selected_request.execution_id(),
+                None,
+                Some(selected_request.gene_id().clone()),
+                receipts.last().cloned(),
+            ),
+            EventPayload::McpEra {
+                server: server.server_id().to_owned(),
+                era: selected_era.as_str().to_owned(),
+                downgraded,
+            },
+        ));
+        Ok(McpStart::new(
+            server,
+            selected_era,
+            downgraded,
+            receipts,
+            events,
+        ))
+    }
+
+    pub fn start_mcp_target(
+        &self,
+        tool_engine: &ToolEngine,
+        target: McpServerTarget,
+        token: Option<String>,
+        session: &Session,
+        now: Timestamp,
+    ) -> Result<McpStart, McpFailure> {
+        match target {
+            McpServerTarget::Stdio(config) => self.start_mcp(tool_engine, config, session, now),
+            McpServerTarget::Http(config) => {
+                self.start_mcp_http(tool_engine, config, token, session, now)
+            }
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn invoke_mcp(
         &self,
@@ -553,6 +765,63 @@ impl ExecutionController {
         let result =
             result.map_err(|error| McpFailure::new(error, receipts.clone(), events.clone()))?;
         Ok(McpInvocation::new(result, receipts, events))
+    }
+
+    fn mcp_http_connect_request(
+        &self,
+        config: &McpHttpConfig,
+        purpose: SpawnPurpose,
+        session: &Session,
+    ) -> Result<OperationRequest, McpError> {
+        let execution_id = self.next_mcp_execution_id()?;
+        let payload = crate::mcp::config_http_authorization_payload(config, purpose)?;
+        let config_digest = crate::mcp::config_http_catalog_digest(config)?;
+        let gene_id = format!("mcp.{}.connect", config.server_id());
+        let execution_profile = self
+            .execution_profile(
+                "network",
+                vec![
+                    profile_binding(
+                        ExecutionProfileBindingKind::Gene,
+                        &gene_id,
+                        Some(env!("CARGO_PKG_VERSION")),
+                        &gene_id,
+                    ),
+                    profile_binding(
+                        ExecutionProfileBindingKind::Configuration,
+                        config.server_id(),
+                        Some(purpose.as_str()),
+                        &config_digest,
+                    ),
+                ]
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| McpError::RequestRejected)?,
+            )
+            .map_err(|_| McpError::RequestRejected)?;
+        let (host, port) = if let Ok(parsed_url) = url::Url::parse(config.url()) {
+            (
+                parsed_url.host_str().unwrap_or("localhost").to_owned(),
+                parsed_url.port_or_known_default().unwrap_or(80),
+            )
+        } else {
+            (config.url().to_owned(), 0)
+        };
+        OperationRequest::new(
+            execution_id,
+            session.id().clone(),
+            session.principal_id().clone(),
+            execution_profile,
+            GeneId::new(gene_id).map_err(|_| McpError::RequestRejected)?,
+            None,
+            Capability::NetworkConnect,
+            Operation::Connect,
+            EffectTarget::network(host, port),
+            ResourceScope::none(),
+        )
+        .map_err(|_| McpError::RequestRejected)?
+        .with_payload_digest(&payload)
+        .map_err(|_| McpError::RequestRejected)
     }
 
     fn mcp_spawn_request(

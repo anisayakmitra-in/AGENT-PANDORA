@@ -74,6 +74,51 @@ pub const DEFAULT_PROVIDER_API_KEY_ENV: &str = "PANDORA_PROVIDER_API_KEY";
 pub const DEFAULT_REGISTRY_TOKEN_ENV: &str = "PANDORA_REGISTRY_TOKEN";
 const TOKENS_PER_MILLION: u128 = 1_000_000;
 
+pub const STANDARD_PRESETS: &[(&str, ProviderProtocol, &str, &str, &str)] = &[
+    (
+        "groq",
+        ProviderProtocol::OpenAiCompatible,
+        "https://api.groq.com/openai/v1",
+        "llama-3.3-70b-versatile",
+        "GROQ_API_KEY",
+    ),
+    (
+        "openrouter",
+        ProviderProtocol::OpenAiCompatible,
+        "https://openrouter.ai/api/v1",
+        "anthropic/claude-3.5-sonnet",
+        "OPENROUTER_API_KEY",
+    ),
+    (
+        "openai",
+        ProviderProtocol::OpenAiCompatible,
+        "https://api.openai.com/v1",
+        "gpt-4o",
+        "OPENAI_API_KEY",
+    ),
+    (
+        "anthropic",
+        ProviderProtocol::AnthropicMessages,
+        "https://api.anthropic.com/v1",
+        "claude-3-7-sonnet-20250219",
+        "ANTHROPIC_API_KEY",
+    ),
+    (
+        "deepseek",
+        ProviderProtocol::OpenAiCompatible,
+        "https://api.deepseek.com/v1",
+        "deepseek-coder",
+        "DEEPSEEK_API_KEY",
+    ),
+    (
+        "ollama",
+        ProviderProtocol::OpenAiCompatible,
+        "http://localhost:11434/v1",
+        "qwen2.5-coder:32b",
+        "OLLAMA_API_KEY",
+    ),
+];
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ProviderPricing {
     input_micros_per_million_tokens: u64,
@@ -305,6 +350,136 @@ impl ConfigOverrides {
     }
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpAuthType {
+    #[default]
+    None,
+    Bearer,
+    ApiKey {
+        #[serde(default = "default_api_key_header")]
+        header: String,
+    },
+    OAuth2Pkce,
+}
+
+fn default_api_key_header() -> String {
+    "X-API-Key".to_owned()
+}
+
+impl McpAuthType {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "none" => Some(Self::None),
+            "bearer" => Some(Self::Bearer),
+            "apikey" | "api_key" | "api-key" => Some(Self::ApiKey {
+                header: default_api_key_header(),
+            }),
+            "oauth" | "oauth2" | "oauth_pkce" | "oauth2_pkce" => Some(Self::OAuth2Pkce),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Bearer => "bearer",
+            Self::ApiKey { .. } => "api_key",
+            Self::OAuth2Pkce => "oauth2_pkce",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct McpOAuthConfig {
+    #[serde(default)]
+    pub auth_endpoint: String,
+    #[serde(default)]
+    pub token_endpoint: String,
+    #[serde(default)]
+    pub client_id: String,
+    #[serde(default)]
+    pub redirect_uri: Option<String>,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct McpHttpConfig {
+    pub server_id: String,
+    pub url: String,
+    pub mode: McpProtocolMode,
+    pub auth: McpAuthType,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub oauth: Option<McpOAuthConfig>,
+    #[serde(default)]
+    pub secret_reference: Option<String>,
+}
+
+impl McpHttpConfig {
+    pub fn new(
+        server_id: impl Into<String>,
+        url: impl Into<String>,
+        mode: McpProtocolMode,
+        auth: McpAuthType,
+    ) -> Self {
+        Self {
+            server_id: server_id.into(),
+            url: url.into(),
+            mode,
+            auth,
+            headers: BTreeMap::new(),
+            oauth: None,
+            secret_reference: None,
+        }
+    }
+
+    pub fn server_id(&self) -> &str {
+        &self.server_id
+    }
+
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
+    pub fn mode(&self) -> McpProtocolMode {
+        self.mode
+    }
+
+    pub fn auth(&self) -> &McpAuthType {
+        &self.auth
+    }
+
+    pub fn headers(&self) -> &BTreeMap<String, String> {
+        &self.headers
+    }
+
+    pub fn oauth(&self) -> Option<&McpOAuthConfig> {
+        self.oauth.as_ref()
+    }
+
+    pub fn secret_reference(&self) -> Option<&str> {
+        self.secret_reference.as_deref()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum McpServerTarget {
+    Stdio(McpStdioConfig),
+    Http(McpHttpConfig),
+}
+
+impl McpServerTarget {
+    pub fn server_id(&self) -> &str {
+        match self {
+            Self::Stdio(s) => s.server_id(),
+            Self::Http(h) => h.server_id(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeConfig {
     config_path: PathBuf,
@@ -316,6 +491,8 @@ pub struct RuntimeConfig {
     registry_profiles: BTreeMap<String, RegistryProfile>,
     active_registry: Option<String>,
     mcp_servers: BTreeMap<String, McpStdioConfig>,
+    mcp_http_servers: BTreeMap<String, String>,
+    mcp_http_configs: BTreeMap<String, McpHttpConfig>,
     data_dir: PathBuf,
     workspace_dir: PathBuf,
     hooks_file: Option<PathBuf>,
@@ -371,6 +548,7 @@ impl RuntimeConfig {
         let provider_model = overrides
             .provider_model
             .clone()
+            .or_else(|| environment.get("PANDORA_MODEL").cloned())
             .or_else(|| environment.get("PANDORA_PROVIDER_MODEL").cloned())
             .or(file.provider_model);
         let mut provider_profiles = file
@@ -424,12 +602,48 @@ impl RuntimeConfig {
                         .contains_key(DEFAULT_PROVIDER_NAME)
                         .then(|| DEFAULT_PROVIDER_NAME.to_owned())
                 })
+                .or_else(|| {
+                    const ENV_PRESETS: &[(&str, &str)] = &[
+                        ("GROQ_API_KEY", "groq"),
+                        ("OPENROUTER_API_KEY", "openrouter"),
+                        ("ANTHROPIC_API_KEY", "anthropic"),
+                        ("OPENAI_API_KEY", "openai"),
+                        ("DEEPSEEK_API_KEY", "deepseek"),
+                        ("OLLAMA_API_KEY", "ollama"),
+                    ];
+                    for (env_var, preset_name) in ENV_PRESETS {
+                        if environment
+                            .get(*env_var)
+                            .is_some_and(|val| !val.trim().is_empty())
+                        {
+                            return Some((*preset_name).to_owned());
+                        }
+                    }
+                    None
+                })
                 .or_else(|| provider_profiles.keys().next().cloned())
         };
         if let Some(name) = active_provider.as_ref()
             && !provider_profiles.contains_key(name)
         {
-            return Err(ConfigError::UnknownProvider);
+            if let Some((_, protocol, url, default_model, api_key_env)) = STANDARD_PRESETS
+                .iter()
+                .find(|(p_name, ..)| p_name.eq_ignore_ascii_case(name))
+            {
+                let model_to_use = provider_model
+                    .clone()
+                    .unwrap_or_else(|| (*default_model).to_owned());
+                let profile = ProviderProfile::new_with_protocol(
+                    name.clone(),
+                    *protocol,
+                    *url,
+                    model_to_use,
+                    *api_key_env,
+                )?;
+                provider_profiles.insert(name.clone(), profile);
+            } else {
+                return Err(ConfigError::UnknownProvider);
+            }
         }
         validate_fallbacks(&provider_profiles)?;
         let registry_profiles = file
@@ -449,20 +663,33 @@ impl RuntimeConfig {
         {
             return Err(ConfigError::UnknownRegistry);
         }
-        let mcp_servers = file
-            .mcp_servers
-            .into_iter()
-            .map(|(server_id, server)| {
-                let config = McpStdioConfig::new(
-                    server_id.clone(),
-                    server.program,
-                    server.arguments,
-                    server.mode,
-                )
-                .map_err(|_| ConfigError::InvalidMcpServer)?;
-                Ok((server_id, config))
-            })
-            .collect::<Result<BTreeMap<_, _>, ConfigError>>()?;
+        let mut mcp_servers = BTreeMap::new();
+        let mut mcp_http_servers = BTreeMap::new();
+        let mut mcp_http_configs = BTreeMap::new();
+        for (server_id, server) in file.mcp_servers {
+            if let Some(url) = server.url
+                && !url.trim().is_empty()
+            {
+                let http_cfg = McpHttpConfig {
+                    server_id: server_id.clone(),
+                    url: url.clone(),
+                    mode: server.mode,
+                    auth: server.auth.unwrap_or_default(),
+                    headers: server.headers,
+                    oauth: server.oauth,
+                    secret_reference: server.secret_reference,
+                };
+                mcp_http_servers.insert(server_id.clone(), url);
+                mcp_http_configs.insert(server_id, http_cfg);
+                continue;
+            }
+            if let Some(program) = server.program {
+                let config =
+                    McpStdioConfig::new(server_id.clone(), program, server.arguments, server.mode)
+                        .map_err(|_| ConfigError::InvalidMcpServer)?;
+                mcp_servers.insert(server_id, config);
+            }
+        }
         let data_dir = resolve_path(
             overrides
                 .data_dir
@@ -502,6 +729,8 @@ impl RuntimeConfig {
             registry_profiles,
             active_registry,
             mcp_servers,
+            mcp_http_servers,
+            mcp_http_configs,
             data_dir,
             workspace_dir,
             hooks_file,
@@ -549,20 +778,41 @@ impl RuntimeConfig {
                 })
                 .collect(),
             active_registry: self.active_registry.clone(),
-            mcp_servers: self
-                .mcp_servers
-                .iter()
-                .map(|(server_id, server)| {
-                    (
+            mcp_servers: {
+                let mut servers = BTreeMap::new();
+                for (server_id, server) in &self.mcp_servers {
+                    servers.insert(
                         server_id.clone(),
                         FileMcpServer {
-                            program: server.program().to_owned(),
+                            program: Some(server.program().to_owned()),
                             arguments: server.arguments().to_vec(),
                             mode: server.mode(),
+                            url: None,
+                            auth: None,
+                            headers: BTreeMap::new(),
+                            oauth: None,
+                            secret_reference: None,
                         },
-                    )
-                })
-                .collect(),
+                    );
+                }
+                for (server_id, url) in &self.mcp_http_servers {
+                    let http_cfg = self.mcp_http_configs.get(server_id);
+                    servers.insert(
+                        server_id.clone(),
+                        FileMcpServer {
+                            program: None,
+                            arguments: Vec::new(),
+                            mode: http_cfg.map(|c| c.mode).unwrap_or_default(),
+                            url: Some(url.clone()),
+                            auth: http_cfg.map(|c| c.auth.clone()),
+                            headers: http_cfg.map(|c| c.headers.clone()).unwrap_or_default(),
+                            oauth: http_cfg.and_then(|c| c.oauth.clone()),
+                            secret_reference: http_cfg.and_then(|c| c.secret_reference.clone()),
+                        },
+                    );
+                }
+                servers
+            },
             data_dir: Some(self.data_dir.display().to_string()),
             workspace_dir: Some(self.workspace_dir.display().to_string()),
             hooks_file: self.hooks_file.as_ref().map(|p| p.display().to_string()),
@@ -718,20 +968,81 @@ impl RuntimeConfig {
     }
 
     pub fn mcp_server_ids(&self) -> Vec<String> {
-        self.mcp_servers.keys().cloned().collect()
+        let mut ids = self.mcp_servers.keys().cloned().collect::<Vec<_>>();
+        ids.extend(self.mcp_http_servers.keys().cloned());
+        ids.sort();
+        ids.dedup();
+        ids
     }
 
     pub fn mcp_server(&self, server_id: &str) -> Option<&McpStdioConfig> {
         self.mcp_servers.get(server_id)
     }
 
+    pub fn mcp_http_servers(&self) -> &BTreeMap<String, String> {
+        &self.mcp_http_servers
+    }
+
+    pub fn mcp_http_server(&self, server_id: &str) -> Option<&str> {
+        self.mcp_http_servers.get(server_id).map(String::as_str)
+    }
+
+    pub fn mcp_http_configs(&self) -> &BTreeMap<String, McpHttpConfig> {
+        &self.mcp_http_configs
+    }
+
+    pub fn mcp_http_config(&self, id: &str) -> Option<&McpHttpConfig> {
+        self.mcp_http_configs.get(id)
+    }
+
+    pub fn set_mcp_http_config(&mut self, config: McpHttpConfig) {
+        self.mcp_servers.remove(config.server_id());
+        self.mcp_http_servers
+            .insert(config.server_id().to_owned(), config.url().to_owned());
+        self.mcp_http_configs
+            .insert(config.server_id().to_owned(), config);
+    }
+
+    pub fn mcp_target(&self, id: &str) -> Option<McpServerTarget> {
+        if let Some(stdio) = self.mcp_servers.get(id) {
+            Some(McpServerTarget::Stdio(stdio.clone()))
+        } else if let Some(http) = self.mcp_http_configs.get(id) {
+            Some(McpServerTarget::Http(http.clone()))
+        } else {
+            self.mcp_http_servers.get(id).map(|url| {
+                McpServerTarget::Http(McpHttpConfig::new(
+                    id,
+                    url,
+                    McpProtocolMode::Auto,
+                    McpAuthType::None,
+                ))
+            })
+        }
+    }
+
     pub fn set_mcp_server(&mut self, server: McpStdioConfig) {
+        self.mcp_http_servers.remove(server.server_id());
+        self.mcp_http_configs.remove(server.server_id());
         self.mcp_servers
             .insert(server.server_id().to_owned(), server);
     }
 
+    pub fn set_mcp_http_server(&mut self, server_id: impl Into<String>, url: impl Into<String>) {
+        let id = server_id.into();
+        let u = url.into();
+        self.mcp_servers.remove(&id);
+        self.mcp_http_configs.insert(
+            id.clone(),
+            McpHttpConfig::new(&id, &u, McpProtocolMode::Auto, McpAuthType::None),
+        );
+        self.mcp_http_servers.insert(id, u);
+    }
+
     pub fn remove_mcp_server(&mut self, server_id: &str) -> bool {
-        self.mcp_servers.remove(server_id).is_some()
+        let removed_stdio = self.mcp_servers.remove(server_id).is_some();
+        let removed_http = self.mcp_http_servers.remove(server_id).is_some();
+        let removed_cfg = self.mcp_http_configs.remove(server_id).is_some();
+        removed_stdio || removed_http || removed_cfg
     }
 
     pub fn data_dir(&self) -> &Path {
@@ -801,11 +1112,22 @@ struct FileProviderProfile {
 
 #[derive(Debug, Deserialize, Serialize)]
 struct FileMcpServer {
-    program: String,
+    #[serde(default)]
+    program: Option<String>,
     #[serde(default)]
     arguments: Vec<String>,
     #[serde(default)]
     mode: McpProtocolMode,
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    auth: Option<McpAuthType>,
+    #[serde(default)]
+    headers: BTreeMap<String, String>,
+    #[serde(default)]
+    oauth: Option<McpOAuthConfig>,
+    #[serde(default)]
+    secret_reference: Option<String>,
 }
 
 fn validate_fallbacks(

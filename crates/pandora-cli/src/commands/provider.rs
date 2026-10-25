@@ -126,18 +126,62 @@ pub(crate) fn provider_credential_available(
     Ok(configured_credential(config, name)?.is_some())
 }
 
+fn resolve_candidate_env(config: &RuntimeConfig, key: &str) -> Option<String> {
+    if let Ok(value) = std::env::var(key) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_owned());
+        }
+    }
+    if let Some(value) = super::setup::read_dotenv_var(config, key) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_owned());
+        }
+    }
+    None
+}
+
+const STANDARD_VENDOR_KEY_ENVS: &[&str] = &[
+    "GROQ_API_KEY",
+    "OPENROUTER_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "DEEPSEEK_API_KEY",
+];
+
 pub(crate) fn configured_credential(
     config: &RuntimeConfig,
     name: &str,
 ) -> Result<Option<String>, CliError> {
-    if let Ok(value) = std::env::var(name)
-        && !value.trim().is_empty()
-    {
+    if let Some(value) = resolve_candidate_env(config, name) {
         return Ok(Some(value));
     }
-    if let Some(value) = super::setup::read_dotenv_var(config, name) {
-        return Ok(Some(value));
+
+    if name == DEFAULT_PROVIDER_API_KEY_ENV || name == "PANDORA_API_KEY" {
+        if let Some(active_env) = config
+            .active_provider()
+            .and_then(|p| config.provider_profile(p))
+            .map(ProviderProfile::api_key_env)
+            && active_env != name
+            && let Some(value) = resolve_candidate_env(config, active_env)
+        {
+            return Ok(Some(value));
+        }
+        for &vendor_key in STANDARD_VENDOR_KEY_ENVS {
+            if let Some(value) = resolve_candidate_env(config, vendor_key) {
+                return Ok(Some(value));
+            }
+        }
+    } else if STANDARD_VENDOR_KEY_ENVS.contains(&name) {
+        if let Some(value) = resolve_candidate_env(config, DEFAULT_PROVIDER_API_KEY_ENV) {
+            return Ok(Some(value));
+        }
+        if let Some(value) = resolve_candidate_env(config, "PANDORA_API_KEY") {
+            return Ok(Some(value));
+        }
     }
+
     if matches!(
         name,
         "OLLAMA_API_KEY" | "LMSTUDIO_API_KEY" | "VLLM_API_KEY" | super::setup::LOCAL_NO_API_KEY_ENV
@@ -156,10 +200,39 @@ pub(crate) fn configured_credential(
     let (_, tenant, workspace) = session_scope();
     let vault = SecretVault::open(config.data_dir(), tenant, workspace, passphrase)
         .map_err(|error| CliError::configuration(error.to_string(), json!({})))?;
-    vault
+
+    if let Some(secret) = vault
         .get(name)
-        .map(|secret| secret.map(|secret| secret.into_string()))
-        .map_err(|error| CliError::configuration(error.to_string(), json!({})))
+        .map_err(|error| CliError::configuration(error.to_string(), json!({})))?
+    {
+        return Ok(Some(secret.into_string()));
+    }
+
+    if name == DEFAULT_PROVIDER_API_KEY_ENV || name == "PANDORA_API_KEY" {
+        for &vendor_key in STANDARD_VENDOR_KEY_ENVS {
+            if let Some(secret) = vault
+                .get(vendor_key)
+                .map_err(|error| CliError::configuration(error.to_string(), json!({})))?
+            {
+                return Ok(Some(secret.into_string()));
+            }
+        }
+    } else if STANDARD_VENDOR_KEY_ENVS.contains(&name) {
+        if let Some(secret) = vault
+            .get(DEFAULT_PROVIDER_API_KEY_ENV)
+            .map_err(|error| CliError::configuration(error.to_string(), json!({})))?
+        {
+            return Ok(Some(secret.into_string()));
+        }
+        if let Some(secret) = vault
+            .get("PANDORA_API_KEY")
+            .map_err(|error| CliError::configuration(error.to_string(), json!({})))?
+        {
+            return Ok(Some(secret.into_string()));
+        }
+    }
+
+    Ok(None)
 }
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {

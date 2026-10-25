@@ -63,6 +63,21 @@ impl ReferenceMonitor {
         }
     }
 
+    pub fn update_policy(&mut self, policy: PolicyContext) {
+        let policy_version = policy.policy_version();
+        self.parliament = Parliament::new(policy_version);
+        self.policy = policy;
+        self.policy_version = policy_version;
+    }
+
+    pub fn policy(&self) -> &PolicyContext {
+        &self.policy
+    }
+
+    pub fn governance_mode(&self) -> pandora_types::GovernanceMode {
+        self.policy.mode()
+    }
+
     pub fn authorize(
         &self,
         request: OperationRequest,

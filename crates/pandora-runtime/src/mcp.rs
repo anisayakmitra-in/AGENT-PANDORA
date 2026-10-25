@@ -1,3 +1,4 @@
+use crate::config::{McpAuthType, McpHttpConfig};
 use crate::mcp_catalog::{
     McpCatalogError, McpCatalogReservation, McpCatalogRevision, McpCatalogTool, digest_bytes,
 };
@@ -93,9 +94,11 @@ impl McpStdioConfig {
         let server_id = server_id.into();
         let program = program.into();
         validate_name(&server_id, 64)?;
-        if !Path::new(&program).is_absolute()
-            || program.len() > 4096
-            || program.chars().any(char::is_control)
+        let is_valid_program = (Path::new(&program).is_absolute()
+            || (!program.contains('/') && !program.contains('\\') && !program.is_empty()))
+            && program.len() <= 4096
+            && !program.chars().any(char::is_control);
+        if !is_valid_program
             || arguments.len() > 64
             || arguments
                 .iter()
@@ -781,11 +784,13 @@ impl McpProcess {
         self.send_request(request, id)
     }
 
+    #[allow(dead_code)]
     fn initialize_legacy(&mut self) -> Result<Value, McpError> {
         let id = self.allocate_request_id()?;
         self.send_request(legacy_initialize_request(id), id)
     }
 
+    #[allow(dead_code)]
     fn notify_initialized(&mut self) -> Result<(), McpError> {
         self.write_message(&legacy_initialized_notification())
     }
@@ -864,10 +869,190 @@ fn read_stderr(stderr: impl Read, limit: usize) -> Result<(), McpError> {
     Ok(())
 }
 
+struct McpHttpClient {
+    #[allow(dead_code)]
+    server_id: String,
+    url: String,
+    auth: McpAuthType,
+    token: Option<String>,
+    headers: std::collections::BTreeMap<String, String>,
+    client: reqwest::blocking::Client,
+    seen_response_ids: HashSet<u64>,
+    next_request_id: u64,
+    limits: McpLimits,
+    connection_id: u32,
+}
+
+impl McpHttpClient {
+    fn connect(config: &McpHttpConfig, token: Option<String>) -> Result<Self, McpError> {
+        let limits = McpLimits::default();
+        let client = pandora_provider::proxy_client_builder()
+            .timeout(limits.timeout)
+            .build()
+            .map_err(|_| McpError::SpawnFailed)?;
+        let now_sec = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let connection_id = ((std::process::id() as u64 ^ (now_sec << 16)) as u32) | 0x8000_0000;
+        Ok(Self {
+            server_id: config.server_id().to_owned(),
+            url: config.url().to_owned(),
+            auth: config.auth().clone(),
+            token,
+            headers: config.headers().clone(),
+            client,
+            seen_response_ids: HashSet::new(),
+            next_request_id: 1,
+            limits,
+            connection_id,
+        })
+    }
+
+    fn request(&mut self, era: McpWireEra, method: &str, params: Value) -> Result<Value, McpError> {
+        let id = self.allocate_request_id()?;
+        let request = match era {
+            McpWireEra::Modern => protocol_request(method, id, params),
+            McpWireEra::Legacy => legacy_request(method, id, params),
+        };
+        self.send_request(request, id)
+    }
+
+    fn initialize_legacy(&mut self) -> Result<Value, McpError> {
+        let id = self.allocate_request_id()?;
+        self.send_request(legacy_initialize_request(id), id)
+    }
+
+    fn notify_initialized(&mut self) -> Result<(), McpError> {
+        let notification = legacy_initialized_notification();
+        let _ = self.post_json(&notification);
+        Ok(())
+    }
+
+    fn allocate_request_id(&mut self) -> Result<u64, McpError> {
+        let id = self.next_request_id;
+        self.next_request_id = id.checked_add(1).ok_or(McpError::RequestRejected)?;
+        Ok(id)
+    }
+
+    fn send_request(&mut self, request: Value, expected_id: u64) -> Result<Value, McpError> {
+        let body_str = self.post_json(&request)?;
+        let trimmed = body_str.trim();
+
+        if trimmed.starts_with("event:") || trimmed.starts_with("data:") {
+            for line in trimmed.lines() {
+                if let Some(data) = line.strip_prefix("data:") {
+                    let data = data.trim();
+                    if !data.is_empty()
+                        && let Ok(val) = serde_json::from_str::<Value>(data)
+                    {
+                        return decode_response(val, expected_id, &mut self.seen_response_ids);
+                    }
+                }
+            }
+        }
+
+        let message: Value =
+            serde_json::from_str(trimmed).map_err(|_| McpError::MalformedMessage)?;
+        decode_response(message, expected_id, &mut self.seen_response_ids)
+    }
+
+    fn post_json(&self, payload: &Value) -> Result<String, McpError> {
+        let bytes = serde_json::to_vec(payload).map_err(|_| McpError::RequestRejected)?;
+        if bytes.len() > self.limits.max_frame_bytes {
+            return Err(McpError::FrameTooLarge);
+        }
+        let mut builder = self
+            .client
+            .post(&self.url)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .header(
+                reqwest::header::USER_AGENT,
+                "Pandora/2.0.0 (Enterprise-MCP)",
+            );
+
+        for (k, v) in &self.headers {
+            builder = builder.header(k.as_str(), v.as_str());
+        }
+
+        if let Some(ref tok) = self.token {
+            match &self.auth {
+                McpAuthType::Bearer | McpAuthType::OAuth2Pkce => {
+                    builder =
+                        builder.header(reqwest::header::AUTHORIZATION, format!("Bearer {tok}"));
+                }
+                McpAuthType::ApiKey { header } => {
+                    builder = builder.header(header.as_str(), tok.as_str());
+                }
+                McpAuthType::None => {}
+            }
+        }
+
+        let response = builder.body(bytes).send().map_err(|_| McpError::Io)?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(McpError::PermissionDenied);
+        }
+        if !response.status().is_success() {
+            return Err(McpError::RequestRejected);
+        }
+
+        response.text().map_err(|_| McpError::Io)
+    }
+
+    fn terminate(&mut self) {}
+
+    fn id(&self) -> u32 {
+        self.connection_id
+    }
+}
+
+enum McpTransport {
+    Stdio(McpProcess),
+    Http(McpHttpClient),
+}
+
+#[allow(dead_code)]
+impl McpTransport {
+    fn request(&mut self, era: McpWireEra, method: &str, params: Value) -> Result<Value, McpError> {
+        match self {
+            Self::Stdio(process) => process.request(era, method, params),
+            Self::Http(client) => client.request(era, method, params),
+        }
+    }
+
+    fn initialize_legacy(&mut self) -> Result<Value, McpError> {
+        match self {
+            Self::Stdio(process) => process.initialize_legacy(),
+            Self::Http(client) => client.initialize_legacy(),
+        }
+    }
+
+    fn notify_initialized(&mut self) -> Result<(), McpError> {
+        match self {
+            Self::Stdio(process) => process.notify_initialized(),
+            Self::Http(client) => client.notify_initialized(),
+        }
+    }
+
+    fn terminate(&mut self) {
+        match self {
+            Self::Stdio(process) => process.terminate(),
+            Self::Http(client) => client.terminate(),
+        }
+    }
+
+    fn id(&self) -> u32 {
+        match self {
+            Self::Stdio(process) => process.id(),
+            Self::Http(client) => client.id(),
+        }
+    }
+}
+
 pub struct McpServer {
     server_id: String,
     era: McpWireEra,
-    process: McpProcess,
+    transport: McpTransport,
     remote_names: HashMap<String, String>,
     tool_engine: ToolEngine,
     imported_ids: Vec<pandora_types::GeneId>,
@@ -939,7 +1124,7 @@ impl McpServer {
     fn terminate(&mut self) {
         if self.active {
             self.active = false;
-            self.process.terminate();
+            self.transport.terminate();
             self.tool_engine.unregister_batch(&self.imported_ids);
             self.catalog_reservation.take();
         }
@@ -1038,7 +1223,7 @@ impl McpExecutor {
             tool_engine,
             config.server_id,
             McpWireEra::Modern,
-            process,
+            McpTransport::Stdio(process),
             &listed,
             catalog_reservation,
         )
@@ -1090,7 +1275,134 @@ impl McpExecutor {
             tool_engine,
             config.server_id,
             McpWireEra::Legacy,
-            process,
+            McpTransport::Stdio(process),
+            &listed,
+            catalog_reservation,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn start_http_modern(
+        permit: &ConsumedPermit,
+        tool_engine: ToolEngine,
+        config: McpHttpConfig,
+        token: Option<String>,
+        catalog_reservation: &McpCatalogReservation,
+        purpose: SpawnPurpose,
+        allow_legacy: bool,
+        now: Timestamp,
+    ) -> McpExecutorResult<McpStartOutcome> {
+        let result = Self::start_http_modern_inner(
+            permit,
+            tool_engine,
+            config,
+            token,
+            catalog_reservation,
+            purpose,
+            allow_legacy,
+        );
+        executor_result(permit, now, result)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn start_http_modern_inner(
+        permit: &ConsumedPermit,
+        tool_engine: ToolEngine,
+        config: McpHttpConfig,
+        token: Option<String>,
+        catalog_reservation: &McpCatalogReservation,
+        purpose: SpawnPurpose,
+        allow_legacy: bool,
+    ) -> Result<McpStartOutcome, McpError> {
+        recheck_http_connect(permit, &config, purpose)?;
+        let mut client = McpHttpClient::connect(&config, token)?;
+        let discovery = client.request(McpWireEra::Modern, "server/discover", json!({}));
+        match discovery {
+            Ok(result) => {
+                if let Err(error) = validate_discovery(&result) {
+                    client.terminate();
+                    return Err(error);
+                }
+            }
+            Err(error) => match classify_probe_error(&error) {
+                ProbeErrorClass::ContinueModern => {}
+                ProbeErrorClass::Legacy if allow_legacy => {
+                    client.terminate();
+                    return Ok(McpStartOutcome::LegacyIdentified);
+                }
+                ProbeErrorClass::Legacy | ProbeErrorClass::Fail => {
+                    client.terminate();
+                    return Err(error);
+                }
+            },
+        }
+        let listed = match client.request(McpWireEra::Modern, "tools/list", json!({})) {
+            Ok(result) => result,
+            Err(error) => {
+                client.terminate();
+                return Err(error);
+            }
+        };
+        import_server(
+            tool_engine,
+            config.server_id,
+            McpWireEra::Modern,
+            McpTransport::Http(client),
+            &listed,
+            catalog_reservation,
+        )
+        .map(|server| McpStartOutcome::Connected(Box::new(server)))
+    }
+
+    pub(crate) fn start_http_legacy(
+        permit: &ConsumedPermit,
+        tool_engine: ToolEngine,
+        config: McpHttpConfig,
+        token: Option<String>,
+        catalog_reservation: &McpCatalogReservation,
+        now: Timestamp,
+    ) -> McpExecutorResult<McpServer> {
+        let result =
+            Self::start_http_legacy_inner(permit, tool_engine, config, token, catalog_reservation);
+        executor_result(permit, now, result)
+    }
+
+    fn start_http_legacy_inner(
+        permit: &ConsumedPermit,
+        tool_engine: ToolEngine,
+        config: McpHttpConfig,
+        token: Option<String>,
+        catalog_reservation: &McpCatalogReservation,
+    ) -> Result<McpServer, McpError> {
+        recheck_http_connect(permit, &config, SpawnPurpose::Legacy)?;
+        let mut client = McpHttpClient::connect(&config, token)?;
+        let initialized = match client.initialize_legacy() {
+            Ok(result) => result,
+            Err(error) => {
+                client.terminate();
+                return Err(error);
+            }
+        };
+        if let Err(error) = validate_legacy_initialize(&initialized) {
+            client.terminate();
+            return Err(error);
+        }
+        if let Err(error) = client.notify_initialized() {
+            client.terminate();
+            return Err(error);
+        }
+        let listed = match client.request(McpWireEra::Legacy, "tools/list", json!({})) {
+            Ok(result) => result,
+            Err(error) => {
+                client.terminate();
+                return Err(error);
+            }
+        };
+        import_server(
+            tool_engine,
+            config.server_id,
+            McpWireEra::Legacy,
+            McpTransport::Http(client),
             &listed,
             catalog_reservation,
         )
@@ -1116,7 +1428,7 @@ impl McpExecutor {
     ) -> Result<McpToolResult, McpError> {
         let remote_name = server.remote_tool(plan.tool_id().as_str())?.to_owned();
         recheck_invocation(permit, server, plan, &remote_name)?;
-        let result = server.process.request(
+        let result = server.transport.request(
             server.era,
             "tools/call",
             json!({
@@ -1132,14 +1444,14 @@ fn import_server(
     tool_engine: ToolEngine,
     server_id: String,
     era: McpWireEra,
-    mut process: McpProcess,
+    mut transport: McpTransport,
     listed: &Value,
     catalog_reservation: &McpCatalogReservation,
 ) -> Result<McpServer, McpError> {
     let imported = match definitions_from_list_for_era(&server_id, era, listed) {
         Ok(imported) => imported,
         Err(error) => {
-            process.terminate();
+            transport.terminate();
             return Err(error);
         }
     };
@@ -1172,21 +1484,21 @@ fn import_server(
         .map(|tool| tool.definition)
         .collect::<Vec<_>>();
     if let Err(error) = tool_engine.register_batch(definitions) {
-        process.terminate();
+        transport.terminate();
         return Err(map_tool_error(error));
     }
-    let catalog_revision = match catalog_reservation.activate(era, process.id(), catalog_tools) {
+    let catalog_revision = match catalog_reservation.activate(era, transport.id(), catalog_tools) {
         Ok(revision) => revision,
         Err(error) => {
             tool_engine.unregister_batch(&imported_ids);
-            process.terminate();
+            transport.terminate();
             return Err(map_catalog_error(error));
         }
     };
     Ok(McpServer {
         server_id,
         era,
-        process,
+        transport,
         remote_names,
         tool_engine,
         imported_ids,
@@ -1204,6 +1516,48 @@ pub(crate) fn map_catalog_error(error: McpCatalogError) -> McpError {
         | McpCatalogError::GenerationExhausted
         | McpCatalogError::ReservationLost => McpError::RequestRejected,
     }
+}
+
+pub(crate) fn config_http_authorization_payload(
+    config: &McpHttpConfig,
+    purpose: SpawnPurpose,
+) -> Result<Vec<u8>, McpError> {
+    serde_json::to_vec(&json!({
+        "server": config.server_id(),
+        "url": config.url(),
+        "mode": config.mode().as_str(),
+        "auth": config.auth().as_str(),
+        "purpose": purpose.as_str(),
+    }))
+    .map_err(|_| McpError::RequestRejected)
+}
+
+pub(crate) fn config_http_catalog_digest(config: &McpHttpConfig) -> Result<String, McpError> {
+    let payload = serde_json::to_vec(&json!({
+        "server": config.server_id(),
+        "url": config.url(),
+        "mode": config.mode().as_str(),
+        "auth": config.auth().as_str(),
+    }))
+    .map_err(|_| McpError::RequestRejected)?;
+    Ok(digest_bytes(&payload))
+}
+
+fn recheck_http_connect(
+    permit: &ConsumedPermit,
+    config: &McpHttpConfig,
+    purpose: SpawnPurpose,
+) -> Result<(), McpError> {
+    let request = permit.request();
+    let payload = config_http_authorization_payload(config, purpose)?;
+    if request.capability() != Capability::NetworkConnect
+        || request.operation() != Operation::Connect
+        || request.resource_scope() != &ResourceScope::none()
+        || !request.payload_digest_matches(&payload)
+    {
+        return Err(McpError::PermissionDenied);
+    }
+    Ok(())
 }
 
 fn recheck_spawn(

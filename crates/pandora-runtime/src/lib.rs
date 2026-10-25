@@ -14,6 +14,7 @@ pub mod content_guard;
 pub mod context_engine;
 pub mod context_recovery;
 pub mod context_vfs;
+pub mod cron_engine;
 pub mod curator;
 pub mod decision_engine;
 pub mod device_trust;
@@ -52,6 +53,7 @@ pub mod package_distribution;
 pub mod package_store;
 pub mod parliament;
 pub mod permit_store;
+pub mod prompt_engine;
 mod receipt_id;
 pub mod recovery_archive;
 pub mod reference_monitor;
@@ -100,6 +102,9 @@ pub use composition_ledger::{
     COMPOSITION_LEDGER_VERSION, CompositionBinding, CompositionLedger, CompositionLedgerError,
     CompositionSource, MAX_COMPOSITION_BINDINGS,
 };
+pub use config::{
+    ConfigOverrides, McpAuthType, McpHttpConfig, McpOAuthConfig, McpServerTarget, RuntimeConfig,
+};
 pub use connector_engine::{ConnectorEngine, ConnectorError};
 pub use containment::shipped_executor_containment;
 pub use content_guard::{
@@ -111,6 +116,10 @@ pub use content_guard::{
 pub use context_engine::{ContextCacheStats, ContextEngine, ContextError};
 pub use context_recovery::{ContextRecovery, RecoveryDecision, RecoveryInput, RecoveryStep};
 pub use context_vfs::{ContextVfs, VfsError};
+pub use cron_engine::{
+    CronEngine, CronError, CronExecutionResult, CronJob, CronJobStatus, CronSchedule,
+    handle_cronjob_manage_action,
+};
 pub use curator::{CuratorEngine, CuratorError};
 pub use decision_engine::{
     CustomApiDecisionDriver, DecisionDriver, DecisionEngine, DecisionError, DpoPair,
@@ -237,6 +246,9 @@ pub use package_store::{
 };
 pub use parliament::Parliament;
 pub use permit_store::{ConsumedPermit, PermitError, PermitStore};
+pub use prompt_engine::{
+    PresetKind, PromptEngine, PromptError, PromptPreset, StorageTier, validate_preset_name,
+};
 pub use recovery_archive::{RecoveryArchive, RecoveryArchiveError, RecoveryBundle, RecoveryEntry};
 pub use reference_monitor::{AuthorizationError, ReferenceMonitor};
 pub use reflexion::{
@@ -251,7 +263,9 @@ pub use research_artifact::{
 };
 pub use rollout_reducer::{RolloutReducer, RolloutReducerError};
 pub use run_loop::{RunLoop, RunLoopError};
-pub use secret_vault::{SecretVault, SecretVaultEntry, SecretVaultError, VaultSecret};
+pub use secret_vault::{
+    SecretVault, SecretVaultEntry, SecretVaultError, StoredMcpAuth, VaultSecret,
+};
 pub use self_healing::{SelfHealingEngine, SelfHealingError};
 pub use service::{RuntimeService, RuntimeServiceError, RuntimeServiceScope};
 pub use service_token::{ServiceToken, ServiceTokenError, ServiceTokenStore};
@@ -281,7 +295,7 @@ pub use subagent_store::{
     SubagentStoreError,
 };
 pub use tool_engine::{
-    ToolContext, ToolDefinition, ToolEngine, ToolError, ToolInvocation, ToolPlan,
+    ToolContext, ToolDefinition, ToolEngine, ToolError, ToolInvocation, ToolPlan, ToolProfile,
 };
 pub use tripartite_governance::{
     TripartiteApproval, TripartiteError, TripartiteEvaluation, TripartiteGovernance,

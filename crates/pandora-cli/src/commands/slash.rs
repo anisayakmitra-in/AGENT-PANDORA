@@ -15,6 +15,8 @@ const COMMON_OPTIONS: &[&str] = &[
     "task-class",
     "approval",
     "optimize",
+    "mode",
+    "permission",
 ];
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
@@ -47,8 +49,12 @@ pub(crate) fn execute_interactive(
     parsed: &ParsedArgs,
     session_id: Option<&str>,
     approval_id: Option<&str>,
+    mode: Option<&str>,
+    provider: Option<&str>,
+    model: Option<&str>,
 ) -> Result<CommandResult, CliError> {
-    let (command, args) = interactive_invocation(line, parsed, session_id, approval_id)?;
+    let (command, args) =
+        interactive_invocation(line, parsed, session_id, approval_id, mode, provider, model)?;
     execute_direct(&command, &args)
 }
 
@@ -57,6 +63,9 @@ fn interactive_invocation(
     parsed: &ParsedArgs,
     session_id: Option<&str>,
     approval_id: Option<&str>,
+    mode: Option<&str>,
+    provider: Option<&str>,
+    model: Option<&str>,
 ) -> Result<(String, Vec<String>), CliError> {
     let mut values = split_interactive_line(line)?.into_iter();
     let command = values
@@ -65,16 +74,32 @@ fn interactive_invocation(
         .ok_or_else(|| CliError::usage("interactive slash command is missing"))?
         .to_owned();
     let mut args = values.collect::<Vec<_>>();
-    append_common_options(
-        &mut args,
-        parsed,
-        &["config", "data-dir", "workspace", "provider", "model"],
-    );
+    let mut allowed = vec!["config", "data-dir", "workspace"];
+    if provider.is_none() {
+        allowed.push("provider");
+    }
+    if model.is_none() {
+        allowed.push("model");
+    }
+    if mode.is_none() {
+        allowed.push("mode");
+        allowed.push("permission");
+    }
+    append_common_options(&mut args, parsed, &allowed);
     if let Some(session_id) = session_id {
         append_option(&mut args, "session", session_id);
     }
     if let Some(approval_id) = approval_id {
         append_option(&mut args, "approval", approval_id);
+    }
+    if let Some(mode) = mode {
+        append_option(&mut args, "mode", mode);
+    }
+    if let Some(provider) = provider {
+        append_option(&mut args, "provider", provider);
+    }
+    if let Some(model) = model {
+        append_option(&mut args, "model", model);
     }
     Ok((command, args))
 }
@@ -380,6 +405,9 @@ mod tests {
             &parsed,
             Some("session-1"),
             Some("approval-1"),
+            None,
+            None,
+            None,
         )
         .unwrap();
 
@@ -399,6 +427,28 @@ mod tests {
                 "approval-1",
             ]
         );
+    }
+
+    #[test]
+    fn interactive_invocation_propagates_governance_mode() {
+        let parsed = ParsedArgs {
+            values: BTreeMap::new(),
+            positionals: Vec::new(),
+        };
+
+        let (command, args) = interactive_invocation(
+            "/patch test.txt hello",
+            &parsed,
+            None,
+            None,
+            Some("read-only"),
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(command, "/patch");
+        assert_eq!(args, ["test.txt", "hello", "--mode", "read-only"]);
     }
 
     #[test]

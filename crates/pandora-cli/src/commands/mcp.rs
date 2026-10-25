@@ -3,22 +3,28 @@ use super::{
     write_config,
 };
 use crate::output::{CliError, CommandResult, success};
+use pandora_runtime::config::{McpAuthType, McpHttpConfig, McpOAuthConfig, RuntimeConfig};
 use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::{
-    ExecutionController, McpError, McpProtocolMode, McpStdioConfig, McpWireEra, ToolEngine,
+    ExecutionController, McpError, McpProtocolMode, McpStdioConfig, McpWireEra, StoredMcpAuth,
+    ToolEngine,
 };
 use pandora_types::{Capability, EffectOutcome, EffectReceipt, PolicyContext, Session, SessionId};
 use serde_json::{Value, json};
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
-        CliError::usage("mcp requires 'list', 'inspect', 'set', 'remove', 'catalog', or 'call'")
+        CliError::usage("mcp requires 'list', 'inspect', 'set', 'add', 'add-http', 'remove', 'catalog', or 'call'")
     })?;
     match subcommand.as_str() {
         "list" => list(&args[1..]),
         "inspect" => inspect(&args[1..]),
         "set" => set(&args[1..]),
-        "remove" => remove(&args[1..]),
+        "add" => add(&args[1..]),
+        "add-http" => add_http(&args[1..]),
+        "login" => login(&args[1..]),
+        "logout" => logout(&args[1..]),
+        "remove" | "rm" => remove(&args[1..]),
         "catalog" => catalog(&args[1..]),
         "call" => call(&args[1..]),
         unknown => Err(CliError::usage(format!("unknown mcp command '{unknown}'"))),
@@ -38,9 +44,10 @@ fn catalog(args: &[String]) -> Result<CommandResult, CliError> {
     }
     let (config, store, session) = runtime_session(&parsed)?;
     let server_id = &parsed.positionals[0];
-    let server = config.mcp_server(server_id).ok_or_else(|| {
+    let target = config.mcp_target(server_id).ok_or_else(|| {
         CliError::configuration("MCP server is not configured", json!({"server": server_id}))
     })?;
+    let token = resolve_mcp_auth_token(&config, server_id)?;
     let workspace = WorkspaceRoot::new(config.workspace_dir()).map_err(|_| {
         CliError::configuration(
             "workspace path is invalid",
@@ -50,9 +57,10 @@ fn catalog(args: &[String]) -> Result<CommandResult, CliError> {
     let policy = mcp_policy();
     let controller = ExecutionController::with_policy(workspace, policy);
     let start = controller
-        .start_mcp(
+        .start_mcp_target(
             &ToolEngine::with_builtins(),
-            server.clone(),
+            target,
+            token,
             &session,
             super::timestamp(),
         )
@@ -114,9 +122,10 @@ fn call(args: &[String]) -> Result<CommandResult, CliError> {
     let (config, store, session) = runtime_session(&parsed)?;
     let server_id = &parsed.positionals[0];
     let local_tool = &parsed.positionals[1];
-    let server = config.mcp_server(server_id).ok_or_else(|| {
+    let target = config.mcp_target(server_id).ok_or_else(|| {
         CliError::configuration("MCP server is not configured", json!({"server": server_id}))
     })?;
+    let token = resolve_mcp_auth_token(&config, server_id)?;
     let workspace = WorkspaceRoot::new(config.workspace_dir()).map_err(|_| {
         CliError::configuration(
             "workspace path is invalid",
@@ -126,7 +135,7 @@ fn call(args: &[String]) -> Result<CommandResult, CliError> {
     let controller = ExecutionController::with_policy(workspace, mcp_policy());
     let tool_engine = ToolEngine::with_builtins();
     let start = controller
-        .start_mcp(&tool_engine, server.clone(), &session, super::timestamp())
+        .start_mcp_target(&tool_engine, target, token, &session, super::timestamp())
         .map_err(mcp_failure)?;
     let selected_era = start.selected_era();
     let downgraded = start.downgraded();
@@ -300,7 +309,52 @@ fn receipts_json(receipts: &[EffectReceipt]) -> Value {
 }
 
 fn mcp_policy() -> PolicyContext {
-    PolicyContext::new(1, [Capability::ProcessExecute, Capability::McpInvoke], [])
+    PolicyContext::new(
+        1,
+        [
+            Capability::ProcessExecute,
+            Capability::NetworkConnect,
+            Capability::McpInvoke,
+        ],
+        [],
+    )
+}
+
+fn resolve_mcp_auth_token(
+    config: &RuntimeConfig,
+    server_id: &str,
+) -> Result<Option<String>, CliError> {
+    if let Ok(tok) = std::env::var("PANDORA_MCP_TOKEN") {
+        let trimmed = tok.trim();
+        if !trimmed.is_empty() {
+            return Ok(Some(trimmed.to_owned()));
+        }
+    }
+    let server_var = format!(
+        "PANDORA_MCP_{}_TOKEN",
+        server_id.to_ascii_uppercase().replace('-', "_")
+    );
+    if let Ok(tok) = std::env::var(&server_var) {
+        let trimmed = tok.trim();
+        if !trimmed.is_empty() {
+            return Ok(Some(trimmed.to_owned()));
+        }
+    }
+    if let Some(http_cfg) = config.mcp_http_config(server_id)
+        && let Some(secret_ref) = http_cfg.secret_reference()
+        && let Ok(val) = std::env::var(secret_ref)
+    {
+        let trimmed = val.trim();
+        if !trimmed.is_empty() {
+            return Ok(Some(trimmed.to_owned()));
+        }
+    }
+    if let Ok(vault) = super::secret::open_vault(config)
+        && let Some(auth) = vault.get_mcp_auth(server_id)
+    {
+        return Ok(Some(auth.access_token.clone()));
+    }
+    Ok(None)
 }
 
 fn mcp_failure(failure: pandora_runtime::McpFailure) -> CliError {
@@ -327,11 +381,18 @@ fn list(args: &[String]) -> Result<CommandResult, CliError> {
         ));
     }
     let config = load_config(&parsed)?;
-    let servers = config
-        .mcp_server_ids()
-        .into_iter()
-        .filter_map(|server_id| config.mcp_server(&server_id).map(server_value))
-        .collect::<Vec<_>>();
+    let mut servers = Vec::new();
+    for server_id in config.mcp_server_ids() {
+        if let Some(server) = config.mcp_server(&server_id) {
+            servers.push(server_value(server));
+        } else if let Some(url) = config.mcp_http_server(&server_id) {
+            servers.push(json!({
+                "id": server_id,
+                "transport": "http",
+                "url": url,
+            }));
+        }
+    }
     Ok(success(
         "mcp list",
         json!({"servers": servers}),
@@ -348,14 +409,33 @@ fn inspect(args: &[String]) -> Result<CommandResult, CliError> {
     }
     let config = load_config(&parsed)?;
     let server_id = &parsed.positionals[0];
-    let server = config.mcp_server(server_id).ok_or_else(|| {
-        CliError::configuration("MCP server is not configured", json!({"server": server_id}))
-    })?;
-    Ok(success(
-        "mcp inspect",
-        json!({"server": server_value(server)}),
-        format!("Inspected MCP server {server_id}"),
-    ))
+    if let Some(server) = config.mcp_server(server_id) {
+        Ok(success(
+            "mcp inspect",
+            json!({"server": server_value(server)}),
+            format!("Inspected MCP server {server_id}"),
+        ))
+    } else if let Some(http_cfg) = config.mcp_http_config(server_id) {
+        Ok(success(
+            "mcp inspect",
+            json!({"server": {
+                "id": server_id,
+                "transport": "http",
+                "url": &http_cfg.url,
+                "mode": http_cfg.mode.as_str(),
+                "auth_type": http_cfg.auth.as_str(),
+                "headers": &http_cfg.headers,
+                "oauth": &http_cfg.oauth,
+                "secret_reference": &http_cfg.secret_reference,
+            }}),
+            format!("Inspected MCP server {server_id}"),
+        ))
+    } else {
+        Err(CliError::configuration(
+            "MCP server is not configured",
+            json!({"server": server_id}),
+        ))
+    }
 }
 
 fn set(args: &[String]) -> Result<CommandResult, CliError> {
@@ -402,15 +482,328 @@ fn set(args: &[String]) -> Result<CommandResult, CliError> {
     ))
 }
 
+fn add(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "program",
+            "arguments-json",
+            "mode",
+        ],
+    )?;
+    if parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "mcp add requires '<name> <command> [args...]' or '--program <path>'",
+        ));
+    }
+    let server_id = &parsed.positionals[0];
+    let (program, arguments) = if let Some(prog) = parsed.value("program") {
+        let args = parsed
+            .value("arguments-json")
+            .map(parse_arguments)
+            .transpose()?
+            .unwrap_or_default();
+        (prog.to_owned(), args)
+    } else if parsed.positionals.len() >= 2 {
+        let prog = parsed.positionals[1].clone();
+        let args = parsed.positionals[2..].to_vec();
+        (prog, args)
+    } else {
+        return Err(CliError::usage(
+            "mcp add requires '<name> <command> [args...]' or '--program <path>'",
+        ));
+    };
+    let mode = parse_mode(parsed.value("mode").unwrap_or("auto"))?;
+    let server = McpStdioConfig::new(server_id, program, arguments, mode).map_err(|error| {
+        CliError::configuration(
+            "MCP server configuration is invalid",
+            json!({"reason": error.code()}),
+        )
+    })?;
+    let mut config = load_config(&parsed)?;
+    config.set_mcp_server(server);
+    write_config(&config)?;
+    let server = config
+        .mcp_server(server_id)
+        .expect("configured MCP server should be available");
+    Ok(success(
+        "mcp add",
+        json!({"server": server_value(server)}),
+        format!("MCP server {} configured", server.server_id()),
+    ))
+}
+
+fn add_http(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "name",
+            "url",
+            "auth",
+            "token",
+            "token-env",
+            "header",
+            "client-id",
+            "auth-url",
+            "token-url",
+            "scopes",
+            "secret",
+        ],
+    )?;
+    let server_id = if let Some(n) = parsed.value("name") {
+        n.to_owned()
+    } else if !parsed.positionals.is_empty() {
+        parsed.positionals[0].clone()
+    } else {
+        return Err(CliError::usage("mcp add-http requires '<name> <url>'"));
+    };
+    let server_id = server_id.as_str();
+    let url = if let Some(u) = parsed.value("url") {
+        u.to_owned()
+    } else if parsed.value("name").is_some() && !parsed.positionals.is_empty() {
+        parsed.positionals[0].clone()
+    } else if parsed.positionals.len() >= 2 {
+        parsed.positionals[1].clone()
+    } else {
+        return Err(CliError::usage("mcp add-http requires '<name> <url>'"));
+    };
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err(CliError::configuration(
+            "MCP HTTP server URL must start with http:// or https://",
+            json!({"url": url}),
+        ));
+    }
+    let auth_type = if let Some(a) = parsed.value("auth") {
+        McpAuthType::parse(a).unwrap_or(McpAuthType::Bearer)
+    } else if parsed.value("token").is_some() || parsed.value("token-env").is_some() {
+        McpAuthType::Bearer
+    } else {
+        McpAuthType::None
+    };
+
+    let mut headers = std::collections::BTreeMap::new();
+    if let Some(h) = parsed.value("header")
+        && let Some((k, v)) = h.split_once(':')
+    {
+        headers.insert(k.trim().to_owned(), v.trim().to_owned());
+    }
+
+    let oauth = if let (Some(auth_ep), Some(tok_ep), Some(cid)) = (
+        parsed.value("auth-url"),
+        parsed.value("token-url"),
+        parsed.value("client-id"),
+    ) {
+        Some(McpOAuthConfig {
+            auth_endpoint: auth_ep.to_owned(),
+            token_endpoint: tok_ep.to_owned(),
+            client_id: cid.to_owned(),
+            redirect_uri: None,
+            scopes: parsed
+                .value("scopes")
+                .map(|s| s.split(',').map(str::trim).map(str::to_owned).collect())
+                .unwrap_or_default(),
+        })
+    } else {
+        None
+    };
+
+    let mut http_config =
+        McpHttpConfig::new(server_id, &url, McpProtocolMode::Auto, auth_type.clone());
+    http_config.headers = headers;
+    http_config.oauth = oauth;
+    http_config.secret_reference = parsed.value("secret").map(str::to_owned);
+
+    let mut config = load_config(&parsed)?;
+    config.set_mcp_http_config(http_config);
+    write_config(&config)?;
+
+    let mut token_stored = false;
+    let token_val = parsed.value("token").map(str::to_owned).or_else(|| {
+        parsed
+            .value("token-env")
+            .and_then(|e| std::env::var(e).ok())
+    });
+    if let Some(token) = token_val
+        && let Ok(mut vault) = super::secret::open_vault(&config)
+    {
+        let auth = StoredMcpAuth {
+            server_id: server_id.to_owned(),
+            auth_type: auth_type.as_str().to_owned(),
+            access_token: token,
+            refresh_token: None,
+            header_name: None,
+            expires_at: None,
+            token_endpoint: parsed.value("token-url").map(str::to_owned),
+            client_id: parsed.value("client-id").map(str::to_owned),
+            scopes: Vec::new(),
+            created_at: super::timestamp().as_unix_seconds(),
+            updated_at: super::timestamp().as_unix_seconds(),
+        };
+        let _ = vault.put_mcp_auth(auth);
+        token_stored = true;
+    }
+
+    Ok(success(
+        "mcp add-http",
+        json!({
+            "server": {
+                "id": server_id,
+                "transport": "http",
+                "url": url,
+                "auth": auth_type.as_str(),
+                "token_stored": token_stored,
+            }
+        }),
+        format!(
+            "MCP HTTP server {server_id} configured (auth: {})",
+            auth_type.as_str()
+        ),
+    ))
+}
+
+fn login(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "token",
+            "token-url",
+            "client-id",
+        ],
+    )?;
+    if parsed.positionals.len() != 1 {
+        return Err(CliError::usage("mcp login requires '<server-id>'"));
+    }
+    let server_id = &parsed.positionals[0];
+    let config = load_config(&parsed)?;
+
+    if let Some(token) = parsed.value("token") {
+        let mut vault = super::secret::open_vault(&config)?;
+        let auth = StoredMcpAuth {
+            server_id: server_id.to_owned(),
+            auth_type: "bearer".to_owned(),
+            access_token: token.to_owned(),
+            refresh_token: None,
+            header_name: None,
+            expires_at: None,
+            token_endpoint: parsed.value("token-url").map(str::to_owned),
+            client_id: parsed.value("client-id").map(str::to_owned),
+            scopes: Vec::new(),
+            created_at: super::timestamp().as_unix_seconds(),
+            updated_at: super::timestamp().as_unix_seconds(),
+        };
+        vault
+            .put_mcp_auth(auth)
+            .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+        return Ok(success(
+            "mcp login",
+            json!({
+                "server": server_id,
+                "auth_type": "bearer",
+                "status": "authenticated",
+            }),
+            format!("MCP server '{server_id}' authenticated via token in SecretVault"),
+        ));
+    }
+
+    let http_cfg = config.mcp_http_config(server_id).ok_or_else(|| {
+        CliError::configuration(
+            "MCP server is not configured or not an HTTP server",
+            json!({"server": server_id}),
+        )
+    })?;
+
+    let oauth = http_cfg.oauth().ok_or_else(|| {
+        CliError::usage(format!(
+            "MCP server '{server_id}' has no OAuth config. Use 'pandora mcp login {server_id} --token <token>' or configure OAuth endpoints."
+        ))
+    })?;
+
+    use base64::Engine;
+    use sha2::Digest;
+    let mut verifier_bytes = [0u8; 32];
+    getrandom::fill(&mut verifier_bytes).map_err(|_| {
+        CliError::internal("could not generate cryptographic PKCE entropy", json!({}))
+    })?;
+    let code_verifier = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifier_bytes);
+    let challenge_digest = sha2::Sha256::digest(code_verifier.as_bytes());
+    let code_challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(challenge_digest);
+
+    let mut state_bytes = [0u8; 16];
+    getrandom::fill(&mut state_bytes).map_err(|_| {
+        CliError::internal("could not generate cryptographic PKCE entropy", json!({}))
+    })?;
+    let state = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(state_bytes);
+
+    let auth_url = format!(
+        "{}?response_type=code&client_id={}&redirect_uri=http%3A%2F%2F127.0.0.1%3A1455%2Fcallback&code_challenge={}&code_challenge_method=S256&state={}",
+        oauth.auth_endpoint, oauth.client_id, code_challenge, state
+    );
+
+    Ok(success(
+        "mcp login",
+        json!({
+            "server": server_id,
+            "auth_type": "oauth_pkce",
+            "authorize_url": auth_url,
+            "state": state,
+        }),
+        format!("Initiate OAuth PKCE login for '{server_id}' at: {auth_url}"),
+    ))
+}
+
+fn logout(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace"])?;
+    if parsed.positionals.len() != 1 {
+        return Err(CliError::usage("mcp logout requires '<server-id>'"));
+    }
+    let server_id = &parsed.positionals[0];
+    let config = load_config(&parsed)?;
+    let mut vault = super::secret::open_vault(&config)?;
+    let removed = vault
+        .remove_mcp_auth(server_id)
+        .map_err(|e| CliError::internal(e.to_string(), json!({})))?;
+    Ok(success(
+        "mcp logout",
+        json!({
+            "server": server_id,
+            "removed": removed,
+        }),
+        format!("MCP server '{server_id}' credential removed from SecretVault"),
+    ))
+}
+
 fn remove(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(args, &["config", "data-dir", "workspace", "yes"])?;
     if parsed.positionals.len() != 1 {
         return Err(CliError::usage("mcp remove requires exactly one server ID"));
     }
-    if parsed.value("yes").is_none() {
-        return Err(CliError::usage("mcp remove requires '--yes'"));
-    }
     let server_id = &parsed.positionals[0];
+    if parsed.value("yes").is_none() {
+        use std::io::IsTerminal;
+        if std::io::stdin().is_terminal() {
+            eprint!("Remove MCP server '{server_id}'? [y/N]: ");
+            let mut input = String::new();
+            if std::io::stdin().read_line(&mut input).is_err()
+                || !matches!(input.trim().to_lowercase().as_str(), "y" | "yes")
+            {
+                return Err(CliError::execution(
+                    "MCP server removal aborted by user",
+                    json!({"server": server_id}),
+                ));
+            }
+        } else {
+            return Err(CliError::usage("mcp remove requires '--yes'"));
+        }
+    }
     let mut config = load_config(&parsed)?;
     if !config.remove_mcp_server(server_id) {
         return Err(CliError::configuration(

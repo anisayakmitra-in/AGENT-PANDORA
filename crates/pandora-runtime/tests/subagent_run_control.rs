@@ -96,6 +96,7 @@ fn ordinary_run_advertises_the_complete_default_tool_catalog() {
             "ariadne.debt".to_owned(),
             "browser.fetch".to_owned(),
             "citation.inventory".to_owned(),
+            "cronjob_manage".to_owned(),
             "daedalus.audit".to_owned(),
             "design.compare".to_owned(),
             "design.inspect".to_owned(),

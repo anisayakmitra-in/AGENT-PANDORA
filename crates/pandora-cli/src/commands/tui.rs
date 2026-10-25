@@ -18,6 +18,7 @@ use ratatui::{Frame, Terminal};
 use serde_json::{Value, json};
 use std::cmp::min;
 use std::io::{self, IsTerminal, Stdout};
+use std::path::Path;
 use std::time::Duration;
 
 const MAX_DISPLAY_CHARS: usize = 64 * 1024;
@@ -43,6 +44,8 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "max-turns",
             "max-tools",
             "theme",
+            "mode",
+            "permission",
         ],
     )?;
     if !parsed.positionals.is_empty() {
@@ -572,6 +575,30 @@ const PALETTE_ENTRIES: &[PaletteEntry] = &[
         immediate: true,
     },
     PaletteEntry {
+        command: "/mode autonomous",
+        category: "Governance",
+        description: "Switch to Autonomous execution mode (zero prompt barriers)",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/mode supervised",
+        category: "Governance",
+        description: "Switch to Supervised execution mode (requires approval on mutating operations)",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/mode read-only",
+        category: "Governance",
+        description: "Switch to Read-Only mode (strictly read operations only)",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/preset",
+        category: "Prompt",
+        description: "List available reusable prompt presets and roles",
+        immediate: true,
+    },
+    PaletteEntry {
         command: "/domain-starter",
         category: "SDK",
         description: "Show the safe Domain Harness scaffold workflow",
@@ -742,6 +769,9 @@ struct App {
     fleet_snapshot: FleetSnapshot,
     packages_cache: Vec<String>,
     distribution_cache: Vec<String>,
+    governance_mode: pandora_types::GovernanceMode,
+    mode_explicit: bool,
+    active_persona: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -937,6 +967,12 @@ impl PendingInvocation {
 
 impl App {
     fn new(args: ParsedArgs, theme: TuiTheme) -> Self {
+        let mode_explicit = args.value("mode").is_some() || args.value("permission").is_some();
+        let governance_mode = args
+            .value("mode")
+            .or_else(|| args.value("permission"))
+            .and_then(pandora_types::GovernanceMode::parse)
+            .unwrap_or(pandora_types::GovernanceMode::Supervised);
         let mut app = Self {
             session_id: args.value("session").map(str::to_owned),
             args,
@@ -1006,6 +1042,9 @@ impl App {
             },
             packages_cache: Vec::new(),
             distribution_cache: Vec::new(),
+            governance_mode,
+            mode_explicit,
+            active_persona: None,
         };
         app.refresh_provider_telemetry();
         app
@@ -2158,6 +2197,52 @@ impl App {
                 let spec = value.trim_start_matches("/model ").trim();
                 self.switch_model(spec);
             }
+            "/mode" | "/permission" => {
+                self.push_message(format!(
+                    "mode> Current governance mode: {} (options: autonomous, supervised, read-only)",
+                    self.governance_mode.as_str()
+                ));
+            }
+            value if value.starts_with("/mode ") || value.starts_with("/permission ") => {
+                let target = value
+                    .trim_start_matches("/permission ")
+                    .trim_start_matches("/mode ")
+                    .trim();
+                match pandora_types::GovernanceMode::parse(target) {
+                    Some(mode) => {
+                        self.governance_mode = mode;
+                        self.mode_explicit = true;
+                        self.push_message(format!(
+                            "mode> Switched governance mode to '{}' (takes effect on subsequent turns)",
+                            mode.as_str()
+                        ));
+                    }
+                    None => {
+                        self.push_message("usage> /mode <autonomous|supervised|read-only>");
+                    }
+                }
+            }
+            "/preset" | "/presets" => {
+                self.handle_preset_list();
+            }
+            value if value.starts_with("/preset ") || value.starts_with("/presets ") => {
+                let rest = value
+                    .trim_start_matches("/presets ")
+                    .trim_start_matches("/preset ")
+                    .trim();
+                let parts: Vec<&str> = rest.split_whitespace().collect();
+                if parts.is_empty() || parts[0] == "list" {
+                    self.handle_preset_list();
+                } else if parts[0] == "save" {
+                    let save_rest = rest.trim_start_matches("save").trim();
+                    self.handle_preset_save(save_rest);
+                } else if parts[0] == "apply" || parts[0] == "use" {
+                    let apply_rest = rest.trim_start_matches(parts[0]).trim();
+                    self.handle_preset_apply(apply_rest);
+                } else {
+                    self.handle_preset_apply(rest);
+                }
+            }
             "/key" => {
                 self.open_key_modal(None);
             }
@@ -2269,7 +2354,9 @@ impl App {
                 self.turns = 0;
                 self.messages.clear();
                 self.scroll_offset = 0;
-                self.push_message("session> Started new clean session. Ready for tasks.".to_owned());
+                self.push_message(
+                    "session> Started new clean session. Ready for tasks.".to_owned(),
+                );
             }
             "/clear" => {
                 self.messages.clear();
@@ -2466,6 +2553,10 @@ impl App {
                     | "/palette"
                     | "/model"
                     | "/models"
+                    | "/mode"
+                    | "/permission"
+                    | "/preset"
+                    | "/presets"
                     | "/key"
                     | "/stash"
             )
@@ -2924,6 +3015,206 @@ impl App {
             Err(error) => {
                 self.activity = TuiActivity::Failure;
                 self.push_message(format!("error> {}", error.message));
+            }
+        }
+    }
+
+    fn handle_preset_list(&mut self) {
+        let Ok(config) = super::load_config(&self.args) else {
+            self.push_message("preset> could not load workspace configuration");
+            return;
+        };
+        let user_config_dir = config
+            .config_path()
+            .parent()
+            .unwrap_or_else(|| Path::new("."));
+        let engine = pandora_runtime::PromptEngine::open(config.workspace_dir(), user_config_dir);
+        match engine.list() {
+            Ok(presets) => {
+                self.push_message(format!("presets available ({}):", presets.len()));
+                for (p, tier) in presets {
+                    let desc = p
+                        .description
+                        .as_deref()
+                        .unwrap_or_else(|| &p.content[..p.content.len().min(40)]);
+                    self.push_message(format!(
+                        "  • {} [{}, {}]: {}",
+                        p.name,
+                        p.kind.as_str(),
+                        tier.as_str(),
+                        desc
+                    ));
+                }
+                self.push_message("Use '/preset <name> [task]' to apply or '/preset save <name> <content...>' to save.");
+            }
+            Err(err) => {
+                self.push_message(format!("preset> error listing presets: {err}"));
+            }
+        }
+    }
+
+    fn handle_preset_save(&mut self, rest: &str) {
+        let (name, content) = match rest.split_once(char::is_whitespace) {
+            Some((n, c)) => (n.trim(), c.trim()),
+            None => {
+                self.push_message("usage: /preset save <name> <content...>");
+                return;
+            }
+        };
+        if name.is_empty() || content.is_empty() {
+            self.push_message("usage: /preset save <name> <content...>");
+            return;
+        }
+        let Ok(config) = super::load_config(&self.args) else {
+            self.push_message("preset> could not load workspace configuration");
+            return;
+        };
+        let user_config_dir = config
+            .config_path()
+            .parent()
+            .unwrap_or_else(|| Path::new("."));
+        let engine = pandora_runtime::PromptEngine::open(config.workspace_dir(), user_config_dir);
+        let preset = pandora_runtime::PromptPreset {
+            name: name.to_owned(),
+            description: None,
+            kind: pandora_runtime::PresetKind::Template,
+            content: content.to_owned(),
+            parameters: pandora_runtime::PromptEngine::extract_parameters(content),
+            model: None,
+            mode: None,
+            created_at: 0,
+            updated_at: 0,
+        };
+        match engine.save(preset, true) {
+            Ok(path) => {
+                self.push_message(format!(
+                    "preset> saved '{}' to workspace ({})",
+                    name,
+                    path.display()
+                ));
+            }
+            Err(err) => {
+                self.push_message(format!("preset> error saving preset: {err}"));
+            }
+        }
+    }
+
+    fn handle_preset_apply(&mut self, rest: &str) {
+        let (name, task_arg) = match rest.split_once(char::is_whitespace) {
+            Some((n, t)) => (n.trim(), t.trim()),
+            None => (rest.trim(), ""),
+        };
+        let Ok(config) = super::load_config(&self.args) else {
+            self.push_message("preset> could not load workspace configuration");
+            return;
+        };
+        let user_config_dir = config
+            .config_path()
+            .parent()
+            .unwrap_or_else(|| Path::new("."));
+        let engine = pandora_runtime::PromptEngine::open(config.workspace_dir(), user_config_dir);
+        match engine.get(name) {
+            Ok((preset, _tier)) => {
+                if preset.kind == pandora_runtime::PresetKind::Persona {
+                    self.active_persona = Some(preset.name.clone());
+                    if let Some(ref m) = preset.mode
+                        && let Some(gov) = pandora_types::GovernanceMode::parse(m)
+                    {
+                        self.governance_mode = gov;
+                        self.mode_explicit = true;
+                    }
+                    if let Some(ref mdl) = preset.model {
+                        self.switch_model(mdl);
+                    }
+                    self.push_message(format!(
+                        "preset> active persona set to '{}' (guidance active across turns)",
+                        preset.name
+                    ));
+                } else {
+                    let mut params = std::collections::BTreeMap::new();
+                    params.insert(
+                        "workspace".to_owned(),
+                        config.workspace_dir().display().to_string(),
+                    );
+                    params.insert(
+                        "lang".to_owned(),
+                        pandora_runtime::PromptEngine::detect_workspace_lang(
+                            config.workspace_dir(),
+                        ),
+                    );
+
+                    let mut final_task_words = Vec::new();
+                    let words: Vec<&str> = task_arg.split_whitespace().collect();
+                    let mut i = 0;
+                    while i < words.len() {
+                        let word = words[i];
+                        if let Some((k, v)) = word.split_once('=') {
+                            if !k.is_empty() && !v.is_empty() {
+                                params.insert(k.trim().to_owned(), v.trim().to_owned());
+                                i += 1;
+                                continue;
+                            }
+                        } else if let Some(key) = word.strip_prefix("--")
+                            && i + 1 < words.len()
+                        {
+                            i += 1;
+                            params.insert(key.trim().to_owned(), words[i].trim().to_owned());
+                            i += 1;
+                            continue;
+                        }
+                        final_task_words.push(word);
+                        i += 1;
+                    }
+
+                    if !params.contains_key("target")
+                        && (preset.parameters.iter().any(|p| p == "target")
+                            || preset.content.contains("{{target}}"))
+                    {
+                        if final_task_words.len() >= 2
+                            && (final_task_words[0].contains('/')
+                                || final_task_words[0].contains('\\')
+                                || final_task_words[0].contains('.')
+                                || config.workspace_dir().join(final_task_words[0]).exists())
+                        {
+                            params
+                                .insert("target".to_owned(), final_task_words.remove(0).to_owned());
+                        } else {
+                            let ws_name = config
+                                .workspace_dir()
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("workspace");
+                            params.insert("target".to_owned(), ws_name.to_owned());
+                        }
+                    }
+
+                    let clean_task = if final_task_words.is_empty() {
+                        if task_arg.is_empty() {
+                            "inspect and improve implementation".to_owned()
+                        } else {
+                            task_arg.to_owned()
+                        }
+                    } else {
+                        final_task_words.join(" ")
+                    };
+                    params.insert("task".to_owned(), clean_task);
+
+                    match pandora_runtime::PromptEngine::interpolate(&preset.content, &params) {
+                        Ok(interpolated) => {
+                            self.push_message(format!(
+                                "preset> applied '{}': {}",
+                                preset.name, interpolated
+                            ));
+                            self.run_task(interpolated);
+                        }
+                        Err(err) => {
+                            self.push_message(format!("preset> interpolation error: {err}"));
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                self.push_message(format!("preset> error: {err}"));
             }
         }
     }
@@ -3574,7 +3865,12 @@ impl App {
         let message_index = self.push_message("pandora> working...");
         self.activity = TuiActivity::Working;
         let started = std::time::Instant::now();
-        let args = self.run_args(&task, approval_id);
+        let effective_task = if let Some(ref persona) = self.active_persona {
+            format!("[Role / Persona: {persona}]\n{task}")
+        } else {
+            task.clone()
+        };
+        let args = self.run_args(&effective_task, approval_id);
         match super::run::execute(&args) {
             Ok(result) => {
                 self.last_turn_ms = Some(started.elapsed().as_millis());
@@ -3603,7 +3899,9 @@ impl App {
                         approval_id: approval_id.to_owned(),
                     });
                     self.push_message("approval> Action required: Type /approve (or press Ctrl+Y / type 'y') to allow, or /deny (Ctrl+N / 'n') to reject");
-                } else if error.message.contains("has a pending approval") || error.message.contains("already resolved or consumed") {
+                } else if error.message.contains("has a pending approval")
+                    || error.message.contains("already resolved or consumed")
+                {
                     self.push_message("hint> Type /new to start a fresh clean session");
                 }
                 self.record_sparkline(5);
@@ -3626,8 +3924,34 @@ impl App {
         let message_index = self.push_message("pandora> working...");
         self.activity = TuiActivity::Working;
         let started = std::time::Instant::now();
-        match slash::execute_interactive(&line, &self.args, self.session_id.as_deref(), approval_id)
+        let mode = if self.mode_explicit {
+            Some(self.governance_mode.as_str())
+        } else {
+            self.args
+                .value("mode")
+                .or_else(|| self.args.value("permission"))
+        };
+        let provider = if self.active_provider_label != "unconfigured"
+            && !self.active_provider_label.is_empty()
         {
+            Some(self.active_provider_label.as_str())
+        } else {
+            None
+        };
+        let model = if self.active_model_label != "default" && !self.active_model_label.is_empty() {
+            Some(self.active_model_label.as_str())
+        } else {
+            None
+        };
+        match slash::execute_interactive(
+            &line,
+            &self.args,
+            self.session_id.as_deref(),
+            approval_id,
+            mode,
+            provider,
+            model,
+        ) {
             Ok(result) => {
                 self.last_turn_ms = Some(started.elapsed().as_millis());
                 self.activity = TuiActivity::Success;
@@ -3759,6 +4083,10 @@ impl App {
         if let Some(approval_id) = approval_id {
             args.push("--approval".to_owned());
             args.push(approval_id.to_owned());
+        }
+        if self.mode_explicit {
+            args.push("--mode".to_owned());
+            args.push(self.governance_mode.as_str().to_owned());
         }
         args.push(task.to_owned());
         args
@@ -4114,7 +4442,9 @@ impl App {
             .collect::<Vec<_>>();
 
         let title = if effective_scroll > 0 {
-            format!(" Transcript (scrolled +{effective_scroll} · PageDown / Scroll down to follow) ")
+            format!(
+                " Transcript (scrolled +{effective_scroll} · PageDown / Scroll down to follow) "
+            )
         } else {
             " Transcript (Scroll wheel / PageUp / Shift+Up to view history) ".to_owned()
         };
@@ -4552,6 +4882,24 @@ impl App {
                 self.theme.title(),
             )),
             Line::from(Span::styled(
+                format!(" • Governance Mode: {}", self.governance_mode.as_str()),
+                self.theme.prompt(),
+            )),
+            Line::from(Span::styled(
+                match self.governance_mode {
+                    pandora_types::GovernanceMode::Autonomous => {
+                        "   [Autonomous: 0 human approval barriers, direct tool execution]"
+                    }
+                    pandora_types::GovernanceMode::Supervised => {
+                        "   [Supervised: write/execute/connect require human approval]"
+                    }
+                    pandora_types::GovernanceMode::ReadOnly => {
+                        "   [Read-Only: mutating tools denied, inspection only]"
+                    }
+                },
+                self.theme.warning(),
+            )),
+            Line::from(Span::styled(
                 " • Legislature: Declarative policy rules & capability bounds",
                 self.theme.muted(),
             )),
@@ -4653,9 +5001,10 @@ impl App {
             ""
         };
         let status = format!(
-            "session: {session} · model: {}:{} · turns: {} · state: {} · view: {} · theme: {}{focus_tag}{stash_tag}{approval_tag}",
+            "session: {session} · model: {}:{} · mode: {} · turns: {} · state: {} · view: {} · theme: {}{focus_tag}{stash_tag}{approval_tag}",
             self.active_provider_label,
             self.active_model_label,
+            self.governance_mode.as_str(),
             self.turns,
             self.activity.name(),
             self.active_tab.name(),
@@ -4681,7 +5030,10 @@ impl App {
         ]);
         let mut block = Block::default().borders(Borders::TOP);
         if self.pending.is_some() {
-            block = block.title(Span::styled(" [⚠️ PENDING APPROVAL: /approve (Ctrl+Y) to allow · /deny (Ctrl+N) to reject] ", self.theme.warning()));
+            block = block.title(Span::styled(
+                " [⚠️ PENDING APPROVAL: /approve (Ctrl+Y) to allow · /deny (Ctrl+N) to reject] ",
+                self.theme.warning(),
+            ));
         } else if area.width >= WIDE_LAYOUT_MIN_WIDTH {
             block = block.title(Span::styled(mode.badge(), self.theme.muted()));
         }
@@ -5584,6 +5936,20 @@ mod tests {
             Some("activity> waiting (typed public state only)")
         );
         assert_eq!(app.run_args("inspect", None), ["--agent", "inspect"]);
+    }
+
+    #[test]
+    fn tui_mode_hotswap_updates_governance_mode_and_run_args() {
+        let mut app = app();
+        app.input = "/mode read-only".chars().collect();
+        app.submit();
+
+        assert_eq!(app.governance_mode, pandora_types::GovernanceMode::ReadOnly);
+        assert!(app.mode_explicit);
+        assert_eq!(
+            app.run_args("inspect", None),
+            ["--agent", "--mode", "read-only", "inspect"]
+        );
     }
 
     #[test]

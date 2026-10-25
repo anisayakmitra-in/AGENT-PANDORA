@@ -4,6 +4,7 @@ pub mod client;
 pub mod failover;
 pub mod inference_policy;
 pub mod manifest;
+pub mod proxy;
 pub mod structured_output;
 
 pub use client::{
@@ -16,6 +17,7 @@ pub use inference_policy::{
     KvCacheOwnership,
 };
 pub use manifest::{ManifestError, ModelId, ProviderId, ProviderManifest, ProviderProtocol};
+pub use proxy::{build_proxy_from_spec, proxy_client_builder, resolve_proxy};
 pub use structured_output::{
     FallbackPolicy, RepairError, Repairer, SchemaError, StructuredOutputError,
     StructuredOutputErrorKind, ValidatedOutput, ValidationOutcome, parse_and_validate,

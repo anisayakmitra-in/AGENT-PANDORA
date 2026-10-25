@@ -116,6 +116,38 @@ struct VaultContents {
     secrets: BTreeMap<String, StoredSecret>,
     #[serde(default)]
     pools: BTreeMap<String, CredentialPool>,
+    #[serde(default)]
+    mcp_auth: BTreeMap<String, StoredMcpAuth>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct StoredMcpAuth {
+    pub server_id: String,
+    pub auth_type: String,
+    pub access_token: String,
+    #[serde(default)]
+    pub refresh_token: Option<String>,
+    #[serde(default)]
+    pub header_name: Option<String>,
+    #[serde(default)]
+    pub expires_at: Option<u64>,
+    #[serde(default)]
+    pub token_endpoint: Option<String>,
+    #[serde(default)]
+    pub client_id: Option<String>,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
+impl Drop for StoredMcpAuth {
+    fn drop(&mut self) {
+        self.access_token.zeroize();
+        if let Some(ref mut refresh) = self.refresh_token {
+            refresh.zeroize();
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -160,6 +192,7 @@ impl SecretVault {
                 workspace_id: workspace_id.as_str().to_owned(),
                 secrets: BTreeMap::new(),
                 pools: BTreeMap::new(),
+                mcp_auth: BTreeMap::new(),
             }
         };
         Ok(Self {
@@ -270,6 +303,27 @@ impl SecretVault {
             self.persist()?;
         }
         Ok(removed)
+    }
+
+    pub fn get_mcp_auth(&self, server_id: &str) -> Option<StoredMcpAuth> {
+        self.contents.mcp_auth.get(server_id).cloned()
+    }
+
+    pub fn put_mcp_auth(&mut self, auth: StoredMcpAuth) -> Result<(), SecretVaultError> {
+        self.contents.mcp_auth.insert(auth.server_id.clone(), auth);
+        self.persist()
+    }
+
+    pub fn remove_mcp_auth(&mut self, server_id: &str) -> Result<bool, SecretVaultError> {
+        let removed = self.contents.mcp_auth.remove(server_id).is_some();
+        if removed {
+            self.persist()?;
+        }
+        Ok(removed)
+    }
+
+    pub fn list_mcp_auth(&self) -> Vec<StoredMcpAuth> {
+        self.contents.mcp_auth.values().cloned().collect()
     }
 
     fn persist(&self) -> Result<(), SecretVaultError> {

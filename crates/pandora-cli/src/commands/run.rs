@@ -32,9 +32,9 @@ use pandora_types::{
     AdaptationCandidate, AdaptationRequest, AdaptationTarget, ArtifactId, Capability,
     ContextClassification, ContextManifest, EfficiencyObjective, EfficiencySample,
     EvaluationReceipt, EvaluationRequest, EvaluationResult, EventPayload, EventType, ExecutionId,
-    Gene, GeneId, HarnessId, HarnessKind, MemoryKind, MemoryRecord, MemoryScope, Operation,
-    PackageId, PackageKind, PackageManifest, PolicyContext, RequestDigest, ResearchArtifactKind,
-    Session, SessionId, TaskIntent, Usage, WorkspaceId,
+    Gene, GeneId, HarnessId, HarnessKind, MemoryKind, MemoryRecord, MemoryScope, PackageId,
+    PackageKind, PackageManifest, PolicyContext, RequestDigest, ResearchArtifactKind, Session,
+    SessionId, TaskIntent, Usage, WorkspaceId,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -133,6 +133,8 @@ pub(super) fn execute_with_control(
             "escalation-threshold",
             "hooks",
             "trusted-process",
+            "mode",
+            "permission",
         ],
     )?;
 
@@ -342,18 +344,15 @@ pub(super) fn execute_with_control(
             json!({"workspace": config.workspace_dir()}),
         )
     })?;
-    let policy = PolicyContext::new(
-        1,
-        [
-            Capability::FilesystemRead,
-            Capability::FilesystemWrite,
-            Capability::ProcessExecute,
-            Capability::NetworkConnect,
-            Capability::ProviderInvoke,
-            Capability::WasmExecute,
-        ],
-        [Operation::Write, Operation::Execute, Operation::Connect],
-    );
+    let governance_mode = match parsed.value("mode").or_else(|| parsed.value("permission")) {
+        Some(m) => pandora_types::GovernanceMode::parse(m).ok_or_else(|| {
+            CliError::usage(format!(
+                "invalid governance mode '{m}': expected 'autonomous' (2), 'supervised' (1), or 'read-only' (0)"
+            ))
+        })?,
+        None => pandora_types::GovernanceMode::Supervised,
+    };
+    let policy = PolicyContext::for_mode(governance_mode);
     let hooks = load_lifecycle_hooks(&config)?;
     let trusted_process = parsed.has_flag("trusted-process");
     let controller = ExecutionController::with_policy_and_harnesses_and_hooks(
