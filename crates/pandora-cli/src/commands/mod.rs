@@ -33,6 +33,7 @@ mod fleet;
 mod graph;
 pub(crate) mod hardware;
 mod harness;
+pub(crate) mod importer;
 mod job;
 pub(crate) mod kanban;
 mod mcp;
@@ -64,6 +65,7 @@ mod tui;
 pub(crate) mod tui_backdrop;
 mod uninstall;
 mod update;
+pub(crate) mod welcome;
 
 pub(crate) const LOCAL_PRINCIPAL: &str = "local-user";
 pub(crate) const LOCAL_TENANT: &str = "local-tenant";

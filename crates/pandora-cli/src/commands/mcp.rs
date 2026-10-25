@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
-        CliError::usage("mcp requires 'list', 'inspect', 'set', 'add', 'add-http', 'remove', 'catalog', or 'call'")
+        CliError::usage("mcp requires 'list', 'inspect', 'set', 'add', 'add-http', 'remove', 'catalog', 'call', or 'import'")
     })?;
     match subcommand.as_str() {
         "list" => list(&args[1..]),
@@ -27,6 +27,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "remove" | "rm" => remove(&args[1..]),
         "catalog" => catalog(&args[1..]),
         "call" => call(&args[1..]),
+        "import" => super::importer::execute_import(&args[1..]),
         unknown => Err(CliError::usage(format!("unknown mcp command '{unknown}'"))),
     }
 }

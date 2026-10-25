@@ -865,9 +865,9 @@ impl TuiTheme {
 
     fn title(self) -> Style {
         let style = match self {
-            Self::Auto => Style::default().fg(TuiColor::Cyan),
-            Self::Dark => Style::default().fg(TuiColor::LightCyan),
-            Self::Light => Style::default().fg(TuiColor::Blue),
+            // 75% Purple brand hierarchy for primary typography and titles
+            Self::Auto | Self::Dark => Style::default().fg(TuiColor::Rgb(168, 85, 247)),
+            Self::Light => Style::default().fg(TuiColor::Rgb(124, 58, 237)),
             Self::Mono => Style::default(),
         };
         style.add_modifier(Modifier::BOLD)
@@ -875,31 +875,28 @@ impl TuiTheme {
 
     fn muted(self) -> Style {
         match self {
-            Self::Auto | Self::Light => Style::default().fg(TuiColor::DarkGray),
-            Self::Dark => Style::default().fg(TuiColor::Gray),
+            Self::Auto | Self::Dark => Style::default().fg(TuiColor::Rgb(148, 163, 184)),
+            Self::Light => Style::default().fg(TuiColor::Rgb(100, 116, 139)),
             Self::Mono => Style::default().add_modifier(Modifier::DIM),
         }
     }
 
     fn prompt(self) -> Style {
         match self {
-            Self::Auto => Style::default().fg(TuiColor::Green),
-            Self::Dark => Style::default().fg(TuiColor::LightGreen),
-            Self::Light => Style::default().fg(TuiColor::Green),
+            Self::Auto | Self::Dark => Style::default().fg(TuiColor::Rgb(52, 211, 153)),
+            Self::Light => Style::default().fg(TuiColor::Rgb(16, 185, 129)),
             Self::Mono => Style::default().add_modifier(Modifier::BOLD),
         }
     }
 
     fn accent(self) -> Style {
         match self {
-            Self::Auto => Style::default()
-                .fg(TuiColor::Magenta)
-                .add_modifier(Modifier::BOLD),
-            Self::Dark => Style::default()
-                .fg(TuiColor::LightMagenta)
+            // 16% Pink / Rose accent for focal selections and active badges
+            Self::Auto | Self::Dark => Style::default()
+                .fg(TuiColor::Rgb(244, 63, 94))
                 .add_modifier(Modifier::BOLD),
             Self::Light => Style::default()
-                .fg(TuiColor::Blue)
+                .fg(TuiColor::Rgb(225, 29, 72))
                 .add_modifier(Modifier::BOLD),
             Self::Mono => Style::default().add_modifier(Modifier::UNDERLINED | Modifier::BOLD),
         }
@@ -907,20 +904,21 @@ impl TuiTheme {
 
     fn border(self) -> Style {
         match self {
-            Self::Auto => Style::default().fg(TuiColor::Cyan),
-            Self::Dark => Style::default().fg(TuiColor::DarkGray),
-            Self::Light => Style::default().fg(TuiColor::Blue),
+            // 75% Purple brand frame: deep violet borders for clean professional structure
+            Self::Auto | Self::Dark => Style::default().fg(TuiColor::Rgb(124, 58, 237)),
+            Self::Light => Style::default().fg(TuiColor::Rgb(147, 51, 234)),
             Self::Mono => Style::default(),
         }
     }
 
     fn warning(self) -> Style {
         match self {
+            // 9% Gold accent for warnings, model tags, and security key alerts
             Self::Auto | Self::Dark => Style::default()
-                .fg(TuiColor::Yellow)
+                .fg(TuiColor::Rgb(245, 158, 11))
                 .add_modifier(Modifier::BOLD),
             Self::Light => Style::default()
-                .fg(TuiColor::LightRed)
+                .fg(TuiColor::Rgb(217, 119, 6))
                 .add_modifier(Modifier::BOLD),
             Self::Mono => Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD),
         }

@@ -88,7 +88,14 @@ impl Fixture {
             .env("PANDORA_CONFIG", &self.config)
             .env("PANDORA_DATA_DIR", &self.data)
             .env("PANDORA_WORKSPACE", &self.workspace)
-            .env_remove("PANDORA_PROVIDER_URL");
+            .env_remove("PANDORA_PROVIDER")
+            .env_remove("PANDORA_PROVIDER_URL")
+            .env_remove("GROQ_API_KEY")
+            .env_remove("OPENROUTER_API_KEY")
+            .env_remove("ANTHROPIC_API_KEY")
+            .env_remove("OPENAI_API_KEY")
+            .env_remove("DEEPSEEK_API_KEY")
+            .env_remove("OLLAMA_API_KEY");
         command
     }
 

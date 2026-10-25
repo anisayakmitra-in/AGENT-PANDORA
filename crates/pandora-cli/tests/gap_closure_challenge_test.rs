@@ -173,3 +173,72 @@ fn test_setup_bare_invocation_help_or_json() {
     let val: Value = serde_json::from_slice(&out.stdout).expect("valid json output");
     assert_eq!(val["provider_model"], "qwen2.5-coder:32b");
 }
+
+#[test]
+fn test_mcp_import_from_agent_config() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // Create a mock Claude / Cursor MCP config file
+    let mcp_config_path = fixture.workspace.join("claude_desktop_config.json");
+    fs::write(
+        &mcp_config_path,
+        r#"{
+            "mcpServers": {
+                "imported-fs": {
+                    "command": "node",
+                    "args": ["server.js", "/data"]
+                },
+                "imported-remote": {
+                    "url": "http://127.0.0.1:9090/sse"
+                }
+            }
+        }"#,
+    )
+    .expect("mcp config written");
+
+    // Dry-run import
+    let dry_run = fixture
+        .command(&[
+            "mcp",
+            "import",
+            mcp_config_path.to_str().unwrap(),
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("mcp import dry-run should execute");
+    assert!(dry_run.status.success());
+    let dry_val: Value = serde_json::from_slice(&dry_run.stdout).expect("valid json");
+    assert_eq!(dry_val["imported_count"], 2);
+    assert_eq!(dry_val["dry_run"], true);
+
+    // Actual import
+    let import_out = fixture
+        .command(&[
+            "mcp",
+            "import",
+            mcp_config_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("mcp import should execute");
+    assert!(import_out.status.success());
+    let val: Value = serde_json::from_slice(&import_out.stdout).expect("valid json");
+    assert_eq!(val["imported_count"], 2);
+
+    // Verify imported servers appear in `mcp list`
+    let list_out = fixture
+        .command(&["mcp", "list", "--json"])
+        .output()
+        .expect("mcp list should execute");
+    assert!(list_out.status.success());
+    let list_val: Value = serde_json::from_slice(&list_out.stdout).expect("valid list json");
+    let servers = list_val["servers"].as_array().expect("servers array");
+    let ids: Vec<&str> = servers
+        .iter()
+        .filter_map(|s| s["id"].as_str())
+        .collect();
+    assert!(ids.contains(&"imported-fs"), "expected imported-fs in {ids:?}");
+    assert!(ids.contains(&"imported-remote"), "expected imported-remote in {ids:?}");
+}

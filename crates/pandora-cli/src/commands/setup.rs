@@ -1459,6 +1459,44 @@ fn configure_interactively(
     config: &mut pandora_runtime::config::RuntimeConfig,
     parsed: &super::ParsedArgs,
 ) -> Result<(), CliError> {
+    if io::stdin().is_terminal()
+        && parsed.value("provider-url").is_none()
+        && parsed.value("preset").is_none()
+    {
+        let detected = super::importer::detect_available_agents();
+        if !detected.is_empty() {
+            eprintln!("\n◆ Coming from another agent?");
+            for agent in &detected {
+                eprintln!("  Found on this computer: {} ({})", agent.name, agent.path.display());
+            }
+            eprintln!("  Pandora can import their MCP servers and tool configurations.");
+            if let Ok(choice) = prompt("Import setup from discovered agent? [y/N]", None) {
+                if choice.trim().eq_ignore_ascii_case("y")
+                    || choice.trim().eq_ignore_ascii_case("yes")
+                {
+                    for agent in &detected {
+                        if let Some(ref cfg_file) = agent.config_file {
+                            if let Ok(content) = fs::read_to_string(cfg_file) {
+                                let servers = super::importer::parse_mcp_servers_from_str(&content);
+                                if !servers.is_empty() {
+                                    let imported =
+                                        super::importer::apply_imported_mcp_servers(&servers, config);
+                                    eprintln!(
+                                        "  ✓ Imported {} MCP server(s) from {}: {}",
+                                        imported.len(),
+                                        agent.name,
+                                        imported.join(", ")
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            eprintln!();
+        }
+    }
+
     eprintln!("Available provider presets:");
     for (i, preset) in PRESETS.iter().enumerate() {
         eprintln!("  [{}] {:<12} - {}", i + 1, preset.name, preset.label);
@@ -1473,10 +1511,10 @@ fn configure_interactively(
         &prompt_label,
         parsed
             .value("provider-url")
-            .or_else(|| parsed.value("preset"))
-            .or_else(|| config.provider_url()),
+            .or_else(|| parsed.value("preset")),
     )?;
     if entered.is_empty() {
+        config.set_provider_activation_disabled(true);
         return Ok(());
     }
 

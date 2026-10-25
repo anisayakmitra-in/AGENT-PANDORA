@@ -5,7 +5,7 @@ use pandora_runtime::prompt_engine::{PresetKind, PromptEngine, PromptPreset};
 use pandora_types::GovernanceMode;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, IsTerminal as _, Write};
 use std::path::Path;
 
 const MAX_DISPLAY_CHARS: usize = 64 * 1024;
@@ -73,7 +73,26 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let stdin = io::stdin();
     let mut input = stdin.lock();
     let mut stdout = io::stdout();
+    if io::stdout().is_terminal() {
+        let config = super::load_config(&parsed).ok();
+        let provider = state.active_provider.as_deref().or_else(|| config.as_ref().and_then(|c| c.active_provider()));
+        let model = state.active_model.as_deref().or_else(|| config.as_ref().and_then(|c| c.provider_model()));
+        let default_workspace = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let workspace = config.as_ref().map(|c| c.workspace_dir()).unwrap_or(&default_workspace);
+        let banner = super::welcome::render_welcome_banner(
+            provider,
+            model,
+            workspace,
+            session_id.as_deref(),
+            true,
+        );
+        print!("{banner}");
+        let _ = stdout.flush();
+    }
     println!("Pandora chat. Type /help for commands or /exit to close.");
+    if io::stdout().is_terminal() {
+        println!("\x1b[38;2;245;158;11m✦ Tip:\x1b[0m Slash commands (/model, /mode, /key, /preset, /tools, /mcp) give instant hot-swapping and zero-turn latency.\n");
+    }
 
     loop {
         print!("pandora> ");

@@ -906,6 +906,10 @@ impl RuntimeConfig {
         Ok(())
     }
 
+    pub fn set_provider_activation_disabled(&mut self, disabled: bool) {
+        self.provider_activation_disabled = disabled;
+    }
+
     pub fn provider_url(&self) -> Option<&str> {
         self.selected_provider()
             .map(ProviderProfile::base_url)
