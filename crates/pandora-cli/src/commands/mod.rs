@@ -677,9 +677,9 @@ mod tests {
 
     /// Root commands whose bare invocation only reports a usage error, so the
     /// tests below can prove they are dispatched without touching disk, stdin,
-    /// or a terminal. `chat`, `tui`, `run`, `setup`, `doctor`, and `help` are
-    /// excluded because they render output, start a session or REPL, or run a
-    /// health probe instead.
+    /// or a terminal. `chat`, `tui`, `run`, `setup`, `doctor`, `update`, and `help` are
+    /// excluded because they render output, start a session or REPL, run a
+    /// health probe, or execute self-update instead.
     const SUBCOMMAND_GATED: &[&str] = &[
         "approval",
         "auth",
@@ -711,7 +711,6 @@ mod tests {
         "subagent",
         "tool",
         "uninstall",
-        "update",
     ];
 
     fn dispatch_error(command: &str) -> String {
