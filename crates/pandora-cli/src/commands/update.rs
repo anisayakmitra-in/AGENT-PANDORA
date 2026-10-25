@@ -82,15 +82,18 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "rollback",
             "release",
             "channel",
+            "check",
+            "force",
         ],
     )?;
-    if !parsed.positionals.is_empty() {
+    if parsed.positionals.len() > 1 {
         return Err(CliError::usage(
-            "update does not accept positional arguments",
+            "update accepts at most one release version argument",
         ));
     }
+    let positional_version = parsed.positionals.first().map(|s| s.as_str());
     let dry_run = parsed.value("dry-run").is_some();
-    if parsed.value("rollback").is_some() {
+    if parsed.value("rollback").is_some() || positional_version == Some("rollback") {
         if parsed.value("artifact").is_some()
             || parsed.value("sha256").is_some()
             || parsed.value("public-key").is_some()
@@ -108,105 +111,155 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         return rollback(&target, dry_run).map_err(|error| update_error(error, &target));
     }
 
-    if let Some(release) = parsed.value("release") {
-        if parsed.value("artifact").is_some()
-            || parsed.value("sha256").is_some()
-            || parsed.value("public-key").is_some()
-            || parsed.value("signature").is_some()
-        {
+    if let Some(artifact) = parsed.value("artifact").map(PathBuf::from) {
+        if parsed.value("release").is_some() || positional_version.is_some() {
             return Err(CliError::usage(
-                "update --release cannot be combined with local artifact verification options",
+                "update --artifact cannot be combined with release version options",
             ));
         }
-        let channel = validate_release_channel(release, parsed.value("channel"))
-            .map_err(|error| update_error(error, Path::new(release)))?;
-        let downloaded = download_release_artifact(
-            OFFICIAL_RELEASE_BASE_URL,
-            release,
-            std::env::consts::OS,
-            std::env::consts::ARCH,
-            download_https,
+        let expected = parsed
+            .value("sha256")
+            .ok_or_else(|| CliError::usage("update requires '--sha256 <digest>'"))?;
+        let verified = verify_artifact(
+            &artifact,
+            expected,
+            parsed.value("public-key"),
+            parsed.value("signature"),
         )
-        .map_err(|error| update_error(error, Path::new(release)))?;
+        .map_err(|error| update_error(error, &artifact))?;
         if dry_run {
             return Ok(success(
                 "update",
                 json!({
                     "verified": true,
-                    "release": release,
-                    "channel": channel,
-                    "artifact": downloaded.artifact_name,
-                    "signature_verified": downloaded.verified.signature_verified,
+                    "artifact": artifact,
+                    "signature_verified": verified.signature_verified,
                     "dry_run": true,
                 }),
-                "Official release artifact verified; no files changed".to_owned(),
+                "Update artifact verified; no files changed".to_owned(),
             ));
         }
         let config = load_config(&parsed)
             .map_err(|error| CliError::update(error.message, json!({"reason": "configuration"})))?;
         let target = target_path(&config, path_option(&parsed, "target"));
-        install_verified(&downloaded.verified.bytes, &target)
-            .map_err(|error| update_error(error, &target))?;
-        return Ok(success(
-            "update",
-            json!({
-                "verified": true,
-                "release": release,
-                "channel": channel,
-                "artifact": downloaded.artifact_name,
-                "target": target,
-                "signature_verified": downloaded.verified.signature_verified,
-                "dry_run": false,
-            }),
-            format!("Verified release update staged at {}", target.display()),
-        ));
-    }
-
-    if parsed.value("channel").is_some() {
-        return Err(CliError::usage(
-            "update --channel requires '--release <tag>'",
-        ));
-    }
-
-    let artifact = parsed.value("artifact").map(PathBuf::from).ok_or_else(|| {
-        CliError::usage("update requires '--release <tag>', '--artifact <path>', or '--rollback'")
-    })?;
-    let expected = parsed
-        .value("sha256")
-        .ok_or_else(|| CliError::usage("update requires '--sha256 <digest>'"))?;
-    let verified = verify_artifact(
-        &artifact,
-        expected,
-        parsed.value("public-key"),
-        parsed.value("signature"),
-    )
-    .map_err(|error| update_error(error, &artifact))?;
-    if dry_run {
+        install_verified(&verified.bytes, &target).map_err(|error| update_error(error, &target))?;
         return Ok(success(
             "update",
             json!({
                 "verified": true,
                 "artifact": artifact,
+                "target": target,
                 "signature_verified": verified.signature_verified,
+                "dry_run": false,
+            }),
+            format!("Verified update staged at {}", target.display()),
+        ));
+    }
+
+    if parsed.value("sha256").is_some()
+        || parsed.value("public-key").is_some()
+        || parsed.value("signature").is_some()
+    {
+        return Err(CliError::usage(
+            "update checksum and signature options require '--artifact <path>'",
+        ));
+    }
+
+    let is_check_only = parsed.value("check").is_some() || positional_version == Some("check");
+    let is_force = parsed.value("force").is_some();
+    let current_version = format!("v{}", env!("CARGO_PKG_VERSION"));
+
+    let release_arg = parsed.value("release").or_else(|| {
+        positional_version.filter(|&v| v != "check" && v != "rollback")
+    });
+
+    let target_release = if let Some(rel) = release_arg {
+        if rel == "latest" {
+            fetch_latest_release_tag().map_err(|error| update_error(error, Path::new("latest")))?
+        } else {
+            normalize_release_tag(rel)
+        }
+    } else {
+        fetch_latest_release_tag().map_err(|error| update_error(error, Path::new("latest")))?
+    };
+
+    if is_check_only {
+        let is_up_to_date = target_release == current_version;
+        let message = if is_up_to_date {
+            format!("Pandora is up to date (running {current_version}).")
+        } else {
+            format!(
+                "Update available: {target_release} (current: {current_version}). Run `pandora update` or `/update` to install."
+            )
+        };
+        return Ok(success(
+            "update check",
+            json!({
+                "current_version": current_version,
+                "latest_release": target_release,
+                "up_to_date": is_up_to_date,
+            }),
+            message,
+        ));
+    }
+
+    if target_release == current_version
+        && !is_force
+        && parsed.value("release").is_none()
+        && positional_version.is_none()
+    {
+        return Ok(success(
+            "update",
+            json!({
+                "current_version": current_version,
+                "latest_release": target_release,
+                "up_to_date": true,
+            }),
+            format!("Already on the latest release ({current_version})."),
+        ));
+    }
+
+    let channel = validate_release_channel(&target_release, parsed.value("channel"))
+        .map_err(|error| update_error(error, Path::new(&target_release)))?;
+    let downloaded = download_release_artifact(
+        OFFICIAL_RELEASE_BASE_URL,
+        &target_release,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        download_https,
+    )
+    .map_err(|error| update_error(error, Path::new(&target_release)))?;
+    if dry_run {
+        return Ok(success(
+            "update",
+            json!({
+                "verified": true,
+                "release": target_release,
+                "channel": channel,
+                "artifact": downloaded.artifact_name,
+                "signature_verified": downloaded.verified.signature_verified,
                 "dry_run": true,
             }),
-            "Update artifact verified; no files changed".to_owned(),
+            "Official release artifact verified; no files changed".to_owned(),
         ));
     }
     let config = load_config(&parsed)
         .map_err(|error| CliError::update(error.message, json!({"reason": "configuration"})))?;
     let target = target_path(&config, path_option(&parsed, "target"));
-    install_verified(&verified.bytes, &target).map_err(|error| update_error(error, &target))?;
+    install_verified(&downloaded.verified.bytes, &target)
+        .map_err(|error| update_error(error, &target))?;
     Ok(success(
         "update",
         json!({
             "verified": true,
-            "artifact": artifact,
+            "release": target_release,
+            "channel": channel,
+            "artifact": downloaded.artifact_name,
             "target": target,
-            "signature_verified": verified.signature_verified,
+            "signature_verified": downloaded.verified.signature_verified,
             "dry_run": false,
         }),
-        format!("Verified update staged at {}", target.display()),
+        format!("Verified release update staged at {}", target.display()),
     ))
 }
 
@@ -366,6 +419,38 @@ fn release_checksum(manifest: &[u8], artifact_name: &str) -> Result<String, Upda
         }
     }
     checksum.ok_or(UpdateError::MissingReleaseChecksum)
+}
+
+fn normalize_release_tag(tag: &str) -> String {
+    let trimmed = tag.trim();
+    if trimmed.starts_with('v') {
+        trimmed.to_owned()
+    } else {
+        format!("v{trimmed}")
+    }
+}
+
+fn fetch_latest_release_tag() -> Result<String, UpdateError> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(RELEASE_DOWNLOAD_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .user_agent(concat!("pandora/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|_| UpdateError::ReleaseDownload)?;
+    let response = client
+        .get("https://api.github.com/repos/anisayakmitra-in/AGENT-PANDORA/releases/latest")
+        .header("Accept", "application/vnd.github.v3+json")
+        .send()
+        .map_err(|_| UpdateError::ReleaseDownload)?;
+    if !response.status().is_success() {
+        return Err(UpdateError::ReleaseDownload);
+    }
+    let body: serde_json::Value = response.json().map_err(|_| UpdateError::ReleaseDownload)?;
+    let tag = body
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .ok_or(UpdateError::InvalidRelease)?;
+    Ok(tag.to_owned())
 }
 
 fn is_sha256_digest(value: &str) -> bool {

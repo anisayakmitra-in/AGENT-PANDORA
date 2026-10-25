@@ -242,3 +242,103 @@ fn test_mcp_import_from_agent_config() {
     assert!(ids.contains(&"imported-fs"), "expected imported-fs in {ids:?}");
     assert!(ids.contains(&"imported-remote"), "expected imported-remote in {ids:?}");
 }
+
+#[test]
+fn test_update_command_check_and_bare_execution() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // Check with --check flag
+    let check_out = fixture
+        .command(&["update", "--check", "--json"])
+        .output()
+        .expect("update check should execute");
+    assert!(check_out.status.success());
+    let val: Value = serde_json::from_slice(&check_out.stdout).expect("valid update json");
+    assert_eq!(val["command"], "update check");
+    assert_eq!(val["current_version"], format!("v{}", env!("CARGO_PKG_VERSION")));
+    assert!(val["latest_release"].is_string());
+
+    // Check with positional "check"
+    let check_pos = fixture
+        .command(&["update", "check", "--json"])
+        .output()
+        .expect("update check positional should execute");
+    assert!(check_pos.status.success());
+    let pos_val: Value = serde_json::from_slice(&check_pos.stdout).expect("valid pos json");
+    assert_eq!(pos_val["command"], "update check");
+
+    // Bare `pandora update --json`
+    let bare_out = fixture
+        .command(&["update", "--json"])
+        .output()
+        .expect("update bare should execute");
+    assert!(bare_out.status.success());
+    let bare_val: Value = serde_json::from_slice(&bare_out.stdout).expect("valid bare json");
+    assert_eq!(bare_val["command"], "update");
+}
+
+#[test]
+fn test_chat_slash_update_and_uninstall_commands() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // Test piping /help to chat shows /update and /uninstall
+    let mut cmd = fixture.command(&["chat"]);
+    cmd.stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = cmd.spawn().expect("chat spawn");
+    {
+        use std::io::Write;
+        let mut stdin = child.stdin.take().expect("stdin");
+        stdin.write_all(b"/help\n/exit\n").expect("write /help");
+    }
+    let output = child.wait_with_output().expect("wait chat");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("/update"), "chat help must include /update");
+    assert!(stdout.contains("/uninstall"), "chat help must include /uninstall");
+
+    // Test interactive /uninstall warning when not confirmed
+    let mut cmd2 = fixture.command(&["chat"]);
+    cmd2.stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child2 = cmd2.spawn().expect("chat spawn 2");
+    {
+        use std::io::Write;
+        let mut stdin = child2.stdin.take().expect("stdin 2");
+        stdin.write_all(b"/uninstall\n/exit\n").expect("write /uninstall");
+    }
+    let output2 = child2.wait_with_output().expect("wait chat 2");
+    assert!(output2.status.success());
+    let stdout2 = String::from_utf8_lossy(&output2.stdout);
+    assert!(
+        stdout2.contains("To confirm uninstallation, type: /uninstall --yes"),
+        "expected confirmation prompt in: {stdout2}"
+    );
+
+    // Test confirmed /uninstall --yes from chat cleans up and exits
+    let mut cmd3 = fixture.command(&["chat"]);
+    cmd3.stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child3 = cmd3.spawn().expect("chat spawn 3");
+    {
+        use std::io::Write;
+        let mut stdin = child3.stdin.take().expect("stdin 3");
+        stdin.write_all(b"/uninstall --yes\n").expect("write /uninstall --yes");
+    }
+    let output3 = child3.wait_with_output().expect("wait chat 3");
+    assert!(output3.status.success());
+    let stdout3 = String::from_utf8_lossy(&output3.stdout);
+    assert!(
+        stdout3.contains("Pandora configuration and data removed"),
+        "expected uninstallation message in: {stdout3}"
+    );
+    // Config file was removed
+    assert!(!fixture.config.exists(), "config file must be removed by /uninstall");
+    // Workspace was preserved
+    assert!(fixture.workspace.exists(), "workspace must be preserved by /uninstall");
+}

@@ -339,6 +339,7 @@ fn is_flag(name: &str) -> bool {
             | "all"
             | "allow"
             | "auto-promote"
+            | "check"
             | "deny"
             | "dry-run"
             | "fail-on-failure"

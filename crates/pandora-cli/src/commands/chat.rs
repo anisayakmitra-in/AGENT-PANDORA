@@ -91,7 +91,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     }
     println!("Pandora chat. Type /help for commands or /exit to close.");
     if io::stdout().is_terminal() {
-        println!("\x1b[38;2;245;158;11m✦ Tip:\x1b[0m Slash commands (/model, /mode, /key, /preset, /tools, /mcp) give instant hot-swapping and zero-turn latency.\n");
+        println!("\x1b[38;2;245;158;11m✦ Tip:\x1b[0m Slash commands (/model, /mode, /key, /preset, /tools, /mcp, /update, /uninstall) give instant hot-swapping and zero-turn latency.\n");
     }
 
     loop {
@@ -207,6 +207,32 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             ),
             value if value.starts_with("/approve ") || value.starts_with("/deny ") => {
                 println!("usage: /approve and /deny do not accept arguments");
+            }
+            "/update" => handle_chat_update(&parsed, None),
+            value if value.starts_with("/update ") => {
+                let spec = value.trim_start_matches("/update ").trim();
+                handle_chat_update(&parsed, Some(spec));
+            }
+            "/uninstall" => {
+                println!("uninstall> Warning: This will remove Pandora configuration and data directories.");
+                println!("uninstall> Workspace files will be preserved.");
+                println!("uninstall> To confirm uninstallation, type: /uninstall --yes");
+            }
+            value if value.starts_with("/uninstall ") => {
+                let arg = value.trim_start_matches("/uninstall ").trim();
+                if arg == "--yes" || arg == "confirm" || arg == "-y" {
+                    match super::uninstall::execute(&["--yes".to_owned()]) {
+                        Ok(res) => {
+                            println!("uninstall> {}", res.human);
+                            break;
+                        }
+                        Err(err) => {
+                            println!("uninstall> Error: {}", err.message);
+                        }
+                    }
+                } else {
+                    println!("uninstall> Unknown option '{arg}'. Type /uninstall --yes to confirm.");
+                }
             }
             command if command.starts_with('/') => run_slash(
                 &parsed,
@@ -671,6 +697,36 @@ fn update_session(session_id: &mut Option<String>, value: Option<&Value>) {
     }
 }
 
+fn handle_chat_update(parsed: &super::ParsedArgs, target: Option<&str>) {
+    println!(
+        "update> Checking for updates (current version: v{})...",
+        env!("CARGO_PKG_VERSION")
+    );
+    let mut update_args = Vec::new();
+    if let Some(config) = parsed.value("config") {
+        update_args.extend(["--config".to_owned(), config.to_owned()]);
+    }
+    if let Some(data_dir) = parsed.value("data-dir") {
+        update_args.extend(["--data-dir".to_owned(), data_dir.to_owned()]);
+    }
+    if let Some(target_spec) = target {
+        match target_spec {
+            "--check" | "check" => update_args.push("--check".to_owned()),
+            "--dry-run" | "dry-run" => update_args.push("--dry-run".to_owned()),
+            "rollback" => update_args.push("--rollback".to_owned()),
+            version => update_args.extend(["--release".to_owned(), version.to_owned()]),
+        }
+    }
+    match super::update::execute(&update_args) {
+        Ok(res) => {
+            println!("update> {}", res.human);
+        }
+        Err(err) => {
+            println!("update> Error: {}", err.message);
+        }
+    }
+}
+
 fn print_help() {
     println!("/help       show chat commands");
     println!("/session    show the active session ID");
@@ -682,6 +738,8 @@ fn print_help() {
     println!("/preset     list, apply, or save prompt presets (/preset <name> [task])");
     println!("/approve    approve and resume the pending task");
     println!("/deny       deny the pending task");
+    println!("/update     check for updates or upgrade to a version (/update [ver|check|rollback])");
+    println!("/uninstall  uninstall Pandora configuration and data (/uninstall --yes)");
     println!("/exit       close the chat");
     println!("/quit       close the chat");
     println!("/coding     inspect the Coding Domain Harness");

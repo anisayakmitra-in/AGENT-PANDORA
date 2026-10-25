@@ -2,6 +2,7 @@ use super::{load_config, parse_options};
 use crate::output::{CliError, CommandResult, success};
 use serde_json::json;
 use std::fs;
+use std::io::{IsTerminal as _, Write as _};
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(args, &["config", "data-dir", "workspace", "dry-run", "yes"])?;
@@ -14,9 +15,37 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     }
     let config = load_config(&parsed)?;
     if !dry_run && !confirmed {
-        return Err(CliError::usage(
-            "uninstall requires '--yes' or '--dry-run'; workspace files are always preserved",
-        ));
+        if std::io::stdin().is_terminal()
+            && std::io::stdout().is_terminal()
+            && !parsed.has_flag("json")
+        {
+            eprintln!(
+                "Warning: This will remove Pandora configuration ({}) and data ({})",
+                config.config_path().display(),
+                config.data_dir().display()
+            );
+            eprintln!(
+                "Workspace files ({}) will be preserved.",
+                config.workspace_dir().display()
+            );
+            eprint!("Are you sure you want to uninstall Pandora? [y/N]: ");
+            let _ = std::io::stderr().flush();
+            let mut answer = String::new();
+            if !std::io::stdin().read_line(&mut answer).is_ok()
+                || (!answer.trim().eq_ignore_ascii_case("y")
+                    && !answer.trim().eq_ignore_ascii_case("yes"))
+            {
+                return Ok(success(
+                    "uninstall",
+                    json!({"cancelled": true, "dry_run": false}),
+                    "Uninstall cancelled by user.".to_owned(),
+                ));
+            }
+        } else {
+            return Err(CliError::usage(
+                "uninstall requires '--yes' or '--dry-run'; workspace files are always preserved",
+            ));
+        }
     }
     validate_workspace_boundary(config.data_dir(), config.workspace_dir())?;
     let config_path = config.config_path().to_path_buf();

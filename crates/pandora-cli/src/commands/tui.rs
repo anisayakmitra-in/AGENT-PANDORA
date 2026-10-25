@@ -277,6 +277,18 @@ const PALETTE_ENTRIES: &[PaletteEntry] = &[
         immediate: true,
     },
     PaletteEntry {
+        command: "/update",
+        category: "System",
+        description: "Check for updates or upgrade Pandora to the latest release (/update [ver|check|rollback])",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/uninstall",
+        category: "System",
+        description: "Uninstall Pandora configuration and data (/uninstall --yes)",
+        immediate: true,
+    },
+    PaletteEntry {
         command: "/todos",
         category: "Kanban",
         description: "Toggle inline session Todo & Kanban card (Alt+X)",
@@ -2176,6 +2188,61 @@ impl App {
                     "autopoke> Policy: when a turn stops with incomplete todos, Pandora nudges continuation with an explicit unfinished-items summary and halts after 3 unchanged retries.",
                 );
             }
+            "/update" => {
+                self.push_message(format!(
+                    "update> Pandora v{} · checking for updates...",
+                    env!("CARGO_PKG_VERSION")
+                ));
+                match super::update::execute(&["--check".to_owned()]) {
+                    Ok(res) => {
+                        self.push_message(format!("update> {}", res.human));
+                    }
+                    Err(err) => {
+                        self.push_message(format!("update> Error: {}", err.message));
+                    }
+                }
+            }
+            value if value.starts_with("/update ") => {
+                let target = value.trim_start_matches("/update ").trim();
+                let args = if target == "rollback" {
+                    vec!["--rollback".to_owned()]
+                } else if target == "--check" || target == "check" {
+                    vec!["--check".to_owned()]
+                } else {
+                    vec!["--release".to_owned(), target.to_owned()]
+                };
+                match super::update::execute(&args) {
+                    Ok(res) => { self.push_message(format!("update> {}", res.human)); }
+                    Err(err) => { self.push_message(format!("update> Error: {}", err.message)); }
+                }
+            }
+            "/uninstall" => {
+                self.push_message(
+                    "uninstall> Warning: This will remove Pandora configuration and data. Workspace files are preserved.",
+                );
+                self.push_message(
+                    "uninstall> To confirm uninstallation from TUI, type: /uninstall --yes",
+                );
+            }
+            value if value.starts_with("/uninstall ") => {
+                let target = value.trim_start_matches("/uninstall ").trim();
+                if target == "--yes" || target == "confirm" || target == "-y" {
+                    match super::uninstall::execute(&["--yes".to_owned()]) {
+                        Ok(res) => {
+                            self.push_message(format!("uninstall> {}", res.human));
+                            self.push_message("uninstall> Exiting Pandora workbench.");
+                            return true;
+                        }
+                        Err(err) => {
+                            self.push_message(format!("uninstall> Error: {}", err.message));
+                        }
+                    }
+                } else {
+                    self.push_message(format!(
+                        "uninstall> Unknown option '{target}'. Type /uninstall --yes to confirm.",
+                    ));
+                }
+            }
             "/selfdev" => {
                 self.push_message(
                     "selfdev> Pandora Governed Self-Development Workflow (RSI + Atomic Reload):",
@@ -2559,6 +2626,8 @@ impl App {
                     | "/presets"
                     | "/key"
                     | "/stash"
+                    | "/update"
+                    | "/uninstall"
             )
             && !line.trim().starts_with("/approve ")
             && !line.trim().starts_with("/deny ")
