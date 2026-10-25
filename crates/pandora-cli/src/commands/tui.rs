@@ -1210,7 +1210,9 @@ impl App {
         if key.kind != KeyEventKind::Press {
             return false;
         }
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && (key.code == KeyCode::Char('c') || key.code == KeyCode::Char('d') || key.code == KeyCode::Char('q'))
+        {
             return true;
         }
 
@@ -1423,7 +1425,13 @@ impl App {
         }
 
         match key.code {
-            KeyCode::Esc => true,
+            KeyCode::Esc => {
+                if !self.input.is_empty() {
+                    self.input.clear();
+                    self.cursor = 0;
+                }
+                false
+            },
             KeyCode::F(1) => {
                 self.open_palette();
                 false
