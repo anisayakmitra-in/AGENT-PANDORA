@@ -173,6 +173,12 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         .value("release")
         .or_else(|| positional_version.filter(|&v| v != "check" && v != "rollback"));
 
+    if !is_check_only && release_arg.is_none() {
+        return Err(CliError::usage(
+            "update requires '--release <tag>', '--artifact <path>', or '--rollback'",
+        ));
+    }
+
     let target_release = if let Some(rel) = release_arg {
         if rel == "latest" {
             fetch_latest_release_tag().map_err(|error| update_error(error, Path::new("latest")))?

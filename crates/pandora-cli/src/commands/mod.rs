@@ -711,6 +711,7 @@ mod tests {
         "subagent",
         "tool",
         "uninstall",
+        "update",
     ];
 
     fn dispatch_error(command: &str) -> String {

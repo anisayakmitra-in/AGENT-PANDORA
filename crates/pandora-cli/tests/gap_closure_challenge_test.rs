@@ -269,14 +269,12 @@ fn test_update_command_check_and_bare_execution() {
     let pos_val: Value = serde_json::from_slice(&check_pos.stdout).expect("valid pos json");
     assert_eq!(pos_val["command"], "update check");
 
-    // Bare `pandora update --json`
+    // Bare `pandora update --json` requires --check, --release, or --rollback
     let bare_out = fixture
         .command(&["update", "--json"])
         .output()
         .expect("update bare should execute");
-    assert!(bare_out.status.success());
-    let bare_val: Value = serde_json::from_slice(&bare_out.stdout).expect("valid bare json");
-    assert_eq!(bare_val["command"], "update");
+    assert_eq!(bare_out.status.code(), Some(2));
 }
 
 #[test]
