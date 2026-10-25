@@ -156,4 +156,4 @@ identity.
 
 ## Product boundary
 
-The `2.0.0-beta.10` identity is the active CLI and TUI release line, and the native CLI/TUI binary is the sole product surface.
+The `2.0.0` identity is the active CLI and TUI release line, and the native CLI/TUI binary is the sole product surface.

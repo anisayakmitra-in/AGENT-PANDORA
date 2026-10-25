@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+## v2.0.0
+
+- **Custom model provider support & management**: `pandora provider add <name> <base_url> [model]`,
+  `pandora provider remove <name>`, `--no-api-key`, `--api-key-stdin`, `--set-default`,
+  and in-TUI `/provider add <name> <base_url> [model]` for seamless connection to
+  local inference servers (Ollama, vLLM, LM Studio) and custom OpenAI-compatible or Anthropic endpoints.
+- **OAuth 2.0 PKCE loopback authentication**: local HTTP callback server on
+  `127.0.0.1:1455/auth/callback` with random CSRF state, PKCE code verifier and challenge
+  (S256), automatic browser authorization launcher, and secure token exchange.
+- **Multi-account credential management**: persistent multi-account credential storage
+  and active account switching via `pandora provider accounts`, `/login`, and `/account`.
+- **Spotlight model & provider picker**: interactive modal (`Ctrl+M` / `/model`) in the
+  workbench TUI with fuzzy search, instant switching of active provider and model, and
+  status bar synchronization.
+- **TrueColor terminal mural canvas**: retro-futuristic backdrop rendering (`Alt+B` /
+  `/backdrop`) with terminal size adaptivity and rich color palettes.
+- **Interactive workbench TUI by default**: bare `pandora` invocation launches the
+  interactive terminal workbench immediately; non-interactive commands execute directly.
+- **Brand identity & OpenGraph social preview**: official 1280×640 px preview image
+  (`docs/assets/social-preview.png` and `.jpg`) and hardened Mermaid sequence diagrams.
+
 ## v2.0.0-beta.10
 
 - **OS-level process confinement**: Windows Job Object boundary (no breakaway,

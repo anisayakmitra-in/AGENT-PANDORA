@@ -1413,7 +1413,7 @@ fn contract_release_manifests_generation_and_cosign_validation() {
     let status = Command::new("python")
         .args([
             "scripts/generate_release_manifests.py",
-            "v2.0.0-beta.10",
+            "v2.0.0",
             "--checksums",
             checksums_file.to_str().unwrap(),
             "--output-dir",
@@ -1452,7 +1452,7 @@ fn contract_release_manifests_generation_and_cosign_validation() {
 
     let scoop_str = fs::read_to_string(&scoop_file).unwrap();
     let scoop_json: serde_json::Value = serde_json::from_str(&scoop_str).unwrap();
-    assert_eq!(scoop_json["version"], "2.0.0-beta.10");
+    assert_eq!(scoop_json["version"], "2.0.0");
 
     let loc_str = fs::read_to_string(&winget_loc_file).unwrap();
     assert!(loc_str.contains("ManifestType: defaultLocale"));

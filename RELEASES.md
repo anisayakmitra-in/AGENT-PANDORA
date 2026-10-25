@@ -14,10 +14,9 @@ history and reproducibility, but they are not the active release line or
 recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
-through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1`, `v2.0.0-beta.2`,
-`v2.0.0-beta.3`, `v2.0.0-beta.4`, `v2.0.0-beta.5`, `v2.0.0-beta.6`,
-`v2.0.0-beta.7`, `v2.0.0-beta.8`, and `v2.0.0-beta.9`. The next planned identity
-is `v2.0.0-beta.10`.
+through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
+leading to the first stable release `v2.0.0`. The active release identity
+is `v2.0.0`.
 
 ## Source-bound release scope
 
@@ -33,6 +32,17 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v2.0.0
+
+This is the first stable release of Pandora v2. It updates the coupled Rust,
+npm, installer, documentation, and SDK runtime surfaces to `2.0.0` while
+retaining the source-bound `cli-only` release scope. It bundles custom model
+provider management, OAuth 2.0 PKCE loopback authentication with multi-account
+switching, an interactive spotlight model/provider picker, a TrueColor terminal
+mural backdrop, interactive workbench TUI startup, OS-level process confinement,
+filesystem TOCTOU hardening, active policy lifecycle hooks, recursive self-improvement
+governance, and dependency security updates.
 
 ## v2.0.0-beta.10
 

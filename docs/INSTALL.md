@@ -27,7 +27,7 @@ irm https://raw.githubusercontent.com/anisayakmitra-in/AGENT-PANDORA/main/instal
 *(Also available at `.../main/scripts/install.ps1`)*
 
 Pin a published tag with `PANDORA_VERSION`, for example
-`v2.0.0-beta.10`. Do not use a tag until its release page contains the binary
+`v2.0.0`. Do not use a tag until its release page contains the binary
 for your platform and its checksum manifest.
 
 ## CLI source build
@@ -92,7 +92,7 @@ is not locally built and trusted.
 
 ## Support status
 
-The `2.0.0-beta.10` installers support the native CLI and TUI on Windows, macOS, and
+The `2.0.0` installers support the native CLI and TUI on Windows, macOS, and
 Linux. No package is
 OS-signed on any channel; see
 [platform support](PLATFORMS.md) for the integrity guarantees that replace

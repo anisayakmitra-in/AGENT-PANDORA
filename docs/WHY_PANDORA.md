@@ -31,7 +31,7 @@ cannot issue permits, change policy roots, or activate themselves.
 
 ## What is shipped
 
-The current `2.0.0-beta.10` line is a CLI and TUI release with:
+The current `2.0.0` line is a CLI and TUI release with:
 
 - an interactive 4-view Ratatui TUI workbench (launched immediately via `pandora`) and 42 CLI subcommands;
 - multi-provider configuration and bounded tool workflows;
