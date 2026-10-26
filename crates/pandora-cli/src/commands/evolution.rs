@@ -2276,12 +2276,17 @@ fn evolution_ladder(args: &[String]) -> Result<CommandResult, CliError> {
 }
 
 fn evolution_genome(args: &[String]) -> Result<CommandResult, CliError> {
-    let parsed = parse_options(args, &["model", "prompt", "step"])?;
+    let is_step = args.iter().any(|a| a == "--step" || a == "--mutate");
+    let non_step_args = args
+        .iter()
+        .filter(|a| a.as_str() != "--step" && a.as_str() != "--mutate")
+        .cloned()
+        .collect::<Vec<_>>();
+    let parsed = parse_options(&non_step_args, &["model", "prompt"])?;
     let model = parsed.value("model").unwrap_or("claude-3-7-sonnet");
     let prompt = parsed
         .value("prompt")
         .unwrap_or("You solve complex systems problems systematically.");
-    let is_step = parsed.values.contains_key("step");
 
     let mut engine = HarnessEvolutionEngine::new(10, 0.005);
     engine.seed_root(

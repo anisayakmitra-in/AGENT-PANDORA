@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-leading to the first stable release `v2.0.0`. The active release identity
-is `v2.0.0`.
+and the stable releases `v2.0.0` and `v3.0.0`. The active release identity
+is `v3.0.0`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,16 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v3.0.0
+
+This is the major stable release of Pandora v3.0.0-SUNLESS. It updates the coupled Rust,
+npm, installer, documentation, and SDK runtime surfaces to `3.0.0` while
+retaining the source-bound `cli-only` release scope. It bundles Declarative Structured
+Reasoning (DSRs), the Genetic-Pareto (GEPA) Optimizer, the 6-Level Optimization Ladder
+($L_0 \to L_5$), Darwin Whole-Agent Genomes with task routing cards, Meta^n Recursive Emergent
+Depth with fixed-point $\Omega$ convergence detection, Product Requirement Prompts (PRP)
+progressive pipelines with 4-gate verification, and Universal Evolutionary Lineage tracing.
 
 ## v2.0.0
 

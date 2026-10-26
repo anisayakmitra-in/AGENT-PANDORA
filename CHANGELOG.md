@@ -1,6 +1,8 @@
 # Changelog
 
-## v3.0.0-SUNLESS
+## v3.0.0
+
+### Pandora v3.0.0-SUNLESS: Autonomous Evolutionary Harness Runtime
 
 ### Declarative Structured Reasoning (DSRs) — DSPy for Rust (`pandora dsrs`)
 - **Type-safe Reasoning Signatures (`pandora-types::dsrs`)**:

@@ -6,9 +6,9 @@ fail() {
   exit 1
 }
 
-version="${PANDORA_VERSION:-v2.0.0}"
+version="${PANDORA_VERSION:-v3.0.0}"
 printf '%s\n' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' \
-  || fail "PANDORA_VERSION must be a SemVer tag such as v2.0.0"
+  || fail "PANDORA_VERSION must be a SemVer tag such as v3.0.0"
 case "$version" in
   *[!A-Za-z0-9._-]*) fail "PANDORA_VERSION contains unsafe characters" ;;
 esac

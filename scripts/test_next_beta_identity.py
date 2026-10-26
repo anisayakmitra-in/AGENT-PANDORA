@@ -8,9 +8,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-NEXT_VERSION = "2.0.0"
+NEXT_VERSION = "3.0.0"
 NEXT_TAG = f"v{NEXT_VERSION}"
-CONSUMED_TAG = "v2.0.0-beta.10"
+CONSUMED_TAG = "v2.0.0"
 
 
 class NextBetaIdentityTests(unittest.TestCase):
@@ -75,9 +75,9 @@ class NextBetaIdentityTests(unittest.TestCase):
         releases = (ROOT / "RELEASES.md").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-        self.assertIn("## v2.0.0", changelog)
-        self.assertIn("## v2.0.0", releases)
-        self.assertIn("active release identity is `2.0.0`", readme)
+        self.assertIn("## v3.0.0", changelog)
+        self.assertIn("## v3.0.0", releases)
+        self.assertIn("active release identity is `3.0.0", readme)
 
 
 if __name__ == "__main__":
