@@ -5374,7 +5374,10 @@ impl App {
         } else {
             None
         };
-        let model = if self.active_model_label != "default" && !self.active_model_label.is_empty() {
+        let model = if self.active_model_label != "default"
+            && self.active_model_label != "unconfigured"
+            && !self.active_model_label.is_empty()
+        {
             Some(self.active_model_label.as_str())
         } else {
             None
@@ -5513,20 +5516,6 @@ impl App {
                 args.push(format!("--{name}"));
                 args.push(value.to_owned());
             }
-        }
-        if self.args.value("provider").is_none()
-            && self.active_provider_label != "unconfigured"
-            && !self.active_provider_label.is_empty()
-        {
-            args.push("--provider".to_owned());
-            args.push(self.active_provider_label.clone());
-        }
-        if self.args.value("model").is_none()
-            && self.active_model_label != "default"
-            && !self.active_model_label.is_empty()
-        {
-            args.push("--model".to_owned());
-            args.push(self.active_model_label.clone());
         }
         if let Some(session_id) = self.session_id.as_deref() {
             args.push("--session".to_owned());
