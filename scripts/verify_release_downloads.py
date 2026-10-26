@@ -165,7 +165,11 @@ def verify_release_downloads(
         try:
             expected = expected_checksum(manifest, name)
         except ValueError as error:
-            raise ReleaseDownloadError(str(error)) from error
+            lookup_name = name.removeprefix("published-")
+            try:
+                expected = expected_checksum(manifest, lookup_name)
+            except ValueError:
+                raise ReleaseDownloadError(str(error)) from error
         actual = sha256_file(artifact)
         if actual != expected:
             raise ReleaseDownloadError(

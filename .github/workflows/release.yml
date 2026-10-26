@@ -422,7 +422,7 @@ jobs:
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           body_path: ${{ runner.temp }}/release-notes.md
-          name: Pandora ${{ github.ref_name }}
+          name: Pandora ${{ github.ref_name }} — SUNLESS
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: dist/*
 
@@ -500,7 +500,9 @@ jobs:
           # Verify the build attestation for the published binary, independently
           # of the checksum path. This is free provenance from GitHub and does not
           # require a signing certificate.
-          published="$RUNNER_TEMP/published-${{ matrix.artifact }}"
+          published_dir="$RUNNER_TEMP/published"
+          mkdir -p "$published_dir"
+          published="$published_dir/${{ matrix.artifact }}"
           curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
             --output "$published" \
             "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/${GITHUB_REF_NAME}/${{ matrix.artifact }}"
@@ -608,7 +610,9 @@ jobs:
           Invoke-WebRequest `
             -Uri "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/$env:GITHUB_REF_NAME/checksums.txt.pem" `
             -OutFile "$checksums.pem"
-          $published = Join-Path $env:RUNNER_TEMP "published-${{ matrix.artifact }}"
+          $publishedDir = Join-Path $env:RUNNER_TEMP "published"
+          New-Item -ItemType Directory -Path $publishedDir -Force | Out-Null
+          $published = Join-Path $publishedDir "${{ matrix.artifact }}"
           Invoke-WebRequest `
             -Uri "https://github.com/anisayakmitra-in/AGENT-PANDORA/releases/download/$env:GITHUB_REF_NAME/${{ matrix.artifact }}" `
             -OutFile $published
