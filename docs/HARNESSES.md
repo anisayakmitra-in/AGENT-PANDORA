@@ -615,3 +615,39 @@ The package envelope is owned by `pandora-types`. Existing Harness and Gene mani
 
 M-Place remains a separate registry. It does not own activation, permissions,
 runtime events, or execution policy.
+
+---
+
+## Harness²: 8-Component Tree & Recursive Harnessing Architecture
+
+Synthesizing Google Research's **Harness²** ([arXiv:2610.14224](https://arxiv.org/abs/2610.14224)), Pandora natively treats agent task environments as an 8-component canonical directory tree ($c_1 \dots c_8$):
+
+| Component | Canonical Prefix | Description |
+| :--- | :--- | :--- |
+| $c_1$: **System Prompt** | `prompts/` | Core behavioral prompts and system instructions |
+| $c_2$: **Guardrails** | `guardrails/` | Safety constraints, constitutional limits, and boundaries |
+| $c_3$: **Memory** | `memory/` | Few-shot exemplars, retrieval indexes, and facts |
+| $c_4$: **Skills** | `skills/` | Markdown skill definitions (`SKILL.md`) and operational SOPs |
+| $c_5$: **Tool Guidance** | `tools/` | Tool invocation guides, parameter recipes, schemas |
+| $c_6$: **Scripts** | `scripts/` | Deterministic verification, linting, and build scripts |
+| $c_7$: **Subagents** | `subagents/` | Specialist definitions, roles, and handoff contracts |
+| $c_8$: **Plugins** | `plugins/` | External runtime extensions and MCP tool descriptors |
+
+### Omitted-is-Inherited Diff Semantics
+Candidate modifications are expressed as `HarnessTreeDiff` deltas (added, modified, removed files). Any file omitted in the diff is inherited unchanged from the baseline harness tree. Every file path is strictly validated against path traversal (`..`), leading slashes, and backslashes, ensuring sandbox confinement.
+
+### Propose–Probe–Compose Engine
+- **Propose**: Generates candidate edits spanning both invariant (general) and domain-specific categories.
+- **Probe**: Executes candidates against task verification suites, capturing test pass rate, token cost, duration, and diagnostic output.
+- **Compose**:
+  - **Parallel Mode**: Explores $K$ general and $K$ domain candidates simultaneously, ranking by pass rate $\to$ tokens $\to$ latency, and contrastively synthesizes non-conflicting optimal edits.
+  - **Sequential Mode**: Iteratively refines the harness tree across $K$ consecutive Propose–Probe–Compose rounds.
+- **Reflect & Adopt**: Distills verified improvements into durable entries stored in the persistent **Harness Improvement Library**.
+
+### CLI & TUI Surfaces
+- `pandora harness tree show [--component <name>]`
+- `pandora harness tree diff [path_to_tree_b]`
+- `pandora harness recursive run --k <n> --mode <parallel|sequential> --task <task>`
+- `pandora harness library list`
+- `pandora harness library inspect <id>`
+- TUI `/harness` command and Palette entry.

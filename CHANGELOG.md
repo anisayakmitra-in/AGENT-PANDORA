@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Harness² 8-Component Tree & Recursive Harnessing (`pandora harness`)**:
+  - Full canonical component decomposition ($c_1 \dots c_8$: System Prompt, Guardrails, Memory, Skills, Tool Guidance, Scripts, Subagents, Plugins) with omitted-is-inherited diff semantics and deterministic SHA-256 digests.
+  - Recursive Propose–Probe–Compose engine supporting Parallel (contrastive Pareto exploration across $K$ budget) and Sequential recursive refinement.
+  - Persistent Improvement Harness Library tracking pass rates, token metrics, latency, and synthesized reflection summaries.
+  - New CLI subcommands: `pandora harness tree show|diff`, `pandora harness recursive run`, and `pandora harness library list|inspect`.
+  - TUI `/harness` command and Palette shortcut.
+- **Extreme Keyboard & Full Mouse Navigation in TUI**:
+  - Interactive mouse click support across all tabs (Console, Kanban, Memory, Governance), model badge, effort selector, brand title, and custom input cursor positioning.
+  - Full keyboard shortcuts (`F1`–`F12`, `Alt+F`/`Alt+B`, `Ctrl+A`/`Ctrl+E`, `Alt+Backspace`, `Ctrl+U`, `Ctrl+K`, `Home`/`End`, etc.).
+
 ## v2.0.0
 
 - **Custom model provider support & management**: `pandora provider add <name> <base_url> [model]`,
