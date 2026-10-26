@@ -1828,7 +1828,11 @@ impl App {
                     return false;
                 }
                 KeyCode::Char('s') => {
-                    self.open_skills_modal();
+                    if !self.input.is_empty() || !self.draft_stash.is_empty() {
+                        self.toggle_stash();
+                    } else {
+                        self.open_skills_modal();
+                    }
                     return false;
                 }
                 KeyCode::Char('g') => {
@@ -1994,6 +1998,14 @@ impl App {
                     self.active_tab = TuiTab::Governance;
                     return false;
                 }
+                KeyCode::Char('k') => {
+                    self.open_key_modal(None);
+                    return false;
+                }
+                KeyCode::Char('s') => {
+                    self.open_skills_modal();
+                    return false;
+                }
                 KeyCode::Char('f') => {
                     self.word_forward();
                     return false;
@@ -2106,14 +2118,22 @@ impl App {
                 false
             }
             KeyCode::F(3) => {
-                self.open_key_modal(None);
+                self.theme = self.theme.next();
+                self.push_message(format!("theme> {}", self.theme.name()));
                 false
             }
             KeyCode::F(4) => {
-                self.open_skills_modal();
+                self.sidebar_visible = !self.sidebar_visible;
                 false
             }
             KeyCode::F(5) => {
+                self.refresh_provider_telemetry();
+                self.refresh_kanban_silent();
+                self.refresh_fleet_silent();
+                self.scroll_offset = 0;
+                false
+            }
+            KeyCode::F(6) => {
                 self.effort = self.effort.next();
                 let effort_desc = match self.effort {
                     ReasoningEffort::Low => "System 1 Reflex (Direct / Fast)",
@@ -2124,13 +2144,9 @@ impl App {
                 self.push_message(format!("effort> {} — {}", self.effort.name(), effort_desc));
                 false
             }
-            KeyCode::F(6) => {
-                self.theme = self.theme.next();
-                self.push_message(format!("theme> {}", self.theme.name()));
-                false
-            }
             KeyCode::F(7) => {
-                self.sidebar_visible = !self.sidebar_visible;
+                self.centered_layout = !self.centered_layout;
+                self.push_message(format!("layout> centered = {}", self.centered_layout));
                 false
             }
             KeyCode::F(8) => {
@@ -5521,14 +5537,14 @@ impl App {
         let mut brand_spans = vec![
             Span::styled(" ◆ ", self.theme.accent()),
             Span::styled(
-                "PANDORA // SUNLESS",
+                "PANDORA TUI // SUNLESS",
                 self.theme.title().add_modifier(Modifier::BOLD),
             ),
             Span::styled(version, self.theme.muted()),
         ];
         if rows[0].width >= 88 {
             brand_spans.push(Span::styled(
-                "  [F1 Help] [F2 Model] [F3 Keys] [F4 Skills] [F5 S1/S2]",
+                "  [F1 Help] [F2 Model] [/keys] [/skills] [F6 S1/S2]",
                 self.theme.muted(),
             ));
         }
