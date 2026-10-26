@@ -1,16 +1,98 @@
 # Changelog
 
-## Unreleased
+## v3.0.0-SUNLESS
 
-- **Harness² 8-Component Tree & Recursive Harnessing (`pandora harness`)**:
-  - Full canonical component decomposition ($c_1 \dots c_8$: System Prompt, Guardrails, Memory, Skills, Tool Guidance, Scripts, Subagents, Plugins) with omitted-is-inherited diff semantics and deterministic SHA-256 digests.
+### Declarative Structured Reasoning (DSRs) — DSPy for Rust (`pandora dsrs`)
+- **Type-safe Reasoning Signatures (`pandora-types::dsrs`)**:
+  - `Signature`, `SignatureField`, `SignatureFieldKind`, `DsrDemonstration`, and `DsrsError`.
+  - Dynamic prompt formatting with strict type assertions, few-shot demonstration binding, and input value substitution.
+  - Robust output parsing supporting both multi-field delimiters and single-field fallback.
+  - Automatic `into_chain_of_thought()` converting any signature into an explicit reasoning module with prepended `rationale`.
+  - Built-in canonical signatures: `CodeReviewer`, `ReActModule`, `SqlSynthesizer`.
+  - CLI subcommands: `pandora dsrs show`, `pandora dsrs inspect <name>`, and `pandora dsrs cot <name>`.
+  - TUI integration: `/dsrs` Spotlight command and palette action.
+
+### Genetic-Pareto (GEPA) Optimizer (`pandora gepa`)
+- **Multi-Objective Pareto Evolution (`pandora-runtime::gepa`)**:
+  - Multi-objective Pareto frontier tracking 3 orthogonal axes: `pass_rate` (maximize), `token_cost` (minimize), and `latency_ms` (minimize).
+  - Strict Pareto dominance check ($A \succ B$), non-dominated candidate preservation, and dominated ancestor pruning.
+  - `GepaReflectiveMutator`: extracts concrete avoidance invariants from failure traces $\mathcal{T}_{\text{fail}}$ to guide targeted prompt mutations.
+  - CLI subcommands: `pandora gepa frontier` and `pandora gepa optimize`.
+  - TUI integration: `/gepa` Spotlight command and palette action.
+
+### The 6-Level Optimization Ladder ($L_0 \to L_5$) (`pandora evolution ladder`)
+- **Taxonomy of Harness Self-Improvement** (synthesized from `Awesome-Harness-Self-Improvement`):
+  - Formalized 6 rungs of self-improvement:
+    - **L0: Instruction Prompts** (APE, OPRO, Promptbreeder, GEPA)
+    - **L1: Context & Memory** (ACE, ReasoningBank, layered memory, context compression)
+    - **L2: Workflow Graph** (ADAS, AFlow, GPTSwarm, dynamic branching)
+    - **L3: Harness Code** (Darwin Gödel Machines, SICA, Gödel Agent)
+    - **L4: Meta-Optimizer** (STOP, Meta-Harness, MCE, Meta^n recursive depth)
+    - **L5: Harness + Weights** (Joint harness scaffolding and foundation model weight co-optimization; SIA, SEAL)
+  - Triad of Self-Improvement Failure Modes & Built-in Safeguards:
+    - **Reward Hacking**: Tamper-proof signatures and isolated external evaluator.
+    - **Capability Collapse**: Multi-domain holdout regression suites and monotonic Pareto frontier checks.
+    - **Harness Drift**: Strict pre-flight invariance contract assertions and cross-validation holdouts.
+  - CLI subcommand: `pandora evolution ladder`.
+  - TUI integration: `/ladder`.
+
+### Darwin Whole-Agent Genomes & Task-Domain Routing Cards (`pandora evolution genome`, `routing-card`)
+- **Whole-Agent Natural Selection** (synthesized from `Darwin`):
+  - Whole-Agent Genome representation: $\mathcal{G} = [\text{system\_prompt}, \text{tool\_bindings}, \text{model\_target}, \text{hyperparameters}]$.
+  - 4-Point Safety Spine (enforced as code):
+    1. *Sandboxed Self-Modification*: Variant modification and execution occurs exclusively within isolated sandboxes.
+    2. *Immutable External Grader*: Fitness evaluator is isolated from the mutator's reach and cannot be gamed.
+    3. *Monotonic Rollback*: Any variant regressing on holdout fitness is killed and automatically restored from parent snapshot.
+    4. *Hard Compute Cap*: Strict generation, token, and turn budgets with mandatory human veto points.
+  - Task-Domain Routing Cards: Synthesizes empirical Pareto champions across task classes (`coding`, `reasoning`, `synthesis`, `data_analysis`).
+  - CLI subcommands: `pandora evolution genome [--step]` and `pandora evolution routing-card`.
+  - TUI integration: `/genome` and `/routing-card`.
+
+### Meta^n Recursive Emergent Depth & Fixed-Point $\Omega$ (`pandora evolution depth`)
+- **Emergent Depth Recurrence** (synthesized from `meta-n` arXiv:2608.24735):
+  - Constructive $N$-th order meta-layers generated from lower-layer execution traces.
+  - Constructive code injection: `pre_process` normalization hooks and `code_library` helper functions.
+  - Fixed-Point Termination ($\Omega$): Detects when successive meta-reflection reaches convergence attractor $M(\mathcal{P}^*) = \mathcal{P}^*$.
+  - CLI subcommand: `pandora evolution depth`.
+  - TUI integration: `/depth`.
+
+### Product Requirement Prompts (PRP) Pipeline (`pandora prp`)
+- **Progressive Validation Gates & Contracts** (synthesized from `hack`):
+  - 4-Level Task Hierarchy: $\text{Phase} \to \text{Milestone} \to \text{Task} \to \text{Subtask}$.
+  - Context-dense prompt contracts: Pre-flight invariants, acceptance criteria, and snapshot rollback plans.
+  - 4 Progressive Validation Gates:
+    - **Gate 1: Syntax** — Compiler diagnostics, AST validation, and strict linter clean checks.
+    - **Gate 2: Unit** — Fast isolated unit test suites in memory or sandbox.
+    - **Gate 3: Integration** — Multi-agent end-to-end task execution and contract verification.
+    - **Gate 4: Receipt Check** — Cryptographic evidence receipts and manual review gates.
+  - Fast-fail progressive evaluation stops immediately on the first defect.
+  - New top-level CLI command: `pandora prp inspect`, `pandora prp scaffold`, and `pandora prp validate`.
+  - TUI integration: `/prp`.
+
+### Universal Evolutionary Lineage DAG & Interactive Visualizer (`pandora evolution lineage`)
+- **Lineage DAG & Standalone Visualizer** (synthesized from `darwinian_evolver`):
+  - Complete DAG tracking candidate organisms, parent-child mutation edges, score deltas, and failure cases addressed.
+  - ASCII DAG tree output in terminal.
+  - Standalone dependency-free interactive HTML/SVG lineage visualizer export with node inspector, score deltas, and generation timeline.
+  - CLI subcommand: `pandora evolution lineage [--export-html <path>]`.
+  - TUI integration: `/lineage`.
+
+### Harness² 8-Component Tree & Recursive Harnessing (`pandora harness`)
+- **Component Decomposition & Recursive Engine** (synthesized from `harness2`):
+  - Canonical $c_1 \dots c_8$ decomposition: System Prompt, Guardrails, Memory, Skills, Tool Guidance, Scripts, Subagents, Plugins.
   - Recursive Propose–Probe–Compose engine supporting Parallel (contrastive Pareto exploration across $K$ budget) and Sequential recursive refinement.
   - Persistent Improvement Harness Library tracking pass rates, token metrics, latency, and synthesized reflection summaries.
-  - New CLI subcommands: `pandora harness tree show|diff`, `pandora harness recursive run`, and `pandora harness library list|inspect`.
-  - TUI `/harness` command and Palette shortcut.
-- **Extreme Keyboard & Full Mouse Navigation in TUI**:
-  - Interactive mouse click support across all tabs (Console, Kanban, Memory, Governance), model badge, effort selector, brand title, and custom input cursor positioning.
-  - Full keyboard shortcuts (`F1`–`F12`, `Alt+F`/`Alt+B`, `Ctrl+A`/`Ctrl+E`, `Alt+Backspace`, `Ctrl+U`, `Ctrl+K`, `Home`/`End`, etc.).
+  - CLI subcommands: `pandora harness tree show|diff`, `pandora harness recursive run`, and `pandora harness library list|inspect`.
+  - TUI integration: `/harness`.
+
+### Extreme Keyboard & Full Mouse Navigation in TUI
+- **Extreme Keyboard Navigation**: Full binding support across `F1`–`F12`, `Alt+F`/`Alt+B`, `Ctrl+A`/`Ctrl+E`, `Alt+Backspace`, `Ctrl+U`, `Ctrl+K`, `Home`/`End`, etc.
+- **Full Mouse Navigation**: Interactive mouse click support across all tabs (Console, Kanban, Memory, Governance), model badge, effort selector, brand title, and custom input cursor positioning.
+
+### Major Version Bump & Shell Completions Parity
+- Bumped workspace version from `2.0.0` to `3.0.0`.
+- 100% completion script parity across PowerShell, Bash, Zsh (all 36 branch entries), and Fish for all new commands and subcommands (`dsrs`, `gepa`, `prp`, `evolution ladder|genome|routing-card|lineage|depth`).
+- Strict `#![forbid(unsafe_code)]` and zero warnings on `cargo clippy --workspace --all-targets --locked -- -D warnings`.
 
 ## v2.0.0
 
