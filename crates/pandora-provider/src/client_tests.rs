@@ -767,3 +767,33 @@ fn gemini_response_falls_back_to_thoughts_when_text_empty() {
         "Only internal reasoning was emitted before cutoff."
     );
 }
+
+#[test]
+fn test_extract_fallback_tool_calls_multiline_json() {
+    let raw = r#"{"name": "workspace.inventory", "arguments": {}}
+{"name": "ariadne.debt", "arguments": {}}
+{"name": "workspace.verify", "arguments": {}}"#;
+    let (calls, remainder) = extract_fallback_tool_calls(raw);
+    assert_eq!(calls.len(), 3);
+    assert_eq!(calls[0].name(), "workspace.inventory");
+    assert_eq!(calls[1].name(), "ariadne.debt");
+    assert_eq!(calls[2].name(), "workspace.verify");
+    assert!(remainder.is_empty());
+}
+
+#[test]
+fn test_extract_fallback_tool_calls_code_fence() {
+    let raw = "```json\n{\"name\": \"workspace.status\", \"arguments\": {}}\n```";
+    let (calls, remainder) = extract_fallback_tool_calls(raw);
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].name(), "workspace.status");
+    assert!(remainder.is_empty());
+}
+
+#[test]
+fn test_extract_fallback_tool_calls_preserves_conversational_text() {
+    let raw = "Hello there! How can I help you today?";
+    let (calls, remainder) = extract_fallback_tool_calls(raw);
+    assert!(calls.is_empty());
+    assert_eq!(remainder, "Hello there! How can I help you today?");
+}

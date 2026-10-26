@@ -1618,6 +1618,110 @@ fn parse_anthropic_response(bytes: &[u8]) -> Result<ModelResponse, ProviderError
     Ok(ModelResponse::new(text, tool_calls, usage))
 }
 
+fn extract_fallback_tool_calls(raw_text: &str) -> (Vec<ToolCall>, String) {
+    let mut tool_calls = Vec::new();
+    let mut remaining_text = raw_text.to_owned();
+
+    // 1. Check for <tool_call>...</tool_call> tags if present
+    let mut text_to_parse = raw_text;
+    let stripped;
+    if text_to_parse.contains("<tool_call>") {
+        let mut inner_parts = Vec::new();
+        let mut non_tool_parts = Vec::new();
+        let mut cursor = 0;
+        while let Some(start) = text_to_parse[cursor..].find("<tool_call>") {
+            let abs_start = cursor + start;
+            if abs_start > cursor {
+                non_tool_parts.push(&text_to_parse[cursor..abs_start]);
+            }
+            let content_start = abs_start + "<tool_call>".len();
+            if let Some(end) = text_to_parse[content_start..].find("</tool_call>") {
+                let abs_end = content_start + end;
+                inner_parts.push(&text_to_parse[content_start..abs_end]);
+                cursor = abs_end + "</tool_call>".len();
+            } else {
+                inner_parts.push(&text_to_parse[content_start..]);
+                cursor = text_to_parse.len();
+                break;
+            }
+        }
+        if cursor < text_to_parse.len() {
+            non_tool_parts.push(&text_to_parse[cursor..]);
+        }
+        stripped = inner_parts.join("\n");
+        text_to_parse = &stripped;
+        remaining_text = non_tool_parts.join("").trim().to_owned();
+    }
+
+    // 2. Strip markdown code fences if present
+    let un_fenced;
+    let trimmed = text_to_parse.trim();
+    let scan_target = if (trimmed.starts_with("```json") || trimmed.starts_with("```"))
+        && trimmed.ends_with("```")
+    {
+        let lines: Vec<&str> = trimmed.lines().collect();
+        if lines.len() >= 2 {
+            un_fenced = lines[1..lines.len() - 1].join("\n");
+            &un_fenced
+        } else {
+            trimmed
+        }
+    } else {
+        trimmed
+    };
+
+    // 3. Parse stream of JSON objects or arrays
+    let de = serde_json::Deserializer::from_str(scan_target);
+    for item in de.into_iter::<serde_json::Value>().flatten() {
+        if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
+            let arguments = item.get("arguments").cloned().unwrap_or(serde_json::json!({}));
+            let id = format!(
+                "call_{}_{}",
+                name.replace('.', "_"),
+                tool_calls.len().saturating_add(1)
+            );
+            if let Ok(call) = ToolCall::new(id, name, arguments) {
+                tool_calls.push(call);
+            }
+        } else if let Some(arr) = item.as_array() {
+            for sub_item in arr {
+                if let Some(name) = sub_item.get("name").and_then(|v| v.as_str()) {
+                    let arguments =
+                        sub_item.get("arguments").cloned().unwrap_or(serde_json::json!({}));
+                    let id = format!(
+                        "call_{}_{}",
+                        name.replace('.', "_"),
+                        tool_calls.len().saturating_add(1)
+                    );
+                    if let Ok(call) = ToolCall::new(id, name, arguments) {
+                        tool_calls.push(call);
+                    }
+                }
+            }
+        }
+    }
+
+    if !tool_calls.is_empty() {
+        let cleaned_test = scan_target
+            .lines()
+            .map(str::trim)
+            .filter(|l| {
+                !l.is_empty()
+                    && !l.starts_with('{')
+                    && !l.ends_with('}')
+                    && !l.starts_with('[')
+                    && !l.ends_with(']')
+                    && !l.starts_with("```")
+            })
+            .collect::<Vec<_>>();
+        if cleaned_test.is_empty() {
+            remaining_text = String::new();
+        }
+    }
+
+    (tool_calls, remaining_text)
+}
+
 fn parse_response(bytes: &[u8]) -> Result<ModelResponse, ProviderError> {
     if bytes.len() > MAX_RESPONSE_BYTES as usize {
         return Err(ProviderError::ResponseTooLarge);
@@ -1658,23 +1762,10 @@ fn parse_response(bytes: &[u8]) -> Result<ModelResponse, ProviderError> {
     }
     let mut final_text = text;
     if tool_calls.is_empty() {
-        let trimmed = final_text.trim();
-        if trimmed.starts_with('{')
-            && trimmed.ends_with('}')
-            && let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed)
-            && let Some(name) = val.get("name").and_then(|v| v.as_str())
-        {
-            let arguments = val
-                .get("arguments")
-                .cloned()
-                .unwrap_or(serde_json::json!({}));
-            if arguments.is_object() {
-                let id = format!("call_{}", name.replace('.', "_"));
-                if let Ok(tool_call) = ToolCall::new(id, name, arguments) {
-                    tool_calls.push(tool_call);
-                    final_text = String::new();
-                }
-            }
+        let (extracted, remainder) = extract_fallback_tool_calls(&final_text);
+        if !extracted.is_empty() {
+            tool_calls = extracted;
+            final_text = remainder;
         }
     }
     let usage = response
