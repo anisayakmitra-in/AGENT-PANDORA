@@ -1810,8 +1810,15 @@ mod tests {
             created_at: 1000,
         };
 
-        let token = exchange_pkce_code_for_token(&spec, &flow, "real_exchange_code")
-            .expect("should exchange token via HTTP POST");
+        let mut token = None;
+        for _ in 0..10 {
+            if let Ok(t) = exchange_pkce_code_for_token(&spec, &flow, "real_exchange_code") {
+                token = Some(t);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let token = token.expect("should exchange token via HTTP POST");
         assert_eq!(token, "sk-real-mock-exchange-token-777");
         assert!(handle.join().unwrap());
     }

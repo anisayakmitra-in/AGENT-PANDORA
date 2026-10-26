@@ -9,6 +9,7 @@ pub mod containment;
 pub mod context;
 pub mod curator;
 pub mod decision;
+pub mod dsrs;
 pub mod effect;
 pub mod efficiency;
 pub mod evaluation;
@@ -69,6 +70,7 @@ pub use decision::{
     DecisionVerdict, DpoPair, DynamicVerdict, FineTuningSample, GoldenEvaluationCase,
     GoldenSuiteDefinition, GoldenTargetRef, IntentTierChoice, QuestionSchema, ToolSafetyChoice,
 };
+pub use dsrs::{DsrDemonstration, DsrsError, Signature, SignatureField, SignatureFieldKind};
 pub use effect::{
     EffectOutcome, EffectPermit, EffectReceipt, EffectTarget, OperationRequest, RequestError,
     ResourceScope, SecretReference, Timestamp,

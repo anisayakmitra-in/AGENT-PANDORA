@@ -28,6 +28,7 @@ pub mod execution_controller;
 mod execution_profile;
 pub mod executors;
 pub mod fleet;
+pub mod gepa;
 pub mod github_client;
 pub mod graph_intelligence;
 pub mod hardware_autopilot;
@@ -169,6 +170,10 @@ pub use fleet::{
     FleetLeaseFence, FleetLeaseState, FleetNode, FleetNodeState, FleetQuiescenceGuard,
     FleetSupervisor, FleetSupervisorState, MAX_FLEET_CAPABILITIES, MAX_FLEET_FENCES,
     MAX_FLEET_LEASES, MAX_FLEET_NODES,
+};
+pub use gepa::{
+    GepaCandidate, GepaError, GepaFeedbackTrace, GepaObjective, GepaOptimizer, GepaParetoFrontier,
+    GepaReflectiveMutator,
 };
 pub use github_client::{GitHubPackageClient, GitHubPackageDownload, GitHubPackageError};
 pub use graph_intelligence::{

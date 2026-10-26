@@ -254,6 +254,18 @@ const PALETTE_ENTRIES: &[PaletteEntry] = &[
         immediate: true,
     },
     PaletteEntry {
+        command: "/dsrs",
+        category: "Reasoning",
+        description: "Inspect Declarative Structured Reasoning (DSRs) signatures and Chain-of-Thought",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/gepa",
+        category: "Evolution",
+        description: "Inspect Genetic-Pareto (GEPA) multi-objective frontier and reflective optimization",
+        immediate: true,
+    },
+    PaletteEntry {
         command: "/effort",
         category: "Model",
         description: "Show or change reasoning effort level (low, medium, high, max) [Alt+Left/Right]",
@@ -2545,6 +2557,8 @@ impl App {
                     "/approve    approve and resume the pending task",
                     "/deny       deny the pending task",
                     "/harness    inspect 8-component Harness² tree and recursive engine",
+                    "/dsrs       inspect Declarative Structured Reasoning signatures and CoT",
+                    "/gepa       inspect Genetic-Pareto multi-objective frontier and optimization",
                     "/coding     inspect the Coding Domain Harness",
                     "/read, /search, /patch, /verify, /test, /format, /lint, /build, /status, /diff, /log, /refs, /review run core Coding Genes",
                     "/audit, /argus-review, /debt, /measure, /guide run workflow Genes",
@@ -3097,6 +3111,10 @@ impl App {
             "/kanban" => self.show_kanban(),
             "/harness" => self.show_harness_summary(),
             value if value.starts_with("/harness ") => self.show_harness_summary(),
+            "/dsrs" => self.show_dsrs_summary(),
+            value if value.starts_with("/dsrs ") => self.show_dsrs_summary(),
+            "/gepa" => self.show_gepa_summary(),
+            value if value.starts_with("/gepa ") => self.show_gepa_summary(),
             "/packages" => self.show_packages(),
             "/distribution" => self.show_distribution(),
             "/domain-starter" => {
@@ -4063,6 +4081,28 @@ impl App {
         self.push_message(
             "harness> CLI: 'pandora harness tree show|diff', 'pandora harness recursive run', 'pandora harness library list|inspect'",
         );
+    }
+
+    fn show_dsrs_summary(&mut self) {
+        self.push_message(
+            "dsrs> Declarative Structured Reasoning: Rust-native DSPy paradigm (Signatures, Predictors, CoT)",
+        );
+        self.push_message(
+            "dsrs> Builtins: CodeReviewer, ReActModule, SqlSynthesizer | Automatic Chain-of-Thought prepending",
+        );
+        self.push_message(
+            "dsrs> CLI: 'pandora dsrs show', 'pandora dsrs inspect <name>', 'pandora dsrs cot <name>'",
+        );
+    }
+
+    fn show_gepa_summary(&mut self) {
+        self.push_message(
+            "gepa> Genetic-Pareto (GEPA) Optimizer: Reflective prompt & program evolution with Pareto frontier",
+        );
+        self.push_message(
+            "gepa> Multi-Objective: 3 orthogonal axes (Pass Rate maximize, Token Cost minimize, Step Latency minimize)",
+        );
+        self.push_message("gepa> CLI: 'pandora gepa frontier', 'pandora gepa optimize'");
     }
 
     fn run_setup_preset(&mut self, target: &str) {
@@ -6560,6 +6600,34 @@ mod tests {
             app.messages
                 .iter()
                 .any(|message| { message.contains("Propose-Probe-Compose") })
+        );
+        assert_eq!(app.activity, TuiActivity::Idle);
+    }
+
+    #[test]
+    fn dsrs_command_shows_summary() {
+        let mut app = app();
+        app.input = "/dsrs".chars().collect();
+        app.submit();
+
+        assert!(
+            app.messages
+                .iter()
+                .any(|message| { message.contains("Declarative Structured Reasoning") })
+        );
+        assert_eq!(app.activity, TuiActivity::Idle);
+    }
+
+    #[test]
+    fn gepa_command_shows_summary() {
+        let mut app = app();
+        app.input = "/gepa".chars().collect();
+        app.submit();
+
+        assert!(
+            app.messages
+                .iter()
+                .any(|message| { message.contains("Genetic-Pareto (GEPA) Optimizer") })
         );
         assert_eq!(app.activity, TuiActivity::Idle);
     }

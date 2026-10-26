@@ -25,11 +25,13 @@ pub(crate) mod curator;
 pub(crate) mod curriculum;
 pub(crate) mod decision;
 mod doctor;
+pub(crate) mod dsrs;
 mod efficiency;
 mod evaluation;
 mod evolution;
 mod feedback;
 mod fleet;
+pub(crate) mod gepa;
 mod graph;
 pub(crate) mod hardware;
 mod harness;
@@ -120,6 +122,8 @@ pub(crate) const ROOT_COMMANDS: &[&str] = &[
     "policy",
     "cron",
     "prompt",
+    "dsrs",
+    "gepa",
 ];
 
 /// [`ROOT_COMMANDS`] joined by single spaces, the way the POSIX, zsh, and fish
@@ -232,6 +236,8 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "policy" => policy::execute(&args[1..]),
         "cron" => cron::execute(&args[1..]),
         "prompt" => prompt::execute(&args[1..]),
+        "dsrs" => dsrs::execute(&args[1..]),
+        "gepa" => gepa::execute(&args[1..]),
         "--help" | "help" => {
             if args.len() != 1 {
                 return Err(CliError::usage("help does not accept additional arguments"));
@@ -499,7 +505,7 @@ pub(crate) fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|curriculum|decision|tui|harness|slash|session|job|subagent|skill|package|registry|runtime|memory|approval|provider|mcp|tool|orchestration|operations|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor|policy|cron|prompt> [options]
+    r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|curriculum|decision|tui|harness|slash|session|job|subagent|skill|package|registry|runtime|memory|approval|provider|mcp|tool|orchestration|operations|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor|policy|cron|prompt|dsrs|gepa> [options]
 
 commands:
   help (or --help)
@@ -552,6 +558,8 @@ commands:
   migrate config
   update [--release <tag> [--channel <stable|beta|release-candidate>] | --artifact <path> --sha256 <digest> | --rollback]
   uninstall [--dry-run|--yes]
+  dsrs show|inspect <name>|cot <name>
+  gepa frontier|optimize
   doctor"#
 }
 
