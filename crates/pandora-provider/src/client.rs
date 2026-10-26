@@ -1674,7 +1674,10 @@ fn extract_fallback_tool_calls(raw_text: &str) -> (Vec<ToolCall>, String) {
     let de = serde_json::Deserializer::from_str(scan_target);
     for item in de.into_iter::<serde_json::Value>().flatten() {
         if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
-            let arguments = item.get("arguments").cloned().unwrap_or(serde_json::json!({}));
+            let arguments = item
+                .get("arguments")
+                .cloned()
+                .unwrap_or(serde_json::json!({}));
             let id = format!(
                 "call_{}_{}",
                 name.replace('.', "_"),
@@ -1686,8 +1689,10 @@ fn extract_fallback_tool_calls(raw_text: &str) -> (Vec<ToolCall>, String) {
         } else if let Some(arr) = item.as_array() {
             for sub_item in arr {
                 if let Some(name) = sub_item.get("name").and_then(|v| v.as_str()) {
-                    let arguments =
-                        sub_item.get("arguments").cloned().unwrap_or(serde_json::json!({}));
+                    let arguments = sub_item
+                        .get("arguments")
+                        .cloned()
+                        .unwrap_or(serde_json::json!({}));
                     let id = format!(
                         "call_{}_{}",
                         name.replace('.', "_"),
