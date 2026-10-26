@@ -10,12 +10,17 @@ pub mod harness;
 pub mod manifest;
 pub mod operations;
 pub mod profile;
+pub mod recursive_engine;
 pub mod research;
 pub mod security;
 pub mod slash;
 pub mod verification;
 
 pub use catalog::{HarnessCatalog, HarnessCatalogError, replaceable_builtin_harness_kind};
+pub use recursive_engine::{
+    ComposeSynthesis, HarnessCandidate, ProbeOutcome, ProposalKind, RecursionMode,
+    RecursiveHarnessRunner, default_baseline_harness_tree,
+};
 
 pub fn canonical_harness_binding_digest(manifest: &pandora_types::HarnessManifest) -> String {
     let mut owned_genes = manifest

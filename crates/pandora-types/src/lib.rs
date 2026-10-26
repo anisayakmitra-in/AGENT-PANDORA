@@ -20,6 +20,7 @@ pub mod gene;
 pub mod governance;
 pub mod hardware;
 pub mod harness;
+pub mod harness_tree;
 pub mod ids;
 pub mod jobs;
 pub mod kanban;
@@ -102,6 +103,10 @@ pub use hardware::{
 };
 pub use harness::{
     Harness, HarnessKind, HarnessManifest, MAX_META_DOMAINS, MAX_META_HANDOFFS, MetaComposition,
+};
+pub use harness_tree::{
+    HarnessComponent, HarnessLibraryEntry, HarnessTree, HarnessTreeDiff, HarnessTreeError,
+    MAX_TREE_FILE_SIZE_BYTES, MAX_TREE_FILES_COUNT, MAX_TREE_TOTAL_SIZE_BYTES,
 };
 pub use ids::{
     ArtifactId, EventId, ExecutionId, FailureId, GeneId, HarnessId, IdError, JobId, JobWorkerId,

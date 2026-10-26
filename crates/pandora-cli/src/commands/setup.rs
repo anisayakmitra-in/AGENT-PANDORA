@@ -1734,15 +1734,20 @@ mod tests {
         let handle =
             std::thread::spawn(move || run_local_oauth_loopback(test_port, expected_state, 5));
 
-        // Small pause to let listener bind
-        std::thread::sleep(std::time::Duration::from_millis(50));
-
-        // Connect and send HTTP GET
+        // Connect and send HTTP GET with retry to ensure listener has bound
         let client = reqwest::blocking::Client::new();
-        let resp = client
-            .get(format!("http://127.0.0.1:{test_port}/auth/callback?code=mock_code_123&state={expected_state}"))
-            .send()
-            .expect("should send GET to loopback");
+        let mut resp = None;
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            if let Ok(r) = client
+                .get(format!("http://127.0.0.1:{test_port}/auth/callback?code=mock_code_123&state={expected_state}"))
+                .send()
+            {
+                resp = Some(r);
+                break;
+            }
+        }
+        let resp = resp.expect("should send GET to loopback");
         assert!(resp.status().is_success());
         let body = resp.text().expect("response text");
         assert!(body.contains("Authentication Received"));

@@ -248,6 +248,12 @@ const PALETTE_ENTRIES: &[PaletteEntry] = &[
         immediate: true,
     },
     PaletteEntry {
+        command: "/harness",
+        category: "Harness",
+        description: "Inspect 8-component Harness² tree, recursive engine, and improvement library",
+        immediate: true,
+    },
+    PaletteEntry {
         command: "/effort",
         category: "Model",
         description: "Show or change reasoning effort level (low, medium, high, max) [Alt+Left/Right]",
@@ -2538,6 +2544,7 @@ impl App {
                     "/fleet-health show the local privacy-safe operations snapshot",
                     "/approve    approve and resume the pending task",
                     "/deny       deny the pending task",
+                    "/harness    inspect 8-component Harness² tree and recursive engine",
                     "/coding     inspect the Coding Domain Harness",
                     "/read, /search, /patch, /verify, /test, /format, /lint, /build, /status, /diff, /log, /refs, /review run core Coding Genes",
                     "/audit, /argus-review, /debt, /measure, /guide run workflow Genes",
@@ -3088,6 +3095,8 @@ impl App {
                 self.run_setup_preset(target);
             }
             "/kanban" => self.show_kanban(),
+            "/harness" => self.show_harness_summary(),
+            value if value.starts_with("/harness ") => self.show_harness_summary(),
             "/packages" => self.show_packages(),
             "/distribution" => self.show_distribution(),
             "/domain-starter" => {
@@ -4041,6 +4050,18 @@ impl App {
         );
         self.push_message(
             "tools> Governance: Reference Monitor + Parliament + One-Shot Capability Permits",
+        );
+    }
+
+    fn show_harness_summary(&mut self) {
+        self.push_message(
+            "harness> Harness² 8-Component Tree: c1:Prompt, c2:Guardrails, c3:Memory, c4:Skills, c5:Tools, c6:Scripts, c7:Subagents, c8:Plugins",
+        );
+        self.push_message(
+            "harness> Engine: Propose-Probe-Compose (Parallel K-budget & Sequential recursive synthesis)",
+        );
+        self.push_message(
+            "harness> CLI: 'pandora harness tree show|diff', 'pandora harness recursive run', 'pandora harness library list|inspect'",
         );
     }
 
@@ -6522,6 +6543,25 @@ mod tests {
         }));
         assert_eq!(app.activity, TuiActivity::Idle);
         assert_eq!(app.run_args("inspect", None), ["--agent", "inspect"]);
+    }
+
+    #[test]
+    fn harness_command_shows_summary() {
+        let mut app = app();
+        app.input = "/harness".chars().collect();
+        app.submit();
+
+        assert!(
+            app.messages
+                .iter()
+                .any(|message| { message.contains("Harness² 8-Component Tree") })
+        );
+        assert!(
+            app.messages
+                .iter()
+                .any(|message| { message.contains("Propose-Probe-Compose") })
+        );
+        assert_eq!(app.activity, TuiActivity::Idle);
     }
 
     #[test]

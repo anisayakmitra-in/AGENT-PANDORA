@@ -516,7 +516,7 @@ commands:
   decision harvest [--min-margin <float>] [--export-golden <path>] [--limit <n>] | list
   policy hooks list | validate --file <path>
   tui [--provider <name>] [--session <id>] [--max-turns <n>] [--max-tools <n>] [--theme <auto|dark|light|mono>]
-  harness list|inspect|run [--harness-version <version>]
+  harness list|inspect|run|tree|recursive|library [--harness-version <version>]
   slash list|resolve <command>
   session list|resume|inspect <id> | events <id> [--after-sequence <n>] [--limit <1-256>]
   job submit|work|list|inspect|cancel|mark-interrupted (work accepts --max-jobs <1-64>, bounded --watch --idle-timeout <1-3600>, or --daemon)
