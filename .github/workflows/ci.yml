@@ -59,6 +59,8 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Run Rust tests
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: cargo test --workspace --lib --tests --locked
 
       - name: Build TypeScript launcher boundary

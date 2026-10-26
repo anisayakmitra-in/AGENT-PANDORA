@@ -2,6 +2,55 @@
 
 Pandora keeps package metadata separate from runtime authority.
 
+## Architectural Topology
+
+```mermaid
+flowchart TB
+    subgraph MetaLayer["Meta-Orchestration Harnesses (pandora-harnesses)"]
+        COORD["coordination-meta<br/>Cross-Domain Topology Planner & Swarm Synthesis"]
+        VERIF["verification-meta<br/>Downstream Canary Gate & Quality Assertion"]
+    end
+
+    subgraph DomainLayer["Domain Harnesses (Execution Boundary)"]
+        COD["coding-domain<br/>Code Generation, Test & Diff Synthesis"]
+        RES["research-domain<br/>Web/Local Information Retrieval & Synthesis"]
+        DES["design-domain<br/>System Architecture & Interface Design"]
+        OPS["operations-domain<br/>CI/CD, Infrastructure & Deployment Automation"]
+        SEC["security-domain<br/>Vulnerability Auditing & Threat Analysis"]
+        DEB["debugging-domain<br/>Root-Cause Isolation & Trace Analysis"]
+        DAT["data-domain<br/>Schema Analysis, ETL & SQL Generation"]
+        ARC["architecture-domain<br/>High-Level System Topology & Invariant Review"]
+    end
+
+    subgraph GeneLayer["WebAssembly Genes (Sandboxed Modules)"]
+        WGEN["Custom Wasm Genes<br/>fuel-metered · memory-capped (wasmi)"]
+        BGEN["Built-In Tool Genes<br/>status · diff · test · lint · audit · debt"]
+    end
+
+    subgraph Packaging["Package Store & Admission Boundary"]
+        STORE["PackageStore (packages.sqlite3)<br/>Manifest Verification & SHA-256 Hashing"]
+        ADM["Admission Gate<br/>Ed25519 Signatures · SemVer Compatibility"]
+        PROF["ExecutionProfile<br/>Immutable, Digest-Bound Composition Snapshot"]
+    end
+
+    COORD -->|"Handoff Ceiling & Plan"| DomainLayer
+    DomainLayer -->|"Verification Checkpoint"| VERIF
+    DomainLayer -->|"Owns"| GeneLayer
+    STORE --> ADM
+    ADM --> PROF
+    PROF --> DomainLayer
+
+    classDef meta fill:#1a3a5c,stroke:#4a90d9,color:#fff,stroke-width:2px
+    classDef domain fill:#243b53,stroke:#627d98,color:#fff,stroke-width:2px
+    classDef gene fill:#1f2933,stroke:#616e7c,color:#e4e7eb,stroke-width:2px
+    classDef pack fill:#1a3a2a,stroke:#3ebd93,color:#fff,stroke-width:2px
+
+    class COORD,VERIF meta
+    class COD,RES,DES,OPS,SEC,DEB,DAT,ARC domain
+    class WGEN,BGEN gene
+    class STORE,ADM,PROF pack
+```
+
 ## Shipped
 
 `pandora-types::PackageManifest` is the package envelope. It records:

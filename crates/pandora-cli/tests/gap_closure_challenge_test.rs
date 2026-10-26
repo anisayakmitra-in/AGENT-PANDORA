@@ -249,6 +249,10 @@ fn test_update_command_check_and_bare_execution() {
     // Check with --check flag
     let check_out = fixture
         .command(&["update", "--check", "--json"])
+        .env(
+            "PANDORA_LATEST_RELEASE_OVERRIDE",
+            format!("v{}", env!("CARGO_PKG_VERSION")),
+        )
         .output()
         .expect("update check should execute");
     assert!(check_out.status.success());
@@ -263,6 +267,10 @@ fn test_update_command_check_and_bare_execution() {
     // Check with positional "check"
     let check_pos = fixture
         .command(&["update", "check", "--json"])
+        .env(
+            "PANDORA_LATEST_RELEASE_OVERRIDE",
+            format!("v{}", env!("CARGO_PKG_VERSION")),
+        )
         .output()
         .expect("update check positional should execute");
     assert!(check_pos.status.success());

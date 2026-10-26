@@ -19,11 +19,12 @@ those concerns in the runtime:
 ```mermaid
 flowchart LR
     TUI["Pandora TUI / CLI"] --> EC["ExecutionController"]
-    EC --> SC["Shadow Council<br/>(Selects Composition)"]
+    EC --> DSR["DSR Reasoning & Reflex<br/>(Signatures · CoT · S1 Logits · S2 LATS)"]
+    DSR --> SC["Shadow Council<br/>(Selects Composition)"]
     SC --> PAR["Parliament<br/>(Policy & Approvals)"]
     PAR --> RM["ReferenceMonitor<br/>(One-Shot Permit)"]
-    RM --> EX["EffectExecutor<br/>(Confined Execution)"]
-    EX --> RCPT["Cryptographic Receipt"]
+    RM --> EX["EffectExecutor<br/>(Confined Sandbox)"]
+    EX --> RCPT["Cryptographic Receipt & 5-Tier Memory"]
 ```
 
 Learning and evolution components can propose or evaluate changes, but they
@@ -31,14 +32,17 @@ cannot issue permits, change policy roots, or activate themselves.
 
 ## What is shipped
 
-The current `2.0.0` line is a CLI and TUI release with:
+The **v3.0.0 — SUNLESS** release provides:
 
-- an interactive 4-view Ratatui TUI workbench (launched immediately via `pandora`) and 42 CLI subcommands;
-- multi-provider configuration and bounded tool workflows;
-- durable sessions, jobs, local subagents, and runtime service access;
-- local governed MCP stdio support;
-- Harness, Gene, Skill, 5-tier memory (L0-L4), graph, evaluation, and evolution contracts;
-- a typed TypeScript launcher/client boundary.
+- **Interactive 4-View Ratatui TUI Workbench**: immediate startup via `pandora` with live Sparkline, turn budget gauges, fuzzy palette (`Ctrl+P`), and 42 CLI subcommands;
+- **Declarative Structured Reasoning (DSRs) & GEPA Optimizer**: typed reasoning signatures (`CodeReviewer`, `ReActModule`, `SqlSynthesizer`), automatic Chain-of-Thought (`.into_chain_of_thought()`), and 3D Pareto frontier optimization (pass rate, token cost, step latency);
+- **Autonomous Self-Improvement**: 6-level optimization ladder ($L_0 \to L_5$), Darwin whole-agent genomes, 4-point safety spine, and $\text{Meta}^n$ recursive emergent depth with fixed-point $\Omega$ convergence;
+- **Product Requirement Prompts (PRP) Pipeline**: 4-level task hierarchy and 4 progressive validation gates (Syntax $\to$ Unit $\to$ Integration $\to$ Receipt Check) with automated snapshot rollback;
+- **System 1 Reflex Logits & System 2 LATS MCTS**: sub-millisecond logprob classification with active-learning uncertainty harvesting and PUCT Monte Carlo tree search;
+- **5-Tier Crystallized Memory & ContextVfs**: `pandora://` virtual filesystem across L0 working rules, L1 insights, L2 global facts, L3 SOPs, and L4 session archives with Ed25519 P2P capsule mesh sync;
+- **Confined Execution & OS-level Sandboxing**: capability-gated process executor, wasmi fuel-metered WebAssembly Genes, and local governed MCP stdio;
+- **Durable Infrastructure**: SQLite WAL state stores, process fencing, PID leases, and multi-agent Diamond orchestration swarms;
+- **Supply Chain Security**: Cosign keyless signatures, in-toto attestations, SLSA Provenance, and SPDX SBOM.
 
 Pandora does not treat a type as proof that a product feature is complete.
 Release notes and tests define the supported scope. Remote

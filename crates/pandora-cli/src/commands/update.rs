@@ -437,17 +437,31 @@ fn normalize_release_tag(tag: &str) -> String {
 }
 
 fn fetch_latest_release_tag() -> Result<String, UpdateError> {
+    if let Ok(override_tag) = std::env::var("PANDORA_LATEST_RELEASE_OVERRIDE") {
+        let trimmed = override_tag.trim();
+        if !trimmed.is_empty() {
+            return Ok(normalize_release_tag(trimmed));
+        }
+    }
+
     let client = reqwest::blocking::Client::builder()
         .timeout(RELEASE_DOWNLOAD_TIMEOUT)
         .redirect(reqwest::redirect::Policy::limited(5))
         .user_agent(concat!("pandora/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|_| UpdateError::ReleaseDownload)?;
-    let response = client
+    let mut request = client
         .get("https://api.github.com/repos/anisayakmitra-in/AGENT-PANDORA/releases/latest")
-        .header("Accept", "application/vnd.github.v3+json")
-        .send()
-        .map_err(|_| UpdateError::ReleaseDownload)?;
+        .header("Accept", "application/vnd.github.v3+json");
+
+    if let Ok(token) = std::env::var("GITHUB_TOKEN").or_else(|_| std::env::var("GH_TOKEN")) {
+        let token = token.trim();
+        if !token.is_empty() {
+            request = request.header("Authorization", format!("Bearer {token}"));
+        }
+    }
+
+    let response = request.send().map_err(|_| UpdateError::ReleaseDownload)?;
     if !response.status().is_success() {
         return Err(UpdateError::ReleaseDownload);
     }

@@ -1,72 +1,76 @@
 # Pandora Runtime Architecture
 
-## High-level diagram
+## High-Level System Topology (SUNLESS)
 
 ```mermaid
 flowchart TB
-    %% ===== Core components =====
-    CLI["TUI & CLI Command Surface<br/>pandora-cli<br/>42 root commands + 4-view TUI"]
-    SVC["LocalService<br/>pandora-service<br/>RPC + wiring"]
-    EC["ExecutionController<br/>run lifecycle"]
-    SC["ShadowCouncil<br/>composition selection"]
-    PAR["Parliament<br/>decision + approval"]
-    RM["ReferenceMonitor<br/>policy enforcement"]
-    EX["Executor / Harness<br/>runs the work"]
-    RCPT["Receipt<br/>execution record"]
-    FLEET["Fleet & Kanban<br/>fences + leases + nodes"]
-    JS["JobStore<br/>job persistence"]
-    PROV["Provider<br/>external LLM"]
-    SV["SecretVault<br/>secrets"]
-    DT["DeviceTrust<br/>device identity"]
+    subgraph Surface["Interactive & Automation Surfaces (pandora-cli / pandora-service)"]
+        TUI["Pandora TUI Workbench<br/>4 Views · Fuzzy Palette (Ctrl+P)<br/>Activity Sparkline · Turn Budget Gauge"]
+        CLI["Headless CLI & JSON Contract<br/>42 Root Commands · --json Output"]
+        SVC["Authenticated Loopback RPC<br/>pandora-service · Ed25519 Device Proofs"]
+    end
 
-    %% ===== Primary path =====
-    CLI -->|"Direct / Loopback RPC"| SVC
+    subgraph Reasoning["Declarative Reasoning & Cognitive Core (pandora-runtime)"]
+        DSR["Declarative Structured Reasoning (DSRs)<br/>Signatures · Invariant Schemas · CoT Rationale"]
+        S1["System 1 DecisionEngine<br/>Single-Pass Logit & Reflex Gate<br/>Uncertainty Harvester"]
+        S2["System 2 LatsEngine (MCTS)<br/>PUCT Tree Search · Anti-Thrash Cosine Gate"]
+        SC["Shadow Council<br/>Selects Approved Harness · Gene · Provider<br/>(Cannot Mint Permits)"]
+        DOM["Domain & Meta Harnesses<br/>coding · research · security · debugging<br/>design · data · operations · Wasm Genes"]
+    end
+
+    subgraph Governance["Constitutional Authority Boundary (pandora-runtime)"]
+        EC["ExecutionController<br/>Assembles Immutable ExecutionProfile<br/>Binds Policy + Workspace Digest"]
+        PLM["Parliament & HumanReviewEngine<br/>Constitutional Policy · Declarative Veto Hooks<br/>Human-in-the-Loop Approval Gate"]
+        RM["ReferenceMonitor<br/>Sole Issuer of Scoped, Expiring,<br/>One-Shot Effect Permits"]
+    end
+
+    subgraph Execution["Confined Effect Executors & Layered State"]
+        EX["EffectExecutors<br/>Filesystem · Process (pandora-sandbox)<br/>Sandboxed Wasm (wasmi fuel-metered) · MCP stdio"]
+        MEM["5-Tier Crystallized Memory & ContextVfs<br/>L0 Rules · L1 Index · L2 Facts · L3 SOP DAGs · L4 Archives<br/>Virtual URI: pandora://"]
+        FLEET["Fleet & Orchestration Engine<br/>PID Leases · Fences · Kanban · Git Worktrees<br/>Diamond Swarm DAGs"]
+        RCPT["Append-Only Receipts & Journal<br/>SHA-256 Step Digests · Time-Travel Rewind<br/>P2P Signed Memory Capsules"]
+    end
+
+    subgraph Evolution["Evolutionary Self-Improvement & Optimization (GEPA / Darwin)"]
+        GEPA["Genetic-Pareto (GEPA) Optimizer<br/>3D Pareto Frontier (Pass Rate, Token Cost, Latency)<br/>Reflective Failure-Trace Mutation"]
+        METAN["Meta^n Recursive Depth<br/>Constructive Code Injection (I_c)<br/>Fixed-Point Omega Attractor"]
+        PRP["PRP 4-Gate Pipeline<br/>Syntax · Unit · Integration · Receipt Check"]
+    end
+
+    TUI --> EC
+    CLI --> EC
+    CLI -->|"Loopback RPC"| SVC
     SVC --> EC
-    EC --> SC
-    SC --> PAR
-    PAR --> RM
-    RM --> EX
+
+    EC --> DSR
+    DSR --> S1
+    S1 -->|"Uncertain Margin (< Threshold)"| S2
+    S1 --> SC
+    S2 --> SC
+    SC --> DOM
+    DOM --> PLM
+    EC --> PLM
+    PLM -->|"Approved Request"| RM
+    RM -->|"One-Shot Permit"| EX
     EX --> RCPT
-
-    %% ===== Supporting edges =====
+    EX --> MEM
     EC --> FLEET
-    EC --> JS
-    EX --> FLEET
-    SVC --> SV
-    CLI --> DT
-    SVC --> PROV
+    MEM --> GEPA
+    GEPA --> METAN
+    METAN --> PRP
+    PRP --> DOM
 
-    %% ===== External dependencies =====
-    PROV -.->|"HTTPS"| EXT_LLM["External LLM<br/>OpenAI / Azure / etc"]
-    CLI -.->|"package download"| EXT_GH["GitHub<br/>package registry"]
-    CLI -.->|"npm"| EXT_NPM["npm registry"]
+    classDef surface fill:#102a43,stroke:#486581,color:#f0f4f8,stroke-width:2px
+    classDef reasoning fill:#243b53,stroke:#627d98,color:#f0f4f8,stroke-width:2px
+    classDef gov fill:#1a3a2a,stroke:#3ebd93,color:#f0f4f8,stroke-width:2px
+    classDef exec fill:#1f2933,stroke:#616e7c,color:#e4e7eb,stroke-width:2px
+    classDef evo fill:#3b2d54,stroke:#9f7aea,color:#f0f4f8,stroke-width:2px
 
-    %% ===== Trust boundaries =====
-    subgraph TB1["Trust Boundary: Loopback RPC"]
-        CLI
-        SVC
-    end
-    subgraph TB2["Trust Boundary: Secrets"]
-        SV
-    end
-    subgraph TB3["Trust Boundary: Device"]
-        DT
-    end
-    subgraph TB4["External: Untrusted"]
-        EXT_LLM
-        EXT_GH
-        EXT_NPM
-    end
-
-    %% ===== Styling =====
-    classDef primary fill:#1a3a5c,stroke:#4a90d9,color:#fff,stroke-width:2px
-    classDef support fill:#2a2a3a,stroke:#666,color:#ddd
-    classDef external fill:#3a1a1a,stroke:#d94a4a,color:#ddd
-    classDef boundary fill:#1a3a2a,stroke:#4ad98a,color:#ddd
-
-    class CLI,SVC,EC,SC,PAR,RM,EX,RCPT primary
-    class FLEET,JS,SV,DT support
-    class EXT_LLM,EXT_GH,EXT_NPM external
+    class TUI,CLI,SVC surface
+    class DSR,S1,S2,SC,DOM reasoning
+    class EC,PLM,RM gov
+    class EX,MEM,FLEET,RCPT exec
+    class GEPA,METAN,PRP evo
 ```
 
 ## End-to-End Governed Execution Sequence
@@ -76,31 +80,150 @@ sequenceDiagram
     autonumber
     actor Op as Operator (TUI / CLI)
     participant EC as ExecutionController
-    participant S1 as DecisionEngine / LATS
+    participant DSR as DSR Signature & CoT Module
+    participant S1 as DecisionEngine / LATS MCTS
     participant SC as ShadowCouncil
     participant PAR as Parliament & Veto Hooks
     participant RM as ReferenceMonitor
-    participant EX as Confined Executor
-    participant DB as SQLite WAL (Receipts & L0-L4 Memory)
+    participant EX as Confined Executor & Sandbox
+    participant DB as SQLite WAL (Receipts, Journal & Memory)
 
-    Op->>EC: Invoke `pandora` (TUI) or `pandora run ...`
-    EC->>S1: Evaluate System 1 Logprob Reflex & Tool Safety Gate
-    alt Margin < Uncertainty Threshold
-        S1->>S1: Escalate to System 2 LATS MCTS (PUCT Selection)
+    Op->>EC: Submit Task / Slash Gene (`pandora` or `pandora run`)
+    EC->>DSR: Compile Task into Typed Signature with Invariants
+    DSR->>DSR: Inject Rationale via Chain-of-Thought (`.into_chain_of_thought()`)
+    DSR->>S1: Evaluate System 1 Logprob Reflex & Tool Safety Gate
+    alt Uncertain Margin (< Calibrated Threshold)
+        S1->>S1: Escalate to System 2 LATS MCTS (PUCT Rollouts + Anti-Thrash)
     end
-    S1-->>EC: Validated Intent + Route Class
-    EC->>SC: Assemble Immutable ExecutionProfile (Harness + Gene + Provider)
-    SC-->>EC: Digest-Bound ExecutionProfile
+    S1-->>EC: Validated Intent + Route Class + Confidence Margin
+    EC->>SC: Request Approved Harness + Gene + Provider Composition
+    SC-->>EC: Digest-Bound Immutable ExecutionProfile
     EC->>PAR: Submit OperationRequest for Constitutional Review
     alt Mutating / Process Effect Requires Human Approval
         PAR-->>Op: Pause Execution (⚠ WAITING APPROVAL)
         Op->>PAR: Approve (Ctrl+Y / /approve) or Deny (Ctrl+N / /deny)
     end
     PAR->>RM: Request Scoped Authorization
-    RM-->>EX: Mint One-Shot, Expiring EffectPermit
-    EX->>EX: Verify Permit Digest & Execute in Confined Boundary
+    RM-->>EX: Mint Scoped, Expiring, One-Shot EffectPermit
+    EX->>EX: Verify Permit Digest & Execute in Confined Boundary (Process / Wasm / VFS)
     EX->>DB: Commit Cryptographic Receipt + SessionJournal Step + L1 Summary
-    DB-->>Op: Return Verified Output & Diff
+    DB-->>Op: Return Verified Output, Receipts & Diffs
+```
+
+## Evolutionary Self-Improvement & GEPA Multi-Objective Engine
+
+```mermaid
+flowchart TD
+    subgraph Ladder["The 6-Level Optimization Ladder"]
+        L5["L5: Harness + Weights (SIA, SEAL co-optimization)"]
+        L4["L4: Meta-Optimizer (STOP, Meta^n recursive depth)"]
+        L3["L3: Harness Code (Darwin Gödel Machines, SICA)"]
+        L2["L2: Workflow Graph (ADAS, AFlow dynamic DAG)"]
+        L1["L1: Context & Memory (ACE, layered memory store)"]
+        L0["L0: Instruction Prompts (GEPA, APE, OPRO)"]
+        L0 -->|Plateau| L1 -->|Plateau| L2 -->|Plateau| L3 -->|Plateau| L4 -->|Plateau| L5
+    end
+
+    subgraph DarwinGenomes["Darwin Whole-Agent Genomes & Safety Spine"]
+        GEN["Agent Genome G = ⟨prompt, tools, model, hyperparams⟩"]
+        SP1["Spine 1: Sandboxed Modification (Isolated Worktree & Wasm)"]
+        SP2["Spine 2: Immutable External Grader (Tamper-Proof)"]
+        SP3["Spine 3: Monotonic Rollback (Reject Regressions)"]
+        SP4["Spine 4: Hard Compute Cap (Turn, Token & Cost Limits)"]
+        GEN --> SP1 --> SP2 --> SP3 --> SP4
+    end
+
+    subgraph GEPAEngine["Genetic-Pareto (GEPA) Multi-Objective Engine"]
+        FRO["3D Pareto Frontier<br/>• Pass Rate (Maximize)<br/>• Token Cost (Minimize)<br/>• Step Latency (Minimize)"]
+        DOM{"Non-Dominated?"}
+        PRUNE["Prune Dominated Ancestors"]
+        REFL["Reflective Failure-Trace Mutator<br/>Extract Invariants & Avoidance Guidance"]
+        FRO --> DOM
+        DOM -->|Dominates Ancestor| PRUNE
+        DOM -->|Failure Encountered| REFL
+        REFL --> FRO
+    end
+
+    subgraph MetaN["Meta^n Recursive Depth & Fixed-Point Omega"]
+        ORD0["Order-0 Base Execution"] --> TRACE["Collect Execution Traces"]
+        TRACE --> META["Constructive Injection I_c (pre_process + code_library)"]
+        META --> NTH["Order-N Meta-Layer Evaluation"]
+        NTH --> CHECK{"Convergence: ||S_N - S_{N-1}|| < ε?"}
+        CHECK -->|No| TRACE
+        CHECK -->|Yes| OMEGA["Fixed-Point Omega Attractor: M(P*) = P*"]
+    end
+
+    Ladder -.-> DarwinGenomes
+    SP4 --> GEPAEngine
+    GEPAEngine --> MetaN
+```
+
+## Product Requirement Prompts (PRP) Pipeline
+
+```mermaid
+flowchart TD
+    subgraph Hierarchy["4-Level Task Hierarchy"]
+        PHASE["Phase (Strategic Deliverable)"]
+        MILESTONE["Milestone (Measurable Checkpoint)"]
+        TASK["Task (Targeted Objective)"]
+        SUBTASK["Subtask (Atomic Action)"]
+        PHASE --> MILESTONE --> TASK --> SUBTASK
+    end
+
+    subgraph Gates["4 Progressive Validation Gates"]
+        G1["Gate 1: Syntax<br/>Compiler Diagnostics, AST & Linter Clean Check"]
+        G2["Gate 2: Unit<br/>Hermetic In-Memory Unit Suites & Invariant Assertions"]
+        G3["Gate 3: Integration<br/>Multi-Agent Contract Verification & Tool Interop"]
+        G4["Gate 4: Receipt Check<br/>Cryptographic Evidence, Signed Verification & Audit"]
+        FAIL["Fast-Fail Stop & Automated Snapshot Rollback"]
+
+        SUBTASK --> G1
+        G1 -->|Pass| G2
+        G1 -->|Fail| FAIL
+        G2 -->|Pass| G3
+        G2 -->|Fail| FAIL
+        G3 -->|Pass| G4
+        G3 -->|Fail| FAIL
+        G4 -->|Pass| ADMIT["Admitted to Production Catalog & Staged Rollout"]
+        G4 -->|Fail| FAIL
+    end
+
+    classDef hier fill:#1a3a5c,stroke:#4a90d9,color:#fff,stroke-width:2px
+    classDef gate fill:#1a3a2a,stroke:#3ebd93,color:#fff,stroke-width:2px
+    classDef fail fill:#4a1a1a,stroke:#d94a4a,color:#fff,stroke-width:2px
+
+    class PHASE,MILESTONE,TASK,SUBTASK hier
+    class G1,G2,G3,G4,ADMIT gate
+    class FAIL fail
+```
+
+## Crystallized 5-Tier Memory & ContextVfs Virtual Topology
+
+```mermaid
+flowchart LR
+    subgraph VFS["Virtual Context Filesystem (pandora://)"]
+        L0["L0: Working Buffer<br/>pandora://meta/rules<br/>In-RAM Expiring Ring Buffer & Rules"]
+        L1["L1: Insight Index<br/>pandora://index/{intent}/{id}<br/>Scoped Summaries, Benchmarks & Provenance"]
+        L2["L2: Global Facts<br/>pandora://facts/{topic}/{id}<br/>Approval-Promoted Repository Truths"]
+        L3["L3: Task Skills (SOPs)<br/>pandora://sops/{sop_id}<br/>Validated Multi-Step DAG Workflows"]
+        L4["L4: Session Archives<br/>pandora://archives/{archive_id}<br/>Immutable Diff Stats & Receipt Digests"]
+        CAP["MemoryCapsule (.capsule.json)<br/>SHA-256 Digest + Ed25519 Mesh Sync"]
+    end
+
+    subgraph Crystallization["Reflexion & Canary Promotion Pipeline"]
+        REFL["ReflexionCrystallizer<br/>Literal Abstraction ({{WORKSPACE_ROOT}}, {{COMMIT_SHA}})"]
+        BAYES["Bayesian Canary Gate<br/>Beta(1+k, 1+n-k) 95% Lower Credible Bound"]
+        MESH["MeshSyncEngine<br/>P2P Gossip Network & 3-Point Security Pipeline"]
+    end
+
+    L0 --> L1
+    L1 -->|"Explicit Operator Approval"| L2
+    L1 --> REFL
+    REFL --> BAYES
+    BAYES -->|"LCB95 > Baseline"| L3
+    L3 --> L4
+    L3 --> MESH
+    MESH --> CAP
 ```
 
 ## Component cards

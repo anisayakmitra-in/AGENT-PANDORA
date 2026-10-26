@@ -1,21 +1,46 @@
 # Governed evolution
 
-Status: partial in the current `v2.0.x` preview line.
+Status: Supported in `v3.0.0 — SUNLESS`.
 
 Pandora records improvement evidence without allowing the improvement system to authorize or activate itself.
 
 ```mermaid
-flowchart LR
-    GEN["Generator / IslandModelEvolver<br/>Proposes Candidate in Git Worktree"]
-    CRIT["Critic<br/>3D ParetoFrontier + BayesianCanaryGate"]
-    GOV["Governor / Parliament<br/>Human Approval + Signature Evidence"]
-    ROLL["Staged Rollout<br/>canary ──► limited ──► expanded ──► complete"]
-    ACT["ReplacementEngine<br/>Quiescence Guard + ArtifactCatalog Activation"]
+flowchart TB
+    subgraph Populations["Darwinian Island-Model Evolver"]
+        N1["QualityFirst Niche<br/>Pass-Rate Prioritized"]
+        N2["CostMinimal Niche<br/>Token Efficiency Prioritized"]
+        N3["LatencyOptimized Niche<br/>Step Latency Prioritized"]
+        N1 -->|"Ring Elite Migration"| N2
+        N2 -->|"Ring Elite Migration"| N3
+        N3 -->|"Ring Elite Migration"| N1
+    end
 
-    GEN --> CRIT
-    CRIT -->|"Non-Dominated & LCB95 > Baseline"| GOV
-    GOV -->|"Self-Approval Forbidden"| ROLL
-    ROLL --> ACT
+    subgraph SafetySpine["4-Point Safety Spine"]
+        S1["1. Sandboxed Modification<br/>Isolated Git Worktree & Confined Sandbox"]
+        S2["2. Immutable External Grader<br/>Tamper-Proof Verification Suite"]
+        S3["3. Monotonic Rollback<br/>Auto-Reject Regressions on Holdouts"]
+        S4["4. Hard Compute Cap<br/>Generation, Token & Turn Ceilings"]
+        S1 --> S2 --> S3 --> S4
+    end
+
+    subgraph Tripartite["Tripartite Cognitive Governance"]
+        GEN["Generator (Candidate Proposer)"]
+        CRIT["Critic (3D ParetoFrontier + BayesianCanaryGate)"]
+        GOV["Governor / Parliament (Human Approval Authority)"]
+        GEN -->|"Proposes in Isolated Worktree"| CRIT
+        CRIT -->|"Non-Dominated & LCB95 > Baseline"| GOV
+        GOV -.->|"Self-Approval Strictly Forbidden"| GEN
+    end
+
+    subgraph Deployment["Staged Rollout & Catalog Activation"]
+        ROLL["4-Stage Governed Rollout<br/>canary ──► limited ──► expanded ──► complete"]
+        ACT["ReplacementEngine<br/>Quiescence Guard + Immutable ExecutionProfile Activation"]
+        ROLL --> ACT
+    end
+
+    Populations --> S1
+    S4 --> Tripartite
+    GOV -->|"Approved Proposal"| ROLL
 ```
 
 ## Shipped

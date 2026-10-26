@@ -28,7 +28,8 @@ flowchart TB
         SVC["Authenticated Loopback RPC<br/>pandora-service · Ed25519 Device Proofs"]
     end
 
-    subgraph Brain["Cognitive & Routing Layer (pandora-runtime / pandora-harnesses)"]
+    subgraph Brain["Cognitive & Reasoning Core (pandora-runtime / pandora-harnesses)"]
+        DSR["Declarative Structured Reasoning (DSRs)<br/>Signatures · CoT Rationale · Invariants"]
         S1["System 1 DecisionEngine<br/>Single-Pass Logit & Reflex Gate<br/>Uncertainty Harvester"]
         S2["System 2 LatsEngine (MCTS)<br/>PUCT Tree Search · Anti-Thrash"]
         SC["Shadow Council<br/>Selects Approved Harness · Gene · Provider<br/>(Cannot Mint Permits)"]
@@ -41,11 +42,17 @@ flowchart TB
         RM["ReferenceMonitor<br/>Sole Issuer of Scoped, Expiring,<br/>One-Shot Effect Permits"]
     end
 
-    subgraph Execution["Confined Effect Executors & Storage"]
+    subgraph Execution["Confined Effect Executors & Layered State"]
         EX["EffectExecutors<br/>Filesystem · Process (pandora-sandbox)<br/>Sandboxed Wasm (wasmi fuel-metered) · MCP stdio"]
         MEM["5-Tier Crystallized Memory & ContextVfs<br/>L0 Rules · L1 Index · L2 Facts · L3 SOP DAGs · L4 Archives<br/>Virtual URI: pandora://"]
         FLEET["Fleet & Orchestration Engine<br/>PID Leases · Fences · Kanban · Git Worktrees<br/>Diamond Swarm DAGs"]
         RCPT["Append-Only Receipts & Journal<br/>SHA-256 Step Digests · Time-Travel Rewind<br/>P2P Signed Memory Capsules"]
+    end
+
+    subgraph Evolution["Evolutionary Optimization & Synthesis"]
+        GEPA["Genetic-Pareto (GEPA) Optimizer<br/>3D Pareto Frontier · Reflective Trace Mutator"]
+        METAN["Meta^n Recursive Emergent Depth<br/>Fixed-Point Omega Attractor"]
+        PRP["PRP 4-Gate Pipeline<br/>Syntax · Unit · Integration · Receipt Check"]
     end
 
     TUI --> EC
@@ -53,7 +60,8 @@ flowchart TB
     CLI -->|"Loopback RPC"| SVC
     SVC --> EC
 
-    EC --> S1
+    EC --> DSR
+    DSR --> S1
     S1 -->|"Low Margin Escalation"| S2
     S1 --> SC
     S2 --> SC
@@ -65,16 +73,22 @@ flowchart TB
     EX --> RCPT
     EX --> MEM
     EC --> FLEET
+    MEM --> GEPA
+    GEPA --> METAN
+    METAN --> PRP
+    PRP --> DOM
 
     classDef surface fill:#102a43,stroke:#486581,color:#f0f4f8,stroke-width:2px
     classDef brain fill:#243b53,stroke:#627d98,color:#f0f4f8,stroke-width:2px
     classDef gov fill:#3ebd93,stroke:#199473,color:#0b1f17,stroke-width:2px
     classDef exec fill:#1f2933,stroke:#616e7c,color:#e4e7eb,stroke-width:2px
+    classDef evo fill:#3b2d54,stroke:#9f7aea,color:#f0f4f8,stroke-width:2px
 
     class TUI,CLI,SVC surface
-    class S1,S2,SC,DOM brain
+    class DSR,S1,S2,SC,DOM brain
     class EC,PLM,RM gov
     class EX,MEM,FLEET,RCPT exec
+    class GEPA,METAN,PRP evo
 ```
 
 ---
@@ -88,6 +102,7 @@ sequenceDiagram
     autonumber
     actor User as Operator (TUI / CLI)
     participant EC as ExecutionController
+    participant DSR as DSR Signature & CoT Module
     participant S1 as System 1 / LATS (System 2)
     participant SC as Shadow Council
     participant PLM as Parliament & Veto Hooks
@@ -96,7 +111,8 @@ sequenceDiagram
     participant MEM as MemoryEngine & Journal
 
     User->>EC: Submit Task or Slash Gene (pandora)
-    EC->>S1: Classify Intent & Screen Tool Safety (Logprobs / Heuristic)
+    EC->>DSR: Compile Typed Signature & Inject CoT Rationale
+    DSR->>S1: Classify Intent & Screen Tool Safety (Logprobs / Heuristic)
     alt Uncertain Margin (< Threshold)
         S1->>S1: Escalate to System 2 LATS MCTS (PUCT Rollouts)
     end
