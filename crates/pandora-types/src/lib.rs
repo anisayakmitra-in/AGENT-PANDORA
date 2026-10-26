@@ -12,12 +12,14 @@ pub mod decision;
 pub mod dsrs;
 pub mod effect;
 pub mod efficiency;
+pub mod emergent;
 pub mod evaluation;
 pub mod events;
 pub mod evolution;
 pub mod execution_profile;
 pub mod feature_map;
 pub mod gene;
+pub mod genome;
 pub mod governance;
 pub mod hardware;
 pub mod harness;
@@ -25,11 +27,14 @@ pub mod harness_tree;
 pub mod ids;
 pub mod jobs;
 pub mod kanban;
+pub mod ladder;
+pub mod lineage;
 pub mod memory;
 pub mod observability;
 pub mod orchestration;
 pub mod package;
 pub mod population;
+pub mod prp;
 pub mod reasoning;
 pub mod rollout;
 pub mod secret;
@@ -78,6 +83,7 @@ pub use effect::{
 pub use efficiency::{
     EfficiencyContractError, EfficiencyObjective, EfficiencySample, EfficiencySummary,
 };
+pub use emergent::{EmergentDepthStack, FixedPointOmega, InjectedCode, MetaLayer};
 pub use evaluation::{
     EvaluationContractError, EvaluationKind, EvaluationReceipt, EvaluationRequest,
     EvaluationResult, EvaluationStatus,
@@ -99,6 +105,7 @@ pub use execution_profile::{
 };
 pub use feature_map::{FeatureEntry, FeatureMap};
 pub use gene::{Gene, GeneError, GeneInput, GeneKind, GeneManifest};
+pub use genome::{AgentGenome, GenomeHyperparameters, RoutingCard, RoutingCardEntry};
 pub use governance::{GovernanceMode, ParliamentDecision, PolicyContext};
 pub use hardware::{
     GpuBackend, GpuDevice, HostHardwareProfile, ModelFootprintEstimation, Quantization,
@@ -118,6 +125,8 @@ pub use ids::{
 };
 pub use jobs::{JobCommand, JobContractError, JobRequest, JobStatus, MAX_JOB_ARGUMENT_BYTES};
 pub use kanban::{KanbanBoard, KanbanReclaimReport, KanbanStatus, KanbanTask};
+pub use ladder::{HarnessFailureMode, OptimizationLadderLevel, SafetySpineReport};
+pub use lineage::{EvolutionLineage, EvolutionLineageEdge, EvolutionLineageNode};
 pub use memory::{
     MAX_MEMORY_SYNTHESIS_EVIDENCE, MEMORY_CONSOLIDATION_POLICY_VERSION, MemoryApproval,
     MemoryAuditAction, MemoryAuditEntry, MemoryCapsule, MemoryConflictRule,
@@ -147,6 +156,9 @@ pub use population::{
     MutationBatch, MutationLimits, MutationPrecheckReceipt, POPULATION_PROTOCOL_VERSION,
     PopulationCandidate, PopulationContractError, PopulationEvaluation, PopulationMutationRequest,
     PopulationPolicy, PopulationScope, PrecheckDisposition, PrecheckFailure,
+};
+pub use prp::{
+    PrpDocument, PrpGateResult, PrpHierarchyLevel, PrpValidationGate, PrpValidationReport,
 };
 pub use reasoning::{PromptCachePolicy, PromptCacheStrategy, ReasoningEffort};
 pub use rollout::{

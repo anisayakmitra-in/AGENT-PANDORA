@@ -266,6 +266,42 @@ const PALETTE_ENTRIES: &[PaletteEntry] = &[
         immediate: true,
     },
     PaletteEntry {
+        command: "/ladder",
+        category: "Evolution",
+        description: "Inspect 6-Level Optimization Ladder (L0->L5) & Triad Failure Safeguards",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/genome",
+        category: "Evolution",
+        description: "Inspect Darwin whole-agent genome (prompt + tools + model + params)",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/routing-card",
+        category: "Evolution",
+        description: "Display empirical Task-Domain Routing Card mapped to Pareto champions",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/lineage",
+        category: "Evolution",
+        description: "Inspect Darwinian mutation lineage DAG & HTML visualizer export",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/depth",
+        category: "Evolution",
+        description: "Inspect Meta^n recursive emergent depth stack & Omega fixed-point",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/prp",
+        category: "Engineering",
+        description: "Inspect Product Requirement Prompt & 4-level progressive validation gates",
+        immediate: true,
+    },
+    PaletteEntry {
         command: "/effort",
         category: "Model",
         description: "Show or change reasoning effort level (low, medium, high, max) [Alt+Left/Right]",
@@ -3115,6 +3151,18 @@ impl App {
             value if value.starts_with("/dsrs ") => self.show_dsrs_summary(),
             "/gepa" => self.show_gepa_summary(),
             value if value.starts_with("/gepa ") => self.show_gepa_summary(),
+            "/ladder" => self.show_ladder_summary(),
+            value if value.starts_with("/ladder ") => self.show_ladder_summary(),
+            "/genome" => self.show_genome_summary(),
+            value if value.starts_with("/genome ") => self.show_genome_summary(),
+            "/routing-card" => self.show_routing_card_summary(),
+            value if value.starts_with("/routing-card ") => self.show_routing_card_summary(),
+            "/lineage" => self.show_lineage_summary(),
+            value if value.starts_with("/lineage ") => self.show_lineage_summary(),
+            "/depth" => self.show_depth_summary(),
+            value if value.starts_with("/depth ") => self.show_depth_summary(),
+            "/prp" => self.show_prp_summary(),
+            value if value.starts_with("/prp ") => self.show_prp_summary(),
             "/packages" => self.show_packages(),
             "/distribution" => self.show_distribution(),
             "/domain-starter" => {
@@ -4103,6 +4151,71 @@ impl App {
             "gepa> Multi-Objective: 3 orthogonal axes (Pass Rate maximize, Token Cost minimize, Step Latency minimize)",
         );
         self.push_message("gepa> CLI: 'pandora gepa frontier', 'pandora gepa optimize'");
+    }
+
+    fn show_ladder_summary(&mut self) {
+        self.push_message(
+            "ladder> Optimization Ladder: L0 (Prompt) -> L1 (Memory) -> L2 (Workflow Graph) -> L3 (Harness Code) -> L4 (Meta-Optimizer) -> L5 (Harness+Weights)",
+        );
+        self.push_message(
+            "ladder> Triad Failure Safeguards: Reward Hacking, Capability Collapse, Harness Drift",
+        );
+        self.push_message(
+            "ladder> Darwin Safety Spine: Sandboxed modification, Immutable grader, Monotonic rollback, Compute capped",
+        );
+        self.push_message("ladder> CLI: 'pandora evolution ladder'");
+    }
+
+    fn show_genome_summary(&mut self) {
+        self.push_message(
+            "genome> Darwin Whole-Agent Genome: [System Prompt + Tool Bindings + Foundation Model + Hyperparameters]",
+        );
+        self.push_message(
+            "genome> Natural selection over entire agents with Daytona sandbox isolation and monotonic rollback",
+        );
+        self.push_message("genome> CLI: 'pandora evolution genome [--step]'");
+    }
+
+    fn show_routing_card_summary(&mut self) {
+        self.push_message(
+            "routing> Darwin Task-Domain Routing Card: Empirically evolved Domain -> Pareto Champion mappings",
+        );
+        self.push_message(
+            "routing> Multi-domain coverage (coding, reasoning, synthesis, data_analysis) with sample confidence",
+        );
+        self.push_message("routing> CLI: 'pandora evolution routing-card [--domains <list>]'");
+    }
+
+    fn show_lineage_summary(&mut self) {
+        self.push_message(
+            "lineage> Darwinian Mutation Lineage DAG: Organism candidates, parent edges, score deltas, and failure remediations",
+        );
+        self.push_message(
+            "lineage> Interactive Visualizer: Standalone dependency-free HTML/SVG export",
+        );
+        self.push_message("lineage> CLI: 'pandora evolution lineage [--export-html <path>]'");
+    }
+
+    fn show_depth_summary(&mut self) {
+        self.push_message(
+            "depth> Meta^n Emergent Depth: Constructive N-th order meta-layer stacking from lower layer execution traces",
+        );
+        self.push_message(
+            "depth> Fixed-Point Termination (Omega): Detects convergence attractor when M(P*) = P*",
+        );
+        self.push_message("depth> CLI: 'pandora evolution depth'");
+    }
+
+    fn show_prp_summary(&mut self) {
+        self.push_message(
+            "prp> Product Requirement Prompts (PRP): 4-level hierarchy (Phase > Milestone > Task > Subtask)",
+        );
+        self.push_message(
+            "prp> 4-Level Validation Gates: Level 1 (Syntax) -> Level 2 (Unit) -> Level 3 (Integration) -> Level 4 (Receipt Check)",
+        );
+        self.push_message(
+            "prp> CLI: 'pandora prp inspect', 'pandora prp scaffold', 'pandora prp validate'",
+        );
     }
 
     fn run_setup_preset(&mut self, target: &str) {

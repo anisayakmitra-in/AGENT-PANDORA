@@ -32,6 +32,7 @@ pub mod gepa;
 pub mod github_client;
 pub mod graph_intelligence;
 pub mod hardware_autopilot;
+pub mod harness_evolution;
 pub mod harness_registry;
 pub mod hooks;
 pub mod human_review;
@@ -55,6 +56,7 @@ pub mod package_store;
 pub mod parliament;
 pub mod permit_store;
 pub mod prompt_engine;
+pub mod prp_engine;
 mod receipt_id;
 pub mod recovery_archive;
 pub mod reference_monitor;
@@ -182,6 +184,9 @@ pub use graph_intelligence::{
     MAX_GRAPH_INPUT_BYTES, MAX_GRAPH_INPUTS, MAX_GRAPH_NODES, MAX_GRAPH_SNAPSHOT_BYTES,
 };
 pub use hardware_autopilot::HardwareAutopilot;
+pub use harness_evolution::{
+    EvolutionTestCase, GenomeEvaluationReceipt, HarnessEvolutionEngine, TestCaseResult,
+};
 pub use harness_registry::{
     HarnessRegistry, HarnessRegistryError, PackageRecord, PackageState, PublisherTrustRoot,
     PublisherTrustRoots,
@@ -254,6 +259,7 @@ pub use permit_store::{ConsumedPermit, PermitError, PermitStore};
 pub use prompt_engine::{
     PresetKind, PromptEngine, PromptError, PromptPreset, StorageTier, validate_preset_name,
 };
+pub use prp_engine::PrpEngine;
 pub use recovery_archive::{RecoveryArchive, RecoveryArchiveError, RecoveryBundle, RecoveryEntry};
 pub use reference_monitor::{AuthorizationError, ReferenceMonitor};
 pub use reflexion::{

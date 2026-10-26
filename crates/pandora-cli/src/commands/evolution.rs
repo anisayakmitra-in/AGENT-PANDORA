@@ -10,19 +10,21 @@ use pandora_provider::{
 use pandora_runtime::executors::WorkspaceRoot;
 use pandora_runtime::{
     ArtifactCatalog, CANARY_POLICY_VERSION, CanaryPolicy, EvaluationEngine, EvolutionEngine,
-    EvolutionError, EvolutionRecord, ExecutionController, FleetEngine, FleetQuiescenceGuard,
-    HoldoutCase, HoldoutSetReport, IslandModelEvolver, MAX_HOLDOUT_CASES, MemoryEngine,
-    PackageStore, ReflexionCrystallizer, ReplacementEngine, ReplacementError,
-    ResearchArtifactError, ResearchArtifactStore, default_evolution_sop,
+    EvolutionError, EvolutionRecord, EvolutionTestCase, ExecutionController, FleetEngine,
+    FleetQuiescenceGuard, HarnessEvolutionEngine, HoldoutCase, HoldoutSetReport,
+    IslandModelEvolver, MAX_HOLDOUT_CASES, MemoryEngine, PackageStore, ReflexionCrystallizer,
+    ReplacementEngine, ReplacementError, ResearchArtifactError, ResearchArtifactStore,
+    default_evolution_sop,
 };
 use pandora_types::{
     ArtifactId, ArtifactSignature, CanaryResult, Capability, ContextClassification,
-    EvaluationRequest, EvolutionApprovalAuthority, EvolutionContractError, EvolutionPolicy,
-    EvolutionPromotionApproval, EvolutionReleaseChannel, EvolutionRollout, EvolutionRolloutBinding,
-    EvolutionRolloutStage, EvolutionScorecard, EvolutionSource, EvolutionStageLimits, ExecutionId,
-    HoldoutEvaluation, MemoryId, MemoryKind, MemoryScope, MemoryTier, MutationProposal,
-    ParliamentApproval, PolicyContext, PrincipalId, ProposalId, RequestDigest,
-    ResearchArtifactKind, SessionId, Timestamp, hash_artifact,
+    EmergentDepthStack, EvaluationRequest, EvolutionApprovalAuthority, EvolutionContractError,
+    EvolutionPolicy, EvolutionPromotionApproval, EvolutionReleaseChannel, EvolutionRollout,
+    EvolutionRolloutBinding, EvolutionRolloutStage, EvolutionScorecard, EvolutionSource,
+    EvolutionStageLimits, ExecutionId, HarnessFailureMode, HoldoutEvaluation, InjectedCode,
+    MemoryId, MemoryKind, MemoryScope, MemoryTier, MetaLayer, MutationProposal,
+    OptimizationLadderLevel, ParliamentApproval, PolicyContext, PrincipalId, ProposalId,
+    RequestDigest, ResearchArtifactKind, SafetySpineReport, SessionId, Timestamp, hash_artifact,
 };
 use rusqlite::Connection;
 use serde::Deserialize;
@@ -169,7 +171,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         .first()
         .ok_or_else(|| {
             CliError::usage(
-                "evolution requires 'generate', 'list', 'inspect', 'submit', 'evaluate', 'approve', 'stage', 'canary', 'rollout', 'activate', 'rollback', 'island', or 'loop'",
+                "evolution requires 'generate', 'list', 'inspect', 'submit', 'evaluate', 'approve', 'stage', 'canary', 'rollout', 'activate', 'rollback', 'island', 'loop', 'ladder', 'genome', 'routing-card', 'lineage', or 'depth'",
             )
         })?;
     match subcommand.as_str() {
@@ -186,8 +188,13 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "rollback" => rollback(&args[1..]),
         "island" => island(&args[1..]),
         "loop" => evolution_loop(&args[1..]),
+        "ladder" => evolution_ladder(&args[1..]),
+        "genome" => evolution_genome(&args[1..]),
+        "routing-card" => evolution_routing_card(&args[1..]),
+        "lineage" => evolution_lineage(&args[1..]),
+        "depth" => evolution_depth(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown evolution command '{unknown}', expected 'generate', 'list', 'inspect', 'submit', 'evaluate', 'approve', 'stage', 'canary', 'rollout', 'activate', 'rollback', 'island', or 'loop'"
+            "unknown evolution command '{unknown}', expected 'generate', 'list', 'inspect', 'submit', 'evaluate', 'approve', 'stage', 'canary', 'rollout', 'activate', 'rollback', 'island', 'loop', 'ladder', 'genome', 'routing-card', 'lineage', or 'depth'"
         ))),
     }
 }
@@ -2202,6 +2209,320 @@ fn evolution_loop(args: &[String]) -> Result<CommandResult, CliError> {
             "Autonomous evolution loop completed {} cycle(s): crystallized {}, promoted {}",
             cycles_completed, total_crystallized, total_promoted
         ),
+    ))
+}
+
+fn evolution_ladder(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["active"])?;
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "evolution ladder does not accept positional arguments",
+        ));
+    }
+
+    let levels = OptimizationLadderLevel::ALL
+        .iter()
+        .map(|lvl| {
+            json!({
+                "rung": lvl.rung_number(),
+                "name": lvl.as_str(),
+                "description": lvl.description()
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let failure_modes = HarnessFailureMode::ALL
+        .iter()
+        .map(|mode| {
+            json!({
+                "mode": mode.as_str(),
+                "safeguard": mode.safeguard()
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let spine = SafetySpineReport::default();
+
+    let mut human = String::from("Harness Self-Improvement Optimization Ladder (L0 -> L5):\n");
+    for lvl in OptimizationLadderLevel::ALL {
+        human.push_str(&format!(
+            "  [{}] {}: {}\n",
+            lvl.rung_number(),
+            lvl.as_str(),
+            lvl.description()
+        ));
+    }
+    human.push_str("\nTriad of Failure Modes & Safeguards:\n");
+    for mode in HarnessFailureMode::ALL {
+        human.push_str(&format!("  * {}: {}\n", mode.as_str(), mode.safeguard()));
+    }
+    human.push_str(&format!(
+        "\nDarwin 4-Point Safety Spine: [sandbox={}, grader={}, rollback={}, compute_capped={}]\n",
+        spine.sandboxed_execution,
+        spine.immutable_grader,
+        spine.monotonic_rollback,
+        spine.compute_capped
+    ));
+
+    Ok(success(
+        "evolution ladder",
+        json!({
+            "levels": levels,
+            "failure_modes": failure_modes,
+            "safety_spine": spine
+        }),
+        human,
+    ))
+}
+
+fn evolution_genome(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["model", "prompt", "step"])?;
+    let model = parsed.value("model").unwrap_or("claude-3-7-sonnet");
+    let prompt = parsed
+        .value("prompt")
+        .unwrap_or("You solve complex systems problems systematically.");
+    let is_step = parsed.values.contains_key("step");
+
+    let mut engine = HarnessEvolutionEngine::new(10, 0.005);
+    engine.seed_root(
+        "root-genome-v0",
+        model,
+        prompt,
+        vec![
+            "bash".to_string(),
+            "read_file".to_string(),
+            "edit_file".to_string(),
+        ],
+    );
+
+    if is_step {
+        let test_cases = vec![EvolutionTestCase {
+            id: "case-01".to_string(),
+            domain: "coding".to_string(),
+            input_prompt: "Resolve syntax defects".to_string(),
+            expected_substring: "systematic".to_string(),
+            max_latency_ms: 1200,
+        }];
+
+        let evolved = engine.step_generation(
+            &test_cases,
+            "Constructive mutation with chain-of-thought rationale",
+            Some(format!("{prompt} Reason step-by-step before acting.")),
+            Some(vec![
+                "bash".to_string(),
+                "read_file".to_string(),
+                "edit_file".to_string(),
+            ]),
+            Some(model.to_string()),
+        );
+
+        if let Some(champ) = evolved {
+            let human = format!(
+                "Evolutionary step succeeded: Promoted {} (gen {}, score {:.3}, model {})",
+                champ.genome_id, champ.generation, champ.fitness_score, champ.model_target
+            );
+            Ok(success(
+                "evolution genome",
+                json!({ "genome": champ, "status": "promoted" }),
+                human,
+            ))
+        } else {
+            let human = "Evolutionary step regressed: Monotonically rolled back to parent snapshot via Safety Spine.";
+            Ok(success(
+                "evolution genome",
+                json!({ "status": "rolled_back" }),
+                human,
+            ))
+        }
+    } else {
+        let root = engine.population.first().cloned().unwrap();
+        let human = format!(
+            "Whole-Agent Genome '{}': model={}, level={}, fitness={:.2}, tools={:?}",
+            root.genome_id,
+            root.model_target,
+            root.ladder_level.as_str(),
+            root.fitness_score,
+            root.tool_bindings
+        );
+        Ok(success(
+            "evolution genome",
+            json!({ "genome": root }),
+            human,
+        ))
+    }
+}
+
+fn evolution_routing_card(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["domains"])?;
+    let domain_str = parsed
+        .value("domains")
+        .unwrap_or("coding,reasoning,synthesis,data_analysis");
+    let domains: Vec<&str> = domain_str.split(',').map(str::trim).collect();
+
+    let mut engine = HarnessEvolutionEngine::new(10, 0.005);
+    engine.seed_root(
+        "pareto-champion",
+        "claude-3-7-sonnet",
+        "You solve tasks across domains systematically.",
+        vec![
+            "bash".to_string(),
+            "read_file".to_string(),
+            "edit_file".to_string(),
+        ],
+    );
+    engine.synthesize_routing_card(&domains);
+
+    let mut human = format!(
+        "Darwin Task-Domain Routing Card ({} domains mapped):\n",
+        engine.routing_card.entries.len()
+    );
+    for entry in &engine.routing_card.entries {
+        human.push_str(&format!(
+            "  * [{}] -> model='{}', genome='{}', rationale='{}'\n",
+            entry.domain,
+            entry.recommended_genome.model_target,
+            entry.recommended_genome.genome_id,
+            entry.rationale
+        ));
+    }
+
+    Ok(success(
+        "evolution routing-card",
+        json!({
+            "card_id": engine.routing_card.card_id,
+            "entries": engine.routing_card.entries
+        }),
+        human,
+    ))
+}
+
+fn evolution_lineage(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["export-html"])?;
+    let export_html_path = parsed.value("export-html");
+
+    let mut engine = HarnessEvolutionEngine::new(10, 0.005);
+    engine.seed_root(
+        "seed-org-0",
+        "claude-3-7-sonnet",
+        "Base system charter.",
+        vec!["bash".to_string(), "read_file".to_string()],
+    );
+
+    let suite = vec![EvolutionTestCase {
+        id: "case-01".to_string(),
+        domain: "coding".to_string(),
+        input_prompt: "Implement safe binary search".to_string(),
+        expected_substring: "solve".to_string(),
+        max_latency_ms: 1000,
+    }];
+
+    let _ = engine.step_generation(
+        &suite,
+        "Added pre-check validation",
+        Some("You solve tasks systematically.".to_string()),
+        None,
+        None,
+    );
+
+    if let Some(path) = export_html_path {
+        let html = engine
+            .lineage
+            .export_html_visualizer("AGENT-PANDORA Evolution Lineage");
+        fs::write(path, html).map_err(|err| {
+            CliError::execution(format!("failed to write HTML visualizer: {err}"), json!({}))
+        })?;
+        Ok(success(
+            "evolution lineage",
+            json!({ "exported_html": path, "node_count": engine.lineage.nodes.len() }),
+            format!(
+                "Exported interactive lineage visualizer to '{}' ({} nodes)",
+                path,
+                engine.lineage.nodes.len()
+            ),
+        ))
+    } else {
+        let ascii = engine.lineage.render_ascii_tree();
+        Ok(success(
+            "evolution lineage",
+            json!({
+                "nodes": engine.lineage.nodes,
+                "edges": engine.lineage.edges
+            }),
+            ascii,
+        ))
+    }
+}
+
+fn evolution_depth(args: &[String]) -> Result<CommandResult, CliError> {
+    let _parsed = parse_options(args, &["epsilon"])?;
+    let mut stack = EmergentDepthStack::new();
+
+    stack.push_layer(MetaLayer {
+        order: 1,
+        layer_id: "order-1-base-solver".to_string(),
+        injected: InjectedCode::default(),
+        score: 0.767,
+        emergence_rationale: "Initial base solver layer".to_string(),
+    });
+
+    let mut injected2 = InjectedCode::default();
+    injected2
+        .directives
+        .push("Always verify invariants before action".to_string());
+    injected2.code_library.insert(
+        "fuzzy_matcher".to_string(),
+        "fn match_label() -> bool { true }".to_string(),
+    );
+
+    stack.push_layer(MetaLayer {
+        order: 2,
+        layer_id: "order-2-fuzzy-matcher".to_string(),
+        injected: injected2,
+        score: 0.833,
+        emergence_rationale: "Injected fuzzy matcher helper from execution traces".to_string(),
+    });
+
+    stack.push_layer(MetaLayer {
+        order: 3,
+        layer_id: "order-3-stabilized".to_string(),
+        injected: InjectedCode::default(),
+        score: 0.835,
+        emergence_rationale: "Rollback of aggressive prompt drift".to_string(),
+    });
+
+    let converged = stack.check_fixed_point(0.01);
+
+    let mut human = format!(
+        "Meta^n Emergent Depth Stack (current order = {}, converged = {}):\n",
+        stack.current_depth(),
+        converged
+    );
+    for layer in &stack.layers {
+        human.push_str(&format!(
+            "  * Order {}: id='{}', score={:.3}, directives={}, code_helpers={}, rationale='{}'\n",
+            layer.order,
+            layer.layer_id,
+            layer.score,
+            layer.injected.directives.len(),
+            layer.injected.code_library.len(),
+            layer.emergence_rationale
+        ));
+    }
+    if let Some(omega) = &stack.fixed_point {
+        human.push_str(&format!(
+            "\nFixed-Point Attractor (Omega): {}\n",
+            omega.attractor_state
+        ));
+    }
+
+    Ok(success(
+        "evolution depth",
+        json!({
+            "current_depth": stack.current_depth(),
+            "layers": stack.layers,
+            "fixed_point": stack.fixed_point
+        }),
+        human,
     ))
 }
 

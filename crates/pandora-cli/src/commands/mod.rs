@@ -48,6 +48,7 @@ pub(crate) mod peer;
 pub(crate) mod policy;
 pub(crate) mod prompt;
 mod provider;
+pub(crate) mod prp;
 pub(crate) mod reasoning;
 mod registry;
 mod restore_journal;
@@ -124,6 +125,7 @@ pub(crate) const ROOT_COMMANDS: &[&str] = &[
     "prompt",
     "dsrs",
     "gepa",
+    "prp",
 ];
 
 /// [`ROOT_COMMANDS`] joined by single spaces, the way the POSIX, zsh, and fish
@@ -238,6 +240,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "prompt" => prompt::execute(&args[1..]),
         "dsrs" => dsrs::execute(&args[1..]),
         "gepa" => gepa::execute(&args[1..]),
+        "prp" => prp::execute(&args[1..]),
         "--help" | "help" => {
             if args.len() != 1 {
                 return Err(CliError::usage("help does not accept additional arguments"));
@@ -505,7 +508,7 @@ pub(crate) fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|curriculum|decision|tui|harness|slash|session|job|subagent|skill|package|registry|runtime|memory|approval|provider|mcp|tool|orchestration|operations|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor|policy|cron|prompt|dsrs|gepa> [options]
+    r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|curriculum|decision|tui|harness|slash|session|job|subagent|skill|package|registry|runtime|memory|approval|provider|mcp|tool|orchestration|operations|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor|policy|cron|prompt|dsrs|gepa|prp> [options]
 
 commands:
   help (or --help)
@@ -560,6 +563,7 @@ commands:
   uninstall [--dry-run|--yes]
   dsrs show|inspect <name>|cot <name>
   gepa frontier|optimize
+  prp inspect [--id <id>] [--input <path>] | scaffold [--id <id>] [--title <title>] [--out <path>] | validate [--id <id>] [--input <path>] [--fail-gate <syntax|unit|integration|receipt>]
   doctor"#
 }
 
