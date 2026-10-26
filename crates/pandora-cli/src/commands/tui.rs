@@ -2,7 +2,7 @@ use super::{ParsedArgs, parse_options, slash};
 use crate::output::{CliError, CommandResult, success};
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-    KeyModifiers, MouseEvent, MouseEventKind,
+    KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
@@ -16,6 +16,7 @@ use ratatui::widgets::{
 };
 use ratatui::{Frame, Terminal};
 use serde_json::{Value, json};
+use std::cell::Cell;
 use std::cmp::min;
 use std::io::{self, IsTerminal, Stdout};
 use std::path::Path;
@@ -787,6 +788,7 @@ struct App {
     governance_mode: pandora_types::GovernanceMode,
     mode_explicit: bool,
     active_persona: Option<String>,
+    last_area: Cell<Rect>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -873,6 +875,15 @@ impl TuiTheme {
             Self::Dark => "dark",
             Self::Light => "light",
             Self::Mono => "mono",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Self::Auto => Self::Dark,
+            Self::Dark => Self::Light,
+            Self::Light => Self::Mono,
+            Self::Mono => Self::Auto,
         }
     }
 
@@ -1058,6 +1069,7 @@ impl App {
             governance_mode,
             mode_explicit,
             active_persona: None,
+            last_area: Cell::new(Rect::default()),
         };
         app.refresh_provider_telemetry();
         app
@@ -1198,12 +1210,298 @@ impl App {
     fn handle_mouse(&mut self, mouse: MouseEvent) {
         match mouse.kind {
             MouseEventKind::ScrollUp => {
-                self.scroll_offset = self.scroll_offset.saturating_add(3);
+                if self.palette_open {
+                    self.palette_index = self.palette_index.saturating_sub(1);
+                } else if self.model_picker_open {
+                    self.model_picker_index = self.model_picker_index.saturating_sub(1);
+                } else {
+                    self.scroll_offset = self.scroll_offset.saturating_add(3);
+                }
             }
             MouseEventKind::ScrollDown => {
-                self.scroll_offset = self.scroll_offset.saturating_sub(3);
+                if self.palette_open {
+                    let len = self.filtered_palette_entries().len();
+                    if len > 0 {
+                        self.palette_index = min(self.palette_index.saturating_add(1), len - 1);
+                    }
+                } else if self.model_picker_open {
+                    let len = self.filtered_model_catalog().len();
+                    if len > 0 {
+                        self.model_picker_index =
+                            min(self.model_picker_index.saturating_add(1), len - 1);
+                    }
+                } else {
+                    self.scroll_offset = self.scroll_offset.saturating_sub(3);
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.handle_mouse_click(mouse.column, mouse.row, MouseButton::Left);
+            }
+            MouseEventKind::Down(MouseButton::Right) => {
+                self.handle_mouse_click(mouse.column, mouse.row, MouseButton::Right);
+            }
+            MouseEventKind::Down(MouseButton::Middle) => {
+                self.handle_mouse_click(mouse.column, mouse.row, MouseButton::Middle);
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                self.handle_mouse_drag(mouse.column, mouse.row);
             }
             _ => {}
+        }
+    }
+
+    fn handle_mouse_click(&mut self, col: u16, row: u16, button: MouseButton) {
+        let area = self.last_area.get();
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        if self.palette_open {
+            let modal_area = centered_rect(72, 65, area);
+            if button == MouseButton::Right
+                || col < modal_area.x
+                || col >= modal_area.x + modal_area.width
+                || row < modal_area.y
+                || row >= modal_area.y + modal_area.height
+            {
+                self.palette_open = false;
+                return;
+            }
+            let inner_y = modal_area.y + 1;
+            let list_y = inner_y + 2;
+            if row >= list_y {
+                let offset = (row - list_y) as usize;
+                let max_items = usize::from(modal_area.height.saturating_sub(4).max(1));
+                let start = self
+                    .palette_index
+                    .saturating_sub(max_items.saturating_sub(1));
+                let clicked = start + offset;
+                let entries = self.filtered_palette_entries();
+                if clicked < entries.len() {
+                    let cmd = entries[clicked].command.to_owned();
+                    self.palette_open = false;
+                    self.input = cmd.chars().collect();
+                    self.submit();
+                }
+            }
+            return;
+        }
+
+        if self.model_picker_open {
+            let modal_area = centered_rect(80, 72, area);
+            if button == MouseButton::Right
+                || col < modal_area.x
+                || col >= modal_area.x + modal_area.width
+                || row < modal_area.y
+                || row >= modal_area.y + modal_area.height
+            {
+                self.model_picker_open = false;
+                return;
+            }
+            let inner_y = modal_area.y + 1;
+            let list_y = inner_y + 3;
+            if row >= list_y {
+                let offset = (row - list_y) as usize;
+                let max_items = usize::from(modal_area.height.saturating_sub(5).max(1));
+                let start = self
+                    .model_picker_index
+                    .saturating_sub(max_items.saturating_sub(1));
+                let clicked = start + offset;
+                let entries = self.filtered_model_catalog();
+                if clicked < entries.len() {
+                    let selected = entries[clicked];
+                    let spec = format!("{}:{}", selected.provider, selected.model);
+                    self.model_picker_open = false;
+                    self.switch_model(&spec);
+                }
+            }
+            return;
+        }
+
+        if self.key_modal_open {
+            let modal_area = centered_rect(70, 30, area);
+            if button == MouseButton::Right
+                || col < modal_area.x
+                || col >= modal_area.x + modal_area.width
+                || row < modal_area.y
+                || row >= modal_area.y + modal_area.height
+            {
+                self.key_modal_open = false;
+                self.key_modal_input.clear();
+            }
+            return;
+        }
+
+        let wide_mode =
+            area.width >= WIDE_LAYOUT_MIN_WIDTH && area.height >= WIDE_LAYOUT_MIN_HEIGHT;
+        let sections = if wide_mode {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),
+                    Constraint::Min(8),
+                    Constraint::Length(1),
+                    Constraint::Length(3),
+                ])
+                .split(area)
+        } else {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(2),
+                    Constraint::Min(3),
+                    Constraint::Length(1),
+                    Constraint::Length(3),
+                ])
+                .split(area)
+        };
+
+        if button == MouseButton::Middle {
+            self.toggle_scroll_bookmark();
+            return;
+        }
+
+        if button == MouseButton::Right && row < sections[3].y {
+            self.open_palette();
+            return;
+        }
+
+        // Top bar
+        if row < sections[0].y + sections[0].height {
+            if wide_mode {
+                let top_inner_y = sections[0].y;
+                if row == top_inner_y {
+                    if col < 18 {
+                        self.welcome_card = !self.welcome_card;
+                    } else if col >= sections[0].width.saturating_sub(25) {
+                        self.open_model_picker();
+                    }
+                } else if row == top_inner_y + 1 {
+                    if col < 16 {
+                        self.active_tab = TuiTab::Console;
+                    } else if col < 39 {
+                        self.active_tab = TuiTab::Kanban;
+                        self.refresh_kanban_silent();
+                        self.refresh_fleet_silent();
+                    } else if col < 62 {
+                        self.active_tab = TuiTab::Memory;
+                    } else {
+                        self.active_tab = TuiTab::Governance;
+                    }
+                }
+            } else if col >= sections[0].width.saturating_sub(20) {
+                self.open_model_picker();
+            } else {
+                self.open_palette();
+            }
+            return;
+        }
+
+        // Status bar
+        if row >= sections[2].y && row < sections[2].y + sections[2].height {
+            if button == MouseButton::Right {
+                if self.pending.is_some() {
+                    self.resolve_pending(false);
+                } else {
+                    self.open_model_picker();
+                }
+            } else if self.pending.is_some() {
+                self.resolve_pending(true);
+            } else if self.scroll_offset > 0 {
+                self.scroll_offset = 0;
+            } else if !self.draft_stash.is_empty() {
+                self.toggle_stash();
+            } else {
+                self.open_palette();
+            }
+            return;
+        }
+
+        // Input box
+        if row >= sections[3].y {
+            if button == MouseButton::Right {
+                if !self.input.is_empty() {
+                    self.input.clear();
+                    self.cursor = 0;
+                } else if !self.draft_stash.is_empty() {
+                    self.toggle_stash();
+                }
+                return;
+            }
+            let available = usize::from(sections[3].width).saturating_sub(2).max(1);
+            let start = self.cursor.saturating_sub(available);
+            let click_col = usize::from(col.saturating_sub(sections[3].x.saturating_add(2)));
+            self.cursor = min(self.input.len(), start + click_col);
+            return;
+        }
+
+        // Workspace / transcript (sections[1])
+        if row >= sections[1].y && row < sections[1].y + sections[1].height {
+            if col >= sections[1].x + sections[1].width.saturating_sub(2) {
+                let mid = sections[1].y + sections[1].height / 2;
+                if row < mid {
+                    self.scroll_offset = self.scroll_offset.saturating_add(5);
+                } else {
+                    self.scroll_offset = self.scroll_offset.saturating_sub(5);
+                }
+                return;
+            }
+
+            if self.welcome_card && self.active_tab == TuiTab::Console {
+                let rel_y = row.saturating_sub(sections[1].y);
+                if rel_y == 3 {
+                    self.open_model_picker();
+                    return;
+                }
+                if rel_y == 7 {
+                    let rel_x = col.saturating_sub(sections[1].x);
+                    if (14..21).contains(&rel_x) {
+                        self.input = "/help".chars().collect();
+                        self.submit();
+                    } else if (21..30).contains(&rel_x) {
+                        self.open_model_picker();
+                    } else if (30..39).contains(&rel_x) {
+                        self.input = "/tools".chars().collect();
+                        self.submit();
+                    } else if (39..50).contains(&rel_x) {
+                        self.input = "/update".chars().collect();
+                        self.submit();
+                    }
+                }
+            }
+        }
+    }
+
+    fn handle_mouse_drag(&mut self, col: u16, row: u16) {
+        let area = self.last_area.get();
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let sections = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Min(8),
+                Constraint::Length(1),
+                Constraint::Length(3),
+            ])
+            .split(area);
+
+        if row >= sections[3].y {
+            let available = usize::from(sections[3].width).saturating_sub(2).max(1);
+            let start = self.cursor.saturating_sub(available);
+            let click_col = usize::from(col.saturating_sub(sections[3].x.saturating_add(2)));
+            self.cursor = min(self.input.len(), start + click_col);
+        } else if col >= area.width.saturating_sub(2)
+            && row >= sections[1].y
+            && row < sections[1].y + sections[1].height
+        {
+            let mid = sections[1].y + sections[1].height / 2;
+            if row < mid {
+                self.scroll_offset = self.scroll_offset.saturating_add(1);
+            } else {
+                self.scroll_offset = self.scroll_offset.saturating_sub(1);
+            }
         }
     }
 
@@ -1213,7 +1511,7 @@ impl App {
         }
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && (key.code == KeyCode::Char('c')
-                || key.code == KeyCode::Char('d')
+                || (key.code == KeyCode::Char('d') && self.input.is_empty())
                 || key.code == KeyCode::Char('q'))
         {
             return true;
@@ -1231,11 +1529,11 @@ impl App {
 
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
-                KeyCode::Char('p') => {
+                KeyCode::Char('p') | KeyCode::Char('r') => {
                     self.open_palette();
                     return false;
                 }
-                KeyCode::Char('m') => {
+                KeyCode::Char('m') | KeyCode::Char('o') => {
                     self.open_model_picker();
                     return false;
                 }
@@ -1245,6 +1543,10 @@ impl App {
                 }
                 KeyCode::Char('g') => {
                     self.toggle_scroll_bookmark();
+                    return false;
+                }
+                KeyCode::Char('f') => {
+                    self.focus_mode = !self.focus_mode;
                     return false;
                 }
                 KeyCode::Tab => {
@@ -1306,6 +1608,40 @@ impl App {
                     self.delete_previous_word();
                     return false;
                 }
+                KeyCode::Char('h') => {
+                    if self.cursor > 0 {
+                        self.cursor -= 1;
+                        self.input.remove(self.cursor);
+                        self.autocomplete_index = 0;
+                    }
+                    return false;
+                }
+                KeyCode::Char('d') => {
+                    if self.cursor < self.input.len() {
+                        self.input.remove(self.cursor);
+                        self.autocomplete_index = 0;
+                    }
+                    return false;
+                }
+                KeyCode::Char('j') => {
+                    return self.submit();
+                }
+                KeyCode::Left => {
+                    self.word_backward();
+                    return false;
+                }
+                KeyCode::Right => {
+                    self.word_forward();
+                    return false;
+                }
+                KeyCode::Home => {
+                    self.scroll_offset = usize::MAX / 2;
+                    return false;
+                }
+                KeyCode::End => {
+                    self.scroll_offset = 0;
+                    return false;
+                }
                 KeyCode::Up => {
                     self.scroll_offset = self.scroll_offset.saturating_add(1);
                     return false;
@@ -1326,6 +1662,22 @@ impl App {
                 }
                 KeyCode::Down => {
                     self.scroll_offset = self.scroll_offset.saturating_sub(2);
+                    return false;
+                }
+                KeyCode::PageUp => {
+                    self.scroll_offset = self.scroll_offset.saturating_add(8);
+                    return false;
+                }
+                KeyCode::PageDown => {
+                    self.scroll_offset = self.scroll_offset.saturating_sub(8);
+                    return false;
+                }
+                KeyCode::Home => {
+                    self.scroll_offset = usize::MAX / 2;
+                    return false;
+                }
+                KeyCode::End => {
+                    self.scroll_offset = 0;
                     return false;
                 }
                 _ => {}
@@ -1350,6 +1702,22 @@ impl App {
                 }
                 KeyCode::Char('4') => {
                     self.active_tab = TuiTab::Governance;
+                    return false;
+                }
+                KeyCode::Char('f') => {
+                    self.word_forward();
+                    return false;
+                }
+                KeyCode::Char('d') => {
+                    if !self.input.is_empty() {
+                        self.delete_next_word();
+                    } else {
+                        self.scroll_offset = self.scroll_offset.saturating_sub(8);
+                    }
+                    return false;
+                }
+                KeyCode::Backspace => {
+                    self.delete_previous_word();
                     return false;
                 }
                 KeyCode::Right => {
@@ -1379,10 +1747,6 @@ impl App {
                 }
                 KeyCode::Char('u') => {
                     self.scroll_offset = self.scroll_offset.saturating_add(8);
-                    return false;
-                }
-                KeyCode::Char('d') => {
-                    self.scroll_offset = self.scroll_offset.saturating_sub(8);
                     return false;
                 }
                 KeyCode::Char('h') => {
@@ -1423,6 +1787,14 @@ impl App {
                     ));
                     return false;
                 }
+                KeyCode::Home => {
+                    self.scroll_offset = usize::MAX / 2;
+                    return false;
+                }
+                KeyCode::End => {
+                    self.scroll_offset = 0;
+                    return false;
+                }
                 _ => {}
             }
         }
@@ -1437,6 +1809,67 @@ impl App {
             }
             KeyCode::F(1) => {
                 self.open_palette();
+                false
+            }
+            KeyCode::F(2) => {
+                self.open_model_picker();
+                false
+            }
+            KeyCode::F(3) => {
+                self.theme = self.theme.next();
+                self.push_message(format!("theme> {}", self.theme.name()));
+                false
+            }
+            KeyCode::F(4) => {
+                self.sidebar_visible = !self.sidebar_visible;
+                false
+            }
+            KeyCode::F(5) => {
+                self.refresh_provider_telemetry();
+                self.refresh_kanban_silent();
+                self.refresh_fleet_silent();
+                self.scroll_offset = 0;
+                false
+            }
+            KeyCode::F(6) => {
+                self.effort = self.effort.next();
+                self.push_message(format!("effort> {}", self.effort.name()));
+                false
+            }
+            KeyCode::F(7) => {
+                self.centered_layout = !self.centered_layout;
+                self.push_message(format!("layout> centered = {}", self.centered_layout));
+                false
+            }
+            KeyCode::F(8) => {
+                self.work_dock_open = !self.work_dock_open;
+                if self.work_dock_open {
+                    self.refresh_kanban_silent();
+                    self.refresh_fleet_silent();
+                }
+                false
+            }
+            KeyCode::F(9) => {
+                self.todo_card_open = !self.todo_card_open;
+                if self.todo_card_open {
+                    self.refresh_kanban_silent();
+                }
+                false
+            }
+            KeyCode::F(10) => {
+                self.info_card_open = !self.info_card_open;
+                if self.info_card_open {
+                    self.refresh_fleet_silent();
+                }
+                false
+            }
+            KeyCode::F(11) => {
+                self.focus_mode = !self.focus_mode;
+                false
+            }
+            KeyCode::F(12) => {
+                self.backdrop_mode = self.backdrop_mode.next();
+                self.push_message(format!("backdrop> {}", self.backdrop_mode.name()));
                 false
             }
             KeyCode::Tab => {
@@ -1590,23 +2023,76 @@ impl App {
 
     fn handle_model_picker_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
-            KeyCode::Esc => {
+            KeyCode::Esc | KeyCode::F(2) => {
                 self.model_picker_open = false;
                 false
             }
-            KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('m') | KeyCode::Char('o')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
                 self.model_picker_open = false;
                 false
             }
-            KeyCode::Up => {
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.model_picker_query.clear();
+                self.model_picker_index = 0;
+                false
+            }
+            KeyCode::Up | KeyCode::BackTab => {
                 self.model_picker_index = self.model_picker_index.saturating_sub(1);
                 false
             }
-            KeyCode::Down => {
+            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.model_picker_index = self.model_picker_index.saturating_sub(1);
+                false
+            }
+            KeyCode::Down | KeyCode::Tab => {
                 let len = self.filtered_model_catalog().len();
                 if len > 0 {
                     self.model_picker_index =
                         min(self.model_picker_index.saturating_add(1), len - 1);
+                }
+                false
+            }
+            KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let len = self.filtered_model_catalog().len();
+                if len > 0 {
+                    self.model_picker_index =
+                        min(self.model_picker_index.saturating_add(1), len - 1);
+                }
+                false
+            }
+            KeyCode::PageUp => {
+                self.model_picker_index = self.model_picker_index.saturating_sub(5);
+                false
+            }
+            KeyCode::PageDown => {
+                let len = self.filtered_model_catalog().len();
+                if len > 0 {
+                    self.model_picker_index =
+                        min(self.model_picker_index.saturating_add(5), len - 1);
+                }
+                false
+            }
+            KeyCode::Home => {
+                self.model_picker_index = 0;
+                false
+            }
+            KeyCode::End => {
+                let len = self.filtered_model_catalog().len();
+                if len > 0 {
+                    self.model_picker_index = len - 1;
+                }
+                false
+            }
+            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.model_picker_index = 0;
+                false
+            }
+            KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let len = self.filtered_model_catalog().len();
+                if len > 0 {
+                    self.model_picker_index = len - 1;
                 }
                 false
             }
@@ -1834,22 +2320,73 @@ impl App {
 
     fn handle_palette_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
-            KeyCode::Esc => {
+            KeyCode::Esc | KeyCode::F(1) => {
                 self.palette_open = false;
                 false
             }
-            KeyCode::F(1) => {
+            KeyCode::Char('p') | KeyCode::Char('r')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
                 self.palette_open = false;
                 false
             }
-            KeyCode::Up => {
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.palette_query.clear();
+                self.palette_index = 0;
+                false
+            }
+            KeyCode::Up | KeyCode::BackTab => {
                 self.palette_index = self.palette_index.saturating_sub(1);
                 false
             }
-            KeyCode::Down => {
+            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.palette_index = self.palette_index.saturating_sub(1);
+                false
+            }
+            KeyCode::Down | KeyCode::Tab => {
                 let len = self.filtered_palette_entries().len();
                 if len > 0 {
                     self.palette_index = min(self.palette_index.saturating_add(1), len - 1);
+                }
+                false
+            }
+            KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let len = self.filtered_palette_entries().len();
+                if len > 0 {
+                    self.palette_index = min(self.palette_index.saturating_add(1), len - 1);
+                }
+                false
+            }
+            KeyCode::PageUp => {
+                self.palette_index = self.palette_index.saturating_sub(5);
+                false
+            }
+            KeyCode::PageDown => {
+                let len = self.filtered_palette_entries().len();
+                if len > 0 {
+                    self.palette_index = min(self.palette_index.saturating_add(5), len - 1);
+                }
+                false
+            }
+            KeyCode::Home => {
+                self.palette_index = 0;
+                false
+            }
+            KeyCode::End => {
+                let len = self.filtered_palette_entries().len();
+                if len > 0 {
+                    self.palette_index = len - 1;
+                }
+                false
+            }
+            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.palette_index = 0;
+                false
+            }
+            KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let len = self.filtered_palette_entries().len();
+                if len > 0 {
+                    self.palette_index = len - 1;
                 }
                 false
             }
@@ -1870,10 +2407,6 @@ impl App {
                 } else {
                     self.palette_open = false;
                 }
-                false
-            }
-            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.palette_open = false;
                 false
             }
             KeyCode::Char(ch)
@@ -1897,6 +2430,36 @@ impl App {
         while self.cursor > 0 && !self.input[self.cursor - 1].is_whitespace() {
             self.cursor -= 1;
             self.input.remove(self.cursor);
+        }
+        self.autocomplete_index = 0;
+    }
+
+    fn delete_next_word(&mut self) {
+        while self.cursor < self.input.len() && self.input[self.cursor].is_whitespace() {
+            self.input.remove(self.cursor);
+        }
+        while self.cursor < self.input.len() && !self.input[self.cursor].is_whitespace() {
+            self.input.remove(self.cursor);
+        }
+        self.autocomplete_index = 0;
+    }
+
+    fn word_forward(&mut self) {
+        let len = self.input.len();
+        while self.cursor < len && self.input[self.cursor].is_whitespace() {
+            self.cursor += 1;
+        }
+        while self.cursor < len && !self.input[self.cursor].is_whitespace() {
+            self.cursor += 1;
+        }
+    }
+
+    fn word_backward(&mut self) {
+        while self.cursor > 0 && self.input[self.cursor - 1].is_whitespace() {
+            self.cursor -= 1;
+        }
+        while self.cursor > 0 && !self.input[self.cursor - 1].is_whitespace() {
+            self.cursor -= 1;
         }
     }
 
@@ -2141,20 +2704,41 @@ impl App {
                     "hotkeys> Navigation & Views:",
                     "  Tab / Shift+Tab / Alt+H,L  Cycle workspace views (Console, Kanban, Memory, Governance)",
                     "  Alt+1..4                   Jump directly to workspace view 1..4",
-                    "  Ctrl+B / Alt+M             Toggle Runtime Telemetry sidebar",
-                    "  Ctrl+T / /dock             Toggle Pandora Live Work Dock",
-                    "  Alt+C                      Toggle centered layout mode",
-                    "  Alt+X / /todos             Toggle pinned Todo & Kanban card",
-                    "  Alt+I / /info              Toggle pinned Session & Usage Info card",
+                    "  Ctrl+B / Alt+M / F4        Toggle Runtime Telemetry sidebar",
+                    "  Ctrl+T / /dock / F8        Toggle Pandora Live Work Dock",
+                    "  Alt+C / F7                 Toggle centered layout mode",
+                    "  Alt+X / /todos / F9        Toggle pinned Todo & Kanban card",
+                    "  Alt+I / /info / F10        Toggle pinned Session & Usage Info card",
+                    "  Ctrl+F / F11               Toggle Focus mode (minimal distraction)",
+                    "  F3                         Cycle UI Theme (auto -> dark -> light -> mono)",
+                    "  Alt+B / F12                Cycle Backdrop shader (subtle -> vivid -> off)",
+                    "  F5                         Refresh telemetry, active view & fleet status",
+                    "hotkeys> Mouse & Touch Navigation:",
+                    "  Click Top Tabs             Switch to Console, Kanban, Memory, or Governance",
+                    "  Click Model Badge          Open interactive Model & Provider Selector",
+                    "  Click Logo Title           Toggle welcome guide card",
+                    "  Click Input / Drag Cursor  Position prompt composer cursor directly",
+                    "  Right-Click Input          Clear input or restore stashed prompt draft",
+                    "  Click Modal Items          Select and activate command or model directly",
+                    "  Click Outside / Right-Clk  Dismiss active modal popup",
+                    "  Click Scrollbar (Right)    Fast page scroll up or down",
+                    "  Middle-Click Transcript    Save or jump to transcript scroll bookmark",
                     "hotkeys> Model, Effort & Prompt Composer:",
-                    "  Ctrl+M / /model            Open interactive Model & Provider Selector",
+                    "  Ctrl+M / Ctrl+O / F2       Open interactive Model & Provider Selector",
                     "  Ctrl+Tab / Ctrl+Shift+Tab  Cycle next / previous model in catalog",
-                    "  Alt+Right / Alt+Left       Increase / decrease reasoning effort (low..max)",
-                    "  Ctrl+P / F1                Open fuzzy Command Palette",
+                    "  Alt+Right / Alt+Left / F6  Cycle reasoning effort (low..max)",
+                    "  Ctrl+Left / Ctrl+Right     Jump cursor backward / forward one word",
+                    "  Alt+F / Alt+B              Word forward / backward (readline style)",
+                    "  Alt+D / Alt+Backspace      Delete next word / previous word",
+                    "  Ctrl+A / Home, Ctrl+E/End  Jump to start / end of input line",
+                    "  Ctrl+U / Ctrl+K / Ctrl+W   Delete to start / delete to end / delete word",
+                    "  Ctrl+P / Ctrl+R / F1       Open fuzzy Command Palette",
                     "  Ctrl+S / /stash            Park or restore current composer prompt draft",
                     "  / · ! · @ + Up/Down + Tab  Navigate & complete slash commands, !genes, or @files",
                     "hotkeys> Transcript & Governance:",
                     "  PageUp/PageDown · Alt+U/D  Scroll transcript by page",
+                    "  Ctrl+Home / Shift+Home     Jump directly to the very top of transcript",
+                    "  Ctrl+End / Shift+End       Jump directly to the very bottom (follow live)",
                     "  Ctrl+Up / Ctrl+Down        Scroll transcript line by line",
                     "  Ctrl+G                     Save or jump to transcript scroll bookmark",
                     "  Ctrl+Y / Ctrl+N            Approve (/approve) or Deny (/deny) pending task",
@@ -4210,6 +4794,7 @@ impl App {
 
     fn render(&self, frame: &mut Frame) {
         let area = frame.area();
+        self.last_area.set(area);
         let wide_mode =
             area.width >= WIDE_LAYOUT_MIN_WIDTH && area.height >= WIDE_LAYOUT_MIN_HEIGHT;
 
@@ -4275,6 +4860,7 @@ impl App {
     }
 
     fn render_compact(&self, frame: &mut Frame, area: Rect) {
+        self.last_area.set(area);
         let sections = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -4563,7 +5149,7 @@ impl App {
             Line::from(vec![
                 label("keys"),
                 Span::styled(
-                    "Ctrl+P palette · Ctrl+M model · Alt+1-4 views · Ctrl+B sidebar · Ctrl+C quit",
+                    "F1/Ctrl+P palette · F2/Ctrl+M model · Alt+1-4/Click tabs · F1-F12 shortcuts · Full mouse",
                     self.theme.muted(),
                 ),
             ]),
@@ -5756,7 +6342,9 @@ mod tests {
         wrap_message,
     };
     use crate::commands::ParsedArgs;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
     use ratatui::{Terminal, backend::TestBackend};
     use std::collections::BTreeMap;
 
@@ -6667,5 +7255,266 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_mouse_navigation_tabs_modals_input_and_scrollbar() {
+        let mut app = app();
+        let backend = ratatui::backend::TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("terminal created");
+        terminal.draw(|f| app.render(f)).expect("draw frame");
+
+        // 1. Tab clicks
+        assert_eq!(app.active_tab, TuiTab::Console);
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 25,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.active_tab, TuiTab::Kanban);
+
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 45,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.active_tab, TuiTab::Memory);
+
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 70,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.active_tab, TuiTab::Governance);
+
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 5,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.active_tab, TuiTab::Console);
+
+        // 2. Brand click toggles welcome card
+        assert!(app.welcome_card);
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 5,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(!app.welcome_card);
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 5,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(app.welcome_card);
+
+        // 3. Model badge click opens model picker
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 110,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(app.model_picker_open);
+
+        // Click outside closes model picker
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(!app.model_picker_open);
+
+        // 4. Command palette clicks
+        app.open_palette();
+        assert!(app.palette_open);
+        // Click outside closes palette
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(!app.palette_open);
+
+        // 5. Input box click & cursor positioning
+        app.input = "navigate seamlessly".chars().collect();
+        app.cursor = 0;
+        // Input box is at row 38 in a 40-row terminal (sections[3] starts at 37)
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 11, // prompt is 2 chars + 1 border = 3
+            row: 38,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(app.cursor > 0);
+
+        // Right click clears input
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column: 11,
+            row: 38,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(app.input.is_empty());
+
+        // 6. Scrollbar clicks on column 119
+        assert_eq!(app.scroll_offset, 0);
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 119,
+            row: 10, // top half -> scroll up
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(app.scroll_offset > 0);
+
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 119,
+            row: 30, // bottom half -> scroll down
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.scroll_offset, 0);
+
+        // 7. Middle click bookmarks
+        assert!(app.scroll_bookmark.is_none());
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Middle),
+            column: 20,
+            row: 20,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(app.scroll_bookmark.is_some());
+    }
+
+    #[test]
+    fn test_extreme_keyboard_navigation_and_shortcuts() {
+        let mut app = app();
+
+        // 1. Function Keys
+        // F1: Palette
+        assert!(!app.palette_open);
+        app.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+        assert!(app.palette_open);
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!app.palette_open);
+
+        // F2: Model Picker
+        assert!(!app.model_picker_open);
+        app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
+        assert!(app.model_picker_open);
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!app.model_picker_open);
+
+        // F3: Theme cycle
+        let orig_theme = app.theme;
+        app.handle_key(KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE));
+        assert_ne!(app.theme, orig_theme);
+
+        // F4: Sidebar toggle
+        let orig_sidebar = app.sidebar_visible;
+        app.handle_key(KeyEvent::new(KeyCode::F(4), KeyModifiers::NONE));
+        assert_ne!(app.sidebar_visible, orig_sidebar);
+
+        // F6: Effort cycle
+        let orig_effort = app.effort;
+        app.handle_key(KeyEvent::new(KeyCode::F(6), KeyModifiers::NONE));
+        assert_ne!(app.effort, orig_effort);
+
+        // F7: Center layout
+        let orig_center = app.centered_layout;
+        app.handle_key(KeyEvent::new(KeyCode::F(7), KeyModifiers::NONE));
+        assert_ne!(app.centered_layout, orig_center);
+
+        // F8: Work dock
+        assert!(!app.work_dock_open);
+        app.handle_key(KeyEvent::new(KeyCode::F(8), KeyModifiers::NONE));
+        assert!(app.work_dock_open);
+
+        // F9: Todo card
+        assert!(!app.todo_card_open);
+        app.handle_key(KeyEvent::new(KeyCode::F(9), KeyModifiers::NONE));
+        assert!(app.todo_card_open);
+
+        // F10: Info card
+        assert!(!app.info_card_open);
+        app.handle_key(KeyEvent::new(KeyCode::F(10), KeyModifiers::NONE));
+        assert!(app.info_card_open);
+
+        // F11: Focus mode
+        assert!(!app.focus_mode);
+        app.handle_key(KeyEvent::new(KeyCode::F(11), KeyModifiers::NONE));
+        assert!(app.focus_mode);
+
+        // F12: Backdrop cycle
+        let orig_backdrop = app.backdrop_mode;
+        app.handle_key(KeyEvent::new(KeyCode::F(12), KeyModifiers::NONE));
+        assert_ne!(app.backdrop_mode, orig_backdrop);
+
+        // 2. Readline and word movements
+        app.input = "alpha beta gamma".chars().collect();
+        app.cursor = 0;
+
+        // Word forward via Ctrl+Right
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL));
+        assert_eq!(app.cursor, 5); // after "alpha"
+
+        // Word forward via Alt+F
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT));
+        assert_eq!(app.cursor, 10); // after "beta"
+
+        // Word backward via Ctrl+Left
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL));
+        assert_eq!(app.cursor, 6); // at "beta"
+
+        // Word backward via Ctrl+Left again
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL));
+        assert_eq!(app.cursor, 0); // at "alpha"
+
+        // Jump to end of line via Ctrl+E
+        app.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL));
+        assert_eq!(app.cursor, 16);
+
+        // Jump to start of line via Ctrl+A
+        app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
+        assert_eq!(app.cursor, 0);
+
+        // Delete word forward via Alt+D
+        app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::ALT));
+        assert_eq!(app.input.iter().collect::<String>(), " beta gamma");
+
+        // Jump to end and delete word backward via Alt+Backspace
+        app.cursor = app.input.len();
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::ALT));
+        assert_eq!(app.input.iter().collect::<String>(), " beta ");
+
+        // 3. Transcript jumps
+        assert_eq!(app.scroll_offset, 0);
+        app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::CONTROL));
+        assert!(app.scroll_offset > 0);
+        app.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::CONTROL));
+        assert_eq!(app.scroll_offset, 0);
+
+        // 4. Modal fast navigation
+        app.open_palette();
+        assert_eq!(app.palette_index, 0);
+        app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
+        assert_eq!(app.palette_index, 5);
+        app.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
+        assert!(app.palette_index > 5);
+        app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
+        assert_eq!(app.palette_index, 0);
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.palette_index, 1);
+        app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
+        assert_eq!(app.palette_index, 0);
     }
 }
