@@ -137,6 +137,7 @@ pub(super) fn execute_with_control(
             "permission",
             "tool-profile",
             "tools",
+            "goal",
         ],
     )?;
 
@@ -233,7 +234,8 @@ pub(super) fn execute_with_control(
     } else {
         None
     };
-    let is_agent = parsed.value("agent").is_some() || strategy.is_some();
+    let is_goal = parsed.has_flag("goal") || parsed.value("goal").is_some();
+    let is_agent = parsed.value("agent").is_some() || strategy.is_some() || is_goal;
 
     if parsed.value("approval").is_some()
         && (parsed.value("plan").is_some() || parsed.value("model").is_some())
@@ -283,10 +285,11 @@ pub(super) fn execute_with_control(
     if parsed.value("harness-version").is_some() && parsed.value("harness").is_none() {
         return Err(CliError::usage("--harness-version requires --harness <id>"));
     }
+    let default_turns = if is_goal { 50 } else { DEFAULT_AGENT_MAX_TURNS };
     let max_turns = parse_agent_budget(
         parsed.value("max-turns"),
         "max-turns",
-        DEFAULT_AGENT_MAX_TURNS,
+        default_turns,
         MAX_AGENT_TURNS,
     )?;
     let max_tool_calls = parse_agent_budget(
@@ -367,7 +370,13 @@ pub(super) fn execute_with_control(
                 "invalid governance mode '{m}': expected 'autonomous' (2), 'supervised' (1), or 'read-only' (0)"
             ))
         })?,
-        None => pandora_types::GovernanceMode::Supervised,
+        None => {
+            if is_goal {
+                pandora_types::GovernanceMode::Autonomous
+            } else {
+                pandora_types::GovernanceMode::Supervised
+            }
+        }
     };
     let policy = PolicyContext::for_mode(governance_mode);
     let hooks = load_lifecycle_hooks(&config)?;
@@ -387,6 +396,18 @@ pub(super) fn execute_with_control(
             parsed.value("model"),
             selected_provider,
         )?
+    } else if is_goal {
+        let raw = &parsed.positionals[0];
+        let wrapped = format!(
+            "[LONG-HORIZON AUTONOMOUS GOAL]\n\
+             Objective: {raw}\n\n\
+             Autonomous Execution Directives:\n\
+             1. Self-Directed Planning: Formulate and track milestone checklist before mutating files.\n\
+             2. Progressive Verification Gates: Syntax/Compile -> Unit/Isolated Tests -> Integration -> Receipt Check.\n\
+             3. Self-Healing: Inspect errors, diagnose root cause, patch, and re-verify without stopping prematurely.\n\
+             4. Complete Resolution: Do not conclude until all verification gates pass and the goal is thoroughly verified."
+        );
+        (wrapped, None)
     } else {
         (parsed.positionals[0].clone(), None)
     };

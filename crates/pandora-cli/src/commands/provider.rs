@@ -238,7 +238,7 @@ pub(crate) fn configured_credential(
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "provider requires 'list', 'set', 'add', 'remove', 'use', 'login', 'accounts', or 'test'",
+            "provider requires 'list', 'set', 'add', 'remove', 'use', 'login', 'accounts', 'models', or 'test'",
         )
     })?;
     match subcommand.as_str() {
@@ -248,6 +248,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "use" => use_provider(&args[1..]),
         "login" | "oauth" => login_provider(&args[1..]),
         "accounts" | "account" => accounts_command(&args[1..]),
+        "models" | "inspect" | "scan" => super::models::execute(&args[1..]),
         "test" | "auth-test" => test(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown provider command '{unknown}'"

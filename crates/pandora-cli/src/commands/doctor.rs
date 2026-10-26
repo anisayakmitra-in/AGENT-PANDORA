@@ -74,6 +74,25 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             ),
         );
     }
+    let preinstalled = super::models::inspect_all_models(config.workspace_dir());
+    let models_check = if !preinstalled.is_empty() {
+        json!({
+            "check": "preinstalled_models",
+            "status": "ok",
+            "message": format!("{} pre-installed model(s) discovered in workspace / local engines", preinstalled.len()),
+            "count": preinstalled.len(),
+            "models": preinstalled.iter().map(|m| &m.name).collect::<Vec<_>>(),
+        })
+    } else {
+        json!({
+            "check": "preinstalled_models",
+            "status": "info",
+            "message": "no pre-installed models found in workspace or local engines (Ollama/LM Studio)",
+            "count": 0,
+            "remediation": "pull a local model via 'ollama pull qwen2.5-coder:7b' or place .gguf files in workspace",
+        })
+    };
+    checks.push(models_check);
     let healthy = config_ok
         && data_ok
         && storage_write_ok

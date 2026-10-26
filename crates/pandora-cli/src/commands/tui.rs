@@ -407,6 +407,12 @@ struct PaletteEntry {
 
 const PALETTE_ENTRIES: &[PaletteEntry] = &[
     PaletteEntry {
+        command: "/goal",
+        category: "Agent",
+        description: "Execute long-horizon autonomous task with self-healing verification gates (/goal <task>)",
+        immediate: false,
+    },
+    PaletteEntry {
         command: "/help",
         category: "Core",
         description: "Show all TUI commands and workflow shortcuts",
@@ -1066,7 +1072,16 @@ struct App {
     governance_mode: pandora_types::GovernanceMode,
     mode_explicit: bool,
     active_persona: Option<String>,
+    discovered_models: Vec<super::models::DiscoveredModel>,
     last_area: Cell<Rect>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TuiModelEntry {
+    pub provider: String,
+    pub model: String,
+    pub description: String,
+    pub is_preinstalled: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1352,6 +1367,7 @@ impl App {
             governance_mode,
             mode_explicit,
             active_persona: None,
+            discovered_models: Vec::new(),
             last_area: Cell::new(Rect::default()),
         };
         app.refresh_provider_telemetry();
@@ -1592,7 +1608,7 @@ impl App {
                 let clicked = start + offset;
                 let entries = self.filtered_model_catalog();
                 if clicked < entries.len() {
-                    let selected = entries[clicked];
+                    let selected = &entries[clicked];
                     let spec = format!("{}:{}", selected.provider, selected.model);
                     self.model_picker_open = false;
                     self.switch_model(&spec);
@@ -2282,8 +2298,16 @@ impl App {
         self.palette_index = 0;
     }
 
+    fn refresh_discovered_models(&mut self) {
+        if let Ok(config) = super::load_config(&self.args) {
+            let workspace = config.workspace_dir();
+            self.discovered_models = super::models::inspect_all_models(workspace);
+        }
+    }
+
     fn open_model_picker(&mut self) {
         self.refresh_provider_telemetry();
+        self.refresh_discovered_models();
         self.model_picker_open = true;
         self.palette_open = false;
         self.key_modal_open = false;
@@ -2427,18 +2451,60 @@ impl App {
         }
     }
 
-    fn filtered_model_catalog(&self) -> Vec<&'static super::setup::ModelCatalogEntry> {
+    fn filtered_model_catalog(&self) -> Vec<TuiModelEntry> {
         let query = self
             .model_picker_query
             .iter()
             .collect::<String>()
             .trim()
             .to_ascii_lowercase();
-        if query.is_empty() {
-            return super::setup::MODEL_CATALOG.iter().collect();
+
+        let mut entries = Vec::new();
+
+        // 1. Pre-installed models discovered in local engines and workspace
+        for m in &self.discovered_models {
+            let provider = if m.source.starts_with("ollama") {
+                "ollama".to_owned()
+            } else if m.source.starts_with("lmstudio") {
+                "lmstudio".to_owned()
+            } else {
+                "workspace".to_owned()
+            };
+            let desc = format!(
+                "{} ({}, {})",
+                m.details.as_deref().unwrap_or(&m.location),
+                m.format,
+                m.size_human
+            );
+            entries.push(TuiModelEntry {
+                provider,
+                model: m.name.clone(),
+                description: desc,
+                is_preinstalled: true,
+            });
         }
-        super::setup::MODEL_CATALOG
-            .iter()
+
+        // 2. Curated model catalog entries
+        for cat in super::setup::MODEL_CATALOG {
+            if !entries
+                .iter()
+                .any(|e| e.provider == cat.provider && e.model == cat.model)
+            {
+                entries.push(TuiModelEntry {
+                    provider: cat.provider.to_owned(),
+                    model: cat.model.to_owned(),
+                    description: cat.description.to_owned(),
+                    is_preinstalled: false,
+                });
+            }
+        }
+
+        if query.is_empty() {
+            return entries;
+        }
+
+        entries
+            .into_iter()
             .filter(|entry| {
                 let prov = entry.provider.to_ascii_lowercase();
                 let model = entry.model.to_ascii_lowercase();
@@ -2535,7 +2601,7 @@ impl App {
             }
             KeyCode::Enter => {
                 let entries = self.filtered_model_catalog();
-                if let Some(selected) = entries.get(self.model_picker_index).copied() {
+                if let Some(selected) = entries.get(self.model_picker_index) {
                     let spec = format!("{}:{}", selected.provider, selected.model);
                     self.model_picker_open = false;
                     self.switch_model(&spec);
@@ -2935,6 +3001,10 @@ impl App {
         self.history_index = None;
         self.autocomplete_index = 0;
         self.scroll_offset = 0;
+        self.model_picker_open = false;
+        self.palette_open = false;
+        self.key_modal_open = false;
+        self.skills_modal_open = false;
         let task = line.trim().to_owned();
         if task.is_empty() {
             return false;
@@ -2947,6 +3017,7 @@ impl App {
             "/" | "/commands" | "/help" | "/?" => {
                 for message in [
                     "/help       show TUI commands",
+                    "/goal       execute long-horizon autonomous task with self-healing verification gates (/goal <objective>)",
                     "/model      open Pandora model & provider picker modal (Ctrl-M) or /model <provider:model>",
                     "/effort     show or change reasoning effort (low, medium, high, max) [Alt+Left/Right]",
                     "/key        open masked API key setup modal or /key [<ENV_VAR>] <api-key> (saved to .env)",
@@ -3322,6 +3393,45 @@ impl App {
                 self.push_message(
                     "  3. Atomic reload:   cargo build --release -p pandora-cli --locked && replace installed binary while preserving session (/resume)",
                 );
+            }
+            "/goal" => {
+                self.push_message("goal> Long-Horizon Autonomous Task Execution:");
+                self.push_message("  Usage: /goal <objective or complex task>");
+                self.push_message(
+                    "  Engages autonomous governance mode with Max reasoning effort,",
+                );
+                self.push_message(
+                    "  multi-phase verification gates (Syntax -> Unit -> Integration -> Receipt),",
+                );
+                self.push_message(
+                    "  and iterative self-healing until the objective is fully verified.",
+                );
+            }
+            value if value.starts_with("/goal ") => {
+                let objective = value.trim_start_matches("/goal ").trim();
+                if objective.is_empty() {
+                    self.push_message("usage> /goal <objective>");
+                } else {
+                    self.governance_mode = pandora_types::GovernanceMode::Autonomous;
+                    self.mode_explicit = true;
+                    self.effort = ReasoningEffort::Max;
+                    self.push_message(format!(
+                        "goal> Long-horizon autonomous execution engaged for objective: \"{objective}\""
+                    ));
+                    self.push_message(
+                        "goal> Governance: Autonomous · Reasoning Effort: Max · Verification Gates: Active"
+                    );
+                    let wrapped = format!(
+                        "[LONG-HORIZON AUTONOMOUS GOAL]\n\
+                         Objective: {objective}\n\n\
+                         Autonomous Execution Directives:\n\
+                         1. Self-Directed Planning: Formulate and track milestone checklist before mutating files.\n\
+                         2. Progressive Verification Gates: Syntax/Compile -> Unit/Isolated Tests -> Integration -> Receipt Check.\n\
+                         3. Self-Healing: Inspect errors, diagnose root cause, patch, and re-verify without stopping prematurely.\n\
+                         4. Complete Resolution: Do not conclude until all verification gates pass and the goal is thoroughly verified."
+                    );
+                    self.run_task(wrapped);
+                }
             }
             "/model" | "/models" => {
                 self.open_model_picker();
@@ -4470,6 +4580,31 @@ impl App {
                     path.display()
                 ));
                 self.record_sparkline(2);
+
+                let matched_provider = KEY_PROVIDER_PRESETS
+                    .iter()
+                    .find(|p| p.env_var.eq_ignore_ascii_case(env_name))
+                    .map(|p| p.name)
+                    .or_else(|| {
+                        super::setup::PRESETS
+                            .iter()
+                            .find(|p| p.api_key_env.eq_ignore_ascii_case(env_name))
+                            .map(|p| p.name)
+                    });
+
+                if let Some(prov) = matched_provider {
+                    self.active_provider_label = prov.to_owned();
+                    self.open_model_picker();
+                    self.model_picker_query = format!("{prov}:").chars().collect();
+                    self.push_message(format!(
+                        "model> Key saved for '{prov}'! Please choose your model card from the picker below (use ↑/↓ and Enter):"
+                    ));
+                } else {
+                    self.open_model_picker();
+                    self.push_message(
+                        "model> Key saved! Please select your model card from the picker below (use ↑/↓ and Enter):"
+                    );
+                }
             }
             Err(error) => {
                 self.activity = TuiActivity::Failure;
@@ -6633,9 +6768,11 @@ impl App {
             .map(|(idx, entry)| {
                 let selected = idx == self.model_picker_index;
                 let prefix = if selected { " ▸ " } else { "   " };
-                let badge = if entry.provider == "ollama" {
+                let badge = if entry.is_preinstalled {
+                    "[✓ PRE-INSTALLED]".to_owned()
+                } else if entry.provider == "ollama" {
                     "[✓ LOCAL]".to_owned()
-                } else if let Some(preset) = super::setup::find_preset(entry.provider) {
+                } else if let Some(preset) = super::setup::find_preset(&entry.provider) {
                     let has_key = config_opt
                         .as_ref()
                         .and_then(|cfg| {
@@ -7995,6 +8132,36 @@ mod tests {
         assert_eq!(app.input.iter().collect::<String>(), "/focus ");
 
         let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_goal_command_engages_autonomous_mode_and_max_effort() {
+        let mut app = app();
+        app.governance_mode = pandora_types::GovernanceMode::Supervised;
+        app.effort = super::ReasoningEffort::Low;
+
+        // 1. Bare /goal shows usage
+        app.input = "/goal".chars().collect();
+        app.submit();
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.contains("Long-Horizon Autonomous Task Execution"))
+        );
+
+        // 2. /goal with objective elevates governance mode and effort
+        app.input = "/goal Implement verified caching layer".chars().collect();
+        app.submit();
+        assert_eq!(
+            app.governance_mode,
+            pandora_types::GovernanceMode::Autonomous
+        );
+        assert_eq!(app.effort, super::ReasoningEffort::Max);
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.contains("Long-horizon autonomous execution engaged"))
+        );
     }
 
     #[test]

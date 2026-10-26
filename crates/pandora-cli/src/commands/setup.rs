@@ -206,8 +206,8 @@ pub const MODEL_CATALOG: &[ModelCatalogEntry] = &[
     },
     ModelCatalogEntry {
         provider: "ollama",
-        model: "qwen2.5-coder:32b",
-        description: "Ollama Local · Qwen 2.5 Coder 32B (offline coding powerhouse)",
+        model: "qwen2.5-coder:7b",
+        description: "Ollama Local · Qwen 2.5 Coder 7B (optimal for RTX 5060 / 16GB RAM setups)",
     },
     ModelCatalogEntry {
         provider: "ollama",
@@ -216,13 +216,43 @@ pub const MODEL_CATALOG: &[ModelCatalogEntry] = &[
     },
     ModelCatalogEntry {
         provider: "ollama",
-        model: "hermes3:8b",
-        description: "Ollama Local · Nous Hermes 3 8B (fast local agent)",
+        model: "qwen2.5-coder:32b",
+        description: "Ollama Local · Qwen 2.5 Coder 32B (heavy local coding)",
+    },
+    ModelCatalogEntry {
+        provider: "ollama",
+        model: "qwen2.5-coder:1.5b",
+        description: "Ollama Local · Qwen 2.5 Coder 1.5B (ultra-fast lightweight)",
+    },
+    ModelCatalogEntry {
+        provider: "ollama",
+        model: "deepseek-r1:7b",
+        description: "Ollama Local · DeepSeek R1 7B Distill (fast local reasoning)",
+    },
+    ModelCatalogEntry {
+        provider: "ollama",
+        model: "deepseek-r1:8b",
+        description: "Ollama Local · DeepSeek R1 8B Distill (Llama-based reasoning)",
     },
     ModelCatalogEntry {
         provider: "ollama",
         model: "deepseek-r1:14b",
         description: "Ollama Local · DeepSeek R1 14B (local chain-of-thought)",
+    },
+    ModelCatalogEntry {
+        provider: "ollama",
+        model: "llama3.2:3b",
+        description: "Ollama Local · Meta Llama 3.2 3B (low memory edge model)",
+    },
+    ModelCatalogEntry {
+        provider: "ollama",
+        model: "llama3.1:8b",
+        description: "Ollama Local · Meta Llama 3.1 8B Instruct",
+    },
+    ModelCatalogEntry {
+        provider: "ollama",
+        model: "hermes3:8b",
+        description: "Ollama Local · Nous Hermes 3 8B (fast local agent)",
     },
     ModelCatalogEntry {
         provider: "ollama",
@@ -251,6 +281,11 @@ pub const MODEL_CATALOG: &[ModelCatalogEntry] = &[
     },
     ModelCatalogEntry {
         provider: "openai",
+        model: "gpt-4o-mini",
+        description: "OpenAI Direct · GPT-4o-mini (fast & economical)",
+    },
+    ModelCatalogEntry {
+        provider: "openai",
         model: "o3-mini",
         description: "OpenAI Direct · o3-mini (fast STEM & code reasoning)",
     },
@@ -273,6 +308,16 @@ pub const MODEL_CATALOG: &[ModelCatalogEntry] = &[
         provider: "groq",
         model: "deepseek-r1-distill-llama-70b",
         description: "Groq LPU · DeepSeek R1 Distill Llama 70B",
+    },
+    ModelCatalogEntry {
+        provider: "lmstudio",
+        model: "qwen2.5-coder-7b-instruct",
+        description: "LM Studio Local · Qwen 2.5 Coder 7B Instruct (optimal for RTX 5060)",
+    },
+    ModelCatalogEntry {
+        provider: "lmstudio",
+        model: "qwen2.5-coder-14b-instruct",
+        description: "LM Studio Local · Qwen 2.5 Coder 14B Instruct (localhost:1234)",
     },
     ModelCatalogEntry {
         provider: "lmstudio",
@@ -1262,6 +1307,11 @@ pub fn find_preset(name: &str) -> Option<&'static ProviderPreset> {
 }
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
+    if args.first().map(String::as_str) == Some("inspect")
+        || args.first().map(String::as_str) == Some("models")
+    {
+        return super::models::execute(&args[1..]);
+    }
     let parsed = parse_options(
         args,
         &[
@@ -1274,8 +1324,13 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "preset",
             "protocol",
             "interactive",
+            "inspect",
+            "detect",
         ],
     )?;
+    if parsed.has_flag("inspect") || parsed.has_flag("detect") {
+        return super::models::execute(args);
+    }
     let mut config = load_config(&parsed)?;
     let is_interactive = parsed.value("interactive").is_some()
         || (parsed.values.is_empty()
@@ -1391,11 +1446,40 @@ fn configure_from_options(
                 "setup provider options require '--provider-url <url>' or '--preset <name>' on an unconfigured installation",
             )
         })?;
+
+    // Model resolution:
+    // 1. Explicitly provided via --model
+    // 2. Pre-installed model detection for local providers (e.g. Ollama / LM Studio)
+    // 3. Existing configured model profile
+    // 4. Default fallback from preset
+    let detected_local_model = if parsed.value("model").is_none()
+        && preset
+            .map(|p| p.name == "ollama" || p.name == "lmstudio")
+            .unwrap_or(false)
+    {
+        let workspace = config.workspace_dir();
+        let scanned = super::models::inspect_all_models(workspace);
+        scanned
+            .into_iter()
+            .find(|m| {
+                if preset.map(|p| p.name == "ollama").unwrap_or(false) {
+                    m.source.starts_with("ollama")
+                } else {
+                    m.source.starts_with("lmstudio")
+                }
+            })
+            .map(|m| m.name)
+    } else {
+        None
+    };
+
     let model = parsed
         .value("model")
-        .or_else(|| preset.map(|p| p.default_model))
-        .or(existing_model.as_deref())
-        .unwrap_or("default");
+        .map(str::to_owned)
+        .or(detected_local_model)
+        .or(existing_model)
+        .or_else(|| preset.map(|p| p.default_model.to_owned()))
+        .unwrap_or_else(|| "default".to_owned());
     let api_key_env = parsed
         .value("api-key-env")
         .or_else(|| preset.map(|p| p.api_key_env))
@@ -1410,7 +1494,7 @@ fn configure_from_options(
         .or(existing_protocol)
         .unwrap_or_default();
 
-    configure_default_provider(config, provider_url, model, api_key_env, protocol)
+    configure_default_provider(config, provider_url, &model, api_key_env, protocol)
 }
 
 pub fn test_provider_connectivity(
@@ -1537,29 +1621,110 @@ fn configure_interactively(
         find_preset(entered.trim())
     };
 
-    let (provider_url, default_model, default_key_env, protocol) = if let Some(p) = preset {
-        (
-            p.base_url.to_string(),
-            p.default_model,
-            p.api_key_env,
-            p.protocol,
-        )
+    let (provider_url, default_model, default_key_env, protocol, preset_name) =
+        if let Some(p) = preset {
+            (
+                p.base_url.to_string(),
+                p.default_model,
+                p.api_key_env,
+                p.protocol,
+                Some(p.name),
+            )
+        } else {
+            (
+                entered,
+                "default",
+                DEFAULT_PROVIDER_API_KEY_ENV,
+                ProviderProtocol::OpenAiCompatible,
+                None,
+            )
+        };
+
+    // Model selection: discover pre-installed models and display curated cards for provider
+    let workspace = config.workspace_dir();
+    let scanned_models = super::models::inspect_all_models(workspace);
+    let preinstalled: Vec<_> = scanned_models
+        .iter()
+        .filter(|m| {
+            if let Some(pn) = preset_name {
+                if pn == "ollama" {
+                    return m.source.starts_with("ollama") || m.source.starts_with("workspace");
+                }
+                if pn == "lmstudio" {
+                    return m.source.starts_with("lmstudio") || m.source.starts_with("workspace");
+                }
+            }
+            m.source.starts_with("workspace")
+        })
+        .collect();
+
+    eprintln!("\nModel Card Selection for this provider:");
+    let mut model_choices: Vec<String> = Vec::new();
+    if !preinstalled.is_empty() {
+        eprintln!("  Detected Pre-installed Models:");
+        for m in &preinstalled {
+            model_choices.push(m.name.clone());
+            eprintln!(
+                "    [{}] {:<28} ({}, {}) [✓ PRE-INSTALLED]",
+                model_choices.len(),
+                m.name,
+                m.format,
+                m.size_human
+            );
+        }
+    }
+    let catalog_cards: Vec<_> = if let Some(pn) = preset_name {
+        MODEL_CATALOG
+            .iter()
+            .filter(|c| c.provider.eq_ignore_ascii_case(pn))
+            .collect()
     } else {
-        (
-            entered,
-            "default",
-            DEFAULT_PROVIDER_API_KEY_ENV,
-            ProviderProtocol::OpenAiCompatible,
-        )
+        Vec::new()
+    };
+    if !catalog_cards.is_empty() {
+        eprintln!("  Curated Model Cards:");
+        for c in &catalog_cards {
+            if !model_choices.contains(&c.model.to_string()) {
+                model_choices.push(c.model.to_string());
+                eprintln!(
+                    "    [{}] {:<28} - {}",
+                    model_choices.len(),
+                    c.model,
+                    c.description
+                );
+            }
+        }
+    }
+
+    let default_suggestion = preinstalled
+        .first()
+        .map(|m| m.name.as_str())
+        .or_else(|| catalog_cards.first().map(|c| c.model))
+        .unwrap_or(default_model);
+
+    let prompt_msg = if model_choices.is_empty() {
+        "Model card name".to_owned()
+    } else {
+        format!("Select model card [1-{}/name]", model_choices.len())
     };
 
-    let model = prompt(
-        "Default model",
+    let chosen_input = prompt(
+        &prompt_msg,
         parsed
             .value("model")
             .or_else(|| config.provider_model())
-            .or(Some(default_model)),
+            .or(Some(default_suggestion)),
     )?;
+
+    let model = if let Ok(idx) = chosen_input.trim().parse::<usize>() {
+        if idx >= 1 && idx <= model_choices.len() {
+            model_choices[idx - 1].clone()
+        } else {
+            chosen_input
+        }
+    } else {
+        chosen_input
+    };
     let api_key_env = prompt(
         "API key environment variable",
         parsed
@@ -1761,30 +1926,25 @@ mod tests {
     fn exchange_pkce_code_with_local_mock_token_endpoint() {
         let mock_server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let test_port = mock_server.local_addr().unwrap().port();
-        mock_server.set_nonblocking(true).unwrap();
 
         let handle = std::thread::spawn(move || {
-            let start = std::time::Instant::now();
-            while start.elapsed() < std::time::Duration::from_secs(5) {
-                if let Ok((mut stream, _)) = mock_server.accept() {
-                    let mut buf = [0u8; 2048];
-                    let _ = stream.read(&mut buf);
-                    let resp_body = r#"{"access_token":"sk-real-mock-exchange-token-777","token_type":"Bearer"}"#;
-                    let resp = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                        resp_body.len(),
-                        resp_body
-                    );
-                    let _ = stream.write_all(resp.as_bytes());
-                    let _ = stream.flush();
-                    return true;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(20));
+            if let Ok((mut stream, _)) = mock_server.accept() {
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf);
+                let resp_body =
+                    r#"{"access_token":"sk-real-mock-exchange-token-777","token_type":"Bearer"}"#;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    resp_body.len(),
+                    resp_body
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+                true
+            } else {
+                false
             }
-            false
         });
-
-        std::thread::sleep(std::time::Duration::from_millis(50));
 
         let auth_ep: &'static str =
             Box::leak(format!("http://127.0.0.1:{test_port}/authorize").into_boxed_str());
@@ -1815,15 +1975,8 @@ mod tests {
             created_at: 1000,
         };
 
-        let mut token = None;
-        for _ in 0..10 {
-            if let Ok(t) = exchange_pkce_code_for_token(&spec, &flow, "real_exchange_code") {
-                token = Some(t);
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-        let token = token.expect("should exchange token via HTTP POST");
+        let token = exchange_pkce_code_for_token(&spec, &flow, "real_exchange_code")
+            .expect("should exchange token via HTTP POST");
         assert_eq!(token, "sk-real-mock-exchange-token-777");
         assert!(handle.join().unwrap());
     }

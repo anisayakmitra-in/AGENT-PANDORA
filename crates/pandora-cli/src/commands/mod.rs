@@ -41,6 +41,7 @@ pub(crate) mod kanban;
 mod mcp;
 mod memory;
 mod migration;
+pub(crate) mod models;
 mod operations;
 mod orchestration;
 mod package;
@@ -198,6 +199,17 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "migrate" => migration::execute(&args[1..]),
         "mcp" => mcp::execute(&args[1..]),
         "memory" => memory::execute(&args[1..]),
+        "models" | "inspect" => models::execute(&args[1..]),
+        "goal" => {
+            let mut run_args = vec![
+                "--agent".to_owned(),
+                "--mode".to_owned(),
+                "autonomous".to_owned(),
+                "--goal".to_owned(),
+            ];
+            run_args.extend_from_slice(&args[1..]);
+            run::execute(&run_args)
+        }
         "package" => package::execute(&args[1..]),
         "setup" => setup::execute(&args[1..]),
         "run" => run::execute(&args[1..]),

@@ -1656,6 +1656,27 @@ fn parse_response(bytes: &[u8]) -> Result<ModelResponse, ProviderError> {
             })?;
         tool_calls.push(tool_call);
     }
+    let mut final_text = text;
+    if tool_calls.is_empty() {
+        let trimmed = final_text.trim();
+        if trimmed.starts_with('{')
+            && trimmed.ends_with('}')
+            && let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed)
+            && let Some(name) = val.get("name").and_then(|v| v.as_str())
+        {
+            let arguments = val
+                .get("arguments")
+                .cloned()
+                .unwrap_or(serde_json::json!({}));
+            if arguments.is_object() {
+                let id = format!("call_{}", name.replace('.', "_"));
+                if let Ok(tool_call) = ToolCall::new(id, name, arguments) {
+                    tool_calls.push(tool_call);
+                    final_text = String::new();
+                }
+            }
+        }
+    }
     let usage = response
         .usage
         .map(|usage| {
@@ -1669,7 +1690,7 @@ fn parse_response(bytes: &[u8]) -> Result<ModelResponse, ProviderError> {
         })
         .unwrap_or_default();
     Ok(ModelResponse {
-        text,
+        text: final_text,
         tool_calls,
         usage,
     })
