@@ -185,6 +185,219 @@ impl TuiTab {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct TuiSkillItem {
+    id: &'static str,
+    name: &'static str,
+    category: &'static str,
+    description: &'static str,
+    enabled: bool,
+}
+
+fn default_skills() -> Vec<TuiSkillItem> {
+    vec![
+        TuiSkillItem {
+            id: "coding",
+            name: "Coding Domain Harness",
+            category: "Domain Harness",
+            description: "Autonomous code editing, patching, refactoring, and AST validation",
+            enabled: true,
+        },
+        TuiSkillItem {
+            id: "security",
+            name: "Security Domain Harness",
+            category: "Domain Harness",
+            description: "Daedalus security auditor, CVE vulnerability analysis, secret scanner",
+            enabled: true,
+        },
+        TuiSkillItem {
+            id: "research",
+            name: "Research Domain Harness",
+            category: "Domain Harness",
+            description: "Semantic codebase search, symbol navigation, documentation synthesis",
+            enabled: true,
+        },
+        TuiSkillItem {
+            id: "operations",
+            name: "Operations Domain Harness",
+            category: "Domain Harness",
+            description: "Governed git lifecycle, environment verification, container checks",
+            enabled: true,
+        },
+        TuiSkillItem {
+            id: "data",
+            name: "Data Domain Harness",
+            category: "Domain Harness",
+            description: "Data pipeline transformation, schema mapping, and lakehouse checks",
+            enabled: false,
+        },
+        TuiSkillItem {
+            id: "architecture",
+            name: "Architecture Domain Harness",
+            category: "Domain Harness",
+            description: "System design, component boundary analysis, and dependency DAGs",
+            enabled: false,
+        },
+        TuiSkillItem {
+            id: "patch",
+            name: "Patch Gene",
+            category: "Core Gene",
+            description: "Atomic syntax-validated file mutations with instant rollback",
+            enabled: true,
+        },
+        TuiSkillItem {
+            id: "test",
+            name: "Test Gene",
+            category: "Core Gene",
+            description: "Governed test execution with failure isolation and output capture",
+            enabled: true,
+        },
+        TuiSkillItem {
+            id: "read",
+            name: "Read Gene",
+            category: "Core Gene",
+            description: "Bounded safe file and symbol reader with path validation",
+            enabled: true,
+        },
+        TuiSkillItem {
+            id: "search",
+            name: "Search Gene",
+            category: "Core Gene",
+            description: "High-speed ripgrep/ast-grep codebase search and regex matching",
+            enabled: true,
+        },
+        TuiSkillItem {
+            id: "diff",
+            name: "Diff Gene",
+            category: "Core Gene",
+            description: "Semantic unified diff generator with syntax highlighting",
+            enabled: true,
+        },
+        TuiSkillItem {
+            id: "status",
+            name: "Status Gene",
+            category: "Core Gene",
+            description: "Zero-token governed workspace health and git status inspection",
+            enabled: true,
+        },
+        TuiSkillItem {
+            id: "format",
+            name: "Format Gene",
+            category: "Core Gene",
+            description: "Code style auto-formatter adhering to project configurations",
+            enabled: true,
+        },
+        TuiSkillItem {
+            id: "lint",
+            name: "Lint Gene",
+            category: "Core Gene",
+            description: "Static AST linter and compiler diagnostic verifier",
+            enabled: true,
+        },
+        TuiSkillItem {
+            id: "audit",
+            name: "Daedalus Auditor",
+            category: "Workflow Gene",
+            description: "Static security, credential leak prevention, and privilege monitor",
+            enabled: true,
+        },
+        TuiSkillItem {
+            id: "argus",
+            name: "Argus Reviewer",
+            category: "Workflow Gene",
+            description: "Adversarial code reviewer, fuzz check verifier, and proof checker",
+            enabled: false,
+        },
+        TuiSkillItem {
+            id: "debt",
+            name: "Ariadne Debt",
+            category: "Workflow Gene",
+            description: "Technical debt tracker and architectural complexity evaluator",
+            enabled: false,
+        },
+        TuiSkillItem {
+            id: "measure",
+            name: "Hephaestus Measure",
+            category: "Workflow Gene",
+            description: "Performance benchmarking, latency profiling, and memory tracking",
+            enabled: false,
+        },
+        TuiSkillItem {
+            id: "guide",
+            name: "Athena Guide",
+            category: "Workflow Gene",
+            description: "Architectural constraint validator and design decision guide",
+            enabled: true,
+        },
+    ]
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug)]
+struct KeyProviderPreset {
+    name: &'static str,
+    label: &'static str,
+    env_var: &'static str,
+    help: &'static str,
+}
+
+const KEY_PROVIDER_PRESETS: &[KeyProviderPreset] = &[
+    KeyProviderPreset {
+        name: "anthropic",
+        label: "Anthropic Claude (3.7 / 3.5)",
+        env_var: "ANTHROPIC_API_KEY",
+        help: "Starts with sk-ant-... from console.anthropic.com",
+    },
+    KeyProviderPreset {
+        name: "openai",
+        label: "OpenAI Direct (GPT-4o / o-series)",
+        env_var: "OPENAI_API_KEY",
+        help: "Starts with sk-proj-... from platform.openai.com",
+    },
+    KeyProviderPreset {
+        name: "gemini",
+        label: "Google Gemini (2.0 / 1.5 Pro)",
+        env_var: "GEMINI_API_KEY",
+        help: "From aistudio.google.com or Vertex AI",
+    },
+    KeyProviderPreset {
+        name: "groq",
+        label: "Groq Fast (Llama 3.3 70B)",
+        env_var: "GROQ_API_KEY",
+        help: "Starts with gsk_... from console.groq.com",
+    },
+    KeyProviderPreset {
+        name: "deepseek",
+        label: "DeepSeek (V3 / R1 Reasoner)",
+        env_var: "DEEPSEEK_API_KEY",
+        help: "Starts with sk-... from platform.deepseek.com",
+    },
+    KeyProviderPreset {
+        name: "openrouter",
+        label: "OpenRouter (Multi-Model Gateway)",
+        env_var: "OPENROUTER_API_KEY",
+        help: "Starts with sk-or-... from openrouter.ai/keys",
+    },
+    KeyProviderPreset {
+        name: "mistral",
+        label: "Mistral AI (Codestral / Large)",
+        env_var: "MISTRAL_API_KEY",
+        help: "From console.mistral.ai",
+    },
+    KeyProviderPreset {
+        name: "ollama",
+        label: "Ollama Local (Offline / No Key)",
+        env_var: "OLLAMA_API_KEY",
+        help: "Local daemon at http://localhost:11434 (use 'local' or leave blank)",
+    },
+    KeyProviderPreset {
+        name: "copilot",
+        label: "GitHub Copilot Subscription",
+        env_var: "COPILOT_OAUTH_TOKEN",
+        help: "Extracted GitHub Copilot subscription token",
+    },
+];
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct PaletteEntry {
     command: &'static str,
     category: &'static str,
@@ -203,6 +416,12 @@ const PALETTE_ENTRIES: &[PaletteEntry] = &[
         command: "/model",
         category: "Model",
         description: "Open interactive Pandora model & provider selector modal (Ctrl+M)",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/keys",
+        category: "Setup",
+        description: "Open interactive Provider Key Vault modal to configure BYOK API keys (F3 / Ctrl+K)",
         immediate: true,
     },
     PaletteEntry {
@@ -370,7 +589,7 @@ const PALETTE_ENTRIES: &[PaletteEntry] = &[
     PaletteEntry {
         command: "/skills",
         category: "Harness",
-        description: "Inspect loaded procedural skills and Domain Harnesses",
+        description: "Open interactive Skills & Domain Harnesses Hub modal (F4 / Ctrl+S)",
         immediate: true,
     },
     PaletteEntry {
@@ -828,6 +1047,11 @@ struct App {
     key_modal_open: bool,
     key_modal_env: String,
     key_modal_input: Vec<char>,
+    key_modal_provider_index: usize,
+    skills_modal_open: bool,
+    skills_modal_query: Vec<char>,
+    skills_modal_index: usize,
+    active_skills: Vec<TuiSkillItem>,
     active_provider_label: String,
     active_model_label: String,
     active_base_url: String,
@@ -1089,6 +1313,11 @@ impl App {
             key_modal_open: false,
             key_modal_env: "OPENROUTER_API_KEY".to_owned(),
             key_modal_input: Vec::new(),
+            key_modal_provider_index: 0,
+            skills_modal_open: false,
+            skills_modal_query: Vec::new(),
+            skills_modal_index: 0,
+            active_skills: default_skills(),
             active_provider_label: "unconfigured".to_owned(),
             active_model_label: "unconfigured".to_owned(),
             active_base_url: "none".to_owned(),
@@ -1580,6 +1809,9 @@ impl App {
         if self.key_modal_open {
             return self.handle_key_modal_key(key);
         }
+        if self.skills_modal_open {
+            return self.handle_skills_modal_key(key);
+        }
 
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
@@ -1591,8 +1823,12 @@ impl App {
                     self.open_model_picker();
                     return false;
                 }
+                KeyCode::Char('k') if self.input.is_empty() => {
+                    self.open_key_modal(None);
+                    return false;
+                }
                 KeyCode::Char('s') => {
-                    self.toggle_stash();
+                    self.open_skills_modal();
                     return false;
                 }
                 KeyCode::Char('g') => {
@@ -1870,29 +2106,31 @@ impl App {
                 false
             }
             KeyCode::F(3) => {
+                self.open_key_modal(None);
+                false
+            }
+            KeyCode::F(4) => {
+                self.open_skills_modal();
+                false
+            }
+            KeyCode::F(5) => {
+                self.effort = self.effort.next();
+                let effort_desc = match self.effort {
+                    ReasoningEffort::Low => "System 1 Reflex (Direct / Fast)",
+                    ReasoningEffort::Medium => "Balanced Reasoning",
+                    ReasoningEffort::High => "Deep Reasoning (CoT)",
+                    ReasoningEffort::Max => "System 2 LATS MCTS (Tree Search)",
+                };
+                self.push_message(format!("effort> {} — {}", self.effort.name(), effort_desc));
+                false
+            }
+            KeyCode::F(6) => {
                 self.theme = self.theme.next();
                 self.push_message(format!("theme> {}", self.theme.name()));
                 false
             }
-            KeyCode::F(4) => {
-                self.sidebar_visible = !self.sidebar_visible;
-                false
-            }
-            KeyCode::F(5) => {
-                self.refresh_provider_telemetry();
-                self.refresh_kanban_silent();
-                self.refresh_fleet_silent();
-                self.scroll_offset = 0;
-                false
-            }
-            KeyCode::F(6) => {
-                self.effort = self.effort.next();
-                self.push_message(format!("effort> {}", self.effort.name()));
-                false
-            }
             KeyCode::F(7) => {
-                self.centered_layout = !self.centered_layout;
-                self.push_message(format!("layout> centered = {}", self.centered_layout));
+                self.sidebar_visible = !self.sidebar_visible;
                 false
             }
             KeyCode::F(8) => {
@@ -2042,11 +2280,132 @@ impl App {
         self.key_modal_open = true;
         self.palette_open = false;
         self.model_picker_open = false;
-        self.key_modal_env = env_override
-            .filter(|val| !val.trim().is_empty())
-            .map(|val| val.trim().to_owned())
-            .unwrap_or_else(|| self.active_api_key_env.clone());
+        self.skills_modal_open = false;
+        if let Some(target) = env_override.filter(|val| !val.trim().is_empty()) {
+            if let Some(pos) = KEY_PROVIDER_PRESETS.iter().position(|p| p.env_var == target) {
+                self.key_modal_provider_index = pos;
+            }
+            self.key_modal_env = target.trim().to_owned();
+        } else {
+            if let Some(pos) = KEY_PROVIDER_PRESETS
+                .iter()
+                .position(|p| p.env_var == self.active_api_key_env)
+            {
+                self.key_modal_provider_index = pos;
+            }
+            if let Some(preset) = KEY_PROVIDER_PRESETS.get(self.key_modal_provider_index) {
+                self.key_modal_env = preset.env_var.to_owned();
+            } else {
+                self.key_modal_env = self.active_api_key_env.clone();
+            }
+        }
         self.key_modal_input.clear();
+    }
+
+    fn open_skills_modal(&mut self) {
+        self.skills_modal_open = true;
+        self.palette_open = false;
+        self.model_picker_open = false;
+        self.key_modal_open = false;
+        self.skills_modal_query.clear();
+        self.skills_modal_index = 0;
+    }
+
+    fn filtered_skills(&self) -> Vec<(usize, &TuiSkillItem)> {
+        let query = self
+            .skills_modal_query
+            .iter()
+            .collect::<String>()
+            .trim()
+            .to_ascii_lowercase();
+        self.active_skills
+            .iter()
+            .enumerate()
+            .filter(|(_, skill)| {
+                if query.is_empty() {
+                    true
+                } else {
+                    skill.name.to_ascii_lowercase().contains(&query)
+                        || skill.category.to_ascii_lowercase().contains(&query)
+                        || skill.description.to_ascii_lowercase().contains(&query)
+                        || skill.id.to_ascii_lowercase().contains(&query)
+                }
+            })
+            .collect()
+    }
+
+    fn handle_skills_modal_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc | KeyCode::F(4) => {
+                self.skills_modal_open = false;
+                false
+            }
+            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.skills_modal_open = false;
+                false
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.skills_modal_query.clear();
+                self.skills_modal_index = 0;
+                false
+            }
+            KeyCode::Up | KeyCode::BackTab => {
+                self.skills_modal_index = self.skills_modal_index.saturating_sub(1);
+                false
+            }
+            KeyCode::Down | KeyCode::Tab => {
+                let len = self.filtered_skills().len();
+                if len > 0 {
+                    self.skills_modal_index =
+                        min(self.skills_modal_index.saturating_add(1), len - 1);
+                }
+                false
+            }
+            KeyCode::Char(' ') => {
+                let target_idx = self
+                    .filtered_skills()
+                    .get(self.skills_modal_index)
+                    .map(|&(idx, _)| idx);
+                if let Some(item) = target_idx.and_then(|idx| self.active_skills.get_mut(idx)) {
+                    item.enabled = !item.enabled;
+                }
+                false
+            }
+            KeyCode::Enter => {
+                self.skills_modal_open = false;
+                let active_domains = self
+                    .active_skills
+                    .iter()
+                    .filter(|s| s.enabled && s.category == "Domain Harness")
+                    .count();
+                let active_genes = self
+                    .active_skills
+                    .iter()
+                    .filter(|s| {
+                        s.enabled && (s.category == "Core Gene" || s.category == "Workflow Gene")
+                    })
+                    .count();
+                self.push_message(format!(
+                    "skills> updated active skills: {active_domains} domain harnesses, {active_genes} genes active"
+                ));
+                false
+            }
+            KeyCode::Backspace => {
+                self.skills_modal_query.pop();
+                self.skills_modal_index = 0;
+                false
+            }
+            KeyCode::Char(ch)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                self.skills_modal_query.push(ch);
+                self.skills_modal_index = 0;
+                false
+            }
+            _ => false,
+        }
     }
 
     fn filtered_model_catalog(&self) -> Vec<&'static super::setup::ModelCatalogEntry> {
@@ -2190,8 +2549,33 @@ impl App {
 
     fn handle_key_modal_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
-            KeyCode::Esc => {
+            KeyCode::Esc | KeyCode::F(3) => {
                 self.key_modal_open = false;
+                self.key_modal_input.clear();
+                false
+            }
+            KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.key_modal_open = false;
+                self.key_modal_input.clear();
+                false
+            }
+            KeyCode::Tab | KeyCode::Down => {
+                self.key_modal_provider_index =
+                    (self.key_modal_provider_index + 1) % KEY_PROVIDER_PRESETS.len();
+                self.key_modal_env = KEY_PROVIDER_PRESETS[self.key_modal_provider_index]
+                    .env_var
+                    .to_owned();
+                self.key_modal_input.clear();
+                false
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                self.key_modal_provider_index = (self.key_modal_provider_index
+                    + KEY_PROVIDER_PRESETS.len()
+                    - 1)
+                    % KEY_PROVIDER_PRESETS.len();
+                self.key_modal_env = KEY_PROVIDER_PRESETS[self.key_modal_provider_index]
+                    .env_var
+                    .to_owned();
                 self.key_modal_input.clear();
                 false
             }
@@ -2237,6 +2621,7 @@ impl App {
             || self.palette_open
             || self.model_picker_open
             || self.key_modal_open
+            || self.skills_modal_open
         {
             return Vec::new();
         }
@@ -2756,20 +3141,24 @@ impl App {
                     }
                 ));
             }
-            "/hotkeys" | "/keys" => {
+            "/hotkeys" => {
                 for line in [
                     "hotkeys> Navigation & Views:",
                     "  Tab / Shift+Tab / Alt+H,L  Cycle workspace views (Console, Kanban, Memory, Governance)",
                     "  Alt+1..4                   Jump directly to workspace view 1..4",
-                    "  Ctrl+B / Alt+M / F4        Toggle Runtime Telemetry sidebar",
-                    "  Ctrl+T / /dock / F8        Toggle Pandora Live Work Dock",
-                    "  Alt+C / F7                 Toggle centered layout mode",
-                    "  Alt+X / /todos / F9        Toggle pinned Todo & Kanban card",
-                    "  Alt+I / /info / F10        Toggle pinned Session & Usage Info card",
-                    "  Ctrl+F / F11               Toggle Focus mode (minimal distraction)",
-                    "  F3                         Cycle UI Theme (auto -> dark -> light -> mono)",
-                    "  Alt+B / F12                Cycle Backdrop shader (subtle -> vivid -> off)",
-                    "  F5                         Refresh telemetry, active view & fleet status",
+                    "  F1 / Ctrl+P                Open interactive Command Palette",
+                    "  F2 / Ctrl+M                Open interactive Model & Provider Selector",
+                    "  F3 / Ctrl+K                Open interactive Provider Key Vault (BYOK Keys)",
+                    "  F4 / Ctrl+S                Open interactive Skills & Domain Harnesses Hub",
+                    "  F5                         Cycle Reasoning Effort (System 1 Reflex / System 2 LATS)",
+                    "  F6                         Cycle UI Theme (auto -> dark -> light -> mono)",
+                    "  F7 / Alt+M / Ctrl+B        Toggle Runtime Telemetry sidebar",
+                    "  F8 / Ctrl+T / /dock        Toggle Pandora Live Work Dock",
+                    "  Alt+C                      Toggle centered layout mode",
+                    "  Alt+X / /todos             Toggle pinned Todo & Kanban card",
+                    "  Alt+I / /info              Toggle pinned Session & Usage Info card",
+                    "  Ctrl+F                     Toggle Focus mode (minimal distraction)",
+                    "  Alt+B                      Cycle Backdrop shader (subtle -> vivid -> off)",
                     "hotkeys> Mouse & Touch Navigation:",
                     "  Click Top Tabs             Switch to Console, Kanban, Memory, or Governance",
                     "  Click Model Badge          Open interactive Model & Provider Selector",
@@ -2803,7 +3192,10 @@ impl App {
                     self.push_message(line);
                 }
             }
-            "/skills" => {
+            "/skills" | "/skills list" => {
+                self.open_skills_modal();
+            }
+            "/skills summary" | "/tools summary" => {
                 self.show_tools_summary();
             }
             "/hill-climb" | "/goal-score" => {
@@ -2966,7 +3358,7 @@ impl App {
                     self.handle_preset_apply(rest);
                 }
             }
-            "/key" => {
+            "/key" | "/keys" => {
                 self.open_key_modal(None);
             }
             value if value.starts_with("/key ") => {
@@ -3033,7 +3425,7 @@ impl App {
                 }
             }
             "/tools" => {
-                self.show_tools_summary();
+                self.open_skills_modal();
             }
             "/stash" => {
                 self.toggle_stash();
@@ -3301,6 +3693,8 @@ impl App {
                     | "/preset"
                     | "/presets"
                     | "/key"
+                    | "/keys"
+                    | "/skills"
                     | "/stash"
                     | "/update"
                     | "/uninstall"
@@ -3984,6 +4378,51 @@ impl App {
             let secret = tokens[1..].join(" ");
             self.save_api_key(env_name, &secret);
         }
+    }
+
+    fn get_provider_key_status(&self, env_var: &str) -> (bool, String) {
+        if let Ok(val) = std::env::var(env_var) {
+            let clean = val.trim();
+            if !clean.is_empty() {
+                let tail: String = clean
+                    .chars()
+                    .rev()
+                    .take(4)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+                let head: String = clean.chars().take(4).collect();
+                return (true, format!("{head}••••{tail}"));
+            }
+        }
+        if let Ok(config) = super::load_config(&self.args) {
+            let dotenv = super::setup::dotenv_path(&config);
+            if let Ok(content) = std::fs::read_to_string(&dotenv) {
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if let Some(val) = trimmed
+                        .strip_prefix(env_var)
+                        .and_then(|rest| rest.trim_start().strip_prefix('='))
+                    {
+                        let clean = val.trim().trim_matches('"').trim_matches('\'');
+                        if !clean.is_empty() {
+                            let tail: String = clean
+                                .chars()
+                                .rev()
+                                .take(4)
+                                .collect::<Vec<_>>()
+                                .into_iter()
+                                .rev()
+                                .collect();
+                            let head: String = clean.chars().take(4).collect();
+                            return (true, format!("{head}••••{tail}"));
+                        }
+                    }
+                }
+            }
+        }
+        (false, "NOT CONFIGURED".to_owned())
     }
 
     fn save_api_key(&mut self, env_name: &str, secret: &str) {
@@ -5021,6 +5460,8 @@ impl App {
             self.render_model_picker_modal(frame, area);
         } else if self.key_modal_open {
             self.render_key_modal(frame, area);
+        } else if self.skills_modal_open {
+            self.render_skills_modal(frame, area);
         }
 
         if self.theme != TuiTheme::Mono {
@@ -5075,17 +5516,31 @@ impl App {
             "{}:{} ",
             self.active_provider_label, self.active_model_label
         );
-        let used =
-            3 + "PANDORA TUI".chars().count() + version.chars().count() + model.chars().count();
-        let gap = usize::from(rows[0].width).saturating_sub(used).max(1);
-        let brand = Line::from(vec![
+        let mut brand_spans = vec![
             Span::styled(" ◆ ", self.theme.accent()),
-            Span::styled("PANDORA TUI", self.theme.title()),
+            Span::styled("PANDORA // SUNLESS", self.theme.title().add_modifier(Modifier::BOLD)),
             Span::styled(version, self.theme.muted()),
-            Span::raw(" ".repeat(gap)),
-            Span::styled(model, self.theme.warning()),
-        ]);
-        frame.render_widget(Paragraph::new(brand), rows[0]);
+        ];
+        if rows[0].width >= 88 {
+            brand_spans.push(Span::styled("  [F1 Help] [F2 Model] [F3 Keys] [F4 Skills] [F5 S1/S2]", self.theme.muted()));
+        }
+        let total_chars: usize = brand_spans.iter().map(|s| s.content.chars().count()).sum::<usize>() + model.chars().count();
+        let gap = usize::from(rows[0].width).saturating_sub(total_chars).max(1);
+        brand_spans.push(Span::raw(" ".repeat(gap)));
+        brand_spans.push(Span::styled(model, self.theme.warning()));
+        frame.render_widget(Paragraph::new(Line::from(brand_spans)), rows[0]);
+
+        let tab_row_split = if rows[1].width >= 80 {
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Min(48), Constraint::Length(32)])
+                .split(rows[1])
+        } else {
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(100), Constraint::Length(0)])
+                .split(rows[1])
+        };
 
         let tab_titles = TuiTab::ALL
             .iter()
@@ -5097,7 +5552,25 @@ impl App {
             .highlight_style(self.theme.title().add_modifier(Modifier::UNDERLINED))
             .divider("·")
             .padding("  ", "  ");
-        frame.render_widget(tabs, rows[1]);
+        frame.render_widget(tabs, tab_row_split[0]);
+
+        if tab_row_split[1].width >= 20 {
+            let active_skills_count = self.active_skills.iter().filter(|s| s.enabled).count();
+            let cred_badge = if self.credential_ready {
+                Span::styled(" [🔑 Ready] ", self.theme.prompt())
+            } else {
+                Span::styled(" [⚠️ Keys Missing] ", self.theme.warning())
+            };
+            let skills_badge = Span::styled(
+                format!("⚡ {} Skills Active ", active_skills_count),
+                self.theme.accent(),
+            );
+            let badges_line = Line::from(vec![cred_badge, skills_badge]);
+            frame.render_widget(
+                Paragraph::new(badges_line).alignment(ratatui::layout::Alignment::Right),
+                tab_row_split[1],
+            );
+        }
     }
 
     fn render_console_workspace(&self, frame: &mut Frame, area: Rect) {
@@ -5311,19 +5784,33 @@ impl App {
             Line::from(vec![label("session"), Span::raw(session)]),
             Line::from(""),
             Line::from(vec![
+                label("shortcuts"),
+                Span::styled("[F1 Palette]", self.theme.accent()),
+                Span::raw("  "),
+                Span::styled("[F2 Model]", self.theme.accent()),
+                Span::raw("  "),
+                Span::styled("[F3 Keys Vault]", self.theme.accent()),
+                Span::raw("  "),
+                Span::styled("[F4 Skills Hub]", self.theme.accent()),
+                Span::raw("  "),
+                Span::styled("[F5 Reflex/LATS]", self.theme.accent()),
+            ]),
+            Line::from(vec![
                 label("commands"),
                 Span::styled("/help", self.theme.accent()),
                 Span::raw("  "),
                 Span::styled("/model", self.theme.accent()),
                 Span::raw("  "),
-                Span::styled("/tools", self.theme.accent()),
+                Span::styled("/keys", self.theme.accent()),
+                Span::raw("  "),
+                Span::styled("/skills", self.theme.accent()),
                 Span::raw("  "),
                 Span::styled("/update", self.theme.accent()),
             ]),
             Line::from(vec![
-                label("keys"),
+                label("controls"),
                 Span::styled(
-                    "F1/Ctrl+P palette · F2/Ctrl+M model · Alt+1-4/Click tabs · F1-F12 shortcuts · Full mouse",
+                    "F1-F5 app actions · Alt+1-4 switch views · Ctrl+Y/N approve/deny · Full mouse support",
                     self.theme.muted(),
                 ),
             ]),
@@ -6149,58 +6636,292 @@ impl App {
     }
 
     fn render_key_modal(&self, frame: &mut Frame, area: Rect) {
-        let modal_area = centered_rect(68, 42, area);
+        let modal_area = centered_rect(76, 72, area);
         frame.render_widget(Clear, modal_area);
 
         let outer = Block::default()
-            .title(" ◆ Pandora Provider Credential Setup (.env Secret Store) ")
+            .title(" ◆ Pandora Provider Key Vault (BYOK Multi-Provider Secret Store) ")
             .borders(Borders::ALL)
             .border_type(BorderType::Double)
             .border_style(self.theme.accent());
         let inner = outer.inner(modal_area);
         frame.render_widget(outer, modal_area);
 
-        if inner.height < 4 || inner.width < 12 {
+        if inner.height < 6 || inner.width < 20 {
             return;
         }
 
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(KEY_PROVIDER_PRESETS.len().min(8) as u16 + 2),
+                Constraint::Min(6),
+                Constraint::Length(1),
+            ])
+            .split(inner);
+
+        // Section 1: Provider selection list
+        let provider_items = KEY_PROVIDER_PRESETS
+            .iter()
+            .enumerate()
+            .map(|(idx, preset)| {
+                let selected = idx == self.key_modal_provider_index;
+                let prefix = if selected { " ▸ " } else { "   " };
+                let (is_set, masked) = self.get_provider_key_status(preset.env_var);
+                let badge = if is_set {
+                    Span::styled(format!("[✓ {masked}]"), self.theme.prompt())
+                } else {
+                    Span::styled("[✗ NOT SET]", self.theme.muted())
+                };
+                let name_style = if selected {
+                    self.theme.title().add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                let line = Line::from(vec![
+                    Span::styled(
+                        prefix,
+                        if selected {
+                            self.theme.accent()
+                        } else {
+                            self.theme.muted()
+                        },
+                    ),
+                    Span::styled(format!("{:<28}", preset.label), name_style),
+                    Span::raw(" "),
+                    Span::styled(format!("{:<22}", preset.env_var), self.theme.muted()),
+                    Span::raw(" "),
+                    badge,
+                ]);
+                ListItem::new(line)
+            })
+            .collect::<Vec<_>>();
+
+        let provider_block = Block::default()
+            .title(" Select Provider (Tab / ↑↓ to switch) ")
+            .borders(Borders::BOTTOM)
+            .border_style(self.theme.border());
+        frame.render_widget(List::new(provider_items).block(provider_block), chunks[0]);
+
+        // Section 2: Input box and preset info
+        let current_preset = &KEY_PROVIDER_PRESETS[self.key_modal_provider_index];
         let dotenv_display = super::load_config(&self.args)
             .map(|cfg| super::setup::dotenv_path(&cfg).display().to_string())
             .unwrap_or_else(|_| ".env".to_owned());
-        let masked: String = std::iter::repeat_n('•', self.key_modal_input.len()).collect();
-        let lines = vec![
+        let masked_input: String = std::iter::repeat_n('•', self.key_modal_input.len()).collect();
+        let (current_is_set, current_masked) =
+            self.get_provider_key_status(current_preset.env_var);
+
+        let input_lines = vec![
             Line::from(vec![
-                Span::styled(" Active Provider: ", self.theme.muted()),
-                Span::styled(&self.active_provider_label, self.theme.title()),
-                Span::styled(" · Model: ", self.theme.muted()),
-                Span::raw(&self.active_model_label),
+                Span::styled(" Active Target: ", self.theme.muted()),
+                Span::styled(
+                    current_preset.label,
+                    self.theme.title().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" · Target Env: ", self.theme.muted()),
+                Span::styled(current_preset.env_var, self.theme.prompt()),
+                Span::styled(" · Status: ", self.theme.muted()),
+                if current_is_set {
+                    Span::styled(
+                        format!("Configured ({current_masked})"),
+                        self.theme.prompt(),
+                    )
+                } else {
+                    Span::styled("Missing / Unset", self.theme.warning())
+                },
             ]),
             Line::from(vec![
-                Span::styled(" Target Env Var:  ", self.theme.muted()),
-                Span::styled(&self.key_modal_env, self.theme.prompt()),
+                Span::styled(" Guidance:      ", self.theme.muted()),
+                Span::styled(current_preset.help, self.theme.muted()),
             ]),
             Line::from(vec![
-                Span::styled(" Secret File:     ", self.theme.muted()),
+                Span::styled(" Secret Path:   ", self.theme.muted()),
                 Span::raw(truncate(
                     &dotenv_display,
-                    usize::from(inner.width.saturating_sub(19)),
+                    usize::from(chunks[1].width.saturating_sub(18)),
                 )),
             ]),
             Line::from(""),
             Line::from(vec![
-                Span::styled(" API Key (masked): ", self.theme.title()),
                 Span::styled(
-                    format!("{masked} ({} chars)", self.key_modal_input.len()),
-                    self.theme.prompt(),
+                    " API Key Secret: ",
+                    self.theme.title().add_modifier(Modifier::BOLD),
                 ),
+                if self.key_modal_input.is_empty() {
+                    Span::styled("<type or paste new secret here>", self.theme.muted())
+                } else {
+                    Span::styled(
+                        format!(
+                            "{masked_input} ({} chars entered)",
+                            self.key_modal_input.len()
+                        ),
+                        self.theme.prompt(),
+                    )
+                },
             ]),
-            Line::from(""),
-            Line::from(Span::styled(
-                " Press Enter to save to .env · Ctrl+U to clear · Esc to cancel",
-                self.theme.muted(),
-            )),
         ];
-        frame.render_widget(Paragraph::new(lines), inner);
+        frame.render_widget(Paragraph::new(input_lines), chunks[1]);
+
+        // Section 3: Shortcuts footer
+        let footer = Line::from(Span::styled(
+            " Tab/↑↓ Select Provider · Type Key · Enter Save to .env · Ctrl+U Clear · Esc Close",
+            self.theme.muted(),
+        ));
+        frame.render_widget(Paragraph::new(footer), chunks[2]);
+    }
+
+    fn render_skills_modal(&self, frame: &mut Frame, area: Rect) {
+        let modal_area = centered_rect(80, 75, area);
+        frame.render_widget(Clear, modal_area);
+
+        let outer = Block::default()
+            .title(" ◆ Pandora Skills & Domain Harnesses Hub (Space to toggle · Enter to save · Esc to close) ")
+            .borders(Borders::ALL)
+            .border_type(BorderType::Double)
+            .border_style(self.theme.accent());
+        let inner = outer.inner(modal_area);
+        frame.render_widget(outer, modal_area);
+
+        if inner.height < 6 || inner.width < 20 {
+            return;
+        }
+
+        let main_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Min(6),
+                Constraint::Length(1),
+            ])
+            .split(inner);
+
+        // Section 1: Search bar
+        let query_str = self.skills_modal_query.iter().collect::<String>();
+        let search_line = Line::from(vec![
+            Span::styled(" Filter: ", self.theme.title()),
+            Span::raw(&query_str),
+            if query_str.is_empty() {
+                Span::styled(
+                    " (type to search skills, domains, or genes)",
+                    self.theme.muted(),
+                )
+            } else {
+                Span::raw("")
+            },
+        ]);
+        frame.render_widget(
+            Paragraph::new(search_line).block(Block::default().borders(Borders::BOTTOM)),
+            main_chunks[0],
+        );
+
+        // Section 2: Split columns - Left: List, Right: Details
+        let body_cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
+            .split(main_chunks[1]);
+
+        let filtered = self.filtered_skills();
+        let max_items = usize::from(body_cols[0].height.max(1));
+        let start = self
+            .skills_modal_index
+            .saturating_sub(max_items.saturating_sub(1));
+
+        let items = filtered
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(max_items)
+            .map(|(list_idx, &(_orig_idx, skill))| {
+                let selected = list_idx == self.skills_modal_index;
+                let check = if skill.enabled { "[✓]" } else { "[ ]" };
+                let check_style = if skill.enabled {
+                    self.theme.prompt()
+                } else {
+                    self.theme.muted()
+                };
+                let prefix = if selected { "▸ " } else { "  " };
+                let style = if selected {
+                    self.theme.title().add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                let spans = vec![
+                    Span::styled(
+                        prefix,
+                        if selected {
+                            self.theme.accent()
+                        } else {
+                            self.theme.muted()
+                        },
+                    ),
+                    Span::styled(format!("{check} "), check_style),
+                    Span::styled(format!("{:<24}", truncate(skill.name, 24)), style),
+                    Span::styled(format!(" [{}]", skill.category), self.theme.muted()),
+                ];
+                ListItem::new(Line::from(spans))
+            })
+            .collect::<Vec<_>>();
+
+        frame.render_widget(
+            List::new(items).block(
+                Block::default()
+                    .borders(Borders::RIGHT)
+                    .border_style(self.theme.border()),
+            ),
+            body_cols[0],
+        );
+
+        // Right details pane
+        if let Some(&(_orig_idx, selected_skill)) = filtered.get(self.skills_modal_index) {
+            let details_lines = vec![
+                Line::from(vec![
+                    Span::styled(" Name:        ", self.theme.muted()),
+                    Span::styled(
+                        selected_skill.name,
+                        self.theme.title().add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+                Line::from(vec![
+                    Span::styled(" Category:    ", self.theme.muted()),
+                    Span::styled(selected_skill.category, self.theme.accent()),
+                ]),
+                Line::from(vec![
+                    Span::styled(" Skill ID:    ", self.theme.muted()),
+                    Span::styled(selected_skill.id, self.theme.prompt()),
+                ]),
+                Line::from(vec![
+                    Span::styled(" Status:      ", self.theme.muted()),
+                    if selected_skill.enabled {
+                        Span::styled(
+                            "ACTIVE (ENABLED) [✓]",
+                            self.theme.prompt().add_modifier(Modifier::BOLD),
+                        )
+                    } else {
+                        Span::styled("INACTIVE (DISABLED) [ ]", self.theme.muted())
+                    },
+                ]),
+                Line::from(""),
+                Line::from(vec![Span::styled(" Description: ", self.theme.muted())]),
+                Line::from(Span::raw(selected_skill.description)),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled(" Policy:      ", self.theme.muted()),
+                    Span::styled(
+                        "ReferenceMonitor + Parliament Governed",
+                        self.theme.warning(),
+                    ),
+                ]),
+            ];
+            frame.render_widget(Paragraph::new(details_lines), body_cols[1]);
+        }
+
+        // Section 3: Footer
+        let footer = Line::from(Span::styled(
+            " ↑↓ Navigate · Space Toggle Active · Type to Filter · Enter Apply & Save · Esc Close",
+            self.theme.muted(),
+        ));
+        frame.render_widget(Paragraph::new(footer), main_chunks[2]);
     }
 
     fn render_palette_modal(&self, frame: &mut Frame, area: Rect) {
@@ -6268,32 +6989,45 @@ fn style_transcript_line(line: &str, width: usize, theme: TuiTheme) -> Line<'sta
     let text = truncate(line, width);
     if let Some(rest) = text.strip_prefix("you> ") {
         Line::from(vec![
-            Span::styled("you> ", theme.prompt()),
+            Span::styled("👤 YOU ▸ ", theme.prompt().add_modifier(Modifier::BOLD)),
             Span::raw(rest.to_owned()),
         ])
     } else if let Some(rest) = text.strip_prefix("pandora> ") {
         Line::from(vec![
-            Span::styled("pandora> ", theme.title()),
+            Span::styled("🤖 PANDORA ▸ ", theme.title().add_modifier(Modifier::BOLD)),
             Span::raw(rest.to_owned()),
         ])
-    } else if let Some(rest) = text.strip_prefix("error> ") {
+    } else if let Some(rest) = text.strip_prefix("skills> ") {
         Line::from(vec![
-            Span::styled("error> ", theme.error()),
+            Span::styled("⚡ SKILLS ▸ ", theme.accent().add_modifier(Modifier::BOLD)),
             Span::raw(rest.to_owned()),
         ])
-    } else if let Some(rest) = text.strip_prefix("approval> ") {
+    } else if let Some(rest) = text.strip_prefix("tools> ") {
         Line::from(vec![
-            Span::styled("approval> ", theme.warning()),
-            Span::raw(rest.to_owned()),
-        ])
-    } else if let Some(rest) = text.strip_prefix("model> ") {
-        Line::from(vec![
-            Span::styled("model> ", theme.prompt()),
+            Span::styled("🛠️ TOOLS ▸ ", theme.accent().add_modifier(Modifier::BOLD)),
             Span::raw(rest.to_owned()),
         ])
     } else if let Some(rest) = text.strip_prefix("key> ") {
         Line::from(vec![
-            Span::styled("key> ", theme.prompt()),
+            Span::styled("🔑 VAULT ▸ ", theme.prompt().add_modifier(Modifier::BOLD)),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("approval> ") {
+        Line::from(vec![
+            Span::styled(
+                "🛡️ PARLIAMENT ▸ ",
+                theme.warning().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("error> ") {
+        Line::from(vec![
+            Span::styled("❌ ERROR ▸ ", theme.error().add_modifier(Modifier::BOLD)),
+            Span::raw(rest.to_owned()),
+        ])
+    } else if let Some(rest) = text.strip_prefix("model> ") {
+        Line::from(vec![
+            Span::styled("🧠 MODEL ▸ ", theme.prompt().add_modifier(Modifier::BOLD)),
             Span::raw(rest.to_owned()),
         ])
     } else if let Some(rest) = text.strip_prefix("config> ") {
@@ -6304,11 +7038,6 @@ fn style_transcript_line(line: &str, width: usize, theme: TuiTheme) -> Line<'sta
     } else if let Some(rest) = text.strip_prefix("setup> ") {
         Line::from(vec![
             Span::styled("setup> ", theme.prompt()),
-            Span::raw(rest.to_owned()),
-        ])
-    } else if let Some(rest) = text.strip_prefix("tools> ") {
-        Line::from(vec![
-            Span::styled("tools> ", theme.accent()),
             Span::raw(rest.to_owned()),
         ])
     } else if let Some(rest) = text.strip_prefix("stash> ") {
@@ -6328,7 +7057,10 @@ fn style_transcript_line(line: &str, width: usize, theme: TuiTheme) -> Line<'sta
         ])
     } else if let Some(rest) = text.strip_prefix("effort> ") {
         Line::from(vec![
-            Span::styled("effort> ", theme.accent()),
+            Span::styled(
+                "⚡ REASONING ▸ ",
+                theme.accent().add_modifier(Modifier::BOLD),
+            ),
             Span::raw(rest.to_owned()),
         ])
     } else if let Some(rest) = text.strip_prefix("session> ") {
