@@ -60,17 +60,45 @@ fi
 # an explicit PANDORA_REQUIRE_SIGNATURE=0, which is a deliberate acceptance of that
 # risk rather than the default state.
 if [ "${PANDORA_REQUIRE_SIGNATURE:-1}" != "0" ]; then
-  command -v cosign >/dev/null 2>&1 || fail "cosign is required to verify this release; install it from https://github.com/sigstore/cosign/releases, or set PANDORA_REQUIRE_SIGNATURE=0 to accept an unverified manifest"
-  identity="${PANDORA_COSIGN_IDENTITY:-}"
+  cosign_bin="cosign"
+  if ! command -v cosign >/dev/null 2>&1; then
+    cosign_platform=""
+    case "$platform:$architecture" in
+      Linux:x86_64|Linux:amd64) cosign_platform="cosign-linux-amd64" ;;
+      Linux:arm64|Linux:aarch64) cosign_platform="cosign-linux-arm64" ;;
+      Darwin:x86_64|Darwin:amd64) cosign_platform="cosign-darwin-amd64" ;;
+      Darwin:arm64|Darwin:aarch64) cosign_platform="cosign-darwin-arm64" ;;
+    esac
+    if [ -n "$cosign_platform" ]; then
+      printf '%s\n' "Fetching cosign to verify release signature..."
+      if curl --fail --silent --show-error --location --retry 2 --output "$temporary/cosign" "https://github.com/sigstore/cosign/releases/download/v2.4.1/$cosign_platform" 2>/dev/null; then
+        chmod 0755 "$temporary/cosign"
+        cosign_bin="$temporary/cosign"
+      fi
+    fi
+  fi
+  if ! command -v "$cosign_bin" >/dev/null 2>&1 && [ ! -x "$temporary/cosign" ]; then
+    fail "cosign is required to verify this release; install it from https://github.com/sigstore/cosign/releases, or set PANDORA_REQUIRE_SIGNATURE=0 to accept an unverified manifest"
+  fi
+  identity="${PANDORA_COSIGN_IDENTITY:-https://github.com/anisayakmitra-in/AGENT-PANDORA/.github/workflows/release.yml@refs/tags/$version}"
   [ -n "$identity" ] || fail "PANDORA_COSIGN_IDENTITY is required for signature verification"
   download "$base/$version/checksums.txt.sig" "$temporary/checksums.txt.sig"
   download "$base/$version/checksums.txt.pem" "$temporary/checksums.txt.pem"
-  cosign verify-blob "$temporary/checksums.txt" \
-    --certificate "$temporary/checksums.txt.pem" \
-    --signature "$temporary/checksums.txt.sig" \
-    --certificate-identity "$identity" \
-    --certificate-oidc-issuer "${PANDORA_COSIGN_OIDC_ISSUER:-https://token.actions.githubusercontent.com}" \
-    >/dev/null || fail "release signature verification failed"
+  if [ "$cosign_bin" = "cosign" ]; then
+    cosign verify-blob "$temporary/checksums.txt" \
+      --certificate "$temporary/checksums.txt.pem" \
+      --signature "$temporary/checksums.txt.sig" \
+      --certificate-identity "$identity" \
+      --certificate-oidc-issuer "${PANDORA_COSIGN_OIDC_ISSUER:-https://token.actions.githubusercontent.com}" \
+      >/dev/null || fail "release signature verification failed"
+  else
+    "$cosign_bin" verify-blob "$temporary/checksums.txt" \
+      --certificate "$temporary/checksums.txt.pem" \
+      --signature "$temporary/checksums.txt.sig" \
+      --certificate-identity "$identity" \
+      --certificate-oidc-issuer "${PANDORA_COSIGN_OIDC_ISSUER:-https://token.actions.githubusercontent.com}" \
+      >/dev/null || fail "release signature verification failed"
+  fi
 fi
 
 mkdir -p "$install_dir"

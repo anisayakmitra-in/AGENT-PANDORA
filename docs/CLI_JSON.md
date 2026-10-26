@@ -239,7 +239,7 @@ numeric `exit_code` field; the process exit status is authoritative.
 Example:
 
 ```json
-{"version":"0.1","code":"usage_error","message":"update requires '--release <tag>', '--artifact <path>', or '--rollback'","details":{}}
+{"version":"0.1","code":"usage_error","message":"update checksum and signature options require '--artifact <path>'","details":{}}
 ```
 
 Credential values, raw environment values, prompts, model output, and hidden

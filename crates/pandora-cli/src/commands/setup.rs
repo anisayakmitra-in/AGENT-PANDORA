@@ -1759,8 +1759,8 @@ mod tests {
 
     #[test]
     fn exchange_pkce_code_with_local_mock_token_endpoint() {
-        let test_port = 19456;
-        let mock_server = std::net::TcpListener::bind(format!("127.0.0.1:{test_port}")).unwrap();
+        let mock_server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let test_port = mock_server.local_addr().unwrap().port();
         mock_server.set_nonblocking(true).unwrap();
 
         let handle = std::thread::spawn(move || {
@@ -1786,12 +1786,17 @@ mod tests {
 
         std::thread::sleep(std::time::Duration::from_millis(50));
 
+        let auth_ep: &'static str =
+            Box::leak(format!("http://127.0.0.1:{test_port}/authorize").into_boxed_str());
+        let token_ep: &'static str =
+            Box::leak(format!("http://127.0.0.1:{test_port}/token").into_boxed_str());
+
         let spec = OAuthProviderSpec {
             name: "test-oauth",
             label: "Test Provider",
             preset_name: "test",
-            auth_endpoint: "http://127.0.0.1:19456/authorize",
-            token_endpoint: "http://127.0.0.1:19456/token",
+            auth_endpoint: auth_ep,
+            token_endpoint: token_ep,
             client_id: "test-client",
             redirect_uri: "http://127.0.0.1:1455/callback",
             scopes: "test",
@@ -1806,7 +1811,7 @@ mod tests {
             code_verifier: "xyz-verifier".to_owned(),
             code_challenge: "ch".to_owned(),
             redirect_uri: "http://127.0.0.1:1455/callback".to_owned(),
-            auth_url: "http://127.0.0.1:19456/authorize".to_owned(),
+            auth_url: auth_ep.to_owned(),
             created_at: 1000,
         };
 

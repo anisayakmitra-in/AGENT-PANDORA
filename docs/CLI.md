@@ -1626,6 +1626,8 @@ untouched, and migration is one-way.
 ## Verified updates and uninstall
 
 ```text
+pandora update
+pandora update --check
 pandora update --release v<version>
 pandora update --release v<version> --channel stable
 pandora update --release v<version>-beta.<n> --channel beta
@@ -1638,11 +1640,14 @@ pandora uninstall --dry-run
 pandora uninstall --yes
 ```
 
+`pandora update` without arguments queries the latest official GitHub release and
+checks if a newer version is available; if so, it downloads and verifies the official
+release artifact for your platform before staging it. Use `pandora update --check` or
+`pandora update check` to inspect release availability without installing.
 `update --release` accepts one explicit SemVer tag, selects the matching
 Windows, macOS, or Linux asset from Pandora's official GitHub release, and
-verifies it against that release's `checksums.txt` before staging it. It never
-resolves an ambiguous latest release. Use `--dry-run` to verify a tag without
-changing files.
+verifies it against that release's `checksums.txt` before staging it. Use
+`--dry-run` to verify a tag without changing files.
 
 The optional channel must match the explicit tag: stable accepts a plain
 SemVer version, release-candidate accepts an `-rc.<n>` prerelease, and beta

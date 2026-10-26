@@ -173,12 +173,6 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         .value("release")
         .or_else(|| positional_version.filter(|&v| v != "check" && v != "rollback"));
 
-    if !is_check_only && release_arg.is_none() {
-        return Err(CliError::usage(
-            "update requires '--release <tag>', '--artifact <path>', or '--rollback'",
-        ));
-    }
-
     let target_release = if let Some(rel) = release_arg {
         if rel == "latest" {
             fetch_latest_release_tag().map_err(|error| update_error(error, Path::new("latest")))?
@@ -660,7 +654,7 @@ fn update_error(error: UpdateError, path: &Path) -> CliError {
 #[cfg(test)]
 mod tests {
     use super::{
-        UpdateError, download_release_artifact, validate_release_channel, verify_artifact,
+        UpdateError, download_release_artifact, execute, validate_release_channel, verify_artifact,
     };
     use ed25519_dalek::{Signer, SigningKey};
     use std::fs;
@@ -813,5 +807,15 @@ mod tests {
         .expect("historic release checksum entries should remain supported");
 
         assert_eq!(downloaded.verified.bytes, artifact);
+    }
+
+    #[test]
+    fn update_without_flags_does_not_fail_with_usage_error() {
+        let result = execute(&[]);
+        // It either succeeds (if on latest release) or fails with a download/network error,
+        // but NEVER fails with the old usage error requiring --release, --artifact, or --rollback.
+        if let Err(err) = result {
+            assert_ne!(err.code, "usage_error");
+        }
     }
 }

@@ -64,21 +64,42 @@ try {
     # requires an explicit PANDORA_REQUIRE_SIGNATURE=0, which is a deliberate
     # acceptance of that risk rather than the default state.
     if ($env:PANDORA_REQUIRE_SIGNATURE -ne "0") {
+        $cosignCmd = "cosign"
         if (-not (Get-Command cosign -ErrorAction SilentlyContinue)) {
-            Fail "cosign is required to verify this release; install it from https://github.com/sigstore/cosign/releases, or set PANDORA_REQUIRE_SIGNATURE=0 to accept an unverified manifest"
+            $cosignPath = Join-Path $temporary "cosign.exe"
+            try {
+                Write-Output "Fetching cosign to verify release signature..."
+                Invoke-WebRequest -Uri "https://github.com/sigstore/cosign/releases/download/v2.4.1/cosign-windows-amd64.exe" -OutFile $cosignPath
+                $cosignCmd = $cosignPath
+            } catch {
+                Fail "cosign is required to verify this release; install it from https://github.com/sigstore/cosign/releases, or set PANDORA_REQUIRE_SIGNATURE=0 to accept an unverified manifest"
+            }
         }
-        if ([string]::IsNullOrWhiteSpace($env:PANDORA_COSIGN_IDENTITY)) {
+        $identity = if ([string]::IsNullOrWhiteSpace($env:PANDORA_COSIGN_IDENTITY)) {
+            "https://github.com/anisayakmitra-in/AGENT-PANDORA/.github/workflows/release.yml@refs/tags/$version"
+        } else {
+            $env:PANDORA_COSIGN_IDENTITY
+        }
+        if ([string]::IsNullOrWhiteSpace($identity)) {
             Fail "PANDORA_COSIGN_IDENTITY is required for signature verification"
         }
         $signaturePath = Join-Path $temporary "checksums.txt.sig"
         $certificatePath = Join-Path $temporary "checksums.txt.pem"
         Invoke-WebRequest -Uri "$base/$version/checksums.txt.sig" -OutFile $signaturePath
         Invoke-WebRequest -Uri "$base/$version/checksums.txt.pem" -OutFile $certificatePath
-        cosign verify-blob $checksumsPath `
-            --certificate $certificatePath `
-            --signature $signaturePath `
-            --certificate-identity $env:PANDORA_COSIGN_IDENTITY `
-            --certificate-oidc-issuer $(if ($env:PANDORA_COSIGN_OIDC_ISSUER) { $env:PANDORA_COSIGN_OIDC_ISSUER } else { "https://token.actions.githubusercontent.com" }) | Out-Null
+        if ($cosignCmd -eq "cosign") {
+            cosign verify-blob $checksumsPath `
+                --certificate $certificatePath `
+                --signature $signaturePath `
+                --certificate-identity $identity `
+                --certificate-oidc-issuer $(if ($env:PANDORA_COSIGN_OIDC_ISSUER) { $env:PANDORA_COSIGN_OIDC_ISSUER } else { "https://token.actions.githubusercontent.com" }) | Out-Null
+        } else {
+            & $cosignCmd verify-blob $checksumsPath `
+                --certificate $certificatePath `
+                --signature $signaturePath `
+                --certificate-identity $identity `
+                --certificate-oidc-issuer $(if ($env:PANDORA_COSIGN_OIDC_ISSUER) { $env:PANDORA_COSIGN_OIDC_ISSUER } else { "https://token.actions.githubusercontent.com" }) | Out-Null
+        }
         if ($LASTEXITCODE -ne 0) { Fail "release signature verification failed" }
     }
 
