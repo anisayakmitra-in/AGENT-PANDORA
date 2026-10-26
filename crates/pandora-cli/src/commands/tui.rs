@@ -2282,7 +2282,10 @@ impl App {
         self.model_picker_open = false;
         self.skills_modal_open = false;
         if let Some(target) = env_override.filter(|val| !val.trim().is_empty()) {
-            if let Some(pos) = KEY_PROVIDER_PRESETS.iter().position(|p| p.env_var == target) {
+            if let Some(pos) = KEY_PROVIDER_PRESETS
+                .iter()
+                .position(|p| p.env_var == target)
+            {
                 self.key_modal_provider_index = pos;
             }
             self.key_modal_env = target.trim().to_owned();
@@ -2569,10 +2572,9 @@ impl App {
                 false
             }
             KeyCode::BackTab | KeyCode::Up => {
-                self.key_modal_provider_index = (self.key_modal_provider_index
-                    + KEY_PROVIDER_PRESETS.len()
-                    - 1)
-                    % KEY_PROVIDER_PRESETS.len();
+                self.key_modal_provider_index =
+                    (self.key_modal_provider_index + KEY_PROVIDER_PRESETS.len() - 1)
+                        % KEY_PROVIDER_PRESETS.len();
                 self.key_modal_env = KEY_PROVIDER_PRESETS[self.key_modal_provider_index]
                     .env_var
                     .to_owned();
@@ -5518,14 +5520,26 @@ impl App {
         );
         let mut brand_spans = vec![
             Span::styled(" ◆ ", self.theme.accent()),
-            Span::styled("PANDORA // SUNLESS", self.theme.title().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "PANDORA // SUNLESS",
+                self.theme.title().add_modifier(Modifier::BOLD),
+            ),
             Span::styled(version, self.theme.muted()),
         ];
         if rows[0].width >= 88 {
-            brand_spans.push(Span::styled("  [F1 Help] [F2 Model] [F3 Keys] [F4 Skills] [F5 S1/S2]", self.theme.muted()));
+            brand_spans.push(Span::styled(
+                "  [F1 Help] [F2 Model] [F3 Keys] [F4 Skills] [F5 S1/S2]",
+                self.theme.muted(),
+            ));
         }
-        let total_chars: usize = brand_spans.iter().map(|s| s.content.chars().count()).sum::<usize>() + model.chars().count();
-        let gap = usize::from(rows[0].width).saturating_sub(total_chars).max(1);
+        let total_chars: usize = brand_spans
+            .iter()
+            .map(|s| s.content.chars().count())
+            .sum::<usize>()
+            + model.chars().count();
+        let gap = usize::from(rows[0].width)
+            .saturating_sub(total_chars)
+            .max(1);
         brand_spans.push(Span::raw(" ".repeat(gap)));
         brand_spans.push(Span::styled(model, self.theme.warning()));
         frame.render_widget(Paragraph::new(Line::from(brand_spans)), rows[0]);
@@ -6709,8 +6723,7 @@ impl App {
             .map(|cfg| super::setup::dotenv_path(&cfg).display().to_string())
             .unwrap_or_else(|_| ".env".to_owned());
         let masked_input: String = std::iter::repeat_n('•', self.key_modal_input.len()).collect();
-        let (current_is_set, current_masked) =
-            self.get_provider_key_status(current_preset.env_var);
+        let (current_is_set, current_masked) = self.get_provider_key_status(current_preset.env_var);
 
         let input_lines = vec![
             Line::from(vec![
