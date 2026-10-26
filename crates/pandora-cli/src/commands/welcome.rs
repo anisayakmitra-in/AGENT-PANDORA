@@ -36,6 +36,7 @@ pub fn render_welcome_banner(
     let bold = if is_color { "\x1b[1m" } else { "" };
     let reset = if is_color { "\x1b[0m" } else { "" };
 
+    let version = env!("CARGO_PKG_VERSION");
     let model_display = truncate_str(model.unwrap_or("unconfigured"), 20);
     let provider_display = truncate_str(provider.unwrap_or("none"), 18);
     let workspace_str = truncate_str(&workspace.display().to_string(), 34);
@@ -52,7 +53,7 @@ pub fn render_welcome_banner(
     );
 
     let card = format!(
-        "{violet}╭─────────────────────────── {bold}Pandora Agent v2.0.0{reset}{violet} · {green}constitutional{violet} · {amber}hardened-wasm{violet} ───────────────────────────╮{reset}\n\
+        "{violet}╭─────────────────────────── {bold}Pandora Agent v{version}{reset}{violet} · {green}constitutional{violet} · {amber}hardened-wasm{violet} ───────────────────────────╮{reset}\n\
 {violet}│{reset}                                   {bold}Constitutional Subsystems & Engines{reset}                                        {violet}│{reset}\n\
 {violet}│{reset}  {purple}⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⡀⠀⣀⣀⠀⢀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀{reset}   {cyan}governance:{reset} shadow_council, parliament, reference_monitor                           {violet}│{reset}\n\
 {violet}│{reset}  {purple}⠀⠀⠀⠀⠀⠀⢀⣠⣴⣾⣿⣿⣇⠸⣿⣿⠇⣸⣿⣿⣷⣦⣄⡀⠀⠀⠀⠀⠀⠀{reset}   {cyan}confinement:{reset} wasmtime_jail, process_job_object, landlock                               {violet}│{reset}\n\
