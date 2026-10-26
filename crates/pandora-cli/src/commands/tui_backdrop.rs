@@ -77,7 +77,7 @@ pub fn apply_backdrop(buf: &mut Buffer, area: Rect, mode: BackdropMode, is_light
         for col in 0..area.width {
             let x = area.x + col;
             let cell = &mut buf[(x, y)];
-            if cell.symbol() == " " {
+            if cell.bg == Color::Reset {
                 cell.set_bg(bg_color);
             }
         }

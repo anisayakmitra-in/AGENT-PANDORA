@@ -760,6 +760,7 @@ struct App {
     activity: TuiActivity,
     active_tab: TuiTab,
     sidebar_visible: bool,
+    welcome_card: bool,
     focus_mode: bool,
     work_dock_open: bool,
     scroll_offset: usize,
@@ -995,8 +996,7 @@ impl App {
             draft_stash: Vec::new(),
             autocomplete_index: 0,
             messages: vec![
-                "Pandora TUI".to_owned(),
-                "Enter a task. Press Ctrl-C or Esc to close; /help lists commands.".to_owned(),
+                "Enter a task to begin, or type /help for commands. Ctrl-C quits.".to_owned(),
             ],
             turns: 0,
             last_turn_ms: None,
@@ -1010,7 +1010,8 @@ impl App {
             theme,
             activity: TuiActivity::Idle,
             active_tab: TuiTab::Console,
-            sidebar_visible: true,
+            sidebar_visible: false,
+            welcome_card: true,
             focus_mode: false,
             work_dock_open: false,
             scroll_offset: 0,
@@ -2434,6 +2435,7 @@ impl App {
                 self.pending = None;
                 self.turns = 0;
                 self.messages.clear();
+                self.welcome_card = true;
                 self.scroll_offset = 0;
                 self.push_message(
                     "session> Started new clean session. Ready for tasks.".to_owned(),
@@ -2441,6 +2443,7 @@ impl App {
             }
             "/clear" => {
                 self.messages.clear();
+                self.welcome_card = false;
                 self.scroll_offset = 0;
             }
             "/theme" => {
@@ -4297,28 +4300,32 @@ impl App {
     }
 
     fn render_top_bar(&self, frame: &mut Frame, area: Rect) {
-        let horizontal = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(34), Constraint::Min(40)])
-            .split(area);
+        let block = Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(self.theme.border());
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)])
+            .split(inner);
 
-        let brand = Paragraph::new(vec![
-            Line::from(vec![
-                Span::styled(" ◆ PANDORA TUI ", self.theme.title()),
-                Span::styled(
-                    format!("v{}", env!("CARGO_PKG_VERSION")),
-                    self.theme.muted(),
-                ),
-            ]),
-            Line::from(Span::styled(" Governed Agent Console", self.theme.muted())),
-        ])
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(self.theme.border()),
+        let version = format!(" v{}", env!("CARGO_PKG_VERSION"));
+        let model = format!(
+            "{}:{} ",
+            self.active_provider_label, self.active_model_label
         );
-        frame.render_widget(brand, horizontal[0]);
+        let used =
+            3 + "PANDORA TUI".chars().count() + version.chars().count() + model.chars().count();
+        let gap = usize::from(rows[0].width).saturating_sub(used).max(1);
+        let brand = Line::from(vec![
+            Span::styled(" ◆ ", self.theme.accent()),
+            Span::styled("PANDORA TUI", self.theme.title()),
+            Span::styled(version, self.theme.muted()),
+            Span::raw(" ".repeat(gap)),
+            Span::styled(model, self.theme.warning()),
+        ]);
+        frame.render_widget(Paragraph::new(brand), rows[0]);
 
         let tab_titles = TuiTab::ALL
             .iter()
@@ -4326,18 +4333,11 @@ impl App {
             .collect::<Vec<_>>();
         let tabs = Tabs::new(tab_titles)
             .select(self.active_tab.index())
-            .highlight_style(self.theme.accent())
-            .divider("│")
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .border_style(self.theme.border())
-                    .title(
-                        " Views (Tab/Alt+1..4 · Ctrl+M Model · Ctrl+P Palette · Ctrl+T Dock · Ctrl+B Sidebar) ",
-                    ),
-            );
-        frame.render_widget(tabs, horizontal[1]);
+            .style(self.theme.muted())
+            .highlight_style(self.theme.title().add_modifier(Modifier::UNDERLINED))
+            .divider("·")
+            .padding("  ", "  ");
+        frame.render_widget(tabs, rows[1]);
     }
 
     fn render_console_workspace(&self, frame: &mut Frame, area: Rect) {
@@ -4508,13 +4508,91 @@ impl App {
         frame.render_widget(dock, area);
     }
 
+    fn welcome_lines(&self, width: usize) -> Vec<Line<'static>> {
+        let rule = "─".repeat(width.saturating_sub(2).min(72));
+        let label = |name: &str| Span::styled(format!("  {name:<10}"), self.theme.muted());
+        let workspace = std::env::current_dir()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|_| ".".to_owned());
+        let session = self
+            .session_id
+            .clone()
+            .unwrap_or_else(|| "not started".to_owned());
+        vec![
+            Line::from(vec![
+                Span::styled("  ◆ ", self.theme.accent()),
+                Span::styled("PANDORA", self.theme.title()),
+                Span::styled(
+                    format!("  v{}", env!("CARGO_PKG_VERSION")),
+                    self.theme.muted(),
+                ),
+                Span::styled("  governed agent console", self.theme.muted()),
+            ]),
+            Line::from(Span::styled(format!("  {rule}"), self.theme.border())),
+            Line::from(vec![
+                label("model"),
+                Span::styled(
+                    format!("{}:{}", self.active_provider_label, self.active_model_label),
+                    self.theme.warning(),
+                ),
+            ]),
+            Line::from(vec![
+                label("workspace"),
+                Span::raw(truncate(&workspace, width.saturating_sub(14))),
+            ]),
+            Line::from(vec![
+                label("mode"),
+                Span::raw(format!(
+                    "{} · effort {}",
+                    self.governance_mode.as_str(),
+                    self.effort.name()
+                )),
+            ]),
+            Line::from(vec![label("session"), Span::raw(session)]),
+            Line::from(""),
+            Line::from(vec![
+                label("commands"),
+                Span::styled("/help", self.theme.accent()),
+                Span::raw("  "),
+                Span::styled("/model", self.theme.accent()),
+                Span::raw("  "),
+                Span::styled("/tools", self.theme.accent()),
+                Span::raw("  "),
+                Span::styled("/update", self.theme.accent()),
+            ]),
+            Line::from(vec![
+                label("keys"),
+                Span::styled(
+                    "Ctrl+P palette · Ctrl+M model · Alt+1-4 views · Ctrl+B sidebar · Ctrl+C quit",
+                    self.theme.muted(),
+                ),
+            ]),
+            Line::from(""),
+        ]
+    }
+
     fn render_transcript_pane(&self, frame: &mut Frame, area: Rect) {
-        let inner_width = usize::from(area.width.saturating_sub(2));
-        let mut lines = Vec::new();
+        let inner = Rect::new(
+            area.x.saturating_add(1),
+            area.y,
+            area.width.saturating_sub(2),
+            area.height,
+        );
+        let inner_width = usize::from(inner.width);
+        let mut wrapped = Vec::new();
         for message in &self.messages {
-            wrap_message(message, inner_width, &mut lines);
+            wrap_message(message, inner_width, &mut wrapped);
         }
-        let body_height = usize::from(area.height.saturating_sub(2));
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        if self.welcome_card && area.height >= 14 && area.width >= 50 {
+            lines.extend(self.welcome_lines(inner_width));
+        }
+        lines.extend(
+            wrapped
+                .iter()
+                .map(|line| style_transcript_line(line, inner_width, self.theme)),
+        );
+        let body_height = usize::from(inner.height);
         let max_scroll = lines.len().saturating_sub(body_height);
         let effective_scroll = min(self.scroll_offset, max_scroll);
         let first = max_scroll.saturating_sub(effective_scroll);
@@ -4523,31 +4601,18 @@ impl App {
             .iter()
             .skip(first)
             .take(body_height)
-            .map(|line| style_transcript_line(line, inner_width, self.theme))
+            .cloned()
             .collect::<Vec<_>>();
-
-        let title = if effective_scroll > 0 {
-            format!(
-                " Transcript (scrolled +{effective_scroll} · PageDown / Scroll down to follow) "
-            )
-        } else {
-            " Transcript (Scroll wheel / PageUp / Shift+Up to view history) ".to_owned()
-        };
-
-        let transcript = Paragraph::new(visible_lines).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(self.theme.border())
-                .title(title),
-        );
-        frame.render_widget(transcript, area);
+        frame.render_widget(Paragraph::new(visible_lines), inner);
 
         if lines.len() > body_height {
             let mut scrollbar_state = ScrollbarState::new(lines.len()).position(first);
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(Some("▲"))
-                .end_symbol(Some("▼"));
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_symbol(None)
+                .thumb_symbol("┃")
+                .style(self.theme.border());
             frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
         }
     }
@@ -5073,32 +5138,55 @@ impl App {
     }
 
     fn render_status_bar(&self, frame: &mut Frame, area: Rect) {
-        let session = self.session_id.as_deref().unwrap_or("not started");
         let focus_tag = if self.focus_mode { " · ◉ FOCUS" } else { "" };
         let stash_tag = if self.draft_stash.is_empty() {
             String::new()
         } else {
-            format!(" · 📌 {} stashed", self.draft_stash.len())
+            format!(" · {} stashed", self.draft_stash.len())
+        };
+        let scroll_tag = if self.scroll_offset > 0 {
+            format!(" · ↑ scrolled +{} (PageDown to follow)", self.scroll_offset)
+        } else {
+            String::new()
         };
         let approval_tag = if self.pending.is_some() {
-            " · ⚠️ APPROVAL PENDING (Ctrl+Y / /approve)"
+            " · APPROVAL PENDING (Ctrl+Y / /approve)"
         } else {
             ""
         };
-        let status = format!(
-            "session: {session} · model: {}:{} · mode: {} · turns: {} · state: {} · view: {} · theme: {}{focus_tag}{stash_tag}{approval_tag}",
-            self.active_provider_label,
-            self.active_model_label,
-            self.governance_mode.as_str(),
-            self.turns,
-            self.activity.name(),
-            self.active_tab.name(),
-            self.theme.name()
+        let hint = if area.width >= WIDE_LAYOUT_MIN_WIDTH {
+            "Ctrl+P palette · Ctrl+M model · /help "
+        } else {
+            ""
+        };
+        let width = usize::from(area.width);
+        let body = truncate(
+            &format!(
+                "{} · {}:{} · {} · turns {}{focus_tag}{stash_tag}{scroll_tag}{approval_tag}",
+                self.activity.name(),
+                self.active_provider_label,
+                self.active_model_label,
+                self.governance_mode.as_str(),
+                self.turns,
+            ),
+            width.saturating_sub(hint.chars().count() + 3),
         );
-        frame.render_widget(
-            Paragraph::new(truncate(&status, usize::from(area.width))).style(self.theme.muted()),
-            area,
-        );
+        let gap = width
+            .saturating_sub(body.chars().count() + 3 + hint.chars().count())
+            .max(1);
+        let body_style = if self.pending.is_some() {
+            self.theme.warning()
+        } else {
+            self.theme.muted()
+        };
+        let line = Line::from(vec![
+            Span::raw(" "),
+            Span::styled("●", self.theme.activity_style(self.activity)),
+            Span::styled(format!(" {body}"), body_style),
+            Span::raw(" ".repeat(gap)),
+            Span::styled(hint, self.theme.muted()),
+        ]);
+        frame.render_widget(Paragraph::new(line), area);
     }
 
     fn render_input_box(&self, frame: &mut Frame, area: Rect) {
@@ -5113,7 +5201,9 @@ impl App {
             Span::styled(prompt_glyph, prompt_style),
             Span::raw(input),
         ]);
-        let mut block = Block::default().borders(Borders::TOP);
+        let mut block = Block::default()
+            .borders(Borders::TOP)
+            .border_style(self.theme.border());
         if self.pending.is_some() {
             block = block.title(Span::styled(
                 " [⚠️ PENDING APPROVAL: /approve (Ctrl+Y) to allow · /deny (Ctrl+N) to reject] ",
@@ -6113,6 +6203,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).expect("test terminal");
         let mut app = app();
         app.active_tab = TuiTab::Console;
+        app.sidebar_visible = true;
 
         terminal
             .draw(|frame| app.render(frame))
@@ -6352,6 +6443,7 @@ mod tests {
         }
 
         app.work_dock_open = true;
+        app.sidebar_visible = true;
         terminal.draw(|frame| app.render(frame)).unwrap();
         let rendered = terminal
             .backend()
