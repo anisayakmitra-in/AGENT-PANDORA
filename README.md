@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="docs/assets/logo.jpg" alt="Pandora Logo" width="280" />
+  <img src="docs/assets/social-preview.png" alt="AGENT-PANDORA: SUNLESS Release" width="100%" />
 </p>
 
-# AGENT-PANDORA (`pandora`)
+# AGENT-PANDORA (`pandora`) — Major Release `v3.0.0-SUNLESS`
 
-**Pandora** is a local-first, governed AI agent runtime and interactive terminal workbench written in Rust (`#[(forbid(unsafe_code))]` across all runtime, CLI, provider, harness, and service crates).
+**Pandora** is a local-first, governed AI agent runtime and interactive terminal workbench written in Rust (`#![forbid(unsafe_code)]` across all runtime, CLI, provider, harness, and service crates).
 
 Typing **`pandora`** in an interactive terminal immediately launches the full-screen **Pandora TUI**—a 4-view agentic mission control featuring a live multi-turn console, a 4-column Kanban & Fleet supervisor board, a 5-tier Hierarchical Memory & Context VFS inspector, a Tripartite Constitutional Governance & Supply-Chain Trust dashboard, and a Spotlight-style Fuzzy Command Palette (`Ctrl+P` / `F1`).
 
@@ -14,7 +14,21 @@ Every tool invocation, filesystem edit, process execution, WebAssembly Gene call
 User / TUI / CLI  ──►  ExecutionController  ──►  Shadow Council  ──►  Parliament  ──►  ReferenceMonitor  ──►  EffectExecutor  ──►  Cryptographic Receipt
 ```
 
-> **Status**: The active release identity is `2.0.0`. Releases follow strict semantic versioning, Ed25519 device trust, and verifiable execution receipts.
+> **Status**: The active release identity is `3.0.0-SUNLESS`. Releases follow strict semantic versioning, Ed25519 device trust, and verifiable execution receipts.
+
+---
+
+## What's New in `v3.0.0-SUNLESS`
+
+- **Declarative Structured Reasoning (DSRs)** (`pandora dsrs show|inspect|cot`): Rust-native DSPy paradigm with type-safe `Signature` schemas, dynamic few-shot binding, and automatic `.into_chain_of_thought()` rationale prepending.
+- **Genetic-Pareto (GEPA) Optimizer** (`pandora gepa frontier|optimize`): Multi-objective Pareto frontier tracking across 3 orthogonal axes (Pass Rate maximize, Token Cost minimize, Step Latency minimize) with trace-based reflective invariant synthesis.
+- **6-Level Optimization Ladder ($L_0 \to L_5$)** (`pandora evolution ladder`): Formalized progression from instruction prompts ($L_0$), memory ($L_1$), workflow graphs ($L_2$), harness code ($L_3$), meta-optimizers ($L_4$), to joint harness + weights ($L_5$) with safeguards against Reward Hacking, Capability Collapse, and Harness Drift.
+- **Darwin Whole-Agent Genomes & Routing Cards** (`pandora evolution genome|routing-card`): Natural selection over `[system_prompt, tool_bindings, model_target, hyperparameters]` governed by a 4-Point Safety Spine (sandboxed execution, immutable grader, monotonic rollback, compute budget) yielding empirical domain routing cards.
+- **Meta^n Recursive Emergent Depth & Fixed-Point $\Omega$** (`pandora evolution depth`): Constructive $N$-th order meta-layers injecting `pre_process` hooks and `code_library` utilities with fixed-point termination $\Omega$ ($M(\mathcal{P}^*) = \mathcal{P}^*$).
+- **Product Requirement Prompts (PRP) Pipeline** (`pandora prp inspect|scaffold|validate`): 4-level task hierarchy with 4 progressive validation gates (Syntax $\to$ Unit $\to$ Integration $\to$ Receipt Check).
+- **Universal Evolutionary Lineage Visualizer** (`pandora evolution lineage --export-html <file>`): Complete DAG tracking mutations and score deltas, exportable to a standalone interactive SVG/HTML visualizer.
+- **Harness² 8-Component Tree** (`pandora harness tree|recursive|library`): Canonical $c_1 \dots c_8$ decomposition with recursive Propose–Probe–Compose engine.
+- **Extreme Keyboard & Full Mouse Navigation in TUI**: Comprehensive mouse click support and extreme readline/function key bindings.
 
 ---
 

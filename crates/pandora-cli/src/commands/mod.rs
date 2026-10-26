@@ -357,6 +357,7 @@ fn is_flag(name: &str) -> bool {
             | "once"
             | "plan"
             | "rollback"
+            | "step"
             | "yes"
             | "retryable"
             | "value-stdin"
