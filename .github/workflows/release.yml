@@ -473,6 +473,8 @@ jobs:
       - name: Exercise published CLI lifecycle (Unix)
         if: runner.os != 'Windows'
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           predecessor="$(python scripts/release_predecessor.py "$GITHUB_REF_NAME")"
@@ -586,8 +588,11 @@ jobs:
       - name: Exercise published CLI lifecycle (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
+          $env:GH_TOKEN = "${{ github.token }}"
           $predecessor = (& python scripts/release_predecessor.py $env:GITHUB_REF_NAME).Trim()
           $env:PANDORA_INSTALL_DIR = Join-Path $env:RUNNER_TEMP "pandora-bin"
           $env:PANDORA_CONFIG = Join-Path $env:RUNNER_TEMP "pandora-home/config.toml"
