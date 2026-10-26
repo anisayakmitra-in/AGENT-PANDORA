@@ -1005,7 +1005,7 @@ mod tests {
             "publisher",
             hash_artifact(artifact),
             Vec::new(),
-            PackageCompatibility::new("pandora>=3.0.0").unwrap(),
+            PackageCompatibility::new("pandora>=4.0.0").unwrap(),
             "MIT",
             TrustEvidence::unsigned(),
         )
@@ -1015,7 +1015,7 @@ mod tests {
         assert_eq!(
             registry.install(&package, &package, artifact),
             Err(HarnessRegistryError::IncompatibleRuntime {
-                required: "pandora>=3.0.0".to_owned(),
+                required: "pandora>=4.0.0".to_owned(),
                 actual: env!("CARGO_PKG_VERSION").to_owned(),
             })
         );
