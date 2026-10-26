@@ -119,15 +119,22 @@ sequenceDiagram
     S1-->>EC: Route Decision + Confidence Margin
     EC->>SC: Request Approved Harness + Gene + Provider Composition
     SC-->>EC: Bound ExecutionProfile (Digest-Locked)
-    EC->>PLM: Evaluate OperationRequest + Declarative Veto Rules
-    alt Mutating / Process Effect Requires Approval
-        PLM-->>User: Pause at Approval Boundary (WAITING APPROVAL)
-        User->>PLM: Approve (Ctrl+Y / /approve) or Deny (Ctrl+N / /deny)
+    loop AgentLoop Turn (Turn Budget & Anti-Thrash Bounded)
+        EC->>PLM: Evaluate OperationRequest + Declarative Veto Rules
+        alt Mutating / Process Effect Requires Approval
+            PLM-->>User: Pause at Approval Boundary (WAITING APPROVAL)
+            User->>PLM: Approve (Ctrl+Y / /approve) or Deny (Ctrl+N / /deny)
+        end
+        PLM->>RM: Authorize Approved OperationRequest
+        RM-->>EX: Issue Scoped, Expiring, One-Shot EffectPermit
+        EX->>EX: Consume Permit & Execute in Sandbox / Wasm / Worktree
+        EX-->>MEM: Record Cryptographic Receipt + SHA-256 Journal Step
     end
-    PLM->>RM: Authorize Approved OperationRequest
-    RM-->>EX: Issue Scoped, Expiring, One-Shot EffectPermit
-    EX->>EX: Consume Permit & Execute in Sandbox / Wasm / Worktree
-    EX-->>MEM: Record Cryptographic Receipt + SHA-256 Journal Step + L1-L4 Evidence
+    alt Trajectory Failure Encountered
+        MEM->>DSR: Synthesize Invariant via ReflexionDiagnosticEngine & GEPA Mutator
+    else Successful Trajectory & Canary Threshold Met
+        MEM->>MEM: Crystallize L3 SOP via ReflexionCrystallizer (Bayesian Gate)
+    end
     MEM-->>User: Stream Styled Output & Diff to TUI Transcript
 ```
 

@@ -98,15 +98,22 @@ sequenceDiagram
     S1-->>EC: Validated Intent + Route Class + Confidence Margin
     EC->>SC: Request Approved Harness + Gene + Provider Composition
     SC-->>EC: Digest-Bound Immutable ExecutionProfile
-    EC->>PAR: Submit OperationRequest for Constitutional Review
-    alt Mutating / Process Effect Requires Human Approval
-        PAR-->>Op: Pause Execution (⚠ WAITING APPROVAL)
-        Op->>PAR: Approve (Ctrl+Y / /approve) or Deny (Ctrl+N / /deny)
+    loop AgentLoop Turn (Turn Budget & Anti-Thrash Bounded)
+        EC->>PAR: Submit OperationRequest for Constitutional Review
+        alt Mutating / Process Effect Requires Human Approval
+            PAR-->>Op: Pause Execution (⚠ WAITING APPROVAL)
+            Op->>PAR: Approve (Ctrl+Y / /approve) or Deny (Ctrl+N / /deny)
+        end
+        PAR->>RM: Request Scoped Authorization
+        RM-->>EX: Mint Scoped, Expiring, One-Shot EffectPermit
+        EX->>EX: Verify Permit Digest & Execute in Confined Boundary (Process / Wasm / VFS)
+        EX->>DB: Commit Cryptographic Receipt + SessionJournal Step
     end
-    PAR->>RM: Request Scoped Authorization
-    RM-->>EX: Mint Scoped, Expiring, One-Shot EffectPermit
-    EX->>EX: Verify Permit Digest & Execute in Confined Boundary (Process / Wasm / VFS)
-    EX->>DB: Commit Cryptographic Receipt + SessionJournal Step + L1 Summary
+    alt Trajectory Failure Encountered
+        DB->>DSR: Synthesize Invariant via ReflexionDiagnosticEngine & GEPA Mutator
+    else Successful Trajectory & Canary Threshold Met
+        DB->>DB: Crystallize L3 SOP via ReflexionCrystallizer (Bayesian Gate)
+    end
     DB-->>Op: Return Verified Output, Receipts & Diffs
 ```
 
