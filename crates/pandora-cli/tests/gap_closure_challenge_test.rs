@@ -277,12 +277,19 @@ fn test_update_command_check_and_bare_execution() {
     let pos_val: Value = serde_json::from_slice(&check_pos.stdout).expect("valid pos json");
     assert_eq!(pos_val["command"], "update check");
 
-    // Bare `pandora update --json` requires --check, --release, or --rollback
+    // Bare `pandora update --json` defaults to checking and reporting up-to-date
     let bare_out = fixture
         .command(&["update", "--json"])
+        .env(
+            "PANDORA_LATEST_RELEASE_OVERRIDE",
+            format!("v{}", env!("CARGO_PKG_VERSION")),
+        )
         .output()
         .expect("update bare should execute");
-    assert_eq!(bare_out.status.code(), Some(2));
+    assert!(bare_out.status.success());
+    let bare_val: Value = serde_json::from_slice(&bare_out.stdout).expect("valid bare json");
+    assert_eq!(bare_val["command"], "update");
+    assert_eq!(bare_val["up_to_date"], true);
 }
 
 #[test]

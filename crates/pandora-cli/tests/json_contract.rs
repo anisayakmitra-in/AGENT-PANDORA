@@ -241,7 +241,9 @@ fn release_critical_success_envelopes_are_stable() {
 fn release_critical_error_envelopes_match_process_exit_codes() {
     let fixture = Fixture::new();
 
-    let usage = fixture.run(&["update", "--json"]).error("usage_error", 2);
+    let usage = fixture
+        .run(&["update", "--artifact", "missing-digest.bin", "--json"])
+        .error("usage_error", 2);
     assert_eq!(usage["details"], serde_json::json!({}));
 
     let configuration = fixture
