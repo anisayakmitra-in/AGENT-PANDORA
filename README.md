@@ -1,4 +1,7 @@
 <p align="center">
+  <img src="docs/assets/logo.jpg" alt="AGENT-PANDORA Logo" width="128" />
+</p>
+<p align="center">
   <img src="docs/assets/social-preview.png" alt="AGENT-PANDORA: SUNLESS Release" width="100%" />
 </p>
 
