@@ -1690,3 +1690,249 @@ fn test_bounded_text_smart_truncation_and_spillover() {
     let massive_res = bounded_text(&massive);
     assert!(massive_res.contains("[Full tool output (102400 bytes) preserved at:"));
 }
+
+#[test]
+fn test_workspace_replace_block_surgical_modification() {
+    let fixture = Fixture::new();
+    let file_path = fixture.path.join("code.rs");
+    std::fs::write(
+        &file_path,
+        "fn main() {\n    let old_value = 1;\n    println!(\"{}\", old_value);\n}\n",
+    )
+    .unwrap();
+
+    let provider = SequenceProvider::new(vec![
+        ModelResponse::new(
+            "Target block replaced successfully.",
+            Vec::new(),
+            TokenUsage::default(),
+        ),
+        ModelResponse::new(
+            "",
+            vec![
+                ToolCall::new(
+                    "call-replace",
+                    "workspace.replace",
+                    serde_json::json!({
+                        "path": "code.rs",
+                        "target": "    let old_value = 1;",
+                        "replacement": "    let new_value = 42;"
+                    }),
+                )
+                .unwrap(),
+            ],
+            TokenUsage::default(),
+        ),
+    ]);
+
+    let policy = PolicyContext::new(
+        1,
+        [
+            Capability::FilesystemRead,
+            Capability::FilesystemWrite,
+            Capability::ProviderInvoke,
+        ],
+        [],
+    );
+    let controller = ExecutionController::with_policy(fixture.root.clone(), policy);
+
+    let summary = AgentLoop::new(3, 3)
+        .unwrap()
+        .run(
+            &provider,
+            &controller,
+            fixture.session(),
+            "Replace variable in code.rs",
+            Timestamp::from_unix_seconds(10),
+        )
+        .unwrap();
+
+    assert_eq!(summary.turns, 2);
+    let updated_content = std::fs::read_to_string(&file_path).unwrap();
+    assert!(updated_content.contains("let new_value = 42;"));
+    assert!(!updated_content.contains("let old_value = 1;"));
+}
+
+#[test]
+fn test_workspace_replace_target_not_found_returns_clear_error() {
+    let fixture = Fixture::new();
+    let file_path = fixture.path.join("code.rs");
+    std::fs::write(&file_path, "fn hello() {}\n").unwrap();
+
+    let provider = SequenceProvider::new(vec![
+        ModelResponse::new("Acknowledged error.", Vec::new(), TokenUsage::default()),
+        ModelResponse::new(
+            "",
+            vec![
+                ToolCall::new(
+                    "call-replace",
+                    "workspace.replace",
+                    serde_json::json!({
+                        "path": "code.rs",
+                        "target": "fn non_existent()",
+                        "replacement": "fn replacement()"
+                    }),
+                )
+                .unwrap(),
+            ],
+            TokenUsage::default(),
+        ),
+    ]);
+
+    let policy = PolicyContext::new(
+        1,
+        [
+            Capability::FilesystemRead,
+            Capability::FilesystemWrite,
+            Capability::ProviderInvoke,
+        ],
+        [],
+    );
+    let controller = ExecutionController::with_policy(fixture.root.clone(), policy);
+
+    let summary = AgentLoop::new(3, 3)
+        .unwrap()
+        .run(
+            &provider,
+            &controller,
+            fixture.session(),
+            "Replace missing function",
+            Timestamp::from_unix_seconds(10),
+        )
+        .unwrap();
+
+    let tool_res = summary
+        .messages
+        .iter()
+        .find(|m| m.role() == MessageRole::Tool);
+    assert!(tool_res.is_some());
+    assert!(
+        tool_res
+            .unwrap()
+            .content()
+            .contains("target block not found in 'code.rs'")
+    );
+}
+
+#[test]
+fn test_workspace_patch_with_target_delegates_to_block_replacement() {
+    let fixture = Fixture::new();
+    let file_path = fixture.path.join("config.toml");
+    std::fs::write(&file_path, "[settings]\nenabled = false\n").unwrap();
+
+    let provider = SequenceProvider::new(vec![
+        ModelResponse::new("Patched config target.", Vec::new(), TokenUsage::default()),
+        ModelResponse::new(
+            "",
+            vec![
+                ToolCall::new(
+                    "call-patch-target",
+                    "workspace.patch",
+                    serde_json::json!({
+                        "path": "config.toml",
+                        "target": "enabled = false",
+                        "replacement": "enabled = true"
+                    }),
+                )
+                .unwrap(),
+            ],
+            TokenUsage::default(),
+        ),
+    ]);
+
+    let policy = PolicyContext::new(
+        1,
+        [
+            Capability::FilesystemRead,
+            Capability::FilesystemWrite,
+            Capability::ProviderInvoke,
+        ],
+        [],
+    );
+    let controller = ExecutionController::with_policy(fixture.root.clone(), policy);
+
+    let summary = AgentLoop::new(3, 3)
+        .unwrap()
+        .run(
+            &provider,
+            &controller,
+            fixture.session(),
+            "Patch config setting",
+            Timestamp::from_unix_seconds(10),
+        )
+        .unwrap();
+
+    assert_eq!(summary.turns, 2);
+    let updated_content = std::fs::read_to_string(&file_path).unwrap();
+    assert_eq!(updated_content, "[settings]\nenabled = true\n");
+}
+
+#[test]
+fn test_autonomous_goal_verification_gate_detects_unverified_modifications() {
+    let fixture = Fixture::new();
+
+    let provider = SequenceProvider::new(vec![
+        // Turn 3: Concludes after verification feedback
+        ModelResponse::new(
+            "Final conclusion after gate.",
+            Vec::new(),
+            TokenUsage::default(),
+        ),
+        // Turn 2: Attempts to conclude goal without verifying
+        ModelResponse::new(
+            "I have concluded the task.",
+            Vec::new(),
+            TokenUsage::default(),
+        ),
+        // Turn 1: Modifies file
+        ModelResponse::new(
+            "",
+            vec![
+                ToolCall::new(
+                    "call-patch",
+                    "workspace.patch",
+                    serde_json::json!({
+                        "path": "README.md",
+                        "content": "modified content\n"
+                    }),
+                )
+                .unwrap(),
+            ],
+            TokenUsage::default(),
+        ),
+    ]);
+
+    let policy = PolicyContext::new(
+        1,
+        [
+            Capability::FilesystemRead,
+            Capability::FilesystemWrite,
+            Capability::ProviderInvoke,
+        ],
+        [],
+    );
+    let controller = ExecutionController::with_policy(fixture.root.clone(), policy);
+
+    let summary = AgentLoop::new(4, 5)
+        .unwrap()
+        .run(
+            &provider,
+            &controller,
+            fixture.session(),
+            "[LONG-HORIZON AUTONOMOUS GOAL]\nObjective: Update README and verify",
+            Timestamp::from_unix_seconds(10),
+        )
+        .unwrap();
+
+    // The gate intercepted at turn 2 because verification was missing / failed (policy denied verify command),
+    // fed diagnostic back to user messages, and reached turn 3!
+    assert!(summary.turns >= 2);
+    let gate_msg = summary
+        .messages
+        .iter()
+        .find(|m| m.content().contains("[AUTONOMOUS VERIFICATION GATE]"));
+    assert!(
+        gate_msg.is_some(),
+        "autonomous verification gate should have triggered"
+    );
+}

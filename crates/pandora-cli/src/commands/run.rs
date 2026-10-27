@@ -236,6 +236,11 @@ pub(super) fn execute_with_control(
     };
     let is_goal = parsed.has_flag("goal") || parsed.value("goal").is_some();
     let is_agent = parsed.value("agent").is_some() || strategy.is_some() || is_goal;
+    let tool_profile = if is_goal {
+        tool_profile.or(Some(pandora_runtime::ToolProfile::Coding))
+    } else {
+        tool_profile
+    };
 
     if parsed.value("approval").is_some()
         && (parsed.value("plan").is_some() || parsed.value("model").is_some())

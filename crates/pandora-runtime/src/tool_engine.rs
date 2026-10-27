@@ -305,13 +305,15 @@ impl ToolEngine {
                 ToolDefinition::new(
                     "workspace.patch",
                     "1.0.0",
-                    "Propose a workspace patch",
+                    "Propose a workspace patch or replace targeted block",
                     json!({
                         "type": "object",
-                        "required": ["path", "content"],
+                        "required": ["path"],
                         "properties": {
                             "path": {"type": "string"},
-                            "content": {"type": "string"}
+                            "content": {"type": "string"},
+                            "target": {"type": "string"},
+                            "replacement": {"type": "string"}
                         },
                         "additionalProperties": false
                     }),
@@ -321,6 +323,28 @@ impl ToolEngine {
                 .expect("built-in patch tool schema is valid"),
             )
             .expect("built-in patch tool ID is unique");
+        engine
+            .register(
+                ToolDefinition::new(
+                    "workspace.replace",
+                    "1.0.0",
+                    "Replace an exact target text block in a workspace file with replacement content",
+                    json!({
+                        "type": "object",
+                        "required": ["path", "target", "replacement"],
+                        "properties": {
+                            "path": {"type": "string", "description": "Relative path to the file"},
+                            "target": {"type": "string", "description": "The exact existing text block to be replaced"},
+                            "replacement": {"type": "string", "description": "The new replacement text"}
+                        },
+                        "additionalProperties": false
+                    }),
+                    Capability::FilesystemWrite,
+                    Operation::Write,
+                )
+                .expect("built-in replace tool schema is valid"),
+            )
+            .expect("built-in replace tool ID is unique");
         engine
             .register(
                 ToolDefinition::new(
@@ -994,8 +1018,22 @@ impl ToolEngine {
             "tool.search" => task_from_argument(arguments, "tool-search", "query")?,
             "workspace.patch" => {
                 let path = required_text_argument(arguments, "path")?;
-                let content = required_text_argument(arguments, "content")?;
+                let content = arguments
+                    .get("content")
+                    .or_else(|| arguments.get("replacement"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 TaskIntent::new(format!("patch:{path}:{content}"))
+                    .map_err(|error| ToolError::InvalidArguments(error.to_string()))?
+            }
+            "workspace.replace" => {
+                let path = required_text_argument(arguments, "path")?;
+                let replacement = arguments
+                    .get("replacement")
+                    .or_else(|| arguments.get("content"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                TaskIntent::new(format!("patch:{path}:{replacement}"))
                     .map_err(|error| ToolError::InvalidArguments(error.to_string()))?
             }
             "workspace.verify" => TaskIntent::new("verify")
@@ -1196,6 +1234,7 @@ fn gene_id_for_tool(tool_id: &str) -> Result<GeneId, ToolError> {
         "workspace.read" => "workspace.read",
         "workspace.search" => "workspace.search",
         "workspace.patch" => "patch.apply",
+        "workspace.replace" => "patch.apply",
         "workspace.verify" => "verification.run",
         "workspace.test" => "tests.run",
         "workspace.format" => "format.check",
