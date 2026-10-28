@@ -1,0 +1,57 @@
+name: "Welcome Contributor Bot"
+
+on:
+  issues:
+    types: [opened]
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  welcome:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Welcome first-time issue contributor
+        if: github.event_name == 'issues'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const author = context.payload.issue.user.login;
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              creator: author,
+              state: 'all'
+            });
+            if (issues.data.length === 1) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: `👋 Welcome @${author}! Thank you for opening your first issue in AGENT-PANDORA. Please ensure you have reviewed our [Contributing Guidelines](https://github.com/anisayakmitra-in/AGENT-PANDORA/blob/main/CONTRIBUTING.md). Maintainers will review this shortly!`
+              });
+            }
+
+      - name: Welcome first-time PR contributor
+        if: github.event_name == 'pull_request_target'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const author = context.payload.pull_request.user.login;
+            const pulls = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              creator: author,
+              state: 'all'
+            });
+            if (pulls.data.length === 1) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: `🎉 Welcome @${author}! Thank you for your first pull request in AGENT-PANDORA. Our automated CI checks will run against your changes. Please make sure all commits adhere to our [Conventional Commits & Architecture Guidelines](https://github.com/anisayakmitra-in/AGENT-PANDORA/blob/main/CONTRIBUTING.md).`
+              });
+            }
