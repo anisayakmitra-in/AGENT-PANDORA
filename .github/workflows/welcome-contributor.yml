@@ -16,7 +16,7 @@ jobs:
     steps:
       - name: Welcome first-time issue contributor
         if: github.event_name == 'issues'
-        uses: actions/github-script@v7
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         with:
           script: |
             const author = context.payload.issue.user.login;
@@ -37,7 +37,7 @@ jobs:
 
       - name: Welcome first-time PR contributor
         if: github.event_name == 'pull_request_target'
-        uses: actions/github-script@v7
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         with:
           script: |
             const author = context.payload.pull_request.user.login;
