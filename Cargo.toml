@@ -25,7 +25,7 @@ categories = ["command-line-utilities", "development-tools"]
 argon2 = "0.5.3"
 atomic-write-file = "=0.3.0"
 axum = "0.8"
-base64 = "0.22"
+base64 = "0.23"
 chacha20poly1305 = "0.10.1"
 crossterm = "0.29"
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
