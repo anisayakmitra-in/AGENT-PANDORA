@@ -828,7 +828,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-harnesses"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "pandora-types",
  "serde",
@@ -838,17 +838,18 @@ dependencies = [
 
 [[package]]
 name = "pandora-provider"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "pandora-types",
  "reqwest",
  "serde",
  "serde_json",
+ "url",
 ]
 
 [[package]]
 name = "pandora-runtime"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "argon2",
  "atomic-write-file",
@@ -874,7 +875,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-sandbox"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -883,7 +884,7 @@ dependencies = [
 
 [[package]]
 name = "pandora-types"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "semver",
  "serde",
@@ -1958,9 +1959,9 @@ dependencies = [
 
 [[package]]
 name = "zeroize"
-version = "1.9.0"
+version = "1.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
+checksum = "e13084392c5e4bc371903e2935a5eaeed24905a7511356b883835e18a78f6879"
 
 [[package]]
 name = "zerotrie"
