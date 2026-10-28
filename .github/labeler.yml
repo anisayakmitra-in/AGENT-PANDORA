@@ -1,0 +1,28 @@
+area/crates:
+  - changed-files:
+      - any-glob-to-any-file: 'crates/**'
+
+area/sdk:
+  - changed-files:
+      - any-glob-to-any-file: 'sdk/**'
+
+area/docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'docs/**'
+          - '*.md'
+
+area/ci:
+  - changed-files:
+      - any-glob-to-any-file: '.github/**'
+
+area/npm:
+  - changed-files:
+      - any-glob-to-any-file: 'npm/**'
+
+area/scripts:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'scripts/**'
+          - '*.ps1'
+          - '*.sh'
