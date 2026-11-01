@@ -29,6 +29,7 @@ pub mod jobs;
 pub mod kanban;
 pub mod ladder;
 pub mod lineage;
+pub mod lsp;
 pub mod memory;
 pub mod observability;
 pub mod orchestration;
@@ -45,6 +46,7 @@ pub mod society;
 pub mod storage_lifecycle;
 pub mod subagent;
 pub mod workspace_orchestration;
+pub mod worktree;
 
 pub use a2a::{
     A2aAgentCard, A2aRpcError, A2aRpcRequest, A2aRpcResponse, A2aTaskRequest, A2aTaskResponse,
@@ -127,6 +129,11 @@ pub use jobs::{JobCommand, JobContractError, JobRequest, JobStatus, MAX_JOB_ARGU
 pub use kanban::{KanbanBoard, KanbanReclaimReport, KanbanStatus, KanbanTask};
 pub use ladder::{HarnessFailureMode, OptimizationLadderLevel, SafetySpineReport};
 pub use lineage::{EvolutionLineage, EvolutionLineageEdge, EvolutionLineageNode};
+pub use lsp::{
+    LspDefinitionResult, LspDiagnostic, LspDiagnosticSeverity, LspDiagnosticsResult,
+    LspLocation, LspPosition, LspRange, LspReferencesResult, LspServerKind,
+    LspServerStatus, LspTypeDefinitionResult,
+};
 pub use memory::{
     MAX_MEMORY_SYNTHESIS_EVIDENCE, MEMORY_CONSOLIDATION_POLICY_VERSION, MemoryApproval,
     MemoryAuditAction, MemoryAuditEntry, MemoryCapsule, MemoryConflictRule,
@@ -197,4 +204,8 @@ pub use workspace_orchestration::{
     GovernedOrchestrationPlan, OrchestrationAggregateBudget, OrchestrationBudgetAmount,
     OrchestrationRoleBudget, OrchestrationRoleReceipt, OrchestrationUsage, RepositoryBinding,
     RoleRepositoryBinding, WorkspaceOrchestrationError,
+};
+pub use worktree::{
+    FinalizeAction, PrBranchResult, WorktreeInfo, WorktreeMergeResult, WorktreeStatus,
+    WorktreeTaskContext,
 };

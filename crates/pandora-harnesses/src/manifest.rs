@@ -244,6 +244,7 @@ pub fn verification_manifest() -> Result<HarnessManifest, ManifestError> {
         "verification.golden",
         "verification.property",
         "verification.guide",
+        "verification.visual",
     ]
     .into_iter()
     .map(|id| GeneId::new(id).expect("built-in Gene ID is valid"))

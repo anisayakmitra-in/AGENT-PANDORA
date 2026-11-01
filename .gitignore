@@ -22,6 +22,7 @@ npm/pandora-cli/node_modules/
 /.unlazy/
 /.unlazy-hook-state.json
 /.claude/settings.local.json
+/.agents/
 
 # Local scratch, not product source. Holds presentation material and its
 # node_modules; the audit's clean-tree check treats any untracked path as a dirty

@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0` and `v3.0.0`. The active release identity
-is `v3.0.0`.
+and the stable releases `v2.0.0`, `v3.0.0`, and `v3.0.1`. The active release identity
+is `v3.0.1`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,14 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v3.0.1
+
+This patch release adds external messaging gateway integration (Telegram long-polling
+daemon and Discord webhook dispatching with autonomous cron monitoring) and comprehensive
+mouse and keyboard ergonomics to the Pandora interactive TUI workbench (horizontal scroll
+tab switching, skills hub modal click-to-toggle, quick-action top bar buttons, direct approval
+shortcuts, and readline word editing).
 
 ## v3.0.0
 

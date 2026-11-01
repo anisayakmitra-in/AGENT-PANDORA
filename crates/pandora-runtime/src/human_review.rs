@@ -184,7 +184,7 @@ impl HumanReviewEngine {
         };
         let id = self
             .next_id
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
                 value.checked_add(1)
             })
             .map_err(|_| ReviewError::InvalidTimeout)?;

@@ -5,9 +5,9 @@ use super::{
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::sessions::{MAX_MEMORY_RECALL_RECORDS, SessionStore};
 use pandora_runtime::{
-    ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, ContextVfs, MemoryEngine,
-    MemoryError, MemorySynthesisScheduleError, MemorySynthesisScheduleStore, MeshSyncEngine,
-    PeerIdentity, ReflexionCrystallizer, VfsError,
+    ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, ContextSearchOptions,
+    ContextVfs, MemoryEngine, MemoryError, MemorySynthesisScheduleError,
+    MemorySynthesisScheduleStore, MeshSyncEngine, PeerIdentity, ReflexionCrystallizer, VfsError,
 };
 use pandora_types::{
     ContextClassification, ContextUri, ExecutionId, FeatureMap, GeneId, JobWorkerId,
@@ -753,10 +753,11 @@ fn capsule_import(args: &[String]) -> Result<CommandResult, CliError> {
 fn vfs(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args
         .first()
-        .ok_or_else(|| CliError::usage("memory vfs requires 'ls' or 'cat'"))?;
+        .ok_or_else(|| CliError::usage("memory vfs requires 'ls', 'cat', or 'search'"))?;
     match subcommand.as_str() {
         "ls" => vfs_ls(&args[1..]),
         "cat" => vfs_cat(&args[1..]),
+        "search" => vfs_search(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown memory vfs command '{unknown}'"
         ))),
@@ -882,6 +883,104 @@ fn vfs_cat(args: &[String]) -> Result<CommandResult, CliError> {
         }),
         text,
     ))
+}
+
+fn vfs_search(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "limit",
+            "tier",
+            "intent",
+        ],
+    )?;
+    let query = if !parsed.positionals.is_empty() {
+        parsed.positionals.join(" ")
+    } else {
+        return Err(CliError::usage("memory vfs search requires '<query>'"));
+    };
+
+    let limit = parsed
+        .value("limit")
+        .map(|v| {
+            v.parse::<usize>()
+                .map_err(|_| CliError::usage("limit must be a positive integer"))
+        })
+        .transpose()?
+        .unwrap_or(5);
+
+    let tier_filter = if let Some(tier_str) = parsed.value("tier") {
+        Some(parse_tier(Some(tier_str))?)
+    } else {
+        None
+    };
+
+    let intent_filter = parse_intent(parsed.value("intent"))?;
+
+    let config = load_config(&parsed)?;
+    let (_, tenant, default_workspace) = session_scope();
+    let workspace = parsed
+        .value("workspace")
+        .map(|v| WorkspaceId::new(v.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("workspace ID is invalid"))?
+        .unwrap_or(default_workspace);
+
+    let vfs = if config.config_path().is_file() {
+        if let Ok(store) = session_store(&config) {
+            if let Ok(vfs) = ContextVfs::from_session_store(&store, &tenant, &workspace) {
+                load_workspace_feature_map(config.workspace_dir(), &vfs);
+                vfs
+            } else {
+                ContextVfs::new()
+            }
+        } else {
+            ContextVfs::new()
+        }
+    } else {
+        ContextVfs::new()
+    };
+
+    let mut options = ContextSearchOptions::new(limit);
+    if let Some(tier) = tier_filter {
+        options = options.with_tier(tier);
+    }
+    if let Some(intent) = intent_filter {
+        options = options.with_intent(intent);
+    }
+
+    let search_results = vfs
+        .search_with_options(&query, &options)
+        .map_err(|e| CliError::execution(e.to_string(), json!({"query": query})))?;
+
+    let count = search_results.len();
+    let results_json: Vec<serde_json::Value> = search_results
+        .iter()
+        .map(|item| {
+            json!({
+                "uri": item.uri.as_str(),
+                "title": item.title,
+                "snippet": item.snippet,
+                "sparse_score": item.sparse_score,
+                "dense_score": item.dense_score,
+                "hybrid_score": item.hybrid_score,
+                "tier": item.tier.map(|t| t.as_str()),
+                "intent": item.intent.map(|i| i.as_str()),
+            })
+        })
+        .collect();
+
+    let human = format!("Found {count} result(s) for query '{query}' in context VFS");
+    let payload = json!({
+        "query": query,
+        "results": results_json,
+        "count": count,
+    });
+
+    Ok(success("memory vfs search", payload, human))
 }
 
 fn load_workspace_feature_map(workspace_dir: &std::path::Path, vfs: &ContextVfs) {

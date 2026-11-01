@@ -379,6 +379,7 @@ fn built_in_gene_alias(id: &str) -> Option<&'static str> {
         "verification.golden" => Some("/verification-golden"),
         "verification.property" => Some("/verification-property"),
         "verification.guide" => Some("/verification-guide"),
+        "verification.visual" => Some("/verification-visual"),
         _ => None,
     }
 }

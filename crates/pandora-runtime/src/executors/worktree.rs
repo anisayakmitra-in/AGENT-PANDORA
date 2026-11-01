@@ -21,6 +21,11 @@ pub enum WorktreeError {
     PermissionDenied,
     GitUnavailable,
     GitFailed,
+    GatesFailed,
+    TaskNotFound,
+    BranchExists,
+    MergeConflict,
+    IoError,
 }
 
 impl WorktreeError {
@@ -37,9 +42,22 @@ impl WorktreeError {
             Self::PermissionDenied => "permission_denied",
             Self::GitUnavailable => "git_unavailable",
             Self::GitFailed => "git_failed",
+            Self::GatesFailed => "gates_failed",
+            Self::TaskNotFound => "task_not_found",
+            Self::BranchExists => "branch_exists",
+            Self::MergeConflict => "merge_conflict",
+            Self::IoError => "io_error",
         }
     }
 }
+
+impl std::fmt::Display for WorktreeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "worktree error: {}", self.code())
+    }
+}
+
+impl std::error::Error for WorktreeError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorktreeCommand {

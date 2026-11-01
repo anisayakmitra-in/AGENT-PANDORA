@@ -1936,3 +1936,58 @@ fn test_autonomous_goal_verification_gate_detects_unverified_modifications() {
         "autonomous verification gate should have triggered"
     );
 }
+
+#[test]
+fn agent_loop_executes_verification_visual_tool() {
+    let fixture = Fixture::new();
+    let provider = SequenceProvider::new(vec![
+        ModelResponse::new("visual verification complete", vec![], TokenUsage::new(4, 2)),
+        ModelResponse::new(
+            "",
+            vec![
+                ToolCall::new(
+                    "call-visual",
+                    "verification.visual",
+                    serde_json::json!({
+                        "html": "<html><body><h1>Dashboard</h1><button id=\"test-btn\">Confirm</button></body></html>",
+                        "viewport": { "width": 1024, "height": 768 },
+                        "steps": [
+                            { "type": "assert_visible", "selector": "#test-btn" },
+                            { "type": "click", "selector": "#test-btn" },
+                            { "type": "screenshot", "name": "confirm_button" }
+                        ]
+                    }),
+                )
+                .unwrap(),
+            ],
+            TokenUsage::new(8, 3),
+        ),
+    ]);
+    let controller = ExecutionController::new(fixture.root.clone());
+
+    let result = AgentLoop::new(4, 4)
+        .unwrap()
+        .run(
+            &provider,
+            &controller,
+            fixture.session(),
+            "Run visual verification on dashboard",
+            Timestamp::from_unix_seconds(10),
+        )
+        .unwrap();
+
+    assert_eq!(result.final_text(), "visual verification complete");
+    assert_eq!(result.turns(), 2);
+    assert_eq!(result.tool_calls(), 1);
+
+    // Verify tool output contains visual verification report JSON with screenshot
+    let tool_msg = result
+        .messages
+        .iter()
+        .find(|m| m.content().contains("confirm_button"));
+    assert!(
+        tool_msg.is_some(),
+        "tool output should contain visual verification report with screenshot artifact"
+    );
+}
+

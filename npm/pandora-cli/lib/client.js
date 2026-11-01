@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PandoraCliProtocolError = void 0;
+exports.PandoraClient = exports.PandoraCliProtocolError = void 0;
 exports.parseJsonEnvelope = parseJsonEnvelope;
 exports.defaultLauncherPath = defaultLauncherPath;
 exports.runPandoraJson = runPandoraJson;
@@ -139,3 +139,37 @@ function runPandoraJson(args, options = {}) {
         });
     });
 }
+class PandoraClient {
+    options;
+    constructor(options = {}) {
+        this.options = options;
+    }
+    async run(args, overrideOptions = {}) {
+        return runPandoraJson(args, { ...this.options, ...overrideOptions });
+    }
+    async doctor(overrideOptions) {
+        return this.run(["doctor"], overrideOptions);
+    }
+    async verify(overrideOptions) {
+        return this.run(["verify"], overrideOptions);
+    }
+    async lspDefinition(file, line, col, overrideOptions) {
+        return this.run(["lsp", "definition", "--file", file, "--line", String(line), "--col", String(col)], overrideOptions);
+    }
+    async lspReferences(file, line, col, overrideOptions) {
+        return this.run(["lsp", "references", "--file", file, "--line", String(line), "--col", String(col)], overrideOptions);
+    }
+    async lspDiagnostics(file, overrideOptions) {
+        return this.run(["lsp", "diagnostics", "--file", file], overrideOptions);
+    }
+    async branchList(overrideOptions) {
+        return this.run(["branch", "list"], overrideOptions);
+    }
+    async prCreate(taskId, title, overrideOptions) {
+        return this.run(["pr", "create", "--task", taskId, "--title", title], overrideOptions);
+    }
+    async semanticSearch(query, limit = 5, overrideOptions) {
+        return this.run(["memory", "vfs", "search", query, "--limit", String(limit)], overrideOptions);
+    }
+}
+exports.PandoraClient = PandoraClient;

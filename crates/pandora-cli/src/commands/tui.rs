@@ -15,11 +15,15 @@ use ratatui::widgets::{
     ScrollbarOrientation, ScrollbarState, Sparkline, Tabs,
 };
 use ratatui::{Frame, Terminal};
+use pandora_runtime::{AgentCheckpoint, AgentCheckpointKind, AgentControlStop, AgentRunControl};
 use serde_json::{Value, json};
 use std::cell::Cell;
 use std::cmp::min;
 use std::io::{self, IsTerminal, Stdout};
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 const MAX_DISPLAY_CHARS: usize = 64 * 1024;
@@ -410,6 +414,18 @@ const PALETTE_ENTRIES: &[PaletteEntry] = &[
         command: "/goal",
         category: "Agent",
         description: "Execute long-horizon autonomous task with self-healing verification gates (/goal <task>)",
+        immediate: false,
+    },
+    PaletteEntry {
+        command: "/branch",
+        category: "Worktree",
+        description: "Manage isolated git worktree branches (list, create, checkout, cleanup)",
+        immediate: true,
+    },
+    PaletteEntry {
+        command: "/pr",
+        category: "Worktree",
+        description: "Pull request lifecycle for isolated worktrees (create, status)",
         immediate: false,
     },
     PaletteEntry {
@@ -1073,7 +1089,233 @@ struct App {
     mode_explicit: bool,
     active_persona: Option<String>,
     discovered_models: Vec<super::models::DiscoveredModel>,
+    steer_modal_open: bool,
+    steer_inflight: Option<SteerInflightState>,
+    steer_guidance_input: Vec<char>,
+    steer_guidance_active: bool,
+    steer_pending_guidance: Vec<String>,
+    steer_skipped_steps: Vec<String>,
+    steer_timeline: Vec<String>,
+    steer_status_message: Option<String>,
+    steer_selected_action: usize,
+    steer_control: Arc<SteerableRunControl>,
     last_area: Cell<Rect>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SteerInflightState {
+    pub turn: u32,
+    pub max_turns: u32,
+    pub tool_calls: u32,
+    pub active_tool: Option<String>,
+    pub tool_args: Option<String>,
+    pub checkpoint_kind: AgentCheckpointKind,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub elapsed_ms: u128,
+    pub timeline: Vec<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug)]
+pub struct SteerableRunControl {
+    pub paused: AtomicBool,
+    pub cancelled: AtomicBool,
+    pub skip_requested: AtomicBool,
+    pub turn: AtomicU32,
+    pub tool_calls: AtomicU32,
+    pub input_tokens: AtomicU64,
+    pub output_tokens: AtomicU64,
+    pub active_tool: Arc<Mutex<Option<String>>>,
+    pub active_tool_args: Arc<Mutex<Option<String>>>,
+    pub guidance_queue: Arc<Mutex<Vec<String>>>,
+    pub skipped_steps: Arc<Mutex<Vec<String>>>,
+    pub timeline: Arc<Mutex<Vec<String>>>,
+}
+
+impl Default for SteerableRunControl {
+    fn default() -> Self {
+        Self {
+            paused: AtomicBool::new(false),
+            cancelled: AtomicBool::new(false),
+            skip_requested: AtomicBool::new(false),
+            turn: AtomicU32::new(0),
+            tool_calls: AtomicU32::new(0),
+            input_tokens: AtomicU64::new(0),
+            output_tokens: AtomicU64::new(0),
+            active_tool: Arc::new(Mutex::new(None)),
+            active_tool_args: Arc::new(Mutex::new(None)),
+            guidance_queue: Arc::new(Mutex::new(Vec::new())),
+            skipped_steps: Arc::new(Mutex::new(Vec::new())),
+            timeline: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+}
+
+#[allow(dead_code)]
+impl SteerableRunControl {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn pause(&self) {
+        self.paused.store(true, Ordering::SeqCst);
+    }
+
+    pub fn resume(&self) {
+        self.paused.store(false, Ordering::SeqCst);
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+        self.paused.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::SeqCst)
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+
+    pub fn set_active_tool(&self, name: &str, args: Option<&str>) {
+        if let Ok(mut tool) = self.active_tool.lock() {
+            *tool = Some(name.to_owned());
+        }
+        if let Ok(mut tool_args) = self.active_tool_args.lock() {
+            *tool_args = args.map(|a| a.to_owned());
+        }
+    }
+
+    pub fn clear_active_tool(&self) {
+        if let Ok(mut tool) = self.active_tool.lock() {
+            *tool = None;
+        }
+        if let Ok(mut tool_args) = self.active_tool_args.lock() {
+            *tool_args = None;
+        }
+    }
+
+    pub fn inject_guidance(&self, guidance: &str) -> Result<String, &'static str> {
+        let trimmed = guidance.trim();
+        if trimmed.is_empty() {
+            return Err("guidance instruction cannot be empty");
+        }
+        let prompt = format!("[OPERATOR GUIDANCE]: {trimmed}");
+        if let Ok(mut q) = self.guidance_queue.lock() {
+            q.push(prompt.clone());
+        }
+        if let Ok(mut tl) = self.timeline.lock() {
+            tl.push(format!("Operator guidance injected: {trimmed}"));
+        }
+        Ok(prompt)
+    }
+
+    pub fn skip_step(&self) -> Result<serde_json::Value, &'static str> {
+        let tool_name = {
+            let guard = self.active_tool.lock().map_err(|_| "lock poisoned")?;
+            guard.clone().ok_or("no active in-flight tool call to skip")?
+        };
+        self.skip_requested.store(true, Ordering::SeqCst);
+        self.clear_active_tool();
+        if let Ok(mut steps) = self.skipped_steps.lock() {
+            steps.push(tool_name.clone());
+        }
+        if let Ok(mut tl) = self.timeline.lock() {
+            tl.push(format!("Skipped tool step '{tool_name}'"));
+        }
+        self.tool_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(json!({
+            "tool_call_id": "call_steer_skipped",
+            "status": "skipped",
+            "output": "tool execution bypassed by operator steering request",
+        }))
+    }
+
+    pub fn inflight_state(&self) -> SteerInflightState {
+        let active_tool = self.active_tool.lock().ok().and_then(|g| g.clone());
+        let tool_args = self.active_tool_args.lock().ok().and_then(|g| g.clone());
+        let timeline = self.timeline.lock().ok().map(|g| g.clone()).unwrap_or_default();
+        SteerInflightState {
+            turn: self.turn.load(Ordering::SeqCst),
+            max_turns: 50,
+            tool_calls: self.tool_calls.load(Ordering::SeqCst),
+            active_tool,
+            tool_args,
+            checkpoint_kind: AgentCheckpointKind::BeforeTurn,
+            input_tokens: self.input_tokens.load(Ordering::SeqCst),
+            output_tokens: self.output_tokens.load(Ordering::SeqCst),
+            elapsed_ms: 0,
+            timeline,
+        }
+    }
+}
+
+impl AgentRunControl for SteerableRunControl {
+    fn checkpoint(&self, checkpoint: AgentCheckpoint<'_>) -> Result<(), AgentControlStop> {
+        self.turn.store(checkpoint.turns(), Ordering::SeqCst);
+        self.tool_calls.store(checkpoint.tool_calls(), Ordering::SeqCst);
+        self.input_tokens.store(checkpoint.usage().prompt_tokens() as u64, Ordering::SeqCst);
+        self.output_tokens.store(checkpoint.usage().completion_tokens() as u64, Ordering::SeqCst);
+
+        if let Ok(mut tl) = self.timeline.lock() {
+            let desc = match checkpoint.kind() {
+                AgentCheckpointKind::BeforeTurn => {
+                    format!("Turn {}: Starting turn evaluation", checkpoint.turns())
+                }
+                AgentCheckpointKind::BeforeProvider => {
+                    format!("Turn {}: Preparing model request", checkpoint.turns())
+                }
+                AgentCheckpointKind::AfterProvider => {
+                    format!("Turn {}: Received model response", checkpoint.turns())
+                }
+                AgentCheckpointKind::BeforeEffectAuthorization => {
+                    format!(
+                        "Turn {}: Authorizing tool effect #{}",
+                        checkpoint.turns(),
+                        checkpoint.tool_calls()
+                    )
+                }
+                AgentCheckpointKind::AfterEffect => {
+                    format!(
+                        "Turn {}: Tool effect #{} executed",
+                        checkpoint.turns(),
+                        checkpoint.tool_calls()
+                    )
+                }
+            };
+            tl.push(desc);
+        }
+
+        // Cooperative crossterm check when running in interactive terminal
+        if !self.paused.load(Ordering::SeqCst) && !self.cancelled.load(Ordering::SeqCst) {
+            if crossterm::terminal::is_raw_mode_enabled().unwrap_or(false) {
+                if let Ok(true) = crossterm::event::poll(Duration::from_millis(0)) {
+                    if let Ok(Event::Key(key)) = crossterm::event::read() {
+                        if key.code == KeyCode::Esc
+                            || (key.modifiers.contains(KeyModifiers::CONTROL)
+                                && key.code == KeyCode::Char('k'))
+                        {
+                            self.paused.store(true, Ordering::SeqCst);
+                        }
+                    }
+                }
+            }
+        }
+
+        if self.cancelled.load(Ordering::SeqCst) {
+            return Err(AgentControlStop::Cancelled);
+        }
+
+        if self.paused.load(Ordering::SeqCst) {
+            if self.cancelled.load(Ordering::SeqCst) {
+                return Err(AgentControlStop::Cancelled);
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1115,6 +1357,7 @@ enum TuiActivity {
     Idle,
     Working,
     Waiting,
+    Paused,
     Success,
     Failure,
 }
@@ -1125,6 +1368,7 @@ impl TuiActivity {
             Self::Idle => "idle",
             Self::Working => "working",
             Self::Waiting => "waiting",
+            Self::Paused => "paused",
             Self::Success => "success",
             Self::Failure => "failure",
         }
@@ -1135,6 +1379,7 @@ impl TuiActivity {
             Self::Idle => "● IDLE",
             Self::Working => "◉ WORKING",
             Self::Waiting => "⚠ WAITING APPROVAL",
+            Self::Paused => "⏸ PAUSED (ESC / CTRL+K)",
             Self::Success => "✔ SUCCESS",
             Self::Failure => "✖ FAILURE",
         }
@@ -1258,6 +1503,7 @@ impl TuiTheme {
             TuiActivity::Idle => self.muted(),
             TuiActivity::Working => self.title(),
             TuiActivity::Waiting => self.warning(),
+            TuiActivity::Paused => self.warning(),
             TuiActivity::Success => self.prompt(),
             TuiActivity::Failure => self.error(),
         }
@@ -1368,6 +1614,16 @@ impl App {
             mode_explicit,
             active_persona: None,
             discovered_models: Vec::new(),
+            steer_modal_open: false,
+            steer_inflight: None,
+            steer_guidance_input: Vec::new(),
+            steer_guidance_active: false,
+            steer_pending_guidance: Vec::new(),
+            steer_skipped_steps: Vec::new(),
+            steer_timeline: Vec::new(),
+            steer_status_message: None,
+            steer_selected_action: 0,
+            steer_control: Arc::new(SteerableRunControl::new()),
             last_area: Cell::new(Rect::default()),
         };
         app.refresh_provider_telemetry();
@@ -1552,6 +1808,40 @@ impl App {
     fn handle_mouse_click(&mut self, col: u16, row: u16, button: MouseButton) {
         let area = self.last_area.get();
         if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        if self.steer_modal_open {
+            let modal_area = centered_rect(80, 75, area);
+            if button == MouseButton::Right
+                || col < modal_area.x
+                || col >= modal_area.x + modal_area.width
+                || row < modal_area.y
+                || row >= modal_area.y + modal_area.height
+            {
+                self.resume_execution();
+                return;
+            }
+            let inner_y = modal_area.y + 1;
+            let action_y = inner_y + 5;
+            if row >= action_y && row < action_y + 3 {
+                let rel_x = col.saturating_sub(modal_area.x + 2);
+                if rel_x < 22 {
+                    self.resume_execution();
+                } else if rel_x < 46 {
+                    self.start_guidance_input();
+                } else if rel_x < 64 {
+                    let _ = self.skip_current_step();
+                } else {
+                    let _ = self.rollback_and_abort();
+                }
+                return;
+            }
+            let guidance_y = inner_y + 8;
+            if row >= guidance_y && row < guidance_y + 3 {
+                self.start_guidance_input();
+                return;
+            }
             return;
         }
 
@@ -1816,6 +2106,9 @@ impl App {
             return true;
         }
 
+        if self.steer_modal_open {
+            return self.handle_steer_modal_key(key);
+        }
         if self.palette_open {
             return self.handle_palette_key(key);
         }
@@ -1827,6 +2120,24 @@ impl App {
         }
         if self.skills_modal_open {
             return self.handle_skills_modal_key(key);
+        }
+
+        if self.activity == TuiActivity::Working {
+            if key.code == KeyCode::Esc
+                || (key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('k'))
+            {
+                self.pause_execution();
+                return false;
+            }
+        }
+
+        if self.activity == TuiActivity::Paused {
+            if key.code == KeyCode::Esc
+                || (key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('k'))
+            {
+                self.open_steer_modal();
+                return false;
+            }
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -2700,12 +3011,269 @@ impl App {
         }
     }
 
+    fn handle_steer_modal_key(&mut self, key: KeyEvent) -> bool {
+        if self.steer_guidance_active {
+            match key.code {
+                KeyCode::Esc => {
+                    self.steer_guidance_active = false;
+                    self.steer_guidance_input.clear();
+                    false
+                }
+                KeyCode::Enter => {
+                    let _ = self.submit_guidance();
+                    false
+                }
+                KeyCode::Backspace => {
+                    self.steer_guidance_input.pop();
+                    false
+                }
+                KeyCode::Char(ch)
+                    if !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                {
+                    self.steer_guidance_input.push(ch);
+                    false
+                }
+                _ => false,
+            }
+        } else {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('r') | KeyCode::Char('R') => {
+                    self.resume_execution();
+                    false
+                }
+                KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.resume_execution();
+                    false
+                }
+                KeyCode::Char('g') | KeyCode::Char('G') => {
+                    self.start_guidance_input();
+                    false
+                }
+                KeyCode::Char('s') | KeyCode::Char('S') => {
+                    let _ = self.skip_current_step();
+                    false
+                }
+                KeyCode::Char('b') | KeyCode::Char('B') => {
+                    let _ = self.rollback_and_abort();
+                    false
+                }
+                KeyCode::Tab | KeyCode::Right | KeyCode::Down => {
+                    self.steer_selected_action = (self.steer_selected_action + 1) % 4;
+                    false
+                }
+                KeyCode::BackTab | KeyCode::Left | KeyCode::Up => {
+                    self.steer_selected_action = (self.steer_selected_action + 3) % 4;
+                    false
+                }
+                KeyCode::Enter => {
+                    match self.steer_selected_action {
+                        0 => self.resume_execution(),
+                        1 => self.start_guidance_input(),
+                        2 => {
+                            let _ = self.skip_current_step();
+                        }
+                        3 => {
+                            let _ = self.rollback_and_abort();
+                        }
+                        _ => {}
+                    }
+                    false
+                }
+                _ => false,
+            }
+        }
+    }
+
+    pub fn pause_execution(&mut self) {
+        self.steer_control.pause();
+        self.activity = TuiActivity::Paused;
+        self.steer_modal_open = true;
+        let mut inflight = self.steer_control.inflight_state();
+        if inflight.turn == 0 {
+            inflight.turn = self.turns;
+        }
+        if inflight.elapsed_ms == 0 {
+            inflight.elapsed_ms = self.last_turn_ms.unwrap_or(0);
+        }
+        self.steer_inflight = Some(inflight);
+        self.steer_timeline
+            .push(format!("Turn {}: Execution paused by operator (Esc/Ctrl+K)", self.turns));
+        self.push_message("steer> execution paused at checkpoint (Esc / Ctrl+K)");
+    }
+
+    pub fn resume_execution(&mut self) {
+        self.steer_control.resume();
+        self.steer_modal_open = false;
+        self.steer_guidance_active = false;
+        if !self.steer_pending_guidance.is_empty() {
+            self.activity = TuiActivity::Working;
+            self.push_message(format!(
+                "steer> resumed execution with {} operator guidance instruction(s) queued",
+                self.steer_pending_guidance.len()
+            ));
+        } else {
+            self.activity = TuiActivity::Working;
+            self.push_message("steer> resumed execution");
+        }
+    }
+
+    pub fn open_steer_modal(&mut self) {
+        self.activity = TuiActivity::Paused;
+        self.steer_modal_open = true;
+        if self.steer_inflight.is_none() {
+            let mut state = self.steer_control.inflight_state();
+            state.turn = self.turns;
+            state.elapsed_ms = self.last_turn_ms.unwrap_or(0);
+            self.steer_inflight = Some(state);
+        }
+    }
+
+    pub fn start_guidance_input(&mut self) {
+        self.steer_guidance_active = true;
+        self.steer_guidance_input.clear();
+        self.steer_status_message = None;
+    }
+
+    pub fn submit_guidance(&mut self) -> Result<String, &'static str> {
+        let text = self.steer_guidance_input.iter().collect::<String>();
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            self.steer_status_message = Some("guidance instruction cannot be empty".to_owned());
+            return Err("guidance instruction cannot be empty");
+        }
+        let payload = self.steer_control.inject_guidance(trimmed)?;
+        self.steer_pending_guidance.push(payload.clone());
+        self.push_message(format!("steer> injected guidance: {trimmed}"));
+        self.steer_timeline
+            .push(format!("Turn {}: Guidance injected: {}", self.turns, trimmed));
+        self.steer_guidance_input.clear();
+        self.steer_guidance_active = false;
+        self.steer_status_message = Some(format!("Guidance injected: {trimmed}"));
+        Ok(trimmed.to_string())
+    }
+
+    #[allow(dead_code)]
+    pub fn inject_guidance(&mut self, text: &str) -> Result<String, &'static str> {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return Err("guidance instruction cannot be empty");
+        }
+        let payload = self.steer_control.inject_guidance(trimmed)?;
+        self.steer_pending_guidance.push(payload);
+        self.push_message(format!("steer> injected guidance: {trimmed}"));
+        self.steer_timeline
+            .push(format!("Turn {}: Guidance injected: {}", self.turns, trimmed));
+        Ok(trimmed.to_string())
+    }
+
+    pub fn skip_current_step(&mut self) -> Result<serde_json::Value, &'static str> {
+        let tool_name = if let Some(ref inflight) = self.steer_inflight {
+            inflight.active_tool.clone()
+        } else {
+            self.steer_control.active_tool.lock().ok().and_then(|g| g.clone())
+        };
+
+        let Some(tool_name) = tool_name else {
+            self.steer_status_message = Some("no active in-flight tool call to skip".to_owned());
+            self.push_message("steer> no active in-flight tool call to skip");
+            return Err("no active in-flight tool call to skip");
+        };
+
+        let synthetic_result = json!({
+            "tool_call_id": "call_steer_skipped",
+            "status": "skipped",
+            "output": "tool execution bypassed by operator steering request",
+        });
+
+        self.steer_skipped_steps.push(tool_name.clone());
+        if let Ok(mut steps) = self.steer_control.skipped_steps.lock() {
+            steps.push(tool_name.clone());
+        }
+        self.steer_control.clear_active_tool();
+        if let Some(ref mut inflight) = self.steer_inflight {
+            inflight.active_tool = None;
+            inflight.tool_args = None;
+            inflight.tool_calls = inflight.tool_calls.saturating_add(1);
+        }
+        self.turns = self.turns.saturating_add(1);
+        self.push_message(format!("steer> skipped tool step: {tool_name}"));
+        self.steer_timeline
+            .push(format!("Turn {}: Skipped tool step '{}'", self.turns, tool_name));
+        self.steer_status_message = Some(format!("Skipped step: {tool_name}"));
+        Ok(synthetic_result)
+    }
+
+    pub fn rollback_and_abort(&mut self) -> Result<(), CliError> {
+        self.steer_control.cancel();
+        let workspace_path = self
+            .args
+            .value("workspace")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+            });
+
+        let is_git = workspace_path.join(".git").exists()
+            || std::process::Command::new("git")
+                .args(["rev-parse", "--is-inside-work-tree"])
+                .current_dir(&workspace_path)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+
+        if is_git && self.args.value("workspace").is_some() {
+            let _ = std::process::Command::new("git")
+                .args(["checkout", "--", "."])
+                .current_dir(&workspace_path)
+                .output();
+        }
+
+        self.steer_modal_open = false;
+        self.steer_guidance_active = false;
+        self.activity = TuiActivity::Idle;
+        let session = self.session_id.as_deref().unwrap_or("none");
+        self.push_message(format!(
+            "steer> execution cleanly aborted and rolled back by operator; transcript preserved (session: {session})"
+        ));
+        self.steer_timeline
+            .push("Operator cleanly aborted execution with rollback".to_owned());
+        self.steer_status_message = Some("Aborted with clean rollback".to_owned());
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn set_active_tool_step(&mut self, name: &str, args: Option<&str>) {
+        self.steer_control.set_active_tool(name, args);
+        if let Some(ref mut inflight) = self.steer_inflight {
+            inflight.active_tool = Some(name.to_owned());
+            inflight.tool_args = args.map(|a| a.to_owned());
+        } else {
+            let mut state = self.steer_control.inflight_state();
+            state.active_tool = Some(name.to_owned());
+            state.tool_args = args.map(|a| a.to_owned());
+            self.steer_inflight = Some(state);
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn has_pending_guidance(&self, needle: &str) -> bool {
+        self.steer_pending_guidance.iter().any(|g| g.contains(needle))
+    }
+
+    #[allow(dead_code)]
+    pub fn skipped_steps_count(&self) -> usize {
+        self.steer_skipped_steps.len()
+    }
+
     fn active_autocomplete_suggestions(&self) -> Vec<(String, String)> {
         if self.input.is_empty()
             || self.palette_open
             || self.model_picker_open
             || self.key_modal_open
             || self.skills_modal_open
+            || self.steer_modal_open
         {
             return Vec::new();
         }
@@ -3005,11 +3573,18 @@ impl App {
         self.palette_open = false;
         self.key_modal_open = false;
         self.skills_modal_open = false;
+        self.steer_modal_open = false;
         let task = line.trim().to_owned();
         if task.is_empty() {
             return false;
         }
         match task.as_str() {
+            "/steer" | "/pause" => {
+                self.pause_execution();
+            }
+            "/unpause" => {
+                self.resume_execution();
+            }
             "/exit" | "/quit" => {
                 self.push_message("Closing...");
                 return true;
@@ -3018,6 +3593,8 @@ impl App {
                 for message in [
                     "/help       show TUI commands",
                     "/goal       execute long-horizon autonomous task with self-healing verification gates (/goal <objective>)",
+                    "/branch     list, create, checkout, or cleanup isolated worktrees (/branch list | create <task-id>)",
+                    "/pr         create or inspect PR branch and verification gate receipts (/pr create | status)",
                     "/model      open Pandora model & provider picker modal (Ctrl-M) or /model <provider:model>",
                     "/effort     show or change reasoning effort (low, medium, high, max) [Alt+Left/Right]",
                     "/key        open masked API key setup modal or /key [<ENV_VAR>] <api-key> (saved to .env)",
@@ -3432,6 +4009,24 @@ impl App {
                     );
                     self.run_task(wrapped);
                 }
+            }
+            "/branch" => {
+                self.handle_branch_command("list");
+            }
+            value if value.starts_with("/branch ") => {
+                let rest = value.trim_start_matches("/branch ").trim();
+                self.handle_branch_command(rest);
+            }
+            "/pr" => {
+                self.push_message("pr> Isolated Worktree Pull Request Lifecycle:");
+                self.push_message("  Usage: /pr <create|status> [options]");
+                self.push_message("  Examples:");
+                self.push_message("    /pr create --base main --title \"Autonomous Goal PR\"");
+                self.push_message("    /pr status");
+            }
+            value if value.starts_with("/pr ") => {
+                let rest = value.trim_start_matches("/pr ").trim();
+                self.handle_pr_command(rest);
             }
             "/model" | "/models" => {
                 self.open_model_picker();
@@ -4853,6 +5448,79 @@ impl App {
         }
     }
 
+    fn handle_branch_command(&mut self, rest: &str) {
+        let mut tokens = match super::slash::split_interactive_line(rest) {
+            Ok(tokens) => tokens,
+            Err(err) => {
+                self.push_message(format!("error> {}", err.message));
+                return;
+            }
+        };
+        if tokens.is_empty() {
+            tokens.push("list".to_owned());
+        }
+        for option in ["config", "data-dir", "workspace"] {
+            if let Some(value) = self.args.value(option) {
+                if !tokens.iter().any(|t| t == &format!("--{option}")) {
+                    tokens.push(format!("--{option}"));
+                    tokens.push(value.to_owned());
+                }
+            }
+        }
+        match super::branch::execute(&tokens) {
+            Ok(result) => {
+                self.activity = TuiActivity::Success;
+                for line in result.human.lines() {
+                    self.push_message(format!("branch> {line}"));
+                }
+                self.record_sparkline(3);
+            }
+            Err(error) => {
+                self.activity = TuiActivity::Failure;
+                self.push_message(format!("error> {}", clean_text(&error.message)));
+            }
+        }
+    }
+
+    fn handle_pr_command(&mut self, rest: &str) {
+        let mut tokens = match super::slash::split_interactive_line(rest) {
+            Ok(tokens) => tokens,
+            Err(err) => {
+                self.push_message(format!("error> {}", err.message));
+                return;
+            }
+        };
+        if tokens.is_empty() {
+            self.push_message("pr> Isolated Worktree Pull Request Lifecycle:");
+            self.push_message("  Usage: /pr <create|status> [options]");
+            self.push_message("  Examples:");
+            self.push_message("    /pr create --base main --title \"Autonomous Goal PR\"");
+            self.push_message("    /pr status");
+            return;
+        }
+        for option in ["config", "data-dir", "workspace"] {
+            if let Some(value) = self.args.value(option) {
+                if !tokens.iter().any(|t| t == &format!("--{option}")) {
+                    tokens.push(format!("--{option}"));
+                    tokens.push(value.to_owned());
+                }
+            }
+        }
+        match super::pr::execute(&tokens) {
+            Ok(result) => {
+                self.activity = TuiActivity::Success;
+                for line in result.human.lines() {
+                    self.push_message(format!("pr> {line}"));
+                }
+                self.record_sparkline(3);
+            }
+            Err(error) => {
+                self.activity = TuiActivity::Failure;
+                self.push_message(format!("error> {}", clean_text(&error.message)));
+            }
+        }
+    }
+
     fn show_kanban(&mut self) {
         self.activity = TuiActivity::Working;
         let mut args = vec!["board".to_owned()];
@@ -5306,8 +5974,18 @@ impl App {
         } else {
             task.clone()
         };
+        let effective_task = if !self.steer_pending_guidance.is_empty() {
+            let mut guidance_block = String::new();
+            for g in self.steer_pending_guidance.drain(..) {
+                guidance_block.push_str(&format!("{g}\n"));
+            }
+            format!("{guidance_block}\n{effective_task}")
+        } else {
+            effective_task
+        };
         let args = self.run_args(&effective_task, approval_id);
-        match super::run::execute(&args) {
+        let control_ref = Arc::clone(&self.steer_control);
+        match super::run::execute_with_control(&args, Some(control_ref.as_ref())) {
             Ok(result) => {
                 self.last_turn_ms = Some(started.elapsed().as_millis());
                 self.activity = TuiActivity::Success;
@@ -5323,22 +6001,35 @@ impl App {
             }
             Err(error) => {
                 self.last_turn_ms = Some(started.elapsed().as_millis());
-                self.activity = TuiActivity::Failure;
-                update_session(&mut self.session_id, error.details.get("session_id"));
-                self.messages[message_index] = format!("error> {}", clean_text(&error.message));
-                if let Some(approval_id) = error.details.get("approval_id").and_then(Value::as_str)
-                {
-                    self.activity = TuiActivity::Waiting;
-                    self.messages[message_index].push_str(&format!(" (approval: {approval_id})"));
-                    self.pending = Some(PendingTask {
-                        invocation: PendingInvocation::Agent(task),
-                        approval_id: approval_id.to_owned(),
-                    });
-                    self.push_message("approval> Action required: Type /approve (or press Ctrl+Y / type 'y') to allow, or /deny (Ctrl+N / 'n') to reject");
-                } else if error.message.contains("has a pending approval")
-                    || error.message.contains("already resolved or consumed")
-                {
-                    self.push_message("hint> Type /new to start a fresh clean session");
+                if error.code == "agent_controlled_stop" {
+                    self.activity = TuiActivity::Idle;
+                    update_session(&mut self.session_id, error.details.get("session_id"));
+                    self.messages[message_index] =
+                        format!("pandora> task stopped: {}", clean_text(&error.message));
+                    self.push_message(format!(
+                        "steer> execution cleanly stopped; transcript preserved (session: {})",
+                        self.session_id.as_deref().unwrap_or("none")
+                    ));
+                } else {
+                    self.activity = TuiActivity::Failure;
+                    update_session(&mut self.session_id, error.details.get("session_id"));
+                    self.messages[message_index] = format!("error> {}", clean_text(&error.message));
+                    if let Some(approval_id) =
+                        error.details.get("approval_id").and_then(Value::as_str)
+                    {
+                        self.activity = TuiActivity::Waiting;
+                        self.messages[message_index]
+                            .push_str(&format!(" (approval: {approval_id})"));
+                        self.pending = Some(PendingTask {
+                            invocation: PendingInvocation::Agent(task),
+                            approval_id: approval_id.to_owned(),
+                        });
+                        self.push_message("approval> Action required: Type /approve (or press Ctrl+Y / type 'y') to allow, or /deny (Ctrl+N / 'n') to reject");
+                    } else if error.message.contains("has a pending approval")
+                        || error.message.contains("already resolved or consumed")
+                    {
+                        self.push_message("hint> Type /new to start a fresh clean session");
+                    }
                 }
                 self.record_sparkline(5);
             }
@@ -5569,7 +6260,9 @@ impl App {
 
         if !wide_mode {
             self.render_compact(frame, area);
-            if self.palette_open {
+            if self.steer_modal_open {
+                self.render_steer_modal(frame, area);
+            } else if self.palette_open {
                 self.render_palette_modal(frame, area);
             } else if self.model_picker_open {
                 self.render_model_picker_modal(frame, area);
@@ -5610,7 +6303,9 @@ impl App {
         self.render_input_box(frame, sections[3]);
         self.render_autocomplete_popup(frame, sections[1], sections[3]);
 
-        if self.palette_open {
+        if self.steer_modal_open {
+            self.render_steer_modal(frame, area);
+        } else if self.palette_open {
             self.render_palette_modal(frame, area);
         } else if self.model_picker_open {
             self.render_model_picker_modal(frame, area);
@@ -6805,6 +7500,169 @@ impl App {
         frame.render_widget(List::new(items), chunks[2]);
     }
 
+    fn render_steer_modal(&self, frame: &mut Frame, area: Rect) {
+        let modal_area = centered_rect(80, 75, area);
+        frame.render_widget(Clear, modal_area);
+
+        let outer = Block::default()
+            .title(" ⏸ Pandora Execution Steer Modal — Autonomous Tool Checkpoint (Esc/Ctrl+K) ")
+            .borders(Borders::ALL)
+            .border_type(BorderType::Double)
+            .border_style(self.theme.warning());
+        let inner = outer.inner(modal_area);
+        frame.render_widget(outer, modal_area);
+
+        if inner.height < 6 || inner.width < 20 {
+            return;
+        }
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(5),
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Min(4),
+                Constraint::Length(1),
+            ])
+            .split(inner);
+
+        let inflight = self.steer_inflight.as_ref();
+        let turn = inflight.map(|s| s.turn).unwrap_or(self.turns);
+        let max_turns = inflight.map(|s| s.max_turns).unwrap_or(50);
+        let tool_calls = inflight.map(|s| s.tool_calls).unwrap_or(0);
+        let in_tok = inflight.map(|s| s.input_tokens).unwrap_or(0);
+        let out_tok = inflight.map(|s| s.output_tokens).unwrap_or(0);
+        let elapsed = inflight
+            .map(|s| s.elapsed_ms)
+            .unwrap_or_else(|| self.last_turn_ms.unwrap_or(0));
+        let active_tool = inflight
+            .and_then(|s| s.active_tool.as_deref())
+            .unwrap_or("none (evaluating turn context)");
+        let tool_args = inflight
+            .and_then(|s| s.tool_args.as_deref())
+            .unwrap_or("{}");
+
+        let p1 = Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled(" ● Checkpoint: ", self.theme.muted()),
+                Span::styled(
+                    "BeforeEffectAuthorization",
+                    self.theme.title().add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("   "),
+                Span::styled("Turn: ", self.theme.muted()),
+                Span::styled(format!("{turn}/{max_turns}"), self.theme.prompt()),
+                Span::raw("   "),
+                Span::styled("Tool Calls: ", self.theme.muted()),
+                Span::styled(format!("{tool_calls}"), self.theme.prompt()),
+            ]),
+            Line::from(vec![
+                Span::styled(" ⚙ In-Flight Tool: ", self.theme.muted()),
+                Span::styled(active_tool, self.theme.accent().add_modifier(Modifier::BOLD)),
+                Span::raw(" "),
+                Span::styled(format!("({tool_args})"), self.theme.muted()),
+            ]),
+            Line::from(vec![
+                Span::styled(" ⏱ Telemetry: ", self.theme.muted()),
+                Span::styled(
+                    format!("{in_tok} in / {out_tok} out tokens"),
+                    self.theme.prompt(),
+                ),
+                Span::raw(" · "),
+                Span::styled(format!("{elapsed}ms elapsed"), self.theme.muted()),
+            ]),
+        ])
+        .block(
+            Block::default()
+                .borders(Borders::BOTTOM)
+                .title(" In-Flight Progress Inspection "),
+        );
+        frame.render_widget(p1, chunks[0]);
+
+        let actions = [
+            ("[R] Resume Execution", 0),
+            ("[G] Inject Guidance", 1),
+            ("[S] Skip Step", 2),
+            ("[B] Clean Rollback", 3),
+        ];
+        let action_spans = actions
+            .iter()
+            .map(|(label, idx)| {
+                let is_sel = *idx == self.steer_selected_action;
+                let style = if is_sel {
+                    self.theme
+                        .accent()
+                        .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+                } else {
+                    self.theme.title()
+                };
+                Span::styled(format!(" {label} "), style)
+            })
+            .collect::<Vec<_>>();
+        let mut action_line_spans = Vec::new();
+        for (i, span) in action_spans.into_iter().enumerate() {
+            if i > 0 {
+                action_line_spans.push(Span::raw("   "));
+            }
+            action_line_spans.push(span);
+        }
+        let p2 = Paragraph::new(Line::from(action_line_spans)).block(
+            Block::default()
+                .borders(Borders::BOTTOM)
+                .title(" Steering Controls (Tab / Arrows to select, Enter to invoke) "),
+        );
+        frame.render_widget(p2, chunks[1]);
+
+        let guidance_style = if self.steer_guidance_active {
+            self.theme.accent()
+        } else {
+            self.theme.muted()
+        };
+        let input_text = if self.steer_guidance_active {
+            let s: String = self.steer_guidance_input.iter().collect();
+            format!("▶ {s}█")
+        } else if let Some(last) = self.steer_pending_guidance.last() {
+            format!("Pending: {last}")
+        } else {
+            "Press [G] to activate guidance input prompt...".to_owned()
+        };
+        let p3 = Paragraph::new(Line::from(vec![
+            Span::styled(" Guidance: ", self.theme.title()),
+            Span::styled(input_text, guidance_style),
+        ]))
+        .block(
+            Block::default()
+                .borders(Borders::BOTTOM)
+                .title(" Corrective Guidance Injection "),
+        );
+        frame.render_widget(p3, chunks[2]);
+
+        let timeline_items = if self.steer_timeline.is_empty() {
+            vec![ListItem::new("• (No timeline events recorded yet)")]
+        } else {
+            self.steer_timeline
+                .iter()
+                .rev()
+                .take(chunks[3].height as usize)
+                .map(|t| ListItem::new(format!("• {t}")))
+                .collect::<Vec<_>>()
+        };
+        let p4 = List::new(timeline_items).block(
+            Block::default()
+                .borders(Borders::BOTTOM)
+                .title(" Checkpoint & Steering Timeline "),
+        );
+        frame.render_widget(p4, chunks[3]);
+
+        let status = self
+            .steer_status_message
+            .as_deref()
+            .unwrap_or("Ready · Press [Esc] or [R] to resume execution cleanly");
+        let p5 = Paragraph::new(Span::styled(format!(" Status: {status}"), self.theme.prompt()));
+        frame.render_widget(p5, chunks[4]);
+    }
+
     fn render_key_modal(&self, frame: &mut Frame, area: Rect) {
         let modal_area = centered_rect(76, 72, area);
         frame.render_widget(Clear, modal_area);
@@ -7413,8 +8271,9 @@ fn terminal_error(error: impl std::fmt::Display) -> CliError {
 #[cfg(test)]
 mod tests {
     use super::{
-        App, MAX_TUI_HISTORY, MAX_TUI_MESSAGES, TuiActivity, TuiTab, TuiTheme, visible_input,
-        wrap_message,
+        AgentCheckpoint, AgentCheckpointKind, AgentControlStop, AgentRunControl, App,
+        MAX_TUI_HISTORY, MAX_TUI_MESSAGES, Ordering, SteerableRunControl, TuiActivity, TuiTab,
+        TuiTheme, visible_input, wrap_message,
     };
     use crate::commands::ParsedArgs;
     use crossterm::event::{
@@ -8168,6 +9027,29 @@ mod tests {
     }
 
     #[test]
+    fn test_branch_and_pr_slash_commands() {
+        let mut app = app();
+
+        // 1. /pr bare shows usage/examples
+        app.input = "/pr".chars().collect();
+        app.submit();
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.contains("Isolated Worktree Pull Request Lifecycle"))
+        );
+
+        // 2. /branch bare executes list
+        app.input = "/branch".chars().collect();
+        app.submit();
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.contains("branch>") || m.contains("error>"))
+        );
+    }
+
+    #[test]
     fn tui_branding_uses_pandora_and_supports_stash_and_autocomplete_navigation() {
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).expect("test terminal");
@@ -8669,4 +9551,250 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
         assert_eq!(app.palette_index, 0);
     }
+
+    #[test]
+    fn test_tui_steer_pause_on_esc_and_ctrl_k() {
+        let mut app = app();
+
+        // 1. Esc during Working pauses execution and opens steer modal
+        app.activity = TuiActivity::Working;
+        assert!(!app.steer_modal_open);
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.steer_modal_open);
+        assert_eq!(app.activity, TuiActivity::Paused);
+        assert!(app.steer_control.is_paused());
+        assert!(app.messages.iter().any(|m| m.contains("execution paused at checkpoint")));
+
+        // 2. Esc while in steer modal resumes execution
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!app.steer_modal_open);
+        assert_eq!(app.activity, TuiActivity::Working);
+        assert!(!app.steer_control.is_paused());
+        assert!(app.messages.iter().any(|m| m.contains("resumed execution")));
+
+        // 3. Ctrl+K during Working pauses execution
+        app.activity = TuiActivity::Working;
+        app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
+        assert!(app.steer_modal_open);
+        assert_eq!(app.activity, TuiActivity::Paused);
+        assert!(app.steer_control.is_paused());
+
+        // 4. 'r' key resumes execution
+        app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+        assert!(!app.steer_modal_open);
+        assert_eq!(app.activity, TuiActivity::Working);
+        assert!(!app.steer_control.is_paused());
+    }
+
+    #[test]
+    fn test_tui_steer_guidance_injection_workflow() {
+        let mut app = app();
+        app.activity = TuiActivity::Working;
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.steer_modal_open);
+
+        // Press 'g' to activate guidance input
+        assert!(!app.steer_guidance_active);
+        app.handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
+        assert!(app.steer_guidance_active);
+
+        // Submit empty guidance -> error
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.steer_guidance_active);
+        assert_eq!(
+            app.steer_status_message.as_deref(),
+            Some("guidance instruction cannot be empty")
+        );
+
+        // Type guidance text
+        for ch in "Stop editing parser.rs; fix the error in lexer.rs instead".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+        assert_eq!(
+            app.steer_guidance_input.iter().collect::<String>(),
+            "Stop editing parser.rs; fix the error in lexer.rs instead"
+        );
+
+        // Submit guidance
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(!app.steer_guidance_active);
+        assert!(app.has_pending_guidance("lexer.rs"));
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.contains("injected guidance") && m.contains("lexer.rs"))
+        );
+
+        // Direct programmatic guidance injection
+        let res = app.inject_guidance("Ensure tests pass before committing");
+        assert!(res.is_ok());
+        assert!(app.has_pending_guidance("Ensure tests pass"));
+
+        // Whitespace-only guidance rejected
+        assert!(app.inject_guidance("   \t\n  ").is_err());
+    }
+
+    #[test]
+    fn test_tui_steer_step_skip_advances_counter() {
+        let mut app = app();
+        app.activity = TuiActivity::Working;
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.steer_modal_open);
+
+        // Skipping when no active tool -> clean rejection
+        let no_tool_res = app.skip_current_step();
+        assert!(no_tool_res.is_err());
+        assert_eq!(no_tool_res.unwrap_err(), "no active in-flight tool call to skip");
+
+        // Set active tool step
+        app.set_active_tool_step("workspace.patch", Some("{\"path\": \"src/parser.rs\"}"));
+        assert_eq!(app.skipped_steps_count(), 0);
+
+        // Press 's' to skip step
+        let orig_turns = app.turns;
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+        assert_eq!(app.skipped_steps_count(), 1);
+        assert_eq!(app.turns, orig_turns + 1);
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.contains("skipped tool step: workspace.patch"))
+        );
+
+        // Synthetic result structure verification
+        app.set_active_tool_step("workspace.replace", None);
+        let skip_val = app.skip_current_step().expect("should skip active tool");
+        assert_eq!(skip_val["status"], "skipped");
+        assert!(skip_val["output"].as_str().unwrap().contains("bypassed"));
+    }
+
+    #[test]
+    fn test_tui_steer_clean_rollback_restores_terminal() {
+        let mut app = app();
+        app.activity = TuiActivity::Working;
+        app.session_id = Some("test-session-rollback-123".to_owned());
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.steer_modal_open);
+
+        // Press 'b' to clean rollback and abort
+        app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));
+        assert!(!app.steer_modal_open);
+        assert_eq!(app.activity, TuiActivity::Idle);
+        assert!(app.steer_control.is_cancelled());
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.contains("execution cleanly aborted and rolled back")
+                    && m.contains("test-session-rollback-123"))
+        );
+    }
+
+    #[test]
+    fn test_tui_steer_modal_keyboard_navigation_and_actions() {
+        let mut app = app();
+        app.open_steer_modal();
+        assert!(app.steer_modal_open);
+        assert_eq!(app.steer_selected_action, 0);
+
+        // Tab cycles action forward: 0 -> 1 -> 2 -> 3 -> 0
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.steer_selected_action, 1);
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.steer_selected_action, 2);
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.steer_selected_action, 3);
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.steer_selected_action, 0);
+
+        // BackTab cycles backward: 0 -> 3 -> 2 -> 1 -> 0
+        app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
+        assert_eq!(app.steer_selected_action, 3);
+        app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
+        assert_eq!(app.steer_selected_action, 2);
+
+        // Enter on action 0 (Resume)
+        app.steer_selected_action = 0;
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(!app.steer_modal_open);
+    }
+
+    #[test]
+    fn test_tui_steerable_run_control_checkpoint_lifecycle() {
+        let control = SteerableRunControl::new();
+        let usage = pandora_provider::TokenUsage::new(150, 60);
+
+        // Normal checkpoint allows execution
+        let cp_turn = AgentCheckpoint::new(AgentCheckpointKind::BeforeTurn, 1, 0, &usage);
+        assert!(control.checkpoint(cp_turn).is_ok());
+        assert_eq!(control.turn.load(Ordering::SeqCst), 1);
+        assert_eq!(control.input_tokens.load(Ordering::SeqCst), 150);
+        assert_eq!(control.output_tokens.load(Ordering::SeqCst), 60);
+
+        // Pause control
+        control.pause();
+        assert!(control.is_paused());
+
+        // BeforeEffectAuthorization checkpoint records timeline
+        let cp_effect = AgentCheckpoint::new(
+            AgentCheckpointKind::BeforeEffectAuthorization,
+            2,
+            1,
+            &usage,
+        );
+        assert!(control.checkpoint(cp_effect).is_ok());
+        let inflight = control.inflight_state();
+        assert_eq!(inflight.turn, 2);
+        assert_eq!(inflight.tool_calls, 1);
+        assert!(!inflight.timeline.is_empty());
+
+        // Guidance injection on control
+        let guidance = control
+            .inject_guidance("Focus on fixing the type error")
+            .unwrap();
+        assert!(guidance.contains("OPERATOR GUIDANCE"));
+
+        // Step skipping on control
+        control.set_active_tool("workspace.patch", Some("file.rs"));
+        let skip_res = control.skip_step().unwrap();
+        assert_eq!(skip_res["status"], "skipped");
+
+        // Cancel control
+        control.cancel();
+        assert!(control.is_cancelled());
+        assert_eq!(
+            control.checkpoint(cp_effect),
+            Err(AgentControlStop::Cancelled)
+        );
+
+        // Rapid repeated calls consistently return Cancelled
+        for _ in 0..10 {
+            assert_eq!(
+                control.checkpoint(cp_effect),
+                Err(AgentControlStop::Cancelled)
+            );
+        }
+    }
+
+    #[test]
+    fn test_tui_steer_slash_commands_pause_and_unpause() {
+        let mut app = app();
+
+        // /pause command pauses execution
+        app.input = "/pause".chars().collect();
+        app.submit();
+        assert!(app.steer_modal_open);
+        assert_eq!(app.activity, TuiActivity::Paused);
+
+        // /unpause command resumes execution
+        app.input = "/unpause".chars().collect();
+        app.submit();
+        assert!(!app.steer_modal_open);
+
+        // /steer command opens steer modal
+        app.input = "/steer".chars().collect();
+        app.submit();
+        assert!(app.steer_modal_open);
+        assert_eq!(app.activity, TuiActivity::Paused);
+    }
+
 }

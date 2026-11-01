@@ -353,7 +353,10 @@ impl ToolEngine {
                     "Run the fixed workspace verification command",
                     json!({
                         "type": "object",
-                        "properties": {},
+                        "properties": {
+                            "compiler": { "type": "string" },
+                            "incremental": { "type": "boolean" }
+                        },
                         "additionalProperties": false
                     }),
                     Capability::ProcessExecute,
@@ -421,7 +424,10 @@ impl ToolEngine {
                     "Build the workspace with the locked dependency graph",
                     json!({
                         "type": "object",
-                        "properties": {},
+                        "properties": {
+                            "compiler": { "type": "string" },
+                            "incremental": { "type": "boolean" }
+                        },
                         "additionalProperties": false
                     }),
                     Capability::ProcessExecute,
@@ -498,6 +504,97 @@ impl ToolEngine {
                 .expect("built-in refs tool schema is valid"),
             )
             .expect("built-in refs tool ID is unique");
+        engine
+            .register(
+                ToolDefinition::new(
+                    "lsp.goto_definition",
+                    "1.0.0",
+                    "Query symbol definition in workspace using Language Server Protocol",
+                    json!({
+                        "type": "object",
+                        "required": ["file", "line", "col"],
+                        "properties": {
+                            "file": {"type": "string", "description": "Relative workspace file path"},
+                            "line": {"type": "integer", "description": "1-indexed line number"},
+                            "col": {"type": "integer", "description": "1-indexed column number"},
+                            "server": {"type": "string", "description": "Optional server kind (rust-analyzer, tsserver, pyright, gopls)"}
+                        },
+                        "additionalProperties": false
+                    }),
+                    Capability::FilesystemRead,
+                    Operation::Read,
+                )
+                .expect("built-in lsp.goto_definition tool schema is valid"),
+            )
+            .expect("built-in lsp.goto_definition tool ID is unique");
+        engine
+            .register(
+                ToolDefinition::new(
+                    "lsp.find_references",
+                    "1.0.0",
+                    "Find all references to a symbol in workspace using Language Server Protocol",
+                    json!({
+                        "type": "object",
+                        "required": ["file", "line", "col"],
+                        "properties": {
+                            "file": {"type": "string", "description": "Relative workspace file path"},
+                            "line": {"type": "integer", "description": "1-indexed line number"},
+                            "col": {"type": "integer", "description": "1-indexed column number"},
+                            "include_declaration": {"type": "boolean", "description": "Whether to include definition"},
+                            "server": {"type": "string", "description": "Optional server kind"}
+                        },
+                        "additionalProperties": false
+                    }),
+                    Capability::FilesystemRead,
+                    Operation::Read,
+                )
+                .expect("built-in lsp.find_references tool schema is valid"),
+            )
+            .expect("built-in lsp.find_references tool ID is unique");
+        engine
+            .register(
+                ToolDefinition::new(
+                    "lsp.type_definition",
+                    "1.0.0",
+                    "Query symbol type definition in workspace using Language Server Protocol",
+                    json!({
+                        "type": "object",
+                        "required": ["file", "line", "col"],
+                        "properties": {
+                            "file": {"type": "string", "description": "Relative workspace file path"},
+                            "line": {"type": "integer", "description": "1-indexed line number"},
+                            "col": {"type": "integer", "description": "1-indexed column number"},
+                            "server": {"type": "string", "description": "Optional server kind"}
+                        },
+                        "additionalProperties": false
+                    }),
+                    Capability::FilesystemRead,
+                    Operation::Read,
+                )
+                .expect("built-in lsp.type_definition tool schema is valid"),
+            )
+            .expect("built-in lsp.type_definition tool ID is unique");
+        engine
+            .register(
+                ToolDefinition::new(
+                    "lsp.diagnostics",
+                    "1.0.0",
+                    "Extract real-time compiler diagnostics before running tests",
+                    json!({
+                        "type": "object",
+                        "properties": {
+                            "file": {"type": "string", "description": "Optional relative workspace file path"},
+                            "severity": {"type": "string", "enum": ["error", "warning", "info", "hint", "all"], "description": "Severity filter"},
+                            "server": {"type": "string", "description": "Optional server kind"}
+                        },
+                        "additionalProperties": false
+                    }),
+                    Capability::FilesystemRead,
+                    Operation::Read,
+                )
+                .expect("built-in lsp.diagnostics tool schema is valid"),
+            )
+            .expect("built-in lsp.diagnostics tool ID is unique");
         for definition in [
             ToolDefinition::new(
                 "daedalus.audit",
@@ -728,6 +825,54 @@ impl ToolEngine {
             )
             .expect("built-in cronjob_manage tool ID is unique");
         engine
+            .register(
+                ToolDefinition::new(
+                    "verification.visual",
+                    "1.0.0",
+                    "Execute visual verification script with synthetic CDP and headless browser canvas",
+                    json!({
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "enum": ["visual_verify", "screenshot", "navigate", "eval"]
+                            },
+                            "url": {"type": "string"},
+                            "html": {"type": "string"},
+                            "viewport": {
+                                "type": "object",
+                                "properties": {
+                                    "width": {"type": "integer"},
+                                    "height": {"type": "integer"}
+                                }
+                            },
+                            "steps": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "required": ["type"],
+                                    "properties": {
+                                        "type": {"type": "string"},
+                                        "selector": {"type": "string"},
+                                        "text": {"type": "string"},
+                                        "name": {"type": "string"},
+                                        "url": {"type": "string"},
+                                        "expression": {"type": "string"},
+                                        "expected_hash": {"type": "string"},
+                                        "expected_text": {"type": "string"}
+                                    }
+                                }
+                            }
+                        },
+                        "additionalProperties": true
+                    }),
+                    Capability::FilesystemRead,
+                    Operation::Read,
+                )
+                .expect("built-in verification.visual tool schema is valid"),
+            )
+            .expect("built-in verification.visual tool ID is unique");
+        engine
     }
 
     pub fn register(&self, definition: ToolDefinition) -> Result<(), ToolError> {
@@ -843,8 +988,10 @@ impl ToolEngine {
                         || id.starts_with("argus.")
                         || id.starts_with("ariadne.")
                         || id.starts_with("hephaestus.")
+                        || id.starts_with("lsp.")
                         || id == "tool.search"
                         || id == "cronjob_manage"
+                        || id == "verification.visual"
                 })
                 .collect(),
             ToolProfile::Minimal => all_tools
@@ -1036,16 +1183,30 @@ impl ToolEngine {
                 TaskIntent::new(format!("patch:{path}:{replacement}"))
                     .map_err(|error| ToolError::InvalidArguments(error.to_string()))?
             }
-            "workspace.verify" => TaskIntent::new("verify")
-                .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
+            "workspace.verify" => {
+                let summary = if arguments.get("compiler").and_then(|v| v.as_str()) == Some("blaze") {
+                    "verify:blaze"
+                } else {
+                    "verify"
+                };
+                TaskIntent::new(summary)
+                    .map_err(|error| ToolError::InvalidArguments(error.to_string()))?
+            }
             "workspace.test" => TaskIntent::new("test")
                 .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
             "workspace.format" => TaskIntent::new("format")
                 .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
             "workspace.lint" => TaskIntent::new("lint")
                 .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
-            "workspace.build" => TaskIntent::new("build")
-                .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
+            "workspace.build" => {
+                let summary = if arguments.get("compiler").and_then(|v| v.as_str()) == Some("blaze") {
+                    "build:blaze"
+                } else {
+                    "build"
+                };
+                TaskIntent::new(summary)
+                    .map_err(|error| ToolError::InvalidArguments(error.to_string()))?
+            }
             "workspace.status" => TaskIntent::new("status")
                 .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
             "workspace.diff" => TaskIntent::new("diff")
@@ -1090,6 +1251,46 @@ impl ToolEngine {
             "cronjob_manage" => {
                 let action = required_text_argument(arguments, "action")?;
                 TaskIntent::new(format!("cronjob_manage:{action}"))
+                    .map_err(|error| ToolError::InvalidArguments(error.to_string()))?
+            }
+            "verification.visual" => {
+                let action = arguments
+                    .get("action")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("visual_verify");
+                TaskIntent::new(format!("verification.visual:{action}"))
+                    .map_err(|error| ToolError::InvalidArguments(error.to_string()))?
+            }
+            "lsp.goto_definition" => {
+                let file = required_text_argument(arguments, "file")?;
+                let line = arguments.get("line").and_then(|v| v.as_u64()).unwrap_or(1);
+                let col = arguments.get("col").and_then(|v| v.as_u64()).unwrap_or(1);
+                let server = arguments.get("server").and_then(|v| v.as_str()).unwrap_or("");
+                TaskIntent::new(format!("lsp:definition:{file}:{line}:{col}:{server}"))
+                    .map_err(|error| ToolError::InvalidArguments(error.to_string()))?
+            }
+            "lsp.find_references" => {
+                let file = required_text_argument(arguments, "file")?;
+                let line = arguments.get("line").and_then(|v| v.as_u64()).unwrap_or(1);
+                let col = arguments.get("col").and_then(|v| v.as_u64()).unwrap_or(1);
+                let inc = arguments.get("include_declaration").and_then(|v| v.as_bool()).unwrap_or(true);
+                let server = arguments.get("server").and_then(|v| v.as_str()).unwrap_or("");
+                TaskIntent::new(format!("lsp:references:{file}:{line}:{col}:{inc}:{server}"))
+                    .map_err(|error| ToolError::InvalidArguments(error.to_string()))?
+            }
+            "lsp.type_definition" => {
+                let file = required_text_argument(arguments, "file")?;
+                let line = arguments.get("line").and_then(|v| v.as_u64()).unwrap_or(1);
+                let col = arguments.get("col").and_then(|v| v.as_u64()).unwrap_or(1);
+                let server = arguments.get("server").and_then(|v| v.as_str()).unwrap_or("");
+                TaskIntent::new(format!("lsp:type-definition:{file}:{line}:{col}:{server}"))
+                    .map_err(|error| ToolError::InvalidArguments(error.to_string()))?
+            }
+            "lsp.diagnostics" => {
+                let file = arguments.get("file").and_then(|v| v.as_str()).unwrap_or("");
+                let severity = arguments.get("severity").and_then(|v| v.as_str()).unwrap_or("all");
+                let server = arguments.get("server").and_then(|v| v.as_str()).unwrap_or("");
+                TaskIntent::new(format!("lsp:diagnostics:{file}:{severity}:{server}"))
                     .map_err(|error| ToolError::InvalidArguments(error.to_string()))?
             }
             _ => {
@@ -1260,6 +1461,11 @@ fn gene_id_for_tool(tool_id: &str) -> Result<GeneId, ToolError> {
         "design.compare" => "design.compare",
         "accessibility.evidence" => "accessibility.evidence",
         "cronjob_manage" => "cronjob.manage",
+        "verification.visual" => "verification.visual",
+        "lsp.goto_definition" => "lsp.goto_definition",
+        "lsp.find_references" => "lsp.find_references",
+        "lsp.type_definition" => "lsp.type_definition",
+        "lsp.diagnostics" => "lsp.diagnostics",
         unknown => return Err(ToolError::UnsupportedTool(unknown.to_owned())),
     };
     Ok(GeneId::new(gene_id).expect("built-in Gene ID is valid"))
@@ -1964,5 +2170,26 @@ mod tests {
         // 4. Bounded limit truncation
         let results = engine.search("workspace", 2);
         assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_blaze_acceleration_tool_intent() {
+        let engine = ToolEngine::with_builtins();
+
+        // 1. Standard verify invocation
+        let plan_std = engine.prepare_invocation("workspace.verify", &json!({})).unwrap();
+        assert_eq!(plan_std.task().summary(), "verify");
+
+        // 2. Blaze verify invocation
+        let plan_blaze = engine
+            .prepare_invocation("workspace.verify", &json!({"compiler": "blaze", "incremental": true}))
+            .unwrap();
+        assert_eq!(plan_blaze.task().summary(), "verify:blaze");
+
+        // 3. Blaze build invocation
+        let plan_build = engine
+            .prepare_invocation("workspace.build", &json!({"compiler": "blaze"}))
+            .unwrap();
+        assert_eq!(plan_build.task().summary(), "build:blaze");
     }
 }

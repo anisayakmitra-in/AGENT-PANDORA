@@ -104,7 +104,7 @@ fn interactive_invocation(
     Ok((command, args))
 }
 
-fn split_interactive_line(line: &str) -> Result<Vec<String>, CliError> {
+pub(super) fn split_interactive_line(line: &str) -> Result<Vec<String>, CliError> {
     let mut values = Vec::new();
     let mut current = String::new();
     let mut quoted = false;

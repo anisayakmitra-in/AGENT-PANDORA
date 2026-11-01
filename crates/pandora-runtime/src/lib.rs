@@ -4,7 +4,9 @@ pub mod a2a_engine;
 pub mod adaptive_engine;
 pub mod agent_loop;
 pub mod approvals;
+pub mod arch_simd;
 pub mod artifact_catalog;
+pub mod blaze_adapter;
 pub mod coding_feedback;
 pub mod composition_ledger;
 pub mod config;
@@ -40,8 +42,10 @@ pub mod identity;
 pub mod job_store;
 pub mod kanban_engine;
 pub mod lats_engine;
+pub mod lsp_engine;
 pub mod mcp;
 pub mod mcp_catalog;
+pub mod mock_cdp;
 pub mod memory_engine;
 pub mod memory_schedule;
 pub mod mesh_sync;
@@ -68,6 +72,7 @@ pub mod rollout_reducer;
 pub mod run_loop;
 pub mod secret_vault;
 pub mod self_healing;
+pub mod semantic_memory;
 pub mod service;
 pub mod service_token;
 pub mod session_journal;
@@ -79,10 +84,12 @@ pub mod storage_lifecycle;
 pub mod strategies;
 pub mod subagent;
 pub mod subagent_store;
+pub mod synthetic_canvas;
 pub mod tool_engine;
 pub mod tripartite_governance;
 pub mod voyager_curriculum;
 pub mod wasm;
+pub mod worktree_isolation;
 
 #[cfg(test)]
 mod test_support;
@@ -97,7 +104,11 @@ pub use agent_loop::{
 pub use approvals::{
     ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, PendingApproval,
 };
+pub use arch_simd::{CpuFeatures, simd_dot_product_128, simd_hash64_seed, simd_norm_sq_128};
 pub use artifact_catalog::{ArtifactActivation, ArtifactCatalog, ArtifactCatalogError};
+pub use blaze_adapter::{
+    BlazeBuildResult, BlazeCompilerAdapter, BlazeConfig, BlazeDiagnostics, DiagnosticLevel,
+};
 pub use coding_feedback::{
     CodingFeedbackError, CodingFeedbackInput, CodingFeedbackLoop, CodingFeedbackResult,
 };
@@ -118,7 +129,13 @@ pub use content_guard::{
 };
 pub use context_engine::{ContextCacheStats, ContextEngine, ContextError};
 pub use context_recovery::{ContextRecovery, RecoveryDecision, RecoveryInput, RecoveryStep};
-pub use context_vfs::{ContextVfs, VfsError};
+pub use context_vfs::{
+    ContextSearchOptions, ContextVfs, HybridSearchResult, SearchResultItem, VfsError,
+};
+pub use semantic_memory::{
+    BM25_B, BM25_K1, DENSE_DIMENSION, DenseFeatureHasher, HybridRankItem, HybridRrfRanker,
+    LessonRecord, RRF_K, SparseBm25Index, tokenize,
+};
 pub use cron_engine::{
     CronEngine, CronError, CronExecutionResult, CronJob, CronJobStatus, CronSchedule,
     handle_cronjob_manage_action,
@@ -167,6 +184,7 @@ pub use executors::{
     GitWorktreeExecutor, ProviderCallMetrics, WorktreeChange, WorktreeCommand, WorktreeError,
     WorktreeResult,
 };
+pub use worktree_isolation::{WorktreeIsolationManager, strip_unc};
 pub use fleet::{
     FLEET_SCHEMA_VERSION, FleetBudget, FleetEngine, FleetError, FleetFenceState, FleetLease,
     FleetLeaseFence, FleetLeaseState, FleetNode, FleetNodeState, FleetQuiescenceGuard,
@@ -206,11 +224,15 @@ pub use lats_engine::{
     LatsEngine, LatsError, LatsNode, LatsSearchMetrics, LatsSearchResult, convergence_choice,
     cosine_similarity, should_escalate,
 };
+pub use lsp_engine::{LspClientConfig, LspEngine, LspError, LspSession};
 pub use mcp::{
     MCP_LEGACY_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION, McpError, McpFailure, McpInvocation,
     McpProtocolMode, McpServer, McpStart, McpStdioConfig, McpToolResult, McpWireEra,
 };
 pub use mcp_catalog::{McpCatalogRevision, McpCatalogTool};
+pub use mock_cdp::{
+    CdpError, CdpResult, ElementRect, MockCdpServer, VirtualDocument, VirtualNode,
+};
 pub use memory_engine::{
     MAX_SYNTHESIS_SOURCE_RECORDS, MemoryEngine, MemoryError, MemorySynthesisProposal,
     MemorySynthesisSnapshot,
@@ -305,6 +327,7 @@ pub use subagent_store::{
     ClaimedSubagent, SubagentPreparation, SubagentRecord, SubagentScope, SubagentStore,
     SubagentStoreError,
 };
+pub use synthetic_canvas::{PNG_SIGNATURE, SyntheticCanvas, adler32, crc32};
 pub use tool_engine::{
     ToolContext, ToolDefinition, ToolEngine, ToolError, ToolInvocation, ToolPlan, ToolProfile,
 };

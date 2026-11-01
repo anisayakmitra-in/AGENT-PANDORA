@@ -2162,7 +2162,7 @@ fn contract_inner_architecture_harnesses_and_subagent_profiles() {
     let resp_verif = fixture.run(&["harness", "inspect", "verification-domain"]);
     let val_verif = resp_verif.success("harness inspect");
     assert_eq!(val_verif["harness"]["kind"], "domain");
-    assert_eq!(val_verif["harness"]["genes"].as_array().unwrap().len(), 4);
+    assert_eq!(val_verif["harness"]["genes"].as_array().unwrap().len(), 5);
 
     // 4. Inspect evolution-meta
     let resp_evo = fixture.run(&["harness", "inspect", "evolution-meta"]);

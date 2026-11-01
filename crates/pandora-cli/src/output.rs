@@ -100,6 +100,14 @@ pub struct CommandResult {
     print: bool,
 }
 
+impl CommandResult {
+    #[allow(dead_code)]
+    pub fn ok(command: &'static str, data: Value) -> Self {
+        let human = serde_json::to_string_pretty(&data).unwrap_or_default();
+        success(command, data, human)
+    }
+}
+
 pub fn success(command: &'static str, data: Value, human: impl Into<String>) -> CommandResult {
     CommandResult {
         command,

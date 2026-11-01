@@ -138,6 +138,8 @@ pub(super) fn execute_with_control(
             "tool-profile",
             "tools",
             "goal",
+            "task-id",
+            "pr",
         ],
     )?;
 
@@ -234,7 +236,13 @@ pub(super) fn execute_with_control(
     } else {
         None
     };
-    let is_goal = parsed.has_flag("goal") || parsed.value("goal").is_some();
+    let is_goal = parsed.has_flag("goal")
+        || parsed.value("goal").is_some()
+        || parsed
+            .positionals
+            .first()
+            .map(|p| p.starts_with("[LONG-HORIZON AUTONOMOUS GOAL]"))
+            .unwrap_or(false);
     let is_agent = parsed.value("agent").is_some() || strategy.is_some() || is_goal;
     let tool_profile = if is_goal {
         tool_profile.or(Some(pandora_runtime::ToolProfile::Coding))
@@ -362,11 +370,32 @@ pub(super) fn execute_with_control(
             None => (create_session(&store, &workspace_id)?, Vec::new()),
         },
     };
-    let workspace = WorkspaceRoot::new(config.workspace_dir()).map_err(|error| {
+    let mut goal_worktree: Option<(pandora_runtime::WorktreeIsolationManager, pandora_types::WorktreeTaskContext)> = None;
+    let workspace_path = if is_goal {
+        let task_id = parsed.value("task-id").map(|s| s.to_owned()).unwrap_or_else(|| {
+            let session_suffix = &session.id().as_str()[..session.id().as_str().len().min(8)];
+            format!("goal-{session_suffix}")
+        });
+        if let Ok(manager) = pandora_runtime::WorktreeIsolationManager::new(config.workspace_dir()) {
+            match manager.provision_worktree(&task_id, None) {
+                Ok(ctx) => {
+                    let path = ctx.worktree_path.clone();
+                    goal_worktree = Some((manager, ctx));
+                    path
+                }
+                Err(_) => config.workspace_dir().to_path_buf(),
+            }
+        } else {
+            config.workspace_dir().to_path_buf()
+        }
+    } else {
+        config.workspace_dir().to_path_buf()
+    };
+    let workspace = WorkspaceRoot::new(&workspace_path).map_err(|error| {
         let _ = error;
         CliError::configuration(
             "workspace path is invalid",
-            json!({"workspace": config.workspace_dir()}),
+            json!({"workspace": workspace_path}),
         )
     })?;
     let governance_mode = match parsed.value("mode").or_else(|| parsed.value("permission")) {
@@ -403,21 +432,25 @@ pub(super) fn execute_with_control(
         )?
     } else if is_goal {
         let raw = &parsed.positionals[0];
-        let wrapped = format!(
-            "[LONG-HORIZON AUTONOMOUS GOAL]\n\
-             Objective: {raw}\n\n\
-             Autonomous Execution Directives:\n\
-             1. Self-Directed Planning: Formulate and track milestone checklist before mutating files.\n\
-             2. Progressive Verification Gates: Syntax/Compile -> Unit/Isolated Tests -> Integration -> Receipt Check.\n\
-             3. Self-Healing: Inspect errors, diagnose root cause, patch, and re-verify without stopping prematurely.\n\
-             4. Complete Resolution: Do not conclude until all verification gates pass and the goal is thoroughly verified."
-        );
+        let wrapped = if raw.starts_with("[LONG-HORIZON AUTONOMOUS GOAL]") {
+            raw.clone()
+        } else {
+            format!(
+                "[LONG-HORIZON AUTONOMOUS GOAL]\n\
+                 Objective: {raw}\n\n\
+                 Autonomous Execution Directives:\n\
+                 1. Self-Directed Planning: Formulate and track milestone checklist before mutating files.\n\
+                 2. Progressive Verification Gates: Syntax/Compile -> Unit/Isolated Tests -> Integration -> Receipt Check.\n\
+                 3. Self-Healing: Inspect errors, diagnose root cause, patch, and re-verify without stopping prematurely.\n\
+                 4. Complete Resolution: Do not conclude until all verification gates pass and the goal is thoroughly verified."
+            )
+        };
         (wrapped, None)
     } else {
         (parsed.positionals[0].clone(), None)
     };
     if is_agent {
-        return execute_agent_core(
+        let mut result = execute_agent_core(
             &config,
             &controller,
             &session,
@@ -443,7 +476,21 @@ pub(super) fn execute_with_control(
                 tool_profile,
                 explicit_tools,
             },
-        );
+        )?;
+        if let Some((manager, ctx)) = goal_worktree {
+            let action = if parsed.has_flag("pr") || parsed.value("pr").is_some() {
+                pandora_types::FinalizeAction::PullRequest
+            } else {
+                pandora_types::FinalizeAction::SquashMerge
+            };
+            if let Ok(finalize_res) = manager.finalize_task(&ctx, action) {
+                if let serde_json::Value::Object(ref mut map) = result.data {
+                    map.insert("goal_worktree".to_string(), json!(finalize_res));
+                }
+                result.human.push_str(&format!("\n\n[Goal Resolution]: {}", finalize_res.message));
+            }
+        }
+        return Ok(result);
     }
     let mut intent =
         TaskIntent::new(task.clone()).map_err(|error| CliError::usage(error.to_string()))?;

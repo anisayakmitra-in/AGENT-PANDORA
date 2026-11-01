@@ -1,8 +1,12 @@
 use pandora_types::{
     ContextClassification, ContextFragment, ContextOrigin, ContextSource, ContextTrust, ContextUri,
-    FeatureMap, MemoryRecord, MemoryTier, SessionArchiveRecord, SkillManifest, StoredSop, TenantId,
-    VfsDirectoryEntry, VfsNodeKind, WorkspaceId,
+    FeatureMap, MemoryIntent, MemoryRecord, MemoryTier, SessionArchiveRecord, SkillManifest,
+    StoredSop, TenantId, VfsDirectoryEntry, VfsNodeKind, WorkspaceId,
 };
+use crate::semantic_memory::{
+    DenseFeatureHasher, HybridRrfRanker, generate_snippet,
+};
+pub use crate::semantic_memory::{ContextSearchOptions, HybridSearchResult, SearchResultItem};
 use std::fmt;
 use std::sync::RwLock;
 
@@ -636,12 +640,254 @@ impl ContextVfs {
             _ => Err(VfsError::NotFound(uri.as_str().to_owned())),
         }
     }
+
+    /// Executes a hybrid BM25 and dense similarity search over all mounted virtual resources.
+    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResultItem>, VfsError> {
+        let options = ContextSearchOptions::new(limit);
+        self.search_with_options(query, &options)
+    }
+
+    /// Executes a hybrid BM25 and dense similarity search with configurable options.
+    pub fn search_with_options(
+        &self,
+        query: &str,
+        options: &ContextSearchOptions,
+    ) -> Result<Vec<SearchResultItem>, VfsError> {
+        if query.trim().is_empty() || options.limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        struct VfsDoc {
+            uri: ContextUri,
+            title: String,
+            content: String,
+            tier: Option<MemoryTier>,
+            intent: Option<MemoryIntent>,
+        }
+
+        let mut docs = Vec::new();
+
+        // 1. Meta rules (Tier L0)
+        if options.tier.is_none() || options.tier == Some(MemoryTier::L0) {
+            let rules = self
+                .meta_rules
+                .read()
+                .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
+            for rule in rules.iter() {
+                let uri_str = if rule.id() == "meta:rules" || rule.id() == "rules" {
+                    "pandora://meta/rules".to_string()
+                } else {
+                    format!("pandora://meta/{}", rule.id().trim_start_matches("meta:"))
+                };
+                if let Ok(uri) = ContextUri::new(uri_str) {
+                    docs.push(VfsDoc {
+                        uri,
+                        title: rule.id().to_string(),
+                        content: rule.content().to_string(),
+                        tier: Some(MemoryTier::L0),
+                        intent: None,
+                    });
+                }
+            }
+        }
+
+        // 2. L1 records (Tier L1)
+        if options.tier.is_none() || options.tier == Some(MemoryTier::L1) {
+            let l1 = self
+                .l1_records
+                .read()
+                .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
+            for rec in l1.iter() {
+                if let Some(target_intent) = options.intent {
+                    if rec.intent() != target_intent {
+                        continue;
+                    }
+                }
+                let intent_str = rec.intent().as_str();
+                if let Ok(uri) = ContextUri::new(format!("pandora://index/{intent_str}/{}", rec.id().as_str())) {
+                    docs.push(VfsDoc {
+                        uri,
+                        title: rec.id().as_str().to_string(),
+                        content: format!("{} {}", rec.id().as_str(), rec.summary()),
+                        tier: Some(MemoryTier::L1),
+                        intent: Some(rec.intent()),
+                    });
+                }
+            }
+        }
+
+        // 3. L2 records (Tier L2)
+        if options.tier.is_none() || options.tier == Some(MemoryTier::L2) {
+            let l2 = self
+                .l2_records
+                .read()
+                .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
+            for rec in l2.iter() {
+                if let Some(target_intent) = options.intent {
+                    if rec.intent() != target_intent {
+                        continue;
+                    }
+                }
+                let intent_str = rec.intent().as_str();
+                if let Ok(uri) = ContextUri::new(format!("pandora://facts/{intent_str}/{}", rec.id().as_str())) {
+                    docs.push(VfsDoc {
+                        uri,
+                        title: rec.id().as_str().to_string(),
+                        content: format!("{} {}", rec.id().as_str(), rec.summary()),
+                        tier: Some(MemoryTier::L2),
+                        intent: Some(rec.intent()),
+                    });
+                }
+            }
+        }
+
+        // 4. SOPs (Tier L3)
+        if options.tier.is_none() || options.tier == Some(MemoryTier::L3) {
+            let sops = self
+                .sops
+                .read()
+                .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
+            for stored in sops.iter() {
+                if let Some(target_intent) = options.intent {
+                    if stored.sop.trigger_intent != target_intent {
+                        continue;
+                    }
+                }
+                if let Ok(uri) = ContextUri::new(format!("pandora://sops/{}", stored.sop.id)) {
+                    let steps_text = stored
+                        .sop
+                        .steps
+                        .iter()
+                        .map(|s| format!("{} {}", s.name, s.command))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let verif = stored.sop.verification_command.as_deref().unwrap_or_default();
+                    docs.push(VfsDoc {
+                        uri,
+                        title: stored.sop.name.clone(),
+                        content: format!("{} {} {} {}", stored.sop.id, stored.sop.name, steps_text, verif),
+                        tier: Some(MemoryTier::L3),
+                        intent: Some(stored.sop.trigger_intent),
+                    });
+                }
+            }
+        }
+
+        // 5. Archives (Tier L4)
+        if (options.tier.is_none() || options.tier == Some(MemoryTier::L4)) && options.intent.is_none() {
+            let archives = self
+                .archives
+                .read()
+                .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
+            for arc in archives.iter() {
+                if let Ok(uri) = ContextUri::new(format!("pandora://archives/{}", arc.archive_id)) {
+                    docs.push(VfsDoc {
+                        uri,
+                        title: arc.archive_id.clone(),
+                        content: format!("{} {}", arc.archive_id, arc.summary),
+                        tier: Some(MemoryTier::L4),
+                        intent: None,
+                    });
+                }
+            }
+        }
+
+        // 6. Feature maps
+        if options.tier.is_none() && options.intent.is_none() {
+            let maps = self
+                .feature_maps
+                .read()
+                .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
+            for (name, map) in maps.iter() {
+                if let Ok(uri) = ContextUri::new(format!("pandora://features/{name}")) {
+                    let map_json = serde_json::to_string(map).unwrap_or_default();
+                    docs.push(VfsDoc {
+                        uri,
+                        title: format!("Feature Map: {name}"),
+                        content: format!("{name} {map_json}"),
+                        tier: None,
+                        intent: None,
+                    });
+                }
+            }
+        }
+
+        // 7. Active skills
+        if options.tier.is_none() && options.intent.is_none() {
+            let skills = self
+                .skills
+                .read()
+                .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
+            for skill in skills.iter() {
+                if let Ok(uri) = ContextUri::new(format!("pandora://skills/{}", skill.id().as_str())) {
+                    docs.push(VfsDoc {
+                        uri,
+                        title: skill.name().to_string(),
+                        content: format!(
+                            "{} {} {} {}",
+                            skill.id().as_str(),
+                            skill.name(),
+                            skill.description(),
+                            skill.resources().join(" ")
+                        ),
+                        tier: None,
+                        intent: None,
+                    });
+                }
+            }
+        }
+
+        if docs.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut bm25 = crate::semantic_memory::SparseBm25Index::new();
+        let hasher = DenseFeatureHasher::new();
+        let mut doc_vectors = Vec::with_capacity(docs.len());
+
+        for (idx, doc) in docs.iter().enumerate() {
+            bm25.add_document(idx, &doc.content);
+            let vec = hasher.vectorize(&doc.content);
+            doc_vectors.push((idx, vec));
+        }
+
+        let sparse_scores = bm25.score(query);
+        let query_vec = hasher.vectorize(query);
+        let dense_scores = hasher.score(&query_vec, &doc_vectors);
+
+        let ranker = HybridRrfRanker::new();
+        let fused = ranker.fuse(&sparse_scores, &dense_scores);
+
+        let mut results = Vec::new();
+        for item in fused {
+            if item.hybrid_score < options.min_score {
+                continue;
+            }
+            let doc = &docs[item.doc_id];
+            let snippet = generate_snippet(&doc.content, query);
+            results.push(SearchResultItem {
+                uri: doc.uri.clone(),
+                title: doc.title.clone(),
+                snippet,
+                sparse_score: item.sparse_score,
+                dense_score: item.dense_score,
+                hybrid_score: item.hybrid_score,
+                tier: doc.tier,
+                intent: doc.intent,
+            });
+            if results.len() >= options.limit {
+                break;
+            }
+        }
+
+        Ok(results)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pandora_types::{MemoryIntent, MemoryScope, SopDefinition, SopStep, Timestamp};
+    use pandora_types::{MemoryIntent, MemoryScope, SessionId, SopDefinition, SopStep, Timestamp};
 
     #[test]
     fn vfs_resolves_default_meta_rules() {
@@ -770,5 +1016,74 @@ mod tests {
         let uri = ContextUri::new("pandora://meta/rules").unwrap();
         let frag = vfs.resolve(&uri).unwrap();
         assert!(frag.content().contains("Custom System Rules"));
+    }
+
+    #[test]
+    fn vfs_search_hybrid_retrieval_and_lesson_pattern() {
+        let vfs = ContextVfs::new();
+
+        // Add L1 lesson record
+        let scope = MemoryScope::new(
+            TenantId::new("t1").unwrap(),
+            WorkspaceId::new("w1").unwrap(),
+            SessionId::new("s1").unwrap(),
+            "p1",
+        )
+        .unwrap();
+
+        let lesson = MemoryRecord::new_l1(
+            "eval-lesson-exec-42",
+            pandora_types::MemoryKind::Lesson,
+            scope.clone(),
+            "failed evaluations: compiler diagnostics type mismatch E0308; retry requires fresh verification",
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(100),
+            "evaluation:exec-42",
+        )
+        .unwrap()
+        .with_intent(MemoryIntent::Procedure);
+        vfs.add_memory_record(lesson);
+
+        // Add SOP
+        let sop = StoredSop {
+            sop: SopDefinition {
+                id: "sop-fix-e0308".to_string(),
+                name: "Type Mismatch Remediation SOP".to_string(),
+                trigger_intent: MemoryIntent::Procedure,
+                steps: vec![SopStep {
+                    id: "step-1".to_string(),
+                    name: "Inspect Diagnostics".to_string(),
+                    command: "cargo check --message-format=json".to_string(),
+                    depends_on: vec![],
+                }],
+                verification_command: Some("cargo test -p pandora-runtime".to_string()),
+            },
+            tenant_id: TenantId::new("t1").unwrap(),
+            workspace_id: WorkspaceId::new("w1").unwrap(),
+            success_count: 5,
+            created_at: Timestamp::from_unix_seconds(10),
+            updated_at: Timestamp::from_unix_seconds(20),
+        };
+        vfs.add_sop(sop);
+
+        // Search for compiler error
+        let results = vfs.search("compiler diagnostics type mismatch E0308", 5).unwrap();
+        assert!(!results.is_empty());
+        assert_eq!(results[0].title, "eval-lesson-exec-42");
+        assert_eq!(results[0].uri.as_str(), "pandora://index/procedure/eval-lesson-exec-42");
+        assert!(results[0].hybrid_score > 0.0);
+        assert!(results[0].snippet.contains("diagnostics") || results[0].snippet.contains("evaluations"));
+
+        // Search for constitutional rules
+        let rule_results = vfs.search("architectural integrity constitutional", 5).unwrap();
+        assert!(!rule_results.is_empty());
+        assert!(rule_results[0].uri.as_str().starts_with("pandora://meta"));
+
+        // Filter search by tier L3
+        let options = ContextSearchOptions::new(5).with_tier(MemoryTier::L3);
+        let sop_results = vfs.search_with_options("type mismatch remediation", &options).unwrap();
+        assert_eq!(sop_results.len(), 1);
+        assert_eq!(sop_results[0].title, "Type Mismatch Remediation SOP");
+        assert_eq!(sop_results[0].tier, Some(MemoryTier::L3));
     }
 }

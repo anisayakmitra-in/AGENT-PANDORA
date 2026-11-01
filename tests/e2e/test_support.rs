@@ -1,0 +1,179 @@
+#![forbid(unsafe_code)]
+
+use serde_json::Value;
+use std::fs;
+use std::path::PathBuf;
+use std::process::{Command, Output};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+static NEXT_E2E_FIXTURE: AtomicU64 = AtomicU64::new(5000);
+
+pub struct E2eFixture {
+    pub root: PathBuf,
+    pub config: PathBuf,
+    pub data: PathBuf,
+    pub workspace: PathBuf,
+}
+
+impl E2eFixture {
+    pub fn new() -> Self {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock available")
+            .as_nanos();
+        let sequence = NEXT_E2E_FIXTURE.fetch_add(1, Ordering::Relaxed);
+        let temp_root = std::env::temp_dir()
+            .canonicalize()
+            .expect("temp dir canonical path");
+        let root = temp_root.join(format!(
+            "pandora-e2e-root-{}-{suffix}-{sequence}",
+            std::process::id()
+        ));
+        let workspace = root.join("workspace");
+        let data = root.join("data");
+        let config = root.join("config.json");
+
+        fs::create_dir_all(&workspace).expect("workspace dir created");
+        fs::create_dir_all(&data).expect("data dir created");
+
+        fs::write(
+            workspace.join("README.md"),
+            "# AGENT-PANDORA E2E Workspace\n",
+        )
+        .expect("initial README written");
+
+        Self {
+            root,
+            config,
+            data,
+            workspace,
+        }
+    }
+
+    pub fn command(&self, args: &[&str]) -> Command {
+        let mut cmd = Command::new("target/debug/pandora.exe");
+        cmd.args(args)
+            .env("PANDORA_CONFIG", &self.config)
+            .env("PANDORA_DATA_DIR", &self.data)
+            .env("PANDORA_WORKSPACE", &self.workspace)
+            .env_remove("PANDORA_PROVIDER")
+            .env_remove("PANDORA_PROVIDER_URL")
+            .env_remove("OPENAI_API_KEY")
+            .env_remove("ANTHROPIC_API_KEY")
+            .env_remove("GROQ_API_KEY")
+            .env_remove("DEEPSEEK_API_KEY")
+            .env_remove("OPENROUTER_API_KEY")
+            .env_remove("OLLAMA_API_KEY");
+        cmd
+    }
+
+    pub fn run(&self, args: &[&str]) -> Output {
+        self.command(args)
+            .output()
+            .unwrap_or_else(|err| panic!("failed to execute pandora with args {args:?}: {err}"))
+    }
+
+    pub fn setup(&self) -> Value {
+        let output = self.run(&[
+            "setup",
+            "--provider-url",
+            "http://127.0.0.1:4317/v1",
+            "--json",
+        ]);
+        assert!(
+            output.status.success(),
+            "setup failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        parse_json(&output)
+    }
+
+    pub fn init_git(&self) -> String {
+        for args in [
+            ["init"].as_slice(),
+            ["config", "user.email", "pandora-e2e@example.test"].as_slice(),
+            ["config", "user.name", "Pandora E2E Test"].as_slice(),
+            ["add", "README.md"].as_slice(),
+            ["commit", "-m", "initial commit"].as_slice(),
+        ] {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(&self.workspace)
+                .output()
+                .expect("git command failed to start");
+            assert!(
+                output.status.success(),
+                "git command {:?} failed: {}",
+                args,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        let output = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&self.workspace)
+            .output()
+            .expect("git rev-parse HEAD failed");
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .expect("HEAD commit is UTF-8")
+            .trim()
+            .to_owned()
+    }
+}
+
+impl Drop for E2eFixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+pub fn parse_json(output: &Output) -> Value {
+    let raw = if !output.stdout.is_empty() {
+        &output.stdout
+    } else {
+        &output.stderr
+    };
+    serde_json::from_slice(raw).unwrap_or_else(|err| {
+        panic!(
+            "failed to parse JSON from output (err: {err}):\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })
+}
+
+pub fn assert_png_valid(bytes: &[u8]) {
+    const PNG_HEADER: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    assert!(
+        bytes.len() >= 8,
+        "PNG bytes length too short: {}",
+        bytes.len()
+    );
+    assert_eq!(
+        &bytes[0..8],
+        &PNG_HEADER,
+        "Invalid PNG magic signature header"
+    );
+
+    assert!(bytes.len() >= 20, "PNG bytes too short for IHDR");
+    let ihdr_type = &bytes[12..16];
+    assert_eq!(ihdr_type, b"IHDR", "First chunk must be IHDR");
+
+    assert!(bytes.len() >= 12, "PNG bytes too short for IEND");
+    let has_iend = bytes.windows(4).any(|w| w == b"IEND");
+    assert!(has_iend, "PNG missing required IEND chunk");
+}
+
+pub fn python_embed_path() -> PathBuf {
+    PathBuf::from(r"C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\python-embed\python.exe")
+}
+
+pub fn gcc_path() -> PathBuf {
+    PathBuf::from(r"C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\w64devkit\bin\gcc.exe")
+}
+
+pub fn project_root() -> PathBuf {
+    PathBuf::from(r"C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\AGENT-PANDORA")
+}

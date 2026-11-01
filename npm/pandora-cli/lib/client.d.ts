@@ -27,3 +27,16 @@ export declare class PandoraCliProtocolError extends Error {
 export declare function parseJsonEnvelope<T extends JsonObject = JsonObject>(stdout: string): PandoraEnvelope<T>;
 export declare function defaultLauncherPath(): string;
 export declare function runPandoraJson<T extends JsonObject = JsonObject>(args: readonly string[], options?: PandoraRunOptions): Promise<PandoraRunResult<T>>;
+export declare class PandoraClient {
+    private readonly options;
+    constructor(options?: PandoraRunOptions);
+    run<T extends JsonObject = JsonObject>(args: readonly string[], overrideOptions?: PandoraRunOptions): Promise<PandoraRunResult<T>>;
+    doctor(overrideOptions?: PandoraRunOptions): Promise<PandoraRunResult>;
+    verify(overrideOptions?: PandoraRunOptions): Promise<PandoraRunResult>;
+    lspDefinition(file: string, line: number, col: number, overrideOptions?: PandoraRunOptions): Promise<PandoraRunResult>;
+    lspReferences(file: string, line: number, col: number, overrideOptions?: PandoraRunOptions): Promise<PandoraRunResult>;
+    lspDiagnostics(file: string, overrideOptions?: PandoraRunOptions): Promise<PandoraRunResult>;
+    branchList(overrideOptions?: PandoraRunOptions): Promise<PandoraRunResult>;
+    prCreate(taskId: string, title: string, overrideOptions?: PandoraRunOptions): Promise<PandoraRunResult>;
+    semanticSearch(query: string, limit?: number, overrideOptions?: PandoraRunOptions): Promise<PandoraRunResult>;
+}

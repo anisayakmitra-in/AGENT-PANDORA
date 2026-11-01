@@ -170,3 +170,73 @@ export function runPandoraJson<T extends JsonObject = JsonObject>(
     });
   });
 }
+
+export class PandoraClient {
+  constructor(private readonly options: PandoraRunOptions = {}) {}
+
+  public async run<T extends JsonObject = JsonObject>(
+    args: readonly string[],
+    overrideOptions: PandoraRunOptions = {},
+  ): Promise<PandoraRunResult<T>> {
+    return runPandoraJson<T>(args, { ...this.options, ...overrideOptions });
+  }
+
+  public async doctor(overrideOptions?: PandoraRunOptions): Promise<PandoraRunResult> {
+    return this.run(["doctor"], overrideOptions);
+  }
+
+  public async verify(overrideOptions?: PandoraRunOptions): Promise<PandoraRunResult> {
+    return this.run(["verify"], overrideOptions);
+  }
+
+  public async lspDefinition(
+    file: string,
+    line: number,
+    col: number,
+    overrideOptions?: PandoraRunOptions,
+  ): Promise<PandoraRunResult> {
+    return this.run(
+      ["lsp", "definition", "--file", file, "--line", String(line), "--col", String(col)],
+      overrideOptions,
+    );
+  }
+
+  public async lspReferences(
+    file: string,
+    line: number,
+    col: number,
+    overrideOptions?: PandoraRunOptions,
+  ): Promise<PandoraRunResult> {
+    return this.run(
+      ["lsp", "references", "--file", file, "--line", String(line), "--col", String(col)],
+      overrideOptions,
+    );
+  }
+
+  public async lspDiagnostics(
+    file: string,
+    overrideOptions?: PandoraRunOptions,
+  ): Promise<PandoraRunResult> {
+    return this.run(["lsp", "diagnostics", "--file", file], overrideOptions);
+  }
+
+  public async branchList(overrideOptions?: PandoraRunOptions): Promise<PandoraRunResult> {
+    return this.run(["branch", "list"], overrideOptions);
+  }
+
+  public async prCreate(
+    taskId: string,
+    title: string,
+    overrideOptions?: PandoraRunOptions,
+  ): Promise<PandoraRunResult> {
+    return this.run(["pr", "create", "--task", taskId, "--title", title], overrideOptions);
+  }
+
+  public async semanticSearch(
+    query: string,
+    limit: number = 5,
+    overrideOptions?: PandoraRunOptions,
+  ): Promise<PandoraRunResult> {
+    return this.run(["memory", "vfs", "search", query, "--limit", String(limit)], overrideOptions);
+  }
+}

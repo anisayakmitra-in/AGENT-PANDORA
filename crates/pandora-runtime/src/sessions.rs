@@ -6,6 +6,7 @@ use pandora_types::{
     RuntimeEvent, Session, SessionArchiveRecord, SessionId, SopDefinition, StoredSop, TenantId,
     Timestamp, WorkspaceId,
 };
+use crate::semantic_memory::{DenseFeatureHasher, HybridRrfRanker, LessonRecord, SparseBm25Index};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -2134,6 +2135,193 @@ impl SessionStore {
             records.push(record);
         }
         Ok(records)
+    }
+
+    /// Queries past resolved error patterns and evaluation lessons (`eval-lesson-*`) using hybrid BM25 + dense ranking.
+    pub fn query_error_patterns(
+        &self,
+        error_pattern: &str,
+        limit: usize,
+    ) -> Result<Vec<LessonRecord>, SessionError> {
+        self.query_error_patterns_internal(None, None, error_pattern, limit)
+    }
+
+    /// Queries past resolved error patterns and evaluation lessons (`eval-lesson-*`) scoped to a tenant and workspace.
+    pub fn query_error_patterns_scoped(
+        &self,
+        tenant_id: &TenantId,
+        workspace_id: &WorkspaceId,
+        error_pattern: &str,
+        limit: usize,
+    ) -> Result<Vec<LessonRecord>, SessionError> {
+        self.query_error_patterns_internal(Some(tenant_id), Some(workspace_id), error_pattern, limit)
+    }
+
+    fn query_error_patterns_internal(
+        &self,
+        tenant_id: Option<&TenantId>,
+        workspace_id: Option<&WorkspaceId>,
+        error_pattern: &str,
+        limit: usize,
+    ) -> Result<Vec<LessonRecord>, SessionError> {
+        if error_pattern.trim().is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let connection = self.lock()?;
+        let map_row =
+            |row: &rusqlite::Row<'_>| -> rusqlite::Result<(String, String, String, String, RawMemoryRecord)> {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    (
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                        row.get(8)?,
+                        row.get(9)?,
+                        row.get(10)?,
+                        row.get(11)?,
+                        row.get(12)?,
+                        row.get(13)?,
+                        row.get(14)?,
+                        row.get(15)?,
+                    ),
+                ))
+            };
+
+        let mut statement = if tenant_id.is_some() && workspace_id.is_some() {
+            connection.prepare(
+                "SELECT s.tenant_id, s.workspace_id, s.id, mr.provider,
+                        mr.tier, mr.kind, mr.classification, mr.summary,
+                        mr.provenance, mr.created_at, mr.memory_id, mr.approval_id, mr.approver,
+                        mr.origin, mr.evidence_ids, mr.intent
+                 FROM memory_records mr
+                 JOIN sessions s ON s.id = mr.session_id
+                 WHERE s.tenant_id = ?1 AND s.workspace_id = ?2
+                   AND NOT EXISTS (
+                       SELECT 1 FROM memory_revocations rev
+                       WHERE rev.session_id = mr.session_id
+                         AND rev.provider = mr.provider
+                         AND rev.memory_id = mr.memory_id
+                   )
+                 ORDER BY mr.created_at DESC
+                 LIMIT 512",
+            )?
+        } else {
+            connection.prepare(
+                "SELECT s.tenant_id, s.workspace_id, s.id, mr.provider,
+                        mr.tier, mr.kind, mr.classification, mr.summary,
+                        mr.provenance, mr.created_at, mr.memory_id, mr.approval_id, mr.approver,
+                        mr.origin, mr.evidence_ids, mr.intent
+                 FROM memory_records mr
+                 JOIN sessions s ON s.id = mr.session_id
+                 WHERE NOT EXISTS (
+                     SELECT 1 FROM memory_revocations rev
+                     WHERE rev.session_id = mr.session_id
+                       AND rev.provider = mr.provider
+                       AND rev.memory_id = mr.memory_id
+                 )
+                 ORDER BY mr.created_at DESC
+                 LIMIT 512",
+            )?
+        };
+
+        let rows = if let (Some(tenant), Some(workspace)) = (tenant_id, workspace_id) {
+            statement.query_map(params![tenant.as_str(), workspace.as_str()], map_row)?
+        } else {
+            statement.query_map([], map_row)?
+        };
+
+        let mut candidates = Vec::new();
+        for row in rows {
+            let (tenant_str, workspace_str, session_str, provider, raw) = row?;
+            let Ok(tenant) = TenantId::new(tenant_str) else { continue };
+            let Ok(workspace) = WorkspaceId::new(workspace_str) else { continue };
+            let Ok(session_id) = SessionId::new(session_str) else { continue };
+            let Ok(scope) = MemoryScope::new(tenant, workspace, session_id, provider) else { continue };
+            let Ok(record) = decode_memory_record(scope, raw) else { continue };
+
+            let is_error_candidate = record.kind() == MemoryKind::Lesson
+                || record.id().as_str().starts_with("eval-lesson-")
+                || record.id().as_str().starts_with("evaluation-lesson:")
+                || record.summary().contains(EVALUATION_FEEDBACK_PREFIX)
+                || record.tier() == MemoryTier::L1;
+
+            if is_error_candidate {
+                candidates.push(record);
+            }
+        }
+
+        if candidates.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut bm25 = SparseBm25Index::new();
+        let hasher = DenseFeatureHasher::new();
+        let mut doc_vectors = Vec::with_capacity(candidates.len());
+
+        for (idx, record) in candidates.iter().enumerate() {
+            let text = format!("{} {} {}", record.id().as_str(), record.summary(), record.provenance());
+            bm25.add_document(idx, &text);
+            let vec = hasher.vectorize(&text);
+            doc_vectors.push((idx, vec));
+        }
+
+        let sparse_scores = bm25.score(error_pattern);
+        let query_vec = hasher.vectorize(error_pattern);
+        let dense_scores = hasher.score(&query_vec, &doc_vectors);
+
+        let ranker = HybridRrfRanker::new();
+        let fused = ranker.fuse(&sparse_scores, &dense_scores);
+
+        let mut results = Vec::new();
+        for item in fused {
+            let record = &candidates[item.doc_id];
+
+            let execution_id = if let Some(stripped) = record.provenance().strip_prefix("evaluation:") {
+                Some(stripped.to_string())
+            } else if let Some(stripped) = record.id().as_str().strip_prefix("eval-lesson-") {
+                Some(stripped.to_string())
+            } else {
+                None
+            };
+
+            let mut failed_kinds = Vec::new();
+            if let Some(rest) = record.summary().strip_prefix(EVALUATION_FEEDBACK_PREFIX) {
+                let kinds_str = rest.strip_suffix(EVALUATION_FEEDBACK_SUFFIX).unwrap_or(rest);
+                for k in kinds_str.split(", ") {
+                    if !k.is_empty() {
+                        failed_kinds.push(k.to_string());
+                    }
+                }
+            } else {
+                for word in &["trajectory", "outcome", "policy", "human", "regression", "adversarial"] {
+                    if record.summary().contains(word) {
+                        failed_kinds.push(word.to_string());
+                    }
+                }
+            }
+
+            results.push(LessonRecord {
+                memory_id: record.id().as_str().to_string(),
+                execution_id,
+                failed_kinds,
+                summary: record.summary().to_string(),
+                relevance_score: item.hybrid_score,
+                created_at: record.created_at(),
+                record: record.clone(),
+            });
+
+            if results.len() >= limit {
+                break;
+            }
+        }
+
+        Ok(results)
     }
 
     /// Prunes inactive sessions older than `older_than_seconds`.
@@ -4914,6 +5102,73 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(loaded_arch_b.summary, "Summary of tenant b session");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_query_error_patterns_hybrid_retrieval() {
+        let (root, store, session, scope) = memory_fixture("pandora-query-error-patterns-test");
+
+        // Record an evaluation feedback lesson for failed trajectory and regression
+        let failed = EvaluationReceipt::new(
+            session.id().clone(),
+            ExecutionId::new("exec-lesson-99").unwrap(),
+            Timestamp::from_unix_seconds(5),
+            vec![
+                EvaluationResult::new(
+                    EvaluationKind::Trajectory,
+                    EvaluationStatus::Failed,
+                    0,
+                    "mismatched trajectory steps",
+                    false,
+                )
+                .unwrap(),
+                EvaluationResult::new(
+                    EvaluationKind::Regression,
+                    EvaluationStatus::Failed,
+                    0,
+                    "compiler diagnostics regression error",
+                    false,
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap();
+
+        assert!(
+            store
+                .record_evaluation_feedback(
+                    &session,
+                    session.principal_id(),
+                    scope.provider(),
+                    &failed,
+                )
+                .unwrap()
+        );
+
+        // Query error patterns for trajectory regression
+        let lessons = store.query_error_patterns("failed trajectory regression", 5).unwrap();
+        assert!(!lessons.is_empty(), "expected at least one matching error pattern lesson");
+        let top = &lessons[0];
+        assert!(top.summary.contains("failed evaluations:"));
+        assert!(top.summary.contains("trajectory"));
+        assert!(top.summary.contains("regression"));
+        assert!(top.failed_kinds.contains(&"trajectory".to_string()));
+        assert!(top.failed_kinds.contains(&"regression".to_string()));
+        assert!(top.relevance_score > 0.0);
+
+        // Scoped query with matching tenant and workspace
+        let scoped_lessons = store
+            .query_error_patterns_scoped(
+                session.tenant_id(),
+                session.workspace_id(),
+                "trajectory",
+                5,
+            )
+            .unwrap();
+        assert!(!scoped_lessons.is_empty());
+        assert_eq!(scoped_lessons[0].memory_id, top.memory_id);
 
         let _ = std::fs::remove_dir_all(root);
     }

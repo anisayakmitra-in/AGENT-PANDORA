@@ -204,7 +204,7 @@ pub struct AgentCheckpoint<'a> {
 }
 
 impl<'a> AgentCheckpoint<'a> {
-    fn new(kind: AgentCheckpointKind, turns: u32, tool_calls: u32, usage: &'a TokenUsage) -> Self {
+    pub const fn new(kind: AgentCheckpointKind, turns: u32, tool_calls: u32, usage: &'a TokenUsage) -> Self {
         Self {
             kind,
             turns,
@@ -1287,6 +1287,105 @@ impl AgentLoop {
                     return Ok(ToolExecution::Output(format!("cron error: {err}")));
                 }
             }
+        }
+
+        if call.name() == "verification.visual" {
+            let width = call
+                .arguments()
+                .get("viewport")
+                .and_then(|v| v.get("width"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1280) as u32;
+            let height = call
+                .arguments()
+                .get("viewport")
+                .and_then(|v| v.get("height"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(720) as u32;
+            let mut server = crate::mock_cdp::MockCdpServer::new(width, height);
+
+            if let Some(url) = call.arguments().get("url").and_then(|v| v.as_str()) {
+                server.navigate(url);
+            } else if let Some(html) = call.arguments().get("html").and_then(|v| v.as_str()) {
+                server.navigate(html);
+            }
+
+            let steps_value = call.arguments().get("steps");
+            let steps: Vec<pandora_harnesses::verification::VisualStep> = if let Some(sv) = steps_value {
+                serde_json::from_value(sv.clone()).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+
+            match server.execute_visual_steps(&steps) {
+                Ok(mut report) => {
+                    convergence.record_success(sig);
+                    for s in &mut report.screenshots {
+                        if s.base64_png.len() > 512 {
+                            s.base64_png = format!(
+                                "<base64_png: {} bytes, sha256: {}>",
+                                s.base64_png.len(),
+                                s.sha256
+                            );
+                        }
+                    }
+                    let out = serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_string());
+                    return Ok(ToolExecution::Output(out));
+                }
+                Err(err) => {
+                    convergence.record_failure(sig);
+                    return Ok(ToolExecution::Output(format!("visual verification error: {err}")));
+                }
+            }
+        }
+
+        if call.name().starts_with("lsp.") {
+            let engine = crate::lsp_engine::LspEngine::new(controller.workspace().root());
+            let result_str = match call.name() {
+                "lsp.goto_definition" => {
+                    let file = call.arguments().get("file").and_then(|v| v.as_str()).unwrap_or("");
+                    let line = call.arguments().get("line").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+                    let col = call.arguments().get("col").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+                    let server = call.arguments().get("server").and_then(|v| v.as_str()).and_then(|s| s.parse().ok());
+                    match engine.goto_definition(std::path::Path::new(file), line, col, server) {
+                        Ok(res) => serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string()),
+                        Err(e) => format!("lsp error: {e}"),
+                    }
+                }
+                "lsp.find_references" => {
+                    let file = call.arguments().get("file").and_then(|v| v.as_str()).unwrap_or("");
+                    let line = call.arguments().get("line").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+                    let col = call.arguments().get("col").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+                    let inc_decl = call.arguments().get("include_declaration").and_then(|v| v.as_bool()).unwrap_or(true);
+                    let server = call.arguments().get("server").and_then(|v| v.as_str()).and_then(|s| s.parse().ok());
+                    match engine.find_references(std::path::Path::new(file), line, col, inc_decl, server) {
+                        Ok(res) => serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string()),
+                        Err(e) => format!("lsp error: {e}"),
+                    }
+                }
+                "lsp.type_definition" => {
+                    let file = call.arguments().get("file").and_then(|v| v.as_str()).unwrap_or("");
+                    let line = call.arguments().get("line").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+                    let col = call.arguments().get("col").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+                    let server = call.arguments().get("server").and_then(|v| v.as_str()).and_then(|s| s.parse().ok());
+                    match engine.type_definition(std::path::Path::new(file), line, col, server) {
+                        Ok(res) => serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string()),
+                        Err(e) => format!("lsp error: {e}"),
+                    }
+                }
+                "lsp.diagnostics" => {
+                    let file = call.arguments().get("file").and_then(|v| v.as_str()).map(std::path::Path::new);
+                    let severity = call.arguments().get("severity").and_then(|v| v.as_str()).and_then(|s| s.parse().ok());
+                    let server = call.arguments().get("server").and_then(|v| v.as_str()).and_then(|s| s.parse().ok());
+                    match engine.diagnostics(file, severity, server) {
+                        Ok(res) => serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string()),
+                        Err(e) => format!("lsp error: {e}"),
+                    }
+                }
+                _ => format!("unknown lsp tool: {}", call.name()),
+            };
+            convergence.record_success(sig);
+            return Ok(ToolExecution::Output(result_str));
         }
 
         let intent = if call.name() == "workspace.replace"

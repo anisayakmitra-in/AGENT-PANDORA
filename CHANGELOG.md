@@ -1,5 +1,24 @@
 # Changelog
 
+## v3.0.1
+
+### External Messaging Gateway Bridge (`scripts/gateway/`)
+- **Telegram & Discord Autonomous Gateway**:
+  - Long-polling Telegram bot supporting `/status`, `/doctor`, `/pending`, `/approve <id>`, `/reject <id>`, `/run <task>`, and `/help`.
+  - Discord webhook event dispatcher sending formatted embeds for approvals, task completions, and health warnings.
+  - Autonomous cron execution monitor polling active scheduled tasks and dispatching updates to messaging channels.
+  - Human-in-the-loop remote approval resolution executing authorized tasks securely through Pandora's ReferenceMonitor.
+  - Windows (`start_bridge.bat`, `start_bridge.ps1`) launchers with `--smoke` verification.
+
+### Enhanced TUI Ergonomics (`pandora tui`)
+- **Advanced Mouse & Keyboard Controls**:
+  - Horizontal scroll wheel (`ScrollLeft` / `ScrollRight`) view cycling across Console, Kanban, Memory, and Governance tabs.
+  - Skills Hub Modal mouse integration: mouse wheel scrolling, direct click-to-toggle on skill rows, click outside to close.
+  - Clickable top bar shortcut buttons: `[F1 Help]`, `[F2 Model]`, `[/keys]`, `[/skills]`, and `[F6 S1/S2]`.
+  - Direct authorization key shortcuts: pressing `y`/`Y` or `n`/`N` on empty prompt immediately resolves pending approvals.
+  - Standard readline editing: `Ctrl+Backspace` for previous word deletion, `Ctrl+Delete` for next word deletion, and `Alt+[` / `Alt+]` for bracket tab navigation.
+  - Added full test coverage in `test_advanced_mouse_and_keyboard_controls` (40/40 TUI tests passing).
+
 ## v3.0.0
 
 ### Pandora v3.0.0-SUNLESS: Autonomous Evolutionary Harness Runtime

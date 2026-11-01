@@ -17,6 +17,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 mod approval;
 mod auth;
 mod backup;
+pub(crate) mod branch;
 mod chat;
 mod completions;
 pub(crate) mod connector;
@@ -38,6 +39,7 @@ mod harness;
 pub(crate) mod importer;
 mod job;
 pub(crate) mod kanban;
+pub(crate) mod lsp;
 mod mcp;
 mod memory;
 mod migration;
@@ -48,6 +50,7 @@ mod package;
 pub(crate) mod peer;
 pub(crate) mod policy;
 pub(crate) mod prompt;
+pub(crate) mod pr;
 mod provider;
 pub(crate) mod prp;
 pub(crate) mod reasoning;
@@ -127,6 +130,9 @@ pub(crate) const ROOT_COMMANDS: &[&str] = &[
     "dsrs",
     "gepa",
     "prp",
+    "branch",
+    "pr",
+    "lsp",
 ];
 
 /// [`ROOT_COMMANDS`] joined by single spaces, the way the POSIX, zsh, and fish
@@ -253,6 +259,9 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "dsrs" => dsrs::execute(&args[1..]),
         "gepa" => gepa::execute(&args[1..]),
         "prp" => prp::execute(&args[1..]),
+        "branch" => branch::execute(&args[1..]),
+        "pr" => pr::execute(&args[1..]),
+        "lsp" => lsp::execute(&args[1..]),
         "--help" | "help" => {
             if args.len() != 1 {
                 return Err(CliError::usage("help does not accept additional arguments"));
@@ -520,7 +529,7 @@ pub(crate) fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|curriculum|decision|tui|harness|slash|session|job|subagent|skill|package|registry|runtime|memory|approval|provider|mcp|tool|orchestration|operations|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor|policy|cron|prompt|dsrs|gepa|prp> [options]
+    r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|curriculum|decision|tui|harness|slash|session|job|subagent|skill|package|registry|runtime|memory|approval|provider|mcp|tool|orchestration|operations|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor|policy|cron|prompt|dsrs|gepa|prp|branch|pr|lsp> [options]
 
 commands:
   help (or --help)
@@ -547,7 +556,7 @@ commands:
   package scaffold domain-harness --output <new-directory> [--id <id>] [--version <semver>] [--publisher <name>] [--gene <id>@<semver>] [--route-hint <hint>] | scaffold meta-harness --output <new-directory> [--id <id>] [--version <semver>] [--publisher <name>] [--domains <id>@<semver>,...] [--max-handoffs <1-64>] | admit --manifest <path> --artifact <path> | admit-cached <id> <version> [--dry-run|--yes] | validate --manifest <path> --artifact <path> | sign --manifest <path> --artifact <path> --secret-name <vault-name> --output <path> [--yes] | keygen --publisher <name> --key-id <id> --secret-name <vault-name> | discover <id> [version] [--registry <url>|--registry-profile <name>] | download|install <id> [version] [--registry <url>|--registry-profile <name>] [--token-env <name>] | download-github|install-github --repository <url> --commit <sha> --manifest <repo-path> --artifact <repo-path> [--token-env <name>] | cache list|inspect|verify|events | list | inspect <id> <version> | enable|disable <id> <version> [--dry-run|--yes] | rollback <id> [--dry-run|--yes] | lock [--output <path>] | verify-lock [--lock <path>] | trust-root add|list|revoke | transparency list [--event-kind <kind>] [--outcome <allowed|denied>] [--limit <1-256>] | transparency inspect --sequence <id> | remove <id> <version> [--dry-run|--yes]
   registry list | set --name <name> --registry-url <url> [--token-env <name>] | use <name> | remove <name> --yes
   runtime engines list|inspect <id>
-  memory recall --session <id> --provider <name> --tier <l1|l2|l3|l4> [--intent <repo|procedure|coding|user>] [--id <memory-id>] [--limit <1-256>] | audit --session <id> --provider <name> | forget --session <id> --provider <name> <memory-id> [--yes] | compact --session <id> --provider <name> --before <unix-seconds> [--yes] | promote --session <id> --provider <name> <memory-id> [--approval <id>] | synthesize --session <id> --provider <name> --id <memory-id> --summary <text> [--kind <kind>] [--classification <public|internal>] [--intent <repo|procedure|coding|user>] [--yes] | consolidate --source-session <id> --target-session <id> --provider <name> --source-id <memory-id> --target-id <memory-id> [--intent <repo|procedure|coding|user>] [--yes] | provenance --session <id> --provider <name> <memory-id> | schedule create|list|disable|claim|run|runs | sop list|inspect | archive list|inspect | capsule export|import | vfs ls|cat
+  memory recall --session <id> --provider <name> --tier <l1|l2|l3|l4> [--intent <repo|procedure|coding|user>] [--id <memory-id>] [--limit <1-256>] | audit --session <id> --provider <name> | forget --session <id> --provider <name> <memory-id> [--yes] | compact --session <id> --provider <name> --before <unix-seconds> [--yes] | promote --session <id> --provider <name> <memory-id> [--approval <id>] | synthesize --session <id> --provider <name> --id <memory-id> --summary <text> [--kind <kind>] [--classification <public|internal>] [--intent <repo|procedure|coding|user>] [--yes] | consolidate --source-session <id> --target-session <id> --provider <name> --source-id <memory-id> --target-id <memory-id> [--intent <repo|procedure|coding|user>] [--yes] | provenance --session <id> --provider <name> <memory-id> | schedule create|list|disable|claim|run|runs | sop list|inspect | archive list|inspect | capsule export|import | vfs ls|cat|search
   tool list|inspect <id> [--catalog <builtin|active>]
   approval list|inspect|resolve
   provider list|set|use|test
@@ -576,6 +585,9 @@ commands:
   dsrs show|inspect <name>|cot <name>
   gepa frontier|optimize
   prp inspect [--id <id>] [--input <path>] | scaffold [--id <id>] [--title <title>] [--out <path>] | validate [--id <id>] [--input <path>] [--fail-gate <syntax|unit|integration|receipt>]
+  branch list | create <task-id> [--base <commit>] | checkout <task-id> | cleanup [--task <task-id>] [--all] [--force]
+  pr create [--task <task-id>] [--title <title>] [--body <body>] | status [--task <task-id>]
+  lsp status|servers|definition|references|type-definition|diagnostics
   doctor"#
 }
 
@@ -708,6 +720,7 @@ mod tests {
         "approval",
         "auth",
         "backup",
+        "branch",
         "completions",
         "cron",
         "efficiency",
@@ -723,6 +736,7 @@ mod tests {
         "migrate",
         "orchestration",
         "package",
+        "pr",
         "prompt",
         "provider",
         "registry",

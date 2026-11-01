@@ -436,8 +436,10 @@ pub use security::{
     security_static_output,
 };
 pub use verification::{
-    VerificationAction, VerificationGene, VerificationGeneRole, VerificationRequest,
-    is_verification_gene, verification_static_output,
+    ScreenshotArtifact, VerificationAction, VerificationGene, VerificationGeneRole,
+    VerificationRequest, VisualStep, VisualVerificationGene, VisualVerificationReport,
+    VisualVerificationSpec, VisualViewport, assert_element_visibility, assert_pixel_tolerance,
+    assert_screenshot_hash, assert_text_matches, is_verification_gene, verification_static_output,
 };
 
 pub fn builtin_genes() -> Vec<Box<dyn pandora_types::Gene>> {
@@ -1053,12 +1055,13 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(verif.manifest().kind(), HarnessKind::Domain);
-        assert_eq!(genes.len(), 4);
+        assert_eq!(genes.len(), 5);
         for id in [
             "verification.contract",
             "verification.golden",
             "verification.property",
             "verification.guide",
+            "verification.visual",
         ] {
             assert!(genes.iter().any(|gene| gene.id().as_str() == id));
         }
@@ -1111,6 +1114,7 @@ mod tests {
         assert!(commands.resolve("/verification-golden").is_some());
         assert!(commands.resolve("/verification-property").is_some());
         assert!(commands.resolve("/verification-guide").is_some());
+        assert!(commands.resolve("/verification-visual").is_some());
 
         assert!(commands.resolve("/evolution").is_some());
         assert!(commands.resolve("/swarm").is_some());
