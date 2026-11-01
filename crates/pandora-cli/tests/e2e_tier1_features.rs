@@ -30,7 +30,10 @@ fn test_tier1_r1_lsp_status_and_server_detection() {
 
     assert!(out.status.success(), "lsp status must succeed: {stdout}");
     let val: Value = serde_json::from_str(&stdout).expect("valid json from lsp status");
-    assert!(val.get("servers").is_some(), "response must contain servers array");
+    assert!(
+        val.get("servers").is_some(),
+        "response must contain servers array"
+    );
 }
 
 #[test]
@@ -58,7 +61,11 @@ fn test_tier1_r1_lsp_definition_query() {
 
     let src_file = fixture.workspace.join("src").join("main.rs");
     fs::create_dir_all(src_file.parent().unwrap()).unwrap();
-    fs::write(&src_file, "fn target_symbol() {}\nfn main() { target_symbol(); }\n").unwrap();
+    fs::write(
+        &src_file,
+        "fn target_symbol() {}\nfn main() { target_symbol(); }\n",
+    )
+    .unwrap();
 
     let out = fixture.run(&[
         "lsp",
@@ -73,9 +80,15 @@ fn test_tier1_r1_lsp_definition_query() {
     ]);
     let stdout = String::from_utf8_lossy(&out.stdout);
 
-    assert!(out.status.success(), "lsp definition must succeed: {stdout}");
+    assert!(
+        out.status.success(),
+        "lsp definition must succeed: {stdout}"
+    );
     let val: Value = serde_json::from_str(&stdout).expect("valid json from lsp definition");
-    assert_eq!(val.get("command").and_then(Value::as_str), Some("lsp definition"));
+    assert_eq!(
+        val.get("command").and_then(Value::as_str),
+        Some("lsp definition")
+    );
 }
 
 #[test]
@@ -100,9 +113,15 @@ fn test_tier1_r1_lsp_references_query() {
     ]);
     let stdout = String::from_utf8_lossy(&out.stdout);
 
-    assert!(out.status.success(), "lsp references must succeed: {stdout}");
+    assert!(
+        out.status.success(),
+        "lsp references must succeed: {stdout}"
+    );
     let val: Value = serde_json::from_str(&stdout).expect("valid json from lsp references");
-    assert_eq!(val.get("command").and_then(Value::as_str), Some("lsp references"));
+    assert_eq!(
+        val.get("command").and_then(Value::as_str),
+        Some("lsp references")
+    );
 }
 
 #[test]
@@ -127,9 +146,15 @@ fn test_tier1_r1_lsp_type_definition_query() {
     ]);
     let stdout = String::from_utf8_lossy(&out.stdout);
 
-    assert!(out.status.success(), "lsp type-definition must succeed: {stdout}");
+    assert!(
+        out.status.success(),
+        "lsp type-definition must succeed: {stdout}"
+    );
     let val: Value = serde_json::from_str(&stdout).expect("valid json from lsp type-definition");
-    assert_eq!(val.get("command").and_then(Value::as_str), Some("lsp type-definition"));
+    assert_eq!(
+        val.get("command").and_then(Value::as_str),
+        Some("lsp type-definition")
+    );
 }
 
 #[test]
@@ -139,20 +164,24 @@ fn test_tier1_r1_lsp_pretest_diagnostics() {
 
     let src_file = fixture.workspace.join("src").join("broken.rs");
     fs::create_dir_all(src_file.parent().unwrap()).unwrap();
-    fs::write(&src_file, "fn error() { let x: u32 = \"type mismatch\"; }\n").unwrap();
+    fs::write(
+        &src_file,
+        "fn error() { let x: u32 = \"type mismatch\"; }\n",
+    )
+    .unwrap();
 
-    let out = fixture.run(&[
-        "lsp",
-        "diagnostics",
-        "--file",
-        "src/broken.rs",
-        "--json",
-    ]);
+    let out = fixture.run(&["lsp", "diagnostics", "--file", "src/broken.rs", "--json"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
 
-    assert!(out.status.success(), "lsp diagnostics must succeed: {stdout}");
+    assert!(
+        out.status.success(),
+        "lsp diagnostics must succeed: {stdout}"
+    );
     let val: Value = serde_json::from_str(&stdout).expect("valid json from lsp diagnostics");
-    assert_eq!(val.get("command").and_then(Value::as_str), Some("lsp diagnostics"));
+    assert_eq!(
+        val.get("command").and_then(Value::as_str),
+        Some("lsp diagnostics")
+    );
 }
 
 // ============================================================================
@@ -182,7 +211,10 @@ fn test_tier1_r2_tui_agent_run_control_checkpoint() {
 
     let usage = TokenUsage::default();
     let cp_turn = AgentCheckpoint::before_effect_authorization(1, 0, &usage);
-    assert_eq!(cp_turn.kind(), AgentCheckpointKind::BeforeEffectAuthorization);
+    assert_eq!(
+        cp_turn.kind(),
+        AgentCheckpointKind::BeforeEffectAuthorization
+    );
     assert_eq!(cp_turn.turns(), 1);
     assert_eq!(cp_turn.tool_calls(), 0);
 
@@ -191,7 +223,10 @@ fn test_tier1_r2_tui_agent_run_control_checkpoint() {
 
     // Intercept with pause/cancel
     control.interrupted.store(true, Ordering::SeqCst);
-    assert_eq!(control.checkpoint(cp_turn), Err(AgentControlStop::Cancelled));
+    assert_eq!(
+        control.checkpoint(cp_turn),
+        Err(AgentControlStop::Cancelled)
+    );
 }
 
 #[test]
@@ -211,8 +246,18 @@ fn test_tier1_r2_tui_steer_guidance_injection() {
         "role": "user",
         "content": format!("[OPERATOR GUIDANCE]: {guidance}"),
     });
-    assert!(message_payload["content"].as_str().unwrap().contains("OPERATOR GUIDANCE"));
-    assert!(message_payload["content"].as_str().unwrap().contains("lexer.rs"));
+    assert!(
+        message_payload["content"]
+            .as_str()
+            .unwrap()
+            .contains("OPERATOR GUIDANCE")
+    );
+    assert!(
+        message_payload["content"]
+            .as_str()
+            .unwrap()
+            .contains("lexer.rs")
+    );
 }
 
 #[test]
@@ -225,7 +270,12 @@ fn test_tier1_r2_tui_steer_skip_step() {
         "output": "tool execution bypassed by operator steering request",
     });
     assert_eq!(synthetic_result["status"], "skipped");
-    assert!(synthetic_result["output"].as_str().unwrap().contains("bypassed"));
+    assert!(
+        synthetic_result["output"]
+            .as_str()
+            .unwrap()
+            .contains("bypassed")
+    );
 }
 
 #[test]
@@ -262,7 +312,10 @@ fn test_tier1_r2_tui_steer_cancellation_rollback() {
         .current_dir(&fixture.workspace)
         .output()
         .unwrap();
-    let current_sha = String::from_utf8(head_out.stdout).unwrap().trim().to_owned();
+    let current_sha = String::from_utf8(head_out.stdout)
+        .unwrap()
+        .trim()
+        .to_owned();
     assert_eq!(current_sha, initial_sha);
 }
 
@@ -277,7 +330,7 @@ fn test_tier1_r3_semantic_bm25_inverted_index() {
     let doc2 = "unhandled exception in network proxy timeout socket disconnect";
     let doc3 = "compiler diagnostics syntax error mismatched types expected u32 found str";
 
-    let docs = vec![doc1, doc2, doc3];
+    let docs = [doc1, doc2, doc3];
     let query = "compiler diagnostics type mismatch";
 
     // Compute term frequencies for doc1 vs doc2
@@ -286,8 +339,14 @@ fn test_tier1_r3_semantic_bm25_inverted_index() {
     let score_doc2 = q_terms.iter().filter(|&&t| doc2.contains(t)).count();
     let score_doc3 = q_terms.iter().filter(|&&t| doc3.contains(t)).count();
 
-    assert!(score_doc1 > score_doc2, "doc1 must score higher than doc2 for query terms");
-    assert!(score_doc3 > score_doc2, "doc3 must score higher than doc2 for query terms");
+    assert!(
+        score_doc1 > score_doc2,
+        "doc1 must score higher than doc2 for query terms"
+    );
+    assert!(
+        score_doc3 > score_doc2,
+        "doc3 must score higher than doc2 for query terms"
+    );
     assert_eq!(docs.len(), 3);
 }
 
@@ -428,13 +487,11 @@ fn test_tier1_r4_mock_cdp_capture_screenshot_base64() {
         0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1x1 pixels
         0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, // 8-bit RGBA
         0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, // IDAT
-        0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00, 
-        0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 
-        0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 
-        0x42, 0x60, 0x82,
+        0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4,
+        0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
     ];
     assert_png_valid(&minimal_png);
-    let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &minimal_png);
+    let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, minimal_png);
     assert!(!b64.is_empty());
 }
 
@@ -445,7 +502,7 @@ fn test_tier1_r4_synthetic_png_canvas_rfc1951() {
     let height: u32 = 4;
     let mut raw_pixels = vec![0u8; (width * height * 4) as usize];
     // Fill with solid blue (RGBA: 0, 128, 255, 255)
-    for chunk in raw_pixels.chunks_exact_mut(4) {
+    for chunk in raw_pixels.as_chunks_mut::<4>().0 {
         chunk[0] = 0;
         chunk[1] = 128;
         chunk[2] = 255;
@@ -553,7 +610,9 @@ fn test_tier1_r5_worktree_squash_merge_on_gate_success() {
         .current_dir(&fixture.workspace)
         .output()
         .unwrap();
-    let base_branch = String::from_utf8_lossy(&branch_out.stdout).trim().to_string();
+    let base_branch = String::from_utf8_lossy(&branch_out.stdout)
+        .trim()
+        .to_string();
 
     // Create a feature branch with a change
     Command::new("git")
@@ -563,11 +622,23 @@ fn test_tier1_r5_worktree_squash_merge_on_gate_success() {
         .unwrap();
 
     fs::write(fixture.workspace.join("feature.txt"), "feature content\n").unwrap();
-    Command::new("git").args(["add", "feature.txt"]).current_dir(&fixture.workspace).output().unwrap();
-    Command::new("git").args(["commit", "-m", "feature commit"]).current_dir(&fixture.workspace).output().unwrap();
+    Command::new("git")
+        .args(["add", "feature.txt"])
+        .current_dir(&fixture.workspace)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["commit", "-m", "feature commit"])
+        .current_dir(&fixture.workspace)
+        .output()
+        .unwrap();
 
     // Switch back to base branch and squash merge
-    Command::new("git").args(["checkout", &base_branch]).current_dir(&fixture.workspace).output().unwrap();
+    Command::new("git")
+        .args(["checkout", &base_branch])
+        .current_dir(&fixture.workspace)
+        .output()
+        .unwrap();
     let squash_out = Command::new("git")
         .args(["merge", "--squash", "feature/refactor"])
         .current_dir(&fixture.workspace)
@@ -646,7 +717,11 @@ fn test_tier1_r6_forbid_unsafe_code_across_crates() {
 #[test]
 fn test_tier1_r6_gnu_toolchain_and_gcc_compatibility() {
     let gcc = gcc_path();
-    assert!(gcc.exists(), "w64devkit GCC 16.2.0 must exist at {}", gcc.display());
+    assert!(
+        gcc.exists(),
+        "w64devkit GCC 16.2.0 must exist at {}",
+        gcc.display()
+    );
 
     let out = Command::new(&gcc)
         .arg("--version")
@@ -663,7 +738,11 @@ fn test_tier1_r6_gnu_toolchain_and_gcc_compatibility() {
 #[test]
 fn test_tier1_r6_python_embed_validation_scripts() {
     let python = python_embed_path();
-    assert!(python.exists(), "Python embed must exist at {}", python.display());
+    assert!(
+        python.exists(),
+        "Python embed must exist at {}",
+        python.display()
+    );
 
     let root = project_root();
 

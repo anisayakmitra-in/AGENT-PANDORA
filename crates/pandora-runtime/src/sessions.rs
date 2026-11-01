@@ -1,3 +1,4 @@
+use crate::semantic_memory::{DenseFeatureHasher, HybridRrfRanker, LessonRecord, SparseBm25Index};
 use pandora_provider::ChatMessage;
 use pandora_types::{
     ContextClassification, EvaluationKind, EvaluationReceipt, EvaluationResult, EvaluationStatus,
@@ -6,7 +7,6 @@ use pandora_types::{
     RuntimeEvent, Session, SessionArchiveRecord, SessionId, SopDefinition, StoredSop, TenantId,
     Timestamp, WorkspaceId,
 };
-use crate::semantic_memory::{DenseFeatureHasher, HybridRrfRanker, LessonRecord, SparseBm25Index};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -2154,7 +2154,12 @@ impl SessionStore {
         error_pattern: &str,
         limit: usize,
     ) -> Result<Vec<LessonRecord>, SessionError> {
-        self.query_error_patterns_internal(Some(tenant_id), Some(workspace_id), error_pattern, limit)
+        self.query_error_patterns_internal(
+            Some(tenant_id),
+            Some(workspace_id),
+            error_pattern,
+            limit,
+        )
     }
 
     fn query_error_patterns_internal(
@@ -2239,11 +2244,21 @@ impl SessionStore {
         let mut candidates = Vec::new();
         for row in rows {
             let (tenant_str, workspace_str, session_str, provider, raw) = row?;
-            let Ok(tenant) = TenantId::new(tenant_str) else { continue };
-            let Ok(workspace) = WorkspaceId::new(workspace_str) else { continue };
-            let Ok(session_id) = SessionId::new(session_str) else { continue };
-            let Ok(scope) = MemoryScope::new(tenant, workspace, session_id, provider) else { continue };
-            let Ok(record) = decode_memory_record(scope, raw) else { continue };
+            let Ok(tenant) = TenantId::new(tenant_str) else {
+                continue;
+            };
+            let Ok(workspace) = WorkspaceId::new(workspace_str) else {
+                continue;
+            };
+            let Ok(session_id) = SessionId::new(session_str) else {
+                continue;
+            };
+            let Ok(scope) = MemoryScope::new(tenant, workspace, session_id, provider) else {
+                continue;
+            };
+            let Ok(record) = decode_memory_record(scope, raw) else {
+                continue;
+            };
 
             let is_error_candidate = record.kind() == MemoryKind::Lesson
                 || record.id().as_str().starts_with("eval-lesson-")
@@ -2265,7 +2280,12 @@ impl SessionStore {
         let mut doc_vectors = Vec::with_capacity(candidates.len());
 
         for (idx, record) in candidates.iter().enumerate() {
-            let text = format!("{} {} {}", record.id().as_str(), record.summary(), record.provenance());
+            let text = format!(
+                "{} {} {}",
+                record.id().as_str(),
+                record.summary(),
+                record.provenance()
+            );
             bm25.add_document(idx, &text);
             let vec = hasher.vectorize(&text);
             doc_vectors.push((idx, vec));
@@ -2282,24 +2302,36 @@ impl SessionStore {
         for item in fused {
             let record = &candidates[item.doc_id];
 
-            let execution_id = if let Some(stripped) = record.provenance().strip_prefix("evaluation:") {
-                Some(stripped.to_string())
-            } else if let Some(stripped) = record.id().as_str().strip_prefix("eval-lesson-") {
-                Some(stripped.to_string())
-            } else {
-                None
-            };
+            let execution_id =
+                if let Some(stripped) = record.provenance().strip_prefix("evaluation:") {
+                    Some(stripped.to_string())
+                } else {
+                    record
+                        .id()
+                        .as_str()
+                        .strip_prefix("eval-lesson-")
+                        .map(|stripped| stripped.to_string())
+                };
 
             let mut failed_kinds = Vec::new();
             if let Some(rest) = record.summary().strip_prefix(EVALUATION_FEEDBACK_PREFIX) {
-                let kinds_str = rest.strip_suffix(EVALUATION_FEEDBACK_SUFFIX).unwrap_or(rest);
+                let kinds_str = rest
+                    .strip_suffix(EVALUATION_FEEDBACK_SUFFIX)
+                    .unwrap_or(rest);
                 for k in kinds_str.split(", ") {
                     if !k.is_empty() {
                         failed_kinds.push(k.to_string());
                     }
                 }
             } else {
-                for word in &["trajectory", "outcome", "policy", "human", "regression", "adversarial"] {
+                for word in &[
+                    "trajectory",
+                    "outcome",
+                    "policy",
+                    "human",
+                    "regression",
+                    "adversarial",
+                ] {
                     if record.summary().contains(word) {
                         failed_kinds.push(word.to_string());
                     }
@@ -5148,8 +5180,13 @@ mod tests {
         );
 
         // Query error patterns for trajectory regression
-        let lessons = store.query_error_patterns("failed trajectory regression", 5).unwrap();
-        assert!(!lessons.is_empty(), "expected at least one matching error pattern lesson");
+        let lessons = store
+            .query_error_patterns("failed trajectory regression", 5)
+            .unwrap();
+        assert!(
+            !lessons.is_empty(),
+            "expected at least one matching error pattern lesson"
+        );
         let top = &lessons[0];
         assert!(top.summary.contains("failed evaluations:"));
         assert!(top.summary.contains("trajectory"));

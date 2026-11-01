@@ -370,13 +370,20 @@ pub(super) fn execute_with_control(
             None => (create_session(&store, &workspace_id)?, Vec::new()),
         },
     };
-    let mut goal_worktree: Option<(pandora_runtime::WorktreeIsolationManager, pandora_types::WorktreeTaskContext)> = None;
+    let mut goal_worktree: Option<(
+        pandora_runtime::WorktreeIsolationManager,
+        pandora_types::WorktreeTaskContext,
+    )> = None;
     let workspace_path = if is_goal {
-        let task_id = parsed.value("task-id").map(|s| s.to_owned()).unwrap_or_else(|| {
-            let session_suffix = &session.id().as_str()[..session.id().as_str().len().min(8)];
-            format!("goal-{session_suffix}")
-        });
-        if let Ok(manager) = pandora_runtime::WorktreeIsolationManager::new(config.workspace_dir()) {
+        let task_id = parsed
+            .value("task-id")
+            .map(|s| s.to_owned())
+            .unwrap_or_else(|| {
+                let session_suffix = &session.id().as_str()[..session.id().as_str().len().min(8)];
+                format!("goal-{session_suffix}")
+            });
+        if let Ok(manager) = pandora_runtime::WorktreeIsolationManager::new(config.workspace_dir())
+        {
             match manager.provision_worktree(&task_id, None) {
                 Ok(ctx) => {
                     let path = ctx.worktree_path.clone();
@@ -487,7 +494,9 @@ pub(super) fn execute_with_control(
                 if let serde_json::Value::Object(ref mut map) = result.data {
                     map.insert("goal_worktree".to_string(), json!(finalize_res));
                 }
-                result.human.push_str(&format!("\n\n[Goal Resolution]: {}", finalize_res.message));
+                result
+                    .human
+                    .push_str(&format!("\n\n[Goal Resolution]: {}", finalize_res.message));
             }
         }
         return Ok(result);

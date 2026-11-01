@@ -141,21 +141,24 @@ impl BlazeCompilerAdapter {
         let mut combined_hashes = Vec::new();
 
         for (rel_path, content) in &unit.files {
-            let full_path = unit.manifest_path.parent().unwrap_or(Path::new("")).join(rel_path);
+            let full_path = unit
+                .manifest_path
+                .parent()
+                .unwrap_or(Path::new(""))
+                .join(rel_path);
             let content_hash = crate::arch_simd::simd_hash64_seed(content.as_bytes(), 0x12345678);
             combined_hashes.push(content_hash);
 
-            if self.config.in_memory_cache {
-                if let Some(entry) = self.file_cache.get(&full_path) {
-                    if entry.content_hash == content_hash {
-                        // Cache hit for this file
-                        if !entry.success {
-                            overall_success = false;
-                        }
-                        all_diagnostics.extend(entry.diagnostics.clone());
-                        continue;
-                    }
+            if self.config.in_memory_cache
+                && let Some(entry) = self.file_cache.get(&full_path)
+                && entry.content_hash == content_hash
+            {
+                // Cache hit for this file
+                if !entry.success {
+                    overall_success = false;
                 }
+                all_diagnostics.extend(entry.diagnostics.clone());
+                continue;
             }
 
             units_to_compile.push((full_path, content_hash, content.clone()));
@@ -189,7 +192,10 @@ impl BlazeCompilerAdapter {
             .into_iter()
             .filter(|d| {
                 let lvl = d.level.to_string();
-                self.config.diagnostics_filter.iter().any(|f| f.eq_ignore_ascii_case(&lvl))
+                self.config
+                    .diagnostics_filter
+                    .iter()
+                    .any(|f| f.eq_ignore_ascii_case(&lvl))
             })
             .collect();
 
@@ -226,7 +232,11 @@ impl BlazeCompilerAdapter {
     }
 
     /// Verifies files in memory, enforcing strict `#![forbid(unsafe_code)]` and syntax.
-    pub fn verify_files(&mut self, base_path: &Path, files: &[(PathBuf, &str)]) -> BlazeBuildResult {
+    pub fn verify_files(
+        &mut self,
+        base_path: &Path,
+        files: &[(PathBuf, &str)],
+    ) -> BlazeBuildResult {
         let unit = CompilationUnit {
             crate_name: "workspace_verify".to_owned(),
             manifest_path: base_path.join("Cargo.toml"),
@@ -248,14 +258,18 @@ impl BlazeCompilerAdapter {
             let line_num = (line_idx + 1) as u32;
 
             // Invariant check: #![forbid(unsafe_code)]
-            if self.config.forbid_unsafe {
-                if let Some(col) = line.find("unsafe ") {
-                    let col_num = (col + 1) as u32;
-                    // Ignore comments and strings
-                    let trimmed = line.trim_start();
-                    if !trimmed.starts_with("//") && !trimmed.starts_with("/*") && !trimmed.starts_with('*') {
-                        success = false;
-                        diagnostics.push(BlazeDiagnostics {
+            if self.config.forbid_unsafe
+                && let Some(col) = line.find("unsafe ")
+            {
+                let col_num = (col + 1) as u32;
+                // Ignore comments and strings
+                let trimmed = line.trim_start();
+                if !trimmed.starts_with("//")
+                    && !trimmed.starts_with("/*")
+                    && !trimmed.starts_with('*')
+                {
+                    success = false;
+                    diagnostics.push(BlazeDiagnostics {
                             file: path_str.clone(),
                             line: line_num,
                             column: col_num,
@@ -267,7 +281,6 @@ impl BlazeCompilerAdapter {
                                 path_str, line_num, col_num, line_num, line
                             ),
                         });
-                    }
                 }
             }
 
@@ -282,7 +295,10 @@ impl BlazeCompilerAdapter {
                     level: DiagnosticLevel::Warning,
                     message: "potentially unbalanced parentheses in expression".to_owned(),
                     code: Some("W0001".to_owned()),
-                    rendered: format!("warning: potentially unbalanced parentheses at {}:{}", path_str, line_num),
+                    rendered: format!(
+                        "warning: potentially unbalanced parentheses at {}:{}",
+                        path_str, line_num
+                    ),
                 });
             }
         }
@@ -310,12 +326,10 @@ mod tests {
         let unit = CompilationUnit {
             crate_name: "test_crate".to_owned(),
             manifest_path: PathBuf::from("crates/test_crate/Cargo.toml"),
-            files: vec![
-                (
-                    PathBuf::from("src/lib.rs"),
-                    "pub fn add(a: i32, b: i32) -> i32 { a + b }".to_owned(),
-                ),
-            ],
+            files: vec![(
+                PathBuf::from("src/lib.rs"),
+                "pub fn add(a: i32, b: i32) -> i32 { a + b }".to_owned(),
+            )],
         };
 
         // First compile: not cached
@@ -340,12 +354,10 @@ mod tests {
         let unit = CompilationUnit {
             crate_name: "unsafe_crate".to_owned(),
             manifest_path: PathBuf::from("crates/unsafe_crate/Cargo.toml"),
-            files: vec![
-                (
-                    PathBuf::from("src/lib.rs"),
-                    "pub fn bad() { unsafe { let _ptr = 0 as *const i32; } }".to_owned(),
-                ),
-            ],
+            files: vec![(
+                PathBuf::from("src/lib.rs"),
+                "pub fn bad() { unsafe { let _ptr = 0 as *const i32; } }".to_owned(),
+            )],
         };
 
         let res = adapter.compile_unit(&unit);
@@ -372,8 +384,14 @@ mod tests {
             crate_name: "inc_crate".to_owned(),
             manifest_path: PathBuf::from("crates/inc_crate/Cargo.toml"),
             files: vec![
-                (PathBuf::from("src/a.rs"), "pub fn a() -> u32 { 1 }".to_owned()),
-                (PathBuf::from("src/b.rs"), "pub fn b() -> u32 { 2 }".to_owned()),
+                (
+                    PathBuf::from("src/a.rs"),
+                    "pub fn a() -> u32 { 1 }".to_owned(),
+                ),
+                (
+                    PathBuf::from("src/b.rs"),
+                    "pub fn b() -> u32 { 2 }".to_owned(),
+                ),
             ],
         };
 

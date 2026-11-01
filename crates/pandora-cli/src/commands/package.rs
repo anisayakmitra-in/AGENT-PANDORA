@@ -852,7 +852,7 @@ fn decode_private_key(value: &str) -> Result<[u8; 32], CliError> {
         ));
     }
     let mut decoded = [0_u8; 32];
-    for (index, chunk) in value.as_bytes().chunks_exact(2).enumerate() {
+    for (index, chunk) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         let high = hex_digit(chunk[0]).ok_or_else(|| {
             CliError::configuration(
                 "package signing secret contains invalid hexadecimal",

@@ -518,7 +518,7 @@ fn decode_fixed<const N: usize>(value: &str) -> Result<[u8; N], UpdateError> {
         return Err(UpdateError::InvalidSignatureEncoding);
     }
     let mut output = [0_u8; N];
-    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+    for (index, pair) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         let high = hex_digit(pair[0]).ok_or(UpdateError::InvalidSignatureEncoding)?;
         let low = hex_digit(pair[1]).ok_or(UpdateError::InvalidSignatureEncoding)?;
         output[index] = (high << 4) | low;

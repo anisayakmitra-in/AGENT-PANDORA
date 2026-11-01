@@ -127,9 +127,9 @@ fn status(args: &[String]) -> Result<CommandResult, CliError> {
         .or_else(|| parsed.positionals.first().map(|s| s.as_str()));
 
     let ctx = find_task_context(&manager, task_id)?;
-    let report = manager
-        .evaluate_gates(&ctx)
-        .map_err(|err| CliError::execution(format!("failed to evaluate gates: {err}"), json!({})))?;
+    let report = manager.evaluate_gates(&ctx).map_err(|err| {
+        CliError::execution(format!("failed to evaluate gates: {err}"), json!({}))
+    })?;
 
     let mut human = format!(
         "PR Status for Task '{}':\n  Branch: {}\n  Path:   {}\n  All Gates Passed: {}\n\nProgressive Validation Gates:\n",

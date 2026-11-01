@@ -184,12 +184,16 @@ pub fn strip_unc(path: &Path) -> String {
 
 #[allow(dead_code)]
 pub fn python_embed_path() -> PathBuf {
-    PathBuf::from(r"C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\python-embed\python.exe")
+    PathBuf::from(
+        r"C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\python-embed\python.exe",
+    )
 }
 
 #[allow(dead_code)]
 pub fn gcc_path() -> PathBuf {
-    PathBuf::from(r"C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\w64devkit\bin\gcc.exe")
+    PathBuf::from(
+        r"C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\w64devkit\bin\gcc.exe",
+    )
 }
 
 #[allow(dead_code)]

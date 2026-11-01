@@ -54,7 +54,10 @@ fn status(args: &[String]) -> Result<CommandResult, CliError> {
     };
 
     let mut lines = Vec::new();
-    lines.push(format!("Language Server Statuses (root: {}):", workspace.display()));
+    lines.push(format!(
+        "Language Server Statuses (root: {}):",
+        workspace.display()
+    ));
     for s in &statuses {
         let state = if s.running {
             "running"
@@ -63,10 +66,7 @@ fn status(args: &[String]) -> Result<CommandResult, CliError> {
         } else {
             "not installed"
         };
-        lines.push(format!(
-            "  - {}: {} (binary: {})",
-            s.name, state, s.binary
-        ));
+        lines.push(format!("  - {}: {} (binary: {})", s.name, state, s.binary));
     }
 
     let summary = lines.join("\n");
@@ -155,7 +155,14 @@ fn definition(args: &[String]) -> Result<CommandResult, CliError> {
 fn references(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
         args,
-        &["file", "line", "col", "include-declaration", "server", "workspace"],
+        &[
+            "file",
+            "line",
+            "col",
+            "include-declaration",
+            "server",
+            "workspace",
+        ],
     )?;
     let file = parsed
         .value("file")
@@ -225,7 +232,10 @@ fn type_definition(args: &[String]) -> Result<CommandResult, CliError> {
         format!("No type definition found for symbol at {file}:{line}:{col}")
     } else {
         let mut lines = Vec::new();
-        lines.push(format!("Found {} type definition(s):", result.locations.len()));
+        lines.push(format!(
+            "Found {} type definition(s):",
+            result.locations.len()
+        ));
         for loc in &result.locations {
             let target_path = loc.relative_path.as_deref().unwrap_or(&loc.uri);
             let (target_line, target_col) = loc.range.start.to_one_indexed();
@@ -271,7 +281,11 @@ fn diagnostics(args: &[String]) -> Result<CommandResult, CliError> {
         for d in &result.diagnostics {
             let target_path = d.relative_path.as_deref().unwrap_or(&d.uri);
             let (line, col) = d.range.start.to_one_indexed();
-            let code_str = d.code.as_deref().map(|c| format!(" [{c}]")).unwrap_or_default();
+            let code_str = d
+                .code
+                .as_deref()
+                .map(|c| format!(" [{c}]"))
+                .unwrap_or_default();
             lines.push(format!(
                 "  - [{}] {}:{}:{}{}: {}",
                 d.severity.as_str().to_uppercase(),
@@ -297,7 +311,11 @@ mod tests {
     fn test_lsp_servers_command() {
         let result = execute(&["servers".to_string()]).expect("lsp servers command should succeed");
         assert_eq!(result.command, "lsp servers");
-        let servers = result.data.get("servers").and_then(|s| s.as_array()).expect("servers array");
+        let servers = result
+            .data
+            .get("servers")
+            .and_then(|s| s.as_array())
+            .expect("servers array");
         assert_eq!(servers.len(), 4);
     }
 

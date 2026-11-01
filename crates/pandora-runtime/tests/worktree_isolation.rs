@@ -1,8 +1,6 @@
 #![forbid(unsafe_code)]
 
-use pandora_runtime::{
-    WorktreeError, WorktreeIsolationManager, strip_unc,
-};
+use pandora_runtime::{WorktreeError, WorktreeIsolationManager, strip_unc};
 use pandora_types::{FinalizeAction, WorktreeStatus};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,7 +22,10 @@ impl TempFixture {
             .unwrap()
             .as_nanos();
         let seq = NEXT_FIXTURE_ID.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("pandora-wt-iso-{}-{nonce}-{seq}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "pandora-wt-iso-{}-{nonce}-{seq}",
+            std::process::id()
+        ));
         let repo_dir = root.join("repo");
         fs::create_dir_all(&repo_dir).expect("create repo dir");
         init_git_repo(&repo_dir);
@@ -189,7 +190,9 @@ fn test_worktree_cleanup_operations() {
         .expect("provisioned");
     assert!(ctx.worktree_path.exists());
 
-    let cleaned = mgr.cleanup_worktree("cleanup-task-4", true).expect("cleanup");
+    let cleaned = mgr
+        .cleanup_worktree("cleanup-task-4", true)
+        .expect("cleanup");
     assert!(cleaned);
     assert!(!ctx.worktree_path.exists());
 }

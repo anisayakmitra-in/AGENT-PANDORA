@@ -1184,7 +1184,8 @@ impl ToolEngine {
                     .map_err(|error| ToolError::InvalidArguments(error.to_string()))?
             }
             "workspace.verify" => {
-                let summary = if arguments.get("compiler").and_then(|v| v.as_str()) == Some("blaze") {
+                let summary = if arguments.get("compiler").and_then(|v| v.as_str()) == Some("blaze")
+                {
                     "verify:blaze"
                 } else {
                     "verify"
@@ -1199,7 +1200,8 @@ impl ToolEngine {
             "workspace.lint" => TaskIntent::new("lint")
                 .map_err(|error| ToolError::InvalidArguments(error.to_string()))?,
             "workspace.build" => {
-                let summary = if arguments.get("compiler").and_then(|v| v.as_str()) == Some("blaze") {
+                let summary = if arguments.get("compiler").and_then(|v| v.as_str()) == Some("blaze")
+                {
                     "build:blaze"
                 } else {
                     "build"
@@ -1265,7 +1267,10 @@ impl ToolEngine {
                 let file = required_text_argument(arguments, "file")?;
                 let line = arguments.get("line").and_then(|v| v.as_u64()).unwrap_or(1);
                 let col = arguments.get("col").and_then(|v| v.as_u64()).unwrap_or(1);
-                let server = arguments.get("server").and_then(|v| v.as_str()).unwrap_or("");
+                let server = arguments
+                    .get("server")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 TaskIntent::new(format!("lsp:definition:{file}:{line}:{col}:{server}"))
                     .map_err(|error| ToolError::InvalidArguments(error.to_string()))?
             }
@@ -1273,8 +1278,14 @@ impl ToolEngine {
                 let file = required_text_argument(arguments, "file")?;
                 let line = arguments.get("line").and_then(|v| v.as_u64()).unwrap_or(1);
                 let col = arguments.get("col").and_then(|v| v.as_u64()).unwrap_or(1);
-                let inc = arguments.get("include_declaration").and_then(|v| v.as_bool()).unwrap_or(true);
-                let server = arguments.get("server").and_then(|v| v.as_str()).unwrap_or("");
+                let inc = arguments
+                    .get("include_declaration")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+                let server = arguments
+                    .get("server")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 TaskIntent::new(format!("lsp:references:{file}:{line}:{col}:{inc}:{server}"))
                     .map_err(|error| ToolError::InvalidArguments(error.to_string()))?
             }
@@ -1282,14 +1293,23 @@ impl ToolEngine {
                 let file = required_text_argument(arguments, "file")?;
                 let line = arguments.get("line").and_then(|v| v.as_u64()).unwrap_or(1);
                 let col = arguments.get("col").and_then(|v| v.as_u64()).unwrap_or(1);
-                let server = arguments.get("server").and_then(|v| v.as_str()).unwrap_or("");
+                let server = arguments
+                    .get("server")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 TaskIntent::new(format!("lsp:type-definition:{file}:{line}:{col}:{server}"))
                     .map_err(|error| ToolError::InvalidArguments(error.to_string()))?
             }
             "lsp.diagnostics" => {
                 let file = arguments.get("file").and_then(|v| v.as_str()).unwrap_or("");
-                let severity = arguments.get("severity").and_then(|v| v.as_str()).unwrap_or("all");
-                let server = arguments.get("server").and_then(|v| v.as_str()).unwrap_or("");
+                let severity = arguments
+                    .get("severity")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("all");
+                let server = arguments
+                    .get("server")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 TaskIntent::new(format!("lsp:diagnostics:{file}:{severity}:{server}"))
                     .map_err(|error| ToolError::InvalidArguments(error.to_string()))?
             }
@@ -2177,12 +2197,17 @@ mod tests {
         let engine = ToolEngine::with_builtins();
 
         // 1. Standard verify invocation
-        let plan_std = engine.prepare_invocation("workspace.verify", &json!({})).unwrap();
+        let plan_std = engine
+            .prepare_invocation("workspace.verify", &json!({}))
+            .unwrap();
         assert_eq!(plan_std.task().summary(), "verify");
 
         // 2. Blaze verify invocation
         let plan_blaze = engine
-            .prepare_invocation("workspace.verify", &json!({"compiler": "blaze", "incremental": true}))
+            .prepare_invocation(
+                "workspace.verify",
+                &json!({"compiler": "blaze", "incremental": true}),
+            )
             .unwrap();
         assert_eq!(plan_blaze.task().summary(), "verify:blaze");
 

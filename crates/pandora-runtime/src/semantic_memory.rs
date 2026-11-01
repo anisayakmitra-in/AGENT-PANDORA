@@ -28,21 +28,147 @@ pub const RRF_K: f32 = 60.0;
 /// Standard non-informative English stop words.
 /// Technical keywords, error codes, and compiler terms are explicitly excluded.
 const STOP_WORDS: &[&str] = &[
-    "a", "about", "above", "after", "again", "against", "all", "am", "an", "and",
-    "any", "are", "aren't", "as", "at", "be", "because", "been", "before", "being",
-    "below", "between", "both", "but", "by", "can", "cannot", "could", "couldn't",
-    "did", "didn't", "do", "does", "doesn't", "doing", "don't", "down", "during",
-    "each", "few", "for", "from", "further", "had", "hadn't", "has", "hasn't",
-    "have", "haven't", "having", "he", "her", "here", "hers", "herself", "him",
-    "himself", "his", "how", "i", "if", "in", "into", "is", "isn't", "it", "it's",
-    "its", "itself", "me", "more", "most", "mustn't", "my", "myself", "no", "nor",
-    "not", "of", "off", "on", "once", "only", "or", "other", "ought", "our", "ours",
-    "ourselves", "out", "over", "own", "same", "she", "should", "shouldn't", "so",
-    "some", "such", "than", "that", "the", "their", "theirs", "them", "themselves",
-    "then", "there", "these", "they", "this", "those", "through", "to", "too",
-    "under", "until", "up", "very", "was", "wasn't", "we", "were", "weren't", "what",
-    "when", "where", "which", "while", "who", "whom", "why", "with", "won't",
-    "would", "wouldn't", "you", "your", "yours", "yourself", "yourselves",
+    "a",
+    "about",
+    "above",
+    "after",
+    "again",
+    "against",
+    "all",
+    "am",
+    "an",
+    "and",
+    "any",
+    "are",
+    "aren't",
+    "as",
+    "at",
+    "be",
+    "because",
+    "been",
+    "before",
+    "being",
+    "below",
+    "between",
+    "both",
+    "but",
+    "by",
+    "can",
+    "cannot",
+    "could",
+    "couldn't",
+    "did",
+    "didn't",
+    "do",
+    "does",
+    "doesn't",
+    "doing",
+    "don't",
+    "down",
+    "during",
+    "each",
+    "few",
+    "for",
+    "from",
+    "further",
+    "had",
+    "hadn't",
+    "has",
+    "hasn't",
+    "have",
+    "haven't",
+    "having",
+    "he",
+    "her",
+    "here",
+    "hers",
+    "herself",
+    "him",
+    "himself",
+    "his",
+    "how",
+    "i",
+    "if",
+    "in",
+    "into",
+    "is",
+    "isn't",
+    "it",
+    "it's",
+    "its",
+    "itself",
+    "me",
+    "more",
+    "most",
+    "mustn't",
+    "my",
+    "myself",
+    "no",
+    "nor",
+    "not",
+    "of",
+    "off",
+    "on",
+    "once",
+    "only",
+    "or",
+    "other",
+    "ought",
+    "our",
+    "ours",
+    "ourselves",
+    "out",
+    "over",
+    "own",
+    "same",
+    "she",
+    "should",
+    "shouldn't",
+    "so",
+    "some",
+    "such",
+    "than",
+    "that",
+    "the",
+    "their",
+    "theirs",
+    "them",
+    "themselves",
+    "then",
+    "there",
+    "these",
+    "they",
+    "this",
+    "those",
+    "through",
+    "to",
+    "too",
+    "under",
+    "until",
+    "up",
+    "very",
+    "was",
+    "wasn't",
+    "we",
+    "were",
+    "weren't",
+    "what",
+    "when",
+    "where",
+    "which",
+    "while",
+    "who",
+    "whom",
+    "why",
+    "with",
+    "won't",
+    "would",
+    "wouldn't",
+    "you",
+    "your",
+    "yours",
+    "yourself",
+    "yourselves",
 ];
 
 /// 64-bit FNV-1a hash with custom seed for deterministic hashing.
@@ -67,14 +193,16 @@ pub fn tokenize(text: &str) -> Vec<String> {
     for ch in text.chars() {
         if ch.is_alphanumeric() {
             // Check for camelCase boundary (e.g. "typeMismatch" -> "type", "Mismatch")
-            if let Some(prev) = prev_char {
-                if prev.is_lowercase() && ch.is_uppercase() && !current_word.is_empty() {
-                    let word = current_word.to_lowercase();
-                    if !is_stop_word(&word) {
-                        tokens.push(word);
-                    }
-                    current_word.clear();
+            if let Some(prev) = prev_char
+                && prev.is_lowercase()
+                && ch.is_uppercase()
+                && !current_word.is_empty()
+            {
+                let word = current_word.to_lowercase();
+                if !is_stop_word(&word) {
+                    tokens.push(word);
                 }
+                current_word.clear();
             }
             current_word.push(ch);
             prev_char = Some(ch);
@@ -106,8 +234,7 @@ fn is_stop_word(word: &str) -> bool {
     if word.len() < 2 && !word.chars().all(|c| c.is_ascii_digit()) {
         return true;
     }
-    STOP_WORDS.binary_search(&word).is_ok()
-        || STOP_WORDS.iter().any(|&s| s == word)
+    STOP_WORDS.binary_search(&word).is_ok() || STOP_WORDS.contains(&word)
 }
 
 /// In-memory Okapi BM25 sparse inverted index.
@@ -299,7 +426,7 @@ impl DenseFeatureHasher {
         }
 
         let dot: f32 = crate::arch_simd::simd_dot_product_128(a, b);
-        dot.max(0.0).min(1.0)
+        dot.clamp(0.0, 1.0)
     }
 
     /// Scores a list of indexed document vectors against a query vector.
@@ -509,7 +636,13 @@ pub fn generate_snippet(content: &str, query: &str) -> String {
 
     let clean_content: String = content
         .chars()
-        .map(|c| if c == '\n' || c == '\r' || c == '\t' { ' ' } else { c })
+        .map(|c| {
+            if c == '\n' || c == '\r' || c == '\t' {
+                ' '
+            } else {
+                c
+            }
+        })
         .collect();
 
     let len = clean_content.len();

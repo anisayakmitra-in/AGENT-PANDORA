@@ -36,10 +36,19 @@ fn test_tier4_workload1_autonomous_goal_refactoring_with_lsp_and_squash() {
         .current_dir(&fixture.workspace)
         .output()
         .unwrap();
-    let base_branch = String::from_utf8_lossy(&branch_out.stdout).trim().to_string();
+    let base_branch = String::from_utf8_lossy(&branch_out.stdout)
+        .trim()
+        .to_string();
 
     let add_out = Command::new("git")
-        .args(["worktree", "add", "-b", &format!("goal/{task_id}"), &dest_str, &initial_sha])
+        .args([
+            "worktree",
+            "add",
+            "-b",
+            &format!("goal/{task_id}"),
+            &dest_str,
+            &initial_sha,
+        ])
         .current_dir(&fixture.workspace)
         .output()
         .unwrap();
@@ -66,7 +75,11 @@ fn test_tier4_workload1_autonomous_goal_refactoring_with_lsp_and_squash() {
     );
 
     // 4. Commit modification in worktree branch
-    Command::new("git").args(["add", "src/checksum.rs"]).current_dir(&worktree_dir).output().unwrap();
+    Command::new("git")
+        .args(["add", "src/checksum.rs"])
+        .current_dir(&worktree_dir)
+        .output()
+        .unwrap();
     let commit_out = Command::new("git")
         .args(["commit", "-m", "refactor: optimize compute_checksum"])
         .current_dir(&worktree_dir)
@@ -79,7 +92,11 @@ fn test_tier4_workload1_autonomous_goal_refactoring_with_lsp_and_squash() {
     assert!(prp_out.status.success() || !prp_out.stderr.is_empty());
 
     // 6. Automated squash-merge to base branch
-    Command::new("git").args(["checkout", &base_branch]).current_dir(&fixture.workspace).output().unwrap();
+    Command::new("git")
+        .args(["checkout", &base_branch])
+        .current_dir(&fixture.workspace)
+        .output()
+        .unwrap();
     let squash_out = Command::new("git")
         .args(["merge", "--squash", &format!("goal/{task_id}")])
         .current_dir(&fixture.workspace)
@@ -88,7 +105,11 @@ fn test_tier4_workload1_autonomous_goal_refactoring_with_lsp_and_squash() {
     assert!(squash_out.status.success());
 
     let final_commit = Command::new("git")
-        .args(["commit", "-m", "Merge goal/refactor via automated gate completion"])
+        .args([
+            "commit",
+            "-m",
+            "Merge goal/refactor via automated gate completion",
+        ])
         .current_dir(&fixture.workspace)
         .output()
         .unwrap();
@@ -130,7 +151,10 @@ fn test_tier4_workload2_web_ui_visual_regression_flow() {
 
     // 3. Virtual DOM inspects elements
     let save_btn = server.document().query_selector("#save-settings");
-    assert!(save_btn.is_some(), "virtual DOM must locate #save-settings button");
+    assert!(
+        save_btn.is_some(),
+        "virtual DOM must locate #save-settings button"
+    );
     let h1 = server.document().query_selector("h1");
     assert!(h1.is_some(), "virtual DOM must locate h1 header");
 
@@ -169,13 +193,16 @@ fn test_tier4_workload3_session_crash_and_semantic_recovery() {
     .unwrap();
 
     // 2. Simulate process crash / abrupt reconnect: query transaction state
-    let mut stmt = conn.prepare("SELECT status, data FROM test_recovery WHERE id = ?1;").unwrap();
-    let row = stmt.query_row(["session-crash-001"], |r| {
-        let status: String = r.get(0)?;
-        let data: String = r.get(1)?;
-        Ok((status, data))
-    })
-    .unwrap();
+    let mut stmt = conn
+        .prepare("SELECT status, data FROM test_recovery WHERE id = ?1;")
+        .unwrap();
+    let row = stmt
+        .query_row(["session-crash-001"], |r| {
+            let status: String = r.get(0)?;
+            let data: String = r.get(1)?;
+            Ok((status, data))
+        })
+        .unwrap();
 
     assert_eq!(row.0, "interrupted");
     assert_eq!(row.1, "turn-15-checkpoint");
@@ -201,11 +228,21 @@ fn test_tier4_workload4_multilingual_lsp_diagnostics_resolution() {
     // 2. TypeScript file with types
     let ts_file = fixture.workspace.join("frontend").join("index.ts");
     fs::create_dir_all(ts_file.parent().unwrap()).unwrap();
-    fs::write(&ts_file, "export function add(a: number, b: number): number { return a + b; }\n").unwrap();
+    fs::write(
+        &ts_file,
+        "export function add(a: number, b: number): number { return a + b; }\n",
+    )
+    .unwrap();
 
     // 3. Query LSP diagnostics for both files
     let out_rs = fixture.run(&["lsp", "diagnostics", "--file", "src/calc.rs", "--json"]);
-    let out_ts = fixture.run(&["lsp", "diagnostics", "--file", "frontend/index.ts", "--json"]);
+    let out_ts = fixture.run(&[
+        "lsp",
+        "diagnostics",
+        "--file",
+        "frontend/index.ts",
+        "--json",
+    ]);
 
     assert!(out_rs.status.success() || !out_rs.stderr.is_empty() || !out_rs.stdout.is_empty());
     assert!(out_ts.status.success() || !out_ts.stderr.is_empty() || !out_ts.stdout.is_empty());
@@ -227,7 +264,14 @@ fn test_tier4_workload5_full_autonomous_pipeline_with_steering() {
     let dest_str = strip_unc(&worktree_dir);
 
     Command::new("git")
-        .args(["worktree", "add", "-b", &format!("goal/{task_id}"), &dest_str, &initial_sha])
+        .args([
+            "worktree",
+            "add",
+            "-b",
+            &format!("goal/{task_id}"),
+            &dest_str,
+            &initial_sha,
+        ])
         .current_dir(&fixture.workspace)
         .output()
         .unwrap();
@@ -244,7 +288,12 @@ fn test_tier4_workload5_full_autonomous_pipeline_with_steering() {
             "role": "user",
             "content": format!("[OPERATOR GUIDANCE]: {guidance}")
         });
-        assert!(user_msg["content"].as_str().unwrap().contains("std::error::Error"));
+        assert!(
+            user_msg["content"]
+                .as_str()
+                .unwrap()
+                .contains("std::error::Error")
+        );
     }
 
     // 3. Agent implements changes following guidance
@@ -256,8 +305,20 @@ fn test_tier4_workload5_full_autonomous_pipeline_with_steering() {
     )
     .unwrap();
 
-    Command::new("git").args(["add", "src/error.rs"]).current_dir(&worktree_dir).output().unwrap();
-    Command::new("git").args(["commit", "-m", "feat: add CustomError implementing std::error::Error"]).current_dir(&worktree_dir).output().unwrap();
+    Command::new("git")
+        .args(["add", "src/error.rs"])
+        .current_dir(&worktree_dir)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args([
+            "commit",
+            "-m",
+            "feat: add CustomError implementing std::error::Error",
+        ])
+        .current_dir(&worktree_dir)
+        .output()
+        .unwrap();
 
     // 4. Evaluate PRP Validation Gates
     let prp_out = fixture.run(&["prp", "validate", "--json"]);

@@ -108,10 +108,7 @@ impl LspServerKind {
         let norm = ext.trim().trim_start_matches('.').to_lowercase();
         if norm == "rs" {
             Some(Self::RustAnalyzer)
-        } else if matches!(
-            norm.as_str(),
-            "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs"
-        ) {
+        } else if matches!(norm.as_str(), "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs") {
             Some(Self::TsServer)
         } else if matches!(norm.as_str(), "py" | "pyi") {
             Some(Self::Pyright)
@@ -123,14 +120,20 @@ impl LspServerKind {
     }
 
     pub fn detect_for_path(path: &Path) -> Option<Self> {
-        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            if let Some(kind) = Self::detect_for_extension(ext) {
-                return Some(kind);
-            }
+        if let Some(kind) = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .and_then(Self::detect_for_extension)
+        {
+            return Some(kind);
         }
         if let Some(file_name) = path.file_name().and_then(|f| f.to_str()) {
             for kind in Self::all_standard() {
-                if kind.trigger_files().iter().any(|&tf| tf.eq_ignore_ascii_case(file_name)) {
+                if kind
+                    .trigger_files()
+                    .iter()
+                    .any(|&tf| tf.eq_ignore_ascii_case(file_name))
+                {
                     return Some(kind.clone());
                 }
             }
@@ -160,9 +163,12 @@ impl FromStr for LspServerKind {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_lowercase().as_str() {
             "rust-analyzer" | "rust" => Ok(Self::RustAnalyzer),
-            "tsserver" | "typescript" | "typescript-language-server" | "javascript" | "js" | "ts" => {
-                Ok(Self::TsServer)
-            }
+            "tsserver"
+            | "typescript"
+            | "typescript-language-server"
+            | "javascript"
+            | "js"
+            | "ts" => Ok(Self::TsServer),
             "pyright" | "pyright-langserver" | "pylsp" | "python" | "py" => Ok(Self::Pyright),
             "gopls" | "go" | "golang" => Ok(Self::Gopls),
             custom if !custom.is_empty() => Ok(Self::Custom(custom.to_string())),
@@ -193,7 +199,10 @@ impl LspPosition {
 
     /// Converts 0-indexed LSP position to 1-indexed (line, column).
     pub const fn to_one_indexed(&self) -> (u32, u32) {
-        (self.line.saturating_add(1), self.character.saturating_add(1))
+        (
+            self.line.saturating_add(1),
+            self.character.saturating_add(1),
+        )
     }
 }
 

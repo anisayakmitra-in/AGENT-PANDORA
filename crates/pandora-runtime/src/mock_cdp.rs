@@ -6,9 +6,7 @@
 //! Strict `#![forbid(unsafe_code)]` compliance.
 
 use crate::synthetic_canvas::SyntheticCanvas;
-use pandora_harnesses::verification::{
-    ScreenshotArtifact, VisualStep, VisualVerificationReport,
-};
+use pandora_harnesses::verification::{ScreenshotArtifact, VisualStep, VisualVerificationReport};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -201,29 +199,30 @@ impl VirtualDocument {
         while cursor < len {
             if bytes[cursor] == b'<' {
                 // Check if comment or doctype
-                if html[cursor..].starts_with("<!--") {
-                    if let Some(end) = html[cursor..].find("-->") {
-                        cursor += end + 3;
-                        continue;
-                    }
+                if html[cursor..].starts_with("<!--")
+                    && let Some(end) = html[cursor..].find("-->")
+                {
+                    cursor += end + 3;
+                    continue;
                 }
-                if html[cursor..].to_ascii_lowercase().starts_with("<!doctype") {
-                    if let Some(end) = html[cursor..].find('>') {
-                        cursor += end + 1;
-                        continue;
-                    }
+                if html[cursor..].to_ascii_lowercase().starts_with("<!doctype")
+                    && let Some(end) = html[cursor..].find('>')
+                {
+                    cursor += end + 1;
+                    continue;
                 }
 
                 // Check closing tag </tag>
-                if cursor + 1 < len && bytes[cursor + 1] == b'/' {
-                    if let Some(end) = html[cursor..].find('>') {
-                        if parent_stack.len() > 1 {
-                            parent_stack.pop();
-                            current_parent = *parent_stack.last().unwrap_or(&self.root_id);
-                        }
-                        cursor += end + 1;
-                        continue;
+                if cursor + 1 < len
+                    && bytes[cursor + 1] == b'/'
+                    && let Some(end) = html[cursor..].find('>')
+                {
+                    if parent_stack.len() > 1 {
+                        parent_stack.pop();
+                        current_parent = *parent_stack.last().unwrap_or(&self.root_id);
                     }
+                    cursor += end + 1;
+                    continue;
                 }
 
                 // Opening tag <tag ...>
@@ -272,17 +271,17 @@ impl VirtualDocument {
                 cursor += 1;
             }
             let text = html[text_start..cursor].trim();
-            if !text.is_empty() {
-                if let Some(parent_node) = self.nodes.get_mut(&current_parent) {
-                    if !parent_node.text_content.is_empty() {
-                        parent_node.text_content.push(' ');
-                    }
-                    parent_node.text_content.push_str(text);
+            if !text.is_empty()
+                && let Some(parent_node) = self.nodes.get_mut(&current_parent)
+            {
+                if !parent_node.text_content.is_empty() {
+                    parent_node.text_content.push(' ');
+                }
+                parent_node.text_content.push_str(text);
 
-                    // Extract title if inside <title>
-                    if parent_node.tag == "title" {
-                        self.title = parent_node.text_content.clone();
-                    }
+                // Extract title if inside <title>
+                if parent_node.tag == "title" {
+                    self.title = parent_node.text_content.clone();
                 }
             }
         }
@@ -328,7 +327,19 @@ impl VirtualDocument {
 
         let is_block = matches!(
             tag.as_str(),
-            "div" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "p" | "form" | "section" | "nav" | "footer" | "header"
+            "div"
+                | "h1"
+                | "h2"
+                | "h3"
+                | "h4"
+                | "h5"
+                | "h6"
+                | "p"
+                | "form"
+                | "section"
+                | "nav"
+                | "footer"
+                | "header"
         );
 
         let elem_h = match tag.as_str() {
@@ -651,25 +662,28 @@ impl VirtualDocument {
                         );
                     }
                 }
-                "div" | "form" | "section" | "nav" | "footer" | "header" => {
-                    if node.get_attribute("class").is_some() || node.get_attribute("id").is_some()
-                    {
-                        canvas.draw_rect(
-                            node.bounds.x,
-                            node.bounds.y,
-                            node.bounds.width,
-                            node.bounds.height,
-                            None,
-                            Some(((226, 232, 240, 255), 1)),
-                        );
-                    }
+                "div" | "form" | "section" | "nav" | "footer" | "header"
+                    if (node.get_attribute("class").is_some()
+                        || node.get_attribute("id").is_some()) =>
+                {
+                    canvas.draw_rect(
+                        node.bounds.x,
+                        node.bounds.y,
+                        node.bounds.width,
+                        node.bounds.height,
+                        None,
+                        Some(((226, 232, 240, 255), 1)),
+                    );
                 }
                 _ => {}
             }
         }
 
         // Draw viewport status watermark
-        let tag = format!("PANDORA-CDP: {}x{}", self.viewport_width, self.viewport_height);
+        let tag = format!(
+            "PANDORA-CDP: {}x{}",
+            self.viewport_width, self.viewport_height
+        );
         canvas.draw_text(
             self.viewport_width.saturating_sub(200),
             self.viewport_height.saturating_sub(16),
@@ -863,8 +877,7 @@ impl MockCdpServer {
 
     /// Navigates the mock browser to the specified URL or loads HTML content.
     pub fn navigate(&mut self, url_or_html: &str) {
-        if url_or_html.starts_with("data:text/html,") {
-            let html = &url_or_html["data:text/html,".len()..];
+        if let Some(html) = url_or_html.strip_prefix("data:text/html,") {
             self.document.url = "data:text/html,...".to_string();
             self.document.load_html(html);
         } else if url_or_html.contains('<') && url_or_html.contains('>') {
@@ -1080,13 +1093,12 @@ impl MockCdpServer {
                     .values()
                     .find(|n| n.is_focused)
                     .map(|n| n.id)
+                    && let Some(node) = self.document.nodes.get_mut(&focused_id)
                 {
-                    if let Some(node) = self.document.nodes.get_mut(&focused_id) {
-                        let mut current = node.attributes.get("value").cloned().unwrap_or_default();
-                        current.push_str(text);
-                        node.attributes.insert("value".to_string(), current);
-                        node.text_content.push_str(text);
-                    }
+                    let mut current = node.attributes.get("value").cloned().unwrap_or_default();
+                    current.push_str(text);
+                    node.attributes.insert("value".to_string(), current);
+                    node.text_content.push_str(text);
                 }
                 Ok(json!({}))
             }
@@ -1172,7 +1184,10 @@ impl MockCdpServer {
                     }
                 }
                 "screenshot" => {
-                    let name = step.name.clone().unwrap_or_else(|| "screenshot".to_string());
+                    let name = step
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| "screenshot".to_string());
                     let mut canvas =
                         SyntheticCanvas::new(self.viewport_width, self.viewport_height);
                     self.document.render_to_canvas(&mut canvas);
@@ -1212,7 +1227,9 @@ impl MockCdpServer {
                             } else {
                                 report.assertions_failed += 1;
                                 report.passed = false;
-                                report.errors.push(format!("element '{sel}' is not visible"));
+                                report
+                                    .errors
+                                    .push(format!("element '{sel}' is not visible"));
                             }
                         }
                     } else {
@@ -1286,7 +1303,9 @@ impl MockCdpServer {
                     }
                 }
                 unknown => {
-                    report.errors.push(format!("unknown visual step type '{unknown}'"));
+                    report
+                        .errors
+                        .push(format!("unknown visual step type '{unknown}'"));
                 }
             }
         }
@@ -1458,7 +1477,9 @@ mod tests {
         let steps = vec![
             VisualStep {
                 step_type: "navigate".into(),
-                url: Some("<h1>Automated Testing</h1><button id=\"action-btn\">Action</button>".into()),
+                url: Some(
+                    "<h1>Automated Testing</h1><button id=\"action-btn\">Action</button>".into(),
+                ),
                 selector: None,
                 text: None,
                 name: None,

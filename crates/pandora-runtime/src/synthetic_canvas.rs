@@ -263,34 +263,34 @@ impl SyntheticCanvas {
         }
 
         // 2. Draw border if specified
-        if let Some(((br, bg, bb, ba), thickness)) = border {
-            if thickness > 0 {
-                let x_end = (x + w).min(self.width);
-                let y_end = (y + h).min(self.height);
+        if let Some(((br, bg, bb, ba), thickness)) = border
+            && thickness > 0
+        {
+            let x_end = (x + w).min(self.width);
+            let y_end = (y + h).min(self.height);
 
-                for t in 0..thickness {
-                    // Top and bottom borders
-                    let top_y = y + t;
-                    let bottom_y = if y + h > t { y + h - 1 - t } else { y };
-                    for px in x..x_end {
-                        if top_y < self.height {
-                            self.set_pixel(px, top_y, br, bg, bb, ba);
-                        }
-                        if bottom_y < self.height {
-                            self.set_pixel(px, bottom_y, br, bg, bb, ba);
-                        }
+            for t in 0..thickness {
+                // Top and bottom borders
+                let top_y = y + t;
+                let bottom_y = if y + h > t { y + h - 1 - t } else { y };
+                for px in x..x_end {
+                    if top_y < self.height {
+                        self.set_pixel(px, top_y, br, bg, bb, ba);
                     }
+                    if bottom_y < self.height {
+                        self.set_pixel(px, bottom_y, br, bg, bb, ba);
+                    }
+                }
 
-                    // Left and right borders
-                    let left_x = x + t;
-                    let right_x = if x + w > t { x + w - 1 - t } else { x };
-                    for py in y..y_end {
-                        if left_x < self.width {
-                            self.set_pixel(left_x, py, br, bg, bb, ba);
-                        }
-                        if right_x < self.width {
-                            self.set_pixel(right_x, py, br, bg, bb, ba);
-                        }
+                // Left and right borders
+                let left_x = x + t;
+                let right_x = if x + w > t { x + w - 1 - t } else { x };
+                for py in y..y_end {
+                    if left_x < self.width {
+                        self.set_pixel(left_x, py, br, bg, bb, ba);
+                    }
+                    if right_x < self.width {
+                        self.set_pixel(right_x, py, br, bg, bb, ba);
                     }
                 }
             }

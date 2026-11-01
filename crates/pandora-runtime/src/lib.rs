@@ -45,10 +45,10 @@ pub mod lats_engine;
 pub mod lsp_engine;
 pub mod mcp;
 pub mod mcp_catalog;
-pub mod mock_cdp;
 pub mod memory_engine;
 pub mod memory_schedule;
 pub mod mesh_sync;
+pub mod mock_cdp;
 pub mod mutation;
 pub mod observability;
 pub mod operations;
@@ -132,10 +132,6 @@ pub use context_recovery::{ContextRecovery, RecoveryDecision, RecoveryInput, Rec
 pub use context_vfs::{
     ContextSearchOptions, ContextVfs, HybridSearchResult, SearchResultItem, VfsError,
 };
-pub use semantic_memory::{
-    BM25_B, BM25_K1, DENSE_DIMENSION, DenseFeatureHasher, HybridRankItem, HybridRrfRanker,
-    LessonRecord, RRF_K, SparseBm25Index, tokenize,
-};
 pub use cron_engine::{
     CronEngine, CronError, CronExecutionResult, CronJob, CronJobStatus, CronSchedule,
     handle_cronjob_manage_action,
@@ -184,7 +180,6 @@ pub use executors::{
     GitWorktreeExecutor, ProviderCallMetrics, WorktreeChange, WorktreeCommand, WorktreeError,
     WorktreeResult,
 };
-pub use worktree_isolation::{WorktreeIsolationManager, strip_unc};
 pub use fleet::{
     FLEET_SCHEMA_VERSION, FleetBudget, FleetEngine, FleetError, FleetFenceState, FleetLease,
     FleetLeaseFence, FleetLeaseState, FleetNode, FleetNodeState, FleetQuiescenceGuard,
@@ -230,9 +225,6 @@ pub use mcp::{
     McpProtocolMode, McpServer, McpStart, McpStdioConfig, McpToolResult, McpWireEra,
 };
 pub use mcp_catalog::{McpCatalogRevision, McpCatalogTool};
-pub use mock_cdp::{
-    CdpError, CdpResult, ElementRect, MockCdpServer, VirtualDocument, VirtualNode,
-};
 pub use memory_engine::{
     MAX_SYNTHESIS_SOURCE_RECORDS, MemoryEngine, MemoryError, MemorySynthesisProposal,
     MemorySynthesisSnapshot,
@@ -248,6 +240,7 @@ pub use mesh_sync::{
     CapsuleValidationVerdict, MeshError, MeshHandshake, MeshPeerEntry, MeshSyncEngine,
     MeshSyncResult, PeerIdentity, SignedCapsulePackage,
 };
+pub use mock_cdp::{CdpError, CdpResult, ElementRect, MockCdpServer, VirtualDocument, VirtualNode};
 pub use mutation::{MutationEngine, MutationError};
 pub use observability::{
     DEFAULT_MAX_OBSERVABILITY_SAMPLES, ObservabilityEngine, ObservabilityError,
@@ -300,6 +293,10 @@ pub use secret_vault::{
     SecretVault, SecretVaultEntry, SecretVaultError, StoredMcpAuth, VaultSecret,
 };
 pub use self_healing::{SelfHealingEngine, SelfHealingError};
+pub use semantic_memory::{
+    BM25_B, BM25_K1, DENSE_DIMENSION, DenseFeatureHasher, HybridRankItem, HybridRrfRanker,
+    LessonRecord, RRF_K, SparseBm25Index, tokenize,
+};
 pub use service::{RuntimeService, RuntimeServiceError, RuntimeServiceScope};
 pub use service_token::{ServiceToken, ServiceTokenError, ServiceTokenStore};
 pub use session_journal::{
@@ -340,3 +337,4 @@ pub use wasm::{
     DEFAULT_WASM_FUEL, MAX_WASM_INPUT_BYTES, MAX_WASM_MEMORY_BYTES, MAX_WASM_OUTPUT_BYTES,
     WasmError, WasmExecutor, WasmGene, WasmGeneRequest, WasmResult,
 };
+pub use worktree_isolation::{WorktreeIsolationManager, strip_unc};

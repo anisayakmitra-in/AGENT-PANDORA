@@ -788,7 +788,9 @@ mod tests {
         assert!(zsh.contains("'2:branch command:(list create checkout cleanup)'"));
         assert!(zsh.contains("'2:pr command:(create status)'"));
 
-        assert!(fish.contains("__fish_seen_subcommand_from branch' -a 'list create checkout cleanup'"));
+        assert!(
+            fish.contains("__fish_seen_subcommand_from branch' -a 'list create checkout cleanup'")
+        );
         assert!(fish.contains("__fish_seen_subcommand_from pr' -a 'create status'"));
     }
 
@@ -800,12 +802,18 @@ mod tests {
         let fish = fish();
 
         assert!(powershell.contains("-eq 'lsp'"));
-        assert!(powershell.contains("'status','servers','definition','references','type-definition','diagnostics'"));
+        assert!(powershell.contains(
+            "'status','servers','definition','references','type-definition','diagnostics'"
+        ));
 
         assert!(bash.contains(r#"[[ "$previous" == "lsp" ]]"#));
-        assert!(bash.contains("compgen -W 'status servers definition references type-definition diagnostics'"));
+        assert!(bash.contains(
+            "compgen -W 'status servers definition references type-definition diagnostics'"
+        ));
 
-        assert!(zsh.contains("'2:lsp command:(status servers definition references type-definition diagnostics)'"));
+        assert!(zsh.contains(
+            "'2:lsp command:(status servers definition references type-definition diagnostics)'"
+        ));
 
         assert!(fish.contains("__fish_seen_subcommand_from lsp' -a 'status servers definition references type-definition diagnostics'"));
     }

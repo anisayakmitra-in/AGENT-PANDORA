@@ -521,7 +521,7 @@ fn decode_hex<const N: usize>(value: &str) -> Result<[u8; N], HarnessRegistryErr
         return Err(HarnessRegistryError::InvalidSignatureEncoding);
     }
     let mut bytes = [0_u8; N];
-    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+    for (index, pair) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         let high = hex_digit(pair[0])?;
         let low = hex_digit(pair[1])?;
         bytes[index] = (high << 4) | low;

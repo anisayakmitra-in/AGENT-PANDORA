@@ -66,7 +66,11 @@ impl CpuFeatures {
                 has_avx2: false,
                 has_avx512: false,
                 vector_width_bits: if has_neon { 128 } else { 64 },
-                preferred_simd_lane: if has_neon { "neon".to_owned() } else { "scalar".to_owned() },
+                preferred_simd_lane: if has_neon {
+                    "neon".to_owned()
+                } else {
+                    "scalar".to_owned()
+                },
             }
         }
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -124,6 +128,7 @@ pub fn simd_norm_sq_128(v: &[f32; 128]) -> f32 {
 
 /// Vector-accelerated subword character FNV-1a block hasher.
 /// Processes bytes with unrolled word accumulation.
+#[allow(clippy::chunks_exact_to_as_chunks)]
 pub fn simd_hash64_seed(bytes: &[u8], seed: u64) -> u64 {
     let mut h = 0xcbf29ce484222325 ^ seed;
     let chunks = bytes.chunks_exact(8);

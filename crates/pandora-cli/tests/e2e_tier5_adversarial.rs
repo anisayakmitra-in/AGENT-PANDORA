@@ -9,15 +9,15 @@ use pandora_runtime::agent_loop::{AgentCheckpoint, AgentControlStop, AgentRunCon
 use pandora_runtime::arch_simd::{simd_dot_product_128, simd_norm_sq_128};
 use pandora_runtime::blaze_adapter::{BlazeCompilerAdapter, CompilationUnit};
 use pandora_runtime::executors::WorktreeError;
-use pandora_runtime::lsp_engine::{read_lsp_message, LspError, LspSessionBackend, MockLspSession};
+use pandora_runtime::lsp_engine::{LspError, LspSessionBackend, MockLspSession, read_lsp_message};
 use pandora_runtime::mock_cdp::{MockCdpServer, VirtualDocument};
 use pandora_runtime::semantic_memory::{
-    tokenize, DenseFeatureHasher, HybridRrfRanker, SparseBm25Index,
+    DenseFeatureHasher, HybridRrfRanker, SparseBm25Index, tokenize,
 };
-use pandora_runtime::synthetic_canvas::{crc32, SyntheticCanvas};
-use pandora_runtime::worktree_isolation::{strip_unc, WorktreeIsolationManager};
+use pandora_runtime::synthetic_canvas::{SyntheticCanvas, crc32};
+use pandora_runtime::worktree_isolation::{WorktreeIsolationManager, strip_unc};
 use pandora_types::LspServerKind;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
@@ -149,7 +149,10 @@ fn test_tier5_r1_lsp_extreme_and_corrupted_coordinates() {
     // Empty file coordinates
     let empty_file = fixture.workspace.join("src").join("empty.rs");
     fs::write(&empty_file, "").unwrap();
-    let empty_uri = format!("file:///{}", empty_file.to_string_lossy().replace('\\', "/"));
+    let empty_uri = format!(
+        "file:///{}",
+        empty_file.to_string_lossy().replace('\\', "/")
+    );
 
     let empty_res = mock
         .request(
@@ -424,7 +427,10 @@ fn test_tier5_r2_tui_clean_rollback_preserves_state() {
         .current_dir(&fixture.workspace)
         .output()
         .unwrap();
-    let current_sha = String::from_utf8(head_out.stdout).unwrap().trim().to_string();
+    let current_sha = String::from_utf8(head_out.stdout)
+        .unwrap()
+        .trim()
+        .to_string();
     assert_eq!(initial_sha, current_sha);
 }
 
@@ -510,7 +516,7 @@ fn test_tier5_r3_semantic_out_of_vocabulary_queries() {
 
     let sim = hasher.cosine_similarity(&query_vec, &doc1_vec);
     assert!(sim.is_finite());
-    assert!(sim >= 0.0 && sim <= 1.0);
+    assert!((0.0..=1.0).contains(&sim));
 }
 
 #[test]
@@ -698,13 +704,19 @@ fn test_tier5_r4_cdp_png_deflate_and_checksum_verification() {
         let length = u32::from_be_bytes(png[pos..pos + 4].try_into().unwrap()) as usize;
         let chunk_type = &png[pos + 4..pos + 8];
         let chunk_data = &png[pos + 8..pos + 8 + length];
-        let read_crc = u32::from_be_bytes(png[pos + 8 + length..pos + 12 + length].try_into().unwrap());
+        let read_crc =
+            u32::from_be_bytes(png[pos + 8 + length..pos + 12 + length].try_into().unwrap());
 
         let mut crc_payload = Vec::new();
         crc_payload.extend_from_slice(chunk_type);
         crc_payload.extend_from_slice(chunk_data);
         let expected_crc = crc32(&crc_payload);
-        assert_eq!(read_crc, expected_crc, "CRC-32 mismatch for chunk {:?}", std::str::from_utf8(chunk_type));
+        assert_eq!(
+            read_crc,
+            expected_crc,
+            "CRC-32 mismatch for chunk {:?}",
+            std::str::from_utf8(chunk_type)
+        );
 
         pos += 12 + length;
     }
@@ -725,9 +737,8 @@ fn test_tier5_r4_cdp_json_rpc_malformed_requests_and_unknown_methods() {
     assert!(res_unknown.contains("error"));
 
     // 3. Valid method Page.enable
-    let res_enable = server.handle_json_rpc(
-        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"Page.enable\",\"params\":{}}",
-    );
+    let res_enable = server
+        .handle_json_rpc("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"Page.enable\",\"params\":{}}");
     assert!(res_enable.contains("\"result\":{}"));
 }
 
@@ -839,8 +850,16 @@ fn test_tier5_r6_blaze_corrupted_compilation_units_and_unsafe_rejection() {
         )],
     };
     let res_unsafe = adapter.compile_unit(&unit_unsafe);
-    assert!(!res_unsafe.success, "unsafe code must fail compilation when forbid_unsafe=true");
-    assert!(res_unsafe.diagnostics.iter().any(|d| d.message.contains("forbidden") && d.code.as_deref() == Some("E0133")));
+    assert!(
+        !res_unsafe.success,
+        "unsafe code must fail compilation when forbid_unsafe=true"
+    );
+    assert!(
+        res_unsafe
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("forbidden") && d.code.as_deref() == Some("E0133"))
+    );
 
     // 2. Unbalanced syntax delimiters should be flagged with warning diagnostics
     let unit_unbalanced = CompilationUnit {
@@ -853,7 +872,10 @@ fn test_tier5_r6_blaze_corrupted_compilation_units_and_unsafe_rejection() {
     };
     let res_unbalanced = adapter.compile_unit(&unit_unbalanced);
     assert!(
-        res_unbalanced.diagnostics.iter().any(|d| d.code.as_deref() == Some("W0001")),
+        res_unbalanced
+            .diagnostics
+            .iter()
+            .any(|d| d.code.as_deref() == Some("W0001")),
         "unbalanced parentheses must emit warning diagnostic"
     );
 
@@ -916,7 +938,9 @@ fn test_tier5_r6_c_abi_and_assembly_simd_execution() {
     assert!(gcc.exists());
 
     // Compile and run adversarial C ABI test
-    let exe_path = root.join("target").join("test_pandora_c_abi_adversarial.exe");
+    let exe_path = root
+        .join("target")
+        .join("test_pandora_c_abi_adversarial.exe");
     let comp_out = Command::new(&gcc)
         .args([
             "-std=c11",

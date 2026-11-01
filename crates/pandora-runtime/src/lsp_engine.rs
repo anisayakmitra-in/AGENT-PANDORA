@@ -1,7 +1,7 @@
 use pandora_types::{
-    LspDefinitionResult, LspDiagnostic, LspDiagnosticSeverity, LspDiagnosticsResult,
-    LspLocation, LspPosition, LspRange, LspReferencesResult, LspServerKind,
-    LspServerStatus, LspTypeDefinitionResult,
+    LspDefinitionResult, LspDiagnostic, LspDiagnosticSeverity, LspDiagnosticsResult, LspLocation,
+    LspPosition, LspRange, LspReferencesResult, LspServerKind, LspServerStatus,
+    LspTypeDefinitionResult,
 };
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -97,19 +97,19 @@ pub fn read_lsp_message<R: BufRead>(reader: &mut R) -> Result<Option<Value>, Lsp
         if trimmed.is_empty() {
             break;
         }
-        if let Some((header_name, header_val)) = trimmed.split_once(':') {
-            if header_name.trim().eq_ignore_ascii_case("Content-Length") {
-                let len = header_val
-                    .trim()
-                    .parse::<usize>()
-                    .map_err(|e| LspError::JsonRpc(format!("invalid Content-Length: {e}")))?;
-                content_length = Some(len);
-            }
+        if let Some((header_name, header_val)) = trimmed.split_once(':')
+            && header_name.trim().eq_ignore_ascii_case("Content-Length")
+        {
+            let len = header_val
+                .trim()
+                .parse::<usize>()
+                .map_err(|e| LspError::JsonRpc(format!("invalid Content-Length: {e}")))?;
+            content_length = Some(len);
         }
     }
 
-    let len =
-        content_length.ok_or_else(|| LspError::JsonRpc("missing Content-Length header".to_string()))?;
+    let len = content_length
+        .ok_or_else(|| LspError::JsonRpc("missing Content-Length header".to_string()))?;
     let mut body = vec![0u8; len];
     reader
         .read_exact(&mut body)
@@ -150,12 +150,12 @@ pub fn find_executable(name: &str) -> Option<PathBuf> {
 
 /// Converts a local filesystem path to a standard file:// URL.
 pub fn path_to_uri(path: &Path) -> Result<String, LspError> {
-    let canonical = path
-        .canonicalize()
-        .unwrap_or_else(|_| path.to_path_buf());
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     Url::from_file_path(&canonical)
         .map(|u| u.to_string())
-        .map_err(|_| LspError::InvalidUri(format!("failed to convert path to URI: {}", path.display())))
+        .map_err(|_| {
+            LspError::InvalidUri(format!("failed to convert path to URI: {}", path.display()))
+        })
 }
 
 /// Converts an LSP file:// URI back to a PathBuf.
@@ -190,10 +190,10 @@ fn parse_locations(result: &Value, workspace_root: &Path) -> Vec<LspLocation> {
         );
 
         let mut loc = LspLocation::new(uri.clone(), LspRange::new(start_pos, end_pos));
-        if let Some(path) = uri_to_path(&uri) {
-            if let Ok(rel) = path.strip_prefix(workspace_root) {
-                loc = loc.with_relative_path(rel.to_string_lossy().replace('\\', "/"));
-            }
+        if let Some(path) = uri_to_path(&uri)
+            && let Ok(rel) = path.strip_prefix(workspace_root)
+        {
+            loc = loc.with_relative_path(rel.to_string_lossy().replace('\\', "/"));
         }
         Some(loc)
     };
@@ -226,11 +226,13 @@ pub trait LspSessionBackend: Send + Sync {
     fn shutdown(&self) -> Result<(), LspError>;
 }
 
+type PendingRequestsMap = Arc<Mutex<HashMap<u64, Sender<Result<Value, LspError>>>>>;
+
 /// Live subprocess LSP session over stdin/stdout.
 pub struct SubprocessLspSession {
     child_process: Mutex<Option<Child>>,
     stdin: Mutex<Option<ChildStdin>>,
-    pending_requests: Arc<Mutex<HashMap<u64, Sender<Result<Value, LspError>>>>>,
+    pending_requests: PendingRequestsMap,
     diagnostics: Arc<Mutex<HashMap<String, Vec<LspDiagnostic>>>>,
     next_id: AtomicU64,
     running: Arc<AtomicBool>,
@@ -261,8 +263,7 @@ impl SubprocessLspSession {
             .take()
             .ok_or_else(|| LspError::Io("failed to capture child stdout".to_string()))?;
 
-        let pending: Arc<Mutex<HashMap<u64, Sender<Result<Value, LspError>>>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let pending: PendingRequestsMap = Arc::new(Mutex::new(HashMap::new()));
         let diagnostics = Arc::new(Mutex::new(HashMap::new()));
         let running = Arc::new(AtomicBool::new(true));
 
@@ -276,62 +277,80 @@ impl SubprocessLspSession {
             while thread_running.load(Ordering::SeqCst) {
                 match read_lsp_message(&mut reader) {
                     Ok(Some(msg)) => {
-                        if let Some(method) = msg.get("method").and_then(|m| m.as_str()) {
-                            if method == "textDocument/publishDiagnostics" {
-                                if let Some(params) = msg.get("params") {
-                                    if let Some(uri) = params.get("uri").and_then(|u| u.as_str()) {
-                                        let diag_list = params
-                                            .get("diagnostics")
-                                            .and_then(|d| d.as_array())
-                                            .cloned()
-                                            .unwrap_or_default();
-                                        let mut parsed = Vec::new();
-                                        for d in diag_list {
-                                            let range_val = d.get("range");
-                                            let start = range_val.and_then(|r| r.get("start"));
-                                            let end = range_val.and_then(|r| r.get("end"));
-                                            let start_pos = LspPosition::new(
-                                                start.and_then(|s| s.get("line")).and_then(|l| l.as_u64()).unwrap_or(0) as u32,
-                                                start.and_then(|s| s.get("character")).and_then(|c| c.as_u64()).unwrap_or(0) as u32,
-                                            );
-                                            let end_pos = LspPosition::new(
-                                                end.and_then(|e| e.get("line")).and_then(|l| l.as_u64()).unwrap_or(0) as u32,
-                                                end.and_then(|e| e.get("character")).and_then(|c| c.as_u64()).unwrap_or(0) as u32,
-                                            );
-                                            let severity_num = d.get("severity").and_then(|s| s.as_u64()).unwrap_or(1);
-                                            let message = d.get("message").and_then(|m| m.as_str()).unwrap_or("").to_string();
-                                            let mut diag = LspDiagnostic::new(
-                                                uri,
-                                                LspRange::new(start_pos, end_pos),
-                                                LspDiagnosticSeverity::from_raw(severity_num),
-                                                message,
-                                            );
-                                            if let Some(code) = d.get("code").and_then(|c| c.as_str()) {
-                                                diag = diag.with_code(code);
-                                            } else if let Some(code_num) = d.get("code").and_then(|c| c.as_i64()) {
-                                                diag = diag.with_code(code_num.to_string());
-                                            }
-                                            if let Some(source) = d.get("source").and_then(|s| s.as_str()) {
-                                                diag = diag.with_source(source);
-                                            }
-                                            if let Some(path) = uri_to_path(uri) {
-                                                if let Ok(rel) = path.strip_prefix(&root_for_thread) {
-                                                    diag = diag.with_relative_path(rel.to_string_lossy().replace('\\', "/"));
-                                                }
-                                            }
-                                            parsed.push(diag);
-                                        }
-                                        if let Ok(mut map) = thread_diag.lock() {
-                                            map.insert(uri.to_string(), parsed);
-                                        }
-                                    }
+                        if let Some(method) = msg.get("method").and_then(|m| m.as_str())
+                            && method == "textDocument/publishDiagnostics"
+                            && let Some(params) = msg.get("params")
+                            && let Some(uri) = params.get("uri").and_then(|u| u.as_str())
+                        {
+                            let diag_list = params
+                                .get("diagnostics")
+                                .and_then(|d| d.as_array())
+                                .cloned()
+                                .unwrap_or_default();
+                            let mut parsed = Vec::new();
+                            for d in diag_list {
+                                let range_val = d.get("range");
+                                let start = range_val.and_then(|r| r.get("start"));
+                                let end = range_val.and_then(|r| r.get("end"));
+                                let start_pos = LspPosition::new(
+                                    start
+                                        .and_then(|s| s.get("line"))
+                                        .and_then(|l| l.as_u64())
+                                        .unwrap_or(0) as u32,
+                                    start
+                                        .and_then(|s| s.get("character"))
+                                        .and_then(|c| c.as_u64())
+                                        .unwrap_or(0) as u32,
+                                );
+                                let end_pos = LspPosition::new(
+                                    end.and_then(|e| e.get("line"))
+                                        .and_then(|l| l.as_u64())
+                                        .unwrap_or(0) as u32,
+                                    end.and_then(|e| e.get("character"))
+                                        .and_then(|c| c.as_u64())
+                                        .unwrap_or(0) as u32,
+                                );
+                                let severity_num =
+                                    d.get("severity").and_then(|s| s.as_u64()).unwrap_or(1);
+                                let message = d
+                                    .get("message")
+                                    .and_then(|m| m.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let mut diag = LspDiagnostic::new(
+                                    uri,
+                                    LspRange::new(start_pos, end_pos),
+                                    LspDiagnosticSeverity::from_raw(severity_num),
+                                    message,
+                                );
+                                if let Some(code) = d.get("code").and_then(|c| c.as_str()) {
+                                    diag = diag.with_code(code);
+                                } else if let Some(code_num) =
+                                    d.get("code").and_then(|c| c.as_i64())
+                                {
+                                    diag = diag.with_code(code_num.to_string());
                                 }
+                                if let Some(source) = d.get("source").and_then(|s| s.as_str()) {
+                                    diag = diag.with_source(source);
+                                }
+                                if let Some(path) = uri_to_path(uri)
+                                    && let Ok(rel) = path.strip_prefix(&root_for_thread)
+                                {
+                                    diag = diag.with_relative_path(
+                                        rel.to_string_lossy().replace('\\', "/"),
+                                    );
+                                }
+                                parsed.push(diag);
+                            }
+                            if let Ok(mut map) = thread_diag.lock() {
+                                map.insert(uri.to_string(), parsed);
                             }
                         }
 
                         if let Some(id) = msg.get("id").and_then(|i| i.as_u64()) {
                             let sender = {
-                                let mut map = thread_pending.lock().unwrap_or_else(|p| p.into_inner());
+                                let mut map =
+                                    thread_pending.lock().unwrap_or_else(|p| p.into_inner());
                                 map.remove(&id)
                             };
                             if let Some(tx) = sender {
@@ -426,7 +445,10 @@ impl LspSessionBackend for SubprocessLspSession {
         let (tx, rx) = channel();
 
         {
-            let mut map = self.pending_requests.lock().unwrap_or_else(|p| p.into_inner());
+            let mut map = self
+                .pending_requests
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
             map.insert(id, tx);
         }
 
@@ -453,9 +475,14 @@ impl LspSessionBackend for SubprocessLspSession {
         match rx.recv_timeout(timeout) {
             Ok(result) => result,
             Err(_) => {
-                let mut map = self.pending_requests.lock().unwrap_or_else(|p| p.into_inner());
+                let mut map = self
+                    .pending_requests
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner());
                 map.remove(&id);
-                Err(LspError::Timeout(format!("request '{method}' timed out after {timeout:?}")))
+                Err(LspError::Timeout(format!(
+                    "request '{method}' timed out after {timeout:?}"
+                )))
             }
         }
     }
@@ -539,11 +566,19 @@ impl MockLspSession {
     }
 
     pub fn set_mock_diagnostic(&self, uri: &str, diagnostic: LspDiagnostic) {
-        let mut map = self.mock_diagnostics.lock().unwrap_or_else(|p| p.into_inner());
+        let mut map = self
+            .mock_diagnostics
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         map.entry(uri.to_string()).or_default().push(diagnostic);
     }
 
-    fn resolve_word_at_position(&self, file_path: &Path, line: u32, character: u32) -> Option<String> {
+    fn resolve_word_at_position(
+        &self,
+        file_path: &Path,
+        line: u32,
+        character: u32,
+    ) -> Option<String> {
         let content = fs::read_to_string(file_path).ok()?;
         let lines: Vec<&str> = content.lines().collect();
         let target_line = lines.get(line as usize)?;
@@ -595,7 +630,10 @@ impl MockLspSession {
                             let sym_start = col_idx + (pat.len() - symbol.len());
                             let uri = path_to_uri(path).unwrap_or_default();
                             let start_pos = LspPosition::new(line_idx as u32, sym_start as u32);
-                            let end_pos = LspPosition::new(line_idx as u32, (sym_start + symbol.len()) as u32);
+                            let end_pos = LspPosition::new(
+                                line_idx as u32,
+                                (sym_start + symbol.len()) as u32,
+                            );
                             let rel = path
                                 .strip_prefix(&self.workspace_root)
                                 .map(|p| p.to_string_lossy().replace('\\', "/"))
@@ -659,10 +697,10 @@ impl MockLspSession {
             if let Ok(entries) = fs::read_dir(dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        if name.starts_with('.') || name == "target" || name == "node_modules" {
-                            continue;
-                        }
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                        && (name.starts_with('.') || name == "target" || name == "node_modules")
+                    {
+                        continue;
                     }
                     if path.is_dir() {
                         visit_dir(&path, visitor, depth + 1);
@@ -712,11 +750,11 @@ impl LspSessionBackend for MockLspSession {
                     .and_then(|c| c.as_u64())
                     .unwrap_or(0) as u32;
 
-                if let Some(file_path) = uri_to_path(uri) {
-                    if let Some(symbol) = self.resolve_word_at_position(&file_path, line, char_col) {
-                        let locations = self.find_symbol_definitions(&symbol);
-                        return Ok(serde_json::to_value(&locations).unwrap_or(Value::Array(vec![])));
-                    }
+                if let Some(file_path) = uri_to_path(uri)
+                    && let Some(symbol) = self.resolve_word_at_position(&file_path, line, char_col)
+                {
+                    let locations = self.find_symbol_definitions(&symbol);
+                    return Ok(serde_json::to_value(&locations).unwrap_or(Value::Array(vec![])));
                 }
                 Ok(Value::Array(vec![]))
             }
@@ -737,11 +775,11 @@ impl LspSessionBackend for MockLspSession {
                     .and_then(|c| c.as_u64())
                     .unwrap_or(0) as u32;
 
-                if let Some(file_path) = uri_to_path(uri) {
-                    if let Some(symbol) = self.resolve_word_at_position(&file_path, line, char_col) {
-                        let locations = self.find_symbol_references(&symbol);
-                        return Ok(serde_json::to_value(&locations).unwrap_or(Value::Array(vec![])));
-                    }
+                if let Some(file_path) = uri_to_path(uri)
+                    && let Some(symbol) = self.resolve_word_at_position(&file_path, line, char_col)
+                {
+                    let locations = self.find_symbol_references(&symbol);
+                    return Ok(serde_json::to_value(&locations).unwrap_or(Value::Array(vec![])));
                 }
                 Ok(Value::Array(vec![]))
             }
@@ -757,38 +795,52 @@ impl LspSessionBackend for MockLspSession {
 
         match method {
             "textDocument/didOpen" => {
-                if let Some(text_doc) = params.get("textDocument") {
-                    if let (Some(uri), Some(text)) = (
+                if let Some(text_doc) = params.get("textDocument")
+                    && let (Some(uri), Some(text)) = (
                         text_doc.get("uri").and_then(|u| u.as_str()),
                         text_doc.get("text").and_then(|t| t.as_str()),
-                    ) {
-                        let mut docs = self.opened_documents.lock().unwrap_or_else(|p| p.into_inner());
-                        docs.insert(uri.to_string(), text.to_string());
+                    )
+                {
+                    let mut docs = self
+                        .opened_documents
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner());
+                    docs.insert(uri.to_string(), text.to_string());
 
-                        // Synthetic check: parse common error patterns in file content
-                        let mut diags = Vec::new();
-                        for (idx, line) in text.lines().enumerate() {
-                            if line.contains("// SYNTAX_ERROR") || line.contains("/* SYNTAX_ERROR */") {
-                                diags.push(LspDiagnostic::new(
+                    // Synthetic check: parse common error patterns in file content
+                    let mut diags = Vec::new();
+                    for (idx, line) in text.lines().enumerate() {
+                        if line.contains("// SYNTAX_ERROR") || line.contains("/* SYNTAX_ERROR */") {
+                            diags.push(
+                                LspDiagnostic::new(
                                     uri,
                                     LspRange::point(idx as u32, 0),
                                     LspDiagnosticSeverity::Error,
                                     "syntax error: unexpected token or statement".to_string(),
-                                ).with_code("E0001").with_source("pandora-lint"));
-                            }
-                            if line.contains("// TYPE_ERROR") || line.contains("/* TYPE_ERROR */") {
-                                diags.push(LspDiagnostic::new(
+                                )
+                                .with_code("E0001")
+                                .with_source("pandora-lint"),
+                            );
+                        }
+                        if line.contains("// TYPE_ERROR") || line.contains("/* TYPE_ERROR */") {
+                            diags.push(
+                                LspDiagnostic::new(
                                     uri,
                                     LspRange::point(idx as u32, 0),
                                     LspDiagnosticSeverity::Error,
                                     "type mismatch error: incompatible types".to_string(),
-                                ).with_code("E0308").with_source("pandora-types"));
-                            }
+                                )
+                                .with_code("E0308")
+                                .with_source("pandora-types"),
+                            );
                         }
-                        if !diags.is_empty() {
-                            let mut map = self.mock_diagnostics.lock().unwrap_or_else(|p| p.into_inner());
-                            map.insert(uri.to_string(), diags);
-                        }
+                    }
+                    if !diags.is_empty() {
+                        let mut map = self
+                            .mock_diagnostics
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner());
+                        map.insert(uri.to_string(), diags);
                     }
                 }
                 Ok(())
@@ -802,7 +854,10 @@ impl LspSessionBackend for MockLspSession {
     }
 
     fn diagnostics_for(&self, uri: Option<&str>) -> Vec<LspDiagnostic> {
-        let map = self.mock_diagnostics.lock().unwrap_or_else(|p| p.into_inner());
+        let map = self
+            .mock_diagnostics
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         if let Some(u) = uri {
             map.get(u).cloned().unwrap_or_default()
         } else {
@@ -831,7 +886,12 @@ impl LspSession {
         Self { kind, backend }
     }
 
-    pub fn request(&self, method: &str, params: Value, timeout: Duration) -> Result<Value, LspError> {
+    pub fn request(
+        &self,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Value, LspError> {
         self.backend.request(method, params, timeout)
     }
 
@@ -873,8 +933,10 @@ impl LspEngine {
     }
 
     pub fn mock(workspace_root: impl Into<PathBuf>) -> Self {
-        let mut config = LspClientConfig::default();
-        config.force_mock = true;
+        let config = LspClientConfig {
+            force_mock: true,
+            ..Default::default()
+        };
         Self::with_config(workspace_root, config)
     }
 
@@ -900,7 +962,10 @@ impl LspEngine {
             .find_map(|&bin| find_executable(bin));
 
         let is_running = {
-            let sessions = self.active_sessions.lock().unwrap_or_else(|p| p.into_inner());
+            let sessions = self
+                .active_sessions
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
             sessions.get(kind).map(|s| s.is_alive()).unwrap_or(false)
         };
 
@@ -937,12 +1002,15 @@ impl LspEngine {
 
     /// Gets or launches an LSP session for the given server kind.
     pub fn get_or_start_session(&self, kind: LspServerKind) -> Result<Arc<LspSession>, LspError> {
-        let mut sessions = self.active_sessions.lock().unwrap_or_else(|p| p.into_inner());
+        let mut sessions = self
+            .active_sessions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
 
-        if let Some(session) = sessions.get(&kind) {
-            if session.is_alive() {
-                return Ok(Arc::clone(session));
-            }
+        if let Some(session) = sessions.get(&kind)
+            && session.is_alive()
+        {
+            return Ok(Arc::clone(session));
         }
 
         // Search for server binary
@@ -958,7 +1026,8 @@ impl LspEngine {
             let mock = MockLspSession::new(&self.workspace_root, kind.clone());
             LspSession::new(kind.clone(), Box::new(mock))
         } else if let Some(bin_path) = binary {
-            match SubprocessLspSession::spawn(&bin_path, kind.default_args(), &self.workspace_root) {
+            match SubprocessLspSession::spawn(&bin_path, kind.default_args(), &self.workspace_root)
+            {
                 Ok(subprocess) => LspSession::new(kind.clone(), Box::new(subprocess)),
                 Err(_) if self.config.enable_mock_fallback => {
                     let mock = MockLspSession::new(&self.workspace_root, kind.clone());
@@ -1030,7 +1099,11 @@ impl LspEngine {
             }
         });
 
-        let resp = session.request("textDocument/definition", params, self.config.request_timeout)?;
+        let resp = session.request(
+            "textDocument/definition",
+            params,
+            self.config.request_timeout,
+        )?;
         let locations = parse_locations(&resp, &self.workspace_root);
         Ok(LspDefinitionResult { locations })
     }
@@ -1087,7 +1160,11 @@ impl LspEngine {
             }
         });
 
-        let resp = session.request("textDocument/references", params, self.config.request_timeout)?;
+        let resp = session.request(
+            "textDocument/references",
+            params,
+            self.config.request_timeout,
+        )?;
         let references = parse_locations(&resp, &self.workspace_root);
         Ok(LspReferencesResult { references })
     }
@@ -1140,7 +1217,11 @@ impl LspEngine {
             }
         });
 
-        let resp = session.request("textDocument/typeDefinition", params, self.config.request_timeout)?;
+        let resp = session.request(
+            "textDocument/typeDefinition",
+            params,
+            self.config.request_timeout,
+        )?;
         let locations = parse_locations(&resp, &self.workspace_root);
         Ok(LspTypeDefinitionResult { locations })
     }
@@ -1190,7 +1271,10 @@ impl LspEngine {
         };
 
         let mut all_diags = Vec::new();
-        let sessions = self.active_sessions.lock().unwrap_or_else(|p| p.into_inner());
+        let sessions = self
+            .active_sessions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
 
         for session in sessions.values() {
             let diags = session.diagnostics_for(target_uri.as_deref());
@@ -1216,7 +1300,10 @@ impl LspEngine {
 
     /// Gracefully terminates all active language server sessions.
     pub fn shutdown_all(&self) {
-        let mut sessions = self.active_sessions.lock().unwrap_or_else(|p| p.into_inner());
+        let mut sessions = self
+            .active_sessions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         for session in sessions.values() {
             let _ = session.shutdown();
         }
@@ -1258,7 +1345,8 @@ mod tests {
 
     #[test]
     fn test_mock_lsp_session_definition_and_references() {
-        let temp_dir = std::env::temp_dir().join(format!("pandora_lsp_test_{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("pandora_lsp_test_{}", std::process::id()));
         let _ = fs::create_dir_all(&temp_dir);
 
         let test_file = temp_dir.join("main.rs");
@@ -1279,26 +1367,36 @@ fn main() {
             .goto_definition(&test_file, 7, 20, Some(LspServerKind::RustAnalyzer))
             .expect("goto_definition");
 
-        assert!(!def.locations.is_empty(), "should find definition of calculate_total");
+        assert!(
+            !def.locations.is_empty(),
+            "should find definition of calculate_total"
+        );
         assert_eq!(def.locations[0].range.start.line, 1);
 
         let refs = engine
             .find_references(&test_file, 2, 5, true, Some(LspServerKind::RustAnalyzer))
             .expect("find_references");
 
-        assert!(refs.references.len() >= 2, "should find calculate_total at definition and callsite");
+        assert!(
+            refs.references.len() >= 2,
+            "should find calculate_total at definition and callsite"
+        );
 
         let type_def = engine
             .type_definition(&test_file, 8, 20, Some(LspServerKind::RustAnalyzer))
             .expect("type_definition");
-        assert!(!type_def.locations.is_empty(), "should find type definition");
+        assert!(
+            !type_def.locations.is_empty(),
+            "should find type definition"
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
 
     #[test]
     fn test_mock_lsp_diagnostics_detection() {
-        let temp_dir = std::env::temp_dir().join(format!("pandora_lsp_diag_test_{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("pandora_lsp_diag_test_{}", std::process::id()));
         let _ = fs::create_dir_all(&temp_dir);
 
         let test_file = temp_dir.join("broken.rs");

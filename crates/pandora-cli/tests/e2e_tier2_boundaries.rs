@@ -6,14 +6,14 @@ mod e2e_support;
 use e2e_support::*;
 use pandora_provider::TokenUsage;
 use pandora_runtime::{
-    AgentCheckpoint, AgentControlStop, AgentRunControl, ContextVfs,
-    GitWorktreeExecutor, WorktreeCommand, WorktreeError,
+    AgentCheckpoint, AgentControlStop, AgentRunControl, ContextVfs, GitWorktreeExecutor,
+    WorktreeCommand, WorktreeError,
 };
 use serde_json::json;
 use std::fs;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 // ============================================================================
 // Tier 2: Boundary & Corner Cases (R1 — Language Server Protocol)
@@ -25,12 +25,21 @@ fn test_tier2_r1_missing_server_binary_graceful_error() {
     fixture.setup();
 
     // Invoking LSP command for non-existent server binary should return clean error
-    let out = fixture.run(&["lsp", "status", "--server", "nonexistent-lang-server-xyz", "--json"]);
+    let out = fixture.run(&[
+        "lsp",
+        "status",
+        "--server",
+        "nonexistent-lang-server-xyz",
+        "--json",
+    ]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let stdout = String::from_utf8_lossy(&out.stdout);
 
     assert!(
-        !out.status.success() || stdout.contains("false") || stdout.contains("unavailable") || stderr.contains("not found"),
+        !out.status.success()
+            || stdout.contains("false")
+            || stdout.contains("unavailable")
+            || stderr.contains("not found"),
         "missing server binary must report error or unavailable: stdout={stdout}, stderr={stderr}"
     );
 }
@@ -59,9 +68,16 @@ fn test_tier2_r1_out_of_bounds_definition_coords() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     let stdout = String::from_utf8_lossy(&out.stdout);
 
-    assert!(out.status.success(), "OOB definition query handled cleanly: stderr={stderr}");
+    assert!(
+        out.status.success(),
+        "OOB definition query handled cleanly: stderr={stderr}"
+    );
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON response");
-    assert!(json["locations"].as_array().map_or(false, |arr| arr.is_empty()));
+    assert!(
+        json["locations"]
+            .as_array()
+            .is_some_and(|arr| arr.is_empty())
+    );
 }
 
 #[test]
@@ -79,10 +95,17 @@ fn test_tier2_r1_nonexistent_file_diagnostics() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     let stdout = String::from_utf8_lossy(&out.stdout);
 
-    assert!(!out.status.success(), "diagnostics on nonexistent file must fail with non-zero exit code: stderr={stderr}");
+    assert!(
+        !out.status.success(),
+        "diagnostics on nonexistent file must fail with non-zero exit code: stderr={stderr}"
+    );
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON error response");
     assert_eq!(json["code"], "execution_failed");
-    assert!(json["message"].as_str().map_or(false, |m| m.contains("file not found")));
+    assert!(
+        json["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("file not found"))
+    );
 }
 
 #[test]
@@ -104,7 +127,11 @@ fn test_tier2_r1_server_process_crash_or_disconnect() {
     let empty_stream: &[u8] = &[];
     let mut reader = std::io::BufReader::new(empty_stream);
     let res = pandora_runtime::lsp_engine::read_lsp_message(&mut reader);
-    assert_eq!(res, Ok(None), "unexpected EOF must yield Ok(None) without hang");
+    assert_eq!(
+        res,
+        Ok(None),
+        "unexpected EOF must yield Ok(None) without hang"
+    );
 }
 
 // ============================================================================
@@ -142,7 +169,9 @@ impl CountingSteerControl {
     fn skip_step(&self) -> Result<serde_json::Value, &'static str> {
         let tool = {
             let mut guard = self.active_tool.lock().unwrap();
-            guard.take().ok_or("no active in-flight tool call to skip")?
+            guard
+                .take()
+                .ok_or("no active in-flight tool call to skip")?
         };
         Ok(json!({
             "status": "skipped",
@@ -199,7 +228,10 @@ fn test_tier2_r2_rollback_at_turn_zero() {
         .current_dir(&fixture.workspace)
         .output()
         .unwrap();
-    let count: u32 = String::from_utf8_lossy(&log_out.stdout).trim().parse().unwrap();
+    let count: u32 = String::from_utf8_lossy(&log_out.stdout)
+        .trim()
+        .parse()
+        .unwrap();
     assert_eq!(count, 1);
     assert!(!initial_sha.is_empty());
 }
@@ -264,7 +296,10 @@ fn test_tier2_r3_empty_query_string() {
 fn test_tier2_r3_stopwords_only_query() {
     use pandora_runtime::semantic_memory::tokenize;
     let stopword_tokens = tokenize("the is at which on and a an in to of for");
-    assert!(stopword_tokens.is_empty(), "stopwords-only query should filter down cleanly");
+    assert!(
+        stopword_tokens.is_empty(),
+        "stopwords-only query should filter down cleanly"
+    );
 
     let mixed = tokenize("the compiler is broken in lexer");
     assert_eq!(mixed, vec!["compiler", "broken", "lexer"]);
@@ -290,7 +325,10 @@ fn test_tier2_r3_dense_hasher_unicode_and_emojis() {
     let unicode_token = "🚀_syntax_error_🦀_line_42";
     let vec = hasher.vectorize(unicode_token);
     let sum: f32 = vec.iter().map(|v| v.abs()).sum();
-    assert!(sum > 0.0, "dense feature hasher must encode unicode and emoji tokens");
+    assert!(
+        sum > 0.0,
+        "dense feature hasher must encode unicode and emoji tokens"
+    );
     assert_eq!(vec.len(), 128);
 }
 
@@ -369,7 +407,7 @@ fn test_tier2_r4_corrupted_truncated_dom() {
 
 #[test]
 fn test_tier2_r4_png_chunk_crc32_checksum_mismatch() {
-    use pandora_runtime::synthetic_canvas::{crc32, SyntheticCanvas};
+    use pandora_runtime::synthetic_canvas::{SyntheticCanvas, crc32};
     let canvas = SyntheticCanvas::new(8, 8);
     let png = canvas.to_png_bytes();
 
@@ -377,13 +415,19 @@ fn test_tier2_r4_png_chunk_crc32_checksum_mismatch() {
     assert!(png.len() >= 33);
     let stored_crc = u32::from_be_bytes([png[29], png[30], png[31], png[32]]);
     let computed_crc = crc32(&png[12..29]);
-    assert_eq!(stored_crc, computed_crc, "authentic PNG must have valid ISO 3309 CRC32");
+    assert_eq!(
+        stored_crc, computed_crc,
+        "authentic PNG must have valid ISO 3309 CRC32"
+    );
 
     // Corrupt one byte in IHDR chunk data -> mismatch detected
     let mut corrupted = png[12..29].to_vec();
     corrupted[5] ^= 0xFF;
     let corrupted_crc = crc32(&corrupted);
-    assert_ne!(corrupted_crc, stored_crc, "corrupted chunk data must trigger CRC32 mismatch");
+    assert_ne!(
+        corrupted_crc, stored_crc,
+        "corrupted chunk data must trigger CRC32 mismatch"
+    );
 }
 
 // ============================================================================
@@ -467,7 +511,10 @@ fn test_tier2_r5_prp_gate_failure_aborts_squash() {
     let gate2_unit_failed = false; // simulates test failure
 
     let can_merge = gate1_syntax_passed && gate2_unit_failed;
-    assert!(!can_merge, "failed PRP gate must abort automated squash-merge");
+    assert!(
+        !can_merge,
+        "failed PRP gate must abort automated squash-merge"
+    );
 }
 
 #[test]
@@ -497,7 +544,10 @@ fn test_tier2_r6_release_identity_version_mismatch_detected() {
         .output()
         .expect("release_identity script failed to execute");
 
-    assert!(!out.status.success(), "version mismatch must trigger failure");
+    assert!(
+        !out.status.success(),
+        "version mismatch must trigger failure"
+    );
 }
 
 #[test]
@@ -517,7 +567,9 @@ fn test_tier2_r6_unfinished_documentation_markers_rejected() {
     assert!(contains_unfinished_marker("This is a TODO item"));
     assert!(contains_unfinished_marker("To be decided: TBD"));
     assert!(contains_unfinished_marker("Needs a FIXME here"));
-    assert!(!contains_unfinished_marker("This documentation is complete and verified."));
+    assert!(!contains_unfinished_marker(
+        "This documentation is complete and verified."
+    ));
 }
 
 #[test]
@@ -526,7 +578,9 @@ fn test_tier2_r6_unpinned_github_action_sha_rejected() {
         s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit())
     }
 
-    assert!(is_full_commit_sha("eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871"));
+    assert!(is_full_commit_sha(
+        "eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871"
+    ));
     assert!(!is_full_commit_sha("v4"));
     assert!(!is_full_commit_sha("main"));
 }
@@ -551,5 +605,8 @@ fn test_tier2_r6_zero_network_isolation_boundary() {
     let fixture = E2eFixture::new();
     let cmd = fixture.command(&["provider", "list"]);
     // Environment variables for cloud providers were explicitly stripped in E2eFixture::command
-    assert!(cmd.get_envs().any(|(k, v)| k == "PANDORA_WORKSPACE" && v.is_some()));
+    assert!(
+        cmd.get_envs()
+            .any(|(k, v)| k == "PANDORA_WORKSPACE" && v.is_some())
+    );
 }

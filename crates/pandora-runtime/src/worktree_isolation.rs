@@ -132,7 +132,8 @@ impl WorktreeIsolationManager {
             None => get_head_commit(&self.repository)?,
         };
 
-        let base_branch = get_current_branch(&self.repository).unwrap_or_else(|_| "main".to_string());
+        let base_branch =
+            get_current_branch(&self.repository).unwrap_or_else(|_| "main".to_string());
         let branch_name = format!("goal/{task_id}");
 
         // If the branch already exists, remove it first to ensure fresh state
@@ -220,10 +221,12 @@ impl WorktreeIsolationManager {
     }
 
     /// Finalizes an isolated task by evaluating gates and executing the selected `action`.
+    ///
     /// On success:
     /// - `SquashMerge`: squash-merges into the base branch and cleans up worktree.
     /// - `PullRequest`: creates/formats PR branch metadata and cleans up worktree.
     /// - `Discard`: discards worktree and branch.
+    ///
     /// On gate failure: prevents merge, preserves worktree for diagnostic inspection.
     pub fn finalize_task(
         &self,
@@ -246,7 +249,10 @@ impl WorktreeIsolationManager {
         }
 
         // Commit any outstanding changes in the worktree before evaluating
-        let _ = commit_all(&ctx.worktree_path, &format!("goal({}): apply changes", ctx.task_id));
+        let _ = commit_all(
+            &ctx.worktree_path,
+            &format!("goal({}): apply changes", ctx.task_id),
+        );
 
         // Evaluate progressive validation gates
         let report = self.evaluate_gates(ctx)?;
@@ -304,7 +310,9 @@ impl WorktreeIsolationManager {
                         "Prepared PR branch '{}' with 4-phase gate verification evidence.\nTitle: {}\nUrl: {}",
                         pr_result.branch_name,
                         pr_result.pr_title,
-                        pr_result.gh_pr_url.unwrap_or_else(|| "local branch preserved".to_string())
+                        pr_result
+                            .gh_pr_url
+                            .unwrap_or_else(|| "local branch preserved".to_string())
                     ),
                 })
             }
@@ -319,7 +327,10 @@ impl WorktreeIsolationManager {
         custom_title: Option<&str>,
         custom_body: Option<&str>,
     ) -> Result<PrBranchResult, WorktreeError> {
-        let _ = commit_all(&ctx.worktree_path, &format!("goal({}): complete task", ctx.task_id));
+        let _ = commit_all(
+            &ctx.worktree_path,
+            &format!("goal({}): complete task", ctx.task_id),
+        );
         let head_commit = get_head_commit(&ctx.worktree_path)?;
         let report = self.evaluate_gates(ctx)?;
 
@@ -354,7 +365,13 @@ impl WorktreeIsolationManager {
         };
 
         // If gh cli is present, attempt PR creation
-        let gh_url = create_github_pr(&self.repository, &ctx.branch_name, &ctx.base_branch, &title, &body);
+        let gh_url = create_github_pr(
+            &self.repository,
+            &ctx.branch_name,
+            &ctx.base_branch,
+            &title,
+            &body,
+        );
 
         Ok(PrBranchResult {
             task_id: ctx.task_id.clone(),
@@ -478,10 +495,10 @@ impl WorktreeIsolationManager {
         let list = self.list_worktrees()?;
         let mut count = 0;
         for wt in list {
-            if wt.path.starts_with(&self.managed_root) {
-                if self.cleanup_worktree(&wt.task_id, force)? {
-                    count += 1;
-                }
+            if wt.path.starts_with(&self.managed_root)
+                && self.cleanup_worktree(&wt.task_id, force)?
+            {
+                count += 1;
             }
         }
         let _ = self.prune();
@@ -763,23 +780,25 @@ fn create_github_pr(
     body: &str,
 ) -> Option<String> {
     let mut cmd = Command::new("gh");
-    cmd.args(["pr", "create", "--head", head, "--base", base, "--title", title, "--body", body])
-        .current_dir(repo)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+    cmd.args([
+        "pr", "create", "--head", head, "--base", base, "--title", title, "--body", body,
+    ])
+    .current_dir(repo)
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::null());
 
     #[cfg(windows)]
     if let Some(path) = std::env::var_os("PATH") {
         cmd.env("PATH", path);
     }
 
-    if let Ok(output) = cmd.output() {
-        if output.status.success() {
-            let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !url.is_empty() {
-                return Some(url);
-            }
+    if let Ok(output) = cmd.output()
+        && output.status.success()
+    {
+        let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !url.is_empty() {
+            return Some(url);
         }
     }
     None

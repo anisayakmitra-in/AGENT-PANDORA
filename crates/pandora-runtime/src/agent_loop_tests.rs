@@ -1990,4 +1990,3 @@ fn agent_loop_executes_verification_visual_tool() {
         "tool output should contain visual verification report with screenshot artifact"
     );
 }
-

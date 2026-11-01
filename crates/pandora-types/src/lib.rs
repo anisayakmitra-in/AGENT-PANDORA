@@ -130,9 +130,9 @@ pub use kanban::{KanbanBoard, KanbanReclaimReport, KanbanStatus, KanbanTask};
 pub use ladder::{HarnessFailureMode, OptimizationLadderLevel, SafetySpineReport};
 pub use lineage::{EvolutionLineage, EvolutionLineageEdge, EvolutionLineageNode};
 pub use lsp::{
-    LspDefinitionResult, LspDiagnostic, LspDiagnosticSeverity, LspDiagnosticsResult,
-    LspLocation, LspPosition, LspRange, LspReferencesResult, LspServerKind,
-    LspServerStatus, LspTypeDefinitionResult,
+    LspDefinitionResult, LspDiagnostic, LspDiagnosticSeverity, LspDiagnosticsResult, LspLocation,
+    LspPosition, LspRange, LspReferencesResult, LspServerKind, LspServerStatus,
+    LspTypeDefinitionResult,
 };
 pub use memory::{
     MAX_MEMORY_SYNTHESIS_EVIDENCE, MEMORY_CONSOLIDATION_POLICY_VERSION, MemoryApproval,

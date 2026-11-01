@@ -6,6 +6,7 @@ use crossterm::event::{
 };
 use crossterm::execute;
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
+use pandora_runtime::{AgentCheckpoint, AgentCheckpointKind, AgentControlStop, AgentRunControl};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
 use ratatui::style::{Color as TuiColor, Modifier, Style};
@@ -15,7 +16,6 @@ use ratatui::widgets::{
     ScrollbarOrientation, ScrollbarState, Sparkline, Tabs,
 };
 use ratatui::{Frame, Terminal};
-use pandora_runtime::{AgentCheckpoint, AgentCheckpointKind, AgentControlStop, AgentRunControl};
 use serde_json::{Value, json};
 use std::cell::Cell;
 use std::cmp::min;
@@ -1215,7 +1215,9 @@ impl SteerableRunControl {
     pub fn skip_step(&self) -> Result<serde_json::Value, &'static str> {
         let tool_name = {
             let guard = self.active_tool.lock().map_err(|_| "lock poisoned")?;
-            guard.clone().ok_or("no active in-flight tool call to skip")?
+            guard
+                .clone()
+                .ok_or("no active in-flight tool call to skip")?
         };
         self.skip_requested.store(true, Ordering::SeqCst);
         self.clear_active_tool();
@@ -1236,7 +1238,12 @@ impl SteerableRunControl {
     pub fn inflight_state(&self) -> SteerInflightState {
         let active_tool = self.active_tool.lock().ok().and_then(|g| g.clone());
         let tool_args = self.active_tool_args.lock().ok().and_then(|g| g.clone());
-        let timeline = self.timeline.lock().ok().map(|g| g.clone()).unwrap_or_default();
+        let timeline = self
+            .timeline
+            .lock()
+            .ok()
+            .map(|g| g.clone())
+            .unwrap_or_default();
         SteerInflightState {
             turn: self.turn.load(Ordering::SeqCst),
             max_turns: 50,
@@ -1255,9 +1262,14 @@ impl SteerableRunControl {
 impl AgentRunControl for SteerableRunControl {
     fn checkpoint(&self, checkpoint: AgentCheckpoint<'_>) -> Result<(), AgentControlStop> {
         self.turn.store(checkpoint.turns(), Ordering::SeqCst);
-        self.tool_calls.store(checkpoint.tool_calls(), Ordering::SeqCst);
-        self.input_tokens.store(checkpoint.usage().prompt_tokens() as u64, Ordering::SeqCst);
-        self.output_tokens.store(checkpoint.usage().completion_tokens() as u64, Ordering::SeqCst);
+        self.tool_calls
+            .store(checkpoint.tool_calls(), Ordering::SeqCst);
+        self.input_tokens
+            .store(checkpoint.usage().prompt_tokens() as u64, Ordering::SeqCst);
+        self.output_tokens.store(
+            checkpoint.usage().completion_tokens() as u64,
+            Ordering::SeqCst,
+        );
 
         if let Ok(mut tl) = self.timeline.lock() {
             let desc = match checkpoint.kind() {
@@ -1289,29 +1301,24 @@ impl AgentRunControl for SteerableRunControl {
         }
 
         // Cooperative crossterm check when running in interactive terminal
-        if !self.paused.load(Ordering::SeqCst) && !self.cancelled.load(Ordering::SeqCst) {
-            if crossterm::terminal::is_raw_mode_enabled().unwrap_or(false) {
-                if let Ok(true) = crossterm::event::poll(Duration::from_millis(0)) {
-                    if let Ok(Event::Key(key)) = crossterm::event::read() {
-                        if key.code == KeyCode::Esc
-                            || (key.modifiers.contains(KeyModifiers::CONTROL)
-                                && key.code == KeyCode::Char('k'))
-                        {
-                            self.paused.store(true, Ordering::SeqCst);
-                        }
-                    }
-                }
-            }
+        if !self.paused.load(Ordering::SeqCst)
+            && !self.cancelled.load(Ordering::SeqCst)
+            && crossterm::terminal::is_raw_mode_enabled().unwrap_or(false)
+            && let Ok(true) = crossterm::event::poll(Duration::from_millis(0))
+            && let Ok(Event::Key(key)) = crossterm::event::read()
+            && (key.code == KeyCode::Esc
+                || (key.modifiers.contains(KeyModifiers::CONTROL)
+                    && key.code == KeyCode::Char('k')))
+        {
+            self.paused.store(true, Ordering::SeqCst);
         }
 
         if self.cancelled.load(Ordering::SeqCst) {
             return Err(AgentControlStop::Cancelled);
         }
 
-        if self.paused.load(Ordering::SeqCst) {
-            if self.cancelled.load(Ordering::SeqCst) {
-                return Err(AgentControlStop::Cancelled);
-            }
+        if self.paused.load(Ordering::SeqCst) && self.cancelled.load(Ordering::SeqCst) {
+            return Err(AgentControlStop::Cancelled);
         }
 
         Ok(())
@@ -2122,22 +2129,22 @@ impl App {
             return self.handle_skills_modal_key(key);
         }
 
-        if self.activity == TuiActivity::Working {
-            if key.code == KeyCode::Esc
-                || (key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('k'))
-            {
-                self.pause_execution();
-                return false;
-            }
+        if self.activity == TuiActivity::Working
+            && (key.code == KeyCode::Esc
+                || (key.modifiers.contains(KeyModifiers::CONTROL)
+                    && key.code == KeyCode::Char('k')))
+        {
+            self.pause_execution();
+            return false;
         }
 
-        if self.activity == TuiActivity::Paused {
-            if key.code == KeyCode::Esc
-                || (key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('k'))
-            {
-                self.open_steer_modal();
-                return false;
-            }
+        if self.activity == TuiActivity::Paused
+            && (key.code == KeyCode::Esc
+                || (key.modifiers.contains(KeyModifiers::CONTROL)
+                    && key.code == KeyCode::Char('k')))
+        {
+            self.open_steer_modal();
+            return false;
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -3098,8 +3105,10 @@ impl App {
             inflight.elapsed_ms = self.last_turn_ms.unwrap_or(0);
         }
         self.steer_inflight = Some(inflight);
-        self.steer_timeline
-            .push(format!("Turn {}: Execution paused by operator (Esc/Ctrl+K)", self.turns));
+        self.steer_timeline.push(format!(
+            "Turn {}: Execution paused by operator (Esc/Ctrl+K)",
+            self.turns
+        ));
         self.push_message("steer> execution paused at checkpoint (Esc / Ctrl+K)");
     }
 
@@ -3146,8 +3155,10 @@ impl App {
         let payload = self.steer_control.inject_guidance(trimmed)?;
         self.steer_pending_guidance.push(payload.clone());
         self.push_message(format!("steer> injected guidance: {trimmed}"));
-        self.steer_timeline
-            .push(format!("Turn {}: Guidance injected: {}", self.turns, trimmed));
+        self.steer_timeline.push(format!(
+            "Turn {}: Guidance injected: {}",
+            self.turns, trimmed
+        ));
         self.steer_guidance_input.clear();
         self.steer_guidance_active = false;
         self.steer_status_message = Some(format!("Guidance injected: {trimmed}"));
@@ -3163,8 +3174,10 @@ impl App {
         let payload = self.steer_control.inject_guidance(trimmed)?;
         self.steer_pending_guidance.push(payload);
         self.push_message(format!("steer> injected guidance: {trimmed}"));
-        self.steer_timeline
-            .push(format!("Turn {}: Guidance injected: {}", self.turns, trimmed));
+        self.steer_timeline.push(format!(
+            "Turn {}: Guidance injected: {}",
+            self.turns, trimmed
+        ));
         Ok(trimmed.to_string())
     }
 
@@ -3172,7 +3185,11 @@ impl App {
         let tool_name = if let Some(ref inflight) = self.steer_inflight {
             inflight.active_tool.clone()
         } else {
-            self.steer_control.active_tool.lock().ok().and_then(|g| g.clone())
+            self.steer_control
+                .active_tool
+                .lock()
+                .ok()
+                .and_then(|g| g.clone())
         };
 
         let Some(tool_name) = tool_name else {
@@ -3199,8 +3216,10 @@ impl App {
         }
         self.turns = self.turns.saturating_add(1);
         self.push_message(format!("steer> skipped tool step: {tool_name}"));
-        self.steer_timeline
-            .push(format!("Turn {}: Skipped tool step '{}'", self.turns, tool_name));
+        self.steer_timeline.push(format!(
+            "Turn {}: Skipped tool step '{}'",
+            self.turns, tool_name
+        ));
         self.steer_status_message = Some(format!("Skipped step: {tool_name}"));
         Ok(synthetic_result)
     }
@@ -3259,7 +3278,9 @@ impl App {
 
     #[allow(dead_code)]
     pub fn has_pending_guidance(&self, needle: &str) -> bool {
-        self.steer_pending_guidance.iter().any(|g| g.contains(needle))
+        self.steer_pending_guidance
+            .iter()
+            .any(|g| g.contains(needle))
     }
 
     #[allow(dead_code)]
@@ -5460,11 +5481,11 @@ impl App {
             tokens.push("list".to_owned());
         }
         for option in ["config", "data-dir", "workspace"] {
-            if let Some(value) = self.args.value(option) {
-                if !tokens.iter().any(|t| t == &format!("--{option}")) {
-                    tokens.push(format!("--{option}"));
-                    tokens.push(value.to_owned());
-                }
+            if let Some(value) = self.args.value(option)
+                && !tokens.iter().any(|t| t == &format!("--{option}"))
+            {
+                tokens.push(format!("--{option}"));
+                tokens.push(value.to_owned());
             }
         }
         match super::branch::execute(&tokens) {
@@ -5499,11 +5520,11 @@ impl App {
             return;
         }
         for option in ["config", "data-dir", "workspace"] {
-            if let Some(value) = self.args.value(option) {
-                if !tokens.iter().any(|t| t == &format!("--{option}")) {
-                    tokens.push(format!("--{option}"));
-                    tokens.push(value.to_owned());
-                }
+            if let Some(value) = self.args.value(option)
+                && !tokens.iter().any(|t| t == &format!("--{option}"))
+            {
+                tokens.push(format!("--{option}"));
+                tokens.push(value.to_owned());
             }
         }
         match super::pr::execute(&tokens) {
@@ -7559,7 +7580,10 @@ impl App {
             ]),
             Line::from(vec![
                 Span::styled(" ⚙ In-Flight Tool: ", self.theme.muted()),
-                Span::styled(active_tool, self.theme.accent().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    active_tool,
+                    self.theme.accent().add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(" "),
                 Span::styled(format!("({tool_args})"), self.theme.muted()),
             ]),
@@ -7659,7 +7683,10 @@ impl App {
             .steer_status_message
             .as_deref()
             .unwrap_or("Ready · Press [Esc] or [R] to resume execution cleanly");
-        let p5 = Paragraph::new(Span::styled(format!(" Status: {status}"), self.theme.prompt()));
+        let p5 = Paragraph::new(Span::styled(
+            format!(" Status: {status}"),
+            self.theme.prompt(),
+        ));
         frame.render_widget(p5, chunks[4]);
     }
 
@@ -9563,7 +9590,11 @@ mod tests {
         assert!(app.steer_modal_open);
         assert_eq!(app.activity, TuiActivity::Paused);
         assert!(app.steer_control.is_paused());
-        assert!(app.messages.iter().any(|m| m.contains("execution paused at checkpoint")));
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.contains("execution paused at checkpoint"))
+        );
 
         // 2. Esc while in steer modal resumes execution
         app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
@@ -9644,7 +9675,10 @@ mod tests {
         // Skipping when no active tool -> clean rejection
         let no_tool_res = app.skip_current_step();
         assert!(no_tool_res.is_err());
-        assert_eq!(no_tool_res.unwrap_err(), "no active in-flight tool call to skip");
+        assert_eq!(
+            no_tool_res.unwrap_err(),
+            "no active in-flight tool call to skip"
+        );
 
         // Set active tool step
         app.set_active_tool_step("workspace.patch", Some("{\"path\": \"src/parser.rs\"}"));
@@ -9735,12 +9769,8 @@ mod tests {
         assert!(control.is_paused());
 
         // BeforeEffectAuthorization checkpoint records timeline
-        let cp_effect = AgentCheckpoint::new(
-            AgentCheckpointKind::BeforeEffectAuthorization,
-            2,
-            1,
-            &usage,
-        );
+        let cp_effect =
+            AgentCheckpoint::new(AgentCheckpointKind::BeforeEffectAuthorization, 2, 1, &usage);
         assert!(control.checkpoint(cp_effect).is_ok());
         let inflight = control.inflight_state();
         assert_eq!(inflight.turn, 2);
@@ -9796,5 +9826,4 @@ mod tests {
         assert!(app.steer_modal_open);
         assert_eq!(app.activity, TuiActivity::Paused);
     }
-
 }

@@ -23,7 +23,7 @@ fn test_png_rfc_compliance_and_canvas_rasterizer() {
         30,
         120,
         40,
-        Some((59, 130, 246, 255)),    // Blue fill
+        Some((59, 130, 246, 255)),     // Blue fill
         Some(((30, 64, 175, 255), 2)), // Darker blue border
     );
 
@@ -288,16 +288,27 @@ fn test_tool_engine_registration_and_profiles() {
 
     // Verify it is accessible in Full and Coding profiles
     let full_tools = engine.list_filtered(ToolProfile::Full, None);
-    assert!(full_tools.iter().any(|t| t.id().as_str() == "verification.visual"));
+    assert!(
+        full_tools
+            .iter()
+            .any(|t| t.id().as_str() == "verification.visual")
+    );
 
     let coding_tools = engine.list_filtered(ToolProfile::Coding, None);
-    assert!(coding_tools.iter().any(|t| t.id().as_str() == "verification.visual"));
+    assert!(
+        coding_tools
+            .iter()
+            .any(|t| t.id().as_str() == "verification.visual")
+    );
 
     // Prepare invocation
     let invocation = engine
         .prepare_invocation("verification.visual", &json!({"action": "visual_verify"}))
         .expect("invocation preparation succeeds");
-    assert_eq!(invocation.task().summary(), "verification.visual:visual_verify");
+    assert_eq!(
+        invocation.task().summary(),
+        "verification.visual:visual_verify"
+    );
 }
 
 #[test]
@@ -317,5 +328,8 @@ fn test_verification_gene_role_and_harness_integration() {
     // Check VerificationGene::all includes Visual
     let all = VerificationGene::all();
     assert_eq!(all.len(), 5);
-    assert!(all.iter().any(|g| g.manifest().id().as_str() == "verification.visual"));
+    assert!(
+        all.iter()
+            .any(|g| g.manifest().id().as_str() == "verification.visual")
+    );
 }

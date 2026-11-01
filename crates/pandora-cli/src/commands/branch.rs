@@ -7,9 +7,9 @@ use serde_json::json;
 use std::path::PathBuf;
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
-    let subcommand = args
-        .first()
-        .ok_or_else(|| CliError::usage("branch requires 'list', 'create', 'checkout', or 'cleanup'"))?;
+    let subcommand = args.first().ok_or_else(|| {
+        CliError::usage("branch requires 'list', 'create', 'checkout', or 'cleanup'")
+    })?;
 
     match subcommand.as_str() {
         "list" => list(&args[1..]),
@@ -164,9 +164,9 @@ fn cleanup(args: &[String]) -> Result<CommandResult, CliError> {
     })?;
 
     if parsed.has_flag("all") || parsed.positionals.first().map(|s| s.as_str()) == Some("all") {
-        let count = manager
-            .cleanup_all(force)
-            .map_err(|err| CliError::execution(format!("failed to cleanup all: {err}"), json!({})))?;
+        let count = manager.cleanup_all(force).map_err(|err| {
+            CliError::execution(format!("failed to cleanup all: {err}"), json!({}))
+        })?;
         let human = format!("Cleaned up {count} ephemeral worktree(s)");
         return Ok(success(
             "branch cleanup",
@@ -180,9 +180,9 @@ fn cleanup(args: &[String]) -> Result<CommandResult, CliError> {
         .or_else(|| parsed.positionals.first().map(|s| s.as_str()))
         .ok_or_else(|| CliError::usage("branch cleanup requires --task <task-id> or --all"))?;
 
-    let cleaned = manager
-        .cleanup_worktree(task_id, force)
-        .map_err(|err| CliError::execution(format!("failed to cleanup worktree: {err}"), json!({})))?;
+    let cleaned = manager.cleanup_worktree(task_id, force).map_err(|err| {
+        CliError::execution(format!("failed to cleanup worktree: {err}"), json!({}))
+    })?;
 
     let human = if cleaned {
         format!("Successfully cleaned up isolated worktree for task '{task_id}'")

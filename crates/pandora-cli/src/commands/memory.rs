@@ -888,14 +888,7 @@ fn vfs_cat(args: &[String]) -> Result<CommandResult, CliError> {
 fn vfs_search(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
         args,
-        &[
-            "config",
-            "data-dir",
-            "workspace",
-            "limit",
-            "tier",
-            "intent",
-        ],
+        &["config", "data-dir", "workspace", "limit", "tier", "intent"],
     )?;
     let query = if !parsed.positionals.is_empty() {
         parsed.positionals.join(" ")

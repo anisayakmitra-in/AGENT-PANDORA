@@ -192,7 +192,12 @@ fn test_tier3_steer_guidance_injected_from_lsp_diagnostics() {
     });
 
     assert!(steer_msg["content"].as_str().unwrap().contains("E0308"));
-    assert!(steer_msg["content"].as_str().unwrap().contains("src/parser.rs:42"));
+    assert!(
+        steer_msg["content"]
+            .as_str()
+            .unwrap()
+            .contains("src/parser.rs:42")
+    );
 }
 
 /// T3.5: Synthetic PNG screenshot verification results indexed into ContextVfs semantic memory (R3 + R4)
@@ -287,5 +292,10 @@ fn test_tier3_worktree_pr_creation_with_semantic_lesson_and_receipts() {
 
     assert!(pr_payload["title"].as_str().unwrap().contains("refactor"));
     assert_eq!(pr_payload["gates_verified"].as_array().unwrap().len(), 4);
-    assert!(pr_payload["body"].as_str().unwrap().contains("eval-lesson-exec-101"));
+    assert!(
+        pr_payload["body"]
+            .as_str()
+            .unwrap()
+            .contains("eval-lesson-exec-101")
+    );
 }
