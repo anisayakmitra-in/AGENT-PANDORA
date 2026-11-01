@@ -128,21 +128,26 @@ pub fn simd_norm_sq_128(v: &[f32; 128]) -> f32 {
 
 /// Vector-accelerated subword character FNV-1a block hasher.
 /// Processes bytes with unrolled word accumulation.
-#[allow(clippy::chunks_exact_to_as_chunks)]
 pub fn simd_hash64_seed(bytes: &[u8], seed: u64) -> u64 {
     let mut h = 0xcbf29ce484222325 ^ seed;
-    let chunks = bytes.chunks_exact(8);
-    let remainder = chunks.remainder();
-
-    for chunk in chunks {
+    let mut i = 0;
+    while i + 8 <= bytes.len() {
         let word = u64::from_le_bytes([
-            chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+            bytes[i],
+            bytes[i + 1],
+            bytes[i + 2],
+            bytes[i + 3],
+            bytes[i + 4],
+            bytes[i + 5],
+            bytes[i + 6],
+            bytes[i + 7],
         ]);
         h ^= word;
         h = h.wrapping_mul(0x100000001b3);
+        i += 8;
     }
 
-    for &b in remainder {
+    for &b in &bytes[i..] {
         h ^= b as u64;
         h = h.wrapping_mul(0x100000001b3);
     }
