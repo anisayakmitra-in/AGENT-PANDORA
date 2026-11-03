@@ -9,6 +9,22 @@
 .globl pandora_simd_dot_product_128_asm
 .globl pandora_simd_dot_product_128_avx2_asm
 .globl pandora_cpuid_features_asm
+.globl pandora_simd_dot_product_128_sysv_asm
+.globl pandora_simd_dot_product_128_avx2_sysv_asm
+.globl pandora_cpuid_features_sysv_asm
+
+/*
+ * SysV AMD64 ABI wrappers for Linux and macOS (arguments passed in %rdi, %rsi)
+ */
+pandora_simd_dot_product_128_sysv_asm:
+    movq %rdi, %rcx
+    movq %rsi, %rdx
+    jmp pandora_simd_dot_product_128_asm
+
+pandora_simd_dot_product_128_avx2_sysv_asm:
+    movq %rdi, %rcx
+    movq %rsi, %rdx
+    jmp pandora_simd_dot_product_128_avx2_asm
 
 /*
  * float pandora_simd_dot_product_128_asm(const float* a, const float* b)
@@ -165,5 +181,49 @@ pandora_cpuid_features_asm:
 
     popq %rsi
     popq %rdi
+    popq %rbx
+    ret
+
+/*
+ * void pandora_cpuid_features_sysv_asm(unsigned int leaf, unsigned int* eax, unsigned int* ebx, unsigned int* ecx, unsigned int* edx)
+ * SysV AMD64 ABI: %edi = leaf, %rsi = eax, %rdx = ebx, %rcx = ecx, %r8 = edx
+ */
+pandora_cpuid_features_sysv_asm:
+    pushq %rbx
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    pushq %r15
+
+    movq %rsi, %r12             /* r12 = eax ptr */
+    movq %rdx, %r13             /* r13 = ebx ptr */
+    movq %rcx, %r14             /* r14 = ecx ptr */
+    movq %r8,  %r15             /* r15 = edx ptr */
+
+    movl %edi, %eax             /* leaf */
+    xorl %ecx, %ecx             /* sub-leaf 0 */
+    cpuid
+
+    testq %r12, %r12
+    jz .skip_sysv_eax
+    movl %eax, (%r12)
+.skip_sysv_eax:
+    testq %r13, %r13
+    jz .skip_sysv_ebx
+    movl %ebx, (%r13)
+.skip_sysv_ebx:
+    testq %r14, %r14
+    jz .skip_sysv_ecx
+    movl %ecx, (%r14)
+.skip_sysv_ecx:
+    testq %r15, %r15
+    jz .skip_sysv_edx
+    movl %edx, (%r15)
+.skip_sysv_edx:
+
+    popq %r15
+    popq %r14
+    popq %r13
+    popq %r12
     popq %rbx
     ret

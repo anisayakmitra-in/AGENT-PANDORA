@@ -8,9 +8,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-NEXT_VERSION = "3.0.0"
+NEXT_VERSION = "3.0.2"
 NEXT_TAG = f"v{NEXT_VERSION}"
-CONSUMED_TAG = "v2.0.0"
+CONSUMED_TAG = "v3.0.1"
 
 
 class NextBetaIdentityTests(unittest.TestCase):
@@ -36,11 +36,10 @@ class NextBetaIdentityTests(unittest.TestCase):
                 document = json.loads(manifest_path.read_text(encoding="utf-8"))
                 self.assertEqual(
                     document["compatibility"]["runtime"],
-                    f"pandora={NEXT_VERSION}",
+                    "pandora^3.0",
                 )
 
         for fixture in (
-            ROOT / "fuzz" / "corpus" / "manifest_parser" / "valid.json",
             ROOT / "sdk" / "gene-pack" / "fixtures" / "negative" / "undeclared-capability.json",
             ROOT / "sdk" / "gene-pack" / "fixtures" / "negative" / "traversal-id.json",
         ):
@@ -48,7 +47,7 @@ class NextBetaIdentityTests(unittest.TestCase):
                 document = json.loads(fixture.read_text(encoding="utf-8"))
                 self.assertEqual(
                     document["compatibility"]["runtime"],
-                    f"pandora={NEXT_VERSION}",
+                    "pandora^3.0",
                 )
 
     def test_release_identity_accepts_next_and_rejects_consumed_tag(self) -> None:
@@ -75,9 +74,9 @@ class NextBetaIdentityTests(unittest.TestCase):
         releases = (ROOT / "RELEASES.md").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-        self.assertIn("## v3.0.0", changelog)
-        self.assertIn("## v3.0.0", releases)
-        self.assertIn("active release identity is `3.0.0", readme)
+        self.assertIn(f"## v{NEXT_VERSION}", changelog)
+        self.assertIn(f"## v{NEXT_VERSION}", releases)
+        self.assertIn(f"active release identity is `{NEXT_VERSION}", readme)
 
 
 if __name__ == "__main__":

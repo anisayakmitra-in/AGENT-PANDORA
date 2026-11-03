@@ -11,9 +11,21 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if defined(_WIN32)
 float pandora_simd_dot_product_128_asm(const float* a, const float* b);
 float pandora_simd_dot_product_128_avx2_asm(const float* a, const float* b);
 void pandora_cpuid_features_asm(unsigned int leaf, unsigned int* eax, unsigned int* ebx, unsigned int* ecx, unsigned int* edx);
+#define pandora_simd_dot_product_128_raw pandora_simd_dot_product_128_asm
+#define pandora_simd_dot_product_128_avx2_raw pandora_simd_dot_product_128_avx2_asm
+#define pandora_cpuid_features_raw pandora_cpuid_features_asm
+#else
+float pandora_simd_dot_product_128_sysv_asm(const float* a, const float* b);
+float pandora_simd_dot_product_128_avx2_sysv_asm(const float* a, const float* b);
+void pandora_cpuid_features_sysv_asm(unsigned int leaf, unsigned int* eax, unsigned int* ebx, unsigned int* ecx, unsigned int* edx);
+#define pandora_simd_dot_product_128_raw pandora_simd_dot_product_128_sysv_asm
+#define pandora_simd_dot_product_128_avx2_raw pandora_simd_dot_product_128_avx2_sysv_asm
+#define pandora_cpuid_features_raw pandora_cpuid_features_sysv_asm
+#endif
 #ifdef __cplusplus
 }
 #endif
@@ -84,20 +96,26 @@ float pandora_simd_dot_product_128_scalar(const float* a, const float* b) {
 
 float pandora_simd_dot_product_128_avx2(const float* a, const float* b) {
     if (!a || !b) return 0.0f;
-    return pandora_simd_dot_product_128_avx2_asm(a, b);
+    return pandora_simd_dot_product_128_avx2_raw(a, b);
 }
 
 float pandora_simd_dot_product_128(const float* a, const float* b) {
     if (!a || !b) return 0.0f;
     if (pandora_cpuid_has_avx2()) {
-        return pandora_simd_dot_product_128_avx2_asm(a, b);
+        return pandora_simd_dot_product_128_avx2_raw(a, b);
     }
-    return pandora_simd_dot_product_128_asm(a, b);
+    return pandora_simd_dot_product_128_raw(a, b);
 }
 
 bool pandora_cpuid_has_avx2(void) {
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(_M_X64) || defined(__i386__))
+    return __builtin_cpu_supports("avx2");
+#elif defined(__x86_64__) || defined(_M_X64)
     unsigned int eax = 0, ebx = 0, ecx = 0, edx = 0;
     // Leaf 7, Subleaf 0: EBX bit 5 = AVX2
-    pandora_cpuid_features_asm(7, &eax, &ebx, &ecx, &edx);
+    pandora_cpuid_features_raw(7, &eax, &ebx, &ecx, &edx);
     return (ebx & (1 << 5)) != 0;
+#else
+    return false;
+#endif
 }

@@ -1,4 +1,4 @@
-﻿import os
+import os
 import sys
 import time
 import json
@@ -209,6 +209,7 @@ class GatewayHttpWebhookServer:
         
         self.server = HTTPServer((self.host, self.port), CustomHandler)
         self.server.allow_reuse_address = True
+        self.port = self.server.server_address[1]
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
 
     def start(self):
@@ -270,6 +271,7 @@ class GatewayTcpServer:
 
         socketserver.ThreadingTCPServer.allow_reuse_address = True
         self.server = socketserver.ThreadingTCPServer((self.host, self.port), CustomHandler)
+        self.port = self.server.server_address[1]
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
 
     def start(self):

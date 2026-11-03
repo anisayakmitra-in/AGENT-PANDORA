@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Unit and integration tests for Pandora External Messaging Gateway Service.
 Validates HTTP Webhook receiver, TCP Socket server, and LiveProcessRunner.
@@ -49,24 +49,24 @@ class TestGatewayService(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.mock_client = MockPandoraClient()
-        cls.webhook_port = 18088
-        cls.socket_port = 18089
         cls.auth_token = "secret-token-123"
 
         cls.webhook_server = GatewayHttpWebhookServer(
             host="127.0.0.1",
-            port=cls.webhook_port,
+            port=0,
             client=cls.mock_client,
             auth_token=cls.auth_token,
         )
         cls.webhook_server.start()
+        cls.webhook_port = cls.webhook_server.port
 
         cls.socket_server = GatewayTcpServer(
             host="127.0.0.1",
-            port=cls.socket_port,
+            port=0,
             client=cls.mock_client,
         )
         cls.socket_server.start()
+        cls.socket_port = cls.socket_server.port
         time.sleep(0.1)
 
     @classmethod
