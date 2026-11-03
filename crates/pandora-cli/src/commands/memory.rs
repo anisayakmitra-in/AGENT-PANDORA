@@ -1070,14 +1070,23 @@ fn vfs_index(args: &[String]) -> Result<CommandResult, CliError> {
         "corpus_hash": stats.corpus_hash,
         "checksum_valid": stats.checksum_valid,
         "is_fresh": stats.is_fresh,
+        "version": stats.version,
+        "vector_bytes": stats.vector_bytes,
+        "vector_bytes_saved": stats.vector_bytes_saved,
+        "cache_hits": stats.cache_hits,
+        "cache_misses": stats.cache_misses,
     });
 
     let human = format!(
-        "Persisted VFS semantic index to {} ({} documents, {} terms, {} bytes, status: {})",
+        "Persisted VFS semantic index to {} ({} documents, {} terms, {} bytes, quantized vectors: {} bytes [{} bytes saved], cache hits/misses: {}/{}, status: {})",
         output_path.display(),
         stats.doc_count,
         stats.vocab_size,
         stats.size_bytes,
+        stats.vector_bytes,
+        stats.vector_bytes_saved,
+        stats.cache_hits,
+        stats.cache_misses,
         status,
     );
 
@@ -1144,16 +1153,25 @@ fn vfs_stats(args: &[String]) -> Result<CommandResult, CliError> {
         "corpus_hash": stats.corpus_hash,
         "checksum_valid": stats.checksum_valid,
         "is_fresh": stats.is_fresh,
+        "version": stats.version,
+        "vector_bytes": stats.vector_bytes,
+        "vector_bytes_saved": stats.vector_bytes_saved,
+        "cache_hits": stats.cache_hits,
+        "cache_misses": stats.cache_misses,
     });
 
     let human = format!(
-        "VFS index stats for {}: {} docs, {} terms, dim {}, {} tokens, {} bytes (checksum: {}, fresh: {})",
+        "VFS index stats for {}: {} docs, {} terms, dim {}, {} tokens, {} bytes, quantized vectors: {} bytes [{} bytes saved], cache hits/misses: {}/{} (checksum: {}, fresh: {})",
         index_path.display(),
         stats.doc_count,
         stats.vocab_size,
         stats.dense_dimension,
         stats.total_tokens,
         stats.size_bytes,
+        stats.vector_bytes,
+        stats.vector_bytes_saved,
+        stats.cache_hits,
+        stats.cache_misses,
         if stats.checksum_valid {
             "VALID"
         } else {

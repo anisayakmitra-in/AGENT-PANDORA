@@ -104,6 +104,13 @@ public:
         return pandora_simd_dot_product_128_avx2(a.data(), b.data());
     }
 
+    [[nodiscard]] float SimdDotProductNeon(
+        const std::array<float, kDenseDimension>& a,
+        const std::array<float, kDenseDimension>& b
+    ) const noexcept {
+        return pandora_simd_dot_product_128_neon(a.data(), b.data());
+    }
+
     [[nodiscard]] float SimdDotProductScalar(
         const std::array<float, kDenseDimension>& a,
         const std::array<float, kDenseDimension>& b
@@ -113,6 +120,10 @@ public:
 
     [[nodiscard]] bool HasAvx2() const noexcept {
         return pandora_cpuid_has_avx2();
+    }
+
+    [[nodiscard]] bool HasNeon() const noexcept {
+        return pandora_cpu_has_neon();
     }
 
 private:

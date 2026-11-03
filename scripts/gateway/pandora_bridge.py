@@ -8,6 +8,8 @@ import threading
 import subprocess
 import socket
 import socketserver
+import hmac
+import hashlib
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib import request, parse, error
@@ -134,6 +136,7 @@ class GatewayWebhookHandler(BaseHTTPRequestHandler):
     """Handles HTTP Webhook calls for external service triggers."""
     client: PandoraClient = None
     auth_token: str = None
+    webhook_secret: str = None
 
     def log_message(self, format, *args):
         pass
@@ -155,24 +158,75 @@ class GatewayWebhookHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_POST(self):
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            if content_length < 0:
+                content_length = 0
+        except (ValueError, TypeError):
+            content_length = 0
+        post_data = self.rfile.read(content_length) if content_length > 0 else b""
+
         if self.auth_token:
             auth_header = self.headers.get("Authorization", "")
-            if not auth_header.startswith("Bearer ") or auth_header[7:] != self.auth_token:
+            if not auth_header.startswith("Bearer ") or not hmac.compare_digest(auth_header[7:].strip(), self.auth_token):
                 self.send_response(401)
                 self.send_header("Content-Type", "application/json")
+                self.send_header("Connection", "close")
                 self.end_headers()
-                self.wfile.write(json.dumps({"error": "unauthorized"}).encode("utf-8"))
+                self.wfile.write(json.dumps({"error": "unauthorized", "message": "invalid or missing bearer token"}).encode("utf-8"))
+                self.close_connection = True
                 return
 
-        content_length = int(self.headers.get("Content-Length", 0))
-        post_data = self.rfile.read(content_length)
+        if self.webhook_secret:
+            sig_header = self.headers.get("X-Pandora-Signature-256")
+            if not sig_header or not sig_header.strip():
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "unauthorized", "message": "missing X-Pandora-Signature-256 header"}).encode("utf-8"))
+                self.close_connection = True
+                return
+
+            sig_val = sig_header.strip()
+            if sig_val.startswith("sha256="):
+                provided_sig = sig_val[7:].strip()
+            else:
+                provided_sig = sig_val
+
+            expected_sig = hmac.new(
+                self.webhook_secret.encode("utf-8"),
+                post_data,
+                hashlib.sha256,
+            ).hexdigest()
+
+            if not hmac.compare_digest(provided_sig.lower(), expected_sig.lower()):
+                self.send_response(403)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "forbidden", "message": "invalid HMAC-SHA256 signature"}).encode("utf-8"))
+                self.close_connection = True
+                return
+
         try:
             payload = json.loads(post_data.decode("utf-8")) if post_data else {}
         except Exception as e:
             self.send_response(400)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(json.dumps({"error": f"invalid json: {e}"}).encode("utf-8"))
+            self.close_connection = True
+            return
+
+        if not isinstance(payload, dict):
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "invalid json: root element must be an object"}).encode("utf-8"))
+            self.close_connection = True
             return
 
         event_type = payload.get("event", "generic")
@@ -196,16 +250,25 @@ class GatewayWebhookHandler(BaseHTTPRequestHandler):
 class GatewayHttpWebhookServer:
     """Threaded HTTP Webhook Gateway Server."""
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 8088, client: PandoraClient = None, auth_token: str = None):
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8088,
+        client: PandoraClient = None,
+        auth_token: str = None,
+        webhook_secret: str = None,
+    ):
         self.host = host
         self.port = port
         self.client = client or PandoraClient()
         self.auth_token = auth_token
+        self.webhook_secret = webhook_secret
         
         class CustomHandler(GatewayWebhookHandler):
             pass
         CustomHandler.client = self.client
         CustomHandler.auth_token = self.auth_token
+        CustomHandler.webhook_secret = self.webhook_secret
         
         self.server = HTTPServer((self.host, self.port), CustomHandler)
         self.server.allow_reuse_address = True
@@ -522,6 +585,7 @@ def main():
     parser.add_argument("--webhook-host", default="127.0.0.1", help="HTTP Webhook server host")
     parser.add_argument("--webhook-port", type=int, default=8088, help="HTTP Webhook server port")
     parser.add_argument("--webhook-token", default=os.environ.get("PANDORA_WEBHOOK_TOKEN"), help="Bearer token for webhook")
+    parser.add_argument("--webhook-secret", default=os.environ.get("PANDORA_WEBHOOK_SECRET"), help="HMAC-SHA256 secret key for webhook payload verification")
     parser.add_argument("--socket-host", default="127.0.0.1", help="TCP Socket server host")
     parser.add_argument("--socket-port", type=int, default=8089, help="TCP Socket server port")
     args = parser.parse_args()
@@ -582,6 +646,7 @@ def main():
             port=args.webhook_port,
             client=client,
             auth_token=args.webhook_token,
+            webhook_secret=args.webhook_secret,
         )
         webhook_server.start()
 

@@ -11,6 +11,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if defined(__x86_64__) || defined(_M_X64)
 #if defined(_WIN32)
 float pandora_simd_dot_product_128_asm(const float* a, const float* b);
 float pandora_simd_dot_product_128_avx2_asm(const float* a, const float* b);
@@ -25,6 +26,7 @@ void pandora_cpuid_features_sysv_asm(unsigned int leaf, unsigned int* eax, unsig
 #define pandora_simd_dot_product_128_raw pandora_simd_dot_product_128_sysv_asm
 #define pandora_simd_dot_product_128_avx2_raw pandora_simd_dot_product_128_avx2_sysv_asm
 #define pandora_cpuid_features_raw pandora_cpuid_features_sysv_asm
+#endif
 #endif
 #ifdef __cplusplus
 }
@@ -96,15 +98,39 @@ float pandora_simd_dot_product_128_scalar(const float* a, const float* b) {
 
 float pandora_simd_dot_product_128_avx2(const float* a, const float* b) {
     if (!a || !b) return 0.0f;
+#if defined(__x86_64__) || defined(_M_X64)
     return pandora_simd_dot_product_128_avx2_raw(a, b);
+#else
+    return pandora_simd_dot_product_128_scalar(a, b);
+#endif
 }
+
+#if !defined(__aarch64__) && !defined(_M_ARM64)
+bool pandora_cpu_has_neon(void) {
+    return false;
+}
+
+float pandora_simd_dot_product_128_neon(const float* a, const float* b) {
+    if (!a || !b) return 0.0f;
+    return pandora_simd_dot_product_128_scalar(a, b);
+}
+#endif
 
 float pandora_simd_dot_product_128(const float* a, const float* b) {
     if (!a || !b) return 0.0f;
+#if defined(__aarch64__) || defined(_M_ARM64)
+    if (pandora_cpu_has_neon()) {
+        return pandora_simd_dot_product_128_neon(a, b);
+    }
+    return pandora_simd_dot_product_128_scalar(a, b);
+#elif defined(__x86_64__) || defined(_M_X64)
     if (pandora_cpuid_has_avx2()) {
         return pandora_simd_dot_product_128_avx2_raw(a, b);
     }
     return pandora_simd_dot_product_128_raw(a, b);
+#else
+    return pandora_simd_dot_product_128_scalar(a, b);
+#endif
 }
 
 bool pandora_cpuid_has_avx2(void) {

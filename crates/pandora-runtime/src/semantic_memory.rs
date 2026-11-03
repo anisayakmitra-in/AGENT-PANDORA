@@ -229,6 +229,19 @@ pub fn tokenize(text: &str) -> Vec<String> {
     tokens
 }
 
+/// Extracts total token count and alphabetically-sorted term frequencies from input text.
+pub fn extract_term_frequencies(text: &str) -> (usize, Vec<(String, u32)>) {
+    let tokens = tokenize(text);
+    let len = tokens.len();
+    let mut counts: HashMap<String, u32> = HashMap::new();
+    for token in tokens {
+        *counts.entry(token).or_insert(0) += 1;
+    }
+    let mut sorted: Vec<(String, u32)> = counts.into_iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    (len, sorted)
+}
+
 fn is_stop_word(word: &str) -> bool {
     // Preserve single/double character diagnostic terms like "e0", error codes, numbers
     if word.len() < 2 && !word.chars().all(|c| c.is_ascii_digit()) {
@@ -313,19 +326,23 @@ impl SparseBm25Index {
 
     /// Adds a document to the index.
     pub fn add_document(&mut self, doc_id: usize, text: &str) {
-        let tokens = tokenize(text);
-        let len = tokens.len();
-        self.doc_lengths.insert(doc_id, len);
-        self.total_tokens += len;
+        let (len, term_freqs) = extract_term_frequencies(text);
+        self.add_document_terms(doc_id, len, &term_freqs);
+    }
+
+    /// Adds pre-extracted document token length and term frequencies directly to the index.
+    pub fn add_document_terms(
+        &mut self,
+        doc_id: usize,
+        doc_length: usize,
+        term_freqs: &[(String, u32)],
+    ) {
+        self.doc_lengths.insert(doc_id, doc_length);
+        self.total_tokens += doc_length;
         self.doc_count += 1;
 
-        let mut term_freqs: HashMap<String, u32> = HashMap::new();
-        for token in tokens {
-            *term_freqs.entry(token).or_insert(0) += 1;
-        }
-
         for (term, tf) in term_freqs {
-            self.postings.entry(term).or_default().push((doc_id, tf));
+            self.postings.entry(term.clone()).or_default().push((doc_id, *tf));
         }
     }
 
@@ -490,6 +507,126 @@ impl DenseFeatureHasher {
                 .then_with(|| a.0.cmp(&b.0))
         });
         scores
+    }
+
+    /// Computes similarity score between an f32 query vector and a QuantizedVector document.
+    pub fn score_quantized(
+        &self,
+        query_dense: &[f32; DENSE_DIMENSION],
+        doc_quantized: &QuantizedVector,
+    ) -> f32 {
+        if doc_quantized.scale < 1e-9 {
+            return 0.0;
+        }
+        let norm_q_sq: f32 = crate::arch_simd::simd_norm_sq_128(query_dense);
+        if norm_q_sq < 1e-9 {
+            return 0.0;
+        }
+        doc_quantized.dot_f32(query_dense)
+    }
+
+    /// Scores a list of indexed QuantizedVectors against an f32 query vector.
+    /// Returns `(doc_id, similarity)` sorted in descending order.
+    pub fn score_quantized_docs(
+        &self,
+        query_dense: &[f32; DENSE_DIMENSION],
+        doc_vecs: &[(usize, QuantizedVector)],
+    ) -> Vec<(usize, f32)> {
+        let mut scores: Vec<(usize, f32)> = doc_vecs
+            .iter()
+            .map(|(doc_id, doc_vec)| (*doc_id, self.score_quantized(query_dense, doc_vec)))
+            .collect();
+        scores.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(&b.0))
+        });
+        scores
+    }
+}
+
+/// Int8 scalar quantized representation of an L2-normalized 128-d dense embedding.
+///
+/// Encodes vector components into signed 8-bit integers $q_i \in [-127, 127]$
+/// and a 32-bit floating point scale factor $s = \frac{\alpha}{127.0}$, where
+/// $\alpha = \max_i |v_i|$. Achieves a 75% coordinate storage reduction (132 bytes vs 512 bytes)
+/// while retaining >99% cosine similarity ranking precision.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct QuantizedVector {
+    pub scale: f32,
+    pub data: [i8; DENSE_DIMENSION],
+}
+
+impl Default for QuantizedVector {
+    fn default() -> Self {
+        Self {
+            scale: 0.0,
+            data: [0i8; DENSE_DIMENSION],
+        }
+    }
+}
+
+impl QuantizedVector {
+    /// Quantizes an f32 dense embedding of dimension 128 into an Int8 `QuantizedVector`.
+    ///
+    /// Let $\alpha = \max_i |v_i|$.
+    /// If $\alpha < 1e-9$, the vector is treated as zero (scale = 0.0, data = [0; 128]).
+    /// Otherwise, $s = \frac{\alpha}{127.0}$ and each component is rounded and clamped to $[-127, 127]$.
+    pub fn quantize(vec: &[f32; DENSE_DIMENSION]) -> Self {
+        let mut alpha = 0.0f32;
+        for &v in vec {
+            let abs_v = v.abs();
+            if abs_v > alpha {
+                alpha = abs_v;
+            }
+        }
+
+        if alpha < 1e-9 {
+            return Self {
+                scale: 0.0,
+                data: [0i8; DENSE_DIMENSION],
+            };
+        }
+
+        let scale = alpha / 127.0;
+        let inv_scale = 127.0 / alpha;
+        let mut data = [0i8; DENSE_DIMENSION];
+
+        for (i, &v) in vec.iter().enumerate() {
+            let scaled = (v * inv_scale).round();
+            data[i] = scaled.clamp(-127.0, 127.0) as i8;
+        }
+
+        Self { scale, data }
+    }
+
+    /// Dequantizes the Int8 representation back into a 128-d f32 vector: $\tilde{v}_i = s \cdot q_i$.
+    pub fn dequantize(&self) -> [f32; DENSE_DIMENSION] {
+        let mut out = [0.0f32; DENSE_DIMENSION];
+        if self.scale < 1e-9 {
+            return out;
+        }
+        for (i, &q) in self.data.iter().enumerate() {
+            out[i] = self.scale * (q as f32);
+        }
+        out
+    }
+
+    /// Computes the asymmetric dot product between an f32 query vector and this quantized document vector.
+    pub fn dot_f32(&self, query: &[f32; DENSE_DIMENSION]) -> f32 {
+        crate::arch_simd::simd_dot_product_f32_i8(query, &self.data, self.scale)
+    }
+
+    /// Computes the symmetric integer dot product against another QuantizedVector:
+    /// $\langle \tilde{\mathbf{u}}, \tilde{\mathbf{v}} \rangle = (s_u \cdot s_v) \sum_{i=0}^{127} q_i^{(u)} q_i^{(v)}$
+    /// clamped to `[0.0, 1.0]`.
+    pub fn dot_i8(&self, other: &QuantizedVector) -> f32 {
+        if self.scale < 1e-9 || other.scale < 1e-9 {
+            return 0.0;
+        }
+        let int_dot = crate::arch_simd::simd_dot_product_i8(&self.data, &other.data);
+        let raw = (int_dot as f32) * self.scale * other.scale;
+        raw.clamp(0.0, 1.0)
     }
 }
 
@@ -858,5 +995,188 @@ mod tests {
         assert_eq!(original_scores, restored_scores);
         assert_eq!(original.doc_count(), restored.doc_count());
         assert_eq!(original.total_tokens(), restored.total_tokens());
+    }
+
+    #[test]
+    fn test_extract_term_frequencies_and_add_document_terms() {
+        let text = "compiler type mismatch error in type checking diagnostics";
+        let (len, tfs) = extract_term_frequencies(text);
+        assert_eq!(len, 7);
+        // "type" occurs twice
+        let type_tf = tfs.iter().find(|(term, _)| term == "type").unwrap();
+        assert_eq!(type_tf.1, 2);
+
+        let mut bm25 = SparseBm25Index::new();
+        bm25.add_document_terms(0, len, &tfs);
+        assert_eq!(bm25.doc_count(), 1);
+        assert_eq!(bm25.total_tokens(), 7);
+        let scores = bm25.score("type mismatch");
+        assert!(!scores.is_empty());
+        assert_eq!(scores[0].0, 0);
+    }
+
+    #[test]
+    fn test_quantized_vector_roundtrip_and_dot_products() {
+        // Zero vector handling
+        let zeros = [0.0f32; DENSE_DIMENSION];
+        let q_zero = QuantizedVector::quantize(&zeros);
+        assert_eq!(q_zero.scale, 0.0);
+        assert_eq!(q_zero.data, [0i8; DENSE_DIMENSION]);
+        let deq_zero = q_zero.dequantize();
+        assert_eq!(deq_zero, zeros);
+
+        // Vector quantization and dequantization fidelity
+        let mut sample = [0.0f32; DENSE_DIMENSION];
+        sample[0] = 0.35;
+        sample[1] = -0.20;
+        sample[2] = 0.05;
+        sample[127] = -0.35;
+
+        let q = QuantizedVector::quantize(&sample);
+        assert!((q.scale - (0.35 / 127.0)).abs() < 1e-6);
+        assert_eq!(q.data[0], 127);
+        assert_eq!(q.data[127], -127);
+
+        let deq = q.dequantize();
+        for i in 0..DENSE_DIMENSION {
+            assert!(
+                (deq[i] - sample[i]).abs() < 0.005,
+                "dequantized component {i} ({}) diverges from sample ({})",
+                deq[i],
+                sample[i]
+            );
+        }
+
+        // Asymmetric dot product
+        let query = sample;
+        let dot_asym = q.dot_f32(&query);
+        let hasher = DenseFeatureHasher::new();
+        let sim_quant = hasher.score_quantized(&query, &q);
+        assert_eq!(dot_asym, sim_quant);
+        assert!(dot_asym > 0.0);
+
+        // Symmetric dot product
+        let dot_sym = q.dot_i8(&q);
+        assert!((dot_sym - dot_asym).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_quantization_error_bound_and_spearman_rank_correlation() {
+        let hasher = DenseFeatureHasher::new();
+
+        // Generate a diverse corpus of 100 documents across various technical domains
+        let topics = [
+            "Rust compiler borrow checker lifetime parameters and move semantics",
+            "Context virtual filesystem persistent indexing and atomic commit safety",
+            "ARM64 NEON vector instruction pipeline latency and cycle throughput",
+            "Hardware autopilot power management and CPU frequency scaling",
+            "Tripartite governance constitutional rules and security boundary verification",
+            "Okapi BM25 sparse keyword saturation and document length normalization",
+            "Subword character n-gram feature hashing with dual FNV-1a seeds",
+            "Asymmetric dot product Int8 quantization noise variance and error bounds",
+            "External gateway webhook HMAC-SHA256 signature and constant-time comparison",
+            "Autonomous agent execution controller and worktree isolation sandboxing",
+        ];
+
+        let mut corpus_texts = Vec::with_capacity(100);
+        for i in 0..100 {
+            let topic = topics[i % topics.len()];
+            let variant = format!("{topic} session record iteration {i} diagnostic verification");
+            corpus_texts.push(variant);
+        }
+
+        let mut true_vectors = Vec::with_capacity(100);
+        let mut quant_vectors = Vec::with_capacity(100);
+
+        for text in &corpus_texts {
+            let vec = hasher.vectorize(text);
+            let qv = QuantizedVector::quantize(&vec);
+            true_vectors.push(vec);
+            quant_vectors.push(qv);
+        }
+
+        let query_text = "persistent indexing vector quantization and verification";
+        let query_vec = hasher.vectorize(query_text);
+
+        let mut true_scores = Vec::with_capacity(100);
+        let mut quant_scores = Vec::with_capacity(100);
+
+        for i in 0..100 {
+            let true_sim = hasher.cosine_similarity(&query_vec, &true_vectors[i]);
+            let quant_sim = hasher.score_quantized(&query_vec, &quant_vectors[i]);
+            true_scores.push(true_sim);
+            quant_scores.push(quant_sim);
+
+            // Absolute error bound verification: |E| <= 0.0156
+            let err = (true_sim - quant_sim).abs();
+            assert!(
+                err < 0.0156,
+                "error {err} exceeded theoretical Cauchy-Schwarz bound 0.0156 at doc {i}"
+            );
+        }
+
+        // Compute Spearman rank correlation rho
+        let mut true_order: Vec<usize> = (0..100).collect();
+        true_order.sort_by(|&a, &b| {
+            true_scores[b]
+                .partial_cmp(&true_scores[a])
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.cmp(&b))
+        });
+
+        let mut quant_order: Vec<usize> = (0..100).collect();
+        quant_order.sort_by(|&a, &b| {
+            quant_scores[b]
+                .partial_cmp(&quant_scores[a])
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.cmp(&b))
+        });
+
+        let mut true_ranks = vec![0.0f64; 100];
+        for (rank, &idx) in true_order.iter().enumerate() {
+            true_ranks[idx] = rank as f64;
+        }
+
+        let mut quant_ranks = vec![0.0f64; 100];
+        for (rank, &idx) in quant_order.iter().enumerate() {
+            quant_ranks[idx] = rank as f64;
+        }
+
+        let mut sum_d_sq = 0.0f64;
+        for i in 0..100 {
+            let d = true_ranks[i] - quant_ranks[i];
+            sum_d_sq += d * d;
+        }
+
+        let n = 100.0f64;
+        let rho = 1.0 - (6.0 * sum_d_sq) / (n * (n * n - 1.0));
+
+        assert!(
+            rho > 0.99,
+            "Spearman rank correlation {rho} must strictly exceed 0.99"
+        );
+
+        // Pairwise ranking precision for margin >= 0.005
+        let mut total_pairs = 0;
+        let mut correct_pairs = 0;
+        for i in 0..100 {
+            for j in (i + 1)..100 {
+                let diff = true_scores[i] - true_scores[j];
+                if diff.abs() >= 0.005 {
+                    total_pairs += 1;
+                    let q_diff = quant_scores[i] - quant_scores[j];
+                    if (diff > 0.0 && q_diff > 0.0) || (diff < 0.0 && q_diff < 0.0) {
+                        correct_pairs += 1;
+                    }
+                }
+            }
+        }
+
+        assert!(total_pairs > 0);
+        let precision = (correct_pairs as f64) / (total_pairs as f64);
+        assert!(
+            precision > 0.99,
+            "Ranking precision {precision} must strictly exceed 0.99"
+        );
     }
 }

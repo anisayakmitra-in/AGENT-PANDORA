@@ -105,8 +105,11 @@ pub use approvals::{
     ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, PendingApproval,
 };
 pub use arch_simd::{
-    CpuFeatures, SimdBenchmarkResult, benchmark_simd_vs_scalar, scalar_dot_product_128,
-    simd_dot_product_128, simd_hash64_seed, simd_norm_sq_128,
+    CpuFeatures, DimensionBenchmarkStats, SimdBenchmarkResult, benchmark_simd_vs_scalar,
+    compute_sample_stats, run_statistical_microbenchmarks, scalar_dot_product_128,
+    scalar_dot_product_slice, simd_dot_product_128, simd_dot_product_f32_i8,
+    simd_dot_product_i8, simd_dot_product_slice, simd_hash64_seed, simd_norm_sq_128,
+    student_t_critical_value_95,
 };
 pub use artifact_catalog::{ArtifactActivation, ArtifactCatalog, ArtifactCatalogError};
 pub use blaze_adapter::{
@@ -133,9 +136,10 @@ pub use content_guard::{
 pub use context_engine::{ContextCacheStats, ContextEngine, ContextError};
 pub use context_recovery::{ContextRecovery, RecoveryDecision, RecoveryInput, RecoveryStep};
 pub use context_vfs::{
-    ContextSearchOptions, ContextVfs, DeserializedVfsIndex, HybridSearchResult, SearchResultItem,
-    VfsDoc, VfsError, VfsIndexStats, compute_corpus_hash, deserialize_vfs_index, read_index_stats,
-    serialize_vfs_index,
+    CachedBufferEntry, ContextSearchOptions, ContextVfs, DeserializedVfsIndex, HybridSearchResult,
+    SearchResultItem, VfsDoc, VfsError, VfsIndexStats, compute_corpus_hash,
+    compute_doc_fingerprint, deserialize_vfs_index, read_index_stats, serialize_vfs_index,
+    VFS_INDEX_VERSION, VFS_INDEX_VERSION_V1, VFS_INDEX_VERSION_V2, VFS_QUANTIZED_VECTOR_SIZE,
 };
 pub use cron_engine::{
     CronEngine, CronError, CronExecutionResult, CronJob, CronJobStatus, CronSchedule,
@@ -300,7 +304,7 @@ pub use secret_vault::{
 pub use self_healing::{SelfHealingEngine, SelfHealingError};
 pub use semantic_memory::{
     BM25_B, BM25_K1, DENSE_DIMENSION, DenseFeatureHasher, HybridRankItem, HybridRrfRanker,
-    LessonRecord, RRF_K, SparseBm25Index, tokenize,
+    LessonRecord, QuantizedVector, RRF_K, SparseBm25Index, extract_term_frequencies, tokenize,
 };
 pub use service::{RuntimeService, RuntimeServiceError, RuntimeServiceScope};
 pub use service_token::{ServiceToken, ServiceTokenError, ServiceTokenStore};

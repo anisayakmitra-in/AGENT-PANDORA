@@ -1,6 +1,7 @@
 pub use crate::semantic_memory::{ContextSearchOptions, HybridSearchResult, SearchResultItem};
 use crate::semantic_memory::{
-    DenseFeatureHasher, HybridRrfRanker, SparseBm25Index, generate_snippet,
+    DenseFeatureHasher, HybridRrfRanker, QuantizedVector, SparseBm25Index,
+    extract_term_frequencies, generate_snippet,
 };
 use atomic_write_file::AtomicWriteFile;
 use pandora_types::{
@@ -18,10 +19,13 @@ use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const VFS_INDEX_MAGIC: &[u8; 4] = b"PVFS";
-pub const VFS_INDEX_VERSION: u32 = 1;
+pub const VFS_INDEX_VERSION_V1: u32 = 1;
+pub const VFS_INDEX_VERSION_V2: u32 = 2;
+pub const VFS_INDEX_VERSION: u32 = VFS_INDEX_VERSION_V2;
 pub const VFS_INDEX_HEADER_SIZE: usize = 68;
 pub const VFS_INDEX_TRAILER_SIZE: usize = 32;
 pub const VFS_DENSE_DIMENSION: u32 = 128;
+pub const VFS_QUANTIZED_VECTOR_SIZE: usize = 132; // 4 bytes scale + 128 bytes i8 data
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum VfsError {
@@ -59,6 +63,11 @@ pub struct VfsIndexStats {
     pub corpus_hash: String,
     pub checksum_valid: bool,
     pub is_fresh: bool,
+    pub version: u32,
+    pub vector_bytes: u64,
+    pub vector_bytes_saved: u64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
 }
 
 /// A mounted virtual document ready for indexing.
@@ -69,6 +78,36 @@ pub struct VfsDoc {
     pub content: String,
     pub tier: Option<MemoryTier>,
     pub intent: Option<MemoryIntent>,
+}
+
+/// Computes deterministic SHA-256 fingerprint over URI, title, content, tier, and intent.
+pub fn compute_doc_fingerprint(doc: &VfsDoc) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    let uri_bytes = doc.uri.as_str().as_bytes();
+    hasher.update((uri_bytes.len() as u32).to_le_bytes());
+    hasher.update(uri_bytes);
+
+    let title_bytes = doc.title.as_bytes();
+    hasher.update((title_bytes.len() as u32).to_le_bytes());
+    hasher.update(title_bytes);
+
+    let content_bytes = doc.content.as_bytes();
+    hasher.update((content_bytes.len() as u32).to_le_bytes());
+    hasher.update(content_bytes);
+
+    hasher.update([tier_to_u8(doc.tier)]);
+    hasher.update([intent_to_u8(doc.intent)]);
+    hasher.finalize().into()
+}
+
+/// Incremental diff cache entry representing an indexed buffer in ContextVfs.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CachedBufferEntry {
+    pub uri: ContextUri,
+    pub fingerprint: [u8; 32],
+    pub vector: QuantizedVector,
+    pub doc_length: usize,
+    pub term_frequencies: Vec<(String, u32)>,
 }
 
 /// In-memory representation of a deserialized VFS persistent index.
@@ -83,7 +122,7 @@ pub struct DeserializedVfsIndex {
     pub vocab_size: u32,
     pub corpus_hash: [u8; 32],
     pub docs: Vec<VfsDoc>,
-    pub doc_vectors: Vec<(usize, [f32; 128])>,
+    pub doc_vectors: Vec<(usize, QuantizedVector)>,
     pub bm25: SparseBm25Index,
 }
 
@@ -97,6 +136,9 @@ pub struct ContextVfs {
     skills: RwLock<Vec<SkillManifest>>,
     index_path: RwLock<Option<PathBuf>>,
     cached_index: RwLock<Option<Arc<DeserializedVfsIndex>>>,
+    diff_cache: RwLock<HashMap<String, CachedBufferEntry>>,
+    cache_hits: std::sync::atomic::AtomicU64,
+    cache_misses: std::sync::atomic::AtomicU64,
 }
 
 impl Default for ContextVfs {
@@ -131,6 +173,9 @@ impl ContextVfs {
             skills: RwLock::new(Vec::new()),
             index_path: RwLock::new(Some(PathBuf::from(".pandora/indices/vfs.idx"))),
             cached_index: RwLock::new(None),
+            diff_cache: RwLock::new(HashMap::new()),
+            cache_hits: std::sync::atomic::AtomicU64::new(0),
+            cache_misses: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -717,11 +762,137 @@ impl ContextVfs {
         self.index_path.read().ok().and_then(|g| g.clone())
     }
 
-    /// Clears the in-memory cached persistent index.
+    /// Clears the in-memory cached persistent index and diff cache.
     pub fn clear_cached_index(&self) {
         if let Ok(mut guard) = self.cached_index.write() {
             *guard = None;
         }
+        if let Ok(mut cache) = self.diff_cache.write() {
+            cache.clear();
+        }
+    }
+
+    /// Clears the diff cache only.
+    pub fn clear_diff_cache(&self) {
+        if let Ok(mut cache) = self.diff_cache.write() {
+            cache.clear();
+        }
+    }
+
+    /// Returns the total diff cache hits and misses since initialization.
+    pub fn diff_cache_stats(&self) -> (u64, u64) {
+        (
+            self.cache_hits.load(std::sync::atomic::Ordering::Relaxed),
+            self.cache_misses.load(std::sync::atomic::Ordering::Relaxed),
+        )
+    }
+
+    /// Resets diff cache statistics.
+    pub fn reset_diff_cache_stats(&self) {
+        self.cache_hits.store(0, std::sync::atomic::Ordering::Relaxed);
+        self.cache_misses.store(0, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Returns a copy of the current in-memory diff cache.
+    pub fn diff_cache(&self) -> HashMap<String, CachedBufferEntry> {
+        self.diff_cache.read().map(|c| c.clone()).unwrap_or_default()
+    }
+
+    /// Populates the diff cache from an existing deserialized index.
+    pub fn populate_diff_cache_from_index(&self, index: &DeserializedVfsIndex) {
+        let mut doc_term_freqs: HashMap<usize, Vec<(String, u32)>> = HashMap::new();
+        for (term, postings) in index.bm25.postings() {
+            for &(doc_id, tf) in postings {
+                doc_term_freqs.entry(doc_id).or_default().push((term.clone(), tf));
+            }
+        }
+
+        if let Ok(mut cache) = self.diff_cache.write() {
+            for (idx, doc) in index.docs.iter().enumerate() {
+                let fp = compute_doc_fingerprint(doc);
+                let vec = index
+                    .doc_vectors
+                    .get(idx)
+                    .map(|(_, v)| *v)
+                    .unwrap_or(QuantizedVector {
+                        scale: 0.0,
+                        data: [0i8; 128],
+                    });
+                let doc_len = *index.bm25.doc_lengths().get(&idx).unwrap_or(&0);
+                let mut tfs = doc_term_freqs.remove(&idx).unwrap_or_default();
+                tfs.sort_by(|a, b| a.0.cmp(&b.0));
+                cache.insert(
+                    doc.uri.as_str().to_string(),
+                    CachedBufferEntry {
+                        uri: doc.uri.clone(),
+                        fingerprint: fp,
+                        vector: vec,
+                        doc_length: doc_len,
+                        term_frequencies: tfs,
+                    },
+                );
+            }
+        }
+    }
+
+    /// Executes incremental differential indexing pipeline:
+    /// - Evicts deleted documents from `diff_cache`.
+    /// - For unchanged documents (fingerprint matches), reuses cached vector, doc_length, and term frequencies.
+    /// - For new or modified documents, vectorizes, quantizes, extracts term frequencies, and updates cache.
+    /// - Re-accumulates BM25 index from term frequencies without re-tokenizing unchanged documents.
+    pub fn build_index_differential(
+        &self,
+        docs: &[VfsDoc],
+    ) -> Result<(SparseBm25Index, Vec<(usize, QuantizedVector)>), VfsError> {
+        let current_uris: std::collections::HashSet<String> =
+            docs.iter().map(|d| d.uri.as_str().to_string()).collect();
+
+        let mut cache = self
+            .diff_cache
+            .write()
+            .map_err(|_| VfsError::BackendError("poisoned diff_cache lock".into()))?;
+
+        // Evict deleted documents from diff_cache
+        cache.retain(|uri, _| current_uris.contains(uri));
+
+        let hasher = DenseFeatureHasher::new();
+        let mut doc_vectors = Vec::with_capacity(docs.len());
+        let mut bm25 = SparseBm25Index::new();
+
+        for (idx, doc) in docs.iter().enumerate() {
+            let fp = compute_doc_fingerprint(doc);
+            let uri_str = doc.uri.as_str();
+
+            let is_hit = cache.get(uri_str).is_some_and(|entry| entry.fingerprint == fp);
+
+            if is_hit {
+                self.cache_hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let entry = cache.get(uri_str).unwrap();
+                bm25.add_document_terms(idx, entry.doc_length, &entry.term_frequencies);
+                doc_vectors.push((idx, entry.vector));
+            } else {
+                self.cache_misses.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let (doc_len, term_freqs) = extract_term_frequencies(&doc.content);
+                let f32_vec = hasher.vectorize(&doc.content);
+                let qv = QuantizedVector::quantize(&f32_vec);
+
+                bm25.add_document_terms(idx, doc_len, &term_freqs);
+                doc_vectors.push((idx, qv));
+
+                cache.insert(
+                    uri_str.to_string(),
+                    CachedBufferEntry {
+                        uri: doc.uri.clone(),
+                        fingerprint: fp,
+                        vector: qv,
+                        doc_length: doc_len,
+                        term_frequencies: term_freqs,
+                    },
+                );
+            }
+        }
+
+        Ok((bm25, doc_vectors))
     }
 
     /// Collects all mounted virtual documents across constitutional rules,
@@ -887,18 +1058,10 @@ impl ContextVfs {
     }
 
     /// Serializes and writes the current BM25 inverted index and 128-d dense embeddings
-    /// atomically to disk at the specified path.
+    /// atomically to disk at the specified path using differential indexing.
     pub fn save_index_to_disk(&self, index_path: &Path) -> Result<(), VfsError> {
         let docs = self.collect_all_documents()?;
-        let hasher = DenseFeatureHasher::new();
-        let mut bm25 = SparseBm25Index::new();
-        let mut doc_vectors = Vec::with_capacity(docs.len());
-
-        for (idx, doc) in docs.iter().enumerate() {
-            bm25.add_document(idx, &doc.content);
-            let vec = hasher.vectorize(&doc.content);
-            doc_vectors.push((idx, vec));
-        }
+        let (bm25, doc_vectors) = self.build_index_differential(&docs)?;
 
         let corpus_hash = compute_corpus_hash(&docs);
         let created_at_unix = SystemTime::now()
@@ -1029,6 +1192,7 @@ impl ContextVfs {
             && let Ok(deserialized) = deserialize_vfs_index(&bytes)
             && deserialized.corpus_hash == current_corpus_hash
         {
+            self.populate_diff_cache_from_index(&deserialized);
             let arc_idx = Arc::new(deserialized);
             if let Ok(mut guard) = self.cached_index.write() {
                 *guard = Some(Arc::clone(&arc_idx));
@@ -1036,7 +1200,7 @@ impl ContextVfs {
             active_index = Some(arc_idx);
         }
 
-        // 3. If missing or stale, build and atomically write to disk
+        // 3. If missing or stale, build differentially and atomically write to disk
         let (index_docs, bm25, doc_vectors) = match active_index {
             Some(loaded) => (
                 loaded.docs.clone(),
@@ -1044,27 +1208,26 @@ impl ContextVfs {
                 loaded.doc_vectors.clone(),
             ),
             None => {
-                let hasher = DenseFeatureHasher::new();
-                let mut bm25 = SparseBm25Index::new();
-                let mut doc_vectors = Vec::with_capacity(all_docs.len());
-
-                for (idx, doc) in all_docs.iter().enumerate() {
-                    bm25.add_document(idx, &doc.content);
-                    let vec = hasher.vectorize(&doc.content);
-                    doc_vectors.push((idx, vec));
+                self.save_index_to_disk(&index_path)?;
+                if let Ok(guard) = self.cached_index.read()
+                    && let Some(cached) = guard.as_ref()
+                {
+                    (
+                        cached.docs.clone(),
+                        cached.bm25.clone(),
+                        cached.doc_vectors.clone(),
+                    )
+                } else {
+                    let (bm25, doc_vectors) = self.build_index_differential(&all_docs)?;
+                    (all_docs, bm25, doc_vectors)
                 }
-
-                // Atomically persist to disk
-                let _ = self.save_index_to_disk(&index_path);
-
-                (all_docs, bm25, doc_vectors)
             }
         };
 
         let hasher = DenseFeatureHasher::new();
         let sparse_scores = bm25.score(query);
         let query_vec = hasher.vectorize(query);
-        let dense_scores = hasher.score(&query_vec, &doc_vectors);
+        let dense_scores = hasher.score_quantized_docs(&query_vec, &doc_vectors);
 
         let ranker = HybridRrfRanker::new();
         let fused = ranker.fuse(&sparse_scores, &dense_scores);
@@ -1170,18 +1333,18 @@ pub fn compute_corpus_hash(docs: &[VfsDoc]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-/// Serializes documents, BM25 postings, and 128-d dense vectors into the pure-Rust
-/// binary layout (Version 1) with SHA-256 integrity trailer.
+/// Serializes documents, BM25 postings, and Int8 quantized dense vectors into the pure-Rust
+/// binary layout (Version 2) with SHA-256 integrity trailer.
 pub fn serialize_vfs_index(
     docs: &[VfsDoc],
     bm25: &SparseBm25Index,
-    doc_vectors: &[(usize, [f32; 128])],
+    doc_vectors: &[(usize, QuantizedVector)],
     corpus_hash: [u8; 32],
     created_at_unix: u64,
 ) -> Result<Vec<u8>, VfsError> {
     let mut buffer = Vec::new();
 
-    // 1. Header (68 bytes)
+    // 1. Header (68 bytes) - Version 2
     buffer.extend_from_slice(VFS_INDEX_MAGIC);
     buffer.extend_from_slice(&VFS_INDEX_VERSION.to_le_bytes());
     buffer.extend_from_slice(&created_at_unix.to_le_bytes());
@@ -1198,7 +1361,7 @@ pub fn serialize_vfs_index(
 
     debug_assert_eq!(buffer.len(), VFS_INDEX_HEADER_SIZE);
 
-    // 2. Document Metadata & Vector Table
+    // 2. Document Metadata & Quantized Vector Table (132 bytes per doc)
     for (idx, doc) in docs.iter().enumerate() {
         let doc_id = idx as u32;
         buffer.extend_from_slice(&doc_id.to_le_bytes());
@@ -1236,13 +1399,17 @@ pub fn serialize_vfs_index(
         let doc_length = bm25.doc_lengths().get(&idx).copied().unwrap_or(0) as u32;
         buffer.extend_from_slice(&doc_length.to_le_bytes());
 
-        // Dense vector: 128 * 4 = 512 bytes
+        // Quantized vector: 4 bytes scale + 128 bytes data = 132 bytes (VFS_QUANTIZED_VECTOR_SIZE)
         let vec = doc_vectors
             .get(idx)
             .map(|(_, v)| *v)
-            .unwrap_or([0.0f32; 128]);
-        for f in vec {
-            buffer.extend_from_slice(&f.to_le_bytes());
+            .unwrap_or(QuantizedVector {
+                scale: 0.0,
+                data: [0i8; 128],
+            });
+        buffer.extend_from_slice(&vec.scale.to_le_bytes());
+        for b in &vec.data {
+            buffer.push(*b as u8);
         }
     }
 
@@ -1276,6 +1443,7 @@ pub fn serialize_vfs_index(
 }
 
 /// Deserializes a binary VFS index from byte slice, validating the 32-byte SHA-256 trailer checksum.
+/// Supports both Version 1 (512 bytes per doc) and Version 2 (132 bytes per doc).
 pub fn deserialize_vfs_index(bytes: &[u8]) -> Result<DeserializedVfsIndex, VfsError> {
     if bytes.len() < VFS_INDEX_HEADER_SIZE + VFS_INDEX_TRAILER_SIZE {
         return Err(VfsError::BackendError(
@@ -1305,7 +1473,7 @@ pub fn deserialize_vfs_index(bytes: &[u8]) -> Result<DeserializedVfsIndex, VfsEr
 
     let version = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
     cursor += 4;
-    if version != VFS_INDEX_VERSION {
+    if version != VFS_INDEX_VERSION_V1 && version != VFS_INDEX_VERSION_V2 {
         return Err(VfsError::BackendError(format!(
             "unsupported index version: {version}"
         )));
@@ -1419,18 +1587,35 @@ pub fn deserialize_vfs_index(bytes: &[u8]) -> Result<DeserializedVfsIndex, VfsEr
         let doc_length = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap()) as usize;
         cursor += 4;
 
-        const VECTOR_BYTES: usize = 128 * 4;
-        if cursor + VECTOR_BYTES > payload_len {
-            return Err(VfsError::BackendError(
-                "unexpected EOF reading dense vector".into(),
-            ));
-        }
-        let mut dense_vector = [0.0f32; 128];
-        for (i, elem) in dense_vector.iter_mut().enumerate() {
-            let offset = cursor + i * 4;
-            *elem = f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
-        }
-        cursor += VECTOR_BYTES;
+        let quantized_vec = if version == VFS_INDEX_VERSION_V1 {
+            const VECTOR_BYTES: usize = 128 * 4;
+            if cursor + VECTOR_BYTES > payload_len {
+                return Err(VfsError::BackendError(
+                    "unexpected EOF reading dense vector (v1)".into(),
+                ));
+            }
+            let mut float_vec = [0.0f32; 128];
+            for (i, elem) in float_vec.iter_mut().enumerate() {
+                let offset = cursor + i * 4;
+                *elem = f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
+            }
+            cursor += VECTOR_BYTES;
+            QuantizedVector::quantize(&float_vec)
+        } else {
+            if cursor + VFS_QUANTIZED_VECTOR_SIZE > payload_len {
+                return Err(VfsError::BackendError(
+                    "unexpected EOF reading quantized vector (v2)".into(),
+                ));
+            }
+            let scale = f32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
+            cursor += 4;
+            let mut data = [0i8; 128];
+            for (i, byte) in bytes[cursor..cursor + 128].iter().enumerate() {
+                data[i] = *byte as i8;
+            }
+            cursor += 128;
+            QuantizedVector { scale, data }
+        };
 
         doc_lengths.insert(doc_id, doc_length);
         docs.push(VfsDoc {
@@ -1440,7 +1625,7 @@ pub fn deserialize_vfs_index(bytes: &[u8]) -> Result<DeserializedVfsIndex, VfsEr
             tier,
             intent,
         });
-        doc_vectors.push((doc_id, dense_vector));
+        doc_vectors.push((doc_id, quantized_vec));
     }
 
     let mut postings: HashMap<String, Vec<(usize, u32)>> =
@@ -1543,6 +1728,7 @@ pub fn read_index_stats(
         return Err(VfsError::BackendError("invalid index magic".into()));
     }
 
+    let version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
     let created_at_unix = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
     let doc_count = u32::from_le_bytes(bytes[16..20].try_into().unwrap());
     let dense_dimension = u32::from_le_bytes(bytes[20..24].try_into().unwrap());
@@ -1567,6 +1753,22 @@ pub fn read_index_stats(
         checksum_valid
     };
 
+    let (vector_bytes, vector_bytes_saved) = if version == VFS_INDEX_VERSION_V2 {
+        let actual = (doc_count as u64) * (VFS_QUANTIZED_VECTOR_SIZE as u64);
+        let baseline = (doc_count as u64) * (dense_dimension as u64 * 4);
+        let saved = baseline.saturating_sub(actual);
+        (actual, saved)
+    } else {
+        let actual = (doc_count as u64) * (dense_dimension as u64 * 4);
+        (actual, 0)
+    };
+
+    let (cache_hits, cache_misses) = if let Some(vfs) = vfs {
+        vfs.diff_cache_stats()
+    } else {
+        (0, 0)
+    };
+
     Ok(VfsIndexStats {
         path: index_path.to_path_buf(),
         size_bytes,
@@ -1578,6 +1780,11 @@ pub fn read_index_stats(
         corpus_hash,
         checksum_valid,
         is_fresh,
+        version,
+        vector_bytes,
+        vector_bytes_saved,
+        cache_hits,
+        cache_misses,
     })
 }
 
@@ -1880,7 +2087,7 @@ mod tests {
         for (idx, doc) in docs.iter().enumerate() {
             bm25.add_document(idx, &doc.content);
             let vec = hasher.vectorize(&doc.content);
-            doc_vectors.push((idx, vec));
+            doc_vectors.push((idx, QuantizedVector::quantize(&vec)));
         }
 
         let corpus_hash = compute_corpus_hash(&docs);
@@ -1891,7 +2098,7 @@ mod tests {
 
         // Verify header layout: 4 (magic) + 4 (version) + 8 (created) + 4 (docs) + 4 (dim) + 8 (tokens) + 4 (vocab) + 32 (hash) = 68
         assert_eq!(&bytes[0..4], b"PVFS");
-        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 1);
+        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 2);
         assert_eq!(
             u64::from_le_bytes(bytes[8..16].try_into().unwrap()),
             created_at
@@ -1909,7 +2116,7 @@ mod tests {
 
         // Deserialize
         let deserialized = deserialize_vfs_index(&bytes).expect("deserialization must succeed");
-        assert_eq!(deserialized.version, 1);
+        assert_eq!(deserialized.version, 2);
         assert_eq!(deserialized.created_at, created_at);
         assert_eq!(deserialized.doc_count, docs.len() as u32);
         assert_eq!(deserialized.dense_dim, 128);
@@ -1944,7 +2151,8 @@ mod tests {
         let mut doc_vectors = Vec::new();
         for (idx, doc) in docs.iter().enumerate() {
             bm25.add_document(idx, &doc.content);
-            doc_vectors.push((idx, hasher.vectorize(&doc.content)));
+            let vec = hasher.vectorize(&doc.content);
+            doc_vectors.push((idx, QuantizedVector::quantize(&vec)));
         }
 
         let corpus_hash = compute_corpus_hash(&docs);
@@ -2001,6 +2209,9 @@ mod tests {
         assert!(stats.checksum_valid);
         assert!(stats.is_fresh);
         assert_eq!(stats.dense_dimension, 128);
+        assert_eq!(stats.version, 2);
+        assert!(stats.vector_bytes > 0);
+        assert!(stats.vector_bytes_saved > 0);
 
         // Modify corpus: add new SOP
         let new_sop = make_test_sop(
@@ -2047,7 +2258,8 @@ mod tests {
         let mut doc_vectors = Vec::new();
         for (idx, doc) in docs.iter().enumerate() {
             bm25.add_document(idx, &doc.content);
-            doc_vectors.push((idx, hasher.vectorize(&doc.content)));
+            let vec = hasher.vectorize(&doc.content);
+            doc_vectors.push((idx, QuantizedVector::quantize(&vec)));
         }
 
         let corpus_hash = compute_corpus_hash(&docs);
@@ -2130,6 +2342,242 @@ mod tests {
                 (results_cached[i].hybrid_score - results_onthefly[i].hybrid_score).abs() < 1e-5
             );
         }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    /// Helper to serialize Version 1 index files for backward-compatibility testing.
+    fn serialize_vfs_index_v1(
+        docs: &[VfsDoc],
+        bm25: &SparseBm25Index,
+        doc_vectors: &[(usize, [f32; 128])],
+        corpus_hash: [u8; 32],
+        created_at_unix: u64,
+    ) -> Result<Vec<u8>, VfsError> {
+        let mut buffer = Vec::new();
+
+        // 1. Header (68 bytes) with version = 1
+        buffer.extend_from_slice(VFS_INDEX_MAGIC);
+        buffer.extend_from_slice(&VFS_INDEX_VERSION_V1.to_le_bytes());
+        buffer.extend_from_slice(&created_at_unix.to_le_bytes());
+        let doc_count = docs.len() as u32;
+        buffer.extend_from_slice(&doc_count.to_le_bytes());
+        buffer.extend_from_slice(&VFS_DENSE_DIMENSION.to_le_bytes());
+        buffer.extend_from_slice(&(bm25.total_tokens() as u64).to_le_bytes());
+
+        let mut terms: Vec<_> = bm25.postings().keys().collect();
+        terms.sort();
+        let vocab_size = terms.len() as u32;
+        buffer.extend_from_slice(&vocab_size.to_le_bytes());
+        buffer.extend_from_slice(&corpus_hash);
+
+        // 2. Document Metadata & 512-byte Float Vector Table
+        for (idx, doc) in docs.iter().enumerate() {
+            let doc_id = idx as u32;
+            buffer.extend_from_slice(&doc_id.to_le_bytes());
+
+            let uri_bytes = doc.uri.as_str().as_bytes();
+            buffer.extend_from_slice(&(uri_bytes.len() as u16).to_le_bytes());
+            buffer.extend_from_slice(uri_bytes);
+
+            let title_bytes = doc.title.as_bytes();
+            buffer.extend_from_slice(&(title_bytes.len() as u16).to_le_bytes());
+            buffer.extend_from_slice(title_bytes);
+
+            let content_bytes = doc.content.as_bytes();
+            buffer.extend_from_slice(&(content_bytes.len() as u32).to_le_bytes());
+            buffer.extend_from_slice(content_bytes);
+
+            buffer.push(tier_to_u8(doc.tier));
+            buffer.push(intent_to_u8(doc.intent));
+
+            let doc_length = bm25.doc_lengths().get(&idx).copied().unwrap_or(0) as u32;
+            buffer.extend_from_slice(&doc_length.to_le_bytes());
+
+            // 512 bytes per document float vector
+            let vec = doc_vectors
+                .get(idx)
+                .map(|(_, v)| *v)
+                .unwrap_or([0.0f32; 128]);
+            for f in vec {
+                buffer.extend_from_slice(&f.to_le_bytes());
+            }
+        }
+
+        // 3. Postings Table
+        for term in terms {
+            let term_bytes = term.as_bytes();
+            buffer.extend_from_slice(&(term_bytes.len() as u16).to_le_bytes());
+            buffer.extend_from_slice(term_bytes);
+
+            let mut postings = bm25.postings().get(term).cloned().unwrap_or_default();
+            postings.sort_by_key(|&(doc_id, _)| doc_id);
+            let postings_count = postings.len() as u32;
+            buffer.extend_from_slice(&postings_count.to_le_bytes());
+
+            for (doc_id, tf) in postings {
+                buffer.extend_from_slice(&(doc_id as u32).to_le_bytes());
+                buffer.extend_from_slice(&tf.to_le_bytes());
+            }
+        }
+
+        // 4. Trailer
+        let checksum = Sha256::digest(&buffer);
+        buffer.extend_from_slice(&checksum);
+
+        Ok(buffer)
+    }
+
+    #[test]
+    fn test_vfs_index_version_1_backward_compatibility() {
+        let vfs = ContextVfs::new();
+        let docs = vfs.collect_all_documents().unwrap();
+        let hasher = DenseFeatureHasher::new();
+        let mut bm25 = SparseBm25Index::new();
+        let mut f32_vectors = Vec::new();
+        for (idx, doc) in docs.iter().enumerate() {
+            bm25.add_document(idx, &doc.content);
+            f32_vectors.push((idx, hasher.vectorize(&doc.content)));
+        }
+
+        let corpus_hash = compute_corpus_hash(&docs);
+        let v1_bytes = serialize_vfs_index_v1(&docs, &bm25, &f32_vectors, corpus_hash, 9999).unwrap();
+
+        // Confirm version header is 1
+        assert_eq!(u32::from_le_bytes(v1_bytes[4..8].try_into().unwrap()), 1);
+
+        // Deserializer must seamlessly decode Version 1 files
+        let deser = deserialize_vfs_index(&v1_bytes).expect("must deserialize v1 index");
+        assert_eq!(deser.version, 1);
+        assert_eq!(deser.doc_count, docs.len() as u32);
+        assert_eq!(deser.docs.len(), docs.len());
+        assert_eq!(deser.doc_vectors.len(), docs.len());
+
+        // Verify vectors were quantized with high precision
+        for (idx, (_, qv)) in deser.doc_vectors.iter().enumerate() {
+            let orig_f32 = &f32_vectors[idx].1;
+            let deq = qv.dequantize();
+            for dim in 0..128 {
+                assert!((deq[dim] - orig_f32[dim]).abs() < 0.01);
+            }
+        }
+
+        // Search on deserialized v1 index
+        let scores = deser.bm25.score("constitutional rules");
+        assert!(!scores.is_empty());
+    }
+
+    #[test]
+    fn test_vfs_storage_reduction_75_percent() {
+        let vfs = ContextVfs::new();
+        for i in 0..10 {
+            vfs.add_memory_record(make_test_record(
+                &format!("storage-rec-{i}"),
+                MemoryTier::L1,
+                MemoryIntent::Coding,
+                &format!("Storage footprint reduction validation record {i} for context VFS int8 quantization"),
+            ));
+        }
+
+        let docs = vfs.collect_all_documents().unwrap();
+        let doc_count = docs.len();
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "pandora_vfs_storage_test_{}_{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let index_path = temp_dir.join("vfs.idx");
+        vfs.set_index_path(&index_path);
+
+        vfs.save_index_to_disk(&index_path).unwrap();
+
+        let stats = read_index_stats(&index_path, Some(&vfs)).unwrap();
+        assert_eq!(stats.version, 2);
+        assert_eq!(stats.doc_count as usize, doc_count);
+
+        // Exact coordinate reduction: 128 bytes vs 512 bytes = 75.00%
+        let baseline_coord_bytes = doc_count * 128 * 4;
+        let quant_coord_bytes = doc_count * 128;
+        let coord_reduction = (baseline_coord_bytes - quant_coord_bytes) as f64 / (baseline_coord_bytes as f64);
+        assert!((coord_reduction - 0.75).abs() < 1e-6);
+
+        // Net storage reduction including scale factor (132 bytes vs 512 bytes):
+        // (512 - 132) / 512 = 380 / 512 = 74.21875% ~= 74.22%
+        let net_reduction = (baseline_coord_bytes - stats.vector_bytes as usize) as f64 / (baseline_coord_bytes as f64);
+        assert!((net_reduction - 0.7421875).abs() < 1e-4);
+        assert_eq!(stats.vector_bytes as usize, doc_count * VFS_QUANTIZED_VECTOR_SIZE);
+        assert_eq!(stats.vector_bytes_saved as usize, doc_count * 380);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_vfs_incremental_diff_caching() {
+        let vfs = ContextVfs::new();
+
+        // Seed with 20 records
+        for i in 0..20 {
+            vfs.add_memory_record(make_test_record(
+                &format!("diff-cache-rec-{i}"),
+                MemoryTier::L1,
+                MemoryIntent::Coding,
+                &format!("Incremental diff caching corpus record {i} for latency verification"),
+            ));
+        }
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "pandora_vfs_diff_test_{}_{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let index_path = temp_dir.join("vfs.idx");
+        vfs.set_index_path(&index_path);
+
+        vfs.reset_diff_cache_stats();
+
+        // 1st indexing pass: cold cache -> all documents are cache misses
+        vfs.save_index_to_disk(&index_path).unwrap();
+        let (hits1, misses1) = vfs.diff_cache_stats();
+        let initial_doc_count = vfs.collect_all_documents().unwrap().len();
+        assert_eq!(hits1, 0);
+        assert_eq!(misses1 as usize, initial_doc_count);
+
+        // Re-saving without changes: 100% cache hits, 0 cache misses
+        vfs.reset_diff_cache_stats();
+        vfs.save_index_to_disk(&index_path).unwrap();
+        let (hits2, misses2) = vfs.diff_cache_stats();
+        assert_eq!(hits2 as usize, initial_doc_count);
+        assert_eq!(misses2, 0);
+
+        // Add exactly 1 new record
+        vfs.add_memory_record(make_test_record(
+            "diff-cache-rec-new-21",
+            MemoryTier::L1,
+            MemoryIntent::Coding,
+            "Fresh newly appended record that must trigger exactly one cache miss",
+        ));
+
+        // 3rd indexing pass: exactly 1 cache miss, all prior documents hit cache
+        vfs.reset_diff_cache_stats();
+        vfs.save_index_to_disk(&index_path).unwrap();
+        let (hits3, misses3) = vfs.diff_cache_stats();
+        assert_eq!(misses3, 1, "adding 1 document must result in exactly 1 cache miss");
+        assert_eq!(
+            hits3 as usize, initial_doc_count,
+            "all prior documents must hit diff cache"
+        );
+
+        // Verify diff cache size matches active document count
+        assert_eq!(vfs.diff_cache().len(), initial_doc_count + 1);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

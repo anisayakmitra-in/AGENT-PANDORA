@@ -62,7 +62,7 @@ int pandora_parse_envelope(const char* json_str, pandora_envelope_t* out_envelop
 
 /**
  * Hardware-accelerated 128-dimensional dense vector dot product.
- * Dynamically selects AVX2 when supported by host CPU, otherwise falling back to SSE.
+ * Dynamically selects NEON on aarch64, AVX2 on x86_64 when supported, otherwise falling back to SSE or scalar.
  */
 float pandora_simd_dot_product_128(const float* a, const float* b);
 
@@ -70,6 +70,11 @@ float pandora_simd_dot_product_128(const float* a, const float* b);
  * Explicit 256-bit AVX2 hardware SIMD 128-dimensional dense vector dot product.
  */
 float pandora_simd_dot_product_128_avx2(const float* a, const float* b);
+
+/**
+ * Explicit 128-bit ARM64 NEON hardware SIMD 128-dimensional dense vector dot product.
+ */
+float pandora_simd_dot_product_128_neon(const float* a, const float* b);
 
 /**
  * Scalar reference 128-dimensional dense vector dot product.
@@ -80,6 +85,11 @@ float pandora_simd_dot_product_128_scalar(const float* a, const float* b);
  * Checks whether the host CPU supports AVX2 instructions.
  */
 bool pandora_cpuid_has_avx2(void);
+
+/**
+ * Checks whether the host CPU supports ARM64 NEON instructions.
+ */
+bool pandora_cpu_has_neon(void);
 
 #ifdef __cplusplus
 }

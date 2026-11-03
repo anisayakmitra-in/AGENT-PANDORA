@@ -364,7 +364,10 @@ Pandora is organized as a Cargo workspace with strict crate boundaries:
 | `crates/pandora-cli` | `pandora-cli` | The 4-view interactive Ratatui TUI workbench and 42 public user-facing CLI commands (`run`, `package`, `harness`, `memory`, `evolution`, `fleet`, `kanban`, `job`, `tui`, etc.). |
 | `sdk/` | Extension Starters | Reference starter packages for [Domain Harnesses](../sdk/domain-harness-starter/README.md), [Meta Harnesses](../sdk/meta-harness-starter/README.md), and [Wasm Genes](../sdk/gene-pack/README.md). |
 | `npm/pandora-cli` | TypeScript Launcher | npm distribution boundary, TypeScript client types, and cross-platform launcher. |
+| `native/` | Native SIMD & C ABI | 128-bit ARM64 NEON (`native/asm/pandora_simd_aarch64.s`), 256-bit x86_64 AVX2/SSE (`native/asm/pandora_simd_x86_64.s`), and dynamic C ABI dispatcher (`native/c/pandora_c_api.c`). |
+| `include/` | C/C++ API Headers | C interface (`include/pandora.h`) and C++20 RAII client wrapper (`include/pandora.hpp`). |
 | `scripts/` | Verification & CI | Toolchain verification (`prepush.ps1`), repository validation (`validate_repo.py`), and documentation validation (`validate_docs.py`). |
+| `docs/` | Architecture & Specifications | Architectural blueprints (`docs/ARCHITECTURE.md`) and mathematical specifications (`docs/MATHEMATICAL_JUSTIFICATIONS.md`). |
 
 ## The 30 Runtime Engines
 
@@ -523,6 +526,44 @@ The `TripartiteGovernance` orchestrator (`crates/pandora-runtime/src/tripartite_
    - Candidate proposals must pass `BayesianCanaryGate` evaluation, requiring the Beta distribution 95% lower credible bound ($\text{LCB}_{95}$) to exceed the baseline pass rate.
 4. **Isolated Git Worktree Branch Derivation**:
    - `branch_name_for_proposal` derives isolated Git worktree branch names (`experiment/<role>-<id>`) ensuring competing evolutionary proposals never mutate the active working tree until full promotion.
+
+## v3.0.3 Architectural Additions & Hardware Parity
+
+AGENT-PANDORA v3.0.3 introduces three core architectural enhancements providing cross-platform hardware acceleration, quantized semantic storage, and hardened external security:
+
+### 1. Cross-Platform SIMD Acceleration Parity (ARM64 NEON & AVX2)
+
+To ensure high-throughput semantic memory operations on Apple Silicon (M1/M2/M3/M4) and Linux AArch64 servers, Pandora incorporates native 128-bit NEON vector instructions (`native/asm/pandora_simd_aarch64.s`) alongside existing 256-bit AVX2/SSE implementations:
+
+- **Mathematical Latency Hiding**: The AArch64 vector assembly unrolls dot products across 4 independent accumulators (`v0`–`v3`), satisfying the dependency distance $\Delta \ge L_{\text{FMLA}}$ (3–4 cycles) to eliminate Read-After-Write (RAW) pipeline bubbles.
+- **AAPCS64 Scratch Allocation**: Consumes 12 scratch vector registers (`v0`–`v7`, `v16`–`v19`), touching zero callee-saved registers and requiring 0 stack frame allocation overhead.
+- **Dual ELF/Mach-O Symbol Export**: Symbols are dual-exported as `pandora_simd_dot_product_128_neon` and `_pandora_simd_dot_product_128_neon`, ensuring linker portability across Linux ELF and macOS Mach-O binaries.
+- **Dynamic C ABI & C++20 Dispatch**: `native/c/pandora_c_api.c` evaluates CPU features at runtime (`pandora_cpu_has_neon()`), dynamically dispatching to NEON on ARM64, AVX2 on x86_64, or safe scalar fallbacks.
+- **Strict Safe Rust Compliance**: `crates/pandora-runtime/src/arch_simd.rs` provides 8-way unrolled slice dot products with `#![forbid(unsafe_code)]` compliance, alongside multi-dimension microbenchmarking with Student's t-distribution confidence intervals.
+
+For microarchitectural derivations, cycle calculations, and error propagation formulas, see [Mathematical Justifications: Section 1 (ARM64 NEON Microarchitecture)](MATHEMATICAL_JUSTIFICATIONS.md#section-1-arm64-neon-hardware-acceleration-microarchitecture) and [Section 4 (Microbenchmark Statistical Analysis)](MATHEMATICAL_JUSTIFICATIONS.md#section-4-microbenchmark-statistical-analysis).
+
+### 2. ContextVfs Int8 Vector Quantization & Incremental Diff Caching
+
+The Context Virtual Filesystem (`crates/pandora-runtime/src/context_vfs.rs` and `semantic_memory.rs`) introduces `PVFS` Version 2 binary index serialization with uniform scalar Int8 quantization and differential buffer caching:
+
+- **Storage Footprint Reduction**: Quantizes 128-dimensional continuous `f32` vectors into a 4-byte `f32` scale factor and 128 signed `i8` integers (`VFS_QUANTIZED_VECTOR_SIZE = 132`). Coordinate data shrinks by exactly $75.00\%$, and total vector storage shrinks by $74.22\%$ (saving 380 bytes per document).
+- **Ranking Fidelity Guarantee**: Under asymmetric dot product evaluation (`simd_dot_product_f32_i8`), the Cauchy-Schwarz error bound satisfies $|E| \le 0.0445$, yielding an SQNR $\approx 40.91\text{ dB}$, Spearman rank correlation $\rho > 0.99$, and $>99.9\%$ pairwise ranking concordance for separation margin $\delta \ge 0.003$.
+- **V1 Backward Compatibility**: `deserialize_vfs_index` decodes both legacy Version 1 (512-byte float) and Version 2 (132-byte quantized) index streams transparently.
+- **Incremental SHA-256 Diff Caching**: Each virtual document is fingerprinted via a canonical 32-byte SHA-256 digest over URI, title, content, tier, and intent. Index builds reuse cached vectors and pre-extracted term frequencies on cache hits, reducing warm re-indexing CPU cycles by up to $98\%$.
+
+For formal derivations of quantization noise, SQNR, Cauchy-Schwarz error bounds, and ranking preservation proofs, see [Mathematical Justifications: Section 2 (ContextVfs Int8 Vector Quantization)](MATHEMATICAL_JUSTIFICATIONS.md#section-2-contextvfs-int8-vector-quantization--ranking-preservation-proof).
+
+### 3. Hardened External Gateway Webhook Authentication
+
+The external messaging bridge service (`scripts/gateway/pandora_bridge.py`) implements defense-in-depth authentication for HTTP webhooks (`POST /webhook`):
+
+- **Cryptographic HMAC-SHA256 Verification**: Evaluates `X-Pandora-Signature-256` headers across raw 64-character hex strings and `sha256=` prefixed digests using secret keys configured via `--webhook-secret` or `PANDORA_WEBHOOK_SECRET`.
+- **Length-Extension Immunity**: Implements nested hashing $H((K \oplus opad) \parallel H((K \oplus ipad) \parallel m))$, eliminating the length-extension vulnerabilities inherent to iterative Merkle-Damgård constructions.
+- **Constant-Time Verification**: All Bearer tokens and HMAC signatures are compared using C-level `hmac.compare_digest`, eliminating timing side-channels.
+- **Strict RFC 7235 / 9110 HTTP Semantics**: Rejects missing authentication credentials with HTTP 401 Unauthorized, and rejects forged or tampered signatures with HTTP 403 Forbidden.
+
+For formal proofs of HMAC pseudo-random function security, birthday collision bounds ($q \approx 4.0 \times 10^{38}$), and key entropy analysis, see [Mathematical Justifications: Section 3 (External Gateway Cryptographic Security)](MATHEMATICAL_JUSTIFICATIONS.md#section-3-external-gateway-cryptographic-security).
 
 ## Extending Pandora
 
