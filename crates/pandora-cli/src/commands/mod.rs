@@ -55,6 +55,7 @@ mod provider;
 pub(crate) mod prp;
 pub(crate) mod reasoning;
 mod registry;
+pub(crate) mod release;
 mod restore_journal;
 mod rollout;
 mod run;
@@ -133,6 +134,7 @@ pub(crate) const ROOT_COMMANDS: &[&str] = &[
     "branch",
     "pr",
     "lsp",
+    "release",
 ];
 
 /// [`ROOT_COMMANDS`] joined by single spaces, the way the POSIX, zsh, and fish
@@ -262,6 +264,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "branch" => branch::execute(&args[1..]),
         "pr" => pr::execute(&args[1..]),
         "lsp" => lsp::execute(&args[1..]),
+        "release" => release::execute(&args[1..]),
         "--help" | "help" => {
             if args.len() != 1 {
                 return Err(CliError::usage("help does not accept additional arguments"));
@@ -395,6 +398,10 @@ fn is_flag(name: &str) -> bool {
             | "print-auth-url"
             | "all-configured"
             | "global"
+            | "validate"
+            | "rebuild"
+            | "reindex"
+            | "no-cache"
     )
 }
 
@@ -529,7 +536,7 @@ pub(crate) fn session_error(error: SessionError) -> CliError {
 }
 
 fn usage() -> &'static str {
-    r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|curriculum|decision|tui|harness|slash|session|job|subagent|skill|package|registry|runtime|memory|approval|provider|mcp|tool|orchestration|operations|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor|policy|cron|prompt|dsrs|gepa|prp|branch|pr|lsp> [options]
+    r#"usage: pandora <help|setup|run|service|auth|secret|backup|chat|curriculum|decision|tui|harness|slash|session|job|subagent|skill|package|registry|runtime|memory|approval|provider|mcp|tool|orchestration|operations|strategies|evaluation|evolution|feedback|rollout|efficiency|fleet|graph|completions|migrate|update|uninstall|doctor|policy|cron|prompt|dsrs|gepa|prp|branch|pr|lsp|release> [options]
 
 commands:
   help (or --help)
@@ -588,6 +595,7 @@ commands:
   branch list | create <task-id> [--base <commit>] | checkout <task-id> | cleanup [--task <task-id>] [--all] [--force]
   pr create [--task <task-id>] [--title <title>] [--body <body>] | status [--task <task-id>]
   lsp status|servers|definition|references|type-definition|diagnostics
+  release manifests [--output <dir>] [--version <ver>]
   doctor"#
 }
 
@@ -740,6 +748,7 @@ mod tests {
         "prompt",
         "provider",
         "registry",
+        "release",
         "rollout",
         "service",
         "session",

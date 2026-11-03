@@ -88,7 +88,7 @@ fn test_mock_cdp_server_json_rpc_and_domains() {
             <head><title>AGENT-PANDORA Console</title></head>
             <body>
                 <header>
-                    <h1 id="app-title">AGENT-PANDORA v3.0.1</h1>
+                    <h1 id="app-title">AGENT-PANDORA v3.0.2</h1>
                 </header>
                 <main class="container">
                     <form id="auth-form">

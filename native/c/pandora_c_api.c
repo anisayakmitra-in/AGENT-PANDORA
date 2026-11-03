@@ -1,6 +1,6 @@
 /**
  * @file pandora_c_api.c
- * @brief Implementation of C ABI for AGENT-PANDORA v3.0.1.
+ * @brief Implementation of C ABI for AGENT-PANDORA v3.0.2.
  */
 
 #include "pandora.h"
@@ -12,6 +12,7 @@
 extern "C" {
 #endif
 float pandora_simd_dot_product_128_asm(const float* a, const float* b);
+float pandora_simd_dot_product_128_avx2_asm(const float* a, const float* b);
 void pandora_cpuid_features_asm(unsigned int leaf, unsigned int* eax, unsigned int* ebx, unsigned int* ecx, unsigned int* edx);
 #ifdef __cplusplus
 }
@@ -72,8 +73,25 @@ int pandora_parse_envelope(const char* json_str, pandora_envelope_t* out_envelop
     return 0;
 }
 
+float pandora_simd_dot_product_128_scalar(const float* a, const float* b) {
+    if (!a || !b) return 0.0f;
+    float sum = 0.0f;
+    for (int i = 0; i < PANDORA_DENSE_DIMENSION; i++) {
+        sum += a[i] * b[i];
+    }
+    return sum;
+}
+
+float pandora_simd_dot_product_128_avx2(const float* a, const float* b) {
+    if (!a || !b) return 0.0f;
+    return pandora_simd_dot_product_128_avx2_asm(a, b);
+}
+
 float pandora_simd_dot_product_128(const float* a, const float* b) {
     if (!a || !b) return 0.0f;
+    if (pandora_cpuid_has_avx2()) {
+        return pandora_simd_dot_product_128_avx2_asm(a, b);
+    }
     return pandora_simd_dot_product_128_asm(a, b);
 }
 

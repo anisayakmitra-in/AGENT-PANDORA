@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, and `v3.0.1`. The active release identity
-is `v3.0.1`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, and `v3.0.2`. The active release identity
+is `v3.0.2`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,10 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v3.0.2
+
+This release introduces persistent disk serialization for the semantic vector index (`.pandora/indices/vfs.idx`), a live external messaging gateway service with HTTP webhook and bidirectional TCP socket event streaming (`pandora_bridge.py`), a background LSP diagnostics daemon streaming real-time compilation indicators into the TUI header, and AVX2 SIMD dot product acceleration with scalar fallback.
 
 ## v3.0.1
 

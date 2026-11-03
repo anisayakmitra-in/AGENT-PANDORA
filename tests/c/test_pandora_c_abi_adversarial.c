@@ -53,6 +53,10 @@ int main(void) {
     assert(pandora_simd_dot_product_128(NULL, b) == 0.0f);
     assert(pandora_simd_dot_product_128(a, NULL) == 0.0f);
     assert(pandora_simd_dot_product_128(NULL, NULL) == 0.0f);
+    assert(pandora_simd_dot_product_128_avx2(NULL, b) == 0.0f);
+    assert(pandora_simd_dot_product_128_avx2(a, NULL) == 0.0f);
+    assert(pandora_simd_dot_product_128_scalar(NULL, b) == 0.0f);
+    assert(pandora_simd_dot_product_128_scalar(a, NULL) == 0.0f);
 
     // 5. Negative and extreme numbers in SIMD dot product
     for (int i = 0; i < 128; i++) {

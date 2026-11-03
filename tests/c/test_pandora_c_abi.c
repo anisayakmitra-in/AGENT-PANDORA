@@ -13,7 +13,7 @@ int main(void) {
     printf("[C ABI Test] Checking AGENT-PANDORA version...\n");
     const char* version = pandora_version();
     assert(version != NULL);
-    assert(strcmp(version, "3.0.1") == 0);
+    assert(strcmp(version, "3.0.2") == 0);
     printf("  -> Verified version: %s\n", version);
 
     printf("[C ABI Test] Checking client allocation and lifecycle...\n");
@@ -26,10 +26,10 @@ int main(void) {
 
     printf("[C ABI Test] Checking envelope parsing...\n");
     pandora_envelope_t envelope;
-    const char* sample_json = "{\"version\":\"3.0.1\",\"command\":\"doctor\",\"healthy\":true}";
+    const char* sample_json = "{\"version\":\"3.0.2\",\"command\":\"doctor\",\"healthy\":true}";
     err = pandora_parse_envelope(sample_json, &envelope);
     assert(err == 0);
-    assert(strcmp(envelope.version, "3.0.1") == 0);
+    assert(strcmp(envelope.version, "3.0.2") == 0);
     assert(strcmp(envelope.command, "doctor") == 0);
     assert(envelope.healthy == true);
     printf("  -> Verified envelope parser: cmd=%s, healthy=%d\n", envelope.command, envelope.healthy);
@@ -49,6 +49,14 @@ int main(void) {
     float dot_parallel = pandora_simd_dot_product_128(a, b);
     assert(fabsf(dot_parallel - 256.0f) < 1e-4);
     printf("  -> Verified 128-d SIMD dot product: %f\n", dot_parallel);
+
+    float dot_scalar = pandora_simd_dot_product_128_scalar(a, b);
+    assert(fabsf(dot_scalar - 256.0f) < 1e-4);
+    printf("  -> Verified 128-d scalar dot product: %f\n", dot_scalar);
+
+    float dot_avx2 = pandora_simd_dot_product_128_avx2(a, b);
+    assert(fabsf(dot_avx2 - 256.0f) < 1e-4);
+    printf("  -> Verified 128-d AVX2 SIMD dot product: %f\n", dot_avx2);
 
     printf("[C ABI Test] Checking CPUID hardware features...\n");
     bool has_avx2 = pandora_cpuid_has_avx2();

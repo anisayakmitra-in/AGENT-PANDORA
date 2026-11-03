@@ -1,8 +1,8 @@
-# AGENT-PANDORA v3.0.1 Test Infrastructure & E2E Test Architecture
+# AGENT-PANDORA v3.0.2 Test Infrastructure & E2E Test Architecture
 
 ## 1. Test Architecture & Design Philosophy
 
-The AGENT-PANDORA v3.0.1 End-to-End (E2E) testing infrastructure provides a robust, requirement-driven, opaque-box verification framework. It validates that the autonomous agent runtime, developer tooling, steering mechanics, semantic memory, visual verification, and git worktree isolation operate reliably under strict safety constraints.
+The AGENT-PANDORA v3.0.2 End-to-End (E2E) testing infrastructure provides a robust, requirement-driven, opaque-box verification framework. It validates that the autonomous agent runtime, developer tooling, steering mechanics, semantic memory, visual verification, and git worktree isolation operate reliably under strict safety constraints.
 
 ### Core Architectural Invariants
 1. **Opaque-Box Boundary**: Tests interact strictly through public CLI entry points, published JSON-RPC protocol interfaces, and public library APIs. Internal private details are never coupled directly into test assertions.
@@ -94,6 +94,6 @@ cargo test -p pandora-cli --test e2e_tier1_features --test e2e_tier2_boundaries 
 ```powershell
 python scripts/validate_docs.py
 python scripts/validate_repo.py
-python scripts/release_identity.py v3.0.1
+python scripts/release_identity.py v3.0.2
 ```
 All commands execute cleanly with exit code 0.

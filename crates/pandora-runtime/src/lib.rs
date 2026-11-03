@@ -104,7 +104,10 @@ pub use agent_loop::{
 pub use approvals::{
     ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, PendingApproval,
 };
-pub use arch_simd::{CpuFeatures, simd_dot_product_128, simd_hash64_seed, simd_norm_sq_128};
+pub use arch_simd::{
+    CpuFeatures, SimdBenchmarkResult, benchmark_simd_vs_scalar, scalar_dot_product_128,
+    simd_dot_product_128, simd_hash64_seed, simd_norm_sq_128,
+};
 pub use artifact_catalog::{ArtifactActivation, ArtifactCatalog, ArtifactCatalogError};
 pub use blaze_adapter::{
     BlazeBuildResult, BlazeCompilerAdapter, BlazeConfig, BlazeDiagnostics, DiagnosticLevel,
@@ -130,7 +133,9 @@ pub use content_guard::{
 pub use context_engine::{ContextCacheStats, ContextEngine, ContextError};
 pub use context_recovery::{ContextRecovery, RecoveryDecision, RecoveryInput, RecoveryStep};
 pub use context_vfs::{
-    ContextSearchOptions, ContextVfs, HybridSearchResult, SearchResultItem, VfsError,
+    ContextSearchOptions, ContextVfs, DeserializedVfsIndex, HybridSearchResult, SearchResultItem,
+    VfsDoc, VfsError, VfsIndexStats, compute_corpus_hash, deserialize_vfs_index, read_index_stats,
+    serialize_vfs_index,
 };
 pub use cron_engine::{
     CronEngine, CronError, CronExecutionResult, CronJob, CronJobStatus, CronSchedule,

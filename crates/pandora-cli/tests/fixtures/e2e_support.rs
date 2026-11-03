@@ -183,20 +183,101 @@ pub fn strip_unc(path: &Path) -> String {
 }
 
 #[allow(dead_code)]
+pub fn find_in_path(binary: &str) -> Option<PathBuf> {
+    if let Some(paths) = std::env::var_os("PATH") {
+        for path in std::env::split_paths(&paths) {
+            let candidate = path.join(binary);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+            #[cfg(windows)]
+            {
+                let with_exe = path.join(format!("{binary}.exe"));
+                if with_exe.is_file() {
+                    return Some(with_exe);
+                }
+            }
+        }
+    }
+    None
+}
+
+pub fn project_root() -> PathBuf {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if let Some(repo_root) = manifest_dir.parent().and_then(|p| p.parent())
+        && repo_root.join("Cargo.toml").is_file()
+    {
+        return repo_root.to_path_buf();
+    }
+    manifest_dir
+        .parent()
+        .and_then(|p| p.parent())
+        .map(PathBuf::from)
+        .unwrap_or(manifest_dir)
+}
+
+#[allow(dead_code)]
 pub fn python_embed_path() -> PathBuf {
-    PathBuf::from(
-        r"C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\python-embed\python.exe",
-    )
+    let root = project_root();
+    if let Some(parent) = root.parent() {
+        let local = parent.join("python-embed").join("python.exe");
+        if local.is_file() {
+            return local;
+        }
+    }
+    if let Some(paths) = std::env::var_os("PATH") {
+        for path in std::env::split_paths(&paths) {
+            for name in &["python3", "python", "python3.exe", "python.exe"] {
+                let candidate = path.join(name);
+                if candidate.is_file() {
+                    return candidate;
+                }
+            }
+        }
+    }
+    PathBuf::from("python")
 }
 
 #[allow(dead_code)]
 pub fn gcc_path() -> PathBuf {
-    PathBuf::from(
-        r"C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\w64devkit\bin\gcc.exe",
-    )
+    let root = project_root();
+    if let Some(parent) = root.parent() {
+        let local = parent.join("w64devkit").join("bin").join("gcc.exe");
+        if local.is_file() {
+            return local;
+        }
+    }
+    if let Some(paths) = std::env::var_os("PATH") {
+        for path in std::env::split_paths(&paths) {
+            for name in &["gcc", "gcc.exe", "clang", "clang.exe"] {
+                let candidate = path.join(name);
+                if candidate.is_file() {
+                    return candidate;
+                }
+            }
+        }
+    }
+    PathBuf::from("gcc")
 }
 
 #[allow(dead_code)]
-pub fn project_root() -> PathBuf {
-    PathBuf::from(r"C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\AGENT-PANDORA")
+pub fn gxx_path() -> PathBuf {
+    let root = project_root();
+    if let Some(parent) = root.parent() {
+        let local = parent.join("w64devkit").join("bin").join("g++.exe");
+        if local.is_file() {
+            return local;
+        }
+    }
+    if let Some(paths) = std::env::var_os("PATH") {
+        for path in std::env::split_paths(&paths) {
+            for name in &["g++", "g++.exe", "clang++", "clang++.exe"] {
+                let candidate = path.join(name);
+                if candidate.is_file() {
+                    return candidate;
+                }
+            }
+        }
+    }
+    PathBuf::from("g++")
 }

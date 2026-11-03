@@ -1,12 +1,27 @@
 pub use crate::semantic_memory::{ContextSearchOptions, HybridSearchResult, SearchResultItem};
-use crate::semantic_memory::{DenseFeatureHasher, HybridRrfRanker, generate_snippet};
+use crate::semantic_memory::{
+    DenseFeatureHasher, HybridRrfRanker, SparseBm25Index, generate_snippet,
+};
+use atomic_write_file::AtomicWriteFile;
 use pandora_types::{
     ContextClassification, ContextFragment, ContextOrigin, ContextSource, ContextTrust, ContextUri,
     FeatureMap, MemoryIntent, MemoryRecord, MemoryTier, SessionArchiveRecord, SkillManifest,
     StoredSop, TenantId, VfsDirectoryEntry, VfsNodeKind, WorkspaceId,
 };
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fmt;
-use std::sync::RwLock;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+pub const VFS_INDEX_MAGIC: &[u8; 4] = b"PVFS";
+pub const VFS_INDEX_VERSION: u32 = 1;
+pub const VFS_INDEX_HEADER_SIZE: usize = 68;
+pub const VFS_INDEX_TRAILER_SIZE: usize = 32;
+pub const VFS_DENSE_DIMENSION: u32 = 128;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum VfsError {
@@ -31,6 +46,47 @@ impl fmt::Display for VfsError {
 
 impl std::error::Error for VfsError {}
 
+/// Persistent VFS index statistics and integrity metadata.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct VfsIndexStats {
+    pub path: PathBuf,
+    pub size_bytes: u64,
+    pub doc_count: u32,
+    pub vocab_size: u32,
+    pub dense_dimension: u32,
+    pub total_tokens: u64,
+    pub created_at_unix: u64,
+    pub corpus_hash: String,
+    pub checksum_valid: bool,
+    pub is_fresh: bool,
+}
+
+/// A mounted virtual document ready for indexing.
+#[derive(Clone, Debug)]
+pub struct VfsDoc {
+    pub uri: ContextUri,
+    pub title: String,
+    pub content: String,
+    pub tier: Option<MemoryTier>,
+    pub intent: Option<MemoryIntent>,
+}
+
+/// In-memory representation of a deserialized VFS persistent index.
+#[derive(Clone, Debug)]
+pub struct DeserializedVfsIndex {
+    pub magic: [u8; 4],
+    pub version: u32,
+    pub created_at: u64,
+    pub doc_count: u32,
+    pub dense_dim: u32,
+    pub total_tokens: u64,
+    pub vocab_size: u32,
+    pub corpus_hash: [u8; 32],
+    pub docs: Vec<VfsDoc>,
+    pub doc_vectors: Vec<(usize, [f32; 128])>,
+    pub bm25: SparseBm25Index,
+}
+
 pub struct ContextVfs {
     meta_rules: RwLock<Vec<ContextFragment>>,
     l1_records: RwLock<Vec<MemoryRecord>>,
@@ -39,6 +95,8 @@ pub struct ContextVfs {
     archives: RwLock<Vec<SessionArchiveRecord>>,
     feature_maps: RwLock<Vec<(String, FeatureMap)>>,
     skills: RwLock<Vec<SkillManifest>>,
+    index_path: RwLock<Option<PathBuf>>,
+    cached_index: RwLock<Option<Arc<DeserializedVfsIndex>>>,
 }
 
 impl Default for ContextVfs {
@@ -71,6 +129,8 @@ impl ContextVfs {
             archives: RwLock::new(Vec::new()),
             feature_maps: RwLock::new(Vec::new()),
             skills: RwLock::new(Vec::new()),
+            index_path: RwLock::new(Some(PathBuf::from(".pandora/indices/vfs.idx"))),
+            cached_index: RwLock::new(None),
         }
     }
 
@@ -645,7 +705,291 @@ impl ContextVfs {
         self.search_with_options(query, &options)
     }
 
+    /// Configures the disk destination for the persistent semantic index.
+    pub fn set_index_path(&self, path: impl Into<PathBuf>) {
+        if let Ok(mut guard) = self.index_path.write() {
+            *guard = Some(path.into());
+        }
+    }
+
+    /// Returns the currently configured persistent index path.
+    pub fn index_path(&self) -> Option<PathBuf> {
+        self.index_path.read().ok().and_then(|g| g.clone())
+    }
+
+    /// Clears the in-memory cached persistent index.
+    pub fn clear_cached_index(&self) {
+        if let Ok(mut guard) = self.cached_index.write() {
+            *guard = None;
+        }
+    }
+
+    /// Collects all mounted virtual documents across constitutional rules,
+    /// L1/L2 memory records, SOPs, session archives, feature maps, and active skills.
+    pub fn collect_all_documents(&self) -> Result<Vec<VfsDoc>, VfsError> {
+        let mut docs = Vec::new();
+
+        // 1. Meta rules (Tier L0)
+        let rules = self
+            .meta_rules
+            .read()
+            .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
+        for rule in rules.iter() {
+            let uri_str = if rule.id() == "meta:rules" || rule.id() == "rules" {
+                "pandora://meta/rules".to_string()
+            } else {
+                format!("pandora://meta/{}", rule.id().trim_start_matches("meta:"))
+            };
+            if let Ok(uri) = ContextUri::new(uri_str) {
+                docs.push(VfsDoc {
+                    uri,
+                    title: rule.id().to_string(),
+                    content: rule.content().to_string(),
+                    tier: Some(MemoryTier::L0),
+                    intent: None,
+                });
+            }
+        }
+
+        // 2. L1 records (Tier L1)
+        let l1 = self
+            .l1_records
+            .read()
+            .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
+        for rec in l1.iter() {
+            let intent_str = rec.intent().as_str();
+            if let Ok(uri) = ContextUri::new(format!(
+                "pandora://index/{intent_str}/{}",
+                rec.id().as_str()
+            )) {
+                docs.push(VfsDoc {
+                    uri,
+                    title: rec.id().as_str().to_string(),
+                    content: format!("{} {}", rec.id().as_str(), rec.summary()),
+                    tier: Some(MemoryTier::L1),
+                    intent: Some(rec.intent()),
+                });
+            }
+        }
+
+        // 3. L2 records (Tier L2)
+        let l2 = self
+            .l2_records
+            .read()
+            .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
+        for rec in l2.iter() {
+            let intent_str = rec.intent().as_str();
+            if let Ok(uri) = ContextUri::new(format!(
+                "pandora://facts/{intent_str}/{}",
+                rec.id().as_str()
+            )) {
+                docs.push(VfsDoc {
+                    uri,
+                    title: rec.id().as_str().to_string(),
+                    content: format!("{} {}", rec.id().as_str(), rec.summary()),
+                    tier: Some(MemoryTier::L2),
+                    intent: Some(rec.intent()),
+                });
+            }
+        }
+
+        // 4. SOPs (Tier L3)
+        let sops = self
+            .sops
+            .read()
+            .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
+        for stored in sops.iter() {
+            if let Ok(uri) = ContextUri::new(format!("pandora://sops/{}", stored.sop.id)) {
+                let steps_text = stored
+                    .sop
+                    .steps
+                    .iter()
+                    .map(|s| format!("{} {}", s.name, s.command))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let verif = stored
+                    .sop
+                    .verification_command
+                    .as_deref()
+                    .unwrap_or_default();
+                docs.push(VfsDoc {
+                    uri,
+                    title: stored.sop.name.clone(),
+                    content: format!(
+                        "{} {} {} {}",
+                        stored.sop.id, stored.sop.name, steps_text, verif
+                    ),
+                    tier: Some(MemoryTier::L3),
+                    intent: Some(stored.sop.trigger_intent),
+                });
+            }
+        }
+
+        // 5. Archives (Tier L4)
+        let archives = self
+            .archives
+            .read()
+            .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
+        for arc in archives.iter() {
+            if let Ok(uri) = ContextUri::new(format!("pandora://archives/{}", arc.archive_id)) {
+                docs.push(VfsDoc {
+                    uri,
+                    title: arc.archive_id.clone(),
+                    content: format!("{} {}", arc.archive_id, arc.summary),
+                    tier: Some(MemoryTier::L4),
+                    intent: None,
+                });
+            }
+        }
+
+        // 6. Feature maps
+        let maps = self
+            .feature_maps
+            .read()
+            .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
+        for (name, map) in maps.iter() {
+            if let Ok(uri) = ContextUri::new(format!("pandora://features/{name}")) {
+                let map_json = serde_json::to_string(map).unwrap_or_default();
+                docs.push(VfsDoc {
+                    uri,
+                    title: format!("Feature Map: {name}"),
+                    content: format!("{name} {map_json}"),
+                    tier: None,
+                    intent: None,
+                });
+            }
+        }
+
+        // 7. Active skills
+        let skills = self
+            .skills
+            .read()
+            .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
+        for skill in skills.iter() {
+            if let Ok(uri) = ContextUri::new(format!("pandora://skills/{}", skill.id().as_str())) {
+                docs.push(VfsDoc {
+                    uri,
+                    title: skill.name().to_string(),
+                    content: format!(
+                        "{} {} {} {}",
+                        skill.id().as_str(),
+                        skill.name(),
+                        skill.description(),
+                        skill.resources().join(" ")
+                    ),
+                    tier: None,
+                    intent: None,
+                });
+            }
+        }
+
+        Ok(docs)
+    }
+
+    /// Serializes and writes the current BM25 inverted index and 128-d dense embeddings
+    /// atomically to disk at the specified path.
+    pub fn save_index_to_disk(&self, index_path: &Path) -> Result<(), VfsError> {
+        let docs = self.collect_all_documents()?;
+        let hasher = DenseFeatureHasher::new();
+        let mut bm25 = SparseBm25Index::new();
+        let mut doc_vectors = Vec::with_capacity(docs.len());
+
+        for (idx, doc) in docs.iter().enumerate() {
+            bm25.add_document(idx, &doc.content);
+            let vec = hasher.vectorize(&doc.content);
+            doc_vectors.push((idx, vec));
+        }
+
+        let corpus_hash = compute_corpus_hash(&docs);
+        let created_at_unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let bytes = serialize_vfs_index(&docs, &bm25, &doc_vectors, corpus_hash, created_at_unix)?;
+
+        if let Some(parent) = index_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                VfsError::BackendError(format!(
+                    "failed to create index directory {}: {e}",
+                    parent.display()
+                ))
+            })?;
+        }
+
+        let mut file = AtomicWriteFile::open(index_path).map_err(|e| {
+            VfsError::BackendError(format!(
+                "failed to open atomic file at {}: {e}",
+                index_path.display()
+            ))
+        })?;
+        file.write_all(&bytes)
+            .map_err(|e| VfsError::BackendError(format!("failed to write index bytes: {e}")))?;
+        file.commit()
+            .map_err(|e| VfsError::BackendError(format!("failed to commit index file: {e}")))?;
+
+        let deserialized = DeserializedVfsIndex {
+            magic: *VFS_INDEX_MAGIC,
+            version: VFS_INDEX_VERSION,
+            created_at: created_at_unix,
+            doc_count: docs.len() as u32,
+            dense_dim: VFS_DENSE_DIMENSION,
+            total_tokens: bm25.total_tokens() as u64,
+            vocab_size: bm25.postings().len() as u32,
+            corpus_hash,
+            docs,
+            doc_vectors,
+            bm25,
+        };
+        if let Ok(mut cache) = self.cached_index.write() {
+            *cache = Some(Arc::new(deserialized));
+        }
+
+        Ok(())
+    }
+
+    /// Checks if a persistent index exists at `index_path` and matches the current corpus hash.
+    pub fn is_index_fresh(&self, index_path: &Path) -> Result<bool, VfsError> {
+        if !index_path.is_file() {
+            return Ok(false);
+        }
+        let stats = read_index_stats(index_path, Some(self))?;
+        Ok(stats.checksum_valid && stats.is_fresh)
+    }
+
+    /// Loads an existing fresh persistent index from `workspace_dir/.pandora/indices/vfs.idx`,
+    /// or builds and persists one if missing or stale. Returns index statistics.
+    pub fn load_or_build_index(workspace_dir: &Path) -> Result<VfsIndexStats, VfsError> {
+        let vfs = Self::new();
+        let feat_map_path = workspace_dir.join(".pandora/feature_map.json");
+        if let Ok(bytes) = std::fs::read(&feat_map_path)
+            && let Ok(map) = serde_json::from_slice::<FeatureMap>(&bytes)
+            && map.validate().is_ok()
+        {
+            vfs.add_feature_map("workspace", map);
+        }
+
+        let index_dir = workspace_dir.join(".pandora/indices");
+        std::fs::create_dir_all(&index_dir).map_err(|e| {
+            VfsError::BackendError(format!(
+                "failed to create indices directory {}: {e}",
+                index_dir.display()
+            ))
+        })?;
+        let index_path = index_dir.join("vfs.idx");
+        vfs.set_index_path(&index_path);
+
+        if !vfs.is_index_fresh(&index_path).unwrap_or(false) {
+            vfs.save_index_to_disk(&index_path)?;
+        }
+
+        read_index_stats(&index_path, Some(&vfs))
+    }
+
     /// Executes a hybrid BM25 and dense similarity search with configurable options.
+    /// Checks if a persistent index exists at `.pandora/indices/vfs.idx` and is fresh
+    /// (corpus hash match); if so, uses the pre-loaded / cached index for instantaneous
+    /// cold-start retrieval (< 5ms). If missing or stale, builds and atomically writes to disk.
     pub fn search_with_options(
         &self,
         query: &str,
@@ -655,217 +999,69 @@ impl ContextVfs {
             return Ok(Vec::new());
         }
 
-        struct VfsDoc {
-            uri: ContextUri,
-            title: String,
-            content: String,
-            tier: Option<MemoryTier>,
-            intent: Option<MemoryIntent>,
-        }
-
-        let mut docs = Vec::new();
-
-        // 1. Meta rules (Tier L0)
-        if options.tier.is_none() || options.tier == Some(MemoryTier::L0) {
-            let rules = self
-                .meta_rules
-                .read()
-                .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
-            for rule in rules.iter() {
-                let uri_str = if rule.id() == "meta:rules" || rule.id() == "rules" {
-                    "pandora://meta/rules".to_string()
-                } else {
-                    format!("pandora://meta/{}", rule.id().trim_start_matches("meta:"))
-                };
-                if let Ok(uri) = ContextUri::new(uri_str) {
-                    docs.push(VfsDoc {
-                        uri,
-                        title: rule.id().to_string(),
-                        content: rule.content().to_string(),
-                        tier: Some(MemoryTier::L0),
-                        intent: None,
-                    });
-                }
-            }
-        }
-
-        // 2. L1 records (Tier L1)
-        if options.tier.is_none() || options.tier == Some(MemoryTier::L1) {
-            let l1 = self
-                .l1_records
-                .read()
-                .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
-            for rec in l1.iter() {
-                if let Some(target_intent) = options.intent
-                    && rec.intent() != target_intent
-                {
-                    continue;
-                }
-                let intent_str = rec.intent().as_str();
-                if let Ok(uri) = ContextUri::new(format!(
-                    "pandora://index/{intent_str}/{}",
-                    rec.id().as_str()
-                )) {
-                    docs.push(VfsDoc {
-                        uri,
-                        title: rec.id().as_str().to_string(),
-                        content: format!("{} {}", rec.id().as_str(), rec.summary()),
-                        tier: Some(MemoryTier::L1),
-                        intent: Some(rec.intent()),
-                    });
-                }
-            }
-        }
-
-        // 3. L2 records (Tier L2)
-        if options.tier.is_none() || options.tier == Some(MemoryTier::L2) {
-            let l2 = self
-                .l2_records
-                .read()
-                .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
-            for rec in l2.iter() {
-                if let Some(target_intent) = options.intent
-                    && rec.intent() != target_intent
-                {
-                    continue;
-                }
-                let intent_str = rec.intent().as_str();
-                if let Ok(uri) = ContextUri::new(format!(
-                    "pandora://facts/{intent_str}/{}",
-                    rec.id().as_str()
-                )) {
-                    docs.push(VfsDoc {
-                        uri,
-                        title: rec.id().as_str().to_string(),
-                        content: format!("{} {}", rec.id().as_str(), rec.summary()),
-                        tier: Some(MemoryTier::L2),
-                        intent: Some(rec.intent()),
-                    });
-                }
-            }
-        }
-
-        // 4. SOPs (Tier L3)
-        if options.tier.is_none() || options.tier == Some(MemoryTier::L3) {
-            let sops = self
-                .sops
-                .read()
-                .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
-            for stored in sops.iter() {
-                if let Some(target_intent) = options.intent
-                    && stored.sop.trigger_intent != target_intent
-                {
-                    continue;
-                }
-                if let Ok(uri) = ContextUri::new(format!("pandora://sops/{}", stored.sop.id)) {
-                    let steps_text = stored
-                        .sop
-                        .steps
-                        .iter()
-                        .map(|s| format!("{} {}", s.name, s.command))
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    let verif = stored
-                        .sop
-                        .verification_command
-                        .as_deref()
-                        .unwrap_or_default();
-                    docs.push(VfsDoc {
-                        uri,
-                        title: stored.sop.name.clone(),
-                        content: format!(
-                            "{} {} {} {}",
-                            stored.sop.id, stored.sop.name, steps_text, verif
-                        ),
-                        tier: Some(MemoryTier::L3),
-                        intent: Some(stored.sop.trigger_intent),
-                    });
-                }
-            }
-        }
-
-        // 5. Archives (Tier L4)
-        if (options.tier.is_none() || options.tier == Some(MemoryTier::L4))
-            && options.intent.is_none()
-        {
-            let archives = self
-                .archives
-                .read()
-                .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
-            for arc in archives.iter() {
-                if let Ok(uri) = ContextUri::new(format!("pandora://archives/{}", arc.archive_id)) {
-                    docs.push(VfsDoc {
-                        uri,
-                        title: arc.archive_id.clone(),
-                        content: format!("{} {}", arc.archive_id, arc.summary),
-                        tier: Some(MemoryTier::L4),
-                        intent: None,
-                    });
-                }
-            }
-        }
-
-        // 6. Feature maps
-        if options.tier.is_none() && options.intent.is_none() {
-            let maps = self
-                .feature_maps
-                .read()
-                .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
-            for (name, map) in maps.iter() {
-                if let Ok(uri) = ContextUri::new(format!("pandora://features/{name}")) {
-                    let map_json = serde_json::to_string(map).unwrap_or_default();
-                    docs.push(VfsDoc {
-                        uri,
-                        title: format!("Feature Map: {name}"),
-                        content: format!("{name} {map_json}"),
-                        tier: None,
-                        intent: None,
-                    });
-                }
-            }
-        }
-
-        // 7. Active skills
-        if options.tier.is_none() && options.intent.is_none() {
-            let skills = self
-                .skills
-                .read()
-                .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
-            for skill in skills.iter() {
-                if let Ok(uri) =
-                    ContextUri::new(format!("pandora://skills/{}", skill.id().as_str()))
-                {
-                    docs.push(VfsDoc {
-                        uri,
-                        title: skill.name().to_string(),
-                        content: format!(
-                            "{} {} {} {}",
-                            skill.id().as_str(),
-                            skill.name(),
-                            skill.description(),
-                            skill.resources().join(" ")
-                        ),
-                        tier: None,
-                        intent: None,
-                    });
-                }
-            }
-        }
-
-        if docs.is_empty() {
+        let all_docs = self.collect_all_documents()?;
+        if all_docs.is_empty() {
             return Ok(Vec::new());
         }
 
-        let mut bm25 = crate::semantic_memory::SparseBm25Index::new();
-        let hasher = DenseFeatureHasher::new();
-        let mut doc_vectors = Vec::with_capacity(docs.len());
+        let current_corpus_hash = compute_corpus_hash(&all_docs);
+        let index_path = self
+            .index_path
+            .read()
+            .ok()
+            .and_then(|guard| guard.clone())
+            .unwrap_or_else(|| PathBuf::from(".pandora/indices/vfs.idx"));
 
-        for (idx, doc) in docs.iter().enumerate() {
-            bm25.add_document(idx, &doc.content);
-            let vec = hasher.vectorize(&doc.content);
-            doc_vectors.push((idx, vec));
+        let mut active_index: Option<Arc<DeserializedVfsIndex>> = None;
+
+        // 1. Check in-memory cached index
+        if let Ok(guard) = self.cached_index.read()
+            && let Some(cached) = guard.as_ref()
+            && cached.corpus_hash == current_corpus_hash
+        {
+            active_index = Some(Arc::clone(cached));
         }
 
+        // 2. Check persistent index on disk if not in-memory
+        if active_index.is_none()
+            && index_path.is_file()
+            && let Ok(bytes) = std::fs::read(&index_path)
+            && let Ok(deserialized) = deserialize_vfs_index(&bytes)
+            && deserialized.corpus_hash == current_corpus_hash
+        {
+            let arc_idx = Arc::new(deserialized);
+            if let Ok(mut guard) = self.cached_index.write() {
+                *guard = Some(Arc::clone(&arc_idx));
+            }
+            active_index = Some(arc_idx);
+        }
+
+        // 3. If missing or stale, build and atomically write to disk
+        let (index_docs, bm25, doc_vectors) = match active_index {
+            Some(loaded) => (
+                loaded.docs.clone(),
+                loaded.bm25.clone(),
+                loaded.doc_vectors.clone(),
+            ),
+            None => {
+                let hasher = DenseFeatureHasher::new();
+                let mut bm25 = SparseBm25Index::new();
+                let mut doc_vectors = Vec::with_capacity(all_docs.len());
+
+                for (idx, doc) in all_docs.iter().enumerate() {
+                    bm25.add_document(idx, &doc.content);
+                    let vec = hasher.vectorize(&doc.content);
+                    doc_vectors.push((idx, vec));
+                }
+
+                // Atomically persist to disk
+                let _ = self.save_index_to_disk(&index_path);
+
+                (all_docs, bm25, doc_vectors)
+            }
+        };
+
+        let hasher = DenseFeatureHasher::new();
         let sparse_scores = bm25.score(query);
         let query_vec = hasher.vectorize(query);
         let dense_scores = hasher.score(&query_vec, &doc_vectors);
@@ -878,7 +1074,22 @@ impl ContextVfs {
             if item.hybrid_score < options.min_score {
                 continue;
             }
-            let doc = &docs[item.doc_id];
+            if item.doc_id >= index_docs.len() {
+                continue;
+            }
+            let doc = &index_docs[item.doc_id];
+
+            if let Some(target_tier) = options.tier
+                && doc.tier != Some(target_tier)
+            {
+                continue;
+            }
+            if let Some(target_intent) = options.intent
+                && doc.intent != Some(target_intent)
+            {
+                continue;
+            }
+
             let snippet = generate_snippet(&doc.content, query);
             results.push(SearchResultItem {
                 uri: doc.uri.clone(),
@@ -897,6 +1108,477 @@ impl ContextVfs {
 
         Ok(results)
     }
+}
+
+fn tier_to_u8(tier: Option<MemoryTier>) -> u8 {
+    match tier {
+        None => 0,
+        Some(MemoryTier::L0) => 1,
+        Some(MemoryTier::L1) => 2,
+        Some(MemoryTier::L2) => 3,
+        Some(MemoryTier::L3) => 4,
+        Some(MemoryTier::L4) => 5,
+    }
+}
+
+fn u8_to_tier(val: u8) -> Option<MemoryTier> {
+    match val {
+        1 => Some(MemoryTier::L0),
+        2 => Some(MemoryTier::L1),
+        3 => Some(MemoryTier::L2),
+        4 => Some(MemoryTier::L3),
+        5 => Some(MemoryTier::L4),
+        _ => None,
+    }
+}
+
+fn intent_to_u8(intent: Option<MemoryIntent>) -> u8 {
+    match intent {
+        None => 0,
+        Some(MemoryIntent::Repo) => 1,
+        Some(MemoryIntent::Procedure) => 2,
+        Some(MemoryIntent::Coding) => 3,
+        Some(MemoryIntent::User) => 4,
+    }
+}
+
+fn u8_to_intent(val: u8) -> Option<MemoryIntent> {
+    match val {
+        1 => Some(MemoryIntent::Repo),
+        2 => Some(MemoryIntent::Procedure),
+        3 => Some(MemoryIntent::Coding),
+        4 => Some(MemoryIntent::User),
+        _ => None,
+    }
+}
+
+/// Computes a deterministic SHA-256 fingerprint over all mounted documents.
+pub fn compute_corpus_hash(docs: &[VfsDoc]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    for doc in docs {
+        let uri_bytes = doc.uri.as_str().as_bytes();
+        hasher.update((uri_bytes.len() as u32).to_le_bytes());
+        hasher.update(uri_bytes);
+
+        let content_bytes = doc.content.as_bytes();
+        hasher.update((content_bytes.len() as u32).to_le_bytes());
+        hasher.update(content_bytes);
+
+        hasher.update([tier_to_u8(doc.tier)]);
+        hasher.update([intent_to_u8(doc.intent)]);
+    }
+    hasher.finalize().into()
+}
+
+/// Serializes documents, BM25 postings, and 128-d dense vectors into the pure-Rust
+/// binary layout (Version 1) with SHA-256 integrity trailer.
+pub fn serialize_vfs_index(
+    docs: &[VfsDoc],
+    bm25: &SparseBm25Index,
+    doc_vectors: &[(usize, [f32; 128])],
+    corpus_hash: [u8; 32],
+    created_at_unix: u64,
+) -> Result<Vec<u8>, VfsError> {
+    let mut buffer = Vec::new();
+
+    // 1. Header (68 bytes)
+    buffer.extend_from_slice(VFS_INDEX_MAGIC);
+    buffer.extend_from_slice(&VFS_INDEX_VERSION.to_le_bytes());
+    buffer.extend_from_slice(&created_at_unix.to_le_bytes());
+    let doc_count = docs.len() as u32;
+    buffer.extend_from_slice(&doc_count.to_le_bytes());
+    buffer.extend_from_slice(&VFS_DENSE_DIMENSION.to_le_bytes());
+    buffer.extend_from_slice(&(bm25.total_tokens() as u64).to_le_bytes());
+
+    let mut terms: Vec<_> = bm25.postings().keys().collect();
+    terms.sort();
+    let vocab_size = terms.len() as u32;
+    buffer.extend_from_slice(&vocab_size.to_le_bytes());
+    buffer.extend_from_slice(&corpus_hash);
+
+    debug_assert_eq!(buffer.len(), VFS_INDEX_HEADER_SIZE);
+
+    // 2. Document Metadata & Vector Table
+    for (idx, doc) in docs.iter().enumerate() {
+        let doc_id = idx as u32;
+        buffer.extend_from_slice(&doc_id.to_le_bytes());
+
+        let uri_bytes = doc.uri.as_str().as_bytes();
+        if uri_bytes.len() > u16::MAX as usize {
+            return Err(VfsError::BackendError(
+                "URI exceeds maximum u16 length".into(),
+            ));
+        }
+        buffer.extend_from_slice(&(uri_bytes.len() as u16).to_le_bytes());
+        buffer.extend_from_slice(uri_bytes);
+
+        let title_bytes = doc.title.as_bytes();
+        if title_bytes.len() > u16::MAX as usize {
+            return Err(VfsError::BackendError(
+                "title exceeds maximum u16 length".into(),
+            ));
+        }
+        buffer.extend_from_slice(&(title_bytes.len() as u16).to_le_bytes());
+        buffer.extend_from_slice(title_bytes);
+
+        let content_bytes = doc.content.as_bytes();
+        if content_bytes.len() > u32::MAX as usize {
+            return Err(VfsError::BackendError(
+                "content exceeds maximum u32 length".into(),
+            ));
+        }
+        buffer.extend_from_slice(&(content_bytes.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(content_bytes);
+
+        buffer.push(tier_to_u8(doc.tier));
+        buffer.push(intent_to_u8(doc.intent));
+
+        let doc_length = bm25.doc_lengths().get(&idx).copied().unwrap_or(0) as u32;
+        buffer.extend_from_slice(&doc_length.to_le_bytes());
+
+        // Dense vector: 128 * 4 = 512 bytes
+        let vec = doc_vectors
+            .get(idx)
+            .map(|(_, v)| *v)
+            .unwrap_or([0.0f32; 128]);
+        for f in vec {
+            buffer.extend_from_slice(&f.to_le_bytes());
+        }
+    }
+
+    // 3. Sparse BM25 Inverted Postings Table
+    for term in terms {
+        let term_bytes = term.as_bytes();
+        if term_bytes.len() > u16::MAX as usize {
+            return Err(VfsError::BackendError(
+                "term exceeds maximum u16 length".into(),
+            ));
+        }
+        buffer.extend_from_slice(&(term_bytes.len() as u16).to_le_bytes());
+        buffer.extend_from_slice(term_bytes);
+
+        let mut postings = bm25.postings().get(term).cloned().unwrap_or_default();
+        postings.sort_by_key(|&(doc_id, _)| doc_id);
+        let postings_count = postings.len() as u32;
+        buffer.extend_from_slice(&postings_count.to_le_bytes());
+
+        for (doc_id, tf) in postings {
+            buffer.extend_from_slice(&(doc_id as u32).to_le_bytes());
+            buffer.extend_from_slice(&tf.to_le_bytes());
+        }
+    }
+
+    // 4. Trailer (32 bytes): SHA-256 checksum over byte 0..end of postings table
+    let checksum = Sha256::digest(&buffer);
+    buffer.extend_from_slice(&checksum);
+
+    Ok(buffer)
+}
+
+/// Deserializes a binary VFS index from byte slice, validating the 32-byte SHA-256 trailer checksum.
+pub fn deserialize_vfs_index(bytes: &[u8]) -> Result<DeserializedVfsIndex, VfsError> {
+    if bytes.len() < VFS_INDEX_HEADER_SIZE + VFS_INDEX_TRAILER_SIZE {
+        return Err(VfsError::BackendError(
+            "index file too short for header and trailer".into(),
+        ));
+    }
+
+    let payload_len = bytes.len() - VFS_INDEX_TRAILER_SIZE;
+    let payload = &bytes[..payload_len];
+    let trailer_checksum = &bytes[payload_len..];
+
+    let computed_hash = Sha256::digest(payload);
+    if computed_hash.as_slice() != trailer_checksum {
+        return Err(VfsError::BackendError(
+            "index integrity verification failed: SHA-256 checksum mismatch".into(),
+        ));
+    }
+
+    let mut cursor = 0;
+    let magic = [bytes[0], bytes[1], bytes[2], bytes[3]];
+    cursor += 4;
+    if &magic != VFS_INDEX_MAGIC {
+        return Err(VfsError::BackendError(
+            "invalid index magic: expected PVFS".into(),
+        ));
+    }
+
+    let version = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
+    cursor += 4;
+    if version != VFS_INDEX_VERSION {
+        return Err(VfsError::BackendError(format!(
+            "unsupported index version: {version}"
+        )));
+    }
+
+    let created_at = u64::from_le_bytes(bytes[cursor..cursor + 8].try_into().unwrap());
+    cursor += 8;
+
+    let doc_count = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
+    cursor += 4;
+
+    let dense_dim = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
+    cursor += 4;
+    if dense_dim != VFS_DENSE_DIMENSION {
+        return Err(VfsError::BackendError(format!(
+            "unexpected dense dimension {dense_dim}, expected {VFS_DENSE_DIMENSION}"
+        )));
+    }
+
+    let total_tokens = u64::from_le_bytes(bytes[cursor..cursor + 8].try_into().unwrap());
+    cursor += 8;
+
+    let vocab_size = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
+    cursor += 4;
+
+    let mut corpus_hash = [0u8; 32];
+    corpus_hash.copy_from_slice(&bytes[cursor..cursor + 32]);
+    cursor += 32;
+
+    debug_assert_eq!(cursor, VFS_INDEX_HEADER_SIZE);
+
+    let mut docs = Vec::with_capacity(doc_count as usize);
+    let mut doc_vectors = Vec::with_capacity(doc_count as usize);
+    let mut doc_lengths = HashMap::with_capacity(doc_count as usize);
+
+    for _ in 0..doc_count {
+        if cursor + 4 > payload_len {
+            return Err(VfsError::BackendError(
+                "unexpected EOF reading doc_id".into(),
+            ));
+        }
+        let doc_id = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap()) as usize;
+        cursor += 4;
+
+        if cursor + 2 > payload_len {
+            return Err(VfsError::BackendError(
+                "unexpected EOF reading uri_len".into(),
+            ));
+        }
+        let uri_len = u16::from_le_bytes(bytes[cursor..cursor + 2].try_into().unwrap()) as usize;
+        cursor += 2;
+        if cursor + uri_len > payload_len {
+            return Err(VfsError::BackendError("unexpected EOF reading uri".into()));
+        }
+        let uri_str = std::str::from_utf8(&bytes[cursor..cursor + uri_len])
+            .map_err(|e| VfsError::BackendError(format!("invalid UTF-8 in URI: {e}")))?;
+        cursor += uri_len;
+        let uri = ContextUri::new(uri_str)
+            .map_err(|e| VfsError::BackendError(format!("invalid ContextUri: {e}")))?;
+
+        if cursor + 2 > payload_len {
+            return Err(VfsError::BackendError(
+                "unexpected EOF reading title_len".into(),
+            ));
+        }
+        let title_len = u16::from_le_bytes(bytes[cursor..cursor + 2].try_into().unwrap()) as usize;
+        cursor += 2;
+        if cursor + title_len > payload_len {
+            return Err(VfsError::BackendError(
+                "unexpected EOF reading title".into(),
+            ));
+        }
+        let title = std::str::from_utf8(&bytes[cursor..cursor + title_len])
+            .map_err(|e| VfsError::BackendError(format!("invalid UTF-8 in title: {e}")))?
+            .to_string();
+        cursor += title_len;
+
+        if cursor + 4 > payload_len {
+            return Err(VfsError::BackendError(
+                "unexpected EOF reading content_len".into(),
+            ));
+        }
+        let content_len =
+            u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap()) as usize;
+        cursor += 4;
+        if cursor + content_len > payload_len {
+            return Err(VfsError::BackendError(
+                "unexpected EOF reading content".into(),
+            ));
+        }
+        let content = std::str::from_utf8(&bytes[cursor..cursor + content_len])
+            .map_err(|e| VfsError::BackendError(format!("invalid UTF-8 in content: {e}")))?
+            .to_string();
+        cursor += content_len;
+
+        if cursor + 2 > payload_len {
+            return Err(VfsError::BackendError(
+                "unexpected EOF reading tier and intent".into(),
+            ));
+        }
+        let tier = u8_to_tier(bytes[cursor]);
+        cursor += 1;
+        let intent = u8_to_intent(bytes[cursor]);
+        cursor += 1;
+
+        if cursor + 4 > payload_len {
+            return Err(VfsError::BackendError(
+                "unexpected EOF reading doc_length".into(),
+            ));
+        }
+        let doc_length = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap()) as usize;
+        cursor += 4;
+
+        const VECTOR_BYTES: usize = 128 * 4;
+        if cursor + VECTOR_BYTES > payload_len {
+            return Err(VfsError::BackendError(
+                "unexpected EOF reading dense vector".into(),
+            ));
+        }
+        let mut dense_vector = [0.0f32; 128];
+        for (i, elem) in dense_vector.iter_mut().enumerate() {
+            let offset = cursor + i * 4;
+            *elem = f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
+        }
+        cursor += VECTOR_BYTES;
+
+        doc_lengths.insert(doc_id, doc_length);
+        docs.push(VfsDoc {
+            uri,
+            title,
+            content,
+            tier,
+            intent,
+        });
+        doc_vectors.push((doc_id, dense_vector));
+    }
+
+    let mut postings: HashMap<String, Vec<(usize, u32)>> =
+        HashMap::with_capacity(vocab_size as usize);
+    for _ in 0..vocab_size {
+        if cursor + 2 > payload_len {
+            return Err(VfsError::BackendError(
+                "unexpected EOF reading term_len".into(),
+            ));
+        }
+        let term_len = u16::from_le_bytes(bytes[cursor..cursor + 2].try_into().unwrap()) as usize;
+        cursor += 2;
+        if cursor + term_len > payload_len {
+            return Err(VfsError::BackendError("unexpected EOF reading term".into()));
+        }
+        let term = std::str::from_utf8(&bytes[cursor..cursor + term_len])
+            .map_err(|e| VfsError::BackendError(format!("invalid UTF-8 in term: {e}")))?
+            .to_string();
+        cursor += term_len;
+
+        if cursor + 4 > payload_len {
+            return Err(VfsError::BackendError(
+                "unexpected EOF reading postings_count".into(),
+            ));
+        }
+        let postings_count =
+            u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap()) as usize;
+        cursor += 4;
+
+        let mut term_postings = Vec::with_capacity(postings_count);
+        for _ in 0..postings_count {
+            if cursor + 8 > payload_len {
+                return Err(VfsError::BackendError(
+                    "unexpected EOF reading posting".into(),
+                ));
+            }
+            let post_doc_id =
+                u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap()) as usize;
+            cursor += 4;
+            let tf = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
+            cursor += 4;
+            term_postings.push((post_doc_id, tf));
+        }
+        postings.insert(term, term_postings);
+    }
+
+    if cursor != payload_len {
+        return Err(VfsError::BackendError(format!(
+            "index parsing incomplete: cursor at {cursor}, expected {payload_len}"
+        )));
+    }
+
+    let bm25 = SparseBm25Index::from_parts(
+        postings,
+        doc_lengths,
+        doc_count as usize,
+        total_tokens as usize,
+    );
+
+    Ok(DeserializedVfsIndex {
+        magic,
+        version,
+        created_at,
+        doc_count,
+        dense_dim,
+        total_tokens,
+        vocab_size,
+        corpus_hash,
+        docs,
+        doc_vectors,
+        bm25,
+    })
+}
+
+/// Reads index metadata from disk and computes integrity validation status.
+pub fn read_index_stats(
+    index_path: &Path,
+    vfs: Option<&ContextVfs>,
+) -> Result<VfsIndexStats, VfsError> {
+    let metadata = std::fs::metadata(index_path).map_err(|e| {
+        VfsError::NotFound(format!(
+            "index file not found at {}: {e}",
+            index_path.display()
+        ))
+    })?;
+    let size_bytes = metadata.len();
+
+    let bytes = std::fs::read(index_path)
+        .map_err(|e| VfsError::BackendError(format!("failed to read index file: {e}")))?;
+
+    if bytes.len() < VFS_INDEX_HEADER_SIZE + VFS_INDEX_TRAILER_SIZE {
+        return Err(VfsError::BackendError("index file is truncated".into()));
+    }
+
+    let payload_len = bytes.len() - VFS_INDEX_TRAILER_SIZE;
+    let computed_hash = Sha256::digest(&bytes[..payload_len]);
+    let checksum_valid = computed_hash.as_slice() == &bytes[payload_len..];
+
+    if &bytes[0..4] != VFS_INDEX_MAGIC {
+        return Err(VfsError::BackendError("invalid index magic".into()));
+    }
+
+    let created_at_unix = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
+    let doc_count = u32::from_le_bytes(bytes[16..20].try_into().unwrap());
+    let dense_dimension = u32::from_le_bytes(bytes[20..24].try_into().unwrap());
+    let total_tokens = u64::from_le_bytes(bytes[24..32].try_into().unwrap());
+    let vocab_size = u32::from_le_bytes(bytes[32..36].try_into().unwrap());
+    let mut hash_bytes = [0u8; 32];
+    hash_bytes.copy_from_slice(&bytes[36..68]);
+    let corpus_hash = hash_bytes
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+
+    let is_fresh = if let Some(vfs) = vfs {
+        if checksum_valid {
+            let docs = vfs.collect_all_documents()?;
+            let current_hash = compute_corpus_hash(&docs);
+            current_hash == hash_bytes
+        } else {
+            false
+        }
+    } else {
+        checksum_valid
+    };
+
+    Ok(VfsIndexStats {
+        path: index_path.to_path_buf(),
+        size_bytes,
+        doc_count,
+        vocab_size,
+        dense_dimension,
+        total_tokens,
+        created_at_unix,
+        corpus_hash,
+        checksum_valid,
+        is_fresh,
+    })
 }
 
 #[cfg(test)]
@@ -1112,5 +1794,343 @@ mod tests {
         assert_eq!(sop_results.len(), 1);
         assert_eq!(sop_results[0].title, "Type Mismatch Remediation SOP");
         assert_eq!(sop_results[0].tier, Some(MemoryTier::L3));
+    }
+
+    fn make_test_record(
+        id: &str,
+        tier: MemoryTier,
+        intent: MemoryIntent,
+        summary: &str,
+    ) -> MemoryRecord {
+        let scope = MemoryScope::new(
+            TenantId::new("t1").unwrap(),
+            WorkspaceId::new("w1").unwrap(),
+            SessionId::new("s1").unwrap(),
+            "p1",
+        )
+        .unwrap();
+        let l1 = MemoryRecord::new_l1(
+            id,
+            pandora_types::MemoryKind::Lesson,
+            scope,
+            summary,
+            ContextClassification::Internal,
+            Timestamp::from_unix_seconds(100),
+            "prov-1",
+        )
+        .unwrap()
+        .with_intent(intent);
+        if tier == MemoryTier::L2 {
+            let approval = pandora_types::MemoryApproval::new("app-1", "operator-1").unwrap();
+            MemoryRecord::promote_l2(l1, approval, Timestamp::from_unix_seconds(150)).unwrap()
+        } else {
+            l1
+        }
+    }
+
+    fn make_test_sop(id: &str, name: &str, intent: MemoryIntent, step_cmd: &str) -> StoredSop {
+        StoredSop {
+            sop: SopDefinition {
+                id: id.to_string(),
+                name: name.to_string(),
+                trigger_intent: intent,
+                steps: vec![SopStep {
+                    id: "step-1".to_string(),
+                    name: "step-name".to_string(),
+                    command: step_cmd.to_string(),
+                    depends_on: vec![],
+                }],
+                verification_command: Some("cargo check".to_string()),
+            },
+            tenant_id: TenantId::new("t1").unwrap(),
+            workspace_id: WorkspaceId::new("w1").unwrap(),
+            success_count: 1,
+            created_at: Timestamp::from_unix_seconds(10),
+            updated_at: Timestamp::from_unix_seconds(20),
+        }
+    }
+
+    #[test]
+    fn test_vfs_index_binary_roundtrip() {
+        let vfs = ContextVfs::new();
+
+        let l1 = make_test_record(
+            "rec-roundtrip-1",
+            MemoryTier::L1,
+            MemoryIntent::Coding,
+            "Rust async cancellation tokens and graceful shutdown",
+        );
+        vfs.add_memory_record(l1);
+
+        let sop = make_test_sop(
+            "sop-roundtrip-1",
+            "Cargo Workspace Build and Verify",
+            MemoryIntent::Procedure,
+            "cargo test --workspace",
+        );
+        vfs.add_sop(sop);
+
+        let docs = vfs.collect_all_documents().unwrap();
+        assert!(docs.len() >= 3); // default rule + l1 + sop
+
+        let hasher = DenseFeatureHasher::new();
+        let mut bm25 = SparseBm25Index::new();
+        let mut doc_vectors = Vec::with_capacity(docs.len());
+
+        for (idx, doc) in docs.iter().enumerate() {
+            bm25.add_document(idx, &doc.content);
+            let vec = hasher.vectorize(&doc.content);
+            doc_vectors.push((idx, vec));
+        }
+
+        let corpus_hash = compute_corpus_hash(&docs);
+        let created_at = 1730000000u64;
+
+        let bytes = serialize_vfs_index(&docs, &bm25, &doc_vectors, corpus_hash, created_at)
+            .expect("serialization must succeed");
+
+        // Verify header layout: 4 (magic) + 4 (version) + 8 (created) + 4 (docs) + 4 (dim) + 8 (tokens) + 4 (vocab) + 32 (hash) = 68
+        assert_eq!(&bytes[0..4], b"PVFS");
+        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 1);
+        assert_eq!(
+            u64::from_le_bytes(bytes[8..16].try_into().unwrap()),
+            created_at
+        );
+        assert_eq!(
+            u32::from_le_bytes(bytes[16..20].try_into().unwrap()),
+            docs.len() as u32
+        );
+        assert_eq!(u32::from_le_bytes(bytes[20..24].try_into().unwrap()), 128);
+
+        // Trailer: last 32 bytes are sha256 checksum
+        let payload_len = bytes.len() - 32;
+        let expected_checksum = Sha256::digest(&bytes[..payload_len]);
+        assert_eq!(&bytes[payload_len..], expected_checksum.as_slice());
+
+        // Deserialize
+        let deserialized = deserialize_vfs_index(&bytes).expect("deserialization must succeed");
+        assert_eq!(deserialized.version, 1);
+        assert_eq!(deserialized.created_at, created_at);
+        assert_eq!(deserialized.doc_count, docs.len() as u32);
+        assert_eq!(deserialized.dense_dim, 128);
+        assert_eq!(deserialized.corpus_hash, corpus_hash);
+        assert_eq!(deserialized.docs.len(), docs.len());
+        assert_eq!(deserialized.doc_vectors.len(), doc_vectors.len());
+
+        for i in 0..docs.len() {
+            assert_eq!(deserialized.docs[i].uri, docs[i].uri);
+            assert_eq!(deserialized.docs[i].title, docs[i].title);
+            assert_eq!(deserialized.docs[i].content, docs[i].content);
+            assert_eq!(deserialized.docs[i].tier, docs[i].tier);
+            assert_eq!(deserialized.docs[i].intent, docs[i].intent);
+
+            // Vector bitwise equality
+            assert_eq!(deserialized.doc_vectors[i].0, doc_vectors[i].0);
+            assert_eq!(deserialized.doc_vectors[i].1, doc_vectors[i].1);
+        }
+
+        // Search equivalence on deserialized BM25
+        let orig_scores = bm25.score("cancellation tokens");
+        let deser_scores = deserialized.bm25.score("cancellation tokens");
+        assert_eq!(orig_scores, deser_scores);
+    }
+
+    #[test]
+    fn test_vfs_index_corrupted_checksum_detected() {
+        let vfs = ContextVfs::new();
+        let docs = vfs.collect_all_documents().unwrap();
+        let hasher = DenseFeatureHasher::new();
+        let mut bm25 = SparseBm25Index::new();
+        let mut doc_vectors = Vec::new();
+        for (idx, doc) in docs.iter().enumerate() {
+            bm25.add_document(idx, &doc.content);
+            doc_vectors.push((idx, hasher.vectorize(&doc.content)));
+        }
+
+        let corpus_hash = compute_corpus_hash(&docs);
+        let bytes = serialize_vfs_index(&docs, &bm25, &doc_vectors, corpus_hash, 1000).unwrap();
+
+        // Tamper with a payload byte
+        let mut corrupted_payload = bytes.clone();
+        corrupted_payload[10] ^= 0x55;
+        let err1 = deserialize_vfs_index(&corrupted_payload).unwrap_err();
+        assert!(
+            matches!(err1, VfsError::BackendError(msg) if msg.contains("SHA-256 checksum mismatch"))
+        );
+
+        // Tamper with trailer checksum
+        let mut corrupted_trailer = bytes.clone();
+        let last = corrupted_trailer.len() - 1;
+        corrupted_trailer[last] ^= 0x01;
+        let err2 = deserialize_vfs_index(&corrupted_trailer).unwrap_err();
+        assert!(
+            matches!(err2, VfsError::BackendError(msg) if msg.contains("SHA-256 checksum mismatch"))
+        );
+
+        // Truncated bytes
+        let truncated = &bytes[..40];
+        let err3 = deserialize_vfs_index(truncated).unwrap_err();
+        assert!(matches!(err3, VfsError::BackendError(msg) if msg.contains("too short")));
+    }
+
+    #[test]
+    fn test_vfs_index_invalidation_on_corpus_modification() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "pandora_vfs_inval_test_{}_{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let index_path = temp_dir.join("vfs.idx");
+
+        let vfs = ContextVfs::new();
+        vfs.set_index_path(&index_path);
+
+        // Initially not fresh (file doesn't exist)
+        assert!(!vfs.is_index_fresh(&index_path).unwrap());
+
+        // Save index
+        vfs.save_index_to_disk(&index_path).unwrap();
+        assert!(vfs.is_index_fresh(&index_path).unwrap());
+
+        // Read stats
+        let stats = read_index_stats(&index_path, Some(&vfs)).unwrap();
+        assert!(stats.checksum_valid);
+        assert!(stats.is_fresh);
+        assert_eq!(stats.dense_dimension, 128);
+
+        // Modify corpus: add new SOP
+        let new_sop = make_test_sop(
+            "sop-inval-test",
+            "New SOP Triggering Invalidation",
+            MemoryIntent::Procedure,
+            "cargo test --workspace",
+        );
+        vfs.add_sop(new_sop);
+
+        // Index is now stale!
+        assert!(!vfs.is_index_fresh(&index_path).unwrap());
+
+        // Search automatically detects stale index, rebuilds and persists it
+        let search_res = vfs.search("Triggering Invalidation", 5).unwrap();
+        assert!(!search_res.is_empty());
+        assert_eq!(search_res[0].title, "New SOP Triggering Invalidation");
+
+        // Now index is fresh again!
+        assert!(vfs.is_index_fresh(&index_path).unwrap());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_vfs_index_cold_start_performance() {
+        let vfs = ContextVfs::new();
+        // Add 15 records to simulate a realistic corpus
+        for i in 0..15 {
+            let rec = make_test_record(
+                &format!("perf-rec-{i}"),
+                MemoryTier::L1,
+                MemoryIntent::Coding,
+                &format!(
+                    "Persistent index performance benchmarking session entry {i} covering latency"
+                ),
+            );
+            vfs.add_memory_record(rec);
+        }
+
+        let docs = vfs.collect_all_documents().unwrap();
+        let hasher = DenseFeatureHasher::new();
+        let mut bm25 = SparseBm25Index::new();
+        let mut doc_vectors = Vec::new();
+        for (idx, doc) in docs.iter().enumerate() {
+            bm25.add_document(idx, &doc.content);
+            doc_vectors.push((idx, hasher.vectorize(&doc.content)));
+        }
+
+        let corpus_hash = compute_corpus_hash(&docs);
+        let bytes = serialize_vfs_index(&docs, &bm25, &doc_vectors, corpus_hash, 12345).unwrap();
+
+        // Cold-start deserialization must complete well within 5ms
+        let start = std::time::Instant::now();
+        let deserialized = deserialize_vfs_index(&bytes).unwrap();
+        let elapsed = start.elapsed();
+
+        assert_eq!(deserialized.doc_count, docs.len() as u32);
+        assert!(
+            elapsed < std::time::Duration::from_millis(5),
+            "cold-start deserialization took {:?}, expected < 5ms",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn test_vfs_search_results_equivalence() {
+        let vfs = ContextVfs::new();
+        let rec1 = make_test_record(
+            "equiv-1",
+            MemoryTier::L1,
+            MemoryIntent::Coding,
+            "Rust trait bounds and associated type parameters",
+        );
+        let rec2 = make_test_record(
+            "equiv-2",
+            MemoryTier::L2,
+            MemoryIntent::Repo,
+            "Workspace build configuration with w64devkit MinGW toolchain",
+        );
+        vfs.add_memory_record(rec1);
+        vfs.add_memory_record(rec2);
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "pandora_vfs_equiv_{}_{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let index_path = temp_dir.join("vfs.idx");
+        vfs.set_index_path(&index_path);
+
+        // Save index
+        vfs.save_index_to_disk(&index_path).unwrap();
+
+        // Query with cached/persistent index
+        let query = "trait bounds associated generics";
+        let results_cached = vfs.search(query, 5).unwrap();
+
+        // Create an unindexed VFS with identical content (pure on-the-fly)
+        let vfs_onthefly = ContextVfs::new();
+        let rec1_clone = make_test_record(
+            "equiv-1",
+            MemoryTier::L1,
+            MemoryIntent::Coding,
+            "Rust trait bounds and associated type parameters",
+        );
+        let rec2_clone = make_test_record(
+            "equiv-2",
+            MemoryTier::L2,
+            MemoryIntent::Repo,
+            "Workspace build configuration with w64devkit MinGW toolchain",
+        );
+        vfs_onthefly.add_memory_record(rec1_clone);
+        vfs_onthefly.add_memory_record(rec2_clone);
+        vfs_onthefly.set_index_path(temp_dir.join("nonexistent_vfs.idx"));
+        let results_onthefly = vfs_onthefly.search(query, 5).unwrap();
+
+        assert_eq!(results_cached.len(), results_onthefly.len());
+        for i in 0..results_cached.len() {
+            assert_eq!(results_cached[i].uri, results_onthefly[i].uri);
+            assert_eq!(results_cached[i].title, results_onthefly[i].title);
+            assert!(
+                (results_cached[i].hybrid_score - results_onthefly[i].hybrid_score).abs() < 1e-5
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

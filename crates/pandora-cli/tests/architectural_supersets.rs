@@ -280,6 +280,38 @@ fn contract_context_vfs_cli_and_in_memory() {
             .contains("Context virtual filesystem from file")
     );
 
+    // Test CLI: pandora memory vfs index
+    let resp_index = fixture.run(&["memory", "vfs", "index"]);
+    let val_index = resp_index.success("memory vfs index");
+    assert_eq!(val_index["status"], "indexed");
+    assert!(val_index["doc_count"].as_u64().unwrap() > 0);
+    assert_eq!(val_index["dense_dimension"], 128);
+    assert!(val_index["checksum_valid"].as_bool().unwrap());
+    assert!(val_index["is_fresh"].as_bool().unwrap());
+
+    // Test CLI: pandora memory vfs index again (should report up_to_date)
+    let resp_index2 = fixture.run(&["memory", "vfs", "index"]);
+    let val_index2 = resp_index2.success("memory vfs index");
+    assert_eq!(val_index2["status"], "up_to_date");
+
+    // Test CLI: pandora memory vfs index --rebuild
+    let resp_rebuild = fixture.run(&["memory", "vfs", "index", "--rebuild"]);
+    let val_rebuild = resp_rebuild.success("memory vfs index");
+    assert_eq!(val_rebuild["status"], "rebuilt");
+
+    // Test CLI: pandora memory vfs stats
+    let resp_stats = fixture.run(&["memory", "vfs", "stats"]);
+    let val_stats = resp_stats.success("memory vfs stats");
+    assert_eq!(val_stats["dense_dimension"], 128);
+    assert!(val_stats["doc_count"].as_u64().unwrap() > 0);
+    assert!(val_stats["checksum_valid"].as_bool().unwrap());
+    assert!(val_stats["is_fresh"].as_bool().unwrap());
+
+    // Test CLI: pandora memory vfs search using persistent index
+    let resp_search = fixture.run(&["memory", "vfs", "search", "pipeline vfs"]);
+    let val_search = resp_search.success("memory vfs search");
+    assert!(val_search["count"].as_u64().unwrap() > 0);
+
     // Traversal rejection tests
     assert!(matches!(
         ContextUri::new("pandora://sops/../meta"),
@@ -1410,7 +1442,35 @@ fn contract_release_manifests_generation_and_cosign_validation() {
 
     let out_dir = fixture.workspace.join("manifests_out");
 
-    let status = Command::new("python")
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf();
+
+    let python_bin = {
+        let mut candidate = PathBuf::from("python");
+        if let Some(parent) = repo_root.parent() {
+            let embed = parent.join("python-embed").join("python.exe");
+            if embed.is_file() {
+                candidate = embed;
+            }
+        }
+        if candidate.as_os_str() == "python" {
+            for name in &["python3", "python", "python.exe", "py"] {
+                if let Ok(out) = Command::new(name).arg("--version").output()
+                    && out.status.success()
+                {
+                    candidate = PathBuf::from(name);
+                    break;
+                }
+            }
+        }
+        candidate
+    };
+
+    let status = Command::new(python_bin)
         .args([
             "scripts/generate_release_manifests.py",
             "v2.0.0",
@@ -1419,13 +1479,7 @@ fn contract_release_manifests_generation_and_cosign_validation() {
             "--output-dir",
             out_dir.to_str().unwrap(),
         ])
-        .current_dir(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .unwrap()
-                .parent()
-                .unwrap(),
-        )
+        .current_dir(&repo_root)
         .status()
         .expect("run generate_release_manifests.py");
 

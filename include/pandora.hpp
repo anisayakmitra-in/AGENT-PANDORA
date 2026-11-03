@@ -1,6 +1,6 @@
 /**
  * @file pandora.hpp
- * @brief Modern C++20 Header-Only Client for AGENT-PANDORA v3.0.1.
+ * @brief Modern C++20 Header-Only Client for AGENT-PANDORA v3.0.2.
  *
  * Implements RAII resource management, structured envelope handling,
  * and vector dot product acceleration.
@@ -95,6 +95,20 @@ public:
         const std::array<float, kDenseDimension>& b
     ) const noexcept {
         return pandora_simd_dot_product_128(a.data(), b.data());
+    }
+
+    [[nodiscard]] float SimdDotProductAvx2(
+        const std::array<float, kDenseDimension>& a,
+        const std::array<float, kDenseDimension>& b
+    ) const noexcept {
+        return pandora_simd_dot_product_128_avx2(a.data(), b.data());
+    }
+
+    [[nodiscard]] float SimdDotProductScalar(
+        const std::array<float, kDenseDimension>& a,
+        const std::array<float, kDenseDimension>& b
+    ) const noexcept {
+        return pandora_simd_dot_product_128_scalar(a.data(), b.data());
     }
 
     [[nodiscard]] bool HasAvx2() const noexcept {

@@ -8,6 +8,7 @@ use pandora_runtime::{
     ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, ContextSearchOptions,
     ContextVfs, MemoryEngine, MemoryError, MemorySynthesisScheduleError,
     MemorySynthesisScheduleStore, MeshSyncEngine, PeerIdentity, ReflexionCrystallizer, VfsError,
+    read_index_stats,
 };
 use pandora_types::{
     ContextClassification, ContextUri, ExecutionId, FeatureMap, GeneId, JobWorkerId,
@@ -751,13 +752,15 @@ fn capsule_import(args: &[String]) -> Result<CommandResult, CliError> {
 }
 
 fn vfs(args: &[String]) -> Result<CommandResult, CliError> {
-    let subcommand = args
-        .first()
-        .ok_or_else(|| CliError::usage("memory vfs requires 'ls', 'cat', or 'search'"))?;
+    let subcommand = args.first().ok_or_else(|| {
+        CliError::usage("memory vfs requires 'ls', 'cat', 'search', 'index', or 'stats'")
+    })?;
     match subcommand.as_str() {
         "ls" => vfs_ls(&args[1..]),
         "cat" => vfs_cat(&args[1..]),
         "search" => vfs_search(&args[1..]),
+        "index" => vfs_index(&args[1..]),
+        "stats" => vfs_stats(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown memory vfs command '{unknown}'"
         ))),
@@ -888,7 +891,16 @@ fn vfs_cat(args: &[String]) -> Result<CommandResult, CliError> {
 fn vfs_search(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
         args,
-        &["config", "data-dir", "workspace", "limit", "tier", "intent"],
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "limit",
+            "tier",
+            "intent",
+            "reindex",
+            "no-cache",
+        ],
     )?;
     let query = if !parsed.positionals.is_empty() {
         parsed.positionals.join(" ")
@@ -936,6 +948,17 @@ fn vfs_search(args: &[String]) -> Result<CommandResult, CliError> {
     } else {
         ContextVfs::new()
     };
+    load_workspace_feature_map(config.workspace_dir(), &vfs);
+
+    let index_file = config.workspace_dir().join(".pandora/indices/vfs.idx");
+    if parsed.has_flag("no-cache") {
+        vfs.clear_cached_index();
+    } else {
+        vfs.set_index_path(&index_file);
+        if parsed.has_flag("reindex") {
+            let _ = vfs.save_index_to_disk(&index_file);
+        }
+    }
 
     let mut options = ContextSearchOptions::new(limit);
     if let Some(tier) = tier_filter {
@@ -974,6 +997,172 @@ fn vfs_search(args: &[String]) -> Result<CommandResult, CliError> {
     });
 
     Ok(success("memory vfs search", payload, human))
+}
+
+fn vfs_index(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "rebuild", "output"],
+    )?;
+    let config = load_config(&parsed)?;
+    let (_, tenant, default_workspace) = session_scope();
+    let workspace = parsed
+        .value("workspace")
+        .map(|v| WorkspaceId::new(v.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("workspace ID is invalid"))?
+        .unwrap_or(default_workspace);
+
+    let vfs = if config.config_path().is_file() {
+        if let Ok(store) = session_store(&config) {
+            if let Ok(vfs) = ContextVfs::from_session_store(&store, &tenant, &workspace) {
+                load_workspace_feature_map(config.workspace_dir(), &vfs);
+                vfs
+            } else {
+                ContextVfs::new()
+            }
+        } else {
+            ContextVfs::new()
+        }
+    } else {
+        ContextVfs::new()
+    };
+    load_workspace_feature_map(config.workspace_dir(), &vfs);
+
+    let output_path = if let Some(out) = parsed.value("output") {
+        std::path::PathBuf::from(out)
+    } else {
+        config.workspace_dir().join(".pandora/indices/vfs.idx")
+    };
+    vfs.set_index_path(&output_path);
+
+    let rebuild = parsed.has_flag("rebuild");
+    let is_already_fresh = vfs.is_index_fresh(&output_path).unwrap_or(false);
+
+    let status = if !rebuild && is_already_fresh {
+        "up_to_date"
+    } else {
+        vfs.save_index_to_disk(&output_path).map_err(|e| {
+            CliError::execution(
+                e.to_string(),
+                json!({"path": output_path.display().to_string()}),
+            )
+        })?;
+        if rebuild { "rebuilt" } else { "indexed" }
+    };
+
+    let stats = read_index_stats(&output_path, Some(&vfs)).map_err(|e| {
+        CliError::execution(
+            e.to_string(),
+            json!({"path": output_path.display().to_string()}),
+        )
+    })?;
+
+    let payload = json!({
+        "path": output_path.display().to_string(),
+        "status": status,
+        "doc_count": stats.doc_count,
+        "vocab_size": stats.vocab_size,
+        "dense_dimension": stats.dense_dimension,
+        "total_tokens": stats.total_tokens,
+        "size_bytes": stats.size_bytes,
+        "created_at_unix": stats.created_at_unix,
+        "corpus_hash": stats.corpus_hash,
+        "checksum_valid": stats.checksum_valid,
+        "is_fresh": stats.is_fresh,
+    });
+
+    let human = format!(
+        "Persisted VFS semantic index to {} ({} documents, {} terms, {} bytes, status: {})",
+        output_path.display(),
+        stats.doc_count,
+        stats.vocab_size,
+        stats.size_bytes,
+        status,
+    );
+
+    Ok(success("memory vfs index", payload, human))
+}
+
+fn vfs_stats(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "path"])?;
+    let config = load_config(&parsed)?;
+    let (_, tenant, default_workspace) = session_scope();
+    let workspace = parsed
+        .value("workspace")
+        .map(|v| WorkspaceId::new(v.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("workspace ID is invalid"))?
+        .unwrap_or(default_workspace);
+
+    let index_path = if let Some(p) = parsed.value("path") {
+        std::path::PathBuf::from(p)
+    } else {
+        config.workspace_dir().join(".pandora/indices/vfs.idx")
+    };
+
+    if !index_path.is_file() {
+        return Err(CliError::execution(
+            format!("VFS index file not found at {}", index_path.display()),
+            json!({
+                "path": index_path.display().to_string(),
+                "exists": false,
+            }),
+        ));
+    }
+
+    let vfs = if config.config_path().is_file() {
+        if let Ok(store) = session_store(&config) {
+            if let Ok(vfs) = ContextVfs::from_session_store(&store, &tenant, &workspace) {
+                load_workspace_feature_map(config.workspace_dir(), &vfs);
+                Some(vfs)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let stats = read_index_stats(&index_path, vfs.as_ref()).map_err(|e| {
+        CliError::execution(
+            e.to_string(),
+            json!({"path": index_path.display().to_string()}),
+        )
+    })?;
+
+    let payload = json!({
+        "path": index_path.display().to_string(),
+        "size_bytes": stats.size_bytes,
+        "doc_count": stats.doc_count,
+        "vocab_size": stats.vocab_size,
+        "dense_dimension": stats.dense_dimension,
+        "total_tokens": stats.total_tokens,
+        "created_at_unix": stats.created_at_unix,
+        "corpus_hash": stats.corpus_hash,
+        "checksum_valid": stats.checksum_valid,
+        "is_fresh": stats.is_fresh,
+    });
+
+    let human = format!(
+        "VFS index stats for {}: {} docs, {} terms, dim {}, {} tokens, {} bytes (checksum: {}, fresh: {})",
+        index_path.display(),
+        stats.doc_count,
+        stats.vocab_size,
+        stats.dense_dimension,
+        stats.total_tokens,
+        stats.size_bytes,
+        if stats.checksum_valid {
+            "VALID"
+        } else {
+            "INVALID"
+        },
+        if stats.is_fresh { "YES" } else { "NO" },
+    );
+
+    Ok(success("memory vfs stats", payload, human))
 }
 
 fn load_workspace_feature_map(workspace_dir: &std::path::Path, vfs: &ContextVfs) {

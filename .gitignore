@@ -28,3 +28,4 @@ npm/pandora-cli/node_modules/
 # node_modules; the audit's clean-tree check treats any untracked path as a dirty
 # product tree, so it is ignored here rather than committed.
 /workspace/
+.pandora/

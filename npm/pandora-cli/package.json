@@ -1,6 +1,6 @@
 {
   "name": "pandora-agent",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "Verified native launcher for the Pandora Agent CLI",
   "license": "Apache-2.0",
   "repository": "github:anisayakmitra-in/AGENT-PANDORA",
@@ -20,7 +20,8 @@
     }
   },
   "scripts": {
-    "build": "tsc --project tsconfig.json"
+    "build": "tsc --project tsconfig.json",
+    "test": "node ../../scripts/test_typescript_client.js"
   },
   "bin": {
     "pandora": "bin/pandora.js"

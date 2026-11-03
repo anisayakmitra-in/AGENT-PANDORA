@@ -1,7 +1,7 @@
-# Project: AGENT-PANDORA v3.0.1 Advanced Capabilities
+# Project: AGENT-PANDORA v3.0.2 Advanced Capabilities
 
 ## Architecture
-AGENT-PANDORA v3.0.1 is an autonomous software engineering agent running across 7 workspace crates:
+AGENT-PANDORA v3.0.2 is an autonomous software engineering agent running across 7 workspace crates:
 - `pandora-types`: Core schemas, protocols, errors, URIs, and validation contracts.
 - `pandora-runtime`: Execution engine, tool runtime, session store, ContextVfs, git executors, and agent loop.
 - `pandora-harnesses`: Verification genes (Contract, Golden, Property, Guide, Visual) and test harnesses.
@@ -19,7 +19,7 @@ Platform & Toolchain Invariants:
 - Rust toolchain: `stable-x86_64-pc-windows-gnu`
 - MinGW GCC: `w64devkit` (GCC 16.2.0)
 - Python embed: Portable Python 3.11.9 (`sandbox-workspace/python-embed/python.exe`)
-- Active version: `3.0.1`
+- Active version: `3.0.2`
 - `#![forbid(unsafe_code)]`: Enforced across all crates (`pandora-types`, `pandora-runtime`, `pandora-harnesses`, `pandora-provider`, `pandora-service`, `pandora-cli`).
 
 ---
@@ -122,7 +122,7 @@ Platform & Toolchain Invariants:
   - TypeScript client `npm/pandora-cli` passes `npm run build` and client tests.
   - Native C++ FFI module compiled with GCC 16.2.0.
   - `#![forbid(unsafe_code)]` preserved across all crates.
-  - Scripts `validate_docs.py`, `validate_repo.py`, `release_identity.py v3.0.1` pass with code 0.
+  - Scripts `validate_docs.py`, `validate_repo.py`, `release_identity.py v3.0.2` pass with code 0.
 
 ---
 

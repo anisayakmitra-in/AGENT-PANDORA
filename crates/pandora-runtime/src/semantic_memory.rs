@@ -271,6 +271,46 @@ impl SparseBm25Index {
         self.doc_count
     }
 
+    /// Access the inverted postings map: term -> Vec<(doc_id, tf)>.
+    pub fn postings(&self) -> &HashMap<String, Vec<(usize, u32)>> {
+        &self.postings
+    }
+
+    /// Access document token lengths: doc_id -> token_count.
+    pub fn doc_lengths(&self) -> &HashMap<usize, usize> {
+        &self.doc_lengths
+    }
+
+    /// Total number of tokens indexed across all documents.
+    pub fn total_tokens(&self) -> usize {
+        self.total_tokens
+    }
+
+    /// Restores a `SparseBm25Index` from state components.
+    pub fn from_parts(
+        postings: HashMap<String, Vec<(usize, u32)>>,
+        doc_lengths: HashMap<usize, usize>,
+        doc_count: usize,
+        total_tokens: usize,
+    ) -> Self {
+        Self {
+            postings,
+            doc_lengths,
+            doc_count,
+            total_tokens,
+        }
+    }
+
+    /// Alias for `from_parts` for compatibility with raw state restoration.
+    pub fn from_raw_parts(
+        postings: HashMap<String, Vec<(usize, u32)>>,
+        doc_lengths: HashMap<usize, usize>,
+        doc_count: usize,
+        total_tokens: usize,
+    ) -> Self {
+        Self::from_parts(postings, doc_lengths, doc_count, total_tokens)
+    }
+
     /// Adds a document to the index.
     pub fn add_document(&mut self, doc_id: usize, text: &str) {
         let tokens = tokenize(text);
@@ -333,7 +373,11 @@ impl SparseBm25Index {
         }
 
         let mut scored_docs: Vec<(usize, f32)> = scores.into_iter().collect();
-        scored_docs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored_docs.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(&b.0))
+        });
         scored_docs
     }
 }
@@ -440,7 +484,11 @@ impl DenseFeatureHasher {
             .iter()
             .map(|(doc_id, doc_vec)| (*doc_id, self.cosine_similarity(query_vec, doc_vec)))
             .collect();
-        scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scores.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(&b.0))
+        });
         scores
     }
 }
@@ -526,6 +574,7 @@ impl HybridRrfRanker {
             b.hybrid_score
                 .partial_cmp(&a.hybrid_score)
                 .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.doc_id.cmp(&b.doc_id))
         });
         results
     }
@@ -787,5 +836,27 @@ mod tests {
         let content = "The system constitutional rule requires architectural integrity. All code changes must be verified with tests and strict bounds.";
         let snippet = generate_snippet(content, "architectural integrity");
         assert!(snippet.contains("architectural integrity"));
+    }
+
+    #[test]
+    fn test_sparse_bm25_export_restore_scoring_equivalence() {
+        let mut original = SparseBm25Index::new();
+        original.add_document(0, "compiler diagnostics type mismatch error");
+        original.add_document(1, "system constitutional integrity and rules");
+        original.add_document(2, "type mismatch in language server diagnostics");
+
+        let original_scores = original.score("type mismatch");
+
+        let restored = SparseBm25Index::from_parts(
+            original.postings().clone(),
+            original.doc_lengths().clone(),
+            original.doc_count(),
+            original.total_tokens(),
+        );
+
+        let restored_scores = restored.score("type mismatch");
+        assert_eq!(original_scores, restored_scores);
+        assert_eq!(original.doc_count(), restored.doc_count());
+        assert_eq!(original.total_tokens(), restored.total_tokens());
     }
 }

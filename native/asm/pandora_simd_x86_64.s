@@ -1,12 +1,13 @@
 /*
  * pandora_simd_x86_64.s
- * Pure x86_64 Assembly implementation for AGENT-PANDORA v3.0.1.
+ * Pure x86_64 Assembly implementation for AGENT-PANDORA v3.0.2.
  * Provides CPUID feature detection and AVX/SSE vector dot product.
  * Target ABI: x86_64 Windows (RCX, RDX, R8, R9 calling convention).
  */
 
 .text
 .globl pandora_simd_dot_product_128_asm
+.globl pandora_simd_dot_product_128_avx2_asm
 .globl pandora_cpuid_features_asm
 
 /*
@@ -60,6 +61,65 @@ pandora_simd_dot_product_128_asm:
     movshdup %xmm0, %xmm1
     addss   %xmm1, %xmm0
 
+    ret
+
+/*
+ * float pandora_simd_dot_product_128_avx2_asm(const float* a, const float* b)
+ * 256-bit AVX2 SIMD dot product unrolled 4x (32 floats / 128 bytes per iteration).
+ * RCX = pointer to array a (128 floats = 512 bytes)
+ * RDX = pointer to array b (128 floats = 512 bytes)
+ * Return: %xmm0 = dot product float
+ */
+pandora_simd_dot_product_128_avx2_asm:
+    vxorps %ymm0, %ymm0, %ymm0  /* accumulator ymm0 */
+    vxorps %ymm1, %ymm1, %ymm1  /* accumulator ymm1 */
+    vxorps %ymm2, %ymm2, %ymm2  /* accumulator ymm2 */
+    vxorps %ymm3, %ymm3, %ymm3  /* accumulator ymm3 */
+
+    movq $0, %rax               /* loop offset in bytes */
+
+.loop_avx2:
+    /* Load and multiply 32 floats (128 bytes) per iteration unrolled 4x */
+    vmovups (%rcx, %rax), %ymm4
+    vmovups (%rdx, %rax), %ymm5
+    vmulps  %ymm5, %ymm4, %ymm4
+    vaddps  %ymm4, %ymm0, %ymm0
+
+    vmovups 32(%rcx, %rax), %ymm6
+    vmovups 32(%rdx, %rax), %ymm7
+    vmulps  %ymm7, %ymm6, %ymm6
+    vaddps  %ymm6, %ymm1, %ymm1
+
+    vmovups 64(%rcx, %rax), %ymm4
+    vmovups 64(%rdx, %rax), %ymm5
+    vmulps  %ymm5, %ymm4, %ymm4
+    vaddps  %ymm4, %ymm2, %ymm2
+
+    vmovups 96(%rcx, %rax), %ymm6
+    vmovups 96(%rdx, %rax), %ymm7
+    vmulps  %ymm7, %ymm6, %ymm6
+    vaddps  %ymm6, %ymm3, %ymm3
+
+    addq $128, %rax
+    cmpq $512, %rax             /* 128 floats * 4 bytes = 512 bytes */
+    jl .loop_avx2
+
+    /* Accumulate 4 YMM registers into %ymm0 */
+    vaddps %ymm1, %ymm0, %ymm0
+    vaddps %ymm3, %ymm2, %ymm2
+    vaddps %ymm2, %ymm0, %ymm0
+
+    /* Extract upper 128 bits of %ymm0 to %xmm1 and add to lower 128 bits */
+    vextractf128 $1, %ymm0, %xmm1
+    vaddps %xmm1, %xmm0, %xmm0
+
+    /* Horizontal add across the 4 single-precision floats in %xmm0 */
+    vshufps $0x4e, %xmm0, %xmm0, %xmm1
+    vaddps  %xmm1, %xmm0, %xmm0
+    vshufps $0xb1, %xmm0, %xmm0, %xmm1
+    vaddss  %xmm1, %xmm0, %xmm0
+
+    vzeroupper
     ret
 
 /*

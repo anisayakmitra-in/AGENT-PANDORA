@@ -1,5 +1,31 @@
 # Changelog
 
+## v3.0.2
+
+### Persistent Semantic Vector Index to Disk (`ContextVfs`)
+- **Binary Index Serialization & Deserialization (`.pandora/indices/vfs.idx`)**:
+  - High-performance binary VFS serialization and cold-start deserialization (`PVFS` v1 format) storing Okapi BM25 indices and 128-dimensional dense embeddings.
+  - Instantaneous cold-start retrieval with zero network dependencies and cryptographic SHA-256 integrity validation.
+  - Dedicated CLI commands for index management: `pandora memory vfs index` and `pandora memory vfs stats`.
+
+### Live External Messaging Gateway Service (`scripts/gateway/pandora_bridge.py`)
+- **Bidirectional Event Streaming Service**:
+  - Multi-threaded local HTTP webhook receiver (`POST /webhook`) with optional Bearer token authentication.
+  - High-throughput TCP socket server streaming NDJSON event frames bidirectionally.
+  - Live subprocess execution runner streaming line-by-line tool executions and responses.
+  - Dedicated service mode (`--service`) and automated integration test suite (`scripts/test_gateway_service.py`).
+
+### Live LSP Diagnostics Watcher (`pandora lsp`)
+- **Real-Time Workspace Diagnostics Daemon**:
+  - Background daemon thread watching workspace file modifications with debounced compilation feedback.
+  - Real-time visual pill status badges (`[Err]`, `[Warn]`, `[Clean]`) in the interactive TUI header bar and status line.
+  - Interactive `/diagnostics` palette modal with severity filtering and rapid error navigation.
+
+### SIMD Acceleration & Benchmark Suite
+- **AVX2 Dot Product Acceleration**:
+  - 256-bit AVX2 assembly dot product vector acceleration with runtime CPUID dynamic dispatch and scalar fallback for non-AVX2 CPUs.
+  - Benchmark suite measuring latency, throughput, and speedup ratios comparing AVX2 and scalar Rust implementations.
+
 ## v3.0.1
 
 ### External Messaging Gateway Bridge (`scripts/gateway/`)

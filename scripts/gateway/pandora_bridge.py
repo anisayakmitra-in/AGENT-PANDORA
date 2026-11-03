@@ -1,18 +1,4 @@
-#!/usr/bin/env python3
-"""
-Pandora External Messaging Gateway (Telegram & Discord Bridge)
-=============================================================
-A local-first, zero-dependency bridge connecting AGENT-PANDORA's constitutional
-agent runtime to Telegram and Discord.
-
-Capabilities:
-- Remote Agent Execution: Run governed tasks via /run <task> or /chat <msg>
-- Human-In-The-Loop Governance: Inspect and resolve effect permits (/approvals, /approve, /reject)
-- Autonomous Background Watcher: Polls scheduled cron jobs and dispatches alerts
-- Zero external dependencies: Built entirely on Python standard library (urllib, json, subprocess)
-"""
-
-import os
+﻿import os
 import sys
 import time
 import json
@@ -20,6 +6,9 @@ import logging
 import argparse
 import threading
 import subprocess
+import socket
+import socketserver
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib import request, parse, error
 
@@ -44,13 +33,36 @@ def find_pandora_binary() -> str:
         if candidate.is_file():
             return str(candidate)
     
-    # Fallback to system PATH lookup
     from shutil import which
     path_bin = which("pandora")
     if path_bin:
         return path_bin
         
-    return str(repo_root / "target" / "debug" / "pandora.exe")
+    return str(repo_root / "target" / "debug" / ("pandora.exe" if sys.platform == "win32" else "pandora"))
+
+
+class LiveProcessRunner:
+    """Executes child process and yields output lines in real-time."""
+
+    def __init__(self, binary_path: str = None):
+        self.binary_path = binary_path or find_pandora_binary()
+
+    def stream_execution(self, args: list):
+        cmd = [self.binary_path] + args
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+            for line in iter(proc.stdout.readline, ''):
+                yield line
+            proc.stdout.close()
+            proc.wait()
+        except Exception as e:
+            yield f"[ERROR] Execution failed: {e}\n"
 
 
 class PandoraClient:
@@ -118,6 +130,158 @@ class PandoraClient:
         return self.execute_json(["tool", "list"])
 
 
+class GatewayWebhookHandler(BaseHTTPRequestHandler):
+    """Handles HTTP Webhook calls for external service triggers."""
+    client: PandoraClient = None
+    auth_token: str = None
+
+    def log_message(self, format, *args):
+        pass
+
+    def do_GET(self):
+        if self.path in ("/health", "/status"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            resp = {
+                "status": "healthy",
+                "service": "pandora-messaging-gateway",
+                "version": "3.0.2",
+                "timestamp": time.time(),
+            }
+            self.wfile.write(json.dumps(resp).encode("utf-8"))
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        if self.auth_token:
+            auth_header = self.headers.get("Authorization", "")
+            if not auth_header.startswith("Bearer ") or auth_header[7:] != self.auth_token:
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "unauthorized"}).encode("utf-8"))
+                return
+
+        content_length = int(self.headers.get("Content-Length", 0))
+        post_data = self.rfile.read(content_length)
+        try:
+            payload = json.loads(post_data.decode("utf-8")) if post_data else {}
+        except Exception as e:
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": f"invalid json: {e}"}).encode("utf-8"))
+            return
+
+        event_type = payload.get("event", "generic")
+        task = payload.get("task")
+        
+        result = {"event": event_type, "status": "processed"}
+        if task and self.client:
+            res = self.client.run_agent_task(task, max_turns=payload.get("max_turns", 3))
+            result["result"] = res
+        elif payload.get("action") == "doctor" and self.client:
+            result["doctor"] = self.client.doctor()
+        elif payload.get("action") == "tools" and self.client:
+            result["tools"] = self.client.list_tools()
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(result).encode("utf-8"))
+
+
+class GatewayHttpWebhookServer:
+    """Threaded HTTP Webhook Gateway Server."""
+
+    def __init__(self, host: str = "127.0.0.1", port: int = 8088, client: PandoraClient = None, auth_token: str = None):
+        self.host = host
+        self.port = port
+        self.client = client or PandoraClient()
+        self.auth_token = auth_token
+        
+        class CustomHandler(GatewayWebhookHandler):
+            pass
+        CustomHandler.client = self.client
+        CustomHandler.auth_token = self.auth_token
+        
+        self.server = HTTPServer((self.host, self.port), CustomHandler)
+        self.server.allow_reuse_address = True
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    def start(self):
+        self.thread.start()
+        logger.info("Gateway HTTP Webhook Server listening on http://%s:%d", self.host, self.port)
+
+    def stop(self):
+        self.server.shutdown()
+        self.server.server_close()
+        logger.info("Gateway HTTP Webhook Server stopped.")
+
+
+class GatewaySocketHandler(socketserver.StreamRequestHandler):
+    """Handles streaming bidirectional NDJSON frames over TCP socket."""
+    client: PandoraClient = None
+
+    def handle(self):
+        while True:
+            line = self.rfile.readline()
+            if not line:
+                break
+            try:
+                msg = json.loads(line.decode("utf-8").strip())
+            except Exception as e:
+                err_resp = {"status": "error", "message": f"invalid ndjson: {e}"}
+                self.wfile.write((json.dumps(err_resp) + "\n").encode("utf-8"))
+                self.wfile.flush()
+                continue
+
+            action = msg.get("action", "")
+            if action == "ping":
+                resp = {"status": "pong", "timestamp": time.time()}
+            elif action == "doctor" and self.client:
+                resp = {"status": "ok", "doctor": self.client.doctor()}
+            elif action == "tools" and self.client:
+                resp = {"status": "ok", "tools": self.client.list_tools()}
+            elif action == "run" and self.client:
+                prompt = msg.get("prompt", "")
+                res = self.client.run_agent_task(prompt, max_turns=msg.get("max_turns", 2))
+                resp = {"status": "completed", "result": res}
+            else:
+                resp = {"status": "error", "message": f"unknown action: {action}"}
+
+            self.wfile.write((json.dumps(resp) + "\n").encode("utf-8"))
+            self.wfile.flush()
+
+
+class GatewayTcpServer:
+    """Threaded TCP Socket Server for bidirectional NDJSON streaming."""
+
+    def __init__(self, host: str = "127.0.0.1", port: int = 8089, client: PandoraClient = None):
+        self.host = host
+        self.port = port
+        self.client = client or PandoraClient()
+
+        class CustomHandler(GatewaySocketHandler):
+            pass
+        CustomHandler.client = self.client
+
+        socketserver.ThreadingTCPServer.allow_reuse_address = True
+        self.server = socketserver.ThreadingTCPServer((self.host, self.port), CustomHandler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    def start(self):
+        self.thread.start()
+        logger.info("Gateway TCP Socket Server listening on %s:%d", self.host, self.port)
+
+    def stop(self):
+        self.server.shutdown()
+        self.server.server_close()
+        logger.info("Gateway TCP Socket Server stopped.")
+
+
 class TelegramBridge:
     """Connects Pandora to Telegram via long-polling (zero webhooks/open ports required)."""
 
@@ -142,7 +306,6 @@ class TelegramBridge:
             return {"ok": False, "error": str(e)}
 
     def send_message(self, chat_id: int, text: str, parse_mode: str = "Markdown") -> bool:
-        """Sends a text message, splitting into chunks if exceeding 4000 characters."""
         max_chunk = 4000
         lines = text.split("\n")
         chunks = []
@@ -163,7 +326,6 @@ class TelegramBridge:
                 payload["parse_mode"] = parse_mode
             res = self._request("sendMessage", payload)
             if not res.get("ok") and parse_mode:
-                # Fallback to plain text if markdown formatting failed
                 payload.pop("parse_mode")
                 res = self._request("sendMessage", payload)
             if not res.get("ok"):
@@ -188,7 +350,6 @@ class TelegramBridge:
                 "• `/tools` — Inspect active tool catalog\n"
             )
             self.send_message(chat_id, msg)
-
         elif command == "/doctor":
             self.send_message(chat_id, "🔍 *Running diagnostics...*")
             res = self.pandora.doctor()
@@ -197,7 +358,6 @@ class TelegramBridge:
             status_text = "All systems healthy" if healthy else "Issues detected"
             msg = f"{icon} *Pandora Doctor*: {status_text}\n```json\n{json.dumps(res, indent=2)[:3000]}\n```"
             self.send_message(chat_id, msg)
-
         elif command == "/run":
             if not args:
                 self.send_message(chat_id, "⚠️ Usage: `/run <your task description>`")
@@ -210,7 +370,6 @@ class TelegramBridge:
             status = res.get("status", "completed")
             msg = f"✨ *Task Finished* ({status})\n*Turns:* {turns} | *Tokens:* {tokens}\n\n{output}"
             self.send_message(chat_id, msg, parse_mode=None)
-
         elif command == "/approvals":
             res = self.pandora.list_approvals()
             approvals = res.get("details", {}).get("approvals", []) or res.get("approvals", [])
@@ -222,7 +381,6 @@ class TelegramBridge:
                     msg += f"• `{app.get('id')}`: {app.get('summary', 'Effect Request')}\n"
                 msg += "\nUse `/approve <id>` or `/reject <id>` to resolve."
                 self.send_message(chat_id, msg)
-
         elif command in ("/approve", "/reject"):
             decision = "accept" if command == "/approve" else "reject"
             if not args:
@@ -232,7 +390,6 @@ class TelegramBridge:
             res = self.pandora.resolve_approval(approval_id, decision)
             msg = f"⚖️ Approval `{approval_id}`: *{decision.upper()}ED*\n```json\n{json.dumps(res, indent=2)}\n```"
             self.send_message(chat_id, msg)
-
         elif command == "/cron":
             res = self.pandora.list_cron()
             jobs = res.get("details", {}).get("jobs", []) or res.get("jobs", [])
@@ -243,19 +400,16 @@ class TelegramBridge:
                 for j in jobs:
                     msg += f"• `{j.get('id')}` [{j.get('schedule')}]: {j.get('command')}\n"
                 self.send_message(chat_id, msg)
-
         elif command == "/tools":
             res = self.pandora.list_tools()
             tools = res.get("details", {}).get("tools", []) or res.get("tools", [])
             count = len(tools)
             msg = f"🛠 *Active Governed Tools:* {count} available."
             self.send_message(chat_id, msg)
-
         else:
             self.send_message(chat_id, f"❓ Unknown command: `{command}`. Type `/help` for list of commands.")
 
     def poll(self):
-        """Single long-polling tick."""
         res = self._request("getUpdates", {"offset": self.last_update_id + 1, "timeout": 25})
         if not res.get("ok"):
             return
@@ -348,7 +502,7 @@ class AutonomousCronMonitor(threading.Thread):
                             self.telegram.send_message(cid, alert)
             except Exception as e:
                 logger.error("Error checking due cron jobs: %s", e)
-            time.sleep(self.interval_sec)
+                time.sleep(self.interval_sec)
 
     def stop(self):
         self._running = False
@@ -362,6 +516,12 @@ def main():
     parser.add_argument("--cron-interval", type=int, default=60, help="Cron check interval in seconds")
     parser.add_argument("--smoke", action="store_true", help="Run self-diagnostic check and exit")
     parser.add_argument("--test-run", type=str, help="Test live agent execution with prompt and exit")
+    parser.add_argument("--service", action="store_true", help="Run in persistent service mode with Webhook and Socket gateways")
+    parser.add_argument("--webhook-host", default="127.0.0.1", help="HTTP Webhook server host")
+    parser.add_argument("--webhook-port", type=int, default=8088, help="HTTP Webhook server port")
+    parser.add_argument("--webhook-token", default=os.environ.get("PANDORA_WEBHOOK_TOKEN"), help="Bearer token for webhook")
+    parser.add_argument("--socket-host", default="127.0.0.1", help="TCP Socket server host")
+    parser.add_argument("--socket-port", type=int, default=8089, help="TCP Socket server port")
     args = parser.parse_args()
 
     client = PandoraClient()
@@ -410,17 +570,41 @@ def main():
     cron_monitor = AutonomousCronMonitor(client, telegram_bridge, discord_notifier, interval_sec=args.cron_interval)
     cron_monitor.start()
 
-    if telegram_bridge:
-        telegram_bridge.run_forever()
-    else:
-        logger.info("Telegram token not set. Running in headless cron/event notification mode.")
-        logger.info("Tip: Set TELEGRAM_BOT_TOKEN or DISCORD_WEBHOOK_URL to enable live chat bridges.")
-        try:
+    webhook_server = None
+    socket_server = None
+
+    if args.service:
+        logger.info("Starting AGENT-PANDORA Gateway in full service mode...")
+        webhook_server = GatewayHttpWebhookServer(
+            host=args.webhook_host,
+            port=args.webhook_port,
+            client=client,
+            auth_token=args.webhook_token,
+        )
+        webhook_server.start()
+
+        socket_server = GatewayTcpServer(
+            host=args.socket_host,
+            port=args.socket_port,
+            client=client,
+        )
+        socket_server.start()
+
+    try:
+        if telegram_bridge:
+            telegram_bridge.run_forever()
+        else:
+            logger.info("Gateway running. Press Ctrl+C to terminate.")
             while True:
                 time.sleep(1)
-        except KeyboardInterrupt:
-            cron_monitor.stop()
-            logger.info("Bridge stopped.")
+    except KeyboardInterrupt:
+        logger.info("Shutting down gateway services...")
+        if webhook_server:
+            webhook_server.stop()
+        if socket_server:
+            socket_server.stop()
+        cron_monitor.stop()
+        logger.info("Bridge stopped cleanly.")
 
 
 if __name__ == "__main__":

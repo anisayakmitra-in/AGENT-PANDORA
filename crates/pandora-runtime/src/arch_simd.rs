@@ -121,6 +121,64 @@ pub fn simd_dot_product_128(a: &[f32; 128], b: &[f32; 128]) -> f32 {
     (sum0 + sum1) + (sum2 + sum3) + (sum4 + sum5) + (sum6 + sum7)
 }
 
+/// Computes dot product using naive scalar loop as a baseline reference and fallback.
+pub fn scalar_dot_product_128(a: &[f32; 128], b: &[f32; 128]) -> f32 {
+    let mut sum = 0.0f32;
+    for i in 0..128 {
+        sum += a[i] * b[i];
+    }
+    sum
+}
+
+/// Benchmark result comparing SIMD unrolled execution vs scalar baseline.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SimdBenchmarkResult {
+    pub iterations: usize,
+    pub scalar_duration_nanos: u128,
+    pub simd_duration_nanos: u128,
+    pub speedup_ratio: f64,
+}
+
+/// Measures microbenchmark performance across SIMD and scalar dot product implementations.
+pub fn benchmark_simd_vs_scalar(iterations: usize) -> SimdBenchmarkResult {
+    let mut a = [0.0f32; 128];
+    let mut b = [0.0f32; 128];
+    for i in 0..128 {
+        a[i] = (i as f32) * 0.01;
+        b[i] = ((128 - i) as f32) * 0.02;
+    }
+
+    let start_scalar = std::time::Instant::now();
+    let mut acc_scalar = 0.0f32;
+    for _ in 0..iterations {
+        acc_scalar += scalar_dot_product_128(&a, &b);
+    }
+    let scalar_duration = start_scalar.elapsed().as_nanos();
+
+    let start_simd = std::time::Instant::now();
+    let mut acc_simd = 0.0f32;
+    for _ in 0..iterations {
+        acc_simd += simd_dot_product_128(&a, &b);
+    }
+    let simd_duration = start_simd.elapsed().as_nanos();
+
+    // Prevent compiler dead-code elimination
+    assert!((acc_scalar - acc_simd).abs() < 1e-2);
+
+    let speedup_ratio = if simd_duration > 0 {
+        scalar_duration as f64 / simd_duration as f64
+    } else {
+        1.0
+    };
+
+    SimdBenchmarkResult {
+        iterations,
+        scalar_duration_nanos: scalar_duration,
+        simd_duration_nanos: simd_duration,
+        speedup_ratio,
+    }
+}
+
 /// Computes L2 squared norm of a 128-dimensional dense vector using vector-unrolled lanes.
 pub fn simd_norm_sq_128(v: &[f32; 128]) -> f32 {
     simd_dot_product_128(v, v)
@@ -197,5 +255,27 @@ mod tests {
         let h2 = simd_hash64_seed(b"compiler_error_diagnostic", 42);
         assert_eq!(h1, h2);
         assert_ne!(h1, simd_hash64_seed(b"compiler_error_diagnostic", 43));
+    }
+
+    #[test]
+    fn test_scalar_vs_simd_equivalence() {
+        let mut a = [0.0f32; 128];
+        let mut b = [0.0f32; 128];
+        for i in 0..128 {
+            a[i] = (i as f32) * 0.5 - 32.0;
+            b[i] = ((128 - i) as f32) * 0.25 + 1.0;
+        }
+        let simd_res = simd_dot_product_128(&a, &b);
+        let scalar_res = scalar_dot_product_128(&a, &b);
+        assert!((simd_res - scalar_res).abs() < 1e-3);
+    }
+
+    #[test]
+    fn test_benchmark_simd_vs_scalar_execution() {
+        let result = benchmark_simd_vs_scalar(10_000);
+        assert_eq!(result.iterations, 10_000);
+        assert!(result.scalar_duration_nanos > 0);
+        assert!(result.simd_duration_nanos > 0);
+        assert!(result.speedup_ratio > 0.0);
     }
 }

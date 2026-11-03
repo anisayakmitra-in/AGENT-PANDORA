@@ -1,6 +1,6 @@
 /**
  * @file pandora.h
- * @brief Stable C ABI Header for AGENT-PANDORA v3.0.1.
+ * @brief Stable C ABI Header for AGENT-PANDORA v3.0.2.
  *
  * Provides universal C FFI exports, JSON-RPC envelope structures,
  * and hardware SIMD vector operations.
@@ -17,7 +17,7 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 
-#define PANDORA_VERSION "3.0.1"
+#define PANDORA_VERSION "3.0.2"
 #define PANDORA_DENSE_DIMENSION 128
 
 typedef struct pandora_client pandora_client_t;
@@ -62,9 +62,19 @@ int pandora_parse_envelope(const char* json_str, pandora_envelope_t* out_envelop
 
 /**
  * Hardware-accelerated 128-dimensional dense vector dot product.
- * Compatible with AVX2/SSE4 vector lanes.
+ * Dynamically selects AVX2 when supported by host CPU, otherwise falling back to SSE.
  */
 float pandora_simd_dot_product_128(const float* a, const float* b);
+
+/**
+ * Explicit 256-bit AVX2 hardware SIMD 128-dimensional dense vector dot product.
+ */
+float pandora_simd_dot_product_128_avx2(const float* a, const float* b);
+
+/**
+ * Scalar reference 128-dimensional dense vector dot product.
+ */
+float pandora_simd_dot_product_128_scalar(const float* a, const float* b);
 
 /**
  * Checks whether the host CPU supports AVX2 instructions.

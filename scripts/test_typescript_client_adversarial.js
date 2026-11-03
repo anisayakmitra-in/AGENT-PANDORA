@@ -30,25 +30,25 @@ assert.throws(() => parseJsonEnvelope("true"), PandoraCliProtocolError);
 assert.throws(() => parseJsonEnvelope("{}"), PandoraCliProtocolError);
 assert.throws(() => parseJsonEnvelope('{"command":"doctor"}'), PandoraCliProtocolError);
 assert.throws(() => parseJsonEnvelope('{"version":""}'), PandoraCliProtocolError);
-assert.throws(() => parseJsonEnvelope('{"version":"3.0.1"}'), PandoraCliProtocolError);
+assert.throws(() => parseJsonEnvelope('{"version":"3.0.2"}'), PandoraCliProtocolError);
 assert.throws(
-  () => parseJsonEnvelope('{"version":"3.0.1","code":"err","message":"msg"}'),
+  () => parseJsonEnvelope('{"version":"3.0.2","code":"err","message":"msg"}'),
   PandoraCliProtocolError,
 );
 
 // 4. Valid error envelope
 const errEnv = parseJsonEnvelope(
-  '{"version":"3.0.1","code":"test_err","message":"failed as planned","details":{"reason":"adversarial"}}',
+  '{"version":"3.0.2","code":"test_err","message":"failed as planned","details":{"reason":"adversarial"}}',
 );
-assert.equal(errEnv.version, "3.0.1");
+assert.equal(errEnv.version, "3.0.2");
 assert.equal(errEnv.code, "test_err");
 assert.equal(errEnv.details.reason, "adversarial");
 
 // 5. Valid success envelope
 const okEnv = parseJsonEnvelope(
-  '{"version":"3.0.1","command":"test","result":"passed","nested":{"ok":true}}',
+  '{"version":"3.0.2","command":"test","result":"passed","nested":{"ok":true}}',
 );
-assert.equal(okEnv.version, "3.0.1");
+assert.equal(okEnv.version, "3.0.2");
 assert.equal(okEnv.command, "test");
 assert.equal(okEnv.nested.ok, true);
 
@@ -65,7 +65,7 @@ async function testLauncherAdversarial() {
     [
       "process.stderr.write('Warning from stderr\\n');",
       "process.stdout.write(JSON.stringify({",
-      "  version: '3.0.1',",
+      "  version: '3.0.2',",
       "  code: 'subcommand_failed',",
       "  message: 'command returned exit 1',",
       "  details: { code: 1 }",

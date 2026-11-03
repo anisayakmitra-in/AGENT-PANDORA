@@ -932,10 +932,11 @@ fn test_tier5_r6_simd_norm_sq_zero_and_near_zero() {
 }
 
 #[test]
+#[cfg(target_arch = "x86_64")]
 fn test_tier5_r6_c_abi_and_assembly_simd_execution() {
     let root = project_root();
     let gcc = gcc_path();
-    assert!(gcc.exists());
+    assert!(gcc.exists() || find_in_path("gcc").is_some());
 
     // Compile and run adversarial C ABI test
     let exe_path = root
@@ -971,11 +972,12 @@ fn test_tier5_r6_c_abi_and_assembly_simd_execution() {
 }
 
 #[test]
+#[cfg(target_arch = "x86_64")]
 fn test_tier5_r6_cpp20_client_raii_leak_and_move_execution() {
     let root = project_root();
-    let gxx = root.join(r"..\w64devkit\bin\g++.exe");
-    let gxx_canonical = fs::canonicalize(&gxx).unwrap_or(gxx);
-    assert!(gxx_canonical.exists());
+    let gxx = gxx_path();
+    assert!(gxx.exists() || find_in_path("g++").is_some() || find_in_path("clang++").is_some());
+    let gxx_canonical = gxx;
 
     let exe_path = root.join("target").join("test_pandora_cpp_adversarial.exe");
     let comp_out = Command::new(&gxx_canonical)

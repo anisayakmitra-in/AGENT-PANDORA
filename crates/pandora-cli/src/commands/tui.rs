@@ -6,7 +6,9 @@ use crossterm::event::{
 };
 use crossterm::execute;
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
+use pandora_runtime::lsp_engine::LspEngine;
 use pandora_runtime::{AgentCheckpoint, AgentCheckpointKind, AgentControlStop, AgentRunControl};
+use pandora_types::{LspDiagnostic, LspDiagnosticSeverity};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
 use ratatui::style::{Color as TuiColor, Modifier, Style};
@@ -20,7 +22,7 @@ use serde_json::{Value, json};
 use std::cell::Cell;
 use std::cmp::min;
 use std::io::{self, IsTerminal, Stdout};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -615,6 +617,12 @@ const PALETTE_ENTRIES: &[PaletteEntry] = &[
         immediate: true,
     },
     PaletteEntry {
+        command: "/diagnostics",
+        category: "Code",
+        description: "Open real-time LSP compiler diagnostics modal (/lsp)",
+        immediate: true,
+    },
+    PaletteEntry {
         command: "/hill-climb",
         category: "Harness",
         description: "Score a goal's hill-climbability (0..100) for continuous verifiable iteration",
@@ -1033,6 +1041,16 @@ impl ReasoningEffort {
     }
 }
 
+/// Snapshot of active compiler and linter diagnostics.
+#[derive(Clone, Debug, Default)]
+pub struct LspDiagnosticsSnapshot {
+    pub total_errors: usize,
+    pub total_warnings: usize,
+    pub total_infos: usize,
+    pub items: Vec<LspDiagnostic>,
+    pub last_updated_ms: u128,
+}
+
 struct App {
     args: ParsedArgs,
     input: Vec<char>,
@@ -1073,6 +1091,10 @@ struct App {
     skills_modal_open: bool,
     skills_modal_query: Vec<char>,
     skills_modal_index: usize,
+    diagnostics_modal_open: bool,
+    diagnostics_modal_index: usize,
+    diagnostics_snapshot: Arc<Mutex<LspDiagnosticsSnapshot>>,
+    diagnostics_watcher_shutdown: Arc<AtomicBool>,
     active_skills: Vec<TuiSkillItem>,
     active_provider_label: String,
     active_model_label: String,
@@ -1585,6 +1607,10 @@ impl App {
             skills_modal_open: false,
             skills_modal_query: Vec::new(),
             skills_modal_index: 0,
+            diagnostics_modal_open: false,
+            diagnostics_modal_index: 0,
+            diagnostics_snapshot: Arc::new(Mutex::new(LspDiagnosticsSnapshot::default())),
+            diagnostics_watcher_shutdown: Arc::new(AtomicBool::new(false)),
             active_skills: default_skills(),
             active_provider_label: "unconfigured".to_owned(),
             active_model_label: "unconfigured".to_owned(),
@@ -1633,10 +1659,76 @@ impl App {
             steer_control: Arc::new(SteerableRunControl::new()),
             last_area: Cell::new(Rect::default()),
         };
+
+        // Spawn background LSP diagnostics watcher thread with 300ms debounce
+        {
+            let snapshot_clone = Arc::clone(&app.diagnostics_snapshot);
+            let shutdown_clone = Arc::clone(&app.diagnostics_watcher_shutdown);
+            let workspace_root = app
+                .args
+                .value("workspace")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+
+            let _ = std::thread::Builder::new()
+                .name("pandora-lsp-watcher".to_string())
+                .spawn(move || {
+                    let engine = LspEngine::new(&workspace_root);
+                    while !shutdown_clone.load(Ordering::Relaxed) {
+                        for _ in 0..6 {
+                            if shutdown_clone.load(Ordering::Relaxed) {
+                                break;
+                            }
+                            std::thread::sleep(Duration::from_millis(50));
+                        }
+                        if shutdown_clone.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        if let Ok(res) = engine.diagnostics(None, None, None) {
+                            let mut errors = 0;
+                            let mut warnings = 0;
+                            let mut infos = 0;
+                            for d in &res.diagnostics {
+                                match d.severity {
+                                    LspDiagnosticSeverity::Error => errors += 1,
+                                    LspDiagnosticSeverity::Warning => warnings += 1,
+                                    _ => infos += 1,
+                                }
+                            }
+                            let now_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_millis())
+                                .unwrap_or(0);
+                            if let Ok(mut snap) = snapshot_clone.lock() {
+                                snap.total_errors = errors;
+                                snap.total_warnings = warnings;
+                                snap.total_infos = infos;
+                                snap.items = res.diagnostics;
+                                snap.last_updated_ms = now_ms;
+                            }
+                        }
+                    }
+                    engine.shutdown_all();
+                });
+        }
+
         app.refresh_provider_telemetry();
         app
     }
 
+    fn shutdown(&mut self) {
+        self.diagnostics_watcher_shutdown
+            .store(true, Ordering::Relaxed);
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+impl App {
     fn refresh_provider_telemetry(&mut self) {
         if let Ok(config) = super::load_config(&self.args) {
             let base_url = config.provider_url().unwrap_or("none").to_owned();
@@ -1772,7 +1864,9 @@ impl App {
     fn handle_mouse(&mut self, mouse: MouseEvent) {
         match mouse.kind {
             MouseEventKind::ScrollUp => {
-                if self.palette_open {
+                if self.diagnostics_modal_open {
+                    self.diagnostics_modal_index = self.diagnostics_modal_index.saturating_sub(1);
+                } else if self.palette_open {
                     self.palette_index = self.palette_index.saturating_sub(1);
                 } else if self.model_picker_open {
                     self.model_picker_index = self.model_picker_index.saturating_sub(1);
@@ -1781,7 +1875,17 @@ impl App {
                 }
             }
             MouseEventKind::ScrollDown => {
-                if self.palette_open {
+                if self.diagnostics_modal_open {
+                    let len = self
+                        .diagnostics_snapshot
+                        .lock()
+                        .map(|s| s.items.len())
+                        .unwrap_or(0);
+                    if len > 0 {
+                        self.diagnostics_modal_index =
+                            min(self.diagnostics_modal_index.saturating_add(1), len - 1);
+                    }
+                } else if self.palette_open {
                     let len = self.filtered_palette_entries().len();
                     if len > 0 {
                         self.palette_index = min(self.palette_index.saturating_add(1), len - 1);
@@ -1815,6 +1919,20 @@ impl App {
     fn handle_mouse_click(&mut self, col: u16, row: u16, button: MouseButton) {
         let area = self.last_area.get();
         if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        if self.diagnostics_modal_open {
+            let modal_area = centered_rect(80, 75, area);
+            if button == MouseButton::Right
+                || col < modal_area.x
+                || col >= modal_area.x + modal_area.width
+                || row < modal_area.y
+                || row >= modal_area.y + modal_area.height
+            {
+                self.diagnostics_modal_open = false;
+                return;
+            }
             return;
         }
 
@@ -2127,6 +2245,9 @@ impl App {
         }
         if self.skills_modal_open {
             return self.handle_skills_modal_key(key);
+        }
+        if self.diagnostics_modal_open {
+            return self.handle_diagnostics_modal_key(key);
         }
 
         if self.activity == TuiActivity::Working
@@ -2769,6 +2890,45 @@ impl App {
         }
     }
 
+    fn open_diagnostics_modal(&mut self) {
+        self.diagnostics_modal_open = true;
+        self.diagnostics_modal_index = 0;
+        self.palette_open = false;
+        self.model_picker_open = false;
+        self.key_modal_open = false;
+        self.skills_modal_open = false;
+        self.steer_modal_open = false;
+    }
+
+    fn handle_diagnostics_modal_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.diagnostics_modal_open = false;
+                false
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.diagnostics_modal_index = self.diagnostics_modal_index.saturating_sub(1);
+                false
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                let count = self
+                    .diagnostics_snapshot
+                    .lock()
+                    .map(|s| s.items.len())
+                    .unwrap_or(0);
+                if count > 0 {
+                    self.diagnostics_modal_index = min(self.diagnostics_modal_index + 1, count - 1);
+                }
+                false
+            }
+            KeyCode::Enter => {
+                self.diagnostics_modal_open = false;
+                false
+            }
+            _ => false,
+        }
+    }
+
     fn filtered_model_catalog(&self) -> Vec<TuiModelEntry> {
         let query = self
             .model_picker_query
@@ -3294,6 +3454,7 @@ impl App {
             || self.model_picker_open
             || self.key_modal_open
             || self.skills_modal_open
+            || self.diagnostics_modal_open
             || self.steer_modal_open
         {
             return Vec::new();
@@ -3627,6 +3788,7 @@ impl App {
                     "/setup      list or configure model provider presets (/setup <preset>)",
                     "/tools      inspect active Domain Harnesses, Coding Genes, and Workflow Genes",
                     "/skills     inspect loaded procedural skills and Domain Harnesses",
+                    "/diagnostics open real-time LSP compiler diagnostics watcher modal (/lsp)",
                     "/hill-climb score a goal (0..100) on quantifiability & verification (/hill-climb <goal>)",
                     "/confidence inspect stepped confidence gate & spike-check verification status",
                     "/autopoke   inspect unfinished Todo continuation gate & retry budget",
@@ -3884,6 +4046,9 @@ impl App {
             }
             "/skills summary" | "/tools summary" => {
                 self.show_tools_summary();
+            }
+            "/diagnostics" | "/lsp" | "/diagnostics list" => {
+                self.open_diagnostics_modal();
             }
             "/hill-climb" | "/goal-score" => {
                 self.evaluate_hill_climb("");
@@ -4439,6 +4604,8 @@ impl App {
                     | "/key"
                     | "/keys"
                     | "/skills"
+                    | "/diagnostics"
+                    | "/lsp"
                     | "/stash"
                     | "/update"
                     | "/uninstall"
@@ -6289,6 +6456,8 @@ impl App {
                 self.render_model_picker_modal(frame, area);
             } else if self.key_modal_open {
                 self.render_key_modal(frame, area);
+            } else if self.diagnostics_modal_open {
+                self.render_diagnostics_modal(frame, area);
             }
             if self.theme != TuiTheme::Mono {
                 super::tui_backdrop::apply_backdrop(
@@ -6334,6 +6503,8 @@ impl App {
             self.render_key_modal(frame, area);
         } else if self.skills_modal_open {
             self.render_skills_modal(frame, area);
+        } else if self.diagnostics_modal_open {
+            self.render_diagnostics_modal(frame, area);
         }
 
         if self.theme != TuiTheme::Mono {
@@ -6414,10 +6585,15 @@ impl App {
         brand_spans.push(Span::styled(model, self.theme.warning()));
         frame.render_widget(Paragraph::new(Line::from(brand_spans)), rows[0]);
 
-        let tab_row_split = if rows[1].width >= 80 {
+        let tab_row_split = if rows[1].width >= 130 {
             Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([Constraint::Min(48), Constraint::Length(32)])
+                .constraints([Constraint::Min(80), Constraint::Length(48)])
+                .split(rows[1])
+        } else if rows[1].width >= 80 {
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Min(80), Constraint::Length(30)])
                 .split(rows[1])
         } else {
             Layout::default()
@@ -6449,7 +6625,30 @@ impl App {
                 format!("⚡ {} Skills Active ", active_skills_count),
                 self.theme.accent(),
             );
-            let badges_line = Line::from(vec![cred_badge, skills_badge]);
+            let diag_badge = {
+                let snap = self
+                    .diagnostics_snapshot
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner());
+                if snap.total_errors > 0 {
+                    Span::styled(
+                        format!("[🔴 {} Err] ", snap.total_errors),
+                        self.theme.error(),
+                    )
+                } else if snap.total_warnings > 0 {
+                    Span::styled(
+                        format!("[⚠️ {} Warn] ", snap.total_warnings),
+                        self.theme.warning(),
+                    )
+                } else {
+                    Span::styled("[✓ Clean] ", self.theme.prompt())
+                }
+            };
+            let badges_line = if tab_row_split[1].width >= 40 {
+                Line::from(vec![cred_badge, skills_badge, diag_badge])
+            } else {
+                Line::from(vec![cred_badge, diag_badge])
+            };
             frame.render_widget(
                 Paragraph::new(badges_line).alignment(ratatui::layout::Alignment::Right),
                 tab_row_split[1],
@@ -7285,6 +7484,19 @@ impl App {
         } else {
             ""
         };
+        let lsp_tag = {
+            let snap = self
+                .diagnostics_snapshot
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            if snap.total_errors > 0 {
+                format!(" · 🔴 LSP: {} err", snap.total_errors)
+            } else if snap.total_warnings > 0 {
+                format!(" · ⚠️ LSP: {} warn", snap.total_warnings)
+            } else {
+                " · ✓ LSP: clean".to_string()
+            }
+        };
         let hint = if area.width >= WIDE_LAYOUT_MIN_WIDTH {
             "Ctrl+P palette · Ctrl+M model · /help "
         } else {
@@ -7293,7 +7505,7 @@ impl App {
         let width = usize::from(area.width);
         let body = truncate(
             &format!(
-                "{} · {}:{} · {} · turns {}{focus_tag}{stash_tag}{scroll_tag}{approval_tag}",
+                "{} · {}:{} · {} · turns {}{lsp_tag}{focus_tag}{stash_tag}{scroll_tag}{approval_tag}",
                 self.activity.name(),
                 self.active_provider_label,
                 self.active_model_label,
@@ -7976,6 +8188,151 @@ impl App {
             self.theme.muted(),
         ));
         frame.render_widget(Paragraph::new(footer), main_chunks[2]);
+    }
+
+    fn render_diagnostics_modal(&self, frame: &mut Frame, area: Rect) {
+        let modal_area = centered_rect(80, 75, area);
+        frame.render_widget(Clear, modal_area);
+
+        let outer = Block::default()
+            .title(" 🔍 Real-Time LSP Diagnostics Watcher (/diagnostics) ")
+            .borders(Borders::ALL)
+            .border_type(BorderType::Double)
+            .border_style(self.theme.accent());
+        let inner = outer.inner(modal_area);
+        frame.render_widget(outer, modal_area);
+
+        if inner.height < 6 || inner.width < 20 {
+            return;
+        }
+
+        let main_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Min(4),
+                Constraint::Length(1),
+            ])
+            .split(inner);
+
+        let (total_err, total_warn, total_info, diags) = {
+            let snap = self
+                .diagnostics_snapshot
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            (
+                snap.total_errors,
+                snap.total_warnings,
+                snap.total_infos,
+                snap.items.clone(),
+            )
+        };
+
+        // Header summary
+        let summary_spans = vec![
+            Span::styled(" Status: ", self.theme.title()),
+            if total_err > 0 {
+                Span::styled(format!("🔴 {total_err} Error(s)   "), self.theme.error())
+            } else {
+                Span::styled("✓ 0 Errors   ", self.theme.prompt())
+            },
+            if total_warn > 0 {
+                Span::styled(
+                    format!("⚠️ {total_warn} Warning(s)   "),
+                    self.theme.warning(),
+                )
+            } else {
+                Span::styled("✓ 0 Warnings   ", self.theme.prompt())
+            },
+            Span::styled(
+                format!("ℹ️ {total_info} Info/Hint(s)   "),
+                self.theme.muted(),
+            ),
+            Span::styled(
+                "· Background Poller: 300ms debounce daemon",
+                self.theme.muted(),
+            ),
+        ];
+        frame.render_widget(
+            Paragraph::new(Line::from(summary_spans))
+                .block(Block::default().borders(Borders::BOTTOM)),
+            main_chunks[0],
+        );
+
+        // Diagnostics list
+        if diags.is_empty() {
+            let clean_msg = vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    "  ✓ Workspace compiler diagnostics are completely clean.",
+                    self.theme.prompt(),
+                )),
+                Line::from(Span::styled(
+                    "    No syntax, type, or lint errors reported by active language servers.",
+                    self.theme.muted(),
+                )),
+            ];
+            frame.render_widget(Paragraph::new(clean_msg), main_chunks[1]);
+        } else {
+            let items: Vec<ListItem> = diags
+                .iter()
+                .enumerate()
+                .map(|(idx, diag)| {
+                    let is_selected = idx == self.diagnostics_modal_index;
+                    let (severity_icon, severity_style) = match diag.severity {
+                        LspDiagnosticSeverity::Error => ("🔴 ERR", self.theme.error()),
+                        LspDiagnosticSeverity::Warning => ("⚠️ WARN", self.theme.warning()),
+                        LspDiagnosticSeverity::Information => ("ℹ️ INFO", self.theme.prompt()),
+                        LspDiagnosticSeverity::Hint => ("💡 HINT", self.theme.muted()),
+                    };
+                    let location = if let Some(rel) = &diag.relative_path {
+                        format!(
+                            "{}:{}:{}",
+                            rel,
+                            diag.range.start.line + 1,
+                            diag.range.start.character + 1
+                        )
+                    } else {
+                        format!(
+                            "line {}:{}",
+                            diag.range.start.line + 1,
+                            diag.range.start.character + 1
+                        )
+                    };
+                    let source_tag = diag.source.as_deref().unwrap_or("lsp");
+                    let prefix = if is_selected { " ▶ " } else { "   " };
+                    let line = Line::from(vec![
+                        Span::styled(prefix, self.theme.accent()),
+                        Span::styled(format!("[{severity_icon}] "), severity_style),
+                        Span::styled(format!("[{location}] "), self.theme.muted()),
+                        Span::styled(
+                            &diag.message,
+                            if is_selected {
+                                self.theme.title()
+                            } else {
+                                Style::default()
+                            },
+                        ),
+                        Span::styled(format!(" ({source_tag})"), self.theme.muted()),
+                    ]);
+                    let mut item = ListItem::new(line);
+                    if is_selected {
+                        item =
+                            item.style(Style::default().bg(ratatui::style::Color::Rgb(30, 27, 46)));
+                    }
+                    item
+                })
+                .collect();
+            frame.render_widget(List::new(items), main_chunks[1]);
+        }
+
+        // Footer
+        let footer_spans = vec![
+            Span::styled(" [↑/k / ↓/j] Navigate   ", self.theme.muted()),
+            Span::styled(" [Esc/q] Close   ", self.theme.muted()),
+            Span::styled(" [Enter] Dismiss modal", self.theme.muted()),
+        ];
+        frame.render_widget(Paragraph::new(Line::from(footer_spans)), main_chunks[2]);
     }
 
     fn render_palette_modal(&self, frame: &mut Frame, area: Rect) {
@@ -9825,5 +10182,69 @@ mod tests {
         app.submit();
         assert!(app.steer_modal_open);
         assert_eq!(app.activity, TuiActivity::Paused);
+    }
+
+    #[test]
+    fn test_tui_lsp_diagnostics_watcher_modal_and_shortcuts() {
+        let mut app = app();
+
+        // Initially diagnostics modal is closed
+        assert!(!app.diagnostics_modal_open);
+
+        // /diagnostics command opens modal
+        app.input = "/diagnostics".chars().collect();
+        app.submit();
+        assert!(app.diagnostics_modal_open);
+
+        // Esc closes modal
+        let handled = app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!handled);
+        assert!(!app.diagnostics_modal_open);
+
+        // /lsp shortcut opens modal
+        app.input = "/lsp".chars().collect();
+        app.submit();
+        assert!(app.diagnostics_modal_open);
+
+        // 'q' closes modal
+        let handled = app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+        assert!(!handled);
+        assert!(!app.diagnostics_modal_open);
+
+        // Populate mock diagnostics in snapshot
+        {
+            let mut snap = app.diagnostics_snapshot.lock().unwrap();
+            snap.total_errors = 1;
+            snap.total_warnings = 2;
+            snap.items.push(pandora_types::LspDiagnostic::new(
+                "file:///test.rs",
+                pandora_types::LspRange::default(),
+                pandora_types::LspDiagnosticSeverity::Error,
+                "syntax error: unexpected token",
+            ));
+            snap.items.push(pandora_types::LspDiagnostic::new(
+                "file:///test.rs",
+                pandora_types::LspRange::default(),
+                pandora_types::LspDiagnosticSeverity::Warning,
+                "unused variable",
+            ));
+        }
+
+        // Open modal and navigate items
+        app.open_diagnostics_modal();
+        assert!(app.diagnostics_modal_open);
+        assert_eq!(app.diagnostics_modal_index, 0);
+
+        // 'j' moves down
+        app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        assert_eq!(app.diagnostics_modal_index, 1);
+
+        // 'k' moves up
+        app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE));
+        assert_eq!(app.diagnostics_modal_index, 0);
+
+        // Enter dismisses modal
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(!app.diagnostics_modal_open);
     }
 }

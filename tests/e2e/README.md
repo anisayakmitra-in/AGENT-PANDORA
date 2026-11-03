@@ -1,8 +1,8 @@
-# AGENT-PANDORA v3.0.1 E2E Test Suite
+# AGENT-PANDORA v3.0.2 E2E Test Suite
 
 ## Overview
 
-The AGENT-PANDORA v3.0.1 End-to-End (E2E) test suite implements comprehensive, requirement-driven, opaque-box testing across the six core capability pillars:
+The AGENT-PANDORA v3.0.2 End-to-End (E2E) test suite implements comprehensive, requirement-driven, opaque-box testing across the six core capability pillars:
 - **R1: Language Server Protocol (LSP) Engine (`pandora lsp`)**
 - **R2: Steerable & Interruptible Execution Loop in the TUI**
 - **R3: Semantic Memory & Hybrid RAG (`pandora://` ContextVfs)**
