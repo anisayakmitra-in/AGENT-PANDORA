@@ -16,7 +16,7 @@ int main() {
 
     std::cout << "[C++20 Client Test] Verifying envelope parsing...\n";
     auto env = client.ParseEnvelope(
-        "{\"version\":\"3.0.2\",\"command\":\"workspace.verify\",\"healthy\":true}"
+        "{\"version\":\"3.0.3\",\"command\":\"workspace.verify\",\"healthy\":true}"
     );
     assert(env.version == "3.0.3");
     assert(env.command == "workspace.verify");

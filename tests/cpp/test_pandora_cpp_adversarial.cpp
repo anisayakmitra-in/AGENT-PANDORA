@@ -52,7 +52,7 @@ int main() {
     auto env2 = target_client.ParseEnvelope("{broken_json: false, random_bytes: \xFF\xFE}");
     assert(env2.version.empty());
 
-    auto env3 = target_client.ParseEnvelope("{\"version\":\"3.0.2\",\"command\":\"run\",\"healthy\":true}");
+    auto env3 = target_client.ParseEnvelope("{\"version\":\"3.0.3\",\"command\":\"run\",\"healthy\":true}");
     assert(env3.version == "3.0.3");
     assert(env3.command == "run");
     assert(env3.healthy == true);

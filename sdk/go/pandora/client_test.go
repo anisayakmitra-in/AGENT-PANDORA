@@ -7,7 +7,7 @@ import (
 
 func TestGoSdkVersion(t *testing.T) {
 	if Version != "3.0.3" {
-		t.Fatalf("expected version 3.0.2, got %s", Version)
+		t.Fatalf("expected version 3.0.3, got %s", Version)
 	}
 }
 
@@ -18,7 +18,7 @@ func TestParseEnvelopeSuccess(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if env.Version != "3.0.3" {
-		t.Errorf("expected version 3.0.2, got %s", env.Version)
+		t.Errorf("expected version 3.0.3, got %s", env.Version)
 	}
 	if env.Command != "doctor" {
 		t.Errorf("expected command doctor, got %s", env.Command)
@@ -51,6 +51,6 @@ func TestClientLifecycle(t *testing.T) {
 		t.Fatalf("failed to create client: %v", err)
 	}
 	if client.Version() != "3.0.3" {
-		t.Errorf("expected client version 3.0.2, got %s", client.Version())
+		t.Errorf("expected client version 3.0.3, got %s", client.Version())
 	}
 }

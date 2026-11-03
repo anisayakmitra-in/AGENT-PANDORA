@@ -832,7 +832,7 @@ fn test_tier1_r6_typescript_client_build_and_launcher() {
     let ts_dir = root.join("npm").join("pandora-cli");
     assert!(ts_dir.join("package.json").exists());
 
-    // Verify TypeScript package.json version parity 3.0.2
+    // Verify TypeScript package.json version parity 3.0.3
     let pkg_content = fs::read_to_string(ts_dir.join("package.json")).unwrap();
     let pkg_val: Value = serde_json::from_str(&pkg_content).unwrap();
     assert_eq!(pkg_val["version"], "3.0.3");

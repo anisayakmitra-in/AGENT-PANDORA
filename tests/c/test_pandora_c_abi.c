@@ -26,7 +26,7 @@ int main(void) {
 
     printf("[C ABI Test] Checking envelope parsing...\n");
     pandora_envelope_t envelope;
-    const char* sample_json = "{\"version\":\"3.0.2\",\"command\":\"doctor\",\"healthy\":true}";
+    const char* sample_json = "{\"version\":\"3.0.3\",\"command\":\"doctor\",\"healthy\":true}";
     err = pandora_parse_envelope(sample_json, &envelope);
     assert(err == 0);
     assert(strcmp(envelope.version, "3.0.3") == 0);
