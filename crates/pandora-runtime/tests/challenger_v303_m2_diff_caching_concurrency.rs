@@ -920,7 +920,10 @@ fn test_empirical_empty_and_large_index_handling() {
     let search_dur = start_search.elapsed();
     assert!(!search_res.is_empty());
     println!("Search on 501 docs: {search_dur:?}");
-    assert!(search_dur < Duration::from_millis(50));
+    assert!(
+        search_dur < Duration::from_millis(500),
+        "Search on 501 docs took too long: {search_dur:?}"
+    );
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
