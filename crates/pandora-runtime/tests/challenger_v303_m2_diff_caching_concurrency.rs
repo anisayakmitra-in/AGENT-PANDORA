@@ -20,20 +20,20 @@
 //!    - Empty index, large index, corrupt binary index handling (graceful error handling, no panics).
 
 use pandora_runtime::context_vfs::{
+    ContextVfs, VFS_DENSE_DIMENSION, VFS_INDEX_HEADER_SIZE, VFS_INDEX_MAGIC,
+    VFS_INDEX_TRAILER_SIZE, VFS_INDEX_VERSION_V1, VFS_QUANTIZED_VECTOR_SIZE, VfsDoc,
     compute_corpus_hash, compute_doc_fingerprint, deserialize_vfs_index, read_index_stats,
-    serialize_vfs_index, ContextVfs, VfsDoc, VFS_DENSE_DIMENSION,
-    VFS_INDEX_HEADER_SIZE, VFS_INDEX_MAGIC, VFS_INDEX_TRAILER_SIZE,
-    VFS_INDEX_VERSION_V1, VFS_QUANTIZED_VECTOR_SIZE,
+    serialize_vfs_index,
 };
 use pandora_runtime::semantic_memory::{DenseFeatureHasher, SparseBm25Index};
 use pandora_types::{
-    ContextClassification, ContextUri, MemoryApproval, MemoryIntent, MemoryKind,
-    MemoryRecord, MemoryScope, MemoryTier, SessionId, TenantId, Timestamp, WorkspaceId,
+    ContextClassification, ContextUri, MemoryApproval, MemoryIntent, MemoryKind, MemoryRecord,
+    MemoryScope, MemoryTier, SessionId, TenantId, Timestamp, WorkspaceId,
 };
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn make_test_record(
@@ -192,8 +192,16 @@ fn test_empirical_incremental_diff_caching_n_corpus() {
     for i in 0..N {
         vfs.add_memory_record(make_test_record(
             &format!("corpus-doc-{i:03}"),
-            if i % 2 == 0 { MemoryTier::L1 } else { MemoryTier::L2 },
-            if i % 3 == 0 { MemoryIntent::Coding } else { MemoryIntent::Repo },
+            if i % 2 == 0 {
+                MemoryTier::L1
+            } else {
+                MemoryTier::L2
+            },
+            if i % 3 == 0 {
+                MemoryIntent::Coding
+            } else {
+                MemoryIntent::Repo
+            },
             &format!("Corpus document payload #{i} with specific tokens: alpha_{i} beta_{i} gamma"),
         ));
     }
@@ -258,14 +266,18 @@ fn test_empirical_incremental_diff_caching_n_corpus() {
     ));
 
     vfs.reset_diff_cache_stats();
-    vfs.save_index_to_disk(&index_path).expect("save with 1 added");
+    vfs.save_index_to_disk(&index_path)
+        .expect("save with 1 added");
 
     let (hits3, misses3) = vfs.diff_cache_stats();
     assert_eq!(
         hits3 as usize, total_initial,
         "all prior documents must hit cache"
     );
-    assert_eq!(misses3, 1, "adding 1 document must result in exactly 1 miss");
+    assert_eq!(
+        misses3, 1,
+        "adding 1 document must result in exactly 1 miss"
+    );
     assert_eq!(vfs.diff_cache().len(), total_initial + 1);
 
     // Pass 4: Mutate exactly 1 record's content (e.g. corpus-doc-010)
@@ -277,7 +289,8 @@ fn test_empirical_incremental_diff_caching_n_corpus() {
     ));
 
     vfs.reset_diff_cache_stats();
-    vfs.save_index_to_disk(&index_path).expect("save with 1 modified");
+    vfs.save_index_to_disk(&index_path)
+        .expect("save with 1 modified");
 
     let (hits4, misses4) = vfs.diff_cache_stats();
     assert_eq!(
@@ -328,7 +341,10 @@ fn test_empirical_cache_invalidation_matrix() {
     let mut doc_title_mod = base_doc.clone();
     doc_title_mod.title = "Modified Title".to_string();
     let fp_title = compute_doc_fingerprint(&doc_title_mod);
-    assert_ne!(base_fp, fp_title, "title change must invalidate fingerprint");
+    assert_ne!(
+        base_fp, fp_title,
+        "title change must invalidate fingerprint"
+    );
 
     // 4. Tier modification invalidation across all tiers
     let all_tiers = [
@@ -483,13 +499,8 @@ fn test_empirical_v1_backward_compatibility_and_transparent_upgrade() {
     let created_at_unix = 1710000000u64;
 
     // 1. Construct Version 1 binary file on disk
-    let v1_bytes = serialize_vfs_index_v1_helper(
-        &docs,
-        &bm25,
-        &raw_f32_vectors,
-        corpus_hash,
-        created_at_unix,
-    );
+    let v1_bytes =
+        serialize_vfs_index_v1_helper(&docs, &bm25, &raw_f32_vectors, corpus_hash, created_at_unix);
     std::fs::write(&index_file, &v1_bytes).expect("write v1 file");
 
     // 2. Verify V1 index stats
@@ -501,10 +512,7 @@ fn test_empirical_v1_backward_compatibility_and_transparent_upgrade() {
         (doc_count * 128 * 4) as u64,
         "V1 vector bytes must be 512 bytes per doc"
     );
-    assert_eq!(
-        stats_v1.vector_bytes_saved, 0,
-        "V1 index saves 0 bytes"
-    );
+    assert_eq!(stats_v1.vector_bytes_saved, 0, "V1 index saves 0 bytes");
     assert!(stats_v1.checksum_valid);
 
     // 3. Deserialize V1 index and test scoring equivalence
@@ -554,12 +562,15 @@ fn test_empirical_v1_backward_compatibility_and_transparent_upgrade() {
 
     // 4. Transparent upgrade: Load V1 into ContextVfs and save
     // Warm cold start from existing V1 index file on disk
-    let search_res = vfs.search("quantum computing entanglement", 5).expect("search on v1");
+    let search_res = vfs
+        .search("quantum computing entanglement", 5)
+        .expect("search on v1");
     assert!(!search_res.is_empty());
     assert!(search_res[0].snippet.contains("quantum") || search_res[0].title.contains("doc-"));
 
     // Save index: this should transparently upgrade disk file to Version 2!
-    vfs.save_index_to_disk(&index_file).expect("save upgraded index");
+    vfs.save_index_to_disk(&index_file)
+        .expect("save upgraded index");
 
     // 5. Verify upgraded Version 2 index stats
     let stats_v2 = read_index_stats(&index_file, Some(&vfs)).expect("read stats v2");
@@ -588,7 +599,9 @@ fn test_empirical_v1_backward_compatibility_and_transparent_upgrade() {
     );
 
     // Subsequent search produces identical top result
-    let search_res2 = vfs.search("quantum computing entanglement", 5).expect("search on v2");
+    let search_res2 = vfs
+        .search("quantum computing entanglement", 5)
+        .expect("search on v2");
     assert_eq!(search_res[0].uri, search_res2[0].uri);
     assert_eq!(search_res[0].title, search_res2[0].title);
     assert!((search_res[0].hybrid_score - search_res2[0].hybrid_score).abs() < 1e-4);
@@ -641,9 +654,15 @@ fn test_empirical_concurrency_stress_and_high_churn() {
                         let rec_id = format!("churn-rec-t{thread_idx}-op{op}");
                         vfs_clone.add_memory_record(make_test_record(
                             &rec_id,
-                            if op % 2 == 0 { MemoryTier::L1 } else { MemoryTier::L2 },
+                            if op % 2 == 0 {
+                                MemoryTier::L1
+                            } else {
+                                MemoryTier::L2
+                            },
                             MemoryIntent::Coding,
-                            &format!("Concurrent payload thread {thread_idx} op {op} token_alpha_{op}"),
+                            &format!(
+                                "Concurrent payload thread {thread_idx} op {op} token_alpha_{op}"
+                            ),
                         ));
                     }
                     1 => {
@@ -676,7 +695,8 @@ fn test_empirical_concurrency_stress_and_high_churn() {
 
     // Join all threads
     for (i, h) in handles.into_iter().enumerate() {
-        h.join().unwrap_or_else(|_| panic!("Thread {i} panicked under concurrency stress"));
+        h.join()
+            .unwrap_or_else(|_| panic!("Thread {i} panicked under concurrency stress"));
     }
 
     // Post-concurrency sanity check
@@ -766,7 +786,8 @@ fn test_empirical_deleted_document_handling() {
 
     // Now save index differentially in vfs2
     vfs2.reset_diff_cache_stats();
-    vfs2.save_index_to_disk(&index_path).expect("save updated index");
+    vfs2.save_index_to_disk(&index_path)
+        .expect("save updated index");
 
     // 1. Verify target doc was cleanly evicted from diff_cache by differential indexing
     assert!(
@@ -784,14 +805,17 @@ fn test_empirical_deleted_document_handling() {
     vfs2.clear_cached_index();
 
     // 4. Search for the unique marker: target doc MUST NOT be present anywhere in search results
-    let res2 = vfs2.search("KANGAROO_SUBMARINE_COBALT", 5).expect("search after deletion");
+    let res2 = vfs2
+        .search("KANGAROO_SUBMARINE_COBALT", 5)
+        .expect("search after deletion");
     for r in &res2 {
         assert_ne!(
             r.title, "del-rec-5",
             "deleted document title must not be returned in search results"
         );
         assert_ne!(
-            r.uri.as_str(), target_uri,
+            r.uri.as_str(),
+            target_uri,
             "deleted document URI must not be returned in search results"
         );
         assert!(
@@ -868,7 +892,8 @@ fn test_empirical_empty_and_large_index_handling() {
     // Warm build 500 docs: must achieve 100% hits and fast execution (< 10ms)
     vfs.reset_diff_cache_stats();
     let start_warm = Instant::now();
-    vfs.save_index_to_disk(&index_path).expect("warm save 500 docs");
+    vfs.save_index_to_disk(&index_path)
+        .expect("warm save 500 docs");
     let warm_dur = start_warm.elapsed();
 
     let (h2, m2) = vfs.diff_cache_stats();
@@ -889,7 +914,9 @@ fn test_empirical_empty_and_large_index_handling() {
 
     // Search performance on 500 docs
     let start_search = Instant::now();
-    let search_res = vfs.search("scalability keyword_12", 10).expect("search 500");
+    let search_res = vfs
+        .search("scalability keyword_12", 10)
+        .expect("search 500");
     let search_dur = start_search.elapsed();
     assert!(!search_res.is_empty());
     println!("Search on 501 docs: {search_dur:?}");
@@ -1021,6 +1048,9 @@ fn test_empirical_corrupt_binary_index_fuzzing_no_panics() {
             *b = (i as u8).wrapping_mul(seed).wrapping_add(37);
         }
         let res = deserialize_vfs_index(&pseudo_random);
-        assert!(res.is_err(), "random fuzz bytes must not successfully parse");
+        assert!(
+            res.is_err(),
+            "random fuzz bytes must not successfully parse"
+        );
     }
 }

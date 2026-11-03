@@ -12,13 +12,11 @@
 
 use pandora_runtime::arch_simd::simd_dot_product_128;
 use pandora_runtime::context_vfs::{
-    ContextVfs, VfsDoc, compute_corpus_hash, deserialize_vfs_index, read_index_stats,
-    serialize_vfs_index, VFS_INDEX_MAGIC, VFS_INDEX_VERSION_V1, VFS_INDEX_VERSION_V2,
-    VFS_QUANTIZED_VECTOR_SIZE,
+    ContextVfs, VFS_INDEX_MAGIC, VFS_INDEX_VERSION_V1, VFS_INDEX_VERSION_V2,
+    VFS_QUANTIZED_VECTOR_SIZE, VfsDoc, compute_corpus_hash, deserialize_vfs_index,
+    read_index_stats, serialize_vfs_index,
 };
-use pandora_runtime::semantic_memory::{
-    DenseFeatureHasher, QuantizedVector, SparseBm25Index,
-};
+use pandora_runtime::semantic_memory::{DenseFeatureHasher, QuantizedVector, SparseBm25Index};
 use pandora_runtime::{simd_dot_product_f32_i8, simd_dot_product_i8};
 use pandora_types::{
     ContextClassification, ContextUri, MemoryIntent, MemoryKind, MemoryRecord, MemoryScope,
@@ -100,7 +98,12 @@ impl ChallengeRng {
     }
 }
 
-fn make_test_record(id: &str, tier: MemoryTier, intent: MemoryIntent, summary: &str) -> MemoryRecord {
+fn make_test_record(
+    id: &str,
+    tier: MemoryTier,
+    intent: MemoryIntent,
+    summary: &str,
+) -> MemoryRecord {
     let scope = MemoryScope::new(
         TenantId::new("t1").unwrap(),
         WorkspaceId::new("w1").unwrap(),
@@ -195,15 +198,20 @@ fn test_challenge_coordinate_and_serialized_storage_reduction_75_percent() {
     assert_eq!(baseline_coord_bytes, 512);
     assert_eq!(quant_coord_bytes, 128);
 
-    let coord_reduction = (baseline_coord_bytes - quant_coord_bytes) as f64 / (baseline_coord_bytes as f64);
-    assert!((coord_reduction - 0.7500).abs() < 1e-9, "Coordinate reduction must be strictly 75.00%");
+    let coord_reduction =
+        (baseline_coord_bytes - quant_coord_bytes) as f64 / (baseline_coord_bytes as f64);
+    assert!(
+        (coord_reduction - 0.7500).abs() < 1e-9,
+        "Coordinate reduction must be strictly 75.00%"
+    );
 
     // Net storage per vector: 4-byte f32 scale + 128 bytes i8 data = 132 bytes
     let net_quant_vector_bytes = std::mem::size_of::<f32>() + 128 * std::mem::size_of::<i8>();
     assert_eq!(net_quant_vector_bytes, 132);
     assert_eq!(net_quant_vector_bytes, VFS_QUANTIZED_VECTOR_SIZE);
 
-    let net_reduction = (baseline_coord_bytes - net_quant_vector_bytes) as f64 / (baseline_coord_bytes as f64);
+    let net_reduction =
+        (baseline_coord_bytes - net_quant_vector_bytes) as f64 / (baseline_coord_bytes as f64);
     // (512 - 132) / 512 = 380 / 512 = 0.7421875 (74.21875%)
     assert!((net_reduction - 0.7421875).abs() < 1e-9);
 
@@ -218,7 +226,9 @@ fn test_challenge_coordinate_and_serialized_storage_reduction_75_percent() {
         let mut quant_vecs = Vec::with_capacity(num_docs);
 
         for i in 0..num_docs {
-            let content = format!("Storage challenge document {i} with technical vector embeddings and BM25 index terms");
+            let content = format!(
+                "Storage challenge document {i} with technical vector embeddings and BM25 index terms"
+            );
             let uri = ContextUri::new(format!("pandora://bench/doc-{i}")).unwrap();
             let doc = VfsDoc {
                 uri,
@@ -239,7 +249,8 @@ fn test_challenge_coordinate_and_serialized_storage_reduction_75_percent() {
         let created_at = 1730000000u64;
 
         // Serialize V2 format
-        let v2_bytes = serialize_vfs_index(&docs, &bm25, &quant_vecs, corpus_hash, created_at).unwrap();
+        let v2_bytes =
+            serialize_vfs_index(&docs, &bm25, &quant_vecs, corpus_hash, created_at).unwrap();
 
         // Validate Header (68 bytes)
         assert_eq!(&v2_bytes[0..4], VFS_INDEX_MAGIC);
@@ -325,7 +336,8 @@ fn test_challenge_cauchy_schwarz_error_bounds() {
 
     // Regime 1: 400 real hashed text embeddings
     for i in 0..400 {
-        let text = format!("domain topic {i} mathematical rigor and quantization noise variance bounds");
+        let text =
+            format!("domain topic {i} mathematical rigor and quantization noise variance bounds");
         test_vectors.push(hasher.vectorize(&text));
     }
 
@@ -462,9 +474,14 @@ fn test_challenge_cauchy_schwarz_error_bounds() {
         }
     }
 
-    println!("Cauchy-Schwarz test: total_pairs = {total_pairs_tested}, linear_violations = {linear_cs_violations}, clamped_violations = {clamped_sim_violations}");
+    println!(
+        "Cauchy-Schwarz test: total_pairs = {total_pairs_tested}, linear_violations = {linear_cs_violations}, clamped_violations = {clamped_sim_violations}"
+    );
     println!("Max theoretical L2 error bound: {max_theoretical_l2_error:.6}");
-    println!("Max observed coordinate error: {max_observed_coord_err:.6} (bound: {:.6})", 1.0 / 254.0);
+    println!(
+        "Max observed coordinate error: {max_observed_coord_err:.6} (bound: {:.6})",
+        1.0 / 254.0
+    );
     println!("Max observed L2 error: {max_observed_l2_err:.6}");
     println!("Max observed linear dot error: {max_linear_error:.6}");
 
@@ -590,9 +607,7 @@ fn test_challenge_spearman_rank_correlation_across_distributions() {
                     }
                     q
                 }
-                "SparseVectors" => {
-                    rng.next_sparse_unit_vector(10)
-                }
+                "SparseVectors" => rng.next_sparse_unit_vector(10),
                 _ => rng.next_unit_vector(),
             };
 
@@ -676,7 +691,9 @@ fn test_challenge_pairwise_discrimination_at_fine_margins() {
                 // Margin delta >= 0.005
                 if diff_true.abs() >= 0.005 {
                     total_pairs_005 += 1;
-                    if (diff_true > 0.0 && diff_quant > 0.0) || (diff_true < 0.0 && diff_quant < 0.0) {
+                    if (diff_true > 0.0 && diff_quant > 0.0)
+                        || (diff_true < 0.0 && diff_quant < 0.0)
+                    {
                         correct_pairs_005 += 1;
                     }
                 }
@@ -684,7 +701,9 @@ fn test_challenge_pairwise_discrimination_at_fine_margins() {
                 // Margin delta >= 0.003
                 if diff_true.abs() >= 0.003 {
                     total_pairs_003 += 1;
-                    if (diff_true > 0.0 && diff_quant > 0.0) || (diff_true < 0.0 && diff_quant < 0.0) {
+                    if (diff_true > 0.0 && diff_quant > 0.0)
+                        || (diff_true < 0.0 && diff_quant < 0.0)
+                    {
                         correct_pairs_003 += 1;
                     }
                 }
@@ -698,8 +717,14 @@ fn test_challenge_pairwise_discrimination_at_fine_margins() {
     let precision_005 = (correct_pairs_005 as f64) / (total_pairs_005 as f64);
     let precision_003 = (correct_pairs_003 as f64) / (total_pairs_003 as f64);
 
-    println!("Pairwise discrimination @ delta >= 0.005: total_pairs = {total_pairs_005}, correct = {correct_pairs_005}, concordance = {:.4}%", precision_005 * 100.0);
-    println!("Pairwise discrimination @ delta >= 0.003: total_pairs = {total_pairs_003}, correct = {correct_pairs_003}, concordance = {:.4}%", precision_003 * 100.0);
+    println!(
+        "Pairwise discrimination @ delta >= 0.005: total_pairs = {total_pairs_005}, correct = {correct_pairs_005}, concordance = {:.4}%",
+        precision_005 * 100.0
+    );
+    println!(
+        "Pairwise discrimination @ delta >= 0.003: total_pairs = {total_pairs_003}, correct = {correct_pairs_003}, concordance = {:.4}%",
+        precision_003 * 100.0
+    );
 
     assert!(
         precision_005 > 0.99,
@@ -730,17 +755,20 @@ fn test_challenge_edge_cases_and_boundary_conditions() {
 
     // 2. Subnormals and values < 1e-9
     let subnormals = [
-        f32::from_bits(1),  // smallest positive subnormal
+        f32::from_bits(1), // smallest positive subnormal
         1e-38f32,
         1e-20f32,
         1e-15f32,
-        9.99e-10f32,        // just below threshold 1e-9
+        9.99e-10f32, // just below threshold 1e-9
     ];
     for &sn in &subnormals {
         let mut sn_vec = [0.0f32; 128];
         sn_vec[0] = sn;
         let q_sn = QuantizedVector::quantize(&sn_vec);
-        assert_eq!(q_sn.scale, 0.0, "Scale for {sn} must be 0.0 (below 1e-9 threshold)");
+        assert_eq!(
+            q_sn.scale, 0.0,
+            "Scale for {sn} must be 0.0 (below 1e-9 threshold)"
+        );
         assert_eq!(q_sn.data, [0i8; 128]);
         assert_eq!(q_sn.dequantize(), [0.0f32; 128]);
     }
@@ -773,7 +801,10 @@ fn test_challenge_edge_cases_and_boundary_conditions() {
     assert_eq!(q_pos.data[0], 127);
     assert!((q_pos.scale - (100.0 / 127.0)).abs() < 1e-5);
     for &d in &q_pos.data {
-        assert!(d >= -127, "data value {d} violated [-127, 127] symmetric bounds");
+        assert!(
+            d >= -127,
+            "data value {d} violated [-127, 127] symmetric bounds"
+        );
     }
 
     let mut neg_extreme = [0.0f32; 128];
@@ -783,8 +814,14 @@ fn test_challenge_edge_cases_and_boundary_conditions() {
     assert_eq!(q_neg.data[0], -127);
     assert!((q_neg.scale - (100.0 / 127.0)).abs() < 1e-5);
     for &d in &q_neg.data {
-        assert!(d >= -127, "data value {d} violated [-127, 127] symmetric bounds");
-        assert_ne!(d, -128, "Value -128 is strictly prohibited in symmetric quantization");
+        assert!(
+            d >= -127,
+            "data value {d} violated [-127, 127] symmetric bounds"
+        );
+        assert_ne!(
+            d, -128,
+            "Value -128 is strictly prohibited in symmetric quantization"
+        );
     }
 
     // 5. Negative dot product clamping to 0.0
@@ -802,7 +839,10 @@ fn test_challenge_edge_cases_and_boundary_conditions() {
 
     // Symmetric: q_u . q_neg_u -> clamped to 0.0
     let sym_neg = q_u.dot_i8(&q_neg_u);
-    assert_eq!(sym_neg, 0.0, "Negative symmetric dot product must clamp to 0.0");
+    assert_eq!(
+        sym_neg, 0.0,
+        "Negative symmetric dot product must clamp to 0.0"
+    );
 
     // Orthogonal vectors
     let mut v_orth = [0.0f32; 128];
@@ -899,7 +939,10 @@ fn test_challenge_v1_v2_backward_compatibility_and_diff_cache() {
     let temp_dir = std::env::temp_dir().join(format!(
         "pandora_chal_v1_v2_test_{}_{}",
         std::process::id(),
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
     let _ = std::fs::create_dir_all(&temp_dir);
     let index_path = temp_dir.join("vfs.idx");
@@ -937,7 +980,10 @@ fn test_challenge_v1_v2_backward_compatibility_and_diff_cache() {
     vfs.reset_diff_cache_stats();
     vfs.save_index_to_disk(&index_path).unwrap();
     let (hits3, misses3) = vfs.diff_cache_stats();
-    assert_eq!(misses3, 1, "Exactly 1 modified document must register 1 cache miss");
+    assert_eq!(
+        misses3, 1,
+        "Exactly 1 modified document must register 1 cache miss"
+    );
     assert_eq!(hits3 as usize, doc_count - 1);
 
     // Deserialize index from disk and verify backward compatibility

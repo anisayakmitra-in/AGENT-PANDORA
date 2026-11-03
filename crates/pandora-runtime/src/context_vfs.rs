@@ -789,13 +789,18 @@ impl ContextVfs {
 
     /// Resets diff cache statistics.
     pub fn reset_diff_cache_stats(&self) {
-        self.cache_hits.store(0, std::sync::atomic::Ordering::Relaxed);
-        self.cache_misses.store(0, std::sync::atomic::Ordering::Relaxed);
+        self.cache_hits
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        self.cache_misses
+            .store(0, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Returns a copy of the current in-memory diff cache.
     pub fn diff_cache(&self) -> HashMap<String, CachedBufferEntry> {
-        self.diff_cache.read().map(|c| c.clone()).unwrap_or_default()
+        self.diff_cache
+            .read()
+            .map(|c| c.clone())
+            .unwrap_or_default()
     }
 
     /// Populates the diff cache from an existing deserialized index.
@@ -803,7 +808,10 @@ impl ContextVfs {
         let mut doc_term_freqs: HashMap<usize, Vec<(String, u32)>> = HashMap::new();
         for (term, postings) in index.bm25.postings() {
             for &(doc_id, tf) in postings {
-                doc_term_freqs.entry(doc_id).or_default().push((term.clone(), tf));
+                doc_term_freqs
+                    .entry(doc_id)
+                    .or_default()
+                    .push((term.clone(), tf));
             }
         }
 
@@ -863,15 +871,19 @@ impl ContextVfs {
             let fp = compute_doc_fingerprint(doc);
             let uri_str = doc.uri.as_str();
 
-            let is_hit = cache.get(uri_str).is_some_and(|entry| entry.fingerprint == fp);
+            let is_hit = cache
+                .get(uri_str)
+                .is_some_and(|entry| entry.fingerprint == fp);
 
             if is_hit {
-                self.cache_hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.cache_hits
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let entry = cache.get(uri_str).unwrap();
                 bm25.add_document_terms(idx, entry.doc_length, &entry.term_frequencies);
                 doc_vectors.push((idx, entry.vector));
             } else {
-                self.cache_misses.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.cache_misses
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let (doc_len, term_freqs) = extract_term_frequencies(&doc.content);
                 let f32_vec = hasher.vectorize(&doc.content);
                 let qv = QuantizedVector::quantize(&f32_vec);
@@ -2441,7 +2453,8 @@ mod tests {
         }
 
         let corpus_hash = compute_corpus_hash(&docs);
-        let v1_bytes = serialize_vfs_index_v1(&docs, &bm25, &f32_vectors, corpus_hash, 9999).unwrap();
+        let v1_bytes =
+            serialize_vfs_index_v1(&docs, &bm25, &f32_vectors, corpus_hash, 9999).unwrap();
 
         // Confirm version header is 1
         assert_eq!(u32::from_le_bytes(v1_bytes[4..8].try_into().unwrap()), 1);
@@ -2503,14 +2516,19 @@ mod tests {
         // Exact coordinate reduction: 128 bytes vs 512 bytes = 75.00%
         let baseline_coord_bytes = doc_count * 128 * 4;
         let quant_coord_bytes = doc_count * 128;
-        let coord_reduction = (baseline_coord_bytes - quant_coord_bytes) as f64 / (baseline_coord_bytes as f64);
+        let coord_reduction =
+            (baseline_coord_bytes - quant_coord_bytes) as f64 / (baseline_coord_bytes as f64);
         assert!((coord_reduction - 0.75).abs() < 1e-6);
 
         // Net storage reduction including scale factor (132 bytes vs 512 bytes):
         // (512 - 132) / 512 = 380 / 512 = 74.21875% ~= 74.22%
-        let net_reduction = (baseline_coord_bytes - stats.vector_bytes as usize) as f64 / (baseline_coord_bytes as f64);
+        let net_reduction = (baseline_coord_bytes - stats.vector_bytes as usize) as f64
+            / (baseline_coord_bytes as f64);
         assert!((net_reduction - 0.7421875).abs() < 1e-4);
-        assert_eq!(stats.vector_bytes as usize, doc_count * VFS_QUANTIZED_VECTOR_SIZE);
+        assert_eq!(
+            stats.vector_bytes as usize,
+            doc_count * VFS_QUANTIZED_VECTOR_SIZE
+        );
         assert_eq!(stats.vector_bytes_saved as usize, doc_count * 380);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -2570,7 +2588,10 @@ mod tests {
         vfs.reset_diff_cache_stats();
         vfs.save_index_to_disk(&index_path).unwrap();
         let (hits3, misses3) = vfs.diff_cache_stats();
-        assert_eq!(misses3, 1, "adding 1 document must result in exactly 1 cache miss");
+        assert_eq!(
+            misses3, 1,
+            "adding 1 document must result in exactly 1 cache miss"
+        );
         assert_eq!(
             hits3 as usize, initial_doc_count,
             "all prior documents must hit diff cache"

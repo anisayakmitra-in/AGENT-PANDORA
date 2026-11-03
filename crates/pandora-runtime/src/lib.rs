@@ -107,9 +107,8 @@ pub use approvals::{
 pub use arch_simd::{
     CpuFeatures, DimensionBenchmarkStats, SimdBenchmarkResult, benchmark_simd_vs_scalar,
     compute_sample_stats, run_statistical_microbenchmarks, scalar_dot_product_128,
-    scalar_dot_product_slice, simd_dot_product_128, simd_dot_product_f32_i8,
-    simd_dot_product_i8, simd_dot_product_slice, simd_hash64_seed, simd_norm_sq_128,
-    student_t_critical_value_95,
+    scalar_dot_product_slice, simd_dot_product_128, simd_dot_product_f32_i8, simd_dot_product_i8,
+    simd_dot_product_slice, simd_hash64_seed, simd_norm_sq_128, student_t_critical_value_95,
 };
 pub use artifact_catalog::{ArtifactActivation, ArtifactCatalog, ArtifactCatalogError};
 pub use blaze_adapter::{
@@ -137,9 +136,9 @@ pub use context_engine::{ContextCacheStats, ContextEngine, ContextError};
 pub use context_recovery::{ContextRecovery, RecoveryDecision, RecoveryInput, RecoveryStep};
 pub use context_vfs::{
     CachedBufferEntry, ContextSearchOptions, ContextVfs, DeserializedVfsIndex, HybridSearchResult,
-    SearchResultItem, VfsDoc, VfsError, VfsIndexStats, compute_corpus_hash,
+    SearchResultItem, VFS_INDEX_VERSION, VFS_INDEX_VERSION_V1, VFS_INDEX_VERSION_V2,
+    VFS_QUANTIZED_VECTOR_SIZE, VfsDoc, VfsError, VfsIndexStats, compute_corpus_hash,
     compute_doc_fingerprint, deserialize_vfs_index, read_index_stats, serialize_vfs_index,
-    VFS_INDEX_VERSION, VFS_INDEX_VERSION_V1, VFS_INDEX_VERSION_V2, VFS_QUANTIZED_VECTOR_SIZE,
 };
 pub use cron_engine::{
     CronEngine, CronError, CronExecutionResult, CronJob, CronJobStatus, CronSchedule,

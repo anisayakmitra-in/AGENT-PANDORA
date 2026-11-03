@@ -1,23 +1,24 @@
 #![forbid(unsafe_code)]
 
 use pandora_runtime::context_vfs::{
-    ContextVfs, VfsDoc,
-    compute_corpus_hash, deserialize_vfs_index, read_index_stats,
-    serialize_vfs_index, VFS_INDEX_MAGIC, VFS_INDEX_VERSION_V1,
-    VFS_QUANTIZED_VECTOR_SIZE,
+    ContextVfs, VFS_INDEX_MAGIC, VFS_INDEX_VERSION_V1, VFS_QUANTIZED_VECTOR_SIZE, VfsDoc,
+    compute_corpus_hash, deserialize_vfs_index, read_index_stats, serialize_vfs_index,
 };
-use pandora_runtime::semantic_memory::{
-    DenseFeatureHasher, QuantizedVector, SparseBm25Index,
-};
+use pandora_runtime::semantic_memory::{DenseFeatureHasher, QuantizedVector, SparseBm25Index};
 use pandora_runtime::{simd_dot_product_f32_i8, simd_dot_product_i8};
 use pandora_types::{
-    ContextClassification, ContextFragment, ContextOrigin, ContextSource,
-    ContextTrust, ContextUri, MemoryIntent, MemoryRecord, MemoryScope, MemoryTier,
-    SessionId, TenantId, Timestamp, WorkspaceId,
+    ContextClassification, ContextFragment, ContextOrigin, ContextSource, ContextTrust, ContextUri,
+    MemoryIntent, MemoryRecord, MemoryScope, MemoryTier, SessionId, TenantId, Timestamp,
+    WorkspaceId,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn make_test_record(id: &str, tier: MemoryTier, intent: MemoryIntent, summary: &str) -> MemoryRecord {
+fn make_test_record(
+    id: &str,
+    tier: MemoryTier,
+    intent: MemoryIntent,
+    summary: &str,
+) -> MemoryRecord {
     let scope = MemoryScope::new(
         TenantId::new("t1").unwrap(),
         WorkspaceId::new("w1").unwrap(),
@@ -148,7 +149,9 @@ fn test_adversarial_quantization_error_bounds_multi_query() {
     let mut corpus = Vec::with_capacity(200);
     for i in 0..200 {
         let phrase = base_phrases[i % base_phrases.len()];
-        corpus.push(format!("{phrase} benchmark evaluation iteration {i} telemetry trace"));
+        corpus.push(format!(
+            "{phrase} benchmark evaluation iteration {i} telemetry trace"
+        ));
     }
 
     let mut f32_docs = Vec::with_capacity(200);
@@ -259,7 +262,10 @@ fn test_adversarial_v1_migration_and_storage_gain() {
     let temp_dir = std::env::temp_dir().join(format!(
         "pandora_v1_v2_migr_test_{}_{}",
         std::process::id(),
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
     let _ = std::fs::create_dir_all(&temp_dir);
     let v1_path = temp_dir.join("vfs_v1.idx");
@@ -374,7 +380,10 @@ fn test_adversarial_v1_migration_and_storage_gain() {
     // Verify V2 file stats
     let v2_stats = read_index_stats(&v2_path, None).unwrap();
     assert_eq!(v2_stats.version, 2);
-    assert_eq!(v2_stats.vector_bytes, (num_docs * VFS_QUANTIZED_VECTOR_SIZE) as u64);
+    assert_eq!(
+        v2_stats.vector_bytes,
+        (num_docs * VFS_QUANTIZED_VECTOR_SIZE) as u64
+    );
     assert_eq!(v2_stats.vector_bytes_saved, (num_docs * 380) as u64);
 
     // Verify exact file size savings
@@ -401,7 +410,10 @@ fn test_adversarial_diff_cache_mutation_and_deletion() {
     let temp_dir = std::env::temp_dir().join(format!(
         "pandora_diff_mut_test_{}_{}",
         std::process::id(),
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
     let _ = std::fs::create_dir_all(&temp_dir);
     let index_path = temp_dir.join("vfs.idx");
@@ -509,5 +521,9 @@ fn test_adversarial_malformed_and_tampered_index() {
     let new_cs2 = Sha256::digest(&bad_ver[..payload_len]);
     bad_ver[payload_len..].copy_from_slice(&new_cs2);
     let err_ver = deserialize_vfs_index(&bad_ver).unwrap_err();
-    assert!(err_ver.to_string().contains("unsupported index version: 99"));
+    assert!(
+        err_ver
+            .to_string()
+            .contains("unsupported index version: 99")
+    );
 }

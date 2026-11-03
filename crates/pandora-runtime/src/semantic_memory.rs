@@ -342,7 +342,10 @@ impl SparseBm25Index {
         self.doc_count += 1;
 
         for (term, tf) in term_freqs {
-            self.postings.entry(term.clone()).or_default().push((doc_id, *tf));
+            self.postings
+                .entry(term.clone())
+                .or_default()
+                .push((doc_id, *tf));
         }
     }
 

@@ -221,7 +221,7 @@ fn challenge_catastrophic_cancellation_and_alternating_magnitudes() {
 
         let diff_simd = (simd_sig - expected).abs();
         let diff_scalar = (scalar_sig - expected).abs();
-        
+
         // Note: In IEEE-754 single-precision float (f32), accumulating 1e6 across 8 parallel
         // SIMD lanes reaches > 1.6e7 when dim >= 128, causing mantissa quantization truncation
         // (machine epsilon at 1.6e7 is 2.0, so adding 1.0 is truncated).
@@ -229,7 +229,6 @@ fn challenge_catastrophic_cancellation_and_alternating_magnitudes() {
         println!(
             "Dim {dim}: expected={expected}, scalar_sig={scalar_sig} (diff={diff_scalar}), simd_sig={simd_sig} (diff={diff_simd})"
         );
-
     }
 }
 
@@ -463,7 +462,10 @@ fn challenge_statistical_variance_and_confidence_invariants() {
     let (mean_id, std_id, ci_id) = compute_sample_stats(&identical_samples);
     assert!((mean_id - 1234.5678).abs() < 1e-10);
     assert!(std_id >= 0.0, "Standard deviation must be non-negative");
-    assert!(std_id < 1e-10, "Standard deviation of constant array must be near 0");
+    assert!(
+        std_id < 1e-10,
+        "Standard deviation of constant array must be near 0"
+    );
     assert!((ci_id.0 - 1234.5678).abs() < 1e-10);
     assert!((ci_id.1 - 1234.5678).abs() < 1e-10);
 
