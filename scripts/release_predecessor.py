@@ -10,6 +10,7 @@ _RELEASE_TAG = re.compile(
     r"(?:-(alpha|beta|rc)\.(0|[1-9][0-9]*))?$"
 )
 _STAGE_ORDER = {"alpha": 0, "beta": 1, "rc": 2, None: 3}
+UNPUBLISHED_TAGS = {"v3.0.1"}
 
 
 class ReleasePredecessorError(ValueError):
@@ -30,7 +31,9 @@ def _parse_tag(tag: str) -> tuple[int, int, int, int, int]:
     )
 
 
-def find_predecessor(changelog: str, current_tag: str) -> str:
+def find_predecessor(
+    changelog: str, current_tag: str, skip_unpublished: bool = True
+) -> str:
     current_version = _parse_tag(current_tag)
     releases: list[tuple[str, tuple[int, int, int, int, int]]] = []
     seen: set[str] = set()
@@ -51,11 +54,18 @@ def find_predecessor(changelog: str, current_tag: str) -> str:
             f"current release section is missing: {current_tag}"
         )
     current_index = current_indexes[0]
-    if current_index + 1 >= len(releases):
+    next_index = current_index + 1
+    while next_index < len(releases):
+        candidate_tag, candidate_version = releases[next_index]
+        if skip_unpublished and candidate_tag in UNPUBLISHED_TAGS:
+            next_index += 1
+            continue
+        break
+    if next_index >= len(releases):
         raise ReleasePredecessorError(
             f"predecessor release section is missing: {current_tag}"
         )
-    predecessor_tag, predecessor_version = releases[current_index + 1]
+    predecessor_tag, predecessor_version = releases[next_index]
     if predecessor_version >= current_version:
         raise ReleasePredecessorError(
             f"predecessor {predecessor_tag} must be older than {current_tag}"
@@ -63,7 +73,9 @@ def find_predecessor(changelog: str, current_tag: str) -> str:
     return predecessor_tag
 
 
-def find_stable_predecessor(changelog: str, current_tag: str) -> str:
+def find_stable_predecessor(
+    changelog: str, current_tag: str, skip_unpublished: bool = True
+) -> str:
     current_version = _parse_tag(current_tag)
     if current_version[3] != _STAGE_ORDER[None]:
         raise ReleasePredecessorError(
@@ -89,6 +101,7 @@ def find_stable_predecessor(changelog: str, current_tag: str) -> str:
         if version[3] == _STAGE_ORDER[None]
         and version[:2] == current_version[:2]
         and version < current_version
+        and (not skip_unpublished or tag not in UNPUBLISHED_TAGS)
     ]
     if not candidates:
         raise ReleasePredecessorError(
