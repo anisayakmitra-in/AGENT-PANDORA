@@ -3,7 +3,7 @@ package pandora
 import "encoding/json"
 
 // Version is the active SemVer release version of AGENT-PANDORA.
-const Version = "3.0.2"
+const Version = "3.0.3"
 
 // DenseDimension is the feature hashing dimension for semantic memory.
 const DenseDimension = 128

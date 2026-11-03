@@ -6,18 +6,18 @@ import (
 )
 
 func TestGoSdkVersion(t *testing.T) {
-	if Version != "3.0.2" {
+	if Version != "3.0.3" {
 		t.Fatalf("expected version 3.0.2, got %s", Version)
 	}
 }
 
 func TestParseEnvelopeSuccess(t *testing.T) {
-	raw := `{"version":"3.0.2","command":"doctor","healthy":true}`
+	raw := `{"version":"3.0.3","command":"doctor","healthy":true}`
 	env, err := ParseEnvelope(raw)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if env.Version != "3.0.2" {
+	if env.Version != "3.0.3" {
 		t.Errorf("expected version 3.0.2, got %s", env.Version)
 	}
 	if env.Command != "doctor" {
@@ -29,7 +29,7 @@ func TestParseEnvelopeSuccess(t *testing.T) {
 }
 
 func TestParseEnvelopeError(t *testing.T) {
-	raw := `{"version":"3.0.2","code":"policy_denied","message":"effect denied","details":{"path":"/root"}}`
+	raw := `{"version":"3.0.3","code":"policy_denied","message":"effect denied","details":{"path":"/root"}}`
 	env, err := ParseEnvelope(raw)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -50,7 +50,7 @@ func TestClientLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
-	if client.Version() != "3.0.2" {
+	if client.Version() != "3.0.3" {
 		t.Errorf("expected client version 3.0.2, got %s", client.Version())
 	}
 }

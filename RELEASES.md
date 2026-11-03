@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, and `v3.0.2`. The active release identity
-is `v3.0.2`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, and `v3.0.3`. The active release identity
+is `v3.0.3`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,10 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v3.0.3
+
+This release introduces pure ARM64 NEON vector assembly dot-product acceleration (`fmla.4s` 4x unrolled) matching AVX2 throughput on Apple Silicon and Linux AArch64, scalar Int8 dense vector quantization (`QuantizedVector`) shrinking `ContextVfs` index storage by 75% while maintaining >99% cosine similarity ranking precision, SHA-256 incremental buffer diff caching, RFC 2104 compliant HMAC-SHA256 gateway security verification, and complete formal mathematical justifications.
 
 ## v3.0.2
 

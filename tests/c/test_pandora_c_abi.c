@@ -13,7 +13,7 @@ int main(void) {
     printf("[C ABI Test] Checking AGENT-PANDORA version...\n");
     const char* version = pandora_version();
     assert(version != NULL);
-    assert(strcmp(version, "3.0.2") == 0);
+    assert(strcmp(version, "3.0.3") == 0);
     printf("  -> Verified version: %s\n", version);
 
     printf("[C ABI Test] Checking client allocation and lifecycle...\n");
@@ -29,7 +29,7 @@ int main(void) {
     const char* sample_json = "{\"version\":\"3.0.2\",\"command\":\"doctor\",\"healthy\":true}";
     err = pandora_parse_envelope(sample_json, &envelope);
     assert(err == 0);
-    assert(strcmp(envelope.version, "3.0.2") == 0);
+    assert(strcmp(envelope.version, "3.0.3") == 0);
     assert(strcmp(envelope.command, "doctor") == 0);
     assert(envelope.healthy == true);
     printf("  -> Verified envelope parser: cmd=%s, healthy=%d\n", envelope.command, envelope.healthy);
