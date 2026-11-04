@@ -34,6 +34,7 @@ pub mod gepa;
 pub mod github_client;
 pub mod graph_intelligence;
 pub mod hardware_autopilot;
+pub mod hardware_batch_dispatch;
 pub mod harness_evolution;
 pub mod harness_registry;
 pub mod hnsw;
@@ -208,6 +209,7 @@ pub use graph_intelligence::{
     MAX_GRAPH_INPUT_BYTES, MAX_GRAPH_INPUTS, MAX_GRAPH_NODES, MAX_GRAPH_SNAPSHOT_BYTES,
 };
 pub use hardware_autopilot::HardwareAutopilot;
+pub use hardware_batch_dispatch::{BatchVectorDispatcher, Precision, RooflineModel};
 pub use harness_evolution::{
     EvolutionTestCase, GenomeEvaluationReceipt, HarnessEvolutionEngine, TestCaseResult,
 };
