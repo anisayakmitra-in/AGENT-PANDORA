@@ -3,6 +3,9 @@ use super::{
     timestamp,
 };
 use crate::output::{CliError, CommandResult, success};
+use pandora_runtime::hnsw::{
+    DEFAULT_HNSW_EF_CONSTRUCTION, DEFAULT_HNSW_EF_SEARCH, DEFAULT_HNSW_M, HnswConfig, HnswIndex,
+};
 use pandora_runtime::sessions::{MAX_MEMORY_RECALL_RECORDS, SessionStore};
 use pandora_runtime::{
     ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, ContextSearchOptions,
@@ -10,10 +13,6 @@ use pandora_runtime::{
     MemorySynthesisScheduleStore, MeshSyncEngine, PeerIdentity, ReflexionCrystallizer, VfsError,
     read_index_stats,
 };
-use pandora_runtime::hnsw::{
-    DEFAULT_HNSW_EF_CONSTRUCTION, DEFAULT_HNSW_EF_SEARCH, DEFAULT_HNSW_M, HnswConfig, HnswIndex,
-};
-use sha2::{Digest, Sha256};
 use pandora_types::{
     ContextClassification, ContextUri, ExecutionId, FeatureMap, GeneId, JobWorkerId,
     MemoryApproval, MemoryCapsule, MemoryConflictRule, MemoryConsolidationBoundary,
@@ -22,6 +21,7 @@ use pandora_types::{
     SessionId, StoredSop, Timestamp, WorkspaceId, hash_artifact,
 };
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 const MAX_L0_ENTRIES: usize = 64;
@@ -1235,7 +1235,9 @@ fn vfs_hnsw_build(args: &[String]) -> Result<CommandResult, CliError> {
         .unwrap_or(DEFAULT_HNSW_EF_CONSTRUCTION);
 
     if ef_construction == 0 {
-        return Err(CliError::usage("ef-construction must be a positive integer"));
+        return Err(CliError::usage(
+            "ef-construction must be a positive integer",
+        ));
     }
 
     let rebuild = parsed.has_flag("rebuild");
@@ -3215,10 +3217,7 @@ mod tests {
         );
 
         // Unknown option
-        assert_err(
-            vfs_hnsw_build(&["--unknown".to_string()]),
-            "unknown option",
-        );
+        assert_err(vfs_hnsw_build(&["--unknown".to_string()]), "unknown option");
     }
 
     #[test]

@@ -833,12 +833,18 @@ mod tests {
         let fish = fish();
 
         assert!(powershell.contains("-eq 'memory' -and $elements[2] -eq 'vfs'"));
-        assert!(powershell.contains("'ls','cat','search','index','stats','hnsw-build','hnsw-search'"));
+        assert!(
+            powershell.contains("'ls','cat','search','index','stats','hnsw-build','hnsw-search'")
+        );
 
         assert!(bash.contains(r#"[[ "${COMP_WORDS[1]}" == "memory" && "$previous" == "vfs" ]]"#));
         assert!(bash.contains("compgen -W 'ls cat search index stats hnsw-build hnsw-search'"));
 
-        assert!(zsh.contains("'3:memory vfs command:(ls cat search index stats hnsw-build hnsw-search)'"));
+        assert!(
+            zsh.contains(
+                "'3:memory vfs command:(ls cat search index stats hnsw-build hnsw-search)'"
+            )
+        );
 
         assert!(fish.contains(
             "__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from vfs' -a 'ls cat search index stats hnsw-build hnsw-search'"

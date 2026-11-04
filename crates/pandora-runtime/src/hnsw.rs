@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::arch_simd::{simd_dot_product_128, simd_dot_product_f32_i8, simd_dot_product_i8};
-use crate::semantic_memory::{QuantizedVector, DENSE_DIMENSION};
+use crate::semantic_memory::{DENSE_DIMENSION, QuantizedVector};
 
 pub const PVHN_MAGIC: &[u8; 4] = b"PVHN";
 pub const PVHN_VERSION: u32 = 1;
@@ -57,7 +57,10 @@ impl fmt::Display for HnswError {
             Self::InvalidMagic => write!(f, "invalid PVHN magic bytes"),
             Self::UnsupportedVersion(v) => write!(f, "unsupported PVHN format version: {v}"),
             Self::DimensionMismatch(d) => {
-                write!(f, "vector dimension mismatch: {d} (expected {DENSE_DIMENSION})")
+                write!(
+                    f,
+                    "vector dimension mismatch: {d} (expected {DENSE_DIMENSION})"
+                )
             }
             Self::ChecksumMismatch => {
                 write!(f, "PVHN SHA-256 checksum mismatch (corrupted index)")
@@ -235,7 +238,6 @@ pub struct HnswIndexStats {
     pub entry_point: Option<usize>,
 }
 
-
 /// A node in the multi-layer HNSW graph.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HnswNode {
@@ -279,11 +281,7 @@ impl SafeRng {
     pub fn generate_level(&mut self, ml: f64) -> usize {
         let u = self.next_f64();
         let level = (-u.ln() * ml).floor();
-        if level < 0.0 {
-            0
-        } else {
-            level as usize
-        }
+        if level < 0.0 { 0 } else { level as usize }
     }
 }
 
@@ -466,7 +464,6 @@ impl HnswIndex {
         }
     }
 
-
     #[inline]
     fn distance_to_node(&self, query: &HnswVector, node_id: usize) -> f32 {
         cosine_distance(query, &self.nodes[node_id].vector)
@@ -575,7 +572,11 @@ impl HnswIndex {
                 distance: item.distance,
             })
             .collect();
-        out.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap_or(Ordering::Equal));
+        out.sort_by(|a, b| {
+            a.distance
+                .partial_cmp(&b.distance)
+                .unwrap_or(Ordering::Equal)
+        });
         out
     }
 
@@ -592,7 +593,11 @@ impl HnswIndex {
         keep_pruned: bool,
     ) -> Vec<usize> {
         let mut sorted = candidates.to_vec();
-        sorted.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap_or(Ordering::Equal));
+        sorted.sort_by(|a, b| {
+            a.distance
+                .partial_cmp(&b.distance)
+                .unwrap_or(Ordering::Equal)
+        });
 
         let mut selected: Vec<usize> = Vec::with_capacity(m_max);
         let mut discarded: Vec<usize> = Vec::new();
@@ -689,7 +694,11 @@ impl HnswIndex {
         let mut ep = vec![curr];
 
         for l in (0..=target_top).rev() {
-            let m_l = if l == 0 { self.config.m_max_0 } else { self.config.m };
+            let m_l = if l == 0 {
+                self.config.m_max_0
+            } else {
+                self.config.m
+            };
             let candidates = self.search_layer(&vector, &ep, self.config.ef_construction, l);
             let selected_neighbors =
                 self.select_neighbors_heuristic(q_id, &candidates, m_l, l, true);
@@ -1058,7 +1067,6 @@ impl HnswIndex {
             });
         }
 
-
         Ok(Self {
             config,
             entry_point,
@@ -1148,16 +1156,10 @@ mod tests {
         // Expected ratio P(L >= l) / P(L >= l+1) ~ 16
         // P(L = 0) ~ 1 - 1/16 = 93.75%
         let p0 = counts[0] as f64 / total_samples as f64;
-        assert!(
-            p0 > 0.90 && p0 < 0.97,
-            "P(L=0) expected ~0.9375, got {p0}"
-        );
+        assert!(p0 > 0.90 && p0 < 0.97, "P(L=0) expected ~0.9375, got {p0}");
 
         let p1 = counts[1] as f64 / total_samples as f64;
-        assert!(
-            p1 > 0.03 && p1 < 0.09,
-            "P(L=1) expected ~0.0586, got {p1}"
-        );
+        assert!(p1 > 0.03 && p1 < 0.09, "P(L=1) expected ~0.0586, got {p1}");
     }
 
     #[test]
@@ -1311,7 +1313,8 @@ mod tests {
                 .map(|(id, vec)| (*id, cosine_distance(&query_vec, vec)))
                 .collect();
             ground_truth.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
-            let top_truth: HashSet<usize> = ground_truth.iter().take(k).map(|(id, _)| *id).collect();
+            let top_truth: HashSet<usize> =
+                ground_truth.iter().take(k).map(|(id, _)| *id).collect();
 
             // HNSW search
             let hnsw_results = index.search(&query_vec, k, 64);
@@ -1339,7 +1342,10 @@ mod tests {
             if doc_id % 2 == 0 {
                 index.insert(doc_id, HnswVector::F32(raw));
             } else {
-                index.insert(doc_id, HnswVector::Quantized(QuantizedVector::quantize(&raw)));
+                index.insert(
+                    doc_id,
+                    HnswVector::Quantized(QuantizedVector::quantize(&raw)),
+                );
             }
         }
 

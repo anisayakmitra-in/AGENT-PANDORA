@@ -1,8 +1,8 @@
 pub use crate::hnsw::HnswIndexStats;
-pub use crate::semantic_memory::{ContextSearchOptions, HybridSearchResult, SearchResultItem};
 use crate::hnsw::{
     HnswConfig, HnswError, HnswIndex, HnswVector, PVHN_HEADER_SIZE, PVHN_TRAILER_SIZE,
 };
+pub use crate::semantic_memory::{ContextSearchOptions, HybridSearchResult, SearchResultItem};
 use crate::semantic_memory::{
     DenseFeatureHasher, HybridRrfRanker, QuantizedVector, SparseBm25Index,
     extract_term_frequencies, generate_snippet,
@@ -32,7 +32,6 @@ pub const VFS_DENSE_DIMENSION: u32 = 128;
 pub const VFS_QUANTIZED_VECTOR_SIZE: usize = 132; // 4 bytes scale + 128 bytes i8 data
 pub const VFS_HNSW_INDEX_PATH_DEFAULT: &str = ".pandora/indices/vfs_hnsw.idx";
 
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum VfsError {
     InvalidUri(String),
@@ -61,7 +60,6 @@ impl From<HnswError> for VfsError {
         VfsError::BackendError(err.to_string())
     }
 }
-
 
 /// Persistent VFS index statistics and integrity metadata.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -203,7 +201,6 @@ impl ContextVfs {
         }
     }
 
-
     pub fn from_session_store(
         store: &crate::sessions::SessionStore,
         tenant_id: &TenantId,
@@ -307,7 +304,6 @@ impl ContextVfs {
             self.mark_buffer_modified();
         }
     }
-
 
     pub fn list(&self, uri: &ContextUri) -> Result<Vec<VfsDirectoryEntry>, VfsError> {
         let segments = uri.segments();
@@ -851,7 +847,6 @@ impl ContextVfs {
         }
     }
 
-
     /// Returns the total diff cache hits and misses since initialization.
     pub fn diff_cache_stats(&self) -> (u64, u64) {
         (
@@ -1339,7 +1334,10 @@ impl ContextVfs {
                 let ef = (options.limit * 2).max(64);
                 let top_k = (options.limit * 5).max(32).min(index_docs.len());
                 let hnsw_res = hnsw_idx.search(&q_hnsw, top_k, ef);
-                hnsw_res.into_iter().map(|r| (r.doc_id, r.similarity)).collect()
+                hnsw_res
+                    .into_iter()
+                    .map(|r| (r.doc_id, r.similarity))
+                    .collect()
             } else {
                 hasher.score_quantized_docs(&query_vec, &doc_vectors)
             }
@@ -1448,9 +1446,9 @@ impl ContextVfs {
             .and_then(|guard| guard.clone())
             .ok_or_else(|| VfsError::BackendError("failed to obtain cached HNSW index".into()))?;
 
-        index_arc
-            .save_to_file(&target_path)
-            .map_err(|e| VfsError::BackendError(format!("failed to save HNSW index to file: {e}")))?;
+        index_arc.save_to_file(&target_path).map_err(|e| {
+            VfsError::BackendError(format!("failed to save HNSW index to file: {e}"))
+        })?;
 
         if path.is_some() {
             if let Ok(mut guard) = self.hnsw_index_path.write() {
@@ -1593,7 +1591,9 @@ impl ContextVfs {
             Err(_) => 0,
         };
 
-        let last_mod = self.last_modified_unix.load(std::sync::atomic::Ordering::Relaxed);
+        let last_mod = self
+            .last_modified_unix
+            .load(std::sync::atomic::Ordering::Relaxed);
         if file_mtime_secs < last_mod {
             return false;
         }
@@ -1621,7 +1621,6 @@ impl ContextVfs {
         file_corpus_hash == current_corpus_hash
     }
 }
-
 
 fn tier_to_u8(tier: Option<MemoryTier>) -> u8 {
     match tier {
@@ -2955,7 +2954,9 @@ mod tests {
                     MemoryTier::L2
                 },
                 MemoryIntent::Coding,
-                &format!("Document number {i} discussing vector search algorithms and data structures"),
+                &format!(
+                    "Document number {i} discussing vector search algorithms and data structures"
+                ),
             ));
         }
 
@@ -2971,7 +2972,9 @@ mod tests {
         assert_eq!(stats.layer_node_counts[0], expected_count);
         assert!(stats.average_degree > 0.0);
 
-        let cached = vfs.cached_hnsw_index().expect("HNSW index should be cached");
+        let cached = vfs
+            .cached_hnsw_index()
+            .expect("HNSW index should be cached");
         assert_eq!(cached.len(), expected_count);
         assert_eq!(cached.corpus_hash(), &compute_corpus_hash(&all_docs));
     }
@@ -3182,4 +3185,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
-
